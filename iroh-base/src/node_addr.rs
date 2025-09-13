@@ -10,8 +10,8 @@ use std::{collections::BTreeSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{NodeId, PublicKey, RelayUrl};
 use crate::webrtc_port::ChannelId;
+use crate::{NodeId, PublicKey, RelayUrl};
 
 /// Network-level addressing information for an iroh node.
 ///
@@ -52,9 +52,9 @@ pub struct NodeAddr {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct WebRtcInfo{
+pub struct WebRtcInfo {
     /// The hash of the certificate, prefixed with the algorithm, e.g./ "sha-256, B1:....:4E"
-    pub cert_fingerprints: BTreeSet<String>
+    pub cert_fingerprints: BTreeSet<String>,
 }
 
 impl NodeAddr {
@@ -132,7 +132,7 @@ impl NodeAddr {
             relay_url,
             channel_id: None,
             direct_addresses: direct_addresses.into_iter().collect(),
-            webrtc_info
+            webrtc_info,
         }
     }
 

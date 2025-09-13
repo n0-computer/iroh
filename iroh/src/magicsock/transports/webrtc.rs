@@ -1,19 +1,19 @@
 pub mod actor;
 
-use crate::disco::WebRtcOffer;
+use crate::disco::{IceCandidate, WebRtcOffer};
 use crate::magicsock::transports::webrtc::actor::{
     PlatformRtcConfig, WebRtcActor, WebRtcActorConfig, WebRtcActorMessage, WebRtcData,
     WebRtcDeliveryMode, WebRtcRecvDatagrams, WebRtcSendItem,
 };
 use bytes::Bytes;
-use iroh_base::{WebRtcPort, NodeId, PublicKey, ChannelId};
+use iroh_base::{ChannelId, NodeId, PublicKey, WebRtcPort};
 use n0_future::ready;
+use n0_watcher::Watchable;
 use snafu::Snafu;
 use std::fmt::Debug;
 use std::io;
 use std::net::SocketAddr;
 use std::task::{Context, Poll};
-use n0_watcher::Watchable;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task;
 use tokio_util::sync::PollSender;
@@ -31,10 +31,6 @@ use crate::magicsock::transports::{Addr, Transmit};
 /// Wrapper around SDP (Session Description Protocol) strings for type safety
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SessionDescription(pub String);
-
-/// Wrapper around ICE candidate strings for type safety
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct IceCandidate(pub String);
 
 /// Messages exchanged during WebRTC signaling process
 /// These are typically sent through a separate signaling server (not part of WebRTC itself)
@@ -415,7 +411,7 @@ impl WebRtcTransport {
             my_node_id,
             #[cfg(not(wasm_browser))]
             bind_addr,
-            my_port
+            my_port,
         }
     }
 
@@ -554,10 +550,12 @@ impl WebRtcTransport {
     ) -> Result<String, WebRtcError> {
         let (tx, rx) = oneshot::channel();
 
+        let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
         let msg = WebRtcActorMessage::CreateOffer {
             peer_node,
             response: tx,
             config,
+            send_ice_candidate_to_msock_tx,
         };
 
         self.actor_sender.send(msg).await?;
@@ -617,11 +615,14 @@ impl WebRtcTransport {
     ) -> Result<String, WebRtcError> {
         let (tx, rx) = oneshot::channel();
 
+        let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+
         let msg = WebRtcActorMessage::CreateAnswer {
             peer_node,
             offer: offer_sdp,
             response: tx,
             config,
+            send_ice_candidate_to_msock_tx,
         };
 
         self.actor_sender.send(msg).await?;
@@ -663,14 +664,8 @@ impl WebRtcTransport {
         self.actor_sender.send(msg).await.map_err(Into::into)
     }
 
-
-    pub(super) fn local_addr_watch(
-        &self
-    ) -> n0_watcher::Direct<WebRtcPort> {
-
+    pub(super) fn local_addr_watch(&self) -> n0_watcher::Direct<WebRtcPort> {
         self.my_port.watch()
-
-
     }
 
     pub fn bind_addr(&self) -> SocketAddr {
@@ -685,14 +680,12 @@ impl WebRtcTransport {
 }
 
 #[derive(Debug, Clone)]
-pub struct WebRtcNetworkChangeSender{
+pub struct WebRtcNetworkChangeSender {
     sender: mpsc::Sender<WebRtcActorMessage>,
 }
 
 impl WebRtcNetworkChangeSender {
-    pub fn sender(&self) -> &mpsc::Sender<WebRtcActorMessage>{
-
+    pub fn sender(&self) -> &mpsc::Sender<WebRtcActorMessage> {
         &self.sender
-
     }
 }

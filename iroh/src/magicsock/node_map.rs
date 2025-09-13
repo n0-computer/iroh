@@ -13,7 +13,7 @@ use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options, PingHandled};
 use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
-use crate::disco::{CallMeMaybe, Pong, SendAddr, WebRtcOffer};
+use crate::disco::{CallMeMaybe, Pong, SendAddr, WebRtcAnswer, WebRtcOffer};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
@@ -22,9 +22,12 @@ mod path_state;
 mod path_validity;
 mod udp_paths;
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing, ReceiveAnswer, ReceiveOffer, SendAnswer, SendOffer};
 use crate::magicsock::transports::Addr;
+pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
+pub(super) use node_state::{
+    DiscoPingPurpose, PingAction, PingRole, ReceiveAnswer, ReceiveIceCandidate, ReceiveOffer,
+    SendAnswer, SendIceCandidate, SendOffer, SendPing,
+};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -260,13 +263,26 @@ impl NodeMap {
         &self,
         sender: PublicKey,
         offer: WebRtcOffer,
-        metrics: &Metrics
+        metrics: &Metrics,
     ) -> Vec<PingAction> {
-        self.inner.lock().expect("poisoned")
-        .handle_webrtc_offer(sender, offer, metrics)
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_webrtc_offer(sender, offer, metrics)
     }
 
-
+    #[must_use = "actions must be completed"]
+    pub(super) fn handle_webrtc_answer(
+        &self,
+        sender: PublicKey,
+        offer: WebRtcAnswer,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_webrtc_answer(sender, offer, metrics)
+    }
 
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
@@ -343,7 +359,6 @@ impl NodeMap {
             .expect("poisoned")
             .on_direct_addr_discovered(discovered, Instant::now());
     }
-
 }
 
 impl NodeMapInner {
@@ -604,10 +619,9 @@ impl NodeMapInner {
         offer: WebRtcOffer,
         metrics: &Metrics,
     ) -> Vec<PingAction> {
-          
-       let ns_id = NodeStateKey::NodeId(sender);
+        let ns_id = NodeStateKey::NodeId(sender);
 
-       //for other transport we have updated the node state, I think we shall update cerficate of the node here
+        //for other transport we have updated the node state, I think we shall update cerficate of the node here
         match self.get_mut(ns_id) {
             None => {
                 println!("certificate for this does not exist: Unknown node");
@@ -618,6 +632,28 @@ impl NodeMapInner {
                 // debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
                 println!("Certificate for this node already exists");
                 ns.handle_webrtc_offer(sender, offer)
+            }
+        }
+    }
+
+    pub(super) fn handle_webrtc_answer(
+        &mut self,
+        sender: PublicKey,
+        answer: WebRtcAnswer,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        let ns_id = NodeStateKey::NodeId(sender);
+        //for other transport we have updated the node state, I think we shall update cerficate of the node here
+        match self.get_mut(ns_id) {
+            None => {
+                println!("certificate for this does not exist: Unknown node");
+                metrics.recv_disco_webrtc_answer.inc();
+                vec![]
+            }
+            Some(ns) => {
+                // debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
+                println!("Certificate for this node already exists");
+                ns.handle_webrtc_answer(sender, answer)
             }
         }
     }
@@ -699,11 +735,8 @@ impl NodeMapInner {
     }
 
     fn set_node_state_for_webrtc_port(&mut self, port: WebRtcPort, id: usize) {
-
         self.by_webrtc_port.insert(port, id);
-
     }
-
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     fn prune_inactive(&mut self) {

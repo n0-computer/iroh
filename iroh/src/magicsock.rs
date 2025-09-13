@@ -15,7 +15,20 @@
 //! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
-use crate::{disco::{Message, WebRtcAnswer}, magicsock::{node_map::{ReceiveAnswer, ReceiveOffer, SendOffer, SendAnswer}, transports::TransportMode}};
+use crate::{
+    disco::{IceCandidate, Message, WebRtcAnswer},
+    magicsock::{
+        node_map::{
+            ReceiveAnswer, ReceiveIceCandidate, ReceiveOffer, SendAnswer, SendIceCandidate,
+            SendOffer,
+        },
+        transports::{
+            TransportMode,
+            webrtc::actor::{PlatformRtcConfig, WebRtcActorMessage},
+        },
+    },
+};
+use aead::rand_core::block;
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{ChannelId, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, WebRtcPort};
@@ -48,13 +61,18 @@ use std::{
     },
     task::{Context, Poll},
 };
-use tokio::sync::{Mutex as AsyncMutex, mpsc};
+use tokio::{
+    net::unix::pipe::Sender,
+    sync::{Mutex as AsyncMutex, mpsc, oneshot},
+    task::block_in_place,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{
     Instrument, Level, debug, error, event, info, info_span, instrument, trace, trace_span, warn,
 };
 use transports::LocalAddrsWatch;
 use url::Url;
+use webrtc::ice_transport::ice_candidate;
 
 #[cfg(not(wasm_browser))]
 use self::transports::IpTransport;
@@ -83,13 +101,13 @@ pub mod node_map;
 
 pub(crate) mod transports;
 
-pub use node_map::Source;
-use crate::disco::WebRtcOffer;
 pub use self::{
     metrics::Metrics,
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
 };
+use crate::disco::WebRtcOffer;
 use crate::magicsock::transports::webrtc::actor::WebRtcActorConfig;
+pub use node_map::Source;
 
 /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -221,6 +239,9 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
+
+    /// to webrtc internal functions!
+    webrtc_actor_sender: Vec<WebRtcNetworkChangeSender>,
 }
 
 #[allow(missing_docs)]
@@ -348,9 +369,7 @@ impl MagicSock {
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
     pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
-        self.net_report
-            .watch()
-            .map(|(r, _)| r)
+        self.net_report.watch().map(|(r, _)| r)
     }
 
     /// Watch for changes to the home relay.
@@ -856,106 +875,239 @@ impl MagicSock {
                             println!("Webrtc answer: But it shall be unreachable");
                         }
                         PingAction::SendWebRtcOffer(offer) => {
-                            println!("Sending webrtc offer after receiving CallMeMaybe: {:?}", offer);
+                            println!(
+                                "Sending webrtc offer after receiving CallMeMaybe: {:?}",
+                                offer
+                            );
                         }
-                        PingAction::SendWebRtcAnswer(answer) => {println!("Sending webrtc answer after receiving CallMeMaybe: {:?}", answer);
+                        PingAction::SendWebRtcAnswer(answer) => {
+                            println!(
+                                "Sending webrtc answer after receiving CallMeMaybe: {:?}",
+                                answer
+                            );
+                        }
+                        PingAction::SetRemoteDescription => {
+                            println!("Setting up remote descrition")
+                        }
+                        PingAction::ReceiveWebRtcIceCandidate(candidate) => {
+                            println!("Received webrtc candidate !!! 867")
+                        }
+                        PingAction::SendWebRtcIceCandidate(candidate) => {
+                            println!("Sending webrtc candidate !!! 868")
                         }
                     }
                 }
             }
             disco::Message::ReceiveOffer(offer) => {
+                println!(
+                    "------------->>>> Reached and now we have to deal wiht what to do with ice {:?}",
+                    offer
+                );
 
-                println!("------------->>>> Reached and now we have to deal wiht what to do with ice {:?}", offer);
-
-                let actions = self.node_map.handle_webrtc_offer(sender, offer, &self.metrics.magicsock);
+                let actions =
+                    self.node_map
+                        .handle_webrtc_offer(sender, offer, &self.metrics.magicsock);
 
                 for action in actions {
-
                     match action {
-                        PingAction::SendCallMeMaybe{..}=>{warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");}
-                        PingAction::SendPing(ping)=>{warn!("Unexpected SendPing as response of handling a SendPing");}
-                        PingAction::ReceiveWebRtcOffer(offer)=>{warn!("Unexpected InitiateWebRtcOffer as response of handling a InitiateWebRtcOffer");}
-                        PingAction::ReceiveWebRtcAnswer(answer)=>{println!("Received answer 882");}
-                        PingAction::SendWebRtcOffer(send_offer) => println!("Sending offer after receiving ofer in handle Receive offer: Shall be unreachable in any case"),
+                        PingAction::SendCallMeMaybe { .. } => {
+                            warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");
+                        }
+                        PingAction::SendPing(ping) => {
+                            warn!("Unexpected SendPing as response of handling a SendPing");
+                        }
+                        PingAction::ReceiveWebRtcOffer(offer) => {
+                            warn!(
+                                "Unexpected InitiateWebRtcOffer as response of handling a InitiateWebRtcOffer"
+                            );
+                        }
+                        PingAction::ReceiveWebRtcAnswer(answer) => {
+                            println!("Received answer 882");
+                        }
+                        PingAction::SendWebRtcOffer(send_offer) => println!(
+                            "Sending offer after receiving ofer in handle Receive offer: Shall be unreachable in any case"
+                        ),
                         PingAction::SendWebRtcAnswer(send_answer) => {
-
-
-
-                            println!("Sending answer after receiving offer in handle_disco_message ");
+                            println!(
+                                "Sending answer after receiving offer in handle_disco_message "
+                            );
                             self.send_answer_queued(send_answer);
-
-
+                        }
+                        PingAction::SetRemoteDescription => {
+                            println!("Setting up remote description");
+                        }
+                        PingAction::ReceiveWebRtcIceCandidate(candidate) => {
+                            println!("Received webrtc candidate !!! 896")
+                        }
+                        PingAction::SendWebRtcIceCandidate(candidate) => {
+                            println!("Sending webrtc candidate !!! 897")
                         }
                     }
                 }
 
                 //Now we need to generate answer and send back
 
-
                 // self.node_map.handle_ice_candidate(sender, src, ice);
-                
             }
             disco::Message::ReceiveAnswer(answer) => {
                 println!("891: Received disco webrtc answer! {:?}", answer);
+
+                let actions = self.node_map.handle_webrtc_answer(
+                    sender,
+                    answer.clone(),
+                    &self.metrics.magicsock,
+                );
+
+                // Set the remote description with the answer from peer B
+                let mut value = answer.clone();
+
+                for action in actions {
+                    match action {
+                        PingAction::SendCallMeMaybe { .. } => {
+                            warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");
+                        }
+                        PingAction::SendPing(ping) => {
+                            warn!("Unexpected SendPing as response of handling a SendPing");
+                        }
+                        PingAction::ReceiveWebRtcOffer(offer) => {
+                            warn!(
+                                "Unexpected InitiateWebRtcOffer as response of handling a InitiateWebRtcOffer"
+                            );
+                        }
+                        PingAction::ReceiveWebRtcAnswer(answer) => {
+                            println!("Received answer 882");
+                        }
+                        PingAction::SendWebRtcOffer(send_offer) => println!(
+                            "Sending offer after receiving answer in handle Receive answer: Shall be unreachable in any case"
+                        ),
+                        PingAction::SendWebRtcAnswer(send_answer) => {
+                            println!(
+                                "Sending answer after receiving answer in handle_disco_message: Shall be unreachable in any case"
+                            );
+                        }
+                        PingAction::SetRemoteDescription => {
+                            let webrtc_sender = self.webrtc_actor_sender.clone();
+                            let mut value = value.clone();
+
+                            let _ = block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(async move {
+                                for webrtc in &webrtc_sender {
+                                    let (response, receiver) = oneshot::channel();
+
+                                    let sdp = value.clone().answer;
+
+                                    if let Err(err) = webrtc.sender().send(WebRtcActorMessage::SetRemoteDescription{
+                                            peer_node: sender,
+                                            sdp,
+                                            response,
+                                    }).await{
+
+                                        info!("Actor send failed while setting up remote description {:?}", err);
+                                        continue;
+                                    };
+
+                                    match receiver.await {
+                                        Ok(result) => return result,
+                                        Err(_) => continue,
+                                    }
+                                }
+                                Err(WebRtcError::NoActorAvailable)
+                            })
+                            });
+                        }
+                        PingAction::ReceiveWebRtcIceCandidate(candidate) => {
+                            println!("Received webrtc candidate !!! 957")
+                        }
+                        PingAction::SendWebRtcIceCandidate(candidate) => {
+                            println!("Sending webrtc candidate !!! 958")
+                        }
+                    }
+                }
+            }
+
+            disco::Message::SendAnswer(answer) => {
+                println!("909: Received disco webrtc answer! {:?}", answer);
 
                 // let actions = self.node_map.handle_webrtc_answer(sender, answer, &self.metrics.magicsock);
                 let actions = Vec::new();
 
                 for action in actions {
-
                     match action {
-                        PingAction::SendCallMeMaybe{..}=>{warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");}
-                        PingAction::SendPing(ping)=>{warn!("Unexpected SendPing as response of handling a SendPing");}
-                        PingAction::ReceiveWebRtcOffer(offer)=>{warn!("Unexpected InitiateWebRtcOffer as response of handling a InitiateWebRtcOffer");}
-                        PingAction::ReceiveWebRtcAnswer(answer)=>{println!("Received answer 882");}
-                        PingAction::SendWebRtcOffer(send_offer) => println!("Sending offer after receiving answer in handle Receive answer: Shall be unreachable in any case"),
-                        PingAction::SendWebRtcAnswer(send_answer) => {
-                            
-                            
-                            println!("Sending answer after receiving answer in handle_disco_message: Shall be unreachable in any case");
+                        PingAction::SendCallMeMaybe { .. } => {
+                            warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");
                         }
-
-                    }
-                }
-
-            }
-            disco::Message::SendAnswer(answer) => {
-                println!("909: Received disco webrtc answer! {:?}", answer);
-
-               // let actions = self.node_map.handle_webrtc_answer(sender, answer, &self.metrics.magicsock);
-                let actions = Vec::new();
-
-                for action in actions {
-
-                    match action {
-                        PingAction::SendCallMeMaybe{..}=>{warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");}
-                        PingAction::SendPing(ping)=>{warn!("Unexpected SendPing as response of handling a SendPing");}
-                        PingAction::ReceiveWebRtcOffer(offer)=>{warn!("Unexpected InitiateWebRtcOffer as response of handling a InitiateWebRtcOffer");}
-                        PingAction::ReceiveWebRtcAnswer(answer)=>{println!("Received answer 882");}
-                        PingAction::SendWebRtcOffer(send_offer) => println!("Sending offer after receiving answer in handle Receive answer: Shall be unreachable in any case"),
-                        PingAction::SendWebRtcAnswer(send_answer) => println!("Sending answer after receiving answer in handle_disco_message: Shall be unreachable in any case"),
+                        PingAction::SendPing(ping) => {
+                            warn!("Unexpected SendPing as response of handling a SendPing");
+                        }
+                        PingAction::ReceiveWebRtcOffer(offer) => {
+                            warn!(
+                                "Unexpected InitiateWebRtcOffer as response of handling a InitiateWebRtcOffer"
+                            );
+                        }
+                        PingAction::ReceiveWebRtcAnswer(answer) => {
+                            println!("Received answer 882");
+                        }
+                        PingAction::SendWebRtcOffer(send_offer) => println!(
+                            "Sending offer after receiving answer in handle Receive answer: Shall be unreachable in any case"
+                        ),
+                        PingAction::SendWebRtcAnswer(send_answer) => println!(
+                            "Sending answer after receiving answer in handle_disco_message: Shall be unreachable in any case"
+                        ),
+                        PingAction::SetRemoteDescription => {
+                            println!("Setting up remote description")
+                        }
+                        PingAction::ReceiveWebRtcIceCandidate(candidate) => {
+                            println!("Received webrtc candidate !!! 979")
+                        }
+                        PingAction::SendWebRtcIceCandidate(candidate) => {
+                            println!("Sending webrtc candidate !!! 980")
+                        }
                     }
                 }
             }
             disco::Message::SendOffer(offer) => {
                 println!("926: Received disco webrtc answer! {:?}", offer);
 
-          // let actions = self.node_map.handle_webrtc_answer(sender, answer, &self.metrics.magicsock);
+                // let actions = self.node_map.handle_webrtc_answer(sender, answer, &self.metrics.magicsock);
                 let actions = Vec::new();
 
                 for action in actions {
-
                     match action {
-                        PingAction::SendCallMeMaybe{..}=>{warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");}
-                        PingAction::SendPing(ping)=>{warn!("Unexpected SendPing as response of handling a SendPing");}
-                        PingAction::ReceiveWebRtcOffer(offer)=>{warn!("Unexpected InitiateWebRtcOffer as response of handling a InitiateWebRtcOffer");}
-                        PingAction::ReceiveWebRtcAnswer(answer)=>{println!("Received answer 936");}
-                        PingAction::SendWebRtcOffer(send_offer) => println!("Sending offer after receiving answer in handle Receive answer: Shall be unreachable in any case"),
-                        PingAction::SendWebRtcAnswer(send_answer) => println!("Sending answer after receiving answer in handle_disco_message: Shall be unreachable in any case"),
+                        PingAction::SendCallMeMaybe { .. } => {
+                            warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");
+                        }
+                        PingAction::SendPing(ping) => {
+                            warn!("Unexpected SendPing as response of handling a SendPing");
+                        }
+                        PingAction::ReceiveWebRtcOffer(offer) => {
+                            warn!(
+                                "Unexpected InitiateWebRtcOffer as response of handling a InitiateWebRtcOffer"
+                            );
+                        }
+                        PingAction::ReceiveWebRtcAnswer(answer) => {
+                            println!("Received answer 936");
+                        }
+                        PingAction::SendWebRtcOffer(send_offer) => println!(
+                            "Sending offer after receiving answer in handle Receive answer: Shall be unreachable in any case"
+                        ),
+                        PingAction::SendWebRtcAnswer(send_answer) => println!(
+                            "Sending answer after receiving answer in handle_disco_message: Shall be unreachable in any case"
+                        ),
+                        PingAction::SetRemoteDescription => {
+                            println!("Setting up remote description")
+                        }
+                        PingAction::ReceiveWebRtcIceCandidate(candidate) => {
+                            println!("Received webrtc candidate !!! 998")
+                        }
+                        PingAction::SendWebRtcIceCandidate(candidate) => println!(
+                            "I think this shall not be invoked!! - Sending webrtc candidate !!! 1001"
+                        ),
                     }
                 }
             }
-
+            disco::Message::WebRtcIceCandidate(ice_candidate) => {
+                println!("Received webrtc candidate!!!!!!!!!!!!!!!!!!!! 1011");
+            }
         }
         trace!("disco message handled");
     }
@@ -1039,11 +1191,11 @@ impl MagicSock {
             dst_node,
             tx_id,
             purpose,
-            received_offer
+            received_offer,
         } = answer;
         let msg = disco::Message::SendAnswer(disco::WebRtcAnswer {
             answer: "dumy answer".to_string(),
-            received_offer: received_offer.offer
+            received_offer: received_offer.offer,
         });
         let sent = self.disco.try_send(dst.clone(), dst_node, msg);
         if sent {
@@ -1122,116 +1274,155 @@ impl MagicSock {
                         .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
                 PingAction::ReceiveWebRtcOffer(ReceiveOffer {
-                                               id,
-                                               dst,
-                                               dst_node,
-                                               tx_id,
-                                               purpose,
-                                               offer
-                                           }) => {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    offer,
+                }) => {
                     let offer = "Hey! I am webrtc ice offer!".to_string();
-                    let msg = disco::Message::ReceiveOffer(
-                        WebRtcOffer{
-                            offer
-                        }
-                    );
-             
+                    let msg = disco::Message::ReceiveOffer(WebRtcOffer { offer });
                 }
                 PingAction::ReceiveWebRtcAnswer(ReceiveAnswer {
-                                               id,
-                                               dst,
-                                               dst_node,
-                                               tx_id,
-                                               purpose,
-                                               answer
-                                           }) => {
-                                            
-                                            //we need to send webrtc answer!
-                                            let answer = "Hey! I am webrtc ice answer!".to_string();
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    answer,
+                }) => {
+                    //we need to send webrtc answer!
+                    let answer = "Hey! I am webrtc ice answer!".to_string();
 
-                            
+                    // let msg = disco::Message::ReceiveAnswer(
+                    //     WebRtcAnswer {
+                    //         answer,
+                    //         received_offer
+                    //     }
+                    // );
+                    // self.send_webrtc_answer(
+                    //     sender,
+                    //     dst,
+                    //     dst_node,
+                    //     msg
+                    // );
 
-                                            // let msg = disco::Message::ReceiveAnswer(
-                                            //     WebRtcAnswer {
-                                            //         answer,
-                                            //         received_offer
-                                            //     }
-                                            // );
-                                            // self.send_webrtc_answer(
-                                            //     sender,
-                                            //     dst,
-                                            //     dst_node,
-                                            //     msg
-                                            // );
-
-                                            println!("1078: WebRtc answer send");
-
-
-                                           }
+                    println!("1078: WebRtc answer send");
+                }
                 PingAction::SendWebRtcAnswer(SendAnswer {
-                                               id,
-                                               dst,
-                                               dst_node,
-                                               tx_id,
-                                               purpose,
-                                               received_offer
-                    
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    received_offer,
                 }) => {
                     let node_id = self.public_key;
-                    if let Ok(answer) = sender.create_answer(node_id, received_offer.clone()){
+
+                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                    if let Ok(answer) = self.create_answer(
+                        node_id,
+                        received_offer.clone(),
+                        send_ice_candidate_to_msock_tx.clone(),
+                    ) {
                         println!("Answer created is {}", answer);
-                        let msg = disco::Message::SendAnswer(
-                            WebRtcAnswer{
-                                answer,
-                                received_offer: received_offer.clone().offer
-                            }
-                        );
-                        self.try_send_disco_message(
-                            sender,
-                            dst.clone(),
-                            dst_node,
-                            msg
-                        )?;
+                        let msg = disco::Message::SendAnswer(WebRtcAnswer {
+                            answer,
+                            received_offer: received_offer.clone().offer,
+                        });
+                        self.try_send_disco_message(sender, dst.clone(), dst_node, msg)?;
                         debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "answer sent");
                         let msg_sender = self.actor_sender.clone();
                         self.node_map
                             .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                         println!("WebRtc Answer send!");
                     };
-
                 }
-                PingAction::SendWebRtcOffer(SendOffer { 
-                    id, 
-                    dst, 
-                    dst_node, 
-                    tx_id, 
-                    purpose }) => {
+                PingAction::SendWebRtcOffer(SendOffer {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
 
-
+                    purpose,
+                }) => {
                     let candidate = "Hey! I am webrtc ice candidate!".to_string();
                     let node_id = self.public_key;
-                    if let Ok(offer) = sender.create_offer(node_id){
-                        println!("Offer created is {}", offer);
-                        let msg = disco::Message::SendOffer(
-                            WebRtcOffer{
-                                offer
-                            }
-                        );
-                        self.try_send_disco_message(
-                            sender,
-                            dst.clone(),
-                            dst_node,
-                            msg
-                        )?;
 
-                            debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "offer sent");
-                    let msg_sender = self.actor_sender.clone();
-                    self.node_map
-                        .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
-                    };
+                    let webrtc_sender = self.webrtc_actor_sender.clone();
+
+                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+
+                    if let Ok(offer) = self.create_offer(node_id, send_ice_candidate_to_msock_tx) {
+                        println!("1214: Offer created is {}", offer);
+                        let msg = disco::Message::SendOffer(WebRtcOffer { offer });
+                        if let Err(e) =
+                            self.try_send_disco_message(sender, dst.clone(), dst_node, msg)
+                        {
+                            println!("Error sending disco offer: {:?}", e);
+                            continue;
+                        }
+                        let result = receiver.recv().await;
+                        match result {
+                            Some(ice_candidate) => match ice_candidate {
+                                Ok(ice) => {
+                                    println!("Received ice candidate from actor: {:?}", ice);
+                                    let msg = disco::Message::WebRtcIceCandidate(ice);
+                                    if let Err(e) = self.try_send_disco_message(
+                                        sender,
+                                        dst.clone(),
+                                        dst_node,
+                                        msg,
+                                    ) {
+                                        println!("Error sending ice candidate: {:?}", e);
+                                    }
+                                }
+                                Err(err) => {
+                                    println!(
+                                        "Error while receiving ice candidate from actor: {:?}",
+                                        err
+                                    );
+                                }
+                            },
+                            None => {
+                                println!("No ice candidate received from actor");
+                            }
+                        }
+
+                        debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "offer sent");
+                        let msg_sender = self.actor_sender.clone();
+                        self.node_map
+                            .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
+                    } else {
+                        println!("Error creating offer for WebRTC");
+                    }
 
                     println!("WebRtc Offer send!");
+                }
 
+                PingAction::SetRemoteDescription => {
+                    println!("1251: Setup remote description");
+                }
+                PingAction::ReceiveWebRtcIceCandidate(ReceiveIceCandidate {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    candidate,
+                }) => {
+                    println!("This shall ideally be not called!! Received webrtc candidate 1304");
+                }
+                PingAction::SendWebRtcIceCandidate(SendIceCandidate {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    candidate,
+                }) => {
+                    println!("Sending webrtc candidate 1313");
                 }
             }
         }
@@ -1282,6 +1473,89 @@ impl MagicSock {
             }
         }
     }
+
+    ///  Generate Offer
+    pub(crate) fn create_offer(
+        &self,
+        peer_node: NodeId,
+        send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+    ) -> Result<String, WebRtcError> {
+        let webrtc_actor_sender = self.webrtc_actor_sender.clone();
+
+        block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                for actor_sender in &webrtc_actor_sender {
+                    let (sender, mut receiver) = oneshot::channel();
+                    let config = PlatformRtcConfig::default();
+
+                    // Clone the sender for each iteration to avoid moving it
+                    let send_ice_candidate_to_msock_tx = send_ice_candidate_to_msock_tx.clone();
+
+                    if let Err(err) = actor_sender
+                        .sender()
+                        .send(WebRtcActorMessage::CreateOffer {
+                            peer_node,
+                            config,
+                            response: sender,
+                            send_ice_candidate_to_msock_tx,
+                        })
+                        .await
+                    {
+                        info!("actor send failed while creating offer {:?}", err);
+                        continue;
+                    };
+
+                    match receiver.await {
+                        Ok(result) => return result,
+                        Err(_) => continue,
+                    }
+                }
+                Err(WebRtcError::NoActorAvailable)
+            })
+        })
+    }
+
+    /// Generate answer
+    pub(crate) fn create_answer(
+        &self,
+        peer_node: NodeId,
+        offer: WebRtcOffer,
+        send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+    ) -> Result<String, WebRtcError> {
+        let webrtc_actor_sender = self.webrtc_actor_sender.clone();
+
+        block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                for actor_sender in &webrtc_actor_sender {
+                    let (sender, mut receiver) = oneshot::channel();
+
+                    let config = PlatformRtcConfig::default();
+
+                    if let Err(err) = actor_sender
+                        .sender()
+                        .send(WebRtcActorMessage::CreateAnswer {
+                            peer_node,
+                            offer: offer.clone(),
+                            config,
+                            response: sender,
+                            send_ice_candidate_to_msock_tx: send_ice_candidate_to_msock_tx.clone(),
+                        })
+                        .await
+                    {
+                        info!("actor send failed while creating answer {:?}", err);
+                        continue;
+                    };
+
+                    match receiver.await {
+                        Ok(result) => return result,
+                        Err(_) => continue,
+                    }
+                }
+                Err(WebRtcError::NoActorAvailable)
+            })
+        })
+    }
+
     /// Tries to send out the given ping actions out.
     fn try_send_ping_actions(&self, sender: &UdpSender, msgs: Vec<PingAction>) -> io::Result<()> {
         for msg in msgs {
@@ -1346,100 +1620,143 @@ impl MagicSock {
                     self.node_map
                         .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
-                PingAction::SendWebRtcOffer(SendOffer{
-                        id,
-                       dst,
-                       dst_node,
-                       tx_id,
-                       purpose
-                }) => {
-                    let node_id = self.public_key;
-                    if let Ok(offer) = sender.create_offer(node_id){
-                        println!("Offer created is {}", offer);
-                        let msg = disco::Message::SendOffer(
-                            WebRtcOffer{
-                                offer
-                            }
-                        );
-                        self.try_send_disco_message(
-                            sender,
-                            dst.clone(),
-                            dst_node,
-                            msg
-                        )?;
-                    };
-
-                    println!("WebRtc Offer send!");
-
-                },
-                PingAction::ReceiveWebRtcOffer(ReceiveOffer{
-                       id,
-                       dst,
-                       dst_node,
-                       tx_id,
-                       purpose,
-                       offer
-                   })=> {
-
-                    let node_id = self.public_key;
-                    if let Ok(answer) = sender.create_answer(node_id, offer.clone()){
-                    println!("Answer created is {}", answer);
-                    let msg = disco::Message::ReceiveAnswer(
-                        WebRtcAnswer { answer, received_offer: offer.offer }
-                    );
-                    self.try_send_disco_message(
-                        sender,
-                        dst.clone(),
-                        dst_node,
-                        msg
-                    )?;
-                }
-                }
-                PingAction::ReceiveWebRtcAnswer(ReceiveAnswer {
-
-                       id,
-                       dst,
-                       dst_node,
-                       tx_id,
-                       purpose,
-                       answer
-    
-                }) => {
-
-                    println!("1076: Received WebRtc answer! {:?}", answer);
-                    //we need to sent to direct connection now!
-
-
-                }
-                PingAction::SendWebRtcAnswer(SendAnswer{
+                PingAction::SendWebRtcOffer(SendOffer {
                     id,
                     dst,
                     dst_node,
                     tx_id,
                     purpose,
-                    received_offer
                 }) => {
                     let node_id = self.public_key;
-                    if let Ok(answer) = sender.create_answer(node_id, received_offer.clone()){
+
+                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                    if let Ok(offer) = self.create_offer(node_id, send_ice_candidate_to_msock_tx) {
+                        println!("1358: Offer created is {}", offer);
+                        let msg = disco::Message::SendOffer(WebRtcOffer { offer });
+                        self.try_send_disco_message(sender, dst.clone(), dst_node, msg)?;
+
+                        // let actor_sender = self.actor_sender.clone();
+                        // let sender_clone = sender.clone();
+                        // let dst_clone = dst.clone();
+
+                        //             block_in_place(|| {
+                        //                 tokio::runtime::Handle::current().block_on(async move {
+                        //                     match receiver.recv().await {
+                        //                     Some(ice_candidate) => {
+                        //                         match ice_candidate {
+                        //                             Ok(ice) => {
+                        //                                 println!("Received ice candidate from actor: {:?}", ice);
+                        //                                 let msg = disco::Message::WebRtcIceCandidate(ice);
+                        //                                 if let Err(e) = self.try_send_disco_message(
+                        //                                     sender,
+                        //                                     dst.clone(),
+                        //                                     dst_node,
+                        //                                     msg
+                        //                                 ) {
+                        //                                     println!("Error sending ice candidate: {:?}", e);
+                        //                                 }
+                        //                             },
+                        //                             Err(err) => {
+                        //                                 println!("Error while receiving ice candidate from actor: {:?}", err);
+                        //                             }
+                        //                         }
+                        //                     },
+                        //                     None => {
+                        //                         println!("No ice candidate received from actor");
+                        //                     },
+                        //                 }
+
+                        // })
+                        //             })
+                        //         };
+
+                        println!("WebRtc Offer send!");
+                    }
+                }
+                PingAction::ReceiveWebRtcOffer(ReceiveOffer {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    offer,
+                }) => {
+                    let node_id = self.public_key;
+
+                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                    if let Ok(answer) =
+                        self.create_answer(node_id, offer.clone(), send_ice_candidate_to_msock_tx)
+                    {
                         println!("Answer created is {}", answer);
-                        let msg = disco::Message::SendAnswer(
-                            WebRtcAnswer{
-                                answer,
-                                received_offer: received_offer.offer
-                            }
-                        );
-                        self.try_send_disco_message(
-                            sender,
-                            dst.clone(),
-                            dst_node,
-                            msg
-                        )?;
+                        let msg = disco::Message::ReceiveAnswer(WebRtcAnswer {
+                            answer,
+                            received_offer: offer.offer,
+                        });
+                        self.try_send_disco_message(sender, dst.clone(), dst_node, msg)?;
+                    }
+                }
+                PingAction::ReceiveWebRtcAnswer(ReceiveAnswer {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    answer,
+                }) => {
+                    println!("1076: Received WebRtc answer! {:?}", answer);
+                    //we need to sent to direct connection now!
+                }
+                PingAction::SendWebRtcAnswer(SendAnswer {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    received_offer,
+                }) => {
+                    let node_id = self.public_key;
+
+                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                    if let Ok(answer) = self.create_answer(
+                        node_id,
+                        received_offer.clone(),
+                        send_ice_candidate_to_msock_tx.clone(),
+                    ) {
+                        println!("Answer created is {}", answer);
+                        let msg = disco::Message::SendAnswer(WebRtcAnswer {
+                            answer,
+                            received_offer: received_offer.offer,
+                        });
+                        self.try_send_disco_message(sender, dst.clone(), dst_node, msg)?;
                         debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "answer sent");
                         let msg_sender = self.actor_sender.clone();
                         self.node_map
                             .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                         println!("WebRtc Answer send!");
                     };
+                }
+                PingAction::SetRemoteDescription => {
+                    println!("Setting up remote description : 1462");
+                }
+                PingAction::ReceiveWebRtcIceCandidate(ReceiveIceCandidate {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    candidate,
+                }) => {
+                    println!("Received Ice Candidate : 1579 {:?}", candidate);
+                }
+                PingAction::SendWebRtcIceCandidate(SendIceCandidate {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                    candidate,
+                }) => {
+                    println!("Sending Ice Candidate : 1589 {:?}", candidate);
                 }
             }
         }
@@ -1492,7 +1809,7 @@ impl MagicSock {
     }
 
     /// Tries to send out a webrtc answer.
-    async fn send_webrtc_answer(
+    async fn send_webrtc_msg(
         &self,
         sender: &UdpSender,
         dst: SendAddr,
@@ -1513,32 +1830,33 @@ impl MagicSock {
             ));
         }
 
+        let final_msg = match &msg {
+            Message::SendAnswer(web_rtc_answer) => {
+                let offer = WebRtcOffer {
+                    offer: web_rtc_answer.received_offer.clone(),
+                };
 
-    let final_msg = match &msg {
-        Message::SendAnswer(web_rtc_answer) => {
-            let offer = WebRtcOffer {
-                offer: web_rtc_answer.received_offer.clone(),
-            };
-            let answer = sender.create_answer(dst_key, offer).map_err(|_| io::Error::new(
-                                io::ErrorKind::Other,
-                                "Cannot create webrtc answer",
-                            ))?;
-            let mut updated_answer = web_rtc_answer.clone();
-            updated_answer.answer = answer;
-            Message::SendAnswer(updated_answer)
-        },
-        // All other message types remain unchanged
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Cannot send other message other than SendAnswer as webrtc answer",
-            ));
-        },
-    };
+                let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                let answer = self
+                    .create_answer(dst_key, offer, send_ice_candidate_to_msock_tx.clone())
+                    .map_err(|_| {
+                        io::Error::new(io::ErrorKind::Other, "Cannot create webrtc answer")
+                    })?;
+                let mut updated_answer = web_rtc_answer.clone();
+                updated_answer.answer = answer;
+                Message::SendAnswer(updated_answer)
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Cannot send other message other than SendAnswer as webrtc answer",
+                ));
+            }
+        };
 
-
-
-        let pkt = self.disco.encode_and_seal(self.public_key, dst_key, &final_msg);
+        let pkt = self
+            .disco
+            .encode_and_seal(self.public_key, dst_key, &final_msg);
 
         let transmit = transports::Transmit {
             contents: &pkt,
@@ -1559,6 +1877,17 @@ impl MagicSock {
                 Err(err)
             }
         }
+    }
+
+    async fn send_ice_candidate(
+        &self,
+        sender: &UdpSender,
+        dst: SendAddr,
+        dst_key: PublicKey,
+        msg: disco::Message,
+    ) -> io::Result<()> {
+        println!("Sending Ice Candidate : 1755 {:?}", msg);
+        Ok(())
     }
 
     /// Publishes our address to a discovery service, if configured.
@@ -1584,7 +1913,6 @@ impl MagicSock {
         }
     }
 }
-
 fn is_webrtc_packet(datagram: &[u8]) -> bool {
     if datagram.is_empty() {
         return false;
@@ -1891,6 +2219,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            webrtc_actor_sender: transports.create_webrtc_actor_sender(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -2058,10 +2387,16 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
         });
         let relay_transports = vec![relay_transport];
-        let my_channel_id = Watchable::new(WebRtcPort::new(secret_key.public().clone(), ChannelId::default()));
+        let my_channel_id = Watchable::new(WebRtcPort::new(
+            secret_key.public().clone(),
+            ChannelId::default(),
+        ));
 
-        let web_rtc_transport =
-            WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into(), my_channel_id));
+        let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig::new(
+            secret_key.clone(),
+            addr_v4.into(),
+            my_channel_id,
+        ));
         let web_rtc_transports = vec![web_rtc_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
@@ -2102,6 +2437,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            webrtc_actor_sender: transports.create_webrtc_actor_sender(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -2269,10 +2605,16 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
         });
         let relay_transports = vec![relay_transport];
-        let my_channel_id = Watchable::new(WebRtcPort::new(secret_key.public().clone(), ChannelId::default()));
+        let my_channel_id = Watchable::new(WebRtcPort::new(
+            secret_key.public().clone(),
+            ChannelId::default(),
+        ));
 
-        let web_rtc_transport =
-            WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into(), my_channel_id));
+        let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig::new(
+            secret_key.clone(),
+            addr_v4.into(),
+            my_channel_id,
+        ));
         let web_rtc_transports = vec![web_rtc_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
@@ -2313,6 +2655,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            webrtc_actor_sender: transports.create_webrtc_actor_sender(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -2479,10 +2822,16 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
         });
         let relay_transports = vec![relay_transport];
-        let my_channel_id = Watchable::new(WebRtcPort::new(secret_key.public().clone(), ChannelId::default()));
+        let my_channel_id = Watchable::new(WebRtcPort::new(
+            secret_key.public().clone(),
+            ChannelId::default(),
+        ));
 
-        let web_rtc_transport =
-            WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into(), my_channel_id));
+        let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig::new(
+            secret_key.clone(),
+            addr_v4.into(),
+            my_channel_id,
+        ));
         let web_rtc_transports = vec![web_rtc_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
@@ -2525,6 +2874,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            webrtc_actor_sender: transports.create_webrtc_actor_sender(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -2662,7 +3012,8 @@ impl Handle {
 
         #[cfg(not(wasm_browser))]
         let (web_transports, port_mapper) =
-            bind_webrtc(addr_v4, addr_v6, &metrics, secret_key.clone()).context(BindSocketsSnafu)?;
+            bind_webrtc(addr_v4, addr_v6, &metrics, secret_key.clone())
+                .context(BindSocketsSnafu)?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -2704,10 +3055,7 @@ impl Handle {
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
         #[cfg(not(wasm_browser))]
-        let ipv6 = web_transports
-            .iter()
-            .any(|t| t.bind_addr().is_ipv6());
-
+        let ipv6 = web_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
         #[cfg(not(wasm_browser))]
         let transports = Transports::new(
@@ -2742,6 +3090,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            webrtc_actor_sender: transports.create_webrtc_actor_sender(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -2908,10 +3257,16 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
         });
         let relay_transports = vec![relay_transport];
-        let my_channel_id = Watchable::new(WebRtcPort::new(secret_key.public().clone(), ChannelId::default()));
+        let my_channel_id = Watchable::new(WebRtcPort::new(
+            secret_key.public().clone(),
+            ChannelId::default(),
+        ));
 
-        let web_rtc_transport =
-            WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into(), my_channel_id));
+        let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig::new(
+            secret_key.clone(),
+            addr_v4.into(),
+            my_channel_id,
+        ));
         let web_rtc_transports = vec![web_rtc_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
@@ -2952,6 +3307,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            webrtc_actor_sender: transports.create_webrtc_actor_sender(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -3290,6 +3646,12 @@ enum ActorMessage {
     ScheduleDirectAddrUpdate(UpdateReason, Option<(NodeId, RelayUrl)>),
     #[cfg(test)]
     ForceNetworkChange(bool),
+    SendIceCandidate {
+        sender: UdpSender,
+        dst: SocketAddr,
+        dst_node: NodeId,
+        ice_candidate: IceCandidate,
+    },
 }
 
 struct Actor {
@@ -3388,10 +3750,16 @@ fn bind_webrtc(
 
     let port = v4.local_addr().map_or(0, |p| p.port());
 
-    let my_channel = Watchable::new(WebRtcPort::new(secret_key.public().clone(), ChannelId::default()));
+    let my_channel = Watchable::new(WebRtcPort::new(
+        secret_key.public().clone(),
+        ChannelId::default(),
+    ));
 
-    let web_rtc_transport =
-        WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into(), my_channel));
+    let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig::new(
+        secret_key.clone(),
+        addr_v4.into(),
+        my_channel,
+    ));
     let web_rtc_transports = vec![web_rtc_transport];
 
     // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
@@ -3454,149 +3822,149 @@ impl Actor {
             let direct_addr_heartbeat_timer_tick = n0_future::future::pending();
 
             tokio::select! {
-                _ = shutdown_token.cancelled() => {
-                    debug!("shutting down");
-                    return;
-                }
-                msg = self.msg_receiver.recv(), if !receiver_closed => {
-                    let Some(msg) = msg else {
-                        trace!("tick: magicsock receiver closed");
-                        self.msock.metrics.magicsock.actor_tick_other.inc();
+            _ = shutdown_token.cancelled() => {
+                debug!("shutting down");
+                return;
+            }
+            msg = self.msg_receiver.recv(), if !receiver_closed => {
+                let Some(msg) = msg else {
+                    trace!("tick: magicsock receiver closed");
+                    self.msock.metrics.magicsock.actor_tick_other.inc();
 
-                        receiver_closed = true;
-                        continue;
-                    };
+                    receiver_closed = true;
+                    continue;
+                };
 
-                    trace!(?msg, "tick: msg");
-                    self.msock.metrics.magicsock.actor_tick_msg.inc();
-                    self.handle_actor_message(msg).await;
-                }
-                tick = self.periodic_re_stun_timer.tick() => {
-                    trace!("tick: re_stun {:?}", tick);
-                    self.msock.metrics.magicsock.actor_tick_re_stun.inc();
-                    self.re_stun(UpdateReason::Periodic);
-                }
-                new_addr = watcher.updated() => {
-                    match new_addr {
-                        Ok(addrs) => {
-                            if !addrs.is_empty() {
-                                trace!(?addrs, "local addrs");
-                                self.msock.publish_my_addr();
-                            }
-                        }
-                        Err(_) => {
-                            warn!("local addr watcher stopped");
+                trace!(?msg, "tick: msg");
+                self.msock.metrics.magicsock.actor_tick_msg.inc();
+                self.handle_actor_message(msg).await;
+            }
+            tick = self.periodic_re_stun_timer.tick() => {
+                trace!("tick: re_stun {:?}", tick);
+                self.msock.metrics.magicsock.actor_tick_re_stun.inc();
+                self.re_stun(UpdateReason::Periodic);
+            }
+            new_addr = watcher.updated() => {
+                match new_addr {
+                    Ok(addrs) => {
+                        if !addrs.is_empty() {
+                            trace!(?addrs, "local addrs");
+                            self.msock.publish_my_addr();
                         }
                     }
-                }
-                report = net_report_watcher.updated() => {
-                    match report {
-                        Ok((report, _)) => {
-                            self.handle_net_report_report(report);
-                            #[cfg(not(wasm_browser))]
-                            {
-                                self.periodic_re_stun_timer = new_re_stun_timer(true);
-                            }
-                        }
-                        Err(_) => {
-                            warn!("net report watcher stopped");
-                        }
+                    Err(_) => {
+                        warn!("local addr watcher stopped");
                     }
-                }
-                reason = self.direct_addr_done_rx.recv() => {
-                    match reason {
-                        Some(()) => {
-                            // check if a new run needs to be scheduled
-                            let state = self.netmon_watcher.get();
-                            self.direct_addr_update_state.try_run(state.into());
-                        }
-                        None => {
-                            warn!("direct addr watcher died");
-                        }
-                    }
-                }
-                change = portmap_watcher_changed, if !portmap_watcher_closed => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        if change.is_err() {
-                            trace!("tick: portmap watcher closed");
-                            self.msock.metrics.magicsock.actor_tick_other.inc();
-
-                            portmap_watcher_closed = true;
-                            continue;
-                        }
-
-                        trace!("tick: portmap changed");
-                        self.msock.metrics.magicsock.actor_tick_portmap_changed.inc();
-                        let new_external_address = *portmap_watcher.borrow();
-                        debug!("external address updated: {new_external_address:?}");
-                        self.re_stun(UpdateReason::PortmapUpdated);
-                    }
-                    #[cfg(wasm_browser)]
-                    let _unused_in_browsers = change;
-                },
-                _ = direct_addr_heartbeat_timer_tick => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!(
-                            "tick: direct addr heartbeat {} direct addrs",
-                            self.msock.node_map.node_count(),
-                        );
-                        self.msock.metrics.magicsock.actor_tick_direct_addr_heartbeat.inc();
-                        // TODO: this might trigger too many packets at once, pace this
-
-                        self.msock.node_map.prune_inactive();
-                        let have_v6 = self.netmon_watcher.clone().get().have_v6;
-                        let msgs = self.msock.node_map.nodes_stayin_alive(have_v6);
-                        self.handle_ping_actions(&sender, msgs).await;
-                    }
-                }
-                state = self.netmon_watcher.updated() => {
-                    let Ok(state) = state else {
-                        trace!("tick: link change receiver closed");
-                        self.msock.metrics.magicsock.actor_tick_other.inc();
-                        continue;
-                    };
-                    let is_major = state.is_major_change(&current_netmon_state);
-                    event!(
-                        target: "iroh::_events::link_change",
-                        Level::DEBUG,
-                        ?state,
-                        is_major
-                    );
-                    current_netmon_state = state;
-                    self.msock.metrics.magicsock.actor_link_change.inc();
-                    self.handle_network_change(is_major).await;
-                }
-                // Even if `discovery_events` yields `None`, it could begin to yield
-                // `Some` again in the future, so we don't want to disable this branch
-                // forever like we do with the other branches that yield `Option`s
-                Some(discovery_item) = discovery_events.next() => {
-                    trace!("tick: discovery event, address discovered: {discovery_item:?}");
-                    let provenance = discovery_item.provenance();
-                    let node_addr = discovery_item.to_node_addr();
-                    if let Err(e) = self.msock.add_node_addr(
-                        node_addr,
-                        Source::Discovery {
-                            name: provenance.to_string()
-                        }) {
-                        let node_addr = discovery_item.to_node_addr();
-                        warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
-                    }
-                    // Send the discovery item to the subscribers of the discovery broadcast stream.
-                    self.msock.discovery_subscribers.send(discovery_item);
-                }
-                Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
-        
-                        if let Err(err) = self.msock.send_webrtc_answer(&sender, dst.clone(), dst_key, msg).await {
-                            warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
-                        }
-                
-                    }
-              
                 }
             }
+            report = net_report_watcher.updated() => {
+                match report {
+                    Ok((report, _)) => {
+                        self.handle_net_report_report(report);
+                        #[cfg(not(wasm_browser))]
+                        {
+                            self.periodic_re_stun_timer = new_re_stun_timer(true);
+                        }
+                    }
+                    Err(_) => {
+                        warn!("net report watcher stopped");
+                    }
+                }
+            }
+            reason = self.direct_addr_done_rx.recv() => {
+                match reason {
+                    Some(()) => {
+                        // check if a new run needs to be scheduled
+                        let state = self.netmon_watcher.get();
+                        self.direct_addr_update_state.try_run(state.into());
+                    }
+                    None => {
+                        warn!("direct addr watcher died");
+                    }
+                }
+            }
+            change = portmap_watcher_changed, if !portmap_watcher_closed => {
+                #[cfg(not(wasm_browser))]
+                {
+                    if change.is_err() {
+                        trace!("tick: portmap watcher closed");
+                        self.msock.metrics.magicsock.actor_tick_other.inc();
+
+                        portmap_watcher_closed = true;
+                        continue;
+                    }
+
+                    trace!("tick: portmap changed");
+                    self.msock.metrics.magicsock.actor_tick_portmap_changed.inc();
+                    let new_external_address = *portmap_watcher.borrow();
+                    debug!("external address updated: {new_external_address:?}");
+                    self.re_stun(UpdateReason::PortmapUpdated);
+                }
+                #[cfg(wasm_browser)]
+                let _unused_in_browsers = change;
+            },
+            _ = direct_addr_heartbeat_timer_tick => {
+                #[cfg(not(wasm_browser))]
+                {
+                    trace!(
+                        "tick: direct addr heartbeat {} direct addrs",
+                        self.msock.node_map.node_count(),
+                    );
+                    self.msock.metrics.magicsock.actor_tick_direct_addr_heartbeat.inc();
+                    // TODO: this might trigger too many packets at once, pace this
+
+                    self.msock.node_map.prune_inactive();
+                    let have_v6 = self.netmon_watcher.clone().get().have_v6;
+                    let msgs = self.msock.node_map.nodes_stayin_alive(have_v6);
+                    self.handle_ping_actions(&sender, msgs).await;
+                }
+            }
+            state = self.netmon_watcher.updated() => {
+                let Ok(state) = state else {
+                    trace!("tick: link change receiver closed");
+                    self.msock.metrics.magicsock.actor_tick_other.inc();
+                    continue;
+                };
+                let is_major = state.is_major_change(&current_netmon_state);
+                event!(
+                    target: "iroh::_events::link_change",
+                    Level::DEBUG,
+                    ?state,
+                    is_major
+                );
+                current_netmon_state = state;
+                self.msock.metrics.magicsock.actor_link_change.inc();
+                self.handle_network_change(is_major).await;
+            }
+            // Even if `discovery_events` yields `None`, it could begin to yield
+            // `Some` again in the future, so we don't want to disable this branch
+            // forever like we do with the other branches that yield `Option`s
+            Some(discovery_item) = discovery_events.next() => {
+                trace!("tick: discovery event, address discovered: {discovery_item:?}");
+                let provenance = discovery_item.provenance();
+                let node_addr = discovery_item.to_node_addr();
+                if let Err(e) = self.msock.add_node_addr(
+                    node_addr,
+                    Source::Discovery {
+                        name: provenance.to_string()
+                    }) {
+                    let node_addr = discovery_item.to_node_addr();
+                    warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
+                }
+                // Send the discovery item to the subscribers of the discovery broadcast stream.
+                self.msock.discovery_subscribers.send(discovery_item);
+            }
+            Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
+
+                if let Err(err) = self.msock.send_webrtc_msg(&sender, dst.clone(), dst_key, msg).await {
+                    warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
+                }
+
+            }
+
+            }
         }
+    }
 
     async fn handle_network_change(&mut self, is_major: bool) {
         debug!(is_major, "link change detected");
@@ -3651,9 +4019,20 @@ impl Actor {
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major).await;
             }
+            ActorMessage::SendIceCandidate {
+                sender,
+                dst,
+                dst_node,
+                ice_candidate,
+            } => {
+                self.handle_ice_candidate();
+            }
         }
     }
 
+    fn handle_ice_candidate(&self) {
+        todo!("handle ice candidate");
+    }
     /// Updates the direct addresses of this magic socket.
     ///
     /// Updates the [`DiscoveredDirectAddrs`] of this [`MagicSock`] with the current set of
@@ -4052,6 +4431,9 @@ fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
         disco::Message::SendOffer(_) => {
             metrics.sent_disco_webrtc_offer.inc();
         }
+        disco::Message::WebRtcIceCandidate(_) => {
+            metrics.send_disco_webrtc_ice_candidate.inc();
+        }
     }
 }
 
@@ -4253,7 +4635,7 @@ mod tests {
                     relay_url: None,
                     direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                     channel_id: None,
-                    webrtc_info: None
+                    webrtc_info: None,
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -4820,7 +5202,7 @@ mod tests {
                 .map(|x| x.addr)
                 .collect(),
             channel_id: None,
-            webrtc_info: None
+            webrtc_info: None,
         };
         msock_1
             .add_node_addr(
@@ -4889,7 +5271,7 @@ mod tests {
                 relay_url: None,
                 direct_addresses: Default::default(),
                 channel_id: None,
-                webrtc_info: None
+                webrtc_info: None,
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -4935,7 +5317,7 @@ mod tests {
                     .map(|x| x.addr)
                     .collect(),
                 channel_id: None,
-                webrtc_info: None
+                webrtc_info: None,
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -4978,7 +5360,7 @@ mod tests {
             relay_url: None,
             direct_addresses: Default::default(),
             channel_id: None,
-            webrtc_info: None
+            webrtc_info: None,
         };
         let err = stack
             .endpoint
@@ -4997,7 +5379,7 @@ mod tests {
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: Default::default(),
             channel_id: None,
-            webrtc_info: None
+            webrtc_info: None,
         };
         stack
             .endpoint
@@ -5011,7 +5393,7 @@ mod tests {
             relay_url: None,
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
             channel_id: None,
-            webrtc_info: None
+            webrtc_info: None,
         };
         stack
             .endpoint
@@ -5025,7 +5407,7 @@ mod tests {
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
             channel_id: None,
-            webrtc_info: None
+            webrtc_info: None,
         };
         stack
             .endpoint

@@ -23,9 +23,9 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use crate::magicsock::transports;
+use crate::magicsock::transports::{self};
 use data_encoding::HEXLOWER;
-use iroh_base::{WebRtcPort, PublicKey, RelayUrl, ChannelId};
+use iroh_base::{ChannelId, PublicKey, RelayUrl, WebRtcPort};
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Snafu, ensure};
@@ -57,10 +57,9 @@ pub enum MessageType {
     Pong = 0x02,
     CallMeMaybe = 0x03,
     WebRtcOffer = 0x06,
-    WebRtcAnwser = 0x07
+    WebRtcAnwser = 0x07,
+    WebRtcIceCandidate = 0x08,
 }
-
-
 
 impl TryFrom<u8> for MessageType {
     type Error = u8;
@@ -119,7 +118,8 @@ pub enum Message {
     ReceiveOffer(WebRtcOffer),
     ReceiveAnswer(WebRtcAnswer),
     SendOffer(WebRtcOffer),
-    SendAnswer(WebRtcAnswer)
+    SendAnswer(WebRtcAnswer),
+    WebRtcIceCandidate(IceCandidate),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,16 +128,12 @@ pub struct WebRtcOffer {
     pub offer: String,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcAnswer {
     // Using a simple string for the candidate for now
     pub answer: String,
-    pub received_offer: String
+    pub received_offer: String,
 }
-
-
-
 
 impl WebRtcOffer {
     fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
@@ -149,7 +145,7 @@ impl WebRtcOffer {
 
     fn as_bytes(&self) -> Vec<u8> {
         let header = msg_header(MessageType::WebRtcOffer, V0);
-        
+
         let mut out = header.to_vec();
         out.extend_from_slice(self.offer.as_bytes());
         out
@@ -160,15 +156,14 @@ impl WebRtcAnswer {
     fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
         // This implementation is incomplete - you need to decide how to parse
         // both the answer and received_offer from the byte array
-        let content = std::str::from_utf8(p)
-            .map_err(|_| InvalidEncodingSnafu.build())?;
-        
+        let content = std::str::from_utf8(p).map_err(|_| InvalidEncodingSnafu.build())?;
+
         // Simple approach: split on a delimiter (you'll need to define this)
         let parts: Vec<&str> = content.splitn(2, '\0').collect();
         if parts.len() != 2 {
             return Err(InvalidEncodingSnafu.build()); // You'll need this error variant
         }
-        
+
         Ok(WebRtcAnswer {
             answer: parts[0].to_string(),
             received_offer: parts[1].to_string(),
@@ -177,12 +172,35 @@ impl WebRtcAnswer {
 
     fn as_bytes(&self) -> Vec<u8> {
         let header = msg_header(MessageType::WebRtcAnwser, V0); // Fixed typo: "Anwser" -> "Answer"
-        
+
         let mut out = header.to_vec();
         // Serialize both fields - using null byte as delimiter
         out.extend_from_slice(self.answer.as_bytes());
         out.push(0); // null byte delimiter
         out.extend_from_slice(self.received_offer.as_bytes());
+        out
+    }
+}
+
+/// Wrapper around ICE candidate strings for type safety
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct IceCandidate {
+    pub candidate: String,
+}
+
+impl IceCandidate {
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
+        let candidate = std::str::from_utf8(p)
+            .map_err(|_| InvalidEncodingSnafu.build())?
+            .to_string();
+        Ok(IceCandidate { candidate })
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
+        let header = msg_header(MessageType::WebRtcIceCandidate, V0);
+
+        let mut out = header.to_vec();
+        out.extend_from_slice(self.candidate.as_bytes());
         out
     }
 }
@@ -497,6 +515,10 @@ impl Message {
                 let answer = WebRtcAnswer::from_bytes(p)?;
                 Ok(Message::ReceiveAnswer(answer))
             }
+            MessageType::WebRtcIceCandidate => {
+                let candidate = IceCandidate::from_bytes(p)?;
+                Ok(Message::WebRtcIceCandidate(candidate))
+            }
         }
     }
 
@@ -509,7 +531,8 @@ impl Message {
             Message::ReceiveOffer(offer) => offer.as_bytes(),
             Message::ReceiveAnswer(answer) => answer.as_bytes(),
             Message::SendOffer(offer) => offer.as_bytes(),
-            Message::SendAnswer(answer) => answer.as_bytes()
+            Message::SendAnswer(answer) => answer.as_bytes(),
+            Message::WebRtcIceCandidate(candidate) => candidate.as_bytes(),
         }
     }
 }
@@ -532,11 +555,14 @@ impl Display for Message {
             Message::ReceiveAnswer(answer) => {
                 write!(f, "ReceiveAnswer {:?}", answer)
             }
-                      Message::SendOffer(offer) => {
+            Message::SendOffer(offer) => {
                 write!(f, "SendOffer {:?}", offer)
             }
             Message::SendAnswer(answer) => {
                 write!(f, "SendAnswer {:?}", answer)
+            }
+            Message::WebRtcIceCandidate(candidate) => {
+                write!(f, "WebRtcIceCandidate {:?}", candidate)
             }
         }
     }

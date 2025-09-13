@@ -1,5 +1,5 @@
 use data_encoding::HEXLOWER;
-use iroh_base::{WebRtcPort, NodeAddr, NodeId, PublicKey, RelayUrl, ChannelId};
+use iroh_base::{ChannelId, NodeAddr, NodeId, PublicKey, RelayUrl, WebRtcPort};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -21,15 +21,16 @@ use super::{
     path_state::{PathState, summarize_node_paths},
     udp_paths::{NodeUdpPaths, UdpSendAddr},
 };
+use crate::disco::WebRtcOffer;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
-    disco::{self, SendAddr, WebRtcAnswer},
+    disco::{self, IceCandidate, SendAddr, WebRtcAnswer},
     magicsock::{
-        node_map::path_validity::PathValidity, ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL
+        ActorMessage, HEARTBEAT_INTERVAL, MagicsockMetrics, NodeIdMappedAddr,
+        node_map::path_validity::PathValidity, transports::webrtc::WebRtcError,
     },
 };
-use crate::disco::WebRtcOffer;
 
 /// Number of addresses that are not active that we keep around per node.
 ///
@@ -65,9 +66,38 @@ pub(in crate::magicsock) enum PingAction {
     ReceiveWebRtcOffer(ReceiveOffer),
     ReceiveWebRtcAnswer(ReceiveAnswer),
     SendWebRtcOffer(SendOffer),
-    SendWebRtcAnswer(SendAnswer)
+    SendWebRtcAnswer(SendAnswer),
+    SetRemoteDescription,
+    SendWebRtcIceCandidate(SendIceCandidate), // First open a channel to gather ice candidates
+    ReceiveWebRtcIceCandidate(ReceiveIceCandidate), // Now after receiving ice
 }
 
+#[derive(Debug)]
+pub(in crate::magicsock) struct SendIceCandidate {
+    pub id: usize,
+    pub dst: SendAddr,
+    pub dst_node: NodeId,
+    pub tx_id: stun_rs::TransactionId,
+    pub purpose: DiscoPingPurpose,
+    pub candidate: IceCandidate,
+}
+
+#[derive(Debug)]
+pub(in crate::magicsock) struct ReceiveIceCandidate {
+    pub id: usize,
+    pub dst: SendAddr,
+    pub dst_node: NodeId,
+    pub tx_id: stun_rs::TransactionId,
+    pub purpose: DiscoPingPurpose,
+    pub candidate: IceCandidate,
+}
+
+#[derive(Debug)]
+pub(in crate::magicsock) struct RemoteDescription {
+    peer_node: NodeId,
+    sdp: String,
+    response: tokio::sync::oneshot::Sender<Result<(), WebRtcError>>,
+}
 
 #[derive(Debug, Clone)]
 pub(in crate::magicsock) struct ReceiveAnswer {
@@ -76,7 +106,7 @@ pub(in crate::magicsock) struct ReceiveAnswer {
     pub dst_node: NodeId,
     pub tx_id: stun_rs::TransactionId,
     pub purpose: DiscoPingPurpose,
-    pub answer: WebRtcAnswer
+    pub answer: WebRtcAnswer,
 }
 
 #[derive(Debug, Clone)]
@@ -86,7 +116,7 @@ pub(in crate::magicsock) struct SendAnswer {
     pub dst_node: NodeId,
     pub tx_id: stun_rs::TransactionId,
     pub purpose: DiscoPingPurpose,
-    pub received_offer: WebRtcOffer
+    pub received_offer: WebRtcOffer,
 }
 
 #[derive(Debug, Clone)]
@@ -96,9 +126,8 @@ pub(in crate::magicsock) struct ReceiveOffer {
     pub dst_node: NodeId,
     pub tx_id: stun_rs::TransactionId,
     pub purpose: DiscoPingPurpose,
-    pub offer: WebRtcOffer
+    pub offer: WebRtcOffer,
 }
-
 
 #[derive(Debug, Clone)]
 pub(in crate::magicsock) struct SendOffer {
@@ -705,7 +734,10 @@ impl NodeState {
                         tx_id: msg.tx_id,
                         purpose: DiscoPingPurpose::Discovery,
                     };
+                    //Here I added these actions as , these start automatically I could not find that code snippet, if there is any beetter place we can add actions there
+                    //Now as sooon as we create offer we shall start gathering ice candidates
                     ping_msgs.push(PingAction::SendWebRtcOffer(offer));
+                    // ping_msgs.push(PingAction::ReceiveWebRtcIceCandidate(())); // it shall be start gathering
                 }
             }
         }
@@ -739,7 +771,6 @@ impl NodeState {
         );
 
         self.last_full_ping.replace(now);
-
 
         ping_msgs
     }
@@ -1180,26 +1211,39 @@ impl NodeState {
         self.send_pings(now)
     }
 
-
     pub(crate) fn handle_webrtc_offer(
         &mut self,
         _sender: NodeId,
-        answer: WebRtcOffer
-    ) -> Vec<PingAction>{
-
+        answer: WebRtcOffer,
+    ) -> Vec<PingAction> {
         let now = Instant::now();
 
         println!("1192: got webrtc offer: {:?}", answer);
         self.send_webrtc_answer(now, answer)
+    }
 
+    pub(crate) fn handle_webrtc_answer(
+        &mut self,
+        sender: NodeId,
+        answer: WebRtcAnswer,
+    ) -> Vec<PingAction> {
+        let now = Instant::now();
 
+        println!(
+            "1207: got webrtc answer!! now wetup ice candidates: {:?}",
+            answer
+        );
 
+        let action = PingAction::SetRemoteDescription;
+
+        // self.send_webrtc_answer(now, answer)
+        vec![action]
     }
 
     pub(crate) fn send_webrtc_answer(
         &mut self,
         now: Instant,
-        offer: WebRtcOffer
+        offer: WebRtcOffer,
     ) -> Vec<PingAction> {
         // We allocate +1 in case the caller wants to add a call-me-maybe message.
         let mut ping_msgs = Vec::with_capacity(self.udp_paths.paths().len() + 1);
@@ -1210,8 +1254,15 @@ impl NodeState {
                 if let Some(msg) =
                     self.start_ping(SendAddr::Relay(url.clone()), DiscoPingPurpose::Discovery)
                 {
-                        let msg = SendAnswer { id: msg.id, dst: msg.dst, dst_node: msg.dst_node, tx_id: msg.tx_id, purpose: msg.purpose, received_offer: offer };
-                        ping_msgs.push(PingAction::SendWebRtcAnswer(msg));
+                    let msg = SendAnswer {
+                        id: msg.id,
+                        dst: msg.dst,
+                        dst_node: msg.dst_node,
+                        tx_id: msg.tx_id,
+                        purpose: msg.purpose,
+                        received_offer: offer,
+                    };
+                    ping_msgs.push(PingAction::SendWebRtcAnswer(msg));
                 }
             }
         }
@@ -1235,7 +1286,6 @@ impl NodeState {
         self.last_full_ping.replace(now);
 
         ping_msgs
-
     }
 
     /// Marks this node as having received a UDP payload message.
@@ -1303,8 +1353,6 @@ impl NodeState {
         self.last_used = Some(now);
     }
 
-
-
     pub(super) fn last_ping(&self, addr: &SendAddr) -> Option<Instant> {
         match addr {
             SendAddr::Udp(addr) => self
@@ -1347,7 +1395,6 @@ impl NodeState {
         // If we do not have an optimal addr, send pings to all known places.
         if self.want_call_me_maybe(&now, have_ipv6) {
             debug!("sending a call-me-maybe");
-            println!("stayin_-alive=----------------------");
             return self.send_call_me_maybe(now, SendCallMeMaybe::Always);
         }
 

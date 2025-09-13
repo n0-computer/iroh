@@ -372,7 +372,7 @@ impl NodeInfo {
             relay_url: self.data.relay_url.clone(),
             direct_addresses: self.data.direct_addresses.clone(),
             channel_id: None,
-            webrtc_info: None
+            webrtc_info: None,
         }
     }
 
@@ -383,7 +383,7 @@ impl NodeInfo {
             relay_url: self.data.relay_url,
             direct_addresses: self.data.direct_addresses,
             channel_id: None,
-            webrtc_info: None
+            webrtc_info: None,
         }
     }
 

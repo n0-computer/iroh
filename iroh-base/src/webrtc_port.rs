@@ -110,9 +110,7 @@ impl WebRtcPort {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy, PartialOrd, Ord)]
 pub struct ChannelId(u16);
 
-
 impl Default for ChannelId {
-
     fn default() -> Self {
         ChannelId(0)
     }

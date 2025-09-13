@@ -1,3 +1,16 @@
+use crate::magicsock::transports::webrtc::actor::{PlatformRtcConfig, WebRtcActorMessage};
+use crate::{
+    disco::WebRtcOffer,
+    magicsock::transports::webrtc::{
+        WebRtcError, WebRtcNetworkChangeSender, WebRtcSender, WebRtcTransport,
+    },
+};
+use iroh_base::{NodeId, RelayUrl, WebRtcPort};
+use n0_watcher::Watcher;
+use relay::{RelayNetworkChangeSender, RelaySender};
+use smallvec::SmallVec;
+use std::future::Future;
+use std::sync::mpsc;
 use std::{
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
@@ -5,19 +18,11 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
     task::{Context, Poll},
 };
-use std::sync::mpsc;
-use crate::{disco::WebRtcOffer, magicsock::transports::webrtc::{WebRtcError, WebRtcNetworkChangeSender, WebRtcSender, WebRtcTransport}};
-use iroh_base::{NodeId, RelayUrl, WebRtcPort};
-use n0_watcher::Watcher;
-use relay::{RelayNetworkChangeSender, RelaySender};
-use smallvec::SmallVec;
 use tokio::sync::oneshot;
 use tokio::sync::oneshot::error::RecvError;
 use tokio::task;
 use tokio::task::futures;
 use tracing::{error, info, trace, warn};
-use crate::magicsock::transports::webrtc::actor::{PlatformRtcConfig, WebRtcActorMessage};
-use std::future::Future;
 
 #[cfg(not(wasm_browser))]
 mod ip;
@@ -67,7 +72,6 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
             n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>>,
         >,
         n0_watcher::Join<WebRtcPort, n0_watcher::Direct<WebRtcPort>>,
-
     ),
     Vec<Addr>,
 >;
@@ -192,24 +196,18 @@ impl Transports {
         // println!("relays {:?}", relays);
         // println!("webrtcs  {:?}", webrtcs);
 
-
-        (ips, relays, webrtcs)
-            .map(|(ips, relays, webrtcs)| {
-                ips.into_iter()
-                    .map(Addr::from)
-                    .chain(
-                        relays
-                            .into_iter()
-                            .flatten()
-                            .map(|(relay_url, node_id)| Addr::Relay(relay_url, node_id)),
-                    )
-                    .chain(
-                        webrtcs
-                            .into_iter()
-                            .map(Addr::from)
-                    )
-                    .collect()
-            })
+        (ips, relays, webrtcs).map(|(ips, relays, webrtcs)| {
+            ips.into_iter()
+                .map(Addr::from)
+                .chain(
+                    relays
+                        .into_iter()
+                        .flatten()
+                        .map(|(relay_url, node_id)| Addr::Relay(relay_url, node_id)),
+                )
+                .chain(webrtcs.into_iter().map(Addr::from))
+                .collect()
+        })
     }
 
     #[cfg(wasm_browser)]
@@ -277,7 +275,6 @@ impl Transports {
         let ip = self.ip.iter().map(|t| t.create_sender()).collect();
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
         let webrtc = self.webrtc.iter().map(|t| t.create_sender()).collect();
-        let webrtc_actor_sender = self.create_webrtc_actor_sender();
         let max_transmit_segments = self.max_transmit_segments();
 
         UdpSender {
@@ -286,7 +283,6 @@ impl Transports {
             msock,
             relay,
             webrtc,
-            webrtc_actor_sender,
             max_transmit_segments,
         }
     }
@@ -315,10 +311,10 @@ impl Transports {
 
     /// Get webrtc actor sender
     pub(crate) fn create_webrtc_actor_sender(&self) -> Vec<WebRtcNetworkChangeSender> {
-
-        self.webrtc.iter().map(|t| t.create_network_change_sender()).collect()
-
-
+        self.webrtc
+            .iter()
+            .map(|t| t.create_network_change_sender())
+            .collect()
     }
 }
 
@@ -327,7 +323,7 @@ pub(crate) struct NetworkChangeSender {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpNetworkChangeSender>,
     relay: Vec<RelayNetworkChangeSender>,
-    webrtc: Vec<WebRtcNetworkChangeSender>
+    webrtc: Vec<WebRtcNetworkChangeSender>,
 }
 
 impl NetworkChangeSender {
@@ -431,7 +427,6 @@ pub(crate) struct UdpSender {
     relay: Vec<RelaySender>,
     webrtc: Vec<WebRtcSender>,
     max_transmit_segments: usize,
-    webrtc_actor_sender: Vec<WebRtcNetworkChangeSender>,
 }
 
 impl UdpSender {
@@ -612,84 +607,7 @@ impl UdpSender {
             "no transport ready",
         ))
     }
-
-    ///  Generate Offer
-    pub(crate) fn create_offer(&self, peer_node: NodeId) -> Result<String, WebRtcError> {
-        let webrtc_actor_sender = self.webrtc_actor_sender.clone();
-
-        task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async move {
-                for actor_sender in &webrtc_actor_sender {
-                    let (sender, mut receiver) = oneshot::channel();
-                    let config = PlatformRtcConfig::default();
-
-                    if let Err(err) = actor_sender.sender().send(WebRtcActorMessage::CreateOffer {
-                        peer_node,
-                        config,
-                        response: sender
-                    }).await {
-                        info!("actor send failed while creating offer {:?}", err);
-                        continue;
-                    };
-
-                    match receiver.await {
-                        Ok(result) => return result,
-                        Err(_) => continue,
-                    }
-                }
-                Err(WebRtcError::NoActorAvailable)
-            })
-        })
-    }
-
-    /// Generate answer
-    pub(crate) fn create_answer(&self, peer_node: NodeId, offer: WebRtcOffer) -> Result<String, WebRtcError> {
-
-        let webrtc_actor_sender = self.webrtc_actor_sender.clone();
-
-        task::block_in_place(|| {
-
-            tokio::runtime::Handle::current().block_on(async move {
-
-                for actor_sender in &webrtc_actor_sender {
-
-                    let (sender, mut receiver) = oneshot::channel();
-
-                    let config = PlatformRtcConfig::default();
-
-                    if let Err(err) = actor_sender.sender().send(
-                            WebRtcActorMessage::CreateAnswer { 
-                                peer_node, 
-                                offer: offer.clone(), 
-                                config, 
-                                response: sender }).await {
-
-                        info!("actor send failed while creating answer {:?}", err);
-                        continue;
-
-                    };
-
-                    match receiver.await {
-
-                        Ok(result) => return result,
-                        Err(_) => continue,
-
-                    }
-
-
-                }
-                Err(WebRtcError::NoActorAvailable)
-
-            })
-
-
-        })
-
-
-    }
-
 }
-
 
 impl quinn::UdpSender for UdpSender {
     fn poll_send(
@@ -749,6 +667,7 @@ impl quinn::UdpSender for UdpSender {
     }
 
     fn try_send(self: Pin<&mut Self>, transmit: &quinn_udp::Transmit) -> io::Result<()> {
+        println!("747: UdpSender try_send called");
         let active_paths = self.msock.prepare_send(&self, transmit)?;
         if active_paths.is_empty() {
             // Returning Ok here means we let QUIC timeout.
