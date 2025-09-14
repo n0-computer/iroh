@@ -39,7 +39,7 @@ use std::{
 use iroh_base::{NodeId, PublicKey};
 use n0_future::{
     boxed::BoxStream,
-    task::{self, JoinSet},
+    task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration},
 };
 use n0_watcher::{Watchable, Watcher as _};
@@ -70,9 +70,10 @@ const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 /// Discovery using `swarm-discovery`, a variation on mdns
 #[derive(Debug)]
 pub struct MdnsDiscovery {
+    #[allow(dead_code)]
+    handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
     advertise: bool,
-    shutdown: mpsc::Sender<()>,
     /// When `local_addrs` changes, we re-publish our info.
     local_addrs: Watchable<Option<NodeData>>,
 }
@@ -185,7 +186,6 @@ impl MdnsDiscovery {
     pub fn new(node_id: NodeId, advertise: bool) -> Result<Self, IntoDiscoveryError> {
         debug!("Creating new MdnsDiscovery service");
         let (send, mut recv) = mpsc::channel(64);
-        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
         let discovery = MdnsDiscovery::spawn_discoverer(
@@ -227,12 +227,6 @@ impl MdnsDiscovery {
                             }
                         }
                         continue;
-                    }
-                    _ = shutdown_rx.recv() => {
-                        error!("MdnsDiscovery channel closed");
-                        error!("closing MdnsDiscovery");
-                        timeouts.abort_all();
-                        return;
                     }
                 };
                 let msg = match msg {
@@ -351,11 +345,11 @@ impl MdnsDiscovery {
                 }
             }
         };
-        task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
+        let handle = task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
+            handle: AbortOnDropHandle::new(handle),
             sender: send,
             advertise,
-            shutdown: shutdown_tx,
             local_addrs,
         })
     }
@@ -408,12 +402,6 @@ impl MdnsDiscovery {
                 .or_insert(vec![socketaddr.ip()]);
         }
         addrs
-    }
-}
-
-impl Drop for MdnsDiscovery {
-    fn drop(&mut self) {
-        self.shutdown.try_send(()).ok();
     }
 }
 
@@ -549,8 +537,8 @@ mod tests {
         #[tokio::test]
         #[traced_test]
         async fn mdns_publish_expire() -> Result {
-            let (_, discovery_a) = make_discoverer()?;
-            let (node_id_b, discovery_b) = make_discoverer()?;
+            let (_, discovery_a) = make_discoverer(false)?;
+            let (node_id_b, discovery_b) = make_discoverer(true)?;
 
             // publish discovery_b's address
             let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
