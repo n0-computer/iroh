@@ -197,7 +197,6 @@ impl MdnsDiscovery {
                         error!("MdnsDiscovery channel closed");
                         error!("closing MdnsDiscovery");
                         timeouts.abort_all();
-
                         return;
                     }
                 };
@@ -207,7 +206,6 @@ impl MdnsDiscovery {
                         error!("closing MdnsDiscovery");
                         timeouts.abort_all();
                         discovery.remove_all();
-
                         return;
                     }
                     Some(msg) => msg,
