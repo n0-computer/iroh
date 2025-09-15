@@ -48,7 +48,7 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{Instrument, debug, error, info_span, trace, warn};
 
 use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
-use crate::discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo};
+use crate::discovery::{Discovery, DiscoveryEvent, DiscoveryItem, NodeData, NodeInfo};
 
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
@@ -83,12 +83,12 @@ enum Message {
     Discovery(String, Peer),
     Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>),
     Timeout(NodeId, usize),
-    Subscribe(mpsc::Sender<DiscoveryItem>),
+    Subscribe(mpsc::Sender<DiscoveryEvent>),
 }
 
 /// Manages the list of subscribers that are subscribed to this discovery service.
 #[derive(Debug)]
-struct Subscribers(Vec<mpsc::Sender<DiscoveryItem>>);
+struct Subscribers(Vec<mpsc::Sender<DiscoveryEvent>>);
 
 impl Subscribers {
     fn new() -> Self {
@@ -96,14 +96,14 @@ impl Subscribers {
     }
 
     /// Add the subscriber to the list of subscribers
-    fn push(&mut self, subscriber: mpsc::Sender<DiscoveryItem>) {
+    fn push(&mut self, subscriber: mpsc::Sender<DiscoveryEvent>) {
         self.0.push(subscriber);
     }
 
     /// Sends the `node_id` and `item` to each subscriber.
     ///
     /// Cleans up any subscribers that have been dropped.
-    fn send(&mut self, item: DiscoveryItem) {
+    fn send(&mut self, item: DiscoveryEvent) {
         let mut clean_up = vec![];
         for (i, subscriber) in self.0.iter().enumerate() {
             // assume subscriber was dropped
@@ -234,6 +234,7 @@ impl MdnsDiscovery {
                         error!("MdnsDiscovery channel closed");
                         error!("closing MdnsDiscovery");
                         timeouts.abort_all();
+                        discovery.remove_all();
                         return;
                     }
                     Some(msg) => msg,
@@ -266,6 +267,7 @@ impl MdnsDiscovery {
                                 "removing node from MdnsDiscovery address book"
                             );
                             node_addrs.remove(&discovered_node_id);
+                            subscribers.send(DiscoveryEvent::Expired(discovered_node_id));
                             continue;
                         }
 
@@ -298,7 +300,7 @@ impl MdnsDiscovery {
                         // in other words, nodes sent to the `subscribers` should only be the ones that
                         // have been "passively" discovered
                         if !resolved {
-                            subscribers.send(item);
+                            subscribers.send(DiscoveryEvent::Discovered(item));
                         }
                     }
                     Message::Resolve(node_id, sender) => {
@@ -346,8 +348,8 @@ impl MdnsDiscovery {
         let handle = task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
             handle: AbortOnDropHandle::new(handle),
-            advertise,
             sender: send,
+            advertise,
             local_addrs,
         })
     }
@@ -450,7 +452,7 @@ impl Discovery for MdnsDiscovery {
         }
     }
 
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
         use futures_util::FutureExt;
 
         let (sender, recv) = mpsc::channel(20);
@@ -490,25 +492,95 @@ mod tests {
             let user_data: UserData = "foobar".parse()?;
             let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
                 .with_user_data(Some(user_data.clone()));
-            println!("info {node_data:?}");
 
             // resolve twice to ensure we can create separate streams for the same node_id
-            let mut s1 = discovery_a.resolve(node_id_b).unwrap();
-            let mut s2 = discovery_a.resolve(node_id_b).unwrap();
+            let mut s1 = discovery_a
+                .subscribe()
+                .unwrap()
+                .filter(|event| match event {
+                    DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
+                    _ => false,
+                });
+            let mut s2 = discovery_a
+                .subscribe()
+                .unwrap()
+                .filter(|event| match event {
+                    DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
+                    _ => false,
+                });
 
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
             discovery_b.publish(&node_data);
-            let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
-                .await
-                .context("timeout")?
-                .unwrap()?;
-            let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
-                .await
-                .context("timeout")?
-                .unwrap()?;
+            let DiscoveryEvent::Discovered(s1_res) =
+                tokio::time::timeout(Duration::from_secs(5), s1.next())
+                    .await
+                    .context("timeout")?
+                    .unwrap()
+            else {
+                panic!("Received unexpected discovery event");
+            };
+            let DiscoveryEvent::Discovered(s2_res) =
+                tokio::time::timeout(Duration::from_secs(5), s2.next())
+                    .await
+                    .context("timeout")?
+                    .unwrap()
+            else {
+                panic!("Received unexpected discovery event");
+            };
             assert_eq!(s1_res.node_info().data, node_data);
             assert_eq!(s2_res.node_info().data, node_data);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn mdns_publish_expire() -> Result {
+            let (_, discovery_a) = make_discoverer(false)?;
+            let (node_id_b, discovery_b) = make_discoverer(true)?;
+
+            // publish discovery_b's address
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
+                .with_user_data(Some("".parse()?));
+            discovery_b.publish(&node_data);
+
+            let mut s1 = discovery_a.subscribe().unwrap();
+            tracing::debug!(?node_id_b, "Discovering node id b");
+
+            // Wait for the specific node to be discovered
+            loop {
+                let event = tokio::time::timeout(Duration::from_secs(5), s1.next())
+                    .await
+                    .context("timeout")?
+                    .expect("Stream should not be closed");
+
+                match event {
+                    DiscoveryEvent::Discovered(item) if item.node_info().node_id == node_id_b => {
+                        break;
+                    }
+                    _ => continue, // Ignore other discovery events
+                }
+            }
+
+            // Shutdown node B
+            drop(discovery_b);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+
+            // Wait for the expiration event for the specific node
+            loop {
+                let event = tokio::time::timeout(Duration::from_secs(10), s1.next())
+                    .await
+                    .context("timeout waiting for expiration event")?
+                    .expect("Stream should not be closed");
+
+                match event {
+                    DiscoveryEvent::Expired(expired_node_id) if expired_node_id == node_id_b => {
+                        break;
+                    }
+                    _ => continue, // Ignore other events
+                }
+            }
 
             Ok(())
         }
@@ -537,7 +609,7 @@ mod tests {
             let test = async move {
                 let mut got_ids = BTreeSet::new();
                 while got_ids.len() != num_nodes {
-                    if let Some(item) = events.next().await {
+                    if let Some(DiscoveryEvent::Discovered(item)) = events.next().await {
                         if node_ids.contains(&(item.node_id(), item.user_data())) {
                             got_ids.insert((item.node_id(), item.user_data()));
                         }

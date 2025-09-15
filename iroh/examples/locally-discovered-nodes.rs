@@ -5,7 +5,7 @@
 //! This is an async, non-determinate process, so the number of NodeIDs discovered each time may be different. If you have other iroh endpoints or iroh nodes with [`MdnsDiscovery`] enabled, it may discover those nodes as well.
 use std::time::Duration;
 
-use iroh::{Endpoint, NodeId, node_info::UserData};
+use iroh::{Endpoint, NodeId, discovery::DiscoveryEvent, node_info::UserData};
 use n0_future::StreamExt;
 use n0_snafu::Result;
 use tokio::task::JoinSet;
@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
                     tracing::error!("{e}");
                     return;
                 }
-                Ok(item) => {
+                Ok(DiscoveryEvent::Discovered(item)) => {
                     // if there is no user data, or the user data
                     // does not indicate that the discovered node
                     // is a part of the example, ignore it
@@ -53,6 +53,7 @@ async fn main() -> Result<()> {
                         println!("Found node {}!", item.node_id().fmt_short());
                     }
                 }
+                Ok(DiscoveryEvent::Expired(_)) => {}
             };
         }
     });

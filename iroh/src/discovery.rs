@@ -352,12 +352,22 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
     /// and add the discovered addresses to the internal address book as they arrive
     /// on this stream.
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
         None
     }
 }
 
 impl<T: Discovery> Discovery for Arc<T> {}
+
+/// An event emitted from [`Discovery`] services.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum DiscoveryEvent {
+    /// A peer was discovered or it's information was updated.
+    Discovered(DiscoveryItem),
+    /// A peer was expired due to being inactive, unreachable, or otherwise
+    /// unavailable.
+    Expired(NodeId),
+}
 
 /// Node discovery results from [`Discovery`] services.
 ///
@@ -367,7 +377,7 @@ impl<T: Discovery> Discovery for Arc<T> {}
 ///
 /// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
 /// directly from [`DiscoveryItem`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DiscoveryItem {
     /// The node info for the node, as discovered by the the discovery service.
     node_info: NodeInfo,
@@ -498,7 +508,7 @@ impl Discovery for ConcurrentDiscovery {
         Some(Box::pin(streams))
     }
 
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
         let mut streams = vec![];
         for service in self.services.iter() {
             if let Some(stream) = service.subscribe() {
@@ -649,11 +659,13 @@ impl DiscoveryTask {
                     }
                     debug!(%provenance, addr = ?node_addr, "new address found");
                     ep.add_node_addr_with_source(node_addr, provenance).ok();
+
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
                     // Send the discovery item to the subscribers of the discovery broadcast stream.
-                    ep.discovery_subscribers().send(r);
+                    ep.discovery_subscribers()
+                        .send(DiscoveryEvent::Discovered(r));
                 }
                 Some(Err(err)) => {
                     warn!(?err, "discovery service produced error");
@@ -685,7 +697,7 @@ pub struct Lagged {
 
 #[derive(Clone, Debug)]
 pub(super) struct DiscoverySubscribers {
-    inner: tokio::sync::broadcast::Sender<DiscoveryItem>,
+    inner: tokio::sync::broadcast::Sender<DiscoveryEvent>,
 }
 
 impl DiscoverySubscribers {
@@ -699,13 +711,13 @@ impl DiscoverySubscribers {
         }
     }
 
-    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> + use<> {
+    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryEvent, Lagged>> + use<> {
         use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
         let recv = self.inner.subscribe();
         BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })
     }
 
-    pub(crate) fn send(&self, item: DiscoveryItem) {
+    pub(crate) fn send(&self, item: DiscoveryEvent) {
         // `broadcast::Sender::send` returns an error if the channel has no subscribers,
         // which we don't care about.
         self.inner.send(item).ok();
@@ -737,7 +749,7 @@ mod tests {
     #[derive(Debug, Clone)]
     struct TestDiscoveryShared {
         nodes: Arc<Mutex<InfoStore>>,
-        watchers: tokio::sync::broadcast::Sender<DiscoveryItem>,
+        watchers: tokio::sync::broadcast::Sender<DiscoveryEvent>,
     }
 
     impl Default for TestDiscoveryShared {
@@ -770,7 +782,7 @@ mod tests {
             }
         }
 
-        pub fn send_passive(&self, item: DiscoveryItem) {
+        pub fn send_passive(&self, item: DiscoveryEvent) {
             self.watchers.send(item).ok();
         }
     }
@@ -831,7 +843,7 @@ mod tests {
             Some(stream)
         }
 
-        fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
             let recv = self.shared.watchers.subscribe();
             let stream =
                 tokio_stream::wrappers::BroadcastStream::new(recv).filter_map(|item| item.ok());
@@ -1016,11 +1028,16 @@ mod tests {
         ep2.node_addr().initialized().await;
         let _ = ep1.connect(ep2.node_id(), TEST_ALPN).await?;
 
-        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
-            .await
-            .expect("timeout")
-            .expect("stream closed")
-            .expect("stream lagged");
+        let DiscoveryEvent::Discovered(item) =
+            tokio::time::timeout(Duration::from_secs(1), stream.next())
+                .await
+                .expect("timeout")
+                .expect("stream closed")
+                .expect("stream lagged")
+        else {
+            panic!("Returned unexpected discovery event!");
+        };
+
         assert_eq!(item.node_id(), ep2.node_id());
         assert_eq!(item.provenance(), "test-disco");
 
@@ -1028,13 +1045,17 @@ mod tests {
         let passive_node_id = SecretKey::generate(rand::thread_rng()).public();
         let node_info = NodeInfo::new(passive_node_id);
         let passive_item = DiscoveryItem::new(node_info, "test-disco-passive", None);
-        disco_shared.send_passive(passive_item.clone());
+        disco_shared.send_passive(DiscoveryEvent::Discovered(passive_item.clone()));
 
-        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
-            .await
-            .expect("timeout")
-            .expect("stream closed")
-            .expect("stream lagged");
+        let DiscoveryEvent::Discovered(item) =
+            tokio::time::timeout(Duration::from_secs(1), stream.next())
+                .await
+                .expect("timeout")
+                .expect("stream closed")
+                .expect("stream lagged")
+        else {
+            panic!("Returned unexpected discovery event!");
+        };
         assert_eq!(item.node_id(), passive_node_id);
         assert_eq!(item.provenance(), "test-disco-passive");
 
