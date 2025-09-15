@@ -2048,7 +2048,6 @@ impl Connection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    // TODO: Would be nice if this could be infallible.
     pub fn remote_node_id(&self) -> NodeId {
         let data = self.peer_identity();
         match data {
