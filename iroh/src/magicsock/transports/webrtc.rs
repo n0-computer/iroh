@@ -1,6 +1,6 @@
 pub mod actor;
 
-use crate::disco::{IceCandidate, WebRtcOffer};
+use crate::disco::{IceCandidate, SendAddr, WebRtcOffer};
 use crate::magicsock::transports::webrtc::actor::{
     PlatformRtcConfig, WebRtcActor, WebRtcActorConfig, WebRtcActorMessage, WebRtcData,
     WebRtcDeliveryMode, WebRtcRecvDatagrams, WebRtcSendItem,
@@ -107,6 +107,9 @@ pub enum WebRtcError {
     },
     #[snafu(display("No actor available"))]
     NoActorAvailable,
+
+    #[snafu(display("Connection already sent"))]
+    OfferAlreadySent,
 }
 
 /// High-level sender interface for WebRTC data transmission
@@ -511,157 +514,6 @@ impl WebRtcTransport {
         } else {
             Poll::Pending
         }
-    }
-
-    /// Get our local node identifier
-    ///
-    /// This is the public key corresponding to our secret key and identifies
-    /// this node in the network.
-    pub fn local_node_id(&self) -> &PublicKey {
-        &self.my_node_id
-    }
-
-    // === WebRTC Connection Management API ===
-    // These methods provide high-level interfaces for the WebRTC connection establishment process
-
-    /// Create a WebRTC offer to initiate connection with a peer
-    ///
-    /// This is step 1 of the WebRTC connection process. The resulting SDP offer
-    /// should be sent to the remote peer through your signaling mechanism.
-    ///
-    /// # WebRTC Flow
-    /// 1. **create_offer()** ← You are here
-    /// 2. Send offer to peer via signaling
-    /// 3. Peer calls create_answer()
-    /// 4. Receive answer via signaling
-    /// 5. Exchange ICE candidates
-    /// 6. Connection established
-    ///
-    /// # Arguments
-    /// * `peer_node` - Node ID of the peer to connect to
-    /// * `config` - WebRTC configuration for this connection
-    ///
-    /// # Returns
-    /// SDP offer string to be sent to the peer
-    pub async fn create_offer(
-        &self,
-        peer_node: NodeId,
-        config: PlatformRtcConfig,
-    ) -> Result<String, WebRtcError> {
-        let (tx, rx) = oneshot::channel();
-
-        let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
-        let msg = WebRtcActorMessage::CreateOffer {
-            peer_node,
-            response: tx,
-            config,
-            send_ice_candidate_to_msock_tx,
-        };
-
-        self.actor_sender.send(msg).await?;
-        rx.await?
-    }
-
-    /// Set remote SDP description (offer or answer) from a peer
-    ///
-    /// This method is used to process SDP descriptions received from remote peers.
-    /// It can handle both offers (when you're the answering peer) and answers
-    /// (when you're the offering peer).
-    ///
-    /// # Arguments
-    /// * `peer_node` - Node ID of the peer that sent this description
-    /// * `sdp` - SDP string received from the peer
-    pub async fn set_remote_description(
-        &self,
-        peer_node: NodeId,
-        sdp: String,
-    ) -> Result<(), WebRtcError> {
-        let (tx, rx) = oneshot::channel();
-
-        let msg = WebRtcActorMessage::SetRemoteDescription {
-            peer_node,
-            sdp,
-            response: tx,
-        };
-
-        self.actor_sender.send(msg).await?;
-        rx.await?
-    }
-
-    /// Create a WebRTC answer in response to a received offer
-    ///
-    /// This is step 3 of the WebRTC connection process (from the answering peer's perspective).
-    /// The resulting SDP answer should be sent back to the offering peer.
-    ///
-    /// # WebRTC Flow (Answering Peer)
-    /// 1. Receive offer via signaling
-    /// 2. **create_answer()** ← You are here
-    /// 3. Send answer to peer via signaling
-    /// 4. Exchange ICE candidates
-    /// 5. Connection established
-    ///
-    /// # Arguments
-    /// * `peer_node` - Node ID of the peer that sent the offer
-    /// * `offer_sdp` - SDP offer string received from the peer
-    /// * `config` - WebRTC configuration for this connection
-    ///
-    /// # Returns
-    /// SDP answer string to be sent back to the peer
-    pub async fn create_answer(
-        &self,
-        peer_node: NodeId,
-        offer_sdp: WebRtcOffer,
-        config: PlatformRtcConfig,
-    ) -> Result<String, WebRtcError> {
-        let (tx, rx) = oneshot::channel();
-
-        let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
-
-        let msg = WebRtcActorMessage::CreateAnswer {
-            peer_node,
-            offer: offer_sdp,
-            response: tx,
-            config,
-            send_ice_candidate_to_msock_tx,
-        };
-
-        self.actor_sender.send(msg).await?;
-        rx.await?
-    }
-
-    /// Add an ICE candidate received from a peer
-    ///
-    /// ICE candidates are discovered during the connection process and exchanged
-    /// between peers to establish the optimal network path. This method should
-    /// be called whenever you receive an ICE candidate from a peer via signaling.
-    ///
-    /// # Arguments
-    /// * `peer_node` - Node ID of the peer that sent this candidate
-    /// * `candidate` - ICE candidate information
-    pub async fn add_ice_candidate(
-        &self,
-        peer_node: NodeId,
-        candidate: crate::magicsock::transports::webrtc::actor::PlatformCandidateIceType,
-    ) -> Result<(), WebRtcError> {
-        let msg = WebRtcActorMessage::AddIceCandidate {
-            peer_node,
-            candidate,
-        };
-
-        self.actor_sender.send(msg).await.map_err(Into::into)
-    }
-
-    /// Close connection to a specific peer
-    ///
-    /// This cleanly shuts down the WebRTC connection to the specified peer,
-    /// cleaning up resources and closing data channels.
-    ///
-    /// # Arguments
-    /// * `peer_node` - Node ID of the peer to disconnect from
-    pub async fn close_connection(&self, peer_node: NodeId) -> Result<(), WebRtcError> {
-        let msg = WebRtcActorMessage::CloseConnection { peer_node };
-
-        self.actor_sender.send(msg).await.map_err(Into::into)
     }
 
     pub(super) fn local_addr_watch(&self) -> n0_watcher::Direct<WebRtcPort> {

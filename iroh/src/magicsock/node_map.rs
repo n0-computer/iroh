@@ -3,6 +3,7 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
+    vec,
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, WebRtcPort};
@@ -13,9 +14,12 @@ use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options, PingHandled};
 use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
-use crate::disco::{CallMeMaybe, Pong, SendAddr, WebRtcAnswer, WebRtcOffer};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
+use crate::{
+    disco::{CallMeMaybe, IceCandidate, Pong, SendAddr, WebRtcAnswer, WebRtcOffer},
+    magicsock::transports::webrtc::actor::PlatformIceCandidateType,
+};
 
 mod node_state;
 mod path_state;
@@ -282,6 +286,19 @@ impl NodeMap {
             .lock()
             .expect("poisoned")
             .handle_webrtc_answer(sender, offer, metrics)
+    }
+
+    #[must_use = "actions must be completed"]
+    pub(super) fn handle_remote_ice_candidate(
+        &self,
+        sender: PublicKey,
+        candidate: PlatformIceCandidateType,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_remote_ice_candidate(sender, candidate, metrics)
     }
 
     #[allow(clippy::type_complexity)]
@@ -654,6 +671,27 @@ impl NodeMapInner {
                 // debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
                 println!("Certificate for this node already exists");
                 ns.handle_webrtc_answer(sender, answer)
+            }
+        }
+    }
+
+    pub(super) fn handle_remote_ice_candidate(
+        &mut self,
+        sender: PublicKey,
+        candidate: PlatformIceCandidateType,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        let ns_id = NodeStateKey::NodeId(sender);
+
+        match self.get_mut(ns_id) {
+            None => {
+                println!("did not received ice candidate from this node!");
+                metrics.recv_disco_webrtc_ice_candidate.inc();
+                vec![]
+            }
+            Some(ns) => {
+                // println!("Received ice candidate for this node: Alreay exists");
+                ns.handle_remote_ice_candidate(sender, candidate)
             }
         }
     }

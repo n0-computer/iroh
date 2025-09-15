@@ -8,10 +8,15 @@ use std::sync::Arc;
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, trace, warn};
+#[cfg(not(wasm_browser))]
+use webrtc::ice_transport::ice_candidate::RTCIceCandidate;
 
-use crate::disco::{IceCandidate, WebRtcOffer};
+#[cfg(not(wasm_browser))]
+use crate::disco::ParseError;
+use crate::disco::{SendAddr, WebRtcOffer};
+use crate::magicsock::ActorMessage;
 use crate::magicsock::transports::webrtc::WebRtcError;
-use iroh_base::{ChannelId, NodeId, SecretKey, WebRtcPort};
+use iroh_base::{ChannelId, NodeId, PublicKey, SecretKey, WebRtcPort};
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
@@ -38,10 +43,16 @@ pub type PlatformRtcConfig = RTCConfiguration;
 pub type PlatformRtcConfig = RtcConfiguration;
 
 #[cfg(not(wasm_browser))]
-pub type PlatformCandidateIceType = RTCIceCandidateInit;
+pub type PlatformIceCandidateInitType = RTCIceCandidateInit;
 
 #[cfg(wasm_browser)]
-pub type PlatformCandidateIceType = RtcIceCandidateInit;
+pub type PlatformIceCandidateInitType = RtcIceCandidateInit;
+
+#[cfg(not(wasm_browser))]
+pub type PlatformIceCandidateType = RTCIceCandidate;
+
+#[cfg(wasm_browser)]
+pub type PlatformIceCandidateType = RtcIceCandidate;
 
 // Application data - these go through the data channel after connection
 #[derive(Debug, Clone)]
@@ -113,29 +124,33 @@ pub(crate) struct WebRtcSendItem {
 
 pub(crate) enum WebRtcActorMessage {
     CreateOffer {
-        peer_node: NodeId,
+        local_node: PublicKey,
+        peer_node: PublicKey,
+        dst: SendAddr,
         config: PlatformRtcConfig,
         response: tokio::sync::oneshot::Sender<Result<String, WebRtcError>>,
-        send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+        send_ice_candidate_to_msock_tx: mpsc::Sender<ActorMessage>,
     },
     SetRemoteDescription {
-        peer_node: NodeId,
+        peer_node: PublicKey,
         sdp: String,
         response: tokio::sync::oneshot::Sender<Result<(), WebRtcError>>,
     },
     AddIceCandidate {
-        peer_node: NodeId,
-        candidate: PlatformCandidateIceType,
+        peer_node: PublicKey,
+        candidate: PlatformIceCandidateType,
     },
     CreateAnswer {
-        peer_node: NodeId,
+        local_node: PublicKey,
+        peer_node: PublicKey,
+        dst: SendAddr,
         offer: WebRtcOffer,
         config: PlatformRtcConfig,
         response: tokio::sync::oneshot::Sender<Result<String, WebRtcError>>,
-        send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+        send_ice_candidate_to_msock_tx: mpsc::Sender<ActorMessage>,
     },
     CloseConnection {
-        peer_node: NodeId,
+        peer_node: PublicKey,
     },
 }
 
@@ -186,7 +201,7 @@ pub struct PeerConnectionState {
     is_initiator: bool,
     peer_node: NodeId,
     send_recv_datagram: mpsc::Sender<WebRtcRecvDatagrams>,
-    send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+    send_ice_candidate_to_msock_tx: mpsc::Sender<ActorMessage>,
 }
 
 impl PeerConnectionState {
@@ -194,9 +209,11 @@ impl PeerConnectionState {
     pub async fn new(
         config: PlatformRtcConfig,
         is_initiator: bool,
-        peer_node: NodeId,
+        local_node: PublicKey,
+        peer_node: PublicKey,
+        dst: SendAddr,
         send_recv_datagram: mpsc::Sender<WebRtcRecvDatagrams>,
-        send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+        send_ice_candidate_to_msock_tx: mpsc::Sender<ActorMessage>,
     ) -> Result<Self, WebRtcError> {
         let api = APIBuilder::new().build();
 
@@ -215,9 +232,108 @@ impl PeerConnectionState {
             send_recv_datagram,
             send_ice_candidate_to_msock_tx,
         };
-        state.setup_ice_candidate_handler().await?;
+        state
+            .setup_ice_candidate_handler(local_node, peer_node, dst)
+            .await?;
+
+        // setup connection state handler
+        state.setup_connection_state_handler().await?;
+
+        if is_initiator {
+            state.setup_incoming_data_channel_handler().await?;
+        }
 
         Ok(state)
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub async fn setup_incoming_data_channel_handler(&mut self) -> Result<(), WebRtcError> {
+        let peer_connection = self.peer_connection.clone();
+        let peer_node = self.peer_node;
+        let sender = self.send_recv_datagram.clone();
+
+        peer_connection.on_data_channel(Box::new(move |data_channel| {
+            println!(
+                "Received data channel '{}' from peer {}",
+                data_channel.label(),
+                peer_node
+            );
+
+            // Store the data channel for later use
+            // Note: You might need to modify your struct to handle this
+
+            let peer_node_clone = peer_node;
+            let sender_clone = sender.clone();
+
+            // Setup handlers for the incoming data channel
+            let dc_for_open = Arc::clone(&data_channel);
+            data_channel.on_open(Box::new(move || {
+                Box::pin(async move {
+                    info!("Incoming data channel opened for peer {}", peer_node_clone);
+                })
+            }));
+
+            let dc_for_message = Arc::clone(&data_channel);
+            data_channel.on_message(Box::new(move |msg| {
+                let sender = sender_clone.clone();
+                let peer_node = peer_node_clone;
+
+                Box::pin(async move {
+                    if let Err(e) = Self::handle_application_message(msg, peer_node, sender).await {
+                        println!("Failed to handle application message: {:?}", e);
+                    }
+                })
+            }));
+
+            let dc_for_error = Arc::clone(&data_channel);
+            data_channel.on_error(Box::new(move |err| {
+                Box::pin(async move {
+                    println!(
+                        "Incoming data channel error for peer {}: {:?}",
+                        peer_node_clone, err
+                    );
+                })
+            }));
+
+            let dc_for_close = Arc::clone(&data_channel);
+            data_channel.on_close(Box::new(move || {
+                Box::pin(async move {
+                    println!("Incoming data channel closed for peer {}", peer_node_clone);
+                })
+            }));
+
+            Box::pin(async {})
+        }));
+
+        Ok(())
+    }
+
+    #[cfg(not(wasm_browser))]
+    async fn setup_connection_state_handler(&mut self) -> Result<(), WebRtcError> {
+        let peer_connection = self.peer_connection.clone();
+
+        let peer_node = self.peer_node;
+
+        peer_connection.on_peer_connection_state_change(Box::new(move |state| {
+
+            println!("-----------------Peer {} connection state: {:?}", peer_node, state);
+
+            match state {
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Unspecified => println!("^^^^^^^^^^^^^^^^^^Unspecified state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::New => println!("^^^^^^^^^^^^^^^^^^New state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connecting => println!("^^^^^^^^^^^^^^^^^^Connecting state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected => println!("^^^^^^^^^^^^^^^^^^Connected state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Disconnected => println!("^^^^^^^^^^^^^^^^^^Disconnected state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Failed => println!("^^^^^^^^^^^^^^^^^^Failed state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Closed => println!("^^^^^^^^^^^^^^^^^^Closed state"),
+            }
+
+            Box::pin(async {})
+
+
+        }));
+
+        Ok(())
     }
 
     #[cfg(wasm_browser)]
@@ -351,27 +467,51 @@ impl PeerConnectionState {
     }
 
     #[cfg(not(wasm_browser))]
-    pub async fn setup_ice_candidate_handler(&mut self) -> Result<(), WebRtcError> {
+    pub async fn setup_ice_candidate_handler(
+        &mut self,
+        local_node: PublicKey,
+        peer_node: PublicKey,
+        dst: SendAddr,
+    ) -> Result<(), WebRtcError> {
         let ice_sender = self.send_ice_candidate_to_msock_tx.clone();
 
+        let dst = dst.clone();
+        self.peer_connection
+            .on_ice_connection_state_change(Box::new(move |state| {
+                println!(
+                    "🧊 ICE connection state for peer {}: {:?}",
+                    local_node, state
+                );
+                Box::pin(async {})
+            }));
         self.peer_connection
             .on_ice_candidate(Box::new(move |candidate| {
                 let sender = ice_sender.clone();
-                Box::pin(async move {
-                    match candidate {
-                        Some(candidate) => {
-                            println!("ICE candidate discovered: {:?}", candidate);
-                            let msg = IceCandidate {
-                                candidate: candidate.to_string(),
-                            };
-                            if let Err(e) = sender.send(Ok(msg)).await {
-                                println!("Failed to send ICE candidate: {}", e);
+                Box::pin({
+                    let value = dst.clone();
+                    async move {
+                        match candidate {
+                            Some(ice_candidate) => {
+                                // CORRECT - these are local candidates being generated for our own connection
+                                // println!("LOCAL ICE candidate discovered (for connection to peer {}): {}", peer_node, ice_candidate);
+                                println!(
+                                    "🧊 ICE candidate type: {:?}, protocol: {:?}",
+                                    ice_candidate.typ, ice_candidate.protocol
+                                );
+
+                                let msg = ActorMessage::SendIceCandidate {
+                                    dst: value,
+                                    dst_key: peer_node,
+                                    ice_candidate,
+                                };
+                                if let Err(e) = sender.send(msg).await {
+                                    println!("Failed to send ICE candidate: {}", e);
+                                }
                             }
-                        }
-                        None => {
-                            let err_msg = WebRtcError::AddIceCandidatesFailed;
-                            if let Err(e) = sender.send(Err(err_msg)).await {
-                                println!("Failed to send ICE candidate error: {}", e);
+                            None => {
+                                // println!(
+                                //     "ICE gathering complete, no more candidates will be sent."
+                                // )
                             }
                         }
                     }
@@ -382,18 +522,29 @@ impl PeerConnectionState {
 
     #[cfg(not(wasm_browser))]
     async fn setup_data_channel_handler(&mut self) -> Result<(), WebRtcError> {
+        // let data_channel = self
+        //     .data_channel
+        //     .as_ref()
+        //     .ok_or(WebRtcError::NoDataChannel)?
+        //     .clone();
+
         let data_channel = self
             .data_channel
             .as_ref()
-            .ok_or(WebRtcError::NoDataChannel)?
+            .ok_or_else(|| {
+                println!("❌ No data channel found for peer {}", self.peer_node);
+                WebRtcError::NoDataChannel
+            })?
             .clone();
 
         let peer_node = self.peer_node;
         let sender = self.send_recv_datagram.clone();
 
+        // println!("--------------------- Data channel label: {}", data_channel.label());
+
         data_channel.on_open(Box::new(move || {
             Box::pin(async move {
-                info!("Data channel opened for peer {}", peer_node);
+                println!("✅ Data channel OPENED for peer {}", peer_node);
             })
         }));
 
@@ -403,20 +554,20 @@ impl PeerConnectionState {
 
             Box::pin(async move {
                 if let Err(e) = Self::handle_application_message(msg, peer_node, sender).await {
-                    error!("Failed to handle application message: {:?}", e);
+                    println!("Failed to handle application message: {:?}", e);
                 }
             })
         }));
 
         data_channel.on_error(Box::new(move |err| {
             Box::pin(async move {
-                error!("Data channel error for peer {}: {:?}", peer_node, err);
+                println!("Data channel error for peer {}: {:?}", peer_node, err);
             })
         }));
 
         data_channel.on_close(Box::new(move || {
             Box::pin(async move {
-                info!("Data channel closed for peer {}", peer_node);
+                println!("❌ Data channel CLOSED for peer {}", peer_node);
             })
         }));
 
@@ -554,11 +705,23 @@ impl PeerConnectionState {
 
     pub async fn add_ice_candidate_for_peer(
         &mut self,
-        candidate: PlatformCandidateIceType,
+        candidate: PlatformIceCandidateType,
     ) -> Result<(), WebRtcError> {
+        let candidate_init = candidate
+            .to_json()
+            .map_err(|_| WebRtcError::AddIceCandidatesFailed)?;
+        println!(
+            "🧊 REMOTE ICE candidate received for peer {}",
+            candidate.address
+        );
+        println!(
+            "🧊 Remote ICE candidate type: {:?}, protocol: {:?}",
+            candidate.typ, candidate.protocol
+        );
+
         #[cfg(not(wasm_browser))]
         self.peer_connection
-            .add_ice_candidate(candidate)
+            .add_ice_candidate(candidate_init)
             .await
             .map_err(|_| WebRtcError::AddIceCandidatesFailed)?;
 
@@ -633,13 +796,21 @@ impl WebRtcActor {
     async fn handle_control_message(&mut self, msg: WebRtcActorMessage) -> Result<(), WebRtcError> {
         match msg {
             WebRtcActorMessage::CreateOffer {
+                local_node,
                 peer_node,
+                dst,
                 config,
                 response,
                 send_ice_candidate_to_msock_tx,
             } => {
                 let result = self
-                    .create_offer_for_peer(peer_node, config, send_ice_candidate_to_msock_tx)
+                    .create_offer_for_peer(
+                        local_node,
+                        peer_node,
+                        dst,
+                        config,
+                        send_ice_candidate_to_msock_tx,
+                    )
                     .await;
                 let _ = response.send(result);
             }
@@ -660,6 +831,8 @@ impl WebRtcActor {
             }
             WebRtcActorMessage::CreateAnswer {
                 peer_node,
+                local_node,
+                dst,
                 offer,
                 config,
                 response,
@@ -667,10 +840,12 @@ impl WebRtcActor {
             } => {
                 let result = self
                     .create_answer_for_peer(
+                        local_node,
                         peer_node,
-                        offer,
                         config,
+                        dst,
                         send_ice_candidate_to_msock_tx,
+                        offer,
                     )
                     .await;
                 let _ = response.send(result);
@@ -703,16 +878,25 @@ impl WebRtcActor {
 
     async fn create_offer_for_peer(
         &mut self,
+        local_node: PublicKey,
         dest_node: NodeId,
+        dst: SendAddr,
         config: PlatformRtcConfig,
-        send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+        send_ice_candidate_to_msock_tx: mpsc::Sender<ActorMessage>,
     ) -> Result<String, WebRtcError> {
         info!("Creating offer for peer {}", dest_node);
+
+        if self.peer_connections.contains_key(&dest_node) {
+            warn!("Peer connection already exists for node: {}", dest_node);
+            return Err(WebRtcError::OfferAlreadySent);
+        }
 
         let mut peer_state = PeerConnectionState::new(
             config,
             true,
+            local_node,
             dest_node,
+            dst,
             self.recv_datagram_sender.clone(),
             send_ice_candidate_to_msock_tx.clone(),
         )
@@ -742,10 +926,12 @@ impl WebRtcActor {
 
     async fn create_answer_for_peer(
         &mut self,
-        peer_node: NodeId,
-        offer_sdp: WebRtcOffer,
+        local_node: PublicKey,
+        peer_node: PublicKey,
         config: PlatformRtcConfig,
-        send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+        dst: SendAddr,
+        send_ice_candidate_to_msock_tx: mpsc::Sender<ActorMessage>,
+        offer_sdp: WebRtcOffer,
     ) -> Result<String, WebRtcError> {
         info!("Creating answer for peer: {}", peer_node);
 
@@ -756,7 +942,9 @@ impl WebRtcActor {
                 let mut peer_state = PeerConnectionState::new(
                     config,
                     false,
+                    local_node,
                     peer_node,
+                    dst,
                     self.recv_datagram_sender.clone(),
                     send_ice_candidate_to_msock_tx.clone(),
                 )
@@ -773,10 +961,9 @@ impl WebRtcActor {
     async fn add_ice_candidate_for_peer(
         &mut self,
         peer_node: NodeId,
-        candidate: PlatformCandidateIceType,
+        candidate: PlatformIceCandidateType,
     ) -> Result<(), WebRtcError> {
         info!("Adding ICE candidate for peer {}", peer_node);
-
         match self.peer_connections.get_mut(&peer_node) {
             Some(peer_state) => peer_state.add_ice_candidate_for_peer(candidate).await,
             None => {

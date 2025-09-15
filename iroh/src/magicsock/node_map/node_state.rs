@@ -21,9 +21,9 @@ use super::{
     path_state::{PathState, summarize_node_paths},
     udp_paths::{NodeUdpPaths, UdpSendAddr},
 };
-use crate::disco::WebRtcOffer;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
+use crate::{disco::WebRtcOffer, magicsock::transports::webrtc::actor::PlatformIceCandidateType};
 use crate::{
     disco::{self, IceCandidate, SendAddr, WebRtcAnswer},
     magicsock::{
@@ -70,6 +70,13 @@ pub(in crate::magicsock) enum PingAction {
     SetRemoteDescription,
     SendWebRtcIceCandidate(SendIceCandidate), // First open a channel to gather ice candidates
     ReceiveWebRtcIceCandidate(ReceiveIceCandidate), // Now after receiving ice
+    AddWebRtcIceCandidate(AddWebRtcIceCandidate), // Add the ice candidates received form the the remote node!!
+}
+
+#[derive(Debug)]
+pub(crate) struct AddWebRtcIceCandidate {
+    peer_node: PublicKey,
+    candidate: PlatformIceCandidateType,
 }
 
 #[derive(Debug)]
@@ -1237,6 +1244,18 @@ impl NodeState {
         let action = PingAction::SetRemoteDescription;
 
         // self.send_webrtc_answer(now, answer)
+        vec![action]
+    }
+
+    pub(super) fn handle_remote_ice_candidate(
+        &self,
+        sender: PublicKey,
+        candidate: PlatformIceCandidateType,
+    ) -> Vec<PingAction> {
+        let action = PingAction::AddWebRtcIceCandidate(AddWebRtcIceCandidate {
+            peer_node: sender,
+            candidate: candidate,
+        });
         vec![action]
     }
 

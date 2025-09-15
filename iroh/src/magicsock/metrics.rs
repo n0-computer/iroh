@@ -50,6 +50,7 @@ pub struct Metrics {
     pub recv_disco_call_me_maybe_bad_disco: Counter,
     pub recv_disco_webrtc_offer: Counter,
     pub recv_disco_webrtc_answer: Counter,
+    pub recv_disco_webrtc_ice_candidate: Counter,
 
     // How many times our relay home node DI has changed from non-zero to a different non-zero.
     pub relay_home_change: Counter,

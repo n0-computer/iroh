@@ -23,7 +23,7 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use crate::magicsock::transports::{self};
+use crate::magicsock::transports::{self, webrtc::actor::PlatformIceCandidateType};
 use data_encoding::HEXLOWER;
 use iroh_base::{ChannelId, PublicKey, RelayUrl, WebRtcPort};
 use nested_enum_utils::common_fields;
@@ -120,9 +120,106 @@ pub enum Message {
     ReceiveAnswer(WebRtcAnswer),
     SendOffer(WebRtcOffer),
     SendAnswer(WebRtcAnswer),
-    WebRtcIceCandidate(IceCandidate),
+    WebRtcIceCandidate(PlatformIceCandidateType),
 }
 
+// Define a trait for the functionality
+pub trait IceCandidateExt {
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError>
+    where
+        Self: Sized;
+    fn as_bytes(&self) -> Vec<u8>;
+}
+
+// Implement for non-wasm
+#[cfg(not(wasm_browser))]
+impl IceCandidateExt for PlatformIceCandidateType {
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
+        use serde_json::from_str;
+
+        let candidate_str = std::str::from_utf8(&p).map_err(|_| InvalidEncodingSnafu.build())?;
+
+        // First deserialize to RTCIceCandidateInit
+        let candidate_init: PlatformIceCandidateType = from_str(candidate_str).map_err(|err| {
+            println!("the error is {:?}", err);
+            InvalidEncodingSnafu.build()
+        })?;
+
+        // Then convert RTCIceCandidateInit back to RTCIceCandidate
+        Ok(candidate_init)
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
+        let header = msg_header(MessageType::WebRtcIceCandidate, V0);
+        let mut out = header.to_vec();
+
+        // let candidate_json = self.to_json().expect("Failed to convert to JSON");
+        let json_string = serde_json::to_string(&self).expect("Failed to serialize to JSON");
+
+        out.extend_from_slice(json_string.as_bytes());
+        out
+    }
+}
+
+// Implement for wasm
+#[cfg(wasm_browser)]
+impl IceCandidateExt for PlatformIceCandidateType {
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
+        use serde_json::from_str;
+        use wasm_bindgen::JsValue;
+        use web_sys::RtcIceCandidateInit;
+
+        // Skip the message header
+        let content_start = 2;
+        if p.len() <= content_start {
+            return Err(InvalidEncodingSnafu.build());
+        }
+
+        let content = &p[content_start..];
+        let candidate_str =
+            std::str::from_utf8(content).map_err(|_| InvalidEncodingSnafu.build())?;
+
+        // Deserialize JSON to RTCIceCandidateInit-like structure
+        let candidate_init: RTCIceCandidateInit =
+            from_str(candidate_str).map_err(|_| InvalidEncodingSnafu.build())?;
+
+        // Convert to web_sys RtcIceCandidateInit
+        let mut init = RtcIceCandidateInit::new(&candidate_init.candidate);
+
+        if let Some(ref sdp_mid) = candidate_init.sdp_mid {
+            init.sdp_mid(Some(sdp_mid));
+        }
+
+        if let Some(sdp_mline_index) = candidate_init.sdp_mline_index {
+            init.sdp_m_line_index(Some(sdp_mline_index));
+        }
+
+        if let Some(ref username_fragment) = candidate_init.username_fragment {
+            init.username_fragment(Some(username_fragment));
+        }
+
+        RtcIceCandidate::new(&init).map_err(|_| InvalidEncodingSnafu.build())
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
+        let header = msg_header(MessageType::WebRtcIceCandidate, V0);
+        let mut out = header.to_vec();
+
+        // Create RTCIceCandidateInit-like structure for JSON serialization
+        let candidate_init = RTCIceCandidateInit {
+            candidate: self.candidate(),
+            sdp_mid: self.sdp_mid(),
+            sdp_mline_index: self.sdp_m_line_index(),
+            username_fragment: self.username_fragment(),
+        };
+
+        let json_string =
+            serde_json::to_string(&candidate_init).expect("Failed to serialize to JSON");
+
+        out.extend_from_slice(json_string.as_bytes());
+        out
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcOffer {
     // Using a simple string for the candidate for now
@@ -517,7 +614,7 @@ impl Message {
                 Ok(Message::ReceiveAnswer(answer))
             }
             MessageType::WebRtcIceCandidate => {
-                let candidate = IceCandidate::from_bytes(p)?;
+                let candidate = PlatformIceCandidateType::from_bytes(p)?;
                 Ok(Message::WebRtcIceCandidate(candidate))
             }
         }
@@ -576,6 +673,10 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 #[cfg(test)]
 mod tests {
     use iroh_base::SecretKey;
+    use webrtc::ice_transport::{
+        ice_candidate::RTCIceCandidate, ice_candidate_type::RTCIceCandidateType,
+        ice_protocol::RTCIceProtocol,
+    };
 
     use super::*;
     use crate::key::{SharedSecret, public_ed_box, secret_ed_box};
@@ -691,38 +792,74 @@ mod tests {
 
     #[test]
     fn test_ice_candidate_round_trip() {
-        // Test with a typical ICE candidate string
-        let original_candidate = "candidate:1 1 UDP 2130706431 192.168.1.100 54400 typ host";
-        let original_ice = IceCandidate {
-            candidate: original_candidate.to_string(),
+        // Create a proper RTCIceCandidate
+        let original_candidate = RTCIceCandidate {
+            stats_id: "candidate-1".to_string(),
+            foundation: "1".to_string(),
+            priority: 2130706431,
+            address: "192.168.1.100".to_string(),
+            protocol: RTCIceProtocol::Udp,
+            port: 54400,
+            typ: RTCIceCandidateType::Host,
+            component: 1,
+            related_address: String::new(),
+            related_port: 0,
+            tcp_type: String::new(),
         };
-        let original_message = Message::WebRtcIceCandidate(original_ice.clone());
 
-        // Serialize to bytes
-        let serialized_bytes = original_message.as_bytes();
+        println!("Original candidate: {:?}", original_candidate);
 
-        println!("Original candidate: {}", original_candidate);
+        // Serialize to bytes using the trait method
+        let serialized_bytes = original_candidate.as_bytes();
         println!("Serialized bytes length: {}", serialized_bytes.len());
-        // println!("Serialized bytes (hex): {}", hex::encode(&serialized_bytes));
 
-        // Deserialize back from bytes
-        let deserialized_message =
-            Message::from_bytes(&serialized_bytes).expect("Failed to deserialize message");
+        // Deserialize back from bytes using the trait method
+        let deserialized_candidate = PlatformIceCandidateType::from_bytes(&serialized_bytes[2..])
+            .expect("Failed to deserialize candidate");
 
-        println!("Deserialized message: {:?}", deserialized_message);
-
-        // Extract the ice candidate from the deserialized message
-        let deserialized_ice = match deserialized_message {
-            Message::WebRtcIceCandidate(ice) => ice,
-            _ => panic!("Expected WebRtcIceCandidate, got different message type"),
-        };
+        println!("Deserialized candidate: {:?}", deserialized_candidate);
 
         // Compare original and deserialized
-        assert_eq!(original_ice, deserialized_ice);
-        assert_eq!(original_ice.candidate, deserialized_ice.candidate);
+        assert_eq!(
+            original_candidate.foundation,
+            deserialized_candidate.foundation
+        );
+        assert_eq!(original_candidate.priority, deserialized_candidate.priority);
+        assert_eq!(original_candidate.address, deserialized_candidate.address);
+        assert_eq!(original_candidate.protocol, deserialized_candidate.protocol);
+        assert_eq!(original_candidate.port, deserialized_candidate.port);
+        assert_eq!(original_candidate.typ, deserialized_candidate.typ);
+        assert_eq!(
+            original_candidate.component,
+            deserialized_candidate.component
+        );
 
         println!("Round-trip test PASSED");
-        println!("Original:     {}", original_ice.candidate);
-        println!("Deserialized: {}", deserialized_ice.candidate);
+    }
+
+    #[test]
+    fn test_ice_candidate_json_conversion() {
+        let candidate = RTCIceCandidate {
+            stats_id: "candidate-1".to_string(),
+            foundation: "1".to_string(),
+            priority: 2130706431,
+            address: "192.168.1.100".to_string(),
+            protocol: RTCIceProtocol::Udp,
+            port: 54400,
+            typ: RTCIceCandidateType::Host,
+            component: 1,
+            related_address: String::new(),
+            related_port: 0,
+            tcp_type: String::new(),
+        };
+
+        // Test round-trip through JSON
+        let json_str = serde_json::to_string(&candidate).expect("Failed to serialize JSON");
+        let parsed_init: PlatformIceCandidateType =
+            serde_json::from_str(&json_str).expect("Failed to parse JSON");
+
+        assert_eq!(candidate.foundation, parsed_init.foundation);
+        assert_eq!(candidate.address, parsed_init.address);
+        assert_eq!(candidate.port, parsed_init.port);
     }
 }

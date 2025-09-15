@@ -24,7 +24,10 @@ use crate::{
         },
         transports::{
             TransportMode,
-            webrtc::actor::{PlatformRtcConfig, WebRtcActorMessage},
+            webrtc::actor::{
+                PlatformIceCandidateInitType, PlatformIceCandidateType, PlatformRtcConfig,
+                WebRtcActorMessage,
+            },
         },
     },
 };
@@ -895,6 +898,9 @@ impl MagicSock {
                         PingAction::SendWebRtcIceCandidate(candidate) => {
                             println!("Sending webrtc candidate !!! 868")
                         }
+                        PingAction::AddWebRtcIceCandidate(candidate) => {
+                            println!("Received ice candidates: 900");
+                        }
                     }
                 }
             }
@@ -929,7 +935,7 @@ impl MagicSock {
                         ),
                         PingAction::SendWebRtcAnswer(send_answer) => {
                             println!(
-                                "Sending answer after receiving offer in handle_disco_message "
+                                "Sending answer after receiving offer in handle_disco_message"
                             );
                             self.send_answer_queued(send_answer);
                         }
@@ -942,6 +948,9 @@ impl MagicSock {
                         PingAction::SendWebRtcIceCandidate(candidate) => {
                             println!("Sending webrtc candidate !!! 897")
                         }
+                        PingAction::AddWebRtcIceCandidate(candidate) => {
+                            println!("Sending webrtc candidate !! 951");
+                        }
                     }
                 }
 
@@ -950,7 +959,7 @@ impl MagicSock {
                 // self.node_map.handle_ice_candidate(sender, src, ice);
             }
             disco::Message::ReceiveAnswer(answer) => {
-                println!("891: Received disco webrtc answer! {:?}", answer);
+                // println!("891: Received disco webrtc answer! {:?}", answer);
 
                 let actions = self.node_map.handle_webrtc_answer(
                     sender,
@@ -1021,6 +1030,9 @@ impl MagicSock {
                         PingAction::SendWebRtcIceCandidate(candidate) => {
                             println!("Sending webrtc candidate !!! 958")
                         }
+                        PingAction::AddWebRtcIceCandidate(candidate) => {
+                            println!("Received ice candidates: 1025");
+                        }
                     }
                 }
             }
@@ -1062,6 +1074,9 @@ impl MagicSock {
                         PingAction::SendWebRtcIceCandidate(candidate) => {
                             println!("Sending webrtc candidate !!! 980")
                         }
+                        PingAction::AddWebRtcIceCandidate(candidate) => {
+                            println!("Received ice candidates: 1066");
+                        }
                     }
                 }
             }
@@ -1102,11 +1117,72 @@ impl MagicSock {
                         PingAction::SendWebRtcIceCandidate(candidate) => println!(
                             "I think this shall not be invoked!! - Sending webrtc candidate !!! 1001"
                         ),
+                        PingAction::AddWebRtcIceCandidate(candidate) => {
+                            println!("received ice candidate <<<<>>>>  ");
+                        }
                     }
                 }
             }
             disco::Message::WebRtcIceCandidate(ice_candidate) => {
-                println!("Received webrtc candidate!!!!!!!!!!!!!!!!!!!! 1011");
+                //   println!(
+                //         "-----------------------------------------------------------------------------------------------------------"
+                //     );
+                //we only need ice candidate from remote node
+                if sender == self.public_key {
+                    println!("Received ice candidate from itself");
+                    return;
+                }
+                // println!(
+                //     "-----------------------------------------------------------------------------------------------------------"
+                // );
+                // println!(
+                //     "Received ice candidate!!!!!!!!!!!!!!!!!!!! 1011 {:?} from sender : ({:?}) via src : {:?}",
+                //     ice_candidate, sender, src
+                // );
+
+                //use actor sender to setup this ice candidate!!!
+                let set_ice_candidate_tx = self.actor_sender.clone();
+
+                let actions = self.node_map.handle_remote_ice_candidate(
+                    sender,
+                    ice_candidate.clone(),
+                    &self.metrics.magicsock,
+                );
+
+                //Now I have received these offers !!
+
+                for action in &actions {
+                    match action {
+                        PingAction::AddWebRtcIceCandidate(add_web_rtc_ice_candidate) => {
+                            let actor_sender = self.actor_sender.clone();
+
+                            block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(async {
+                                    match actor_sender
+                                        .send(ActorMessage::AddIceCandidate {
+                                            received_from: sender,
+                                            ice_candidate: ice_candidate.clone(),
+                                        })
+                                        .await
+                                    {
+                                        Ok(_) => {
+
+                                            //  println!("Initiated ice candidate addition from remote peer")
+                                        }
+                                        Err(err) => {
+                                            println!("Error sending ActorMessage {:?}", err)
+                                        }
+                                    }
+                                })
+                            });
+                        }
+                        _ => println!("Wrong action after receiving ice_candidates"),
+                    }
+                }
+
+                // println!(
+                //     "-----------------------------------------------------------------------------------------------------------"
+                // );
             }
         }
         trace!("disco message handled");
@@ -1178,7 +1254,7 @@ impl MagicSock {
             let msg_sender = self.actor_sender.clone();
             trace!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (queued)");
             self.node_map
-                .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
+                .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
         } else {
             warn!(dst = ?dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "failed to send ping: queues full");
         }
@@ -1320,9 +1396,11 @@ impl MagicSock {
                 }) => {
                     let node_id = self.public_key;
 
-                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                    // let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                    let send_ice_candidate_to_msock_tx = self.actor_sender.clone();
                     if let Ok(answer) = self.create_answer(
-                        node_id,
+                        dst_node,
+                        dst.clone(),
                         received_offer.clone(),
                         send_ice_candidate_to_msock_tx.clone(),
                     ) {
@@ -1342,19 +1420,23 @@ impl MagicSock {
                 PingAction::SendWebRtcOffer(SendOffer {
                     id,
                     dst,
-                    dst_node,
+                    dst_node, //remote node
                     tx_id,
 
                     purpose,
                 }) => {
                     let candidate = "Hey! I am webrtc ice candidate!".to_string();
-                    let node_id = self.public_key;
+                    // let node_id = self.public_key;
 
                     let webrtc_sender = self.webrtc_actor_sender.clone();
 
-                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                    let send_ice_candidate_to_msock_tx = self.actor_sender.clone();
 
-                    if let Ok(offer) = self.create_offer(node_id, send_ice_candidate_to_msock_tx) {
+                    if let Ok(offer) = self.create_offer(
+                        dst_node.clone(),
+                        dst.clone(),
+                        send_ice_candidate_to_msock_tx,
+                    ) {
                         // println!("1214: Offer created is {}", offer);
                         let msg = disco::Message::SendOffer(WebRtcOffer { offer });
                         if let Err(e) =
@@ -1363,32 +1445,30 @@ impl MagicSock {
                             println!("Error sending disco offer: {:?}", e);
                             continue;
                         }
-                        let actor_sender = self.actor_sender.clone();
-                        let dst2 = dst.clone();
+                        // let actor_sender = self.actor_sender.clone();
+                        // let dst2 = dst.clone();
 
-                        tokio::spawn(async move {
-                            let dst_clone = dst2.clone();
+                        //             tokio::spawn(async move {
+                        //     let dst_clone = dst2.clone();
 
-                            loop {
-                                while let Some(Ok(ice_candidate)) = receiver.recv().await {
-                                    //Now this has to be send to another peer
-
-                                    if let Err(err) = actor_sender
-                                        .send(ActorMessage::SendIceCandidate {
-                                            dst: dst_clone.clone(),
-                                            dst_key: dst_node,
-                                            ice_candidate,
-                                        })
-                                        .await
-                                    {
-                                        println!(
-                                            "Error sending ice candidate to peer from actor: {:?}",
-                                            err
-                                        );
-                                    }
-                                }
-                            }
-                        });
+                        //     while let Some(ice_candidate) = receiver.recv().await {
+                        //         if let Err(err) = actor_sender
+                        //             .send(ActorMessage::SendIceCandidate {
+                        //                 dst: dst_clone.clone(),
+                        //                 dst_key: dst_node,
+                        //                 ice_candidate,
+                        //             })
+                        //             .await
+                        //         {
+                        //             println!(
+                        //                 "Error sending ice candidate to peer: {:?}",
+                        //                 err
+                        //             );
+                        //             break; // Exit on send failure
+                        //         }
+                        //     }
+                        //     println!("ICE candidate handling task completed");
+                        // });
 
                         debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "offer sent");
                         let msg_sender = self.actor_sender.clone();
@@ -1423,6 +1503,9 @@ impl MagicSock {
                     candidate,
                 }) => {
                     println!("Sending webrtc candidate 1313");
+                }
+                PingAction::AddWebRtcIceCandidate(add_webrtc_ice_candidates) => {
+                    println!("adding webrtc ice candidates from remote: 1504");
                 }
             }
         }
@@ -1478,9 +1561,11 @@ impl MagicSock {
     pub(crate) fn create_offer(
         &self,
         peer_node: NodeId,
-        send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+        dst: SendAddr,
+        send_ice_candidate_to_msock_tx: mpsc::Sender<ActorMessage>,
     ) -> Result<String, WebRtcError> {
         let webrtc_actor_sender = self.webrtc_actor_sender.clone();
+        let local_node = self.public_key;
 
         block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async move {
@@ -1494,8 +1579,10 @@ impl MagicSock {
                     if let Err(err) = actor_sender
                         .sender()
                         .send(WebRtcActorMessage::CreateOffer {
+                            local_node,
                             peer_node,
                             config,
+                            dst: dst.clone(),
                             response: sender,
                             send_ice_candidate_to_msock_tx,
                         })
@@ -1518,24 +1605,28 @@ impl MagicSock {
     /// Generate answer
     pub(crate) fn create_answer(
         &self,
-        peer_node: NodeId,
+        peer_node: PublicKey,
+        dst: SendAddr,
         offer: WebRtcOffer,
-        send_ice_candidate_to_msock_tx: mpsc::Sender<Result<IceCandidate, WebRtcError>>,
+        send_ice_candidate_to_msock_tx: mpsc::Sender<ActorMessage>,
     ) -> Result<String, WebRtcError> {
         let webrtc_actor_sender = self.webrtc_actor_sender.clone();
-
+        let dst = dst.clone();
+        let local_node = self.public_key;
         block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async move {
                 for actor_sender in &webrtc_actor_sender {
-                    let (sender, mut receiver) = oneshot::channel();
+                    let (sender, receiver) = oneshot::channel();
 
                     let config = PlatformRtcConfig::default();
 
                     if let Err(err) = actor_sender
                         .sender()
                         .send(WebRtcActorMessage::CreateAnswer {
+                            local_node,
                             peer_node,
                             offer: offer.clone(),
+                            dst: dst.clone(),
                             config,
                             response: sender,
                             send_ice_candidate_to_msock_tx: send_ice_candidate_to_msock_tx.clone(),
@@ -1629,37 +1720,40 @@ impl MagicSock {
                 }) => {
                     let node_id = self.public_key;
 
-                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
-                    if let Ok(offer) = self.create_offer(node_id, send_ice_candidate_to_msock_tx) {
+                    // let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                    let send_ice_candidate_to_msock_tx = self.actor_sender.clone();
+                    if let Ok(offer) = self.create_offer(
+                        dst_node.clone(),
+                        dst.clone(),
+                        send_ice_candidate_to_msock_tx,
+                    ) {
                         // println!("1358: Offer created is {}", offer);
                         let msg = disco::Message::SendOffer(WebRtcOffer { offer });
                         self.try_send_disco_message(sender, dst.clone(), dst_node, msg)?;
                         //Now I will have use this actor to send ice candidate to another peer!
-                        let actor_sender = self.actor_sender.clone();
+                        // let actor_sender = self.actor_sender.clone();
 
-                        tokio::spawn(async move {
-                            let dst_clone = dst.clone();
+                        // tokio::spawn(async move {
+                        //     let dst_clone = dst.clone();
 
-                            loop {
-                                while let Some(Ok(ice_candidate)) = receiver.recv().await {
-                                    //Now this has to be send to another peer
-
-                                    if let Err(err) = actor_sender
-                                        .send(ActorMessage::SendIceCandidate {
-                                            dst: dst_clone.clone(),
-                                            dst_key: dst_node,
-                                            ice_candidate,
-                                        })
-                                        .await
-                                    {
-                                        println!(
-                                            "Error sending ice candidate to peer from actor: {:?}",
-                                            err
-                                        );
-                                    }
-                                }
-                            }
-                        });
+                        //     while let Some(ice_candidate) = receiver.recv().await {
+                        //         if let Err(err) = actor_sender
+                        //             .send(ActorMessage::SendIceCandidate {
+                        //                 dst: dst_clone.clone(),
+                        //                 dst_key: dst_node,
+                        //                 ice_candidate,
+                        //             })
+                        //             .await
+                        //         {
+                        //             println!(
+                        //                 "Error sending ice candidate to peer: {:?}",
+                        //                 err
+                        //             );
+                        //             break; // Exit on send failure
+                        //         }
+                        //     }
+                        //     println!("ICE candidate handling task completed");
+                        // });
 
                         // let actor_sender = self.actor_sender.clone();
                         // let sender_clone = sender.clone();
@@ -1709,10 +1803,13 @@ impl MagicSock {
                 }) => {
                     let node_id = self.public_key;
 
-                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
-                    if let Ok(answer) =
-                        self.create_answer(node_id, offer.clone(), send_ice_candidate_to_msock_tx)
-                    {
+                    let send_ice_candidate_to_msock_tx = self.actor_sender.clone();
+                    if let Ok(answer) = self.create_answer(
+                        node_id,
+                        dst.clone(),
+                        offer.clone(),
+                        send_ice_candidate_to_msock_tx,
+                    ) {
                         println!("Answer created is {}", answer);
                         let msg = disco::Message::ReceiveAnswer(WebRtcAnswer {
                             answer,
@@ -1742,9 +1839,10 @@ impl MagicSock {
                 }) => {
                     let node_id = self.public_key;
 
-                    let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                    let send_ice_candidate_to_msock_tx = self.actor_sender.clone();
                     if let Ok(answer) = self.create_answer(
                         node_id,
+                        dst.clone(),
                         received_offer.clone(),
                         send_ice_candidate_to_msock_tx.clone(),
                     ) {
@@ -1783,6 +1881,9 @@ impl MagicSock {
                     candidate,
                 }) => {
                     println!("Sending Ice Candidate : 1589 {:?}", candidate);
+                }
+                PingAction::AddWebRtcIceCandidate(ice_candidate) => {
+                    println!("Adding webrtc ice candidates");
                 }
             }
         }
@@ -1842,29 +1943,21 @@ impl MagicSock {
         dst_key: PublicKey,
         msg: disco::Message,
     ) -> io::Result<()> {
-        let dst = match dst {
-            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
-            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
-            SendAddr::WebRtc(port) => transports::Addr::WebRtc(port),
-        };
-
-        trace!(?dst, %msg, "send webrtc answer (UDP)");
-        if self.is_closed() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            ));
-        }
-
         let final_msg = match &msg {
             Message::SendAnswer(web_rtc_answer) => {
                 let offer = WebRtcOffer {
                     offer: web_rtc_answer.received_offer.clone(),
                 };
 
-                let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                // let (send_ice_candidate_to_msock_tx, mut receiver) = mpsc::channel(32);
+                let send_ice_candidate_to_msock_tx = self.actor_sender.clone();
                 let answer = self
-                    .create_answer(dst_key, offer, send_ice_candidate_to_msock_tx.clone())
+                    .create_answer(
+                        dst_key,
+                        dst.clone(),
+                        offer,
+                        send_ice_candidate_to_msock_tx.clone(),
+                    )
                     .map_err(|_| {
                         io::Error::new(io::ErrorKind::Other, "Cannot create webrtc answer")
                     })?;
@@ -1879,6 +1972,20 @@ impl MagicSock {
                 ));
             }
         };
+
+        let dst = match dst {
+            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
+            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+            SendAddr::WebRtc(port) => transports::Addr::WebRtc(port),
+        };
+
+        trace!(?dst, %msg, "send webrtc answer (UDP)");
+        if self.is_closed() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            ));
+        }
 
         let pkt = self
             .disco
@@ -3708,7 +3815,11 @@ enum ActorMessage {
     SendIceCandidate {
         dst: SendAddr,
         dst_key: PublicKey,
-        ice_candidate: IceCandidate,
+        ice_candidate: PlatformIceCandidateType,
+    },
+    AddIceCandidate {
+        received_from: PublicKey,
+        ice_candidate: PlatformIceCandidateType,
     },
 }
 
@@ -4085,6 +4196,40 @@ impl Actor {
                 self.send_ice_candidate_to_peer(&sender, dst, dst_key, ice_candidate)
                     .await;
             }
+            ActorMessage::AddIceCandidate {
+                received_from,
+                ice_candidate,
+            } => {
+                self.add_ice_candidate_from_remote(received_from, ice_candidate)
+                    .await;
+            }
+        }
+    }
+
+    async fn add_ice_candidate_from_remote(
+        &self,
+        received_from: PublicKey,
+        ice_candidate: PlatformIceCandidateType,
+    ) {
+        let webrtc_senders = self.msock.webrtc_actor_sender.clone();
+
+        for webrtc_sender in &webrtc_senders {
+            match webrtc_sender
+                .sender()
+                .send(WebRtcActorMessage::AddIceCandidate {
+                    peer_node: received_from,
+                    candidate: ice_candidate.clone(),
+                })
+                .await
+            {
+                Ok(_) => {
+                    // println!("Ice candidates from remote passed to webrtc actor")
+                }
+                Err(err) => println!(
+                    "Ice candidates from remote passed to webrtc actor: Err ({:?})",
+                    err
+                ),
+            }
         }
     }
 
@@ -4093,7 +4238,7 @@ impl Actor {
         sender: &UdpSender,
         dst: SendAddr,
         dst_key: PublicKey,
-        ice_candidate: IceCandidate,
+        ice_candidate: PlatformIceCandidateType,
     ) {
         let msg = disco::Message::WebRtcIceCandidate(ice_candidate);
         let _ = self
