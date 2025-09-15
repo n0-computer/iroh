@@ -1220,13 +1220,13 @@ impl NodeState {
 
     pub(crate) fn handle_webrtc_offer(
         &mut self,
-        _sender: NodeId,
-        answer: WebRtcOffer,
+        sender: NodeId,
+        offer: WebRtcOffer,
     ) -> Vec<PingAction> {
         let now = Instant::now();
 
         // println!("1192: got webrtc offer: {:?}", answer);
-        self.send_webrtc_answer(now, answer)
+        self.send_webrtc_answer(now, offer, sender)
     }
 
     pub(crate) fn handle_webrtc_answer(
@@ -1263,6 +1263,7 @@ impl NodeState {
         &mut self,
         now: Instant,
         offer: WebRtcOffer,
+        sender: NodeId,
     ) -> Vec<PingAction> {
         // We allocate +1 in case the caller wants to add a call-me-maybe message.
         let mut ping_msgs = Vec::with_capacity(self.udp_paths.paths().len() + 1);
@@ -1276,7 +1277,7 @@ impl NodeState {
                     let msg = SendAnswer {
                         id: msg.id,
                         dst: msg.dst,
-                        dst_node: msg.dst_node,
+                        dst_node: sender,
                         tx_id: msg.tx_id,
                         purpose: msg.purpose,
                         received_offer: offer,

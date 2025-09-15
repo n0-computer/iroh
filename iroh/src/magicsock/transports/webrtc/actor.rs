@@ -69,6 +69,12 @@ pub enum ApplicationMessageType {
     // Your app-specific types
 }
 
+#[derive(Debug, Clone)]
+pub enum SdpType {
+    Offer,
+    Answer,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SignalingMessage {
     Offer {
@@ -134,6 +140,7 @@ pub(crate) enum WebRtcActorMessage {
     SetRemoteDescription {
         peer_node: PublicKey,
         sdp: String,
+        sdp_type: SdpType,
         response: tokio::sync::oneshot::Sender<Result<(), WebRtcError>>,
     },
     AddIceCandidate {
@@ -239,7 +246,7 @@ impl PeerConnectionState {
         // setup connection state handler
         state.setup_connection_state_handler().await?;
 
-        if is_initiator {
+        if !is_initiator {
             state.setup_incoming_data_channel_handler().await?;
         }
 
@@ -251,6 +258,8 @@ impl PeerConnectionState {
         let peer_connection = self.peer_connection.clone();
         let peer_node = self.peer_node;
         let sender = self.send_recv_datagram.clone();
+
+        println!("Trying to setup incoming data channel ");
 
         peer_connection.on_data_channel(Box::new(move |data_channel| {
             println!(
@@ -269,7 +278,10 @@ impl PeerConnectionState {
             let dc_for_open = Arc::clone(&data_channel);
             data_channel.on_open(Box::new(move || {
                 Box::pin(async move {
-                    info!("Incoming data channel opened for peer {}", peer_node_clone);
+                    println!(
+                        "********Incoming data channel opened for peer {}",
+                        peer_node_clone
+                    );
                 })
             }));
 
@@ -494,11 +506,12 @@ impl PeerConnectionState {
                             Some(ice_candidate) => {
                                 // CORRECT - these are local candidates being generated for our own connection
                                 // println!("LOCAL ICE candidate discovered (for connection to peer {}): {}", peer_node, ice_candidate);
+                                println!("--------------------");
                                 println!(
-                                    "🧊 ICE candidate type: {:?}, protocol: {:?}",
-                                    ice_candidate.typ, ice_candidate.protocol
+                                    "🧊 Gathered: ICE candidate type: {:?}, protocol: {:?}, address: {:?}",
+                                    ice_candidate.typ, ice_candidate.protocol, ice_candidate.address
                                 );
-
+                                println!("--------------------");
                                 let msg = ActorMessage::SendIceCandidate {
                                     dst: value,
                                     dst_key: peer_node,
@@ -537,18 +550,30 @@ impl PeerConnectionState {
             })?
             .clone();
 
+        let dc = Arc::new(data_channel);
+
+        let dc_open = Arc::clone(&dc);
         let peer_node = self.peer_node;
         let sender = self.send_recv_datagram.clone();
 
         // println!("--------------------- Data channel label: {}", data_channel.label());
 
-        data_channel.on_open(Box::new(move || {
+        dc.on_open(Box::new(move || {
             Box::pin(async move {
                 println!("✅ Data channel OPENED for peer {}", peer_node);
+                loop {
+                    use std::time::Duration;
+
+                    if let Err(e) = dc_open.send_text("Hello from peer!".to_string()).await {
+                        println!("Failed to send message: {:?}", e);
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
             })
         }));
 
-        data_channel.on_message(Box::new(move |msg| {
+        dc.on_message(Box::new(move |msg| {
             let sender = sender.clone();
             let peer_node = peer_node;
 
@@ -559,13 +584,13 @@ impl PeerConnectionState {
             })
         }));
 
-        data_channel.on_error(Box::new(move |err| {
+        dc.on_error(Box::new(move |err| {
             Box::pin(async move {
                 println!("Data channel error for peer {}: {:?}", peer_node, err);
             })
         }));
 
-        data_channel.on_close(Box::new(move || {
+        dc.on_close(Box::new(move || {
             Box::pin(async move {
                 println!("❌ Data channel CLOSED for peer {}", peer_node);
             })
@@ -579,6 +604,7 @@ impl PeerConnectionState {
         src: NodeId,
         sender: mpsc::Sender<WebRtcRecvDatagrams>,
     ) -> Result<(), WebRtcError> {
+        println!("Received message from peer {}: {:?} bytes", src, msg);
         let datagrams = Datagrams::from(msg.data);
         let recv_data = WebRtcRecvDatagrams {
             src,
@@ -605,10 +631,23 @@ impl PeerConnectionState {
     }
 
     #[cfg(not(wasm_browser))]
-    pub async fn set_remote_description(&mut self, sdp: String) -> Result<(), WebRtcError> {
-        let remote_desc = RTCSessionDescription::offer(sdp).map_err(|e| WebRtcError::Native {
-            source: Box::new(e),
-        })?;
+    pub async fn set_remote_description(
+        &mut self,
+        sdp: String,
+        sdp_type: SdpType,
+    ) -> Result<(), WebRtcError> {
+        let remote_desc = match sdp_type {
+            SdpType::Offer => {
+                RTCSessionDescription::offer(sdp).map_err(|e| WebRtcError::Native {
+                    source: Box::new(e),
+                })?
+            }
+            SdpType::Answer => {
+                RTCSessionDescription::answer(sdp).map_err(|e| WebRtcError::Native {
+                    source: Box::new(e),
+                })?
+            }
+        };
 
         self.peer_connection
             .set_remote_description(remote_desc)
@@ -817,9 +856,12 @@ impl WebRtcActor {
             WebRtcActorMessage::SetRemoteDescription {
                 peer_node,
                 sdp,
+                sdp_type,
                 response,
             } => {
-                let result = self.set_remote_description_for_peer(peer_node, sdp).await;
+                let result = self
+                    .set_remote_description_for_peer(peer_node, sdp, sdp_type)
+                    .await;
                 let _ = response.send(result);
             }
             WebRtcActorMessage::AddIceCandidate {
@@ -912,11 +954,12 @@ impl WebRtcActor {
         &mut self,
         peer_node: NodeId,
         sdp: String,
+        sdp_type: SdpType,
     ) -> Result<(), WebRtcError> {
         println!("Setting remote description for peer {}", peer_node);
 
         match self.peer_connections.get_mut(&peer_node) {
-            Some(peer_state) => peer_state.set_remote_description(sdp).await,
+            Some(peer_state) => peer_state.set_remote_description(sdp, sdp_type).await,
             None => {
                 error!("No peer connection found for node: {}", peer_node);
                 Err(WebRtcError::NoPeerConnection)
