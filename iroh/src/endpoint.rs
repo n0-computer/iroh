@@ -2066,21 +2066,19 @@ impl Connection {
             Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
                 Ok(certs) => {
                     if certs.len() != 1 {
-                        warn!(
+                        panic!(
                             "expected a single peer certificate, but {} found",
                             certs.len()
                         );
-                        return Err(RemoteNodeIdSnafu.build());
                     }
 
-                    let peer_id = VerifyingKey::from_public_key_der(&certs[0])
-                        .map_err(|_| RemoteNodeIdSnafu.build())?
-                        .into();
-                    Ok(peer_id)
+                    let Ok(peer_id) = VerifyingKey::from_public_key_der(&certs[0]) else {
+                        panic!("invalid peer certificate");
+                    };
+                    Ok(peer_id.into())
                 }
                 Err(err) => {
-                    warn!("invalid peer certificate: {:?}", err);
-                    Err(RemoteNodeIdSnafu.build())
+                    panic!("invalid peer certificate: {:?}", err);
                 }
             },
         }
