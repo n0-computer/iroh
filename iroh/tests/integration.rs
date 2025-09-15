@@ -54,7 +54,7 @@ async fn simple_node_id_based_connection_transfer() -> Result {
         async move {
             while let Some(incoming) = server.accept().await {
                 let conn = incoming.await.e()?;
-                let node_id = conn.remote_node_id()?;
+                let node_id = conn.remote_node_id();
                 tracing::info!(node_id = %node_id.fmt_short(), "Accepted connection");
 
                 let (mut send, mut recv) = conn.accept_bi().await.e()?;

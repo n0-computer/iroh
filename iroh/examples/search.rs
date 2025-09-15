@@ -128,7 +128,7 @@ impl ProtocolHandler for BlobSearch {
     /// the connection lasts.
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // We can get the remote's node id from the connection.
-        let node_id = connection.remote_node_id()?;
+        let node_id = connection.remote_node_id();
         println!("accepted connection from {node_id}");
 
         // Our protocol is a simple request-response protocol, so we expect the

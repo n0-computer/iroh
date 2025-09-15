@@ -87,7 +87,7 @@ async fn chat_server(args: Args) -> n0_snafu::Result<()> {
         };
         tokio::spawn(async move {
             let connection = connecting.await.e()?;
-            let remote_node_id = connection.remote_node_id()?;
+            let remote_node_id = connection.remote_node_id();
             println!("got connection from {remote_node_id}");
             // just leave the tasks hanging. this is just an example.
             let (mut writer, mut reader) = connection.accept_bi().await.e()?;

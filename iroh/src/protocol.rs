@@ -50,7 +50,7 @@ use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
-    endpoint::{Connecting, Connection, RemoteNodeIdError},
+    endpoint::{Connecting, Connection},
 };
 
 /// The built router.
@@ -109,8 +109,6 @@ pub enum AcceptError {
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
-    #[snafu(transparent)]
-    MissingRemoteNodeId { source: RemoteNodeIdError },
     #[snafu(display("Not allowed."))]
     NotAllowed {},
 
@@ -505,10 +503,8 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
     };
     match handler.on_connecting(connecting).await {
         Ok(connection) => {
-            if let Ok(remote) = connection.remote_node_id() {
-                tracing::Span::current()
-                    .record("remote", tracing::field::display(remote.fmt_short()));
-            };
+            let remote = connection.remote_node_id();
+            tracing::Span::current().record("remote", tracing::field::display(remote.fmt_short()));
             if let Err(err) = handler.accept(connection).await {
                 warn!("Handling incoming connection ended with error: {err}");
             }
@@ -555,7 +551,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
     }
 
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
-        let remote = conn.remote_node_id()?;
+        let remote = conn.remote_node_id();
         let is_allowed = (self.limiter)(remote);
         if !is_allowed {
             conn.close(0u32.into(), b"not allowed");

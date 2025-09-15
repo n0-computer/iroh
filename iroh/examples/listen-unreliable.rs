@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
         };
         let alpn = connecting.alpn().await?;
         let conn = connecting.await.e()?;
-        let node_id = conn.remote_node_id()?;
+        let node_id = conn.remote_node_id();
         info!(
             "new (unreliable) connection from {node_id} with ALPN {}",
             String::from_utf8_lossy(&alpn),

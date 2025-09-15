@@ -89,7 +89,7 @@ async fn start_accept_side() -> Result<Endpoint> {
                     let connection = incoming.await.e()?;
 
                     // We can get the remote's node id from the connection.
-                    let node_id = connection.remote_node_id()?;
+                    let node_id = connection.remote_node_id();
                     println!("accepted connection from {node_id}");
 
                     // Our protocol is a simple request-response protocol, so we expect the

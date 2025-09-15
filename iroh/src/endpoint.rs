@@ -1834,13 +1834,6 @@ pub struct Connection {
     inner: quinn::Connection,
 }
 
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[snafu(display("Protocol error: no remote id available"))]
-pub struct RemoteNodeIdError {
-    backtrace: Option<snafu::Backtrace>,
-}
-
 impl Connection {
     /// Initiates a new outgoing unidirectional stream.
     ///
@@ -2056,12 +2049,11 @@ impl Connection {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     // TODO: Would be nice if this could be infallible.
-    pub fn remote_node_id(&self) -> Result<NodeId, RemoteNodeIdError> {
+    pub fn remote_node_id(&self) -> NodeId {
         let data = self.peer_identity();
         match data {
             None => {
-                warn!("no peer certificate found");
-                Err(RemoteNodeIdSnafu.build())
+                panic!("no peer certificate found");
             }
             Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
                 Ok(certs) => {
@@ -2075,10 +2067,10 @@ impl Connection {
                     let Ok(peer_id) = VerifyingKey::from_public_key_der(&certs[0]) else {
                         panic!("invalid peer certificate");
                     };
-                    Ok(peer_id.into())
+                    peer_id.into()
                 }
                 Err(err) => {
-                    panic!("invalid peer certificate: {:?}", err);
+                    panic!("invalid peer certificate: {err:?}");
                 }
             },
         }
@@ -2142,10 +2134,7 @@ impl Connection {
 /// function.
 fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint, remote_node_id: Option<NodeId>) {
     // If we can't notify the rtt-actor that's not great but not critical.
-    let Some(node_id) = remote_node_id.or_else(|| conn.remote_node_id().ok()) else {
-        warn!(?conn, "failed to get remote node id");
-        return;
-    };
+    let node_id = remote_node_id.unwrap_or_else(|| conn.remote_node_id());
     let Some(conn_type_changes) = magic_ep.conn_type(node_id) else {
         warn!(?conn, "failed to create conn_type stream");
         return;
@@ -2489,7 +2478,7 @@ mod tests {
                     info!("[server] round {i}");
                     let incoming = ep.accept().await.e()?;
                     let conn = incoming.await.e()?;
-                    let node_id = conn.remote_node_id()?;
+                    let node_id = conn.remote_node_id();
                     info!(%i, peer = %node_id.fmt_short(), "accepted connection");
                     let (mut send, mut recv) = conn.accept_bi().await.e()?;
                     let mut buf = vec![0u8; chunk_size];
@@ -2653,7 +2642,7 @@ mod tests {
             let mut iconn = incoming.accept().e()?;
             let alpn = iconn.alpn().await?;
             let conn = iconn.await.e()?;
-            let node_id = conn.remote_node_id()?;
+            let node_id = conn.remote_node_id();
             assert_eq!(node_id, src);
             assert_eq!(alpn, TEST_ALPN);
             let (mut send, mut recv) = conn.accept_bi().await.e()?;
@@ -2744,7 +2733,7 @@ mod tests {
         async fn accept(ep: &Endpoint) -> Result<Connection> {
             let incoming = ep.accept().await.expect("ep closed");
             let conn = incoming.await.e()?;
-            let node_id = conn.remote_node_id()?;
+            let node_id = conn.remote_node_id();
             tracing::info!(node_id=%node_id.fmt_short(), "accepted connection");
             Ok(conn)
         }
