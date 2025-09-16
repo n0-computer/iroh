@@ -224,7 +224,7 @@ impl From<NodeAddr> for NodeData {
 /// `UserData` implements [`FromStr`] and [`TryFrom<String>`], so you can
 /// convert `&str` and `String` into `UserData` easily.
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct UserData(String);
+pub struct UserData(pub String);
 
 impl UserData {
     /// The max byte length allowed for user-defined data.
@@ -371,6 +371,8 @@ impl NodeInfo {
             node_id: self.node_id,
             relay_url: self.data.relay_url.clone(),
             direct_addresses: self.data.direct_addresses.clone(),
+            channel_id: None,
+            webrtc_info: None,
         }
     }
 
@@ -380,6 +382,8 @@ impl NodeInfo {
             node_id: self.node_id,
             relay_url: self.data.relay_url,
             direct_addresses: self.data.direct_addresses,
+            channel_id: None,
+            webrtc_info: None,
         }
     }
 

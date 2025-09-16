@@ -15,22 +15,23 @@
 //! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    fmt::Display,
-    io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    pin::Pin,
-    sync::{
-        Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+use crate::{
+    disco::{IceCandidate, Message, WebRtcAnswer},
+    magicsock::{
+        node_map::ReceiveOffer,
+        transports::{
+            TransportMode,
+            webrtc::actor::{
+                PlatformIceCandidateInitType, PlatformIceCandidateType, PlatformRtcConfig, SdpType,
+                WebRtcActorMessage,
+            },
+        },
     },
-    task::{Context, Poll},
 };
-
+use aead::rand_core::block;
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+use iroh_base::{ChannelId, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, WebRtcPort};
 use iroh_relay::RelayMap;
 use n0_future::{
     StreamExt,
@@ -47,20 +48,41 @@ use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
-use tokio::sync::{Mutex as AsyncMutex, mpsc};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    fmt::Display,
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    task::{Context, Poll},
+};
+use std::{
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::atomic::AtomicUsize,
+};
+use tokio::{
+    net::unix::pipe::Sender,
+    sync::{Mutex as AsyncMutex, mpsc, oneshot},
+    task::block_in_place,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{
     Instrument, Level, debug, error, event, info, info_span, instrument, trace, trace_span, warn,
 };
 use transports::LocalAddrsWatch;
 use url::Url;
+use webrtc::ice_transport::ice_candidate;
 
 #[cfg(not(wasm_browser))]
 use self::transports::IpTransport;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    transports::{RelayActorConfig, RelayTransport, Transports, UdpSender},
+    transports::{RelayActorConfig, RelayTransport, Transports, UdpSender, webrtc::*},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -78,16 +100,17 @@ use crate::{
 };
 
 mod metrics;
-mod node_map;
+pub mod node_map;
 
 pub(crate) mod transports;
-
-pub use node_map::Source;
 
 pub use self::{
     metrics::Metrics,
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
 };
+use crate::disco::WebRtcOffer;
+use crate::magicsock::transports::webrtc::actor::WebRtcActorConfig;
+pub use node_map::Source;
 
 /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -219,6 +242,9 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
+
+    /// to webrtc internal functions!
+    webrtc_actor_sender: Vec<WebRtcNetworkChangeSender>,
 }
 
 #[allow(missing_docs)]
@@ -243,6 +269,19 @@ impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     pub(crate) async fn spawn(opts: Options) -> Result<Handle, CreateHandleError> {
         Handle::new(opts).await
+    }
+
+    pub(crate) async fn spawn_transport_mode(
+        opts: Options,
+        transport_mode: TransportMode,
+    ) -> Result<Handle, CreateHandleError> {
+        match transport_mode {
+            TransportMode::UdpRelay => todo!("Implement iroh for UdpRelay"),
+            TransportMode::RelayOnly => todo!("Implement iroh for RelayOnly"),
+            TransportMode::UdpWebrtcRelay => todo!("Implement iroh for UdpWebrtcRelay"),
+            TransportMode::WebrtcRelay => Handle::new_webrtc_relay(opts).await,
+            TransportMode::UdpWebrtc => todo!("Implement iroh for UdpWebrtc"),
+        }
     }
 
     /// Returns the relay node we are connected to, that has the best latency.
@@ -333,10 +372,7 @@ impl MagicSock {
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
     pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
-        self.net_report
-            .watch()
-            .map(|(r, _)| r)
-            .expect("disconnected")
+        self.net_report.watch().map(|(r, _)| r)
     }
 
     /// Watch for changes to the home relay.
@@ -356,7 +392,7 @@ impl MagicSock {
                 })
                 .collect()
         });
-        res.expect("disconnected")
+        res
     }
 
     /// Returns a [`n0_watcher::Direct`] that reports the [`ConnectionType`] we have to the
@@ -657,6 +693,12 @@ impl MagicSock {
                                 .recv_data_relay
                                 .inc_by(datagram.len() as _);
                         }
+                        transports::Addr::WebRtc(..) => {
+                            self.metrics
+                                .magicsock
+                                .recv_data_webrtc
+                                .inc_by(datagram.len() as _);
+                        }
                     }
 
                     quic_datagram_count += 1;
@@ -717,6 +759,11 @@ impl MagicSock {
                     transports::Addr::Relay(src_url, src_node) => {
                         // Relay
                         let quic_mapped_addr = self.node_map.receive_relay(src_url, *src_node);
+                        quinn_meta.addr = quic_mapped_addr.private_socket_addr();
+                    }
+                    transports::Addr::WebRtc(port) => {
+                        println!("received->>> :");
+                        let quic_mapped_addr = self.node_map.receive_webrtc(*port);
                         quinn_meta.addr = quic_mapped_addr.private_socket_addr();
                     }
                 }
@@ -825,6 +872,131 @@ impl MagicSock {
                         PingAction::SendPing(ping) => {
                             self.send_ping_queued(ping);
                         }
+                        _ => {
+                            println!("invalid ping action for call me maybe");
+                        }
+                    }
+                }
+            }
+            disco::Message::ReceiveOffer(offer) => {
+                let actions = self.node_map.handle_webrtc_offer(
+                    sender,
+                    offer.clone(),
+                    &self.metrics.magicsock,
+                );
+
+                for action in actions {
+                    match action {
+                        PingAction::SendWebRtcAnswer(offer) => {
+                            let actor_sender = self.actor_sender.clone();
+
+                            task::spawn(async move {
+                                if let Err(err) = actor_sender
+                                    .send(ActorMessage::SendWebRtcAnswer(offer))
+                                    .await
+                                {
+                                    info!(
+                                        "Actor send failed while sending webrtc answer {:?}",
+                                        err
+                                    );
+                                };
+                            });
+                        }
+                        _ => {
+                            println!("invalid ping action for receive offer");
+                        }
+                    }
+                }
+            }
+            disco::Message::ReceiveAnswer(answer) => {
+                let actions = self.node_map.handle_webrtc_answer(
+                    sender,
+                    answer.clone(),
+                    &self.metrics.magicsock,
+                );
+
+                // Set the remote description with the answer from peer B
+                let value = answer.clone();
+
+                for action in actions {
+                    match action {
+                        PingAction::SetRemoteDescription => {
+                            let webrtc_sender = self.webrtc_actor_sender.clone();
+                            let value = value.clone();
+
+                            let _ = block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(async move {
+                                for webrtc in &webrtc_sender {
+                                    let (response, receiver) = oneshot::channel();
+
+                                    let sdp = value.clone().answer;
+                                    let sdp_type = SdpType::Answer;
+
+                                    if let Err(err) = webrtc.sender().send(WebRtcActorMessage::SetRemoteDescription{
+                                            peer_node: sender,
+                                            sdp,
+                                            sdp_type,
+                                            response,
+
+                                    }).await{
+
+                                        info!("Actor send failed while setting up remote description {:?}", err);
+                                        continue;
+                                    };
+
+                                    match receiver.await {
+                                        Ok(result) => return result,
+                                        Err(_) => continue,
+                                    }
+                                }
+                                Err(WebRtcError::NoActorAvailable)
+                            })
+                            });
+                        }
+                        _ => {
+                            println!("Wrong action after receiving answer");
+                        }
+                    }
+                }
+            }
+            disco::Message::WebRtcIceCandidate(ice_candidate) => {
+                if sender == self.public_key {
+                    println!("Received ice candidate from itself");
+                    return;
+                }
+
+                let actions = self.node_map.handle_remote_ice_candidate(
+                    sender,
+                    ice_candidate.clone(),
+                    &self.metrics.magicsock,
+                );
+
+                for action in &actions {
+                    match action {
+                        PingAction::AddWebRtcIceCandidate => {
+                            let actor_sender = self.actor_sender.clone();
+
+                            block_in_place(|| {
+                                tokio::runtime::Handle::current().block_on(async {
+                                    match actor_sender
+                                        .send(ActorMessage::AddIceCandidate {
+                                            received_from: sender,
+                                            ice_candidate: ice_candidate.clone(),
+                                        })
+                                        .await
+                                    {
+                                        Ok(_) => {
+
+                                            //  println!("Initiated ice candidate addition from remote peer")
+                                        }
+                                        Err(err) => {
+                                            println!("Error sending ActorMessage {:?}", err)
+                                        }
+                                    }
+                                })
+                            });
+                        }
+                        _ => println!("Wrong action after receiving ice_candidates"),
                     }
                 }
             }
@@ -898,7 +1070,7 @@ impl MagicSock {
             let msg_sender = self.actor_sender.clone();
             trace!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (queued)");
             self.node_map
-                .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
+                .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
         } else {
             warn!(dst = ?dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "failed to send ping: queues full");
         }
@@ -969,6 +1141,9 @@ impl MagicSock {
                     self.node_map
                         .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
+                _ => {
+                    println!("Invalid ping action {:?}", msg)
+                }
             }
         }
         Ok(())
@@ -985,6 +1160,7 @@ impl MagicSock {
         let dst = match dst {
             SendAddr::Udp(addr) => transports::Addr::Ip(addr),
             SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+            SendAddr::WebRtc(port) => transports::Addr::WebRtc(port),
         };
 
         trace!(?dst, %msg, "send disco message (UDP)");
@@ -1017,6 +1193,89 @@ impl MagicSock {
             }
         }
     }
+
+    ///  Generate Offer
+    pub(crate) async fn create_offer(
+        &self,
+        peer_node: NodeId,
+        dst: SendAddr,
+    ) -> Result<String, WebRtcError> {
+        let send_ice_candidate_to_msock_tx = self.actor_sender.clone();
+        let webrtc_actor_sender = self.webrtc_actor_sender.clone();
+        let local_node = self.public_key;
+
+        for actor_sender in &webrtc_actor_sender {
+            let (sender, receiver) = oneshot::channel();
+            let config = PlatformRtcConfig::default();
+
+            // Clone the sender for each iteration to avoid moving it
+            let send_ice_candidate_to_msock_tx = send_ice_candidate_to_msock_tx.clone();
+
+            if let Err(err) = actor_sender
+                .sender()
+                .send(WebRtcActorMessage::CreateOffer {
+                    local_node,
+                    peer_node,
+                    config,
+                    dst: dst.clone(),
+                    response: sender,
+                    send_ice_candidate_to_msock_tx,
+                })
+                .await
+            {
+                info!("actor send failed while creating offer {:?}", err);
+                // continue;
+            };
+
+            match receiver.await {
+                Ok(result) => return result,
+                Err(_) => continue,
+            }
+        }
+
+        Err(WebRtcError::NoActorAvailable)
+    }
+    // Generate answer
+    pub(crate) async fn create_answer(
+        &self,
+        peer_node: PublicKey,
+        dst: SendAddr,
+        offer: WebRtcOffer,
+    ) -> Result<String, WebRtcError> {
+        let send_ice_candidate_to_msock_tx = self.actor_sender.clone();
+        let webrtc_actor_sender = self.webrtc_actor_sender.clone();
+        let local_node = self.public_key;
+
+        for actor_sender in &webrtc_actor_sender {
+            let (sender, receiver) = oneshot::channel();
+
+            let config = PlatformRtcConfig::default();
+
+            if let Err(err) = actor_sender
+                .sender()
+                .send(WebRtcActorMessage::CreateAnswer {
+                    local_node,
+                    peer_node,
+                    offer: offer.clone(),
+                    dst: dst.clone(),
+                    config,
+                    response: sender,
+                    send_ice_candidate_to_msock_tx: send_ice_candidate_to_msock_tx.clone(),
+                })
+                .await
+            {
+                info!("actor send failed while creating answer {:?}", err);
+                continue;
+            };
+
+            match receiver.await {
+                Ok(result) => return result,
+                Err(_) => continue,
+            }
+        }
+        Err(WebRtcError::NoActorAvailable)
+    }
+
     /// Tries to send out the given ping actions out.
     fn try_send_ping_actions(&self, sender: &UdpSender, msgs: Vec<PingAction>) -> io::Result<()> {
         for msg in msgs {
@@ -1081,6 +1340,7 @@ impl MagicSock {
                     self.node_map
                         .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
+                _ => println!("Invalid ping actions {:?}", msg),
             }
         }
         Ok(())
@@ -1097,6 +1357,7 @@ impl MagicSock {
         let dst = match dst {
             SendAddr::Udp(addr) => transports::Addr::Ip(addr),
             SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+            SendAddr::WebRtc(port) => transports::Addr::WebRtc(port),
         };
 
         trace!(?dst, %msg, "send disco message (UDP)");
@@ -1130,6 +1391,94 @@ impl MagicSock {
         }
     }
 
+    /// Tries to send out a webrtc answer.
+    async fn send_msg(
+        &self,
+        sender: &UdpSender,
+        dst: SendAddr, //Addr where we want to send or to be more precise, via what address??
+        dst_key: PublicKey, // Remote node address
+        msg: disco::Message,
+    ) -> io::Result<()> {
+        let dst = match dst {
+            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
+            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+            SendAddr::WebRtc(port) => transports::Addr::WebRtc(port),
+        };
+
+        trace!(?dst, %msg, "send webrtc answer (UDP)");
+        if self.is_closed() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            ));
+        }
+
+        let pkt = self.disco.encode_and_seal(self.public_key, dst_key, &msg);
+
+        let transmit = transports::Transmit {
+            contents: &pkt,
+            ecn: None,
+            segment_size: None,
+        };
+
+        let dst2 = dst.clone();
+        match sender.inner_try_send(&dst2, None, &transmit) {
+            Ok(()) => {
+                trace!(?dst, %msg, "Sent WebRtc Answer");
+                self.metrics.magicsock.sent_disco_call_me_maybe.inc();
+                disco_message_sent(&msg, &self.metrics.magicsock);
+                Ok(())
+            }
+            Err(err) => {
+                warn!(?dst, ?msg, ?err, "failed to send disco message");
+                Err(err)
+            }
+        }
+    }
+
+    async fn send_ice_candidate_to_remote_peer(
+        &self,
+        sender: &UdpSender,
+        dst: SendAddr,
+        dst_key: PublicKey,
+        msg: disco::Message,
+    ) -> io::Result<()> {
+        let dst = match dst {
+            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
+            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+            SendAddr::WebRtc(port) => transports::Addr::WebRtc(port),
+        };
+
+        trace!(?dst, %msg, "send webrtc ice (UDP)");
+        if self.is_closed() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            ));
+        }
+
+        let pkt = self.disco.encode_and_seal(self.public_key, dst_key, &msg);
+
+        let transmit = transports::Transmit {
+            contents: &pkt,
+            ecn: None,
+            segment_size: None,
+        };
+        let dst2 = dst.clone();
+        match sender.inner_try_send(&dst2, None, &transmit) {
+            Ok(()) => {
+                trace!(?dst, %msg, "Sent WebRtc ice");
+                self.metrics.magicsock.send_disco_webrtc_ice_candidate.inc();
+                disco_message_sent(&msg, &self.metrics.magicsock);
+                Ok(())
+            }
+            Err(err) => {
+                warn!(?dst, ?msg, ?err, "failed to send disco message");
+                Err(err)
+            }
+        }
+    }
+
     /// Publishes our address to a discovery service, if configured.
     ///
     /// Called whenever our addresses or home relay node changes.
@@ -1151,6 +1500,46 @@ impl MagicSock {
             let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
             discovery.publish(&data);
         }
+    }
+
+    pub async fn intiate_webrtc_offer(&self, node_id: PublicKey) -> io::Result<()> {
+        let actor_sender = self.actor_sender.clone();
+
+        // let dst = SendAddr::Relay(self.my_relay().ok_or(io::Error::new(io::ErrorKind::Other, "No relay to send webrtc offer via"))?);
+        actor_sender
+            .send(ActorMessage::SendWebRtcOffer(node_id))
+            .await
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Failed to send webrtc offer via actor: {:?}", e),
+                )
+            })?;
+        Ok(())
+    }
+}
+fn is_webrtc_packet(datagram: &[u8]) -> bool {
+    if datagram.is_empty() {
+        return false;
+    }
+
+    let first_byte = datagram[0];
+
+    // From RFC 9443 - WebRTC packets (DTLS/SRTP):
+    match first_byte {
+        // DTLS packets
+        20..=63 => true, // DTLS range
+
+        // SRTP/SRTCP packets
+        128..=191 => true, // RTP/RTCP range
+
+        // Not WebRTC
+        0..=3 => false,     // STUN
+        16..=19 => false,   // ZRTP
+        64..=79 => false,   // TURN Channel (or QUIC)
+        80..=127 => false,  // QUIC
+        192..=255 => false, // QUIC
+        _ => false,
     }
 }
 
@@ -1332,6 +1721,8 @@ pub enum CreateHandleError {
     CreateNetmonMonitor { source: netmon::Error },
     #[snafu(display("Failed to subscribe netmon monitor"))]
     SubscribeNetmonMonitor { source: netmon::Error },
+    #[snafu(display("Failed to create webrtc endpoint"))]
+    CreateWebRtcEndpoint { source: WebRtcError },
 }
 
 impl Handle {
@@ -1393,16 +1784,24 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
         });
         let relay_transports = vec![relay_transport];
+        let web_rtc_transports = Vec::new();
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
-        #[cfg(not(wasm_browser))]
-        let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
+        let max_receive_segments = Arc::new(AtomicUsize::new(1));
 
         #[cfg(not(wasm_browser))]
-        let transports = Transports::new(ip_transports, relay_transports);
+        let ipv6 = ip_transports
+            .iter()
+            .any(|t: &IpTransport| t.bind_addr().is_ipv6());
+        #[cfg(not(wasm_browser))]
+        let transports = Transports::new(
+            ip_transports,
+            relay_transports,
+            web_rtc_transports,
+            max_receive_segments,
+        );
         #[cfg(wasm_browser)]
-        let transports = Transports::new(relay_transports);
-
+        let transports = Transports::new(relay_transports, max_receive_segments);
         let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
         let msock = Arc::new(MagicSock {
@@ -1425,6 +1824,222 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            webrtc_actor_sender: transports.create_webrtc_actor_sender(),
+        });
+
+        let mut endpoint_config = quinn::EndpointConfig::default();
+        // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
+        // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
+        // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
+        // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
+        // the packet if grease_quic_bit is set to false.
+        endpoint_config.grease_quic_bit(false);
+
+        let sender = transports.create_sender(msock.clone());
+        let local_addrs_watch = transports.local_addrs_watch();
+        let network_change_sender = transports.create_network_change_sender();
+
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            endpoint_config,
+            Some(server_config),
+            Box::new(MagicUdpSocket {
+                socket: msock.clone(),
+                transports,
+            }),
+            #[cfg(not(wasm_browser))]
+            Arc::new(quinn::TokioRuntime),
+            #[cfg(wasm_browser)]
+            Arc::new(crate::web_runtime::WebRuntime),
+        )
+        .context(CreateQuinnEndpointSnafu)?;
+
+        let network_monitor = netmon::Monitor::new()
+            .await
+            .context(CreateNetmonMonitorSnafu)?;
+
+        let qad_endpoint = endpoint.clone();
+
+        #[cfg(any(test, feature = "test-utils"))]
+        let client_config = if insecure_skip_relay_cert_verify {
+            iroh_relay::client::make_dangerous_client_config()
+        } else {
+            default_quic_client_config()
+        };
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let client_config = default_quic_client_config();
+
+        let net_report_config = net_report::Options::default();
+        #[cfg(not(wasm_browser))]
+        let net_report_config = net_report_config.quic_config(Some(QuicConfig {
+            ep: qad_endpoint,
+            client_config,
+            ipv4: true,
+            ipv6,
+        }));
+
+        #[cfg(any(test, feature = "test-utils"))]
+        let net_report_config =
+            net_report_config.insecure_skip_relay_cert_verify(insecure_skip_relay_cert_verify);
+
+        let net_reporter = net_report::Client::new(
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+            #[cfg(not(wasm_browser))]
+            Some(ip_mapped_addrs),
+            relay_map.clone(),
+            net_report_config,
+            metrics.net_report.clone(),
+        );
+
+        let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
+        let direct_addr_update_state = DirectAddrUpdateState::new(
+            msock.clone(),
+            #[cfg(not(wasm_browser))]
+            port_mapper,
+            Arc::new(AsyncMutex::new(net_reporter)),
+            relay_map,
+            direct_addr_done_tx,
+        );
+
+        let netmon_watcher = network_monitor.interface_state();
+        let actor = Actor {
+            msg_receiver: actor_receiver,
+            msock: msock.clone(),
+            periodic_re_stun_timer: new_re_stun_timer(false),
+            network_monitor,
+            netmon_watcher,
+            direct_addr_update_state,
+            network_change_sender,
+            direct_addr_done_rx,
+            pending_call_me_maybes: Default::default(),
+            disco_receiver,
+        };
+
+        let actor_token = CancellationToken::new();
+        let token = actor_token.clone();
+        let actor_task = task::spawn(
+            actor
+                .run(token, local_addrs_watch, sender)
+                .instrument(info_span!("actor")),
+        );
+
+        let actor_task = Arc::new(Mutex::new(Some(AbortOnDropHandle::new(actor_task))));
+
+        Ok(Handle {
+            msock,
+            actor_task,
+            endpoint,
+            actor_token,
+        })
+    }
+    /// Creates a magic [`MagicSock`]
+    async fn new_webrtc_relay(opts: Options) -> Result<Self, CreateHandleError> {
+        let Options {
+            addr_v4,
+            addr_v6,
+            secret_key,
+            relay_map,
+            node_map,
+            discovery,
+            discovery_user_data,
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+            proxy_url,
+            server_config,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
+            metrics,
+        } = opts;
+
+        let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+
+        #[cfg(not(wasm_browser))]
+        let (ip_transports, port_mapper) =
+            bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
+
+        #[cfg(not(wasm_browser))]
+        let (web_transports, port_mapper) =
+            bind_webrtc(addr_v4, addr_v6, &metrics, secret_key.clone())
+                .context(BindSocketsSnafu)?;
+
+        let ip_mapped_addrs = IpMappedAddresses::default();
+
+        let (actor_sender, actor_receiver) = mpsc::channel(256);
+
+        let ipv6_reported = false;
+
+        // load the node data
+        let node_map = node_map.unwrap_or_default();
+        let node_map = NodeMap::load_from_vec(
+            node_map,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
+            ipv6_reported,
+            &metrics.magicsock,
+        );
+
+        let my_relay = Watchable::new(None);
+        let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
+        let max_receive_segments = Arc::new(AtomicUsize::new(1));
+
+        let relay_transport = RelayTransport::new(RelayActorConfig {
+            my_relay: my_relay.clone(),
+            secret_key: secret_key.clone(),
+            #[cfg(not(wasm_browser))]
+            dns_resolver: dns_resolver.clone(),
+            proxy_url: proxy_url.clone(),
+            ipv6_reported: ipv6_reported.clone(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
+            metrics: metrics.magicsock.clone(),
+        });
+        let relay_transports = vec![relay_transport];
+        // let my_channel_id = Watchable::new(WebRtcPort::new(secret_key.public().clone(), ChannelId::default()));
+
+        // let web_rtc_transport =
+        //     WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into(), my_channel_id));
+        // let web_rtc_transports = vec![web_rtc_transport];
+
+        let secret_encryption_key = secret_ed_box(secret_key.secret());
+        #[cfg(not(wasm_browser))]
+        let ipv6 = web_transports.iter().any(|t| t.bind_addr().is_ipv6());
+
+        #[cfg(not(wasm_browser))]
+        let transports = Transports::new(
+            ip_transports,
+            relay_transports,
+            web_transports,
+            max_receive_segments,
+        );
+        #[cfg(wasm_browser)]
+        let transports =
+            Transports::new(relay_transports, web_rtc_transports, max_receive_segments);
+
+        let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
+        // let webrtc_sender_handle = transports.create_webrtc_sender_handle();
+        let msock = Arc::new(MagicSock {
+            public_key: secret_key.public(),
+            closing: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            disco,
+            actor_sender: actor_sender.clone(),
+            ipv6_reported,
+            node_map,
+            ip_mapped_addrs: ip_mapped_addrs.clone(),
+            discovery,
+            discovery_user_data: RwLock::new(discovery_user_data),
+            direct_addrs: Default::default(),
+            net_report: Watchable::new((None, UpdateReason::None)),
+            #[cfg(not(wasm_browser))]
+            dns_resolver: dns_resolver.clone(),
+            discovery_subscribers: DiscoverySubscribers::new(),
+            metrics: metrics.clone(),
+            local_addrs_watch: transports.local_addrs_watch(),
+            #[cfg(not(wasm_browser))]
+            ip_bind_addrs: transports.ip_bind_addrs(),
+            webrtc_actor_sender: transports.create_webrtc_actor_sender(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -1647,6 +2262,7 @@ impl DiscoState {
         msg: &disco::Message,
     ) -> Bytes {
         let mut seal = msg.as_bytes();
+
         self.get_secret(other_node_id, |secret| secret.seal(&mut seal));
         disco::encode_message(&this_node_id, seal).into()
     }
@@ -1763,6 +2379,18 @@ enum ActorMessage {
     ScheduleDirectAddrUpdate(UpdateReason, Option<(NodeId, RelayUrl)>),
     #[cfg(test)]
     ForceNetworkChange(bool),
+    SendWebRtcOffer(PublicKey),
+    SendWebRtcAnswer(ReceiveOffer),
+    AddWebRtcIceCandidate,
+    SendIceCandidate {
+        dst: SendAddr,
+        dst_key: PublicKey,
+        ice_candidate: PlatformIceCandidateType,
+    },
+    AddIceCandidate {
+        received_from: PublicKey,
+        ice_candidate: PlatformIceCandidateType,
+    },
 }
 
 struct Actor {
@@ -1834,6 +2462,56 @@ fn bind_ip(
     Ok((ip, port_mapper))
 }
 
+#[cfg(not(wasm_browser))]
+fn bind_webrtc(
+    addr_v4: SocketAddrV4,
+    addr_v6: Option<SocketAddrV6>,
+    metrics: &EndpointMetrics,
+    secret_key: SecretKey,
+) -> io::Result<(Vec<WebRtcTransport>, portmapper::Client)> {
+    let port_mapper =
+        portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
+
+    let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4))?);
+    let ip4_port = v4.local_addr()?.port();
+    let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
+
+    let addr_v6 =
+        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
+
+    let v6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
+        Ok(sock) => Some(Arc::new(sock)),
+        Err(err) => {
+            info!("bind ignoring IPv6 bind failure: {:?}", err);
+            None
+        }
+    };
+
+    let port = v4.local_addr().map_or(0, |p| p.port());
+
+    let my_channel = Watchable::new(WebRtcPort::new(
+        secret_key.public().clone(),
+        ChannelId::default(),
+    ));
+
+    let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig::new(
+        secret_key.clone(),
+        addr_v4.into(),
+        my_channel,
+    ));
+    let web_rtc_transports = vec![web_rtc_transport];
+
+    // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
+    match port.try_into() {
+        Ok(non_zero_port) => {
+            port_mapper.update_local_port(non_zero_port);
+        }
+        Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
+    }
+
+    Ok((web_rtc_transports, port_mapper))
+}
+
 impl Actor {
     async fn run(
         mut self,
@@ -1883,126 +2561,126 @@ impl Actor {
             let direct_addr_heartbeat_timer_tick = n0_future::future::pending();
 
             tokio::select! {
-                _ = shutdown_token.cancelled() => {
-                    debug!("shutting down");
-                    return;
+            _ = shutdown_token.cancelled() => {
+                debug!("shutting down");
+                return;
+            }
+            msg = self.msg_receiver.recv(), if !receiver_closed => {
+                let Some(msg) = msg else {
+                    trace!("tick: magicsock receiver closed");
+                    self.msock.metrics.magicsock.actor_tick_other.inc();
+
+                    receiver_closed = true;
+                    continue;
+                };
+
+                trace!(?msg, "tick: msg");
+                self.msock.metrics.magicsock.actor_tick_msg.inc();
+                self.handle_actor_message(msg, &sender).await;
+            }
+            tick = self.periodic_re_stun_timer.tick() => {
+                trace!("tick: re_stun {:?}", tick);
+                self.msock.metrics.magicsock.actor_tick_re_stun.inc();
+                self.re_stun(UpdateReason::Periodic);
+            }
+            new_addr = watcher.updated() => {
+                match new_addr {
+                    Ok(addrs) => {
+                        if !addrs.is_empty() {
+                            trace!(?addrs, "local addrs");
+                            self.msock.publish_my_addr();
+                        }
+                    }
+                    Err(_) => {
+                        warn!("local addr watcher stopped");
+                    }
                 }
-                msg = self.msg_receiver.recv(), if !receiver_closed => {
-                    let Some(msg) = msg else {
-                        trace!("tick: magicsock receiver closed");
+            }
+            report = net_report_watcher.updated() => {
+                match report {
+                    Ok((report, _)) => {
+                        self.handle_net_report_report(report);
+                        #[cfg(not(wasm_browser))]
+                        {
+                            self.periodic_re_stun_timer = new_re_stun_timer(true);
+                        }
+                    }
+                    Err(_) => {
+                        warn!("net report watcher stopped");
+                    }
+                }
+            }
+            reason = self.direct_addr_done_rx.recv() => {
+                match reason {
+                    Some(()) => {
+                        // check if a new run needs to be scheduled
+                        let state = self.netmon_watcher.get();
+                        self.direct_addr_update_state.try_run(state.into());
+                    }
+                    None => {
+                        warn!("direct addr watcher died");
+                    }
+                }
+            }
+            change = portmap_watcher_changed, if !portmap_watcher_closed => {
+                #[cfg(not(wasm_browser))]
+                {
+                    if change.is_err() {
+                        trace!("tick: portmap watcher closed");
                         self.msock.metrics.magicsock.actor_tick_other.inc();
 
-                        receiver_closed = true;
+                        portmap_watcher_closed = true;
                         continue;
-                    };
+                    }
 
-                    trace!(?msg, "tick: msg");
-                    self.msock.metrics.magicsock.actor_tick_msg.inc();
-                    self.handle_actor_message(msg).await;
+                    trace!("tick: portmap changed");
+                    self.msock.metrics.magicsock.actor_tick_portmap_changed.inc();
+                    let new_external_address = *portmap_watcher.borrow();
+                    debug!("external address updated: {new_external_address:?}");
+                    self.re_stun(UpdateReason::PortmapUpdated);
                 }
-                tick = self.periodic_re_stun_timer.tick() => {
-                    trace!("tick: re_stun {:?}", tick);
-                    self.msock.metrics.magicsock.actor_tick_re_stun.inc();
-                    self.re_stun(UpdateReason::Periodic);
-                }
-                new_addr = watcher.updated() => {
-                    match new_addr {
-                        Ok(addrs) => {
-                            if !addrs.is_empty() {
-                                trace!(?addrs, "local addrs");
-                                self.msock.publish_my_addr();
-                            }
-                        }
-                        Err(_) => {
-                            warn!("local addr watcher stopped");
-                        }
-                    }
-                }
-                report = net_report_watcher.updated() => {
-                    match report {
-                        Ok((report, _)) => {
-                            self.handle_net_report_report(report);
-                            #[cfg(not(wasm_browser))]
-                            {
-                                self.periodic_re_stun_timer = new_re_stun_timer(true);
-                            }
-                        }
-                        Err(_) => {
-                            warn!("net report watcher stopped");
-                        }
-                    }
-                }
-                reason = self.direct_addr_done_rx.recv() => {
-                    match reason {
-                        Some(()) => {
-                            // check if a new run needs to be scheduled
-                            let state = self.netmon_watcher.get();
-                            self.direct_addr_update_state.try_run(state.into());
-                        }
-                        None => {
-                            warn!("direct addr watcher died");
-                        }
-                    }
-                }
-                change = portmap_watcher_changed, if !portmap_watcher_closed => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        if change.is_err() {
-                            trace!("tick: portmap watcher closed");
-                            self.msock.metrics.magicsock.actor_tick_other.inc();
-
-                            portmap_watcher_closed = true;
-                            continue;
-                        }
-
-                        trace!("tick: portmap changed");
-                        self.msock.metrics.magicsock.actor_tick_portmap_changed.inc();
-                        let new_external_address = *portmap_watcher.borrow();
-                        debug!("external address updated: {new_external_address:?}");
-                        self.re_stun(UpdateReason::PortmapUpdated);
-                    }
-                    #[cfg(wasm_browser)]
-                    let _unused_in_browsers = change;
-                },
-                _ = direct_addr_heartbeat_timer_tick => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!(
-                            "tick: direct addr heartbeat {} direct addrs",
-                            self.msock.node_map.node_count(),
-                        );
-                        self.msock.metrics.magicsock.actor_tick_direct_addr_heartbeat.inc();
-                        // TODO: this might trigger too many packets at once, pace this
-
-                        self.msock.node_map.prune_inactive();
-                        let have_v6 = self.netmon_watcher.clone().get().have_v6;
-                        let msgs = self.msock.node_map.nodes_stayin_alive(have_v6);
-                        self.handle_ping_actions(&sender, msgs).await;
-                    }
-                }
-                state = self.netmon_watcher.updated() => {
-                    let Ok(state) = state else {
-                        trace!("tick: link change receiver closed");
-                        self.msock.metrics.magicsock.actor_tick_other.inc();
-                        continue;
-                    };
-                    let is_major = state.is_major_change(&current_netmon_state);
-                    event!(
-                        target: "iroh::_events::link_change",
-                        Level::DEBUG,
-                        ?state,
-                        is_major
+                #[cfg(wasm_browser)]
+                let _unused_in_browsers = change;
+            },
+            _ = direct_addr_heartbeat_timer_tick => {
+                #[cfg(not(wasm_browser))]
+                {
+                    trace!(
+                        "tick: direct addr heartbeat {} direct addrs",
+                        self.msock.node_map.node_count(),
                     );
-                    current_netmon_state = state;
-                    self.msock.metrics.magicsock.actor_link_change.inc();
-                    self.handle_network_change(is_major).await;
+                    self.msock.metrics.magicsock.actor_tick_direct_addr_heartbeat.inc();
+                    // TODO: this might trigger too many packets at once, pace this
+
+                    self.msock.node_map.prune_inactive();
+                    let have_v6 = self.netmon_watcher.clone().get().have_v6;
+                    let msgs = self.msock.node_map.nodes_stayin_alive(have_v6);
+                    self.handle_ping_actions(&sender, msgs).await;
                 }
-                // Even if `discovery_events` yields `None`, it could begin to yield
-                // `Some` again in the future, so we don't want to disable this branch
-                // forever like we do with the other branches that yield `Option`s
-                Some(discovery_item) = discovery_events.next() => {
-                    trace!("tick: discovery event, address discovered: {discovery_item:?}");
-                    if let DiscoveryEvent::Discovered(discovery_item) = &discovery_item {
+            }
+            state = self.netmon_watcher.updated() => {
+                let Ok(state) = state else {
+                    trace!("tick: link change receiver closed");
+                    self.msock.metrics.magicsock.actor_tick_other.inc();
+                    continue;
+                };
+                let is_major = state.is_major_change(&current_netmon_state);
+                event!(
+                    target: "iroh::_events::link_change",
+                    Level::DEBUG,
+                    ?state,
+                    is_major
+                );
+                current_netmon_state = state;
+                self.msock.metrics.magicsock.actor_link_change.inc();
+                self.handle_network_change(is_major).await;
+            }
+            // Even if `discovery_events` yields `None`, it could begin to yield
+            // `Some` again in the future, so we don't want to disable this branch
+            // forever like we do with the other branches that yield `Option`s
+            Some(discovery_item) = discovery_events.next() => {
+                trace!("tick: discovery event, address discovered: {discovery_item:?}");
+                if let DiscoveryEvent::Discovered(discovery_item) = &discovery_item {
                         let provenance = discovery_item.provenance();
                         let node_addr = discovery_item.to_node_addr();
                         if let Err(e) = self.msock.add_node_addr(
@@ -2014,15 +2692,17 @@ impl Actor {
                             warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                         }
                     }
+                // Send the discovery item to the subscribers of the discovery broadcast stream.
+                self.msock.discovery_subscribers.send(discovery_item);
+            }
+            Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
 
-                    // Send the discovery item to the subscribers of the discovery broadcast stream.
-                    self.msock.discovery_subscribers.send(discovery_item);
+                if let Err(err) = self.msock.send_msg(&sender, dst.clone(), dst_key, msg).await {
+                    warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
                 }
-                Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
-                    if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
-                        warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
-                    }
-                }
+
+            }
+
             }
         }
     }
@@ -2060,7 +2740,7 @@ impl Actor {
     /// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
-    async fn handle_actor_message(&mut self, msg: ActorMessage) {
+    async fn handle_actor_message(&mut self, msg: ActorMessage, sender: &UdpSender) {
         match msg {
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.msock.node_map.notify_ping_timeout(id, txid);
@@ -2080,9 +2760,179 @@ impl Actor {
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major).await;
             }
+            ActorMessage::SendIceCandidate {
+                dst,
+                dst_key,
+                ice_candidate,
+            } => {
+                self.send_ice_candidate_to_peer(&sender, dst, dst_key, ice_candidate)
+                    .await;
+            }
+            ActorMessage::AddIceCandidate {
+                received_from,
+                ice_candidate,
+            } => {
+                self.add_ice_candidate_from_remote(received_from, ice_candidate)
+                    .await;
+            }
+            ActorMessage::SendWebRtcOffer(dest) => {
+                if let Err(e) = self.send_webrtc_offer(dest, &sender).await {
+                    println!("Error sending webrtc offer {:?}", e);
+                }
+            }
+            ActorMessage::SendWebRtcAnswer(offer) => self.send_webrtc_answer(offer, &sender).await,
+            ActorMessage::AddWebRtcIceCandidate => todo!(),
         }
     }
 
+    async fn send_webrtc_offer(
+        &mut self,
+        dest: PublicKey,
+        sender: &UdpSender,
+    ) -> Result<(), WebRtcError> {
+        let peer_node = dest.clone();
+
+        let dst = self
+            .msock
+            .node_map
+            .get_quic_mapped_addr_for_node_key(dest)
+            .expect("Could not find mapped addr for node key");
+
+        let mut active_paths = Vec::new();
+        match self.msock.node_map.get_send_addrs(
+            dst,
+            self.msock.ipv6_reported.load(Ordering::Relaxed),
+            &self.msock.metrics.magicsock,
+        ) {
+            Some((node_id, udp_addr, relay_url, ping_actions)) => {
+                if !ping_actions.is_empty() {
+                    // self.try_send_ping_actions(udp_sender, ping_actions).ok();
+                    println!("Sending ping actions: {:?}", ping_actions);
+                }
+                if let Some(addr) = udp_addr {
+                    active_paths.push(transports::Addr::from(addr));
+                }
+                if let Some(url) = relay_url {
+                    active_paths.push(transports::Addr::Relay(url, node_id));
+                }
+            }
+            None => {
+                error!(%dest, "no NodeState for mapped address");
+            }
+        }
+
+        for destination in active_paths {
+            let send_addr = match &destination {
+                transports::Addr::Ip(socket_addr) => SendAddr::Udp(socket_addr.clone().into()),
+                transports::Addr::Relay(relay_url, public_key) => {
+                    SendAddr::Relay(relay_url.clone())
+                }
+                transports::Addr::WebRtc(web_rtc_port) => SendAddr::WebRtc(web_rtc_port.clone()),
+            };
+
+            if let Ok(offer) = self.msock.create_offer(peer_node.clone(), send_addr).await {
+                // Package the msg as Receive offer, remote node will handle it at receive offer
+
+                let msg = disco::Message::ReceiveOffer(WebRtcOffer { offer });
+
+                let pkt = self.msock.disco.encode_and_seal(
+                    self.msock.public_key,
+                    peer_node.clone(),
+                    &msg,
+                );
+
+                let transmit = transports::Transmit {
+                    contents: &pkt,
+                    ecn: None,
+                    segment_size: None,
+                };
+
+                sender
+                    .send(&destination, None, &transmit)
+                    .await
+                    .map_err(|_| WebRtcError::OfferCreationFailed)?
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn send_webrtc_answer(&self, offer: ReceiveOffer, sender: &UdpSender) {
+        let ReceiveOffer {
+            id,
+            dst,
+            dst_node,
+            tx_id,
+            purpose,
+            offer,
+        } = offer;
+
+        let peer_node = dst_node;
+        let offer = offer.clone();
+
+        if let Ok(answer) = self
+            .msock
+            .create_answer(peer_node, dst.clone(), offer.clone())
+            .await
+        {
+            //Send receive answer as the another peer will handle this .. and view it has receive answer
+            let msg = disco::Message::ReceiveAnswer(WebRtcAnswer {
+                answer,
+                received_offer: offer.offer,
+            });
+
+            println!("Sending webrtc answer to {:?}", dst);
+
+            if let Err(e) = self
+                .msock
+                .send_disco_message(sender, dst, peer_node, msg)
+                .await
+            {
+                println!("Error sending disco answer {:?}", e);
+            }
+        }
+    }
+
+    async fn add_ice_candidate_from_remote(
+        &self,
+        received_from: PublicKey,
+        ice_candidate: PlatformIceCandidateType,
+    ) {
+        let webrtc_senders = self.msock.webrtc_actor_sender.clone();
+
+        for webrtc_sender in &webrtc_senders {
+            match webrtc_sender
+                .sender()
+                .send(WebRtcActorMessage::AddIceCandidate {
+                    peer_node: received_from,
+                    candidate: ice_candidate.clone(),
+                })
+                .await
+            {
+                Ok(_) => {
+                    // println!("Ice candidates from remote passed to webrtc actor")
+                }
+                Err(err) => println!(
+                    "Ice candidates from remote passed to webrtc actor: Err ({:?})",
+                    err
+                ),
+            }
+        }
+    }
+
+    async fn send_ice_candidate_to_peer(
+        &self,
+        sender: &UdpSender,
+        dst: SendAddr,
+        dst_key: PublicKey,
+        ice_candidate: PlatformIceCandidateType,
+    ) {
+        let msg = disco::Message::WebRtcIceCandidate(ice_candidate);
+        let _ = self
+            .msock
+            .send_ice_candidate_to_remote_peer(sender, dst, dst_key, msg)
+            .await;
+    }
     /// Updates the direct addresses of this magic socket.
     ///
     /// Updates the [`DiscoveredDirectAddrs`] of this [`MagicSock`] with the current set of
@@ -2469,6 +3319,15 @@ fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
         disco::Message::CallMeMaybe(_) => {
             metrics.sent_disco_call_me_maybe.inc();
         }
+        disco::Message::ReceiveOffer(_) => {
+            metrics.recv_disco_webrtc_offer.inc();
+        }
+        disco::Message::ReceiveAnswer(_) => {
+            metrics.sent_disco_webrtc_answer.inc();
+        }
+        disco::Message::WebRtcIceCandidate(_) => {
+            metrics.send_disco_webrtc_ice_candidate.inc();
+        }
     }
 }
 
@@ -2524,6 +3383,12 @@ impl Display for DirectAddrType {
             DirectAddrType::Qad4LocalPort => write!(f, "qad4localport"),
         }
     }
+}
+
+fn hash_datagram_default(datagram: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    datagram.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(test)]
@@ -2669,6 +3534,8 @@ mod tests {
                     node_id: me.public(),
                     relay_url: None,
                     direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
+                    channel_id: None,
+                    webrtc_info: None,
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -3234,6 +4101,8 @@ mod tests {
                 .into_iter()
                 .map(|x| x.addr)
                 .collect(),
+            channel_id: None,
+            webrtc_info: None,
         };
         msock_1
             .add_node_addr(
@@ -3301,6 +4170,8 @@ mod tests {
                 node_id: node_id_2,
                 relay_url: None,
                 direct_addresses: Default::default(),
+                channel_id: None,
+                webrtc_info: None,
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -3345,6 +4216,8 @@ mod tests {
                     .into_iter()
                     .map(|x| x.addr)
                     .collect(),
+                channel_id: None,
+                webrtc_info: None,
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -3386,6 +4259,8 @@ mod tests {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: None,
             direct_addresses: Default::default(),
+            channel_id: None,
+            webrtc_info: None,
         };
         let err = stack
             .endpoint
@@ -3403,6 +4278,8 @@ mod tests {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: Default::default(),
+            channel_id: None,
+            webrtc_info: None,
         };
         stack
             .endpoint
@@ -3415,6 +4292,8 @@ mod tests {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: None,
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+            channel_id: None,
+            webrtc_info: None,
         };
         stack
             .endpoint
@@ -3427,6 +4306,8 @@ mod tests {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+            channel_id: None,
+            webrtc_info: None,
         };
         stack
             .endpoint

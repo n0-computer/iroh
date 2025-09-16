@@ -1002,6 +1002,8 @@ mod tests {
             node_id: ep1.node_id(),
             relay_url: None,
             direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
+            channel_id: None,
+            webrtc_info: None,
         };
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
         Ok(())
@@ -1188,6 +1190,8 @@ mod test_dns_pkarr {
             node_id,
             relay_url,
             direct_addresses: Default::default(),
+            channel_id: None,
+            webrtc_info: None,
         };
 
         assert_eq!(resolved.to_node_addr(), expected_addr);

@@ -17,7 +17,7 @@ use std::{
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, mpsc},
     task::Poll,
 };
 
@@ -42,7 +42,10 @@ use crate::{
         DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
         Lagged, UserData, pkarr::PkarrPublisher,
     },
-    magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
+    magicsock::{
+        self, Handle, NodeIdMappedAddr, OwnAddressSnafu,
+        transports::webrtc::{WebRtcError, actor::WebRtcSendItem},
+    },
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -51,6 +54,12 @@ use crate::{
 mod rtt_actor;
 
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
+use self::rtt_actor::RttMessage;
+pub use super::magicsock::{
+    AddNodeAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
+    RemoteInfo, Source,
+};
+use crate::magicsock::transports::TransportMode;
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
@@ -65,12 +74,6 @@ pub use quinn_proto::{
         AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
         ServerConfig as CryptoServerConfig, UnsupportedVersion,
     },
-};
-
-use self::rtt_actor::RttMessage;
-pub use super::magicsock::{
-    AddNodeAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    RemoteInfo, Source,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -210,6 +213,67 @@ impl Builder {
         };
 
         Endpoint::bind(static_config, msock_opts).await
+    }
+
+    /// Binds the magic webrtc endpoint
+    pub async fn bind_transport(
+        self,
+        transport_mode: TransportMode,
+    ) -> Result<Endpoint, BindError> {
+        let relay_map = self.relay_mode.relay_map();
+        let secret_key = self
+            .secret_key
+            .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
+        let static_config = StaticConfig {
+            transport_config: Arc::new(self.transport_config),
+            tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
+            keylog: self.keylog,
+        };
+        let server_config = static_config.create_server_config(self.alpn_protocols);
+
+        #[cfg(not(wasm_browser))]
+        let dns_resolver = self.dns_resolver.unwrap_or_default();
+
+        let discovery: Option<Box<dyn Discovery>> = {
+            let context = DiscoveryContext {
+                secret_key: &secret_key,
+                #[cfg(not(wasm_browser))]
+                dns_resolver: &dns_resolver,
+            };
+            let discovery = self
+                .discovery
+                .into_iter()
+                .map(|builder| builder.into_discovery(&context))
+                .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
+            match discovery.len() {
+                0 => None,
+                1 => Some(discovery.into_iter().next().expect("checked length")),
+                _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
+            }
+        };
+
+        let metrics = EndpointMetrics::default();
+
+        let msock_opts = magicsock::Options {
+            addr_v4: self.addr_v4,
+            addr_v6: self.addr_v6,
+            secret_key,
+            relay_map,
+            node_map: self.node_map,
+            discovery,
+            discovery_user_data: self.discovery_user_data,
+            proxy_url: self.proxy_url,
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+            server_config,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: self.path_selection,
+            metrics,
+        };
+
+        Endpoint::bind_transport_mode(static_config, msock_opts, transport_mode).await
     }
 
     // # The very common methods everyone basically needs.
@@ -656,6 +720,26 @@ impl Endpoint {
         Ok(ep)
     }
 
+    ///Returns Build for an endpoint[`Endpoint`], with required transport
+    #[instrument("ep", skip_all, fields(me = %static_config.tls_config.secret_key.public().fmt_short()))]
+    async fn bind_transport_mode(
+        static_config: StaticConfig,
+        msock_opts: magicsock::Options,
+        transport_mode: TransportMode,
+    ) -> Result<Self, BindError> {
+        let msock = magicsock::MagicSock::spawn_transport_mode(msock_opts, transport_mode).await?;
+        trace!("created magicsock");
+        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+
+        let metrics = msock.metrics.magicsock.clone();
+        let ep = Self {
+            msock,
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
+            static_config: Arc::new(static_config),
+        };
+        Ok(ep)
+    }
+
     /// Sets the list of accepted ALPN protocols.
     ///
     /// This will only affect new incoming connections.
@@ -701,6 +785,14 @@ impl Endpoint {
             .await?;
         let conn = connecting.await?;
 
+        //Now try to setup webrtc p2p connection
+
+        match self.msock.intiate_webrtc_offer(remote).await {
+            Ok(_) => {
+                println!("Successfully initiated webrtc offer")
+            }
+            Err(err) => println!("Error initiating webrtc offer: {}", err),
+        }
         debug!(
             me = %self.node_id().fmt_short(),
             remote = %remote.fmt_short(),
@@ -941,7 +1033,6 @@ impl Endpoint {
                     NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
                 }),
             })
-            .expect("watchable is alive - cannot be disconnected yet")
     }
 
     /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.

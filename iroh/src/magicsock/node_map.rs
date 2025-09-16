@@ -3,9 +3,10 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
+    vec,
 };
 
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, WebRtcPort};
 use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
@@ -13,17 +14,23 @@ use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options, PingHandled};
 use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
-use crate::disco::{CallMeMaybe, Pong, SendAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
+use crate::{
+    disco::{CallMeMaybe, IceCandidate, Pong, SendAddr, WebRtcAnswer, WebRtcOffer},
+    magicsock::transports::webrtc::actor::PlatformIceCandidateType,
+};
 
 mod node_state;
 mod path_state;
 mod path_validity;
 mod udp_paths;
 
+use crate::magicsock::transports::Addr;
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
+pub(super) use node_state::{
+    DiscoPingPurpose, PingAction, PingRole, ReceiveOffer, SendOffer, SendPing,
+};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -55,6 +62,7 @@ pub(super) struct NodeMap {
 pub(super) struct NodeMapInner {
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
+    by_webrtc_port: HashMap<WebRtcPort, usize>,
     by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
     by_id: HashMap<usize, NodeState>,
     next_id: usize,
@@ -72,6 +80,7 @@ enum NodeStateKey {
     NodeId(NodeId),
     NodeIdMappedAddr(NodeIdMappedAddr),
     IpPort(IpPort),
+    WebRtcPort(WebRtcPort),
 }
 
 /// The origin or *source* through which an address associated with a remote node
@@ -115,6 +124,8 @@ pub enum Source {
         /// The name of the application that added the node
         name: String,
     },
+    /// A node communicated with us via webrtc
+    WebRtc,
 }
 
 impl NodeMap {
@@ -173,7 +184,9 @@ impl NodeMap {
             .expect("poisoned")
             .receive_relay(relay_url, src)
     }
-
+    pub(crate) fn receive_webrtc(&self, port: WebRtcPort) -> NodeIdMappedAddr {
+        self.inner.lock().expect("poisoned").receive_webrtc(port)
+    }
     pub(super) fn notify_ping_sent(
         &self,
         id: usize,
@@ -246,6 +259,45 @@ impl NodeMap {
             .lock()
             .expect("poisoned")
             .handle_call_me_maybe(sender, cm, metrics)
+    }
+
+    #[must_use = "actions must be completed"]
+    pub(super) fn handle_webrtc_offer(
+        &self,
+        sender: PublicKey,
+        offer: WebRtcOffer,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_webrtc_offer(sender, offer, metrics)
+    }
+
+    #[must_use = "actions must be completed"]
+    pub(super) fn handle_webrtc_answer(
+        &self,
+        sender: PublicKey,
+        offer: WebRtcAnswer,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_webrtc_answer(sender, offer, metrics)
+    }
+
+    #[must_use = "actions must be completed"]
+    pub(super) fn handle_remote_ice_candidate(
+        &self,
+        sender: PublicKey,
+        candidate: PlatformIceCandidateType,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_remote_ice_candidate(sender, candidate, metrics)
     }
 
     #[allow(clippy::type_complexity)]
@@ -356,11 +408,13 @@ impl NodeMapInner {
         let source0 = source.clone();
         let node_id = node_addr.node_id;
         let relay_url = node_addr.relay_url.clone();
+        let webrtc_channel = node_addr.channel_id.clone();
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url,
+            webrtc_channel,
             active: false,
             source,
             #[cfg(any(test, feature = "test-utils"))]
@@ -414,6 +468,7 @@ impl NodeMapInner {
             NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
             NodeStateKey::NodeIdMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
             NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
+            NodeStateKey::WebRtcPort(port) => self.by_webrtc_port.get(&port).copied(),
         }
     }
 
@@ -467,9 +522,37 @@ impl NodeMapInner {
                 source: Source::Relay,
                 #[cfg(any(test, feature = "test-utils"))]
                 path_selection,
+                webrtc_channel: None,
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
+        *node_state.quic_mapped_addr()
+    }
+
+    #[instrument(skip_all, fields(src = %port))]
+    fn receive_webrtc(&mut self, port: WebRtcPort) -> NodeIdMappedAddr {
+        #[cfg(any(test, feature = "test-utils"))]
+        let path_selection = self.path_selection;
+
+        let src_node = port.node_id;
+        let channel_id = port.channel_id;
+
+        // First, try to find existing node by NodeId
+        let node_state = self.get_or_insert_with(NodeStateKey::WebRtcPort(port), || {
+            trace!("WebRTC packets from unknown node, insert into node map");
+            Options {
+                node_id: src_node,
+                relay_url: None,
+                active: true,
+                source: Source::WebRtc,
+                #[cfg(any(test, feature = "test-utils"))]
+                path_selection,
+                webrtc_channel: Some(channel_id),
+            }
+        });
+
+        node_state.receive_webrtc(port.clone(), Instant::now());
+
         *node_state.quic_mapped_addr()
     }
 
@@ -546,6 +629,72 @@ impl NodeMapInner {
         }
     }
 
+    pub(crate) fn handle_webrtc_offer(
+        &mut self,
+        sender: NodeId,
+        offer: WebRtcOffer,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        let ns_id = NodeStateKey::NodeId(sender);
+
+        //for other transport we have updated the node state, I think we shall update cerficate of the node here
+        match self.get_mut(ns_id) {
+            None => {
+                println!("certificate for this does not exist: Unknown node");
+                metrics.recv_disco_webrtc_offer.inc();
+                vec![]
+            }
+            Some(ns) => {
+                // debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
+                println!("Certificate for this node already exists");
+                ns.handle_webrtc_offer(sender, offer)
+            }
+        }
+    }
+
+    pub(super) fn handle_webrtc_answer(
+        &mut self,
+        sender: PublicKey,
+        answer: WebRtcAnswer,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        let ns_id = NodeStateKey::NodeId(sender);
+        //for other transport we have updated the node state, I think we shall update cerficate of the node here
+        match self.get_mut(ns_id) {
+            None => {
+                // println!("certificate for this does not exist: Unknown node");
+                metrics.recv_disco_webrtc_answer.inc();
+                vec![]
+            }
+            Some(ns) => {
+                // debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
+                // println!("Certificate for this node already exists");
+                ns.handle_webrtc_answer(sender, answer)
+            }
+        }
+    }
+
+    pub(super) fn handle_remote_ice_candidate(
+        &mut self,
+        sender: PublicKey,
+        candidate: PlatformIceCandidateType,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+        let ns_id = NodeStateKey::NodeId(sender);
+
+        match self.get_mut(ns_id) {
+            None => {
+                println!("did not received ice candidate from this node!");
+                metrics.recv_disco_webrtc_ice_candidate.inc();
+                vec![]
+            }
+            Some(ns) => {
+                // println!("Received ice candidate for this node: Alreay exists");
+                ns.handle_remote_ice_candidate(sender, candidate)
+            }
+        }
+    }
+
     fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
@@ -559,6 +708,7 @@ impl NodeMapInner {
             Options {
                 node_id: sender,
                 relay_url: src.relay_url(),
+                webrtc_channel: src.webrtc_channel(),
                 active: true,
                 source,
                 #[cfg(any(test, feature = "test-utils"))]
@@ -619,6 +769,10 @@ impl NodeMapInner {
         let ipp = ipp.into();
         trace!(?ipp, ?id, "set endpoint for ip:port");
         self.by_ip_port.insert(ipp, id);
+    }
+
+    fn set_node_state_for_webrtc_port(&mut self, port: WebRtcPort, id: usize) {
+        self.by_webrtc_port.insert(port, id);
     }
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
@@ -813,6 +967,7 @@ mod tests {
                     name: "test".into(),
                 },
                 path_selection: PathSelection::default(),
+                webrtc_channel: None,
             })
             .id();
 
