@@ -1,4 +1,3 @@
-use crate::magicsock::transports::webrtc::actor::{PlatformRtcConfig, WebRtcActorMessage};
 use crate::{
     disco::WebRtcOffer,
     magicsock::transports::webrtc::{
