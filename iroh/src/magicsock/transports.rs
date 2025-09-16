@@ -13,6 +13,10 @@ use relay::{RelayNetworkChangeSender, RelaySender};
 use tokio::sync::mpsc;
 use tracing::{debug, error, instrument, trace, warn};
 
+use crate::net_report::Report;
+
+use super::{MagicSock, mapped_addrs::MultipathMappedAddr, node_map::NodeStateMessage};
+
 #[cfg(not(wasm_browser))]
 mod ip;
 mod relay;
@@ -21,9 +25,8 @@ mod relay;
 pub(crate) use self::ip::IpTransport;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpSender};
+
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
-use super::{MagicSock, node_map::NodeStateMessage};
-use crate::{magicsock::MultipathMappedAddr, net_report::Report};
 
 /// Manages the different underlying data transports that the magicsock
 /// can support.

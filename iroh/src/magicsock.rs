@@ -22,7 +22,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::{
         Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -42,7 +42,6 @@ use netwatch::netmon;
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{ServerConfig, WeakConnectionHandle};
 use rand::Rng;
-use relay_mapped_addrs::{RelayAddrMap, RelayMappedAddr};
 use snafu::{ResultExt, Snafu};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -75,17 +74,16 @@ use crate::{
 };
 
 mod metrics;
-mod relay_mapped_addrs;
 
+pub(crate) mod mapped_addrs;
 pub(crate) mod node_map;
 pub(crate) mod transports;
 
-pub use node_map::Source;
+use mapped_addrs::{NodeIdMappedAddr, RelayAddrMap};
 
-pub use self::{
-    metrics::Metrics,
-    node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
-};
+pub use metrics::Metrics;
+pub use node_map::Source;
+pub use node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
 
 /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -631,6 +629,8 @@ impl MagicSock {
     ///
     /// This fixes up the datagrams to use the correct [`MultipathMappedAddr`] and extracts
     /// DISCO packets, processing them inside the magic socket.
+    ///
+    /// [`MultipathMappedAddr`]: mapped_addrs::MultipathMappedAddr
     fn process_datagrams(
         &self,
         bufs: &mut [io::IoSliceMut<'_>],
@@ -991,41 +991,6 @@ impl MagicSock {
 
             let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
             discovery.publish(&data);
-        }
-    }
-}
-
-/// Definies the translation of addresses in quinn land vs iroh land.
-///
-/// This is necessary, because quinn can only reason about `SocketAddr`s.
-#[derive(Clone, Debug)]
-pub(crate) enum MultipathMappedAddr {
-    /// Used for the initial connection.
-    ///
-    /// - Only used for sending
-    /// - This means send on all known paths/transports
-    Mixed(NodeIdMappedAddr),
-    /// Relay based transport address
-    Relay(RelayMappedAddr),
-    /// IP based transport address
-    #[cfg(not(wasm_browser))]
-    Ip(SocketAddr),
-}
-
-impl From<SocketAddr> for MultipathMappedAddr {
-    fn from(value: SocketAddr) -> Self {
-        match value.ip() {
-            IpAddr::V4(_) => Self::Ip(value),
-            IpAddr::V6(addr) => {
-                if let Ok(addr) = NodeIdMappedAddr::try_from(addr) {
-                    return Self::Mixed(addr);
-                }
-                #[cfg(not(wasm_browser))]
-                if let Ok(addr) = RelayMappedAddr::try_from(addr) {
-                    return Self::Relay(addr);
-                }
-                Self::Ip(value)
-            }
         }
     }
 }
@@ -2217,90 +2182,6 @@ impl DiscoveredDirectAddrs {
             .map(|da| da.addr)
             .collect();
         disco::CallMeMaybe { my_numbers }
-    }
-}
-
-/// An address used by the QUIC layer to address a node on any or all paths.
-///
-/// This is only used for initially connecting to a remote node.  We instruct Quinn to send
-/// to this address, and duplicate all packets for this address to send on all paths we
-/// might want to send the initial on:
-///
-/// - If this the first connection to the remote node we don't know which path will work and
-///   send to all of them.
-///
-/// - If there already is an active connection to this node we now which path to use.
-///
-/// It is but a newtype around an IPv6 Unique Local Addr.  And in our QUIC-facing socket
-/// APIs like [`quinn::AsyncUdpSocket`] it comes in as the inner [`Ipv6Addr`], in those
-/// interfaces we have to be careful to do the conversion to this type.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
-
-/// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to convert"))]
-pub struct AllPathsMappedAddrError;
-
-/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
-static ALL_PATHS_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-impl NodeIdMappedAddr {
-    /// The Prefix/L of our Unique Local Addresses.
-    const ADDR_PREFIXL: u8 = 0xfd;
-    /// The Global ID used in our Unique Local Addresses.
-    const ADDR_GLOBAL_ID: [u8; 5] = [21, 7, 10, 81, 11];
-    /// The Subnet ID used in our Unique Local Addresses.
-    const ADDR_SUBNET: [u8; 2] = [0; 2];
-
-    /// The dummy port used for all [`NodeIdMappedAddr`]s.
-    const MAPPED_PORT: u16 = 12345;
-
-    /// Generates a globally unique fake UDP address.
-    ///
-    /// This generates and IPv6 Unique Local Address according to RFC 4193.
-    pub(crate) fn generate() -> Self {
-        let mut addr = [0u8; 16];
-        addr[0] = Self::ADDR_PREFIXL;
-        addr[1..6].copy_from_slice(&Self::ADDR_GLOBAL_ID);
-        addr[6..8].copy_from_slice(&Self::ADDR_SUBNET);
-
-        let counter = ALL_PATHS_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        addr[8..16].copy_from_slice(&counter.to_be_bytes());
-
-        Self(Ipv6Addr::from(addr))
-    }
-
-    /// Returns a consistent [`SocketAddr`] for the [`NodeIdMappedAddr`].
-    ///
-    /// This socket address does not have a routable IP address.
-    ///
-    /// This uses a made-up port number, since the port does not play a role in looking up
-    /// the node in the [`NodeMap`].  This socket address is only to be used to pass into
-    /// Quinn.
-    pub(crate) fn private_socket_addr(&self) -> SocketAddr {
-        SocketAddr::new(IpAddr::from(self.0), Self::MAPPED_PORT)
-    }
-}
-
-impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
-    type Error = AllPathsMappedAddrError;
-
-    fn try_from(value: Ipv6Addr) -> Result<Self, Self::Error> {
-        let octets = value.octets();
-        if octets[0] == Self::ADDR_PREFIXL
-            && octets[1..6] == Self::ADDR_GLOBAL_ID
-            && octets[6..8] == Self::ADDR_SUBNET
-        {
-            return Ok(Self(value));
-        }
-        Err(AllPathsMappedAddrError)
-    }
-}
-
-impl std::fmt::Display for NodeIdMappedAddr {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "NodeIdMappedAddr({})", self.0)
     }
 }
 

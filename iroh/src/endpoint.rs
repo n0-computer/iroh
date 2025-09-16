@@ -62,7 +62,7 @@ use crate::{
         DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
         Lagged, UserData, pkarr::PkarrPublisher,
     },
-    magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
+    magicsock::{self, Handle, OwnAddressSnafu, mapped_addrs::NodeIdMappedAddr},
     metrics::EndpointMetrics,
     net_report::Report,
     tls,

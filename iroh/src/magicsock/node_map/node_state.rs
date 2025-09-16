@@ -25,7 +25,8 @@ use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
     magicsock::{
-        HEARTBEAT_INTERVAL, MagicsockMetrics, NodeIdMappedAddr,
+        HEARTBEAT_INTERVAL, MagicsockMetrics,
+        mapped_addrs::NodeIdMappedAddr,
         node_map::path_validity::PathValidity,
         transports::{self, OwnedTransmit, TransportsSender},
     },

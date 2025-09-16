@@ -18,7 +18,7 @@ use super::transports::TransportsSender;
 #[cfg(not(any(test, feature = "test-utils")))]
 use super::transports::TransportsSender;
 use super::{
-    NodeIdMappedAddr,
+    mapped_addrs::NodeIdMappedAddr,
     metrics::Metrics,
     transports::{self, OwnedTransmit},
 };
