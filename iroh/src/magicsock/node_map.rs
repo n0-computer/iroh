@@ -1,4 +1,3 @@
-#[cfg(any(test, feature = "test-utils"))]
 use std::sync::Arc;
 use std::{
     collections::{BTreeSet, HashMap, hash_map::Entry},
@@ -15,13 +14,14 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options};
+use super::mapped_addrs::{AddrMap, RelayMappedAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use super::transports::TransportsSender;
 #[cfg(not(any(test, feature = "test-utils")))]
 use super::transports::TransportsSender;
 use super::{
     MagicsockMetrics,
-    mapped_addrs::{NodeIdAddrMap, NodeIdMappedAddr},
+    mapped_addrs::NodeIdMappedAddr,
     transports::{self, OwnedTransmit},
 };
 use crate::disco::CallMeMaybe;
@@ -62,7 +62,9 @@ const MAX_INACTIVE_NODES: usize = 30;
 pub(super) struct NodeMap {
     inner: Mutex<NodeMapInner>,
     /// The mapping between [`NodeId`]s and [`NodeIdMappedAddr`]s.
-    pub(super) node_mapped_addrs: NodeIdAddrMap,
+    pub(super) node_mapped_addrs: AddrMap<NodeId, NodeIdMappedAddr>,
+    /// The mapping between nodes via a relay and their [`RelayMappedAddr`]s.
+    pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, NodeId), RelayMappedAddr>,
 }
 
 #[derive(Debug)]
@@ -173,6 +175,7 @@ impl NodeMap {
         Self {
             inner: Mutex::new(inner),
             node_mapped_addrs: Default::default(),
+            relay_mapped_addrs: Default::default(),
         }
     }
 

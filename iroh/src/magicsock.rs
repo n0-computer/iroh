@@ -52,13 +52,6 @@ use transports::{LocalAddrsWatch, MagicTransport};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
-use self::transports::IpTransport;
-use self::{
-    metrics::Metrics as MagicsockMetrics,
-    node_map::{NodeMap, PingAction},
-    transports::{RelayActorConfig, RelayTransport, Transports, TransportsSender},
-};
-#[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
@@ -73,13 +66,21 @@ use crate::{
     net_report::{self, IfStateDetails, Report},
 };
 
+#[cfg(not(wasm_browser))]
+use self::transports::IpTransport;
+use self::{
+    metrics::Metrics as MagicsockMetrics,
+    node_map::{NodeMap, PingAction},
+    transports::{RelayActorConfig, RelayTransport, Transports, TransportsSender},
+};
+
 mod metrics;
 
 pub(crate) mod mapped_addrs;
 pub(crate) mod node_map;
 pub(crate) mod transports;
 
-use mapped_addrs::{NodeIdMappedAddr, RelayAddrMap};
+use mapped_addrs::{MappedAddr, NodeIdMappedAddr};
 
 pub use metrics::Metrics;
 pub use node_map::Source;
@@ -204,8 +205,6 @@ pub(crate) struct MagicSock {
     /// Tracks existing connections
     connection_map: ConnectionMap,
 
-    /// Tracks the mapped IP addresses
-    relay_mapped_addrs: RelayAddrMap,
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
     /// Currently bound IP addresses of all sockets
@@ -462,9 +461,8 @@ impl MagicSock {
             self.node_map
                 .add_node_addr(addr.clone(), source, &self.metrics.magicsock);
 
-            if let Some(url) = addr.relay_url() {
-                self.relay_mapped_addrs
-                    .get_or_register(url.clone(), addr.node_id);
+            if let Some(url) = addr.relay_url().cloned() {
+                self.node_map.relay_mapped_addrs.get(&(url, addr.node_id));
             }
 
             // Add paths to the existing connections
@@ -763,8 +761,9 @@ impl MagicSock {
                         // Relay
                         let _quic_mapped_addr = self.node_map.receive_relay(src_url, *src_node);
                         let mapped_addr = self
+                            .node_map
                             .relay_mapped_addrs
-                            .get_or_register(src_url.clone(), *src_node);
+                            .get(&(src_url.clone(), *src_node));
                         quinn_meta.addr = mapped_addr.private_socket_addr();
                     }
                 }
@@ -1177,8 +1176,6 @@ impl Handle {
         let (ip_transports, port_mapper) =
             bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
 
-        let relay_mapped_addrs = RelayAddrMap::default();
-
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
         let my_relay = Watchable::new(None);
@@ -1235,7 +1232,6 @@ impl Handle {
             ipv6_reported,
             node_map,
             connection_map: Default::default(),
-            relay_mapped_addrs,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
@@ -1515,66 +1511,6 @@ enum DiscoBoxError {
         source: Box<disco::ParseError>,
     },
 }
-
-// #[derive(Debug)]
-// struct MagicUdpSocket {
-//     socket: Arc<MagicSock>,
-//     transports: Transports,
-// }
-
-// impl AsyncUdpSocket for MagicUdpSocket {
-//     fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
-//         Box::pin(self.transports.create_sender(self.socket.clone()))
-//     }
-
-//     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
-//     fn poll_recv(
-//         &mut self,
-//         cx: &mut Context,
-//         bufs: &mut [io::IoSliceMut<'_>],
-//         metas: &mut [quinn_udp::RecvMeta],
-//     ) -> Poll<io::Result<usize>> {
-//         self.transports.poll_recv(cx, bufs, metas, &self.socket)
-//     }
-
-//     #[cfg(not(wasm_browser))]
-//     fn local_addr(&self) -> io::Result<SocketAddr> {
-//         let addrs: Vec<_> = self
-//             .transports
-//             .local_addrs()
-//             .into_iter()
-//             .filter_map(|addr| {
-//                 let addr: SocketAddr = addr.into_socket_addr()?;
-//                 Some(addr)
-//             })
-//             .collect();
-
-//         if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
-//             return Ok(*addr);
-//         }
-//         if let Some(SocketAddr::V4(addr)) = addrs.first() {
-//             // Pretend to be IPv6, because our `MappedAddr`s need to be IPv6.
-//             let ip = addr.ip().to_ipv6_mapped().into();
-//             return Ok(SocketAddr::new(ip, addr.port()));
-//         }
-
-//         Err(io::Error::other("no valid address available"))
-//     }
-
-//     #[cfg(wasm_browser)]
-//     fn local_addr(&self) -> io::Result<SocketAddr> {
-//         // Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
-//         Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
-//     }
-
-//     fn max_receive_segments(&self) -> usize {
-//         self.transports.max_receive_segments()
-//     }
-
-//     fn may_fragment(&self) -> bool {
-//         self.transports.may_fragment()
-//     }
-// }
 
 #[derive(Debug)]
 enum ActorMessage {
@@ -2270,7 +2206,6 @@ mod tests {
     use tracing::{Instrument, error, info, info_span, instrument};
     use tracing_test::traced_test;
 
-    use super::{NodeIdMappedAddr, Options};
     use crate::{
         Endpoint, RelayMap, RelayMode, SecretKey,
         dns::DnsResolver,
@@ -2278,6 +2213,8 @@ mod tests {
         magicsock::{Handle, MagicSock, node_map},
         tls,
     };
+
+    use super::{NodeIdMappedAddr, Options, mapped_addrs::MappedAddr};
 
     const ALPN: &[u8] = b"n0/test/1";
 

@@ -666,7 +666,7 @@ impl quinn::UdpSender for MagicSender {
                 // TODO: Would be nicer to log the NodeId of this, but we only get an actor
                 //   sender for it.
                 tracing::Span::current().record("dst", tracing::field::debug(&mapped_addr));
-                let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(mapped_addr)
+                let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(&mapped_addr)
                 else {
                     error!("unknown NodeIdMappedAddr, dropped transmit");
                     return Poll::Ready(Ok(()));
@@ -698,7 +698,12 @@ impl quinn::UdpSender for MagicSender {
                 };
             }
             MultipathMappedAddr::Relay(relay_mapped_addr) => {
-                match self.msock.relay_mapped_addrs.get_url(&relay_mapped_addr) {
+                match self
+                    .msock
+                    .node_map
+                    .relay_mapped_addrs
+                    .lookup(&relay_mapped_addr)
+                {
                     Some((relay_url, node_id)) => Addr::Relay(relay_url, node_id),
                     None => {
                         error!("unknown RelayMappedAddr, dropped transmit");
@@ -758,7 +763,7 @@ impl quinn::UdpSender for MagicSender {
                 // TODO: Would be nicer to log the NodeId of this, but we only get an actor
                 //   sender for it.
                 tracing::Span::current().record("dst", tracing::field::debug(&mapped_addr));
-                let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(mapped_addr)
+                let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(&mapped_addr)
                 else {
                     error!("unknown NodeIdMappedAddr, dropped transmit");
                     return Err(io::Error::new(
@@ -798,7 +803,12 @@ impl quinn::UdpSender for MagicSender {
                 };
             }
             MultipathMappedAddr::Relay(relay_mapped_addr) => {
-                match self.msock.relay_mapped_addrs.get_url(&relay_mapped_addr) {
+                match self
+                    .msock
+                    .node_map
+                    .relay_mapped_addrs
+                    .lookup(&relay_mapped_addr)
+                {
                     Some((relay_url, node_id)) => Addr::Relay(relay_url, node_id),
                     None => {
                         error!("unknown RelayMappedAddr, dropped transmit");

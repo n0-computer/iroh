@@ -6,7 +6,8 @@
 //! Address ranges we use to keep track of the various "fake" address types we use.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
+    hash::Hash,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
         Arc,
@@ -14,7 +15,6 @@ use std::{
     },
 };
 
-use iroh_base::{NodeId, RelayUrl};
 use snafu::Snafu;
 
 /// The Prefix/L of all Unique Local Addresses.
@@ -40,6 +40,21 @@ static RELAY_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
 static NODE_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Generic mapped address.
+///
+/// Allows implementing [`AddrMap`].
+pub(crate) trait MappedAddr {
+    /// Generates a new mapped address in the IPv6 Unique Local Address space.
+    fn generate() -> Self;
+
+    /// Returns a consistent [`SocketAddr`] for the mapped addr.
+    ///
+    /// This socket address does not have a routable IP address.  It uses a fake but
+    /// consistent port number, since the port does not play a role in the addressing.  This
+    /// socket address is only to be used to pass into Quinn.
+    fn private_socket_addr(&self) -> SocketAddr;
+}
 
 /// An enum encompassing all the mapped and unmapped addresses.
 ///
@@ -92,11 +107,11 @@ impl From<SocketAddr> for MultipathMappedAddr {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
 
-impl NodeIdMappedAddr {
+impl MappedAddr for NodeIdMappedAddr {
     /// Generates a globally unique fake UDP address.
     ///
     /// This generates and IPv6 Unique Local Address according to RFC 4193.
-    pub(crate) fn generate() -> Self {
+    fn generate() -> Self {
         let mut addr = [0u8; 16];
         addr[0] = ADDR_PREFIXL;
         addr[1..6].copy_from_slice(&ADDR_GLOBAL_ID);
@@ -114,7 +129,7 @@ impl NodeIdMappedAddr {
     ///
     /// This uses a made-up port number, since the port does not play a role in the
     /// addressing.  This socket address is only to be used to pass into Quinn.
-    pub(crate) fn private_socket_addr(&self) -> SocketAddr {
+    fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
     }
 }
@@ -140,41 +155,10 @@ impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
     }
 }
 
-/// A map between [`NodeId`] and [`NodeIdMappedAddr`].
-#[derive(Debug, Clone, Default)]
-pub(super) struct NodeIdAddrMap {
-    inner: Arc<std::sync::Mutex<NodeIdAddrMapInner>>,
-}
-
-impl NodeIdAddrMap {
-    pub(super) fn get(&self, node_id: NodeId) -> NodeIdMappedAddr {
-        let mut inner = self.inner.lock().expect("poisoned");
-        match inner.node_addrs.get(&node_id) {
-            Some(addr) => *addr,
-            None => {
-                let addr = NodeIdMappedAddr::generate();
-                inner.lookup.insert(addr, node_id);
-                addr
-            }
-        }
-    }
-
-    pub(super) fn lookup(&self, addr: NodeIdMappedAddr) -> Option<NodeId> {
-        let inner = self.inner.lock().expect("poisoned");
-        inner.lookup.get(&addr).copied()
-    }
-}
-
-#[derive(Debug, Default)]
-struct NodeIdAddrMapInner {
-    node_addrs: HashMap<NodeId, NodeIdMappedAddr>,
-    lookup: HashMap<NodeIdMappedAddr, NodeId>,
-}
-
 /// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
 #[derive(Debug, Snafu)]
 #[snafu(display("Failed to convert"))]
-pub struct NodeIdMappedAddrError;
+pub(crate) struct NodeIdMappedAddrError;
 
 /// An Ipv6 ULA address, identifying a relay path for a [`NodeId`].
 ///
@@ -185,12 +169,12 @@ pub struct NodeIdMappedAddrError;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub(crate) struct RelayMappedAddr(Ipv6Addr);
 
-impl RelayMappedAddr {
+impl MappedAddr for RelayMappedAddr {
     /// Generates a globally unique fake UDP address.
     ///
     /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
     /// which is recognised by iroh as an IP mapped address.
-    pub(crate) fn generate() -> Self {
+    fn generate() -> Self {
         let mut addr = [0u8; 16];
         addr[0] = ADDR_PREFIXL;
         addr[1..6].copy_from_slice(&ADDR_GLOBAL_ID);
@@ -209,7 +193,7 @@ impl RelayMappedAddr {
     /// This uses a made-up, but fixed port number.  The [`RelayAddrMap`] creates a unique
     /// [`RelayMappedAddr`] for each `(NodeId, RelayUrl)` pair and thus does not use the
     /// port to map back to the original [`SocketAddr`].
-    pub(crate) fn private_socket_addr(&self) -> SocketAddr {
+    fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
     }
 }
@@ -229,62 +213,65 @@ impl TryFrom<Ipv6Addr> for RelayMappedAddr {
     }
 }
 
+/// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
+#[derive(Debug, Snafu)]
+#[snafu(display("Failed to convert"))]
+pub(crate) struct RelayMappedAddrError;
+
 impl std::fmt::Display for RelayMappedAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "RelayMappedAddr({})", self.0)
     }
 }
 
-/// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to convert"))]
-pub struct RelayMappedAddrError;
-
-/// A Map of [`RelayMappedAddr`] to `(RelayUrl, NodeId)`.
-// TODO: this could be an RwLock, or even an dashmap
-#[derive(Debug, Clone, Default)]
-pub(crate) struct RelayAddrMap(Arc<std::sync::Mutex<Inner>>);
-
-#[derive(Debug, Default)]
-pub(super) struct Inner {
-    by_mapped_addr: BTreeMap<RelayMappedAddr, (RelayUrl, NodeId)>,
-    by_url: BTreeMap<(RelayUrl, NodeId), RelayMappedAddr>,
+/// A bi-directional map between a key and a [`MappedAddr`].
+#[derive(Debug, Clone)]
+pub(super) struct AddrMap<K, V> {
+    inner: Arc<std::sync::Mutex<AddrMapInner<K, V>>>,
 }
 
-impl RelayAddrMap {
-    /// Adds a new entry to the map and returns the generated [`RelayMappedAddr`].
-    ///
-    /// If this `(RelayUrl, NodeId)` already exists in the map, it returns its associated
-    /// [`RelayMappedAddr`].
-    ///
-    /// Otherwise a new [`RelayMappedAddr`] is generated for it and returned.
-    pub(super) fn get_or_register(&self, relay: RelayUrl, node: NodeId) -> RelayMappedAddr {
-        let mut inner = self.0.lock().expect("poisoned");
-        if let Some(mapped_addr) = inner.by_url.get(&(relay.clone(), node)) {
-            return *mapped_addr;
+// Manual impl because derive ends up requiring T: Default.
+impl<K, V> Default for AddrMap<K, V> {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
         }
-        let ip_mapped_addr = RelayMappedAddr::generate();
-        inner
-            .by_mapped_addr
-            .insert(ip_mapped_addr, (relay.clone(), node));
-        inner.by_url.insert((relay, node), ip_mapped_addr);
-        ip_mapped_addr
-    }
-
-    /// Returns the [`RelayMappedAddr`] for the given [`RelayUrl`] and [`NodeId`].
-    pub(crate) fn get_mapped_addr(&self, relay: RelayUrl, node: NodeId) -> Option<RelayMappedAddr> {
-        let inner = self.0.lock().expect("poisoned");
-        inner.by_url.get(&(relay, node)).copied()
-    }
-
-    /// Returns the [`RelayUrl`] and [`NodeId`] for the given [`RelayMappedAddr`].
-    pub(crate) fn get_url(&self, mapped_addr: &RelayMappedAddr) -> Option<(RelayUrl, NodeId)> {
-        let inner = self.0.lock().expect("poisoned");
-        inner.by_mapped_addr.get(mapped_addr).cloned()
     }
 }
 
-/// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to convert"))]
-pub struct RelayAddrMapError;
+impl<K: Eq + Hash + Clone, V: MappedAddr + Eq + Hash + Copy> AddrMap<K, V> {
+    /// Returns the [`MappedAddr`], generating one if needed.
+    pub(super) fn get(&self, key: &K) -> V {
+        let mut inner = self.inner.lock().expect("poisoned");
+        match inner.addrs.get(&key) {
+            Some(addr) => *addr,
+            None => {
+                let addr = V::generate();
+                inner.lookup.insert(addr, key.clone());
+                addr
+            }
+        }
+    }
+
+    /// Performs the reverse lookup.
+    pub(super) fn lookup(&self, addr: &V) -> Option<K> {
+        let inner = self.inner.lock().expect("poisoned");
+        inner.lookup.get(addr).cloned()
+    }
+}
+
+#[derive(Debug)]
+struct AddrMapInner<K, V> {
+    addrs: HashMap<K, V>,
+    lookup: HashMap<V, K>,
+}
+
+// Manual impl because derive ends up requiring T: Default.
+impl<K, V> Default for AddrMapInner<K, V> {
+    fn default() -> Self {
+        Self {
+            addrs: Default::default(),
+            lookup: Default::default(),
+        }
+    }
+}

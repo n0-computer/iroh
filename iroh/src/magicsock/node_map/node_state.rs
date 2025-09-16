@@ -21,7 +21,7 @@ use crate::{
     disco::{self, SendAddr},
     magicsock::{
         HEARTBEAT_INTERVAL, MagicsockMetrics,
-        mapped_addrs::NodeIdMappedAddr,
+        mapped_addrs::{MappedAddr, NodeIdMappedAddr},
         node_map::path_validity::PathValidity,
         transports::{self, OwnedTransmit},
     },
