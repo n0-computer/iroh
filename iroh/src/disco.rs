@@ -116,10 +116,8 @@ pub enum Message {
     Ping(Ping),
     Pong(Pong),
     CallMeMaybe(CallMeMaybe),
-    ReceiveOffer(WebRtcOffer),
-    ReceiveAnswer(WebRtcAnswer),
-    SendOffer(WebRtcOffer),
-    SendAnswer(WebRtcAnswer),
+    ReceiveOffer(WebRtcOffer),   //disco msg reveiced
+    ReceiveAnswer(WebRtcAnswer), //answer received
     WebRtcIceCandidate(PlatformIceCandidateType),
 }
 
@@ -628,8 +626,6 @@ impl Message {
             Message::CallMeMaybe(cm) => cm.as_bytes(),
             Message::ReceiveOffer(offer) => offer.as_bytes(),
             Message::ReceiveAnswer(answer) => answer.as_bytes(),
-            Message::SendOffer(offer) => offer.as_bytes(),
-            Message::SendAnswer(answer) => answer.as_bytes(),
             Message::WebRtcIceCandidate(candidate) => candidate.as_bytes(),
         }
     }
@@ -652,12 +648,6 @@ impl Display for Message {
             }
             Message::ReceiveAnswer(answer) => {
                 write!(f, "ReceiveAnswer {:?}", answer)
-            }
-            Message::SendOffer(offer) => {
-                write!(f, "SendOffer {:?}", offer)
-            }
-            Message::SendAnswer(answer) => {
-                write!(f, "SendAnswer {:?}", answer)
             }
             Message::WebRtcIceCandidate(candidate) => {
                 write!(f, "WebRtcIceCandidate {:?}", candidate)

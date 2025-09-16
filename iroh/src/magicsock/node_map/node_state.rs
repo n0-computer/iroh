@@ -63,67 +63,9 @@ pub(in crate::magicsock) enum PingAction {
         dst_node: NodeId,
     },
     SendPing(SendPing),
-    ReceiveWebRtcOffer(ReceiveOffer),
-    ReceiveWebRtcAnswer(ReceiveAnswer),
-    SendWebRtcOffer(SendOffer),
-    SendWebRtcAnswer(SendAnswer),
+    SendWebRtcAnswer(ReceiveOffer),
     SetRemoteDescription,
-    SendWebRtcIceCandidate(SendIceCandidate), // First open a channel to gather ice candidates
-    ReceiveWebRtcIceCandidate(ReceiveIceCandidate), // Now after receiving ice
-    AddWebRtcIceCandidate(AddWebRtcIceCandidate), // Add the ice candidates received form the the remote node!!
-}
-
-#[derive(Debug)]
-pub(crate) struct AddWebRtcIceCandidate {
-    peer_node: PublicKey,
-    candidate: PlatformIceCandidateType,
-}
-
-#[derive(Debug)]
-pub(in crate::magicsock) struct SendIceCandidate {
-    pub id: usize,
-    pub dst: SendAddr,
-    pub dst_node: NodeId,
-    pub tx_id: stun_rs::TransactionId,
-    pub purpose: DiscoPingPurpose,
-    pub candidate: IceCandidate,
-}
-
-#[derive(Debug)]
-pub(in crate::magicsock) struct ReceiveIceCandidate {
-    pub id: usize,
-    pub dst: SendAddr,
-    pub dst_node: NodeId,
-    pub tx_id: stun_rs::TransactionId,
-    pub purpose: DiscoPingPurpose,
-    pub candidate: IceCandidate,
-}
-
-#[derive(Debug)]
-pub(in crate::magicsock) struct RemoteDescription {
-    peer_node: NodeId,
-    sdp: String,
-    response: tokio::sync::oneshot::Sender<Result<(), WebRtcError>>,
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::magicsock) struct ReceiveAnswer {
-    pub id: usize,
-    pub dst: SendAddr,
-    pub dst_node: NodeId,
-    pub tx_id: stun_rs::TransactionId,
-    pub purpose: DiscoPingPurpose,
-    pub answer: WebRtcAnswer,
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::magicsock) struct SendAnswer {
-    pub id: usize,
-    pub dst: SendAddr,
-    pub dst_node: NodeId,
-    pub tx_id: stun_rs::TransactionId,
-    pub purpose: DiscoPingPurpose,
-    pub received_offer: WebRtcOffer,
+    AddWebRtcIceCandidate, // Add the ice candidates received form the the remote node!!
 }
 
 #[derive(Debug, Clone)]
@@ -138,10 +80,10 @@ pub(in crate::magicsock) struct ReceiveOffer {
 
 #[derive(Debug, Clone)]
 pub(in crate::magicsock) struct SendOffer {
-    pub id: usize,
-    pub dst: SendAddr,
+    // pub id: usize,
+    // pub dst: SendAddr,
     pub dst_node: NodeId,
-    pub tx_id: stun_rs::TransactionId,
+    // pub tx_id: stun_rs::TransactionId,
     pub purpose: DiscoPingPurpose,
 }
 
@@ -608,6 +550,46 @@ impl NodeState {
         })
     }
 
+    #[must_use = "pings must be handled"]
+    fn start_answer(
+        &self,
+        dst: SendAddr,
+        purpose: DiscoPingPurpose,
+        peer_node: PublicKey,
+        offer: WebRtcOffer,
+    ) -> Option<ReceiveOffer> {
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.path_selection == PathSelection::RelayOnly && !dst.is_relay() {
+            // don't attempt any hole punching in relay only mode
+            warn!("in `RelayOnly` mode, ignoring request to start a hole punching attempt.");
+            return None;
+        }
+        #[cfg(wasm_browser)]
+        if !dst.is_relay() {
+            return None; // Similar to `RelayOnly` mode, we don't send UDP pings for hole-punching.
+        }
+
+        let tx_id = stun_rs::TransactionId::default();
+        trace!(tx = %HEXLOWER.encode(&tx_id), %dst, ?purpose,
+               dst = %self.node_id.fmt_short(), "start ping");
+        event!(
+            target: "iroh::_events::ping::sent",
+            Level::DEBUG,
+            remote_node = %self.node_id.fmt_short(),
+            ?dst,
+            txn = ?tx_id,
+            ?purpose,
+        );
+        Some(ReceiveOffer {
+            id: self.id,
+            dst,
+            dst_node: peer_node,
+            tx_id,
+            purpose,
+            offer,
+        })
+    }
+
     /// Record the fact that a ping has been sent out.
     pub(super) fn ping_sent(
         &mut self,
@@ -734,16 +716,16 @@ impl NodeState {
                 {
                     ping_msgs.push(PingAction::SendPing(msg.clone()));
 
-                    let offer = SendOffer {
-                        id: msg.id,
-                        dst: SendAddr::Relay(url.clone()),
-                        dst_node: msg.dst_node,
-                        tx_id: msg.tx_id,
-                        purpose: DiscoPingPurpose::Discovery,
-                    };
+                    // let offer = SendOffer {
+                    //     // id: msg.id,
+                    //     dst: SendAddr::Relay(url.clone()),
+                    //     dst_node: msg.dst_node,
+                    //     // tx_id: msg.tx_id,
+                    //     purpose: DiscoPingPurpose::Discovery,
+                    // };
                     //Here I added these actions as , these start automatically I could not find that code snippet, if there is any beetter place we can add actions there
                     //Now as sooon as we create offer we shall start gathering ice candidates
-                    ping_msgs.push(PingAction::SendWebRtcOffer(offer));
+                    // ping_msgs.push(PingAction::SendWebRtcOffer(offer));
                     // ping_msgs.push(PingAction::ReceiveWebRtcIceCandidate(())); // it shall be start gathering
                 }
             }
@@ -1231,19 +1213,10 @@ impl NodeState {
 
     pub(crate) fn handle_webrtc_answer(
         &mut self,
-        sender: NodeId,
-        answer: WebRtcAnswer,
+        _sender: NodeId,
+        _answer: WebRtcAnswer,
     ) -> Vec<PingAction> {
-        let now = Instant::now();
-
-        // println!(
-        //     "1207: got webrtc answer!! now wetup ice candidates: {:?}",
-        //     answer
-        // );
-
         let action = PingAction::SetRemoteDescription;
-
-        // self.send_webrtc_answer(now, answer)
         vec![action]
     }
 
@@ -1252,10 +1225,7 @@ impl NodeState {
         sender: PublicKey,
         candidate: PlatformIceCandidateType,
     ) -> Vec<PingAction> {
-        let action = PingAction::AddWebRtcIceCandidate(AddWebRtcIceCandidate {
-            peer_node: sender,
-            candidate: candidate,
-        });
+        let action = PingAction::AddWebRtcIceCandidate;
         vec![action]
     }
 
@@ -1266,25 +1236,22 @@ impl NodeState {
         sender: NodeId,
     ) -> Vec<PingAction> {
         // We allocate +1 in case the caller wants to add a call-me-maybe message.
+        let peer_node = sender.clone();
+
         let mut ping_msgs = Vec::with_capacity(self.udp_paths.paths().len() + 1);
 
         if let Some((url, state)) = self.relay_url.as_ref() {
-            if state.needs_ping(&now) {
-                debug!(%url, "relay path needs ping");
-                if let Some(msg) =
-                    self.start_ping(SendAddr::Relay(url.clone()), DiscoPingPurpose::Discovery)
-                {
-                    let msg = SendAnswer {
-                        id: msg.id,
-                        dst: msg.dst,
-                        dst_node: sender,
-                        tx_id: msg.tx_id,
-                        purpose: msg.purpose,
-                        received_offer: offer,
-                    };
-                    ping_msgs.push(PingAction::SendWebRtcAnswer(msg));
-                }
+            // if state.needs_ping(&now) {
+            //     debug!(%url, "relay path needs ping");
+            if let Some(msg) = self.start_answer(
+                SendAddr::Relay(url.clone()),
+                DiscoPingPurpose::Discovery,
+                peer_node,
+                offer.clone(),
+            ) {
+                ping_msgs.push(PingAction::SendWebRtcAnswer(msg.clone()));
             }
+            // }
         }
 
         #[cfg(any(test, feature = "test-utils"))]
@@ -1295,15 +1262,28 @@ impl NodeState {
 
         self.prune_direct_addresses(now);
         let mut ping_dsts = String::from("[");
-        ping_dsts.push(']');
-        debug!(
-            %ping_dsts,
-            dst = %self.node_id.fmt_short(),
-            paths = %summarize_node_paths(self.udp_paths.paths()),
-            "sending pings to node",
-        );
 
-        self.last_full_ping.replace(now);
+        self.udp_paths
+            .paths()
+            .iter()
+            // .filter_map(|(ipp, state)| state.needs_ping(&now).then_some(*ipp))
+            .filter_map(|(ipp, _): (&IpPort, _)| {
+                self.start_answer(
+                    SendAddr::Udp((*ipp).into()),
+                    DiscoPingPurpose::Discovery,
+                    peer_node.clone(),
+                    offer.clone(),
+                )
+            })
+            .for_each(|msg| {
+                use std::fmt::Write;
+                write!(&mut ping_dsts, " {} ", msg.dst).ok();
+                ping_msgs.push(PingAction::SendWebRtcAnswer(msg.clone()));
+            });
+
+        ping_dsts.push(']');
+
+        // self.last_full_ping.replace(now);
 
         ping_msgs
     }

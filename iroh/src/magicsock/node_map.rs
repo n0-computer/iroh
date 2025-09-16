@@ -29,8 +29,7 @@ mod udp_paths;
 use crate::magicsock::transports::Addr;
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
 pub(super) use node_state::{
-    DiscoPingPurpose, PingAction, PingRole, ReceiveAnswer, ReceiveIceCandidate, ReceiveOffer,
-    SendAnswer, SendIceCandidate, SendOffer, SendPing,
+    DiscoPingPurpose, PingAction, PingRole, ReceiveOffer, SendOffer, SendPing,
 };
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
@@ -663,13 +662,13 @@ impl NodeMapInner {
         //for other transport we have updated the node state, I think we shall update cerficate of the node here
         match self.get_mut(ns_id) {
             None => {
-                println!("certificate for this does not exist: Unknown node");
+                // println!("certificate for this does not exist: Unknown node");
                 metrics.recv_disco_webrtc_answer.inc();
                 vec![]
             }
             Some(ns) => {
                 // debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
-                println!("Certificate for this node already exists");
+                // println!("Certificate for this node already exists");
                 ns.handle_webrtc_answer(sender, answer)
             }
         }

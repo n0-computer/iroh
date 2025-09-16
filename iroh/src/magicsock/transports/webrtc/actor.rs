@@ -246,9 +246,9 @@ impl PeerConnectionState {
         // setup connection state handler
         state.setup_connection_state_handler().await?;
 
-        if !is_initiator {
-            state.setup_incoming_data_channel_handler().await?;
-        }
+        // if !is_initiator {
+        //     state.setup_incoming_data_channel_handler().await?;
+        // }
 
         Ok(state)
     }
@@ -278,10 +278,7 @@ impl PeerConnectionState {
             let dc_for_open = Arc::clone(&data_channel);
             data_channel.on_open(Box::new(move || {
                 Box::pin(async move {
-                    println!(
-                        "********Incoming data channel opened for peer {}",
-                        peer_node_clone
-                    );
+                    println!("Incoming data channel opened for peer {}", peer_node_clone);
                 })
             }));
 
@@ -301,7 +298,7 @@ impl PeerConnectionState {
             data_channel.on_error(Box::new(move |err| {
                 Box::pin(async move {
                     println!(
-                        "Incoming data channel error for peer {}: {:?}",
+                        "🧊 Incoming data channel error for peer {}: {:?}",
                         peer_node_clone, err
                     );
                 })
@@ -310,7 +307,10 @@ impl PeerConnectionState {
             let dc_for_close = Arc::clone(&data_channel);
             data_channel.on_close(Box::new(move || {
                 Box::pin(async move {
-                    println!("Incoming data channel closed for peer {}", peer_node_clone);
+                    println!(
+                        "🧊 Incoming data channel closed for peer {}",
+                        peer_node_clone
+                    );
                 })
             }));
 
@@ -328,16 +328,14 @@ impl PeerConnectionState {
 
         peer_connection.on_peer_connection_state_change(Box::new(move |state| {
 
-            println!("-----------------Peer {} connection state: {:?}", peer_node, state);
-
             match state {
-                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Unspecified => println!("^^^^^^^^^^^^^^^^^^Unspecified state"),
-                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::New => println!("^^^^^^^^^^^^^^^^^^New state"),
-                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connecting => println!("^^^^^^^^^^^^^^^^^^Connecting state"),
-                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected => println!("^^^^^^^^^^^^^^^^^^Connected state"),
-                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Disconnected => println!("^^^^^^^^^^^^^^^^^^Disconnected state"),
-                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Failed => println!("^^^^^^^^^^^^^^^^^^Failed state"),
-                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Closed => println!("^^^^^^^^^^^^^^^^^^Closed state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Unspecified => println!("Unspecified state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::New => println!("New state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connecting => println!("Connecting state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Connected => println!("Connected state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Disconnected => println!("Disconnected state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Failed => println!("Failed state"),
+                webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState::Closed => println!("Closed state"),
             }
 
             Box::pin(async {})
@@ -504,14 +502,7 @@ impl PeerConnectionState {
                     async move {
                         match candidate {
                             Some(ice_candidate) => {
-                                // CORRECT - these are local candidates being generated for our own connection
-                                // println!("LOCAL ICE candidate discovered (for connection to peer {}): {}", peer_node, ice_candidate);
-                                println!("--------------------");
-                                println!(
-                                    "🧊 Gathered: ICE candidate type: {:?}, protocol: {:?}, address: {:?}",
-                                    ice_candidate.typ, ice_candidate.protocol, ice_candidate.address
-                                );
-                                println!("--------------------");
+                                // these are local candidates being generated for our own connection
                                 let msg = ActorMessage::SendIceCandidate {
                                     dst: value,
                                     dst_key: peer_node,
@@ -522,9 +513,7 @@ impl PeerConnectionState {
                                 }
                             }
                             None => {
-                                // println!(
-                                //     "ICE gathering complete, no more candidates will be sent."
-                                // )
+                                println!("ICE gathering complete, no more candidates will be sent.")
                             }
                         }
                     }
@@ -535,12 +524,6 @@ impl PeerConnectionState {
 
     #[cfg(not(wasm_browser))]
     async fn setup_data_channel_handler(&mut self) -> Result<(), WebRtcError> {
-        // let data_channel = self
-        //     .data_channel
-        //     .as_ref()
-        //     .ok_or(WebRtcError::NoDataChannel)?
-        //     .clone();
-
         let data_channel = self
             .data_channel
             .as_ref()
@@ -556,20 +539,9 @@ impl PeerConnectionState {
         let peer_node = self.peer_node;
         let sender = self.send_recv_datagram.clone();
 
-        // println!("--------------------- Data channel label: {}", data_channel.label());
-
         dc.on_open(Box::new(move || {
             Box::pin(async move {
                 println!("✅ Data channel OPENED for peer {}", peer_node);
-                loop {
-                    use std::time::Duration;
-
-                    if let Err(e) = dc_open.send_text("Hello from peer!".to_string()).await {
-                        println!("Failed to send message: {:?}", e);
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
             })
         }));
 
@@ -604,7 +576,7 @@ impl PeerConnectionState {
         src: NodeId,
         sender: mpsc::Sender<WebRtcRecvDatagrams>,
     ) -> Result<(), WebRtcError> {
-        println!("Received message from peer {}: {:?} bytes", src, msg);
+        // println!("Received message from peer {}: {:?} bytes", src, msg);
         let datagrams = Datagrams::from(msg.data);
         let recv_data = WebRtcRecvDatagrams {
             src,
@@ -612,20 +584,8 @@ impl PeerConnectionState {
             datagrams,
         };
 
+        // sends data to transport layer of webrtc
         sender.send(recv_data).await?;
-
-        // if msg.is_string {
-        //     match String::from_utf8(msg.data.to_vec()) {
-        //         Ok(text) => {
-        //             info!("Received text message from {}: {}", src, text);
-        //         }
-        //         Err(e) => {
-        //             error!("Failed to parse text message from {}: {}", src, e);
-        //         }
-        //     }
-        // } else {
-        //     info!("Received binary data from {}: {} bytes", src, msg.data.len());
-        // }
 
         Ok(())
     }
@@ -803,6 +763,7 @@ impl WebRtcActor {
     ) {
         loop {
             select! {
+                //For setting up webrtc
                 control_msg = control_receiver.recv() => {
                     match control_msg {
                         Some(msg) => {
@@ -816,6 +777,7 @@ impl WebRtcActor {
                         }
                     }
                 }
+                //receives data from application to be send to internet via webrtc
                 send_item = sender.recv() => {
                     match send_item {
                         Some(item) => {
@@ -828,6 +790,7 @@ impl WebRtcActor {
                         }
                     }
                 }
+
             }
         }
     }
@@ -994,6 +957,7 @@ impl WebRtcActor {
                 .await?;
 
                 let answer_sdp = peer_state.create_answer(offer_sdp).await?;
+                peer_state.setup_incoming_data_channel_handler().await?;
                 self.peer_connections.insert(peer_node, peer_state);
 
                 Ok(answer_sdp)

@@ -134,7 +134,6 @@ impl Transports {
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-
         macro_rules! poll_transport {
             ($socket:expr) => {
                 match $socket.poll_recv(cx, bufs, metas, source_addrs)? {
@@ -145,6 +144,28 @@ impl Transports {
                 }
             };
         }
+        // macro_rules! poll_webrtc_transport {
+        //     ($socket:expr) => {
+        //         match $socket.poll_recv(cx, bufs, metas, source_addrs)? {
+        //             Poll::Pending | Poll::Ready(0) => {}
+        //             Poll::Ready(n) => {
+        //                 println!("🌐 WebRTC transport received {} packets", n);
+        //                 for i in 0..n {
+        //                     if let Some(buf) = bufs.get(i) {
+        //                         // let hash = hash_datagram(buf);
+        //                         // println!("WebRTC[{}]: {:?} bytes,", i, buf);
+
+        //                         // Check for specific message patterns
+        //                         if buf.windows(b"Hello from peer!".len()).any(|w| w == b"Hello from peer!") {
+        //                             println!("  📨 Contains: 'Hello from peer!'");
+        //                         }
+        //                     }
+        //                 }
+        //                 return Poll::Ready(Ok(n));
+        //             }
+        //         }
+        //     };
+        // }
 
         // To improve fairness, every other call reverses the ordering of polling.
 
@@ -160,11 +181,13 @@ impl Transports {
             for transport in &mut self.relay {
                 poll_transport!(transport);
             }
+            for transport in &mut self.webrtc {
+                poll_transport!(transport);
+            }
         } else {
             for transport in self.webrtc.iter_mut().rev() {
                 poll_transport!(transport);
             }
-
             for transport in self.relay.iter_mut().rev() {
                 poll_transport!(transport);
             }

@@ -17,7 +17,7 @@ use std::{
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, mpsc},
     task::Poll,
 };
 
@@ -42,7 +42,10 @@ use crate::{
         DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
         Lagged, UserData, pkarr::PkarrPublisher,
     },
-    magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
+    magicsock::{
+        self, Handle, NodeIdMappedAddr, OwnAddressSnafu,
+        transports::webrtc::{WebRtcError, actor::WebRtcSendItem},
+    },
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -782,6 +785,14 @@ impl Endpoint {
             .await?;
         let conn = connecting.await?;
 
+        //Now try to setup webrtc p2p connection
+
+        match self.msock.intiate_webrtc_offer(remote).await {
+            Ok(_) => {
+                println!("Successfully initiated webrtc offer")
+            }
+            Err(err) => println!("Error initiating webrtc offer: {}", err),
+        }
         debug!(
             me = %self.node_id().fmt_short(),
             remote = %remote.fmt_short(),
@@ -876,8 +887,6 @@ impl Endpoint {
                 server_name,
             )
             .context(QuinnSnafu)?;
-
-        // signalling happens here
 
         Ok(Connecting {
             inner: connect,
