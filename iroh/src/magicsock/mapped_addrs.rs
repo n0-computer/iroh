@@ -6,7 +6,7 @@
 //! Address ranges we use to keep track of the various "fake" address types we use.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
         Arc,
@@ -138,6 +138,37 @@ impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
         }
         Err(NodeIdMappedAddrError)
     }
+}
+
+/// A map between [`NodeId`] and [`NodeIdMappedAddr`].
+#[derive(Debug, Clone, Default)]
+pub(super) struct NodeIdAddrMap {
+    inner: Arc<std::sync::Mutex<NodeIdAddrMapInner>>,
+}
+
+impl NodeIdAddrMap {
+    pub(super) fn get(&self, node_id: NodeId) -> NodeIdMappedAddr {
+        let mut inner = self.inner.lock().expect("poisoned");
+        match inner.node_addrs.get(&node_id) {
+            Some(addr) => *addr,
+            None => {
+                let addr = NodeIdMappedAddr::generate();
+                inner.lookup.insert(addr, node_id);
+                addr
+            }
+        }
+    }
+
+    pub(super) fn lookup(&self, addr: NodeIdMappedAddr) -> Option<NodeId> {
+        let inner = self.inner.lock().expect("poisoned");
+        inner.lookup.get(&addr).copied()
+    }
+}
+
+#[derive(Debug, Default)]
+struct NodeIdAddrMapInner {
+    node_addrs: HashMap<NodeId, NodeIdMappedAddr>,
+    lookup: HashMap<NodeIdMappedAddr, NodeId>,
 }
 
 /// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]

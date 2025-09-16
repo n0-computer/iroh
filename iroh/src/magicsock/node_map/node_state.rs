@@ -15,11 +15,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{Level, debug, event, info, instrument, trace, warn};
 
-use super::{
-    IpPort, Source,
-    path_state::{PathState, summarize_node_paths},
-    udp_paths::{NodeUdpPaths, UdpSendAddr},
-};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
@@ -28,8 +23,14 @@ use crate::{
         HEARTBEAT_INTERVAL, MagicsockMetrics,
         mapped_addrs::NodeIdMappedAddr,
         node_map::path_validity::PathValidity,
-        transports::{self, OwnedTransmit, TransportsSender},
+        transports::{self, OwnedTransmit},
     },
+};
+
+use super::{
+    IpPort, Source, TransportsSenderMessage,
+    path_state::{PathState, summarize_node_paths},
+    udp_paths::{NodeUdpPaths, UdpSendAddr},
 };
 
 /// Number of addresses that are not active that we keep around per node.
@@ -708,7 +709,7 @@ impl NodeState {
 pub(super) struct NodeStateActor {
     /// The node ID of the remote node.
     node_id: NodeId,
-    transports_sender: TransportsSender,
+    transports_sender: mpsc::Sender<TransportsSenderMessage>,
     // TODO: Turn this into a WeakConnectionHandle
     connections: Vec<quinn::Connection>,
     paths: BTreeMap<transports::Addr, NewPathState>,
@@ -718,7 +719,7 @@ pub(super) struct NodeStateActor {
 impl NodeStateActor {
     pub(super) fn new(
         node_id: NodeId,
-        transports_sender: TransportsSender,
+        transports_sender: mpsc::Sender<TransportsSenderMessage>,
         metrics: Arc<MagicsockMetrics>,
     ) -> Self {
         Self {
@@ -790,7 +791,7 @@ pub(crate) enum NodeStateMessage {
 /// Dropping this will stop the actor.
 #[derive(Debug)]
 pub(super) struct NodeStateHandle {
-    sender: mpsc::Sender<NodeStateMessage>,
+    pub(super) sender: mpsc::Sender<NodeStateMessage>,
     _task: AbortOnDropHandle<()>,
 }
 

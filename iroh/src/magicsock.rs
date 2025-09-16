@@ -1212,9 +1212,10 @@ impl Handle {
             let node_map = node_map.unwrap_or_default();
             let sender = transports.create_sender();
             #[cfg(any(test, feature = "test-utils"))]
-            let nm = NodeMap::load_from_vec(node_map, path_selection, &metrics.magicsock, sender);
+            let nm =
+                NodeMap::load_from_vec(node_map, path_selection, metrics.magicsock.clone(), sender);
             #[cfg(not(any(test, feature = "test-utils")))]
-            let nm = NodeMap::load_from_vec(node_map, &metrics.magicsock, sender);
+            let nm = NodeMap::load_from_vec(node_map, metrics.magicsock.clone(), sender);
             nm
         };
         // let node_map = node_map.unwrap_or_default();

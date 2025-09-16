@@ -646,7 +646,7 @@ impl MagicSender {
 impl quinn::UdpSender for MagicSender {
     #[instrument(
         skip_all,
-        fields(src = ?quinn_transmit.src_ip, len = quinn_transmit.contents.len(), dst),
+        fields(src = ?quinn_transmit.src_ip, len = quinn_transmit.contents.len(), dst, node_id),
     )]
     fn poll_send(
         self: Pin<&mut Self>,
@@ -666,6 +666,12 @@ impl quinn::UdpSender for MagicSender {
                 // TODO: Would be nicer to log the NodeId of this, but we only get an actor
                 //   sender for it.
                 tracing::Span::current().record("dst", tracing::field::debug(&mapped_addr));
+                let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(mapped_addr)
+                else {
+                    error!("unknown NodeIdMappedAddr, dropped transmit");
+                    return Poll::Ready(Ok(()));
+                };
+                tracing::Span::current().record("node_id", node_id.fmt_short());
 
                 // Note we drop the src_ip set in the Quinn Transmit.  This is only the
                 // Initial packet we are sending, so we do not yet have an src address we
@@ -673,26 +679,20 @@ impl quinn::UdpSender for MagicSender {
                 if let Some(src_ip) = quinn_transmit.src_ip {
                     warn!(?src_ip, "oops, flub didn't think this would happen");
                 }
-                return match self.msock.node_map.get_node_state_actor(mapped_addr) {
-                    Some(sender) => {
-                        let transmit = OwnedTransmit::from(quinn_transmit);
-                        match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
-                            Ok(()) => {
-                                trace!("sent transmit",);
-                                Poll::Ready(Ok(()))
-                            }
-                            Err(err) => {
-                                // We do not want to block the next send which might be on a
-                                // different transport.  Instead we let Quinn handle this as
-                                // a lost datagram.
-                                // TODO: Revisit this: we might want to do something better.
-                                debug!("NodeStateActor inbox full ({err:#}), dropped transmit");
-                                Poll::Ready(Ok(()))
-                            }
-                        }
+
+                let sender = self.msock.node_map.node_state_actor(node_id);
+                let transmit = OwnedTransmit::from(quinn_transmit);
+                return match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
+                    Ok(()) => {
+                        trace!("sent transmit",);
+                        Poll::Ready(Ok(()))
                     }
-                    None => {
-                        error!("unknown AllPathsMappedAddr, dropped transmit");
+                    Err(err) => {
+                        // We do not want to block the next send which might be on a
+                        // different transport.  Instead we let Quinn handle this as
+                        // a lost datagram.
+                        // TODO: Revisit this: we might want to do something better.
+                        debug!("NodeStateActor inbox full ({err:#}), dropped transmit");
                         Poll::Ready(Ok(()))
                     }
                 };
@@ -746,7 +746,7 @@ impl quinn::UdpSender for MagicSender {
 
     #[instrument(
         skip_all,
-        fields(src = ?quinn_transmit.src_ip, len = quinn_transmit.contents.len(), dst),
+        fields(src = ?quinn_transmit.src_ip, len = quinn_transmit.contents.len(), dst, node_id),
     )]
     fn try_send(self: Pin<&mut Self>, quinn_transmit: &quinn_udp::Transmit) -> io::Result<()> {
         // As opposed to poll_send this method does return normal IO errors.  Calls to this
@@ -758,6 +758,15 @@ impl quinn::UdpSender for MagicSender {
                 // TODO: Would be nicer to log the NodeId of this, but we only get an actor
                 //   sender for it.
                 tracing::Span::current().record("dst", tracing::field::debug(&mapped_addr));
+                let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(mapped_addr)
+                else {
+                    error!("unknown NodeIdMappedAddr, dropped transmit");
+                    return Err(io::Error::new(
+                        io::ErrorKind::HostUnreachable,
+                        "Unknown NodeIdMappedAddr",
+                    ));
+                };
+                tracing::Span::current().record("node_id", node_id.fmt_short());
 
                 // Note we drop the src_ip set in the Quinn Transmit.  This is only the
                 // Initial packet we are sending, so we do not yet have an src address we
@@ -765,35 +774,25 @@ impl quinn::UdpSender for MagicSender {
                 if let Some(src_ip) = quinn_transmit.src_ip {
                     warn!(?src_ip, "oops, flub didn't think this would happen");
                 }
-                return match self.msock.node_map.get_node_state_actor(mapped_addr) {
-                    Some(sender) => {
-                        let transmit = OwnedTransmit::from(quinn_transmit);
-                        match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
-                            Ok(()) => {
-                                trace!("sent transmit",);
-                                Ok(())
-                            }
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                debug!("NodeStateActor inbox full, dropped transmit");
-                                Err(io::Error::new(
-                                    io::ErrorKind::WouldBlock,
-                                    "NodeStateActor inbox full",
-                                ))
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                debug!("NodeStateActor inbox closed, dropped transmit");
-                                Err(io::Error::new(
-                                    io::ErrorKind::NetworkDown,
-                                    "NodeStateActor inbox closed",
-                                ))
-                            }
-                        }
+                let sender = self.msock.node_map.node_state_actor(node_id);
+                let transmit = OwnedTransmit::from(quinn_transmit);
+                return match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
+                    Ok(()) => {
+                        trace!("sent transmit",);
+                        Ok(())
                     }
-                    None => {
-                        error!("unknown AllPathsMappedAddr, dropped transmit");
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        debug!("NodeStateActor inbox full, dropped transmit");
                         Err(io::Error::new(
-                            io::ErrorKind::HostUnreachable,
-                            "unknown AllPathsMappedAddr",
+                            io::ErrorKind::WouldBlock,
+                            "NodeStateActor inbox full",
+                        ))
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        debug!("NodeStateActor inbox closed, dropped transmit");
+                        Err(io::Error::new(
+                            io::ErrorKind::NetworkDown,
+                            "NodeStateActor inbox closed",
                         ))
                     }
                 };
