@@ -20,12 +20,10 @@ use std::{
     fmt::Display,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    pin::Pin,
     sync::{
         Arc, Mutex, RwLock,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
-    task::{Context, Poll},
 };
 
 use bytes::Bytes;
@@ -42,17 +40,16 @@ use nested_enum_utils::common_fields;
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
-use quinn::{AsyncUdpSocket, ServerConfig, WeakConnectionHandle};
+use quinn::{ServerConfig, WeakConnectionHandle};
 use rand::Rng;
 use relay_mapped_addrs::{RelayAddrMap, RelayMappedAddr};
-use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{
-    Instrument, Level, debug, error, event, info, info_span, instrument, trace, trace_span, warn,
+    Instrument, Level, debug, event, info, info_span, instrument, trace, trace_span, warn,
 };
-use transports::LocalAddrsWatch;
+use transports::{LocalAddrsWatch, MagicTransport};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -60,7 +57,7 @@ use self::transports::IpTransport;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction},
-    transports::{RelayActorConfig, RelayTransport, Transports, UdpSender},
+    transports::{RelayActorConfig, RelayTransport, Transports, TransportsSender},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -78,9 +75,9 @@ use crate::{
 };
 
 mod metrics;
-mod node_map;
 mod relay_mapped_addrs;
 
+pub(crate) mod node_map;
 pub(crate) mod transports;
 
 pub use node_map::Source;
@@ -628,106 +625,6 @@ impl MagicSock {
         }
     }
 
-    /// Returns the transport addresses for the [`quinn_udp::Transmit`]'s destination.
-    ///
-    /// Because Quinn does only know about IP transports we map other transports to private
-    /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
-    /// transmit's destination.
-    #[instrument(skip_all)]
-    fn prepare_send(
-        &self,
-        transmit: &quinn_udp::Transmit,
-    ) -> io::Result<SmallVec<[transports::Addr; 3]>> {
-        self.metrics
-            .magicsock
-            .send_data
-            .inc_by(transmit.contents.len() as _);
-
-        if self.is_closed() {
-            self.metrics
-                .magicsock
-                .send_data_network_down
-                .inc_by(transmit.contents.len() as _);
-            return Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            ));
-        }
-
-        let mut active_paths = SmallVec::<[_; 3]>::new();
-
-        match MultipathMappedAddr::from(transmit.destination) {
-            MultipathMappedAddr::Mixed(dest) => {
-                trace!(
-                    dst = %dest,
-                    src = ?transmit.src_ip,
-                    len = %transmit.contents.len(),
-                    "sending mixed",
-                );
-
-                // Get the node's relay address and best direct address, as well
-                // as any pings that need to be sent for hole-punching purposes.
-                match self.node_map.get_send_addrs(
-                    dest,
-                    self.ipv6_reported.load(Ordering::Relaxed),
-                    &self.metrics.magicsock,
-                ) {
-                    Some((node_id, _udp_addr, _relay_url, ping_actions)) => {
-                        if !ping_actions.is_empty() {
-                            self.actor_sender
-                                .try_send(ActorMessage::PingActions(ping_actions))
-                                .ok();
-                        }
-
-                        if let Some(addr) = self.node_map.get_current_addr(node_id) {
-                            // Mixed will send all available addrs
-                            if let Some(ref url) = addr.relay_url {
-                                active_paths.push(transports::Addr::Relay(url.clone(), node_id));
-                            }
-                            for ip in addr.direct_addresses() {
-                                active_paths.push(transports::Addr::Ip(*ip));
-                            }
-                        }
-                    }
-                    None => {
-                        error!(%dest, "no NodeState for mapped address");
-                    }
-                }
-            }
-            #[cfg(not(wasm_browser))]
-            MultipathMappedAddr::Ip(addr) => {
-                trace!(
-                    dst = %addr,
-                    src = ?transmit.src_ip,
-                    len = %transmit.contents.len(),
-                    "sending IP",
-                );
-                active_paths.push(transports::Addr::Ip(addr));
-            }
-            MultipathMappedAddr::Relay(dest) => {
-                trace!(
-                    dst = %dest,
-                    src = ?transmit.src_ip,
-                    len = %transmit.contents.len(),
-                    "sending relay",
-                );
-
-                // Check if this is a known IpMappedAddr, and if so, send over UDP
-                // Get the socket addr
-                match self.relay_mapped_addrs.get_url(&dest) {
-                    Some((relay, node_id)) => {
-                        active_paths.push(transports::Addr::Relay(relay, node_id));
-                    }
-                    None => {
-                        error!(%dest, "unknown mapped address");
-                    }
-                }
-            }
-        }
-
-        Ok(active_paths)
-    }
-
     /// Process datagrams received from all the transports.
     ///
     /// All the `bufs` and `metas` should have initialized packets in them.
@@ -978,7 +875,7 @@ impl MagicSock {
     /// Send the given ping actions out.
     async fn send_ping_actions(
         &self,
-        _sender: &UdpSender,
+        _sender: &TransportsSender,
         msgs: Vec<PingAction>,
     ) -> io::Result<()> {
         for msg in msgs {
@@ -1033,7 +930,7 @@ impl MagicSock {
     /// Sends out a disco message.
     async fn send_disco_message(
         &self,
-        sender: &UdpSender,
+        sender: &TransportsSender,
         dst: SendAddr,
         dst_key: PublicKey,
         msg: disco::Message,
@@ -1104,6 +1001,7 @@ impl MagicSock {
 #[derive(Clone, Debug)]
 pub(crate) enum MultipathMappedAddr {
     /// Used for the initial connection.
+    ///
     /// - Only used for sending
     /// - This means send on all known paths/transports
     Mixed(AllPathsMappedAddr),
@@ -1119,12 +1017,12 @@ impl From<SocketAddr> for MultipathMappedAddr {
         match value.ip() {
             IpAddr::V4(_) => Self::Ip(value),
             IpAddr::V6(addr) => {
-                if let Ok(node_id_mapped_addr) = AllPathsMappedAddr::try_from(addr) {
-                    return Self::Mixed(node_id_mapped_addr);
+                if let Ok(addr) = AllPathsMappedAddr::try_from(addr) {
+                    return Self::Mixed(addr);
                 }
                 #[cfg(not(wasm_browser))]
-                if let Ok(ip_mapped_addr) = RelayMappedAddr::try_from(addr) {
-                    return Self::Relay(ip_mapped_addr);
+                if let Ok(addr) = RelayMappedAddr::try_from(addr) {
+                    return Self::Relay(addr);
                 }
                 Self::Ip(value)
             }
@@ -1318,13 +1216,6 @@ impl Handle {
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
-        // load the node data
-        let node_map = node_map.unwrap_or_default();
-        #[cfg(any(test, feature = "test-utils"))]
-        let node_map = NodeMap::load_from_vec(node_map, path_selection, &metrics.magicsock);
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let node_map = NodeMap::load_from_vec(node_map, &metrics.magicsock);
-
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(false));
         let max_receive_segments = Arc::new(AtomicUsize::new(1));
@@ -1351,6 +1242,21 @@ impl Handle {
         let transports = Transports::new(ip_transports, relay_transports, max_receive_segments);
         #[cfg(wasm_browser)]
         let transports = Transports::new(relay_transports, max_receive_segments);
+
+        let node_map = {
+            let node_map = node_map.unwrap_or_default();
+            let sender = transports.create_sender();
+            #[cfg(any(test, feature = "test-utils"))]
+            let nm = NodeMap::load_from_vec(node_map, path_selection, &metrics.magicsock, sender);
+            #[cfg(not(any(test, feature = "test-utils")))]
+            let nm = NodeMap::load_from_vec(node_map, &metrics.magicsock, sender);
+            nm
+        };
+        // let node_map = node_map.unwrap_or_default();
+        // #[cfg(any(test, feature = "test-utils"))]
+        // let node_map = NodeMap::load_from_vec(node_map, path_selection, &metrics.magicsock);
+        // #[cfg(not(any(test, feature = "test-utils")))]
+        // let node_map = NodeMap::load_from_vec(node_map, &metrics.magicsock);
 
         let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
@@ -1385,17 +1291,14 @@ impl Handle {
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
-        let sender = transports.create_sender(msock.clone());
+        let sender = transports.create_sender();
         let local_addrs_watch = transports.local_addrs_watch();
         let network_change_sender = transports.create_network_change_sender();
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
-            Box::new(MagicUdpSocket {
-                socket: msock.clone(),
-                transports,
-            }),
+            Box::new(MagicTransport::new(msock.clone(), transports)),
             #[cfg(not(wasm_browser))]
             Arc::new(quinn::TokioRuntime),
             #[cfg(wasm_browser)]
@@ -1645,65 +1548,65 @@ enum DiscoBoxError {
     },
 }
 
-#[derive(Debug)]
-struct MagicUdpSocket {
-    socket: Arc<MagicSock>,
-    transports: Transports,
-}
+// #[derive(Debug)]
+// struct MagicUdpSocket {
+//     socket: Arc<MagicSock>,
+//     transports: Transports,
+// }
 
-impl AsyncUdpSocket for MagicUdpSocket {
-    fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
-        Box::pin(self.transports.create_sender(self.socket.clone()))
-    }
+// impl AsyncUdpSocket for MagicUdpSocket {
+//     fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
+//         Box::pin(self.transports.create_sender(self.socket.clone()))
+//     }
 
-    /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
-    fn poll_recv(
-        &mut self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        self.transports.poll_recv(cx, bufs, metas, &self.socket)
-    }
+//     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
+//     fn poll_recv(
+//         &mut self,
+//         cx: &mut Context,
+//         bufs: &mut [io::IoSliceMut<'_>],
+//         metas: &mut [quinn_udp::RecvMeta],
+//     ) -> Poll<io::Result<usize>> {
+//         self.transports.poll_recv(cx, bufs, metas, &self.socket)
+//     }
 
-    #[cfg(not(wasm_browser))]
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs: Vec<_> = self
-            .transports
-            .local_addrs()
-            .into_iter()
-            .filter_map(|addr| {
-                let addr: SocketAddr = addr.into_socket_addr()?;
-                Some(addr)
-            })
-            .collect();
+//     #[cfg(not(wasm_browser))]
+//     fn local_addr(&self) -> io::Result<SocketAddr> {
+//         let addrs: Vec<_> = self
+//             .transports
+//             .local_addrs()
+//             .into_iter()
+//             .filter_map(|addr| {
+//                 let addr: SocketAddr = addr.into_socket_addr()?;
+//                 Some(addr)
+//             })
+//             .collect();
 
-        if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
-            return Ok(*addr);
-        }
-        if let Some(SocketAddr::V4(addr)) = addrs.first() {
-            // Pretend to be IPv6, because our `MappedAddr`s need to be IPv6.
-            let ip = addr.ip().to_ipv6_mapped().into();
-            return Ok(SocketAddr::new(ip, addr.port()));
-        }
+//         if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
+//             return Ok(*addr);
+//         }
+//         if let Some(SocketAddr::V4(addr)) = addrs.first() {
+//             // Pretend to be IPv6, because our `MappedAddr`s need to be IPv6.
+//             let ip = addr.ip().to_ipv6_mapped().into();
+//             return Ok(SocketAddr::new(ip, addr.port()));
+//         }
 
-        Err(io::Error::other("no valid address available"))
-    }
+//         Err(io::Error::other("no valid address available"))
+//     }
 
-    #[cfg(wasm_browser)]
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        // Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
-        Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
-    }
+//     #[cfg(wasm_browser)]
+//     fn local_addr(&self) -> io::Result<SocketAddr> {
+//         // Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
+//         Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
+//     }
 
-    fn max_receive_segments(&self) -> usize {
-        self.transports.max_receive_segments()
-    }
+//     fn max_receive_segments(&self) -> usize {
+//         self.transports.max_receive_segments()
+//     }
 
-    fn may_fragment(&self) -> bool {
-        self.transports.may_fragment()
-    }
-}
+//     fn may_fragment(&self) -> bool {
+//         self.transports.may_fragment()
+//     }
+// }
 
 #[derive(Debug)]
 enum ActorMessage {
@@ -1788,7 +1691,7 @@ impl Actor {
         mut self,
         shutdown_token: CancellationToken,
         mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
-        sender: UdpSender,
+        sender: TransportsSender,
     ) {
         // Initialize addresses
         #[cfg(not(wasm_browser))]
@@ -1991,7 +1894,7 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    async fn handle_ping_actions(&mut self, sender: &UdpSender, msgs: Vec<PingAction>) {
+    async fn handle_ping_actions(&mut self, sender: &TransportsSender, msgs: Vec<PingAction>) {
         if let Err(err) = self.msock.send_ping_actions(sender, msgs).await {
             warn!("Failed to send ping actions: {err:#}");
         }
@@ -2000,7 +1903,7 @@ impl Actor {
     /// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
-    async fn handle_actor_message(&mut self, msg: ActorMessage, sender: &UdpSender) {
+    async fn handle_actor_message(&mut self, msg: ActorMessage, sender: &TransportsSender) {
         match msg {
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
@@ -2321,19 +2224,19 @@ impl DiscoveredDirectAddrs {
 /// to this address, and duplicate all packets for this address to send on all paths we know
 /// for the node.
 ///
-/// It is but a newtype.  And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
-/// comes in as the inner [`Ipv6Addr`], in those interfaces we have to be careful to do
-/// the conversion to this type.
+/// It is but a newtype around an IPv6 Unique Local Addr.  And in our QUIC-facing socket
+/// APIs like [`AsyncUdpSocket`] it comes in as the inner [`Ipv6Addr`], in those interfaces
+/// we have to be careful to do the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct AllPathsMappedAddr(Ipv6Addr);
 
-/// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
+/// Can occur when converting a [`SocketAddr`] to an [`AllPathsMappedAddr`]
 #[derive(Debug, Snafu)]
 #[snafu(display("Failed to convert"))]
-pub struct NodeIdMappedAddrError;
+pub struct AllPathsMappedAddrError;
 
-/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
-static NODE_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
+/// Counter to always generate unique addresses for [`AllPathsMappedAddr`].
+static ALL_PATHS_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl AllPathsMappedAddr {
     /// The Prefix/L of our Unique Local Addresses.
@@ -2344,7 +2247,7 @@ impl AllPathsMappedAddr {
     const ADDR_SUBNET: [u8; 2] = [0; 2];
 
     /// The dummy port used for all [`NodeIdMappedAddr`]s.
-    const NODE_ID_MAPPED_PORT: u16 = 12345;
+    const MAPPED_PORT: u16 = 12345;
 
     /// Generates a globally unique fake UDP address.
     ///
@@ -2355,7 +2258,7 @@ impl AllPathsMappedAddr {
         addr[1..6].copy_from_slice(&Self::ADDR_GLOBAL_ID);
         addr[6..8].copy_from_slice(&Self::ADDR_SUBNET);
 
-        let counter = NODE_ID_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let counter = ALL_PATHS_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
         addr[8..16].copy_from_slice(&counter.to_be_bytes());
 
         Self(Ipv6Addr::from(addr))
@@ -2369,12 +2272,12 @@ impl AllPathsMappedAddr {
     /// the node in the [`NodeMap`].  This socket address is only to be used to pass into
     /// Quinn.
     pub(crate) fn private_socket_addr(&self) -> SocketAddr {
-        SocketAddr::new(IpAddr::from(self.0), Self::NODE_ID_MAPPED_PORT)
+        SocketAddr::new(IpAddr::from(self.0), Self::MAPPED_PORT)
     }
 }
 
 impl TryFrom<Ipv6Addr> for AllPathsMappedAddr {
-    type Error = NodeIdMappedAddrError;
+    type Error = AllPathsMappedAddrError;
 
     fn try_from(value: Ipv6Addr) -> Result<Self, Self::Error> {
         let octets = value.octets();
@@ -2384,7 +2287,7 @@ impl TryFrom<Ipv6Addr> for AllPathsMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err(NodeIdMappedAddrError)
+        Err(AllPathsMappedAddrError)
     }
 }
 

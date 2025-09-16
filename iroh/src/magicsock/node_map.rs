@@ -6,12 +6,22 @@ use std::{
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use n0_future::time::Instant;
+use n0_future::{task::AbortOnDropHandle, time::Instant};
+use node_state::NodeStateHandle;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options};
-use super::{AllPathsMappedAddr, metrics::Metrics};
+#[cfg(any(test, feature = "test-utils"))]
+use super::transports::TransportsSender;
+#[cfg(not(any(test, feature = "test-utils")))]
+use super::transports::TransportsSender;
+use super::{
+    AllPathsMappedAddr,
+    metrics::Metrics,
+    transports::{self, OwnedTransmit},
+};
 use crate::disco::CallMeMaybe;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
@@ -21,7 +31,8 @@ mod path_state;
 mod path_validity;
 mod udp_paths;
 
-pub(super) use node_state::PingAction;
+pub(super) use node_state::{NodeStateMessage, PingAction};
+
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
@@ -45,13 +56,15 @@ const MAX_INACTIVE_NODES: usize = 30;
 ///   These come and go as the node moves around on the internet
 ///
 /// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct NodeMap {
     inner: Mutex<NodeMapInner>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub(super) struct NodeMapInner {
+    /// Handle to an actor that can send over the transports.
+    transports_handle: TransportsSenderHandle,
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
     by_quic_mapped_addr: HashMap<AllPathsMappedAddr, usize>,
@@ -59,6 +72,14 @@ pub(super) struct NodeMapInner {
     next_id: usize,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
+    /// The [`NodeStateActor`] for each remote node.
+    node_states: HashMap<NodeId, NodeStateHandle>,
+    /// The [`AllPathsMappedAddr`] for each node.
+    node_addrs: HashMap<NodeId, AllPathsMappedAddr>,
+    /// The reverse of mapping of [`Self::node_addrs`].
+    node_addrs_lookup: HashMap<AllPathsMappedAddr, NodeId>,
+    // /// The [`RelayMappedAddr`] for each node.
+    // relay_addrs: HashMap<NodeId, RelayMappedAddr>,
 }
 
 /// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -116,10 +137,19 @@ pub enum Source {
 }
 
 impl NodeMap {
+    #[cfg(any(test, feature = "test-utils"))]
+    pub(super) fn new(sender: TransportsSender) -> Self {
+        Self::from_inner(NodeMapInner::new(sender))
+    }
+
     #[cfg(not(any(test, feature = "test-utils")))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes, metrics))
+    pub(super) fn load_from_vec(
+        nodes: Vec<NodeAddr>,
+        metrics: &Metrics,
+        sender: TransportsSender,
+    ) -> Self {
+        Self::from_inner(NodeMapInner::load_from_vec(nodes, metrics, sender))
     }
 
     #[cfg(any(test, feature = "test-utils"))]
@@ -128,8 +158,14 @@ impl NodeMap {
         nodes: Vec<NodeAddr>,
         path_selection: PathSelection,
         metrics: &Metrics,
+        sender: TransportsSender,
     ) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes, path_selection, metrics))
+        Self::from_inner(NodeMapInner::load_from_vec(
+            nodes,
+            path_selection,
+            metrics,
+            sender,
+        ))
     }
 
     fn from_inner(inner: NodeMapInner) -> Self {
@@ -168,12 +204,12 @@ impl NodeMap {
 
     pub(super) fn get_all_paths_addr_for_node(
         &self,
-        node_key: NodeId,
+        node_id: NodeId,
     ) -> Option<AllPathsMappedAddr> {
         self.inner
             .lock()
             .expect("poisoned")
-            .get(NodeStateKey::NodeId(node_key))
+            .get(NodeStateKey::NodeId(node_id))
             .map(|ep| *ep.all_paths_mapped_addr())
     }
 
@@ -282,34 +318,96 @@ impl NodeMap {
             .expect("poisoned")
             .on_direct_addr_discovered(discovered, Instant::now());
     }
+
+    /// Returns the sender for the [`NodeStateActor`].
+    pub(super) fn get_node_state_actor(
+        &self,
+        addr: AllPathsMappedAddr,
+        // node_id: NodeId,
+    ) -> Option<mpsc::Sender<NodeStateMessage>> {
+        // self
+        //     .inner
+        //     .lock()
+        //     .expect("poisoned")
+        //     .new
+        //     .entry(node_id)
+        //     .or_insert_with_key(|node_id| {
+        //         let mut actor = NodeStateActor::new(*node_id, transports_sender, metrics);
+        //         actor.start()
+        //     });
+        todo!()
+    }
 }
 
 impl NodeMapInner {
+    #[cfg(any(test, feature = "test-utils"))]
+    fn new(sender: TransportsSender) -> Self {
+        let transports_handle = Self::start_transports_sender(sender);
+        Self {
+            transports_handle,
+            by_node_key: Default::default(),
+            by_ip_port: Default::default(),
+            by_quic_mapped_addr: Default::default(),
+            by_id: Default::default(),
+            next_id: 0,
+            path_selection: Default::default(),
+            node_states: Default::default(),
+            node_addrs: Default::default(),
+            node_addrs_lookup: Default::default(),
+        }
+    }
+
+    /// Creates a new [`NodeMap`] from a list of [`NodeAddr`]s.
     #[cfg(not(any(test, feature = "test-utils")))]
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
-        let mut me = Self::default();
+    fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics, sender: TransportsSender) -> Self {
+        let transports_handle = Self::start_transports_sender(sender);
+        let mut me = Self {
+            transports_handle,
+            by_node_key: Default::default(),
+            by_ip_port: Default::default(),
+            by_quic_mapped_addr: Default::default(),
+            by_id: Default::default(),
+            next_id: 0,
+            node_states: Default::default(),
+            node_addrs: Default::default(),
+            node_addrs_lookup: Default::default(),
+        };
         for node_addr in nodes {
             me.add_node_addr(node_addr, Source::Saved, metrics);
         }
         me
     }
 
+    /// Creates a new [`NodeMap`] from a list of [`NodeAddr`]s.
     #[cfg(any(test, feature = "test-utils"))]
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     fn load_from_vec(
         nodes: Vec<NodeAddr>,
         path_selection: PathSelection,
         metrics: &Metrics,
+        sender: TransportsSender,
     ) -> Self {
+        let transports_handle = Self::start_transports_sender(sender);
         let mut me = Self {
+            transports_handle,
+            by_node_key: Default::default(),
+            by_ip_port: Default::default(),
+            by_quic_mapped_addr: Default::default(),
+            by_id: Default::default(),
+            next_id: 0,
             path_selection,
-            ..Default::default()
+            node_states: Default::default(),
+            node_addrs: Default::default(),
+            node_addrs_lookup: Default::default(),
         };
         for node_addr in nodes {
             me.add_node_addr(node_addr, Source::Saved, metrics);
         }
         me
+    }
+
+    fn start_transports_sender(sender: TransportsSender) -> TransportsSenderHandle {
+        let actor = TransportsSenderActor::new(sender);
+        actor.start()
     }
 
     /// Add the contact information for a node.
@@ -617,15 +715,87 @@ impl IpPort {
     }
 }
 
+/// An actor that can send datagrams onto iroh transports.
+///
+/// The [`NodeStateActor`]s want to be able to send datagrams.  Because we can not create
+/// [`TransportsSender`]s on demand we must share one for the entire [`NodeMap`], which
+/// lives in this actor.
+#[derive(Debug)]
+struct TransportsSenderActor {
+    sender: TransportsSender,
+}
+
+impl TransportsSenderActor {
+    fn new(sender: TransportsSender) -> Self {
+        Self { sender }
+    }
+
+    fn start(self) -> TransportsSenderHandle {
+        // This actor gets an inbox size of exactly 1.  This is the same as if they had the
+        // underlying sender directly: either you can send or not, or you await until you
+        // can.  No need to introduce extra buffering.
+        let (tx, rx) = mpsc::channel(1);
+
+        // No .instrument() on task, run method has an #[instrument] attribute.
+        let task = tokio::spawn(async move {
+            self.run(rx).await;
+        });
+        TransportsSenderHandle {
+            inbox: tx,
+            _task: AbortOnDropHandle::new(task),
+        }
+    }
+
+    #[instrument(name = "TransportsSenderActor", skip_all)]
+    async fn run(self, mut inbox: mpsc::Receiver<TransportsSenderMessage>) {
+        use TransportsSenderMessage::SendDatagram;
+
+        loop {
+            if let Some(SendDatagram(dst, owned_transmit)) = inbox.recv().await {
+                let transmit = transports::Transmit {
+                    ecn: owned_transmit.ecn,
+                    contents: owned_transmit.contents.as_ref(),
+                    segment_size: owned_transmit.segment_size,
+                };
+                let len = transmit.contents.len();
+                match self.sender.send(&dst, None, &transmit).await {
+                    Ok(()) => {
+                        trace!(?dst, %len, "sent transmit");
+                    }
+                    Err(err) => {
+                        trace!(?dst, %len, "transmit failed to send: {err:#}");
+                    }
+                };
+            } else {
+                break;
+            }
+        }
+        trace!("actor terminating");
+    }
+}
+
+#[derive(Debug)]
+struct TransportsSenderHandle {
+    inbox: mpsc::Sender<TransportsSenderMessage>,
+    _task: AbortOnDropHandle<()>,
+}
+
+#[derive(Debug)]
+enum TransportsSenderMessage {
+    SendDatagram(transports::Addr, OwnedTransmit),
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
+    use std::sync::Arc;
 
     use iroh_base::SecretKey;
     use tracing_test::traced_test;
 
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
     use crate::disco::SendAddr;
+    use crate::magicsock::transports::Transports;
 
     impl NodeMap {
         #[track_caller]
@@ -644,7 +814,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn restore_from_vec() {
-        let node_map = NodeMap::default();
+        let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
+        let node_map = NodeMap::new(transports.create_sender());
 
         let mut rng = rand::thread_rng();
         let node_a = SecretKey::generate(&mut rng).public();
@@ -681,8 +852,12 @@ mod tests {
                 Some(addr)
             })
             .collect();
-        let loaded_node_map =
-            NodeMap::load_from_vec(addrs.clone(), PathSelection::default(), &Default::default());
+        let loaded_node_map = NodeMap::load_from_vec(
+            addrs.clone(),
+            PathSelection::default(),
+            &Default::default(),
+            transports.create_sender(),
+        );
 
         let mut loaded: Vec<NodeAddr> = loaded_node_map
             .list_remote_infos(Instant::now())
@@ -710,7 +885,8 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_prune_direct_addresses() {
-        let node_map = NodeMap::default();
+        let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
+        let node_map = NodeMap::new(transports.create_sender());
         let public_key = SecretKey::generate(rand::thread_rng()).public();
         let id = node_map
             .inner
@@ -783,7 +959,8 @@ mod tests {
 
     #[test]
     fn test_prune_inactive() {
-        let node_map = NodeMap::default();
+        let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
+        let node_map = NodeMap::new(transports.create_sender());
         // add one active node and more than MAX_INACTIVE_NODES inactive nodes
         let active_node = SecretKey::generate(rand::thread_rng()).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);

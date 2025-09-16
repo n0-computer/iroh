@@ -93,6 +93,7 @@ impl std::fmt::Display for RelayMappedAddr {
 pub struct RelayAddrMapError;
 
 /// A Map of [`RelayMappedAddr`] to `(RelayUrl, NodeId)`.
+// TODO: this could be an RwLock, or even an dashmap
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RelayAddrMap(Arc<std::sync::Mutex<Inner>>);
 

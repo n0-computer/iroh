@@ -1,13 +1,18 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
-    sync::atomic::AtomicBool,
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use n0_future::time::{Duration, Instant};
+use n0_future::{
+    task::AbortOnDropHandle,
+    time::{Duration, Instant},
+};
 use n0_watcher::Watchable;
+use quinn::WeakConnectionHandle;
 use serde::{Deserialize, Serialize};
+use tokio::sync::mpsc;
 use tracing::{Level, debug, event, info, instrument, trace, warn};
 
 use super::{
@@ -22,6 +27,7 @@ use crate::{
     magicsock::{
         AllPathsMappedAddr, HEARTBEAT_INTERVAL, MagicsockMetrics,
         node_map::path_validity::PathValidity,
+        transports::{self, OwnedTransmit, TransportsSender},
     },
 };
 
@@ -692,6 +698,103 @@ impl NodeState {
     pub(super) fn last_used(&self) -> Option<Instant> {
         self.last_used
     }
+}
+
+/// The state we need to know about a single remote node.
+///
+/// This actor manages all connections to the remote node.  It will trigger holepunching and
+/// select the best path etc.
+pub(super) struct NodeStateActor {
+    /// The node ID of the remote node.
+    node_id: NodeId,
+    transports_sender: TransportsSender,
+    // TODO: Turn this into a WeakConnectionHandle
+    connections: Vec<quinn::Connection>,
+    paths: BTreeMap<transports::Addr, NewPathState>,
+    metrics: Arc<MagicsockMetrics>,
+}
+
+impl NodeStateActor {
+    pub(super) fn new(
+        node_id: NodeId,
+        transports_sender: TransportsSender,
+        metrics: Arc<MagicsockMetrics>,
+    ) -> Self {
+        Self {
+            node_id,
+            transports_sender,
+            connections: Vec::new(),
+            paths: BTreeMap::new(),
+            metrics,
+        }
+    }
+
+    pub(super) fn start(mut self) -> NodeStateHandle {
+        let (tx, rx) = mpsc::channel(16);
+
+        // No .instrument() on the task, run method has an #[instrument] attribute.
+        let task = tokio::spawn(async move {
+            self.run(rx).await;
+        });
+        NodeStateHandle {
+            sender: tx,
+            _task: AbortOnDropHandle::new(task),
+        }
+    }
+
+    #[instrument(
+        name = "NodeStateActor",
+        skip_all,
+        fields(node_id = %self.node_id.fmt_short())
+    )]
+    async fn run(&mut self, mut inbox: mpsc::Receiver<NodeStateMessage>) {
+        loop {
+            if let Some(msg) = inbox.recv().await {
+                match msg {
+                    NodeStateMessage::SendDatagram(transmit) => todo!(),
+                    NodeStateMessage::AddConnection(handle) => todo!(),
+                    NodeStateMessage::PingReceived => todo!(),
+                }
+            } else {
+                break;
+            }
+        }
+        trace!("actor terminating");
+    }
+}
+
+/// Messages to send to the [`NodeStateActor`].
+pub(crate) enum NodeStateMessage {
+    /// Send a datagram to all known paths.
+    ///
+    /// Used to send QUIC Initial packets.  If there is no working direct path this will
+    /// trigger holepunching.
+    ///
+    /// This is not acceptable to use on the normal send path, as it is an async send
+    /// operation with a bunch more copying.  So it should only be used for sending QUIC
+    /// Initial packets.
+    SendDatagram(OwnedTransmit),
+    /// Add an active connection to this remote node.
+    ///
+    /// The connection will now be managed by this actor.  Holepunching will happen when
+    /// needed, any new paths discovered via holepunching will be added.  And closed paths
+    /// will be removed etc.
+    AddConnection(WeakConnectionHandle),
+    // TODO: Add the transaction ID.
+    PingReceived,
+}
+
+/// A handle to a [`NodeStateActor`].
+///
+/// Dropping this will stop the actor.
+#[derive(Debug)]
+pub(super) struct NodeStateHandle {
+    sender: mpsc::Sender<NodeStateMessage>,
+    _task: AbortOnDropHandle<()>,
+}
+
+struct NewPathState {
+    addr: transports::Addr,
 }
 
 impl From<RemoteInfo> for NodeAddr {
