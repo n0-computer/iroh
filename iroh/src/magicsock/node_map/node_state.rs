@@ -25,7 +25,7 @@ use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
     magicsock::{
-        AllPathsMappedAddr, HEARTBEAT_INTERVAL, MagicsockMetrics,
+        HEARTBEAT_INTERVAL, MagicsockMetrics, NodeIdMappedAddr,
         node_map::path_validity::PathValidity,
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -69,7 +69,7 @@ pub(super) struct NodeState {
     /// [`NodeMap`]: super::NodeMap
     id: usize,
     /// The UDP address used on the QUIC-layer to address this node.
-    quic_mapped_addr: AllPathsMappedAddr,
+    quic_mapped_addr: NodeIdMappedAddr,
     /// The global identifier for this endpoint.
     node_id: NodeId,
     /// The url of relay node that we can relay over to communicate.
@@ -119,7 +119,7 @@ pub(super) struct Options {
 
 impl NodeState {
     pub(super) fn new(id: usize, options: Options) -> Self {
-        let quic_mapped_addr = AllPathsMappedAddr::generate();
+        let quic_mapped_addr = NodeIdMappedAddr::generate();
 
         // TODO(frando): I don't think we need to track the `num_relay_conns_added`
         // metric here. We do so in `Self::addr_for_send`.
@@ -154,7 +154,7 @@ impl NodeState {
         &self.node_id
     }
 
-    pub(super) fn all_paths_mapped_addr(&self) -> &AllPathsMappedAddr {
+    pub(super) fn all_paths_mapped_addr(&self) -> &NodeIdMappedAddr {
         &self.quic_mapped_addr
     }
 

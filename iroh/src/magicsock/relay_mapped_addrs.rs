@@ -10,10 +10,10 @@ use std::{
 use iroh_base::{NodeId, RelayUrl};
 use snafu::Snafu;
 
-/// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
+/// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
 #[derive(Debug, Snafu)]
 #[snafu(display("Failed to convert"))]
-pub struct IpMappedAddrError;
+pub struct RelayMappedAddrError;
 
 /// An Ipv6 ULA address, identifying a relay path for a [`NodeId`].
 ///
@@ -24,8 +24,8 @@ pub struct IpMappedAddrError;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub(crate) struct RelayMappedAddr(Ipv6Addr);
 
-/// Counter to always generate unique addresses for [`IpMappedAddr`].
-static IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
+/// Counter to always generate unique addresses for [`RelayMappedAddr`].
+static RELAY_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl RelayMappedAddr {
     /// The Prefix/L of our Unique Local Addresses.
@@ -48,7 +48,7 @@ impl RelayMappedAddr {
         addr[1..6].copy_from_slice(&Self::ADDR_GLOBAL_ID);
         addr[6..8].copy_from_slice(&Self::ADDR_SUBNET);
 
-        let counter = IP_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let counter = RELAY_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
         addr[8..16].copy_from_slice(&counter.to_be_bytes());
 
         Self(Ipv6Addr::from(addr))
@@ -67,7 +67,7 @@ impl RelayMappedAddr {
 }
 
 impl TryFrom<Ipv6Addr> for RelayMappedAddr {
-    type Error = IpMappedAddrError;
+    type Error = RelayMappedAddrError;
 
     fn try_from(value: Ipv6Addr) -> std::result::Result<Self, Self::Error> {
         let octets = value.octets();
@@ -77,7 +77,7 @@ impl TryFrom<Ipv6Addr> for RelayMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err(IpMappedAddrError)
+        Err(RelayMappedAddrError)
     }
 }
 
@@ -129,7 +129,7 @@ impl RelayAddrMap {
         inner.by_url.get(&(relay, node)).copied()
     }
 
-    /// Returns the [`RelayUrl`] and [`NodeId`] for the given [`IpMappedAddr`].
+    /// Returns the [`RelayUrl`] and [`NodeId`] for the given [`RelayMappedAddr`].
     pub(crate) fn get_url(&self, mapped_addr: &RelayMappedAddr) -> Option<(RelayUrl, NodeId)> {
         let inner = self.0.lock().expect("poisoned");
         inner.by_mapped_addr.get(mapped_addr).cloned()

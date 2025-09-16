@@ -62,7 +62,7 @@ use crate::{
         DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
         Lagged, UserData, pkarr::PkarrPublisher,
     },
-    magicsock::{self, AllPathsMappedAddr, Handle, OwnAddressSnafu},
+    magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
     tls,
@@ -1363,7 +1363,7 @@ impl Endpoint {
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
-    ) -> Result<(AllPathsMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
+    ) -> Result<(NodeIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
         let node_id = node_addr.node_id;
 
         // Only return a mapped addr if we have some way of dialing this node, in other

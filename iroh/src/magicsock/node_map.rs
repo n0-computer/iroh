@@ -18,7 +18,7 @@ use super::transports::TransportsSender;
 #[cfg(not(any(test, feature = "test-utils")))]
 use super::transports::TransportsSender;
 use super::{
-    AllPathsMappedAddr,
+    NodeIdMappedAddr,
     metrics::Metrics,
     transports::{self, OwnedTransmit},
 };
@@ -67,17 +67,19 @@ pub(super) struct NodeMapInner {
     transports_handle: TransportsSenderHandle,
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
-    by_quic_mapped_addr: HashMap<AllPathsMappedAddr, usize>,
+    by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
     by_id: HashMap<usize, NodeState>,
     next_id: usize,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
     /// The [`NodeStateActor`] for each remote node.
+    ///
+    /// [`NodeStateActor`]: node_state::NodeStateActor
     node_states: HashMap<NodeId, NodeStateHandle>,
-    /// The [`AllPathsMappedAddr`] for each node.
-    node_addrs: HashMap<NodeId, AllPathsMappedAddr>,
+    /// The [`NodeIdMappedAddr`] for each node.
+    node_addrs: HashMap<NodeId, NodeIdMappedAddr>,
     /// The reverse of mapping of [`Self::node_addrs`].
-    node_addrs_lookup: HashMap<AllPathsMappedAddr, NodeId>,
+    node_addrs_lookup: HashMap<NodeIdMappedAddr, NodeId>,
     // /// The [`RelayMappedAddr`] for each node.
     // relay_addrs: HashMap<NodeId, RelayMappedAddr>,
 }
@@ -89,7 +91,7 @@ pub(super) struct NodeMapInner {
 #[derive(Debug, Clone)]
 enum NodeStateKey {
     NodeId(NodeId),
-    NodeIdMappedAddr(AllPathsMappedAddr),
+    NodeIdMappedAddr(NodeIdMappedAddr),
     IpPort(IpPort),
 }
 
@@ -191,21 +193,18 @@ impl NodeMap {
     pub(super) fn receive_udp(
         &self,
         udp_addr: SocketAddr,
-    ) -> Option<(PublicKey, AllPathsMappedAddr)> {
+    ) -> Option<(PublicKey, NodeIdMappedAddr)> {
         self.inner.lock().expect("poisoned").receive_udp(udp_addr)
     }
 
-    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> AllPathsMappedAddr {
+    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
         self.inner
             .lock()
             .expect("poisoned")
             .receive_relay(relay_url, src)
     }
 
-    pub(super) fn get_all_paths_addr_for_node(
-        &self,
-        node_id: NodeId,
-    ) -> Option<AllPathsMappedAddr> {
+    pub(super) fn get_all_paths_addr_for_node(&self, node_id: NodeId) -> Option<NodeIdMappedAddr> {
         self.inner
             .lock()
             .expect("poisoned")
@@ -246,7 +245,7 @@ impl NodeMap {
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
         &self,
-        addr: AllPathsMappedAddr,
+        addr: NodeIdMappedAddr,
         have_ipv6: bool,
         metrics: &Metrics,
     ) -> Option<(
@@ -320,9 +319,11 @@ impl NodeMap {
     }
 
     /// Returns the sender for the [`NodeStateActor`].
+    ///
+    /// [`NodeStateActor`]: node_state::NodeStateActor
     pub(super) fn get_node_state_actor(
         &self,
-        addr: AllPathsMappedAddr,
+        addr: NodeIdMappedAddr,
         // node_id: NodeId,
     ) -> Option<mpsc::Sender<NodeStateMessage>> {
         // self
@@ -502,7 +503,7 @@ impl NodeMapInner {
 
     /// Marks the node we believe to be at `ipp` as recently used.
     #[cfg(not(wasm_browser))]
-    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, AllPathsMappedAddr)> {
+    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, NodeIdMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
         let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
             trace!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
@@ -516,7 +517,7 @@ impl NodeMapInner {
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> AllPathsMappedAddr {
+    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
@@ -720,6 +721,8 @@ impl IpPort {
 /// The [`NodeStateActor`]s want to be able to send datagrams.  Because we can not create
 /// [`TransportsSender`]s on demand we must share one for the entire [`NodeMap`], which
 /// lives in this actor.
+///
+/// [`NodeStateActor`]: node_state::NodeStateActor
 #[derive(Debug)]
 struct TransportsSenderActor {
     sender: TransportsSender,

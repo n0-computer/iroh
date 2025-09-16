@@ -592,7 +592,7 @@ impl quinn::AsyncUdpSocket for MagicTransport {
 /// A sender for [`MagicTransport`].
 ///
 /// This is special in that it handles [`MultipathMappedAddr::Mixed`] by delegating to the
-/// [`MagicSock`] which expands it back to one or more [`transport::Addr`]s and sends it
+/// [`MagicSock`] which expands it back to one or more [`Addr`]s and sends it
 /// using the underlying [`Transports`].
 // TODO: Can I just send the TransportsSender along in the NodeStateMessage::SendDatagram
 // message??  That way you don't have to hook up the sender into the NodeMap!
@@ -605,7 +605,7 @@ pub(crate) struct MagicSender {
 }
 
 impl MagicSender {
-    /// Extracts the right [`transports::Addr`] from the [`quinn_udp::Transmit`].
+    /// Extracts the right [`Addr`] from the [`quinn_udp::Transmit`].
     ///
     /// Because Quinn does only know about IP transports we map other transports to private
     /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the

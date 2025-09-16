@@ -437,7 +437,7 @@ impl MagicSock {
     }
 
     /// Returns the socket address which can be used by the QUIC layer to *dial* this node.
-    pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<AllPathsMappedAddr> {
+    pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<NodeIdMappedAddr> {
         self.node_map.get_all_paths_addr_for_node(node_id)
     }
 
@@ -1004,7 +1004,7 @@ pub(crate) enum MultipathMappedAddr {
     ///
     /// - Only used for sending
     /// - This means send on all known paths/transports
-    Mixed(AllPathsMappedAddr),
+    Mixed(NodeIdMappedAddr),
     /// Relay based transport address
     Relay(RelayMappedAddr),
     /// IP based transport address
@@ -1017,7 +1017,7 @@ impl From<SocketAddr> for MultipathMappedAddr {
         match value.ip() {
             IpAddr::V4(_) => Self::Ip(value),
             IpAddr::V6(addr) => {
-                if let Ok(addr) = AllPathsMappedAddr::try_from(addr) {
+                if let Ok(addr) = NodeIdMappedAddr::try_from(addr) {
                     return Self::Mixed(addr);
                 }
                 #[cfg(not(wasm_browser))]
@@ -1392,9 +1392,11 @@ impl Handle {
 
     /// Closes the connection.
     ///
-    /// Only the first close does anything. Any later closes return nil.
-    /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
-    /// indefinitely after this call.
+    /// Only the first close does anything. Any later closes return nil.  Polling the socket
+    /// ([`quinn::AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`] indefinitely
+    /// after this call.
+    ///
+    /// [`Poll::Pending`]: std::task::Poll::Pending
     #[instrument(skip_all)]
     pub(crate) async fn close(&self) {
         trace!(me = ?self.public_key, "magicsock closing...");
@@ -2218,27 +2220,32 @@ impl DiscoveredDirectAddrs {
     }
 }
 
-/// An address used by the QUIC layer to address a node on all paths.
+/// An address used by the QUIC layer to address a node on any or all paths.
 ///
 /// This is only used for initially connecting to a remote node.  We instruct Quinn to send
-/// to this address, and duplicate all packets for this address to send on all paths we know
-/// for the node.
+/// to this address, and duplicate all packets for this address to send on all paths we
+/// might want to send the initial on:
+///
+/// - If this the first connection to the remote node we don't know which path will work and
+///   send to all of them.
+///
+/// - If there already is an active connection to this node we now which path to use.
 ///
 /// It is but a newtype around an IPv6 Unique Local Addr.  And in our QUIC-facing socket
-/// APIs like [`AsyncUdpSocket`] it comes in as the inner [`Ipv6Addr`], in those interfaces
-/// we have to be careful to do the conversion to this type.
+/// APIs like [`quinn::AsyncUdpSocket`] it comes in as the inner [`Ipv6Addr`], in those
+/// interfaces we have to be careful to do the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct AllPathsMappedAddr(Ipv6Addr);
+pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
 
-/// Can occur when converting a [`SocketAddr`] to an [`AllPathsMappedAddr`]
+/// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
 #[derive(Debug, Snafu)]
 #[snafu(display("Failed to convert"))]
 pub struct AllPathsMappedAddrError;
 
-/// Counter to always generate unique addresses for [`AllPathsMappedAddr`].
+/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
 static ALL_PATHS_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-impl AllPathsMappedAddr {
+impl NodeIdMappedAddr {
     /// The Prefix/L of our Unique Local Addresses.
     const ADDR_PREFIXL: u8 = 0xfd;
     /// The Global ID used in our Unique Local Addresses.
@@ -2276,7 +2283,7 @@ impl AllPathsMappedAddr {
     }
 }
 
-impl TryFrom<Ipv6Addr> for AllPathsMappedAddr {
+impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
     type Error = AllPathsMappedAddrError;
 
     fn try_from(value: Ipv6Addr) -> Result<Self, Self::Error> {
@@ -2291,7 +2298,7 @@ impl TryFrom<Ipv6Addr> for AllPathsMappedAddr {
     }
 }
 
-impl std::fmt::Display for AllPathsMappedAddr {
+impl std::fmt::Display for NodeIdMappedAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "NodeIdMappedAddr({})", self.0)
     }
@@ -2381,7 +2388,7 @@ mod tests {
     use tracing::{Instrument, error, info, info_span, instrument};
     use tracing_test::traced_test;
 
-    use super::{AllPathsMappedAddr, Options};
+    use super::{NodeIdMappedAddr, Options};
     use crate::{
         Endpoint, RelayMap, RelayMode, SecretKey,
         dns::DnsResolver,
@@ -2958,7 +2965,7 @@ mod tests {
     async fn magicsock_connect(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
-        addr: AllPathsMappedAddr,
+        addr: NodeIdMappedAddr,
         node_id: NodeId,
     ) -> Result<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
@@ -2984,7 +2991,7 @@ mod tests {
     async fn magicsock_connect_with_transport_config(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
-        mapped_addr: AllPathsMappedAddr,
+        mapped_addr: NodeIdMappedAddr,
         node_id: NodeId,
         transport_config: Arc<quinn::TransportConfig>,
     ) -> Result<quinn::Connection> {
@@ -3019,7 +3026,7 @@ mod tests {
         let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
 
         // Generate an address not present in the NodeMap.
-        let bad_addr = AllPathsMappedAddr::generate();
+        let bad_addr = NodeIdMappedAddr::generate();
 
         // 500ms is rather fast here.  Running this locally it should always be the correct
         // timeout.  If this is too slow however the test will not become flaky as we are
