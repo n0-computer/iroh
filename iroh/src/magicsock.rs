@@ -93,7 +93,7 @@ use crate::net_report::{IpMappedAddr, QuicConfig};
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
-    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
+    discovery::{Discovery, DiscoveryEvent, DiscoverySubscribers, NodeData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, IpMappedAddresses, Report},
@@ -3408,7 +3408,7 @@ impl Actor {
             .port_mapper
             .watch_external_address();
 
-        let mut discovery_events: BoxStream<DiscoveryItem> = Box::pin(n0_future::stream::empty());
+        let mut discovery_events: BoxStream<DiscoveryEvent> = Box::pin(n0_future::stream::empty());
         if let Some(d) = self.msock.discovery() {
             if let Some(events) = d.subscribe() {
                 discovery_events = events;
