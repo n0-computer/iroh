@@ -6,6 +6,7 @@ use std::{
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use n0_future::{
+    MergeUnbounded,
     task::AbortOnDropHandle,
     time::{Duration, Instant},
 };
@@ -13,6 +14,7 @@ use n0_watcher::Watchable;
 use quinn::WeakConnectionHandle;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio_stream::wrappers::BroadcastStream;
 use tracing::{Level, debug, event, info, instrument, trace, warn};
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -712,6 +714,13 @@ pub(super) struct NodeStateActor {
     transports_sender: mpsc::Sender<TransportsSenderMessage>,
     // TODO: Turn this into a WeakConnectionHandle
     connections: Vec<quinn::Connection>,
+    // TODO: Do we need to know which event comes from which connection?  We could store
+    //    connections in an FxHashMap using a u64 counter as index and map event streams to
+    //    this index if so.  Events only come with a PathId, so to know which actual path
+    //    this refers to we need to know more.
+    path_events: MergeUnbounded<BroadcastStream<quinn_proto::PathEvent>>,
+    // TODO: We probably need some indexes from (Connection, PathId) pairs to
+    //    transports::Addr.
     paths: BTreeMap<transports::Addr, NewPathState>,
     metrics: Arc<MagicsockMetrics>,
 }
@@ -726,6 +735,7 @@ impl NodeStateActor {
             node_id,
             transports_sender,
             connections: Vec::new(),
+            path_events: Default::default(),
             paths: BTreeMap::new(),
             metrics,
         }
@@ -753,8 +763,17 @@ impl NodeStateActor {
         loop {
             if let Some(msg) = inbox.recv().await {
                 match msg {
-                    NodeStateMessage::SendDatagram(transmit) => todo!(),
-                    NodeStateMessage::AddConnection(handle) => todo!(),
+                    NodeStateMessage::SendDatagram(transmit) => {
+                        // - do we have a currently selected path?
+                        // - if not initiate holepunching
+                        // - and then send along all paths
+                        todo!();
+                    }
+                    NodeStateMessage::AddConnection(handle) => {
+                        let events = BroadcastStream::new(handle.path_events());
+                        self.path_events.push(events);
+                        self.connections.push(handle);
+                    }
                     NodeStateMessage::PingReceived => todo!(),
                 }
             } else {
@@ -781,7 +800,7 @@ pub(crate) enum NodeStateMessage {
     /// The connection will now be managed by this actor.  Holepunching will happen when
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
-    AddConnection(WeakConnectionHandle),
+    AddConnection(quinn::Connection),
     // TODO: Add the transaction ID.
     PingReceived,
 }
