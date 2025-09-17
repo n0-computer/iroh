@@ -40,6 +40,8 @@ const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 ///
 /// --relay-only needs the `test-utils` feature
 ///
+/// --dev needs the `test-utils` feature
+///
 /// --mdns needs the `discovery-local-network` feature
 ///
 /// To enable all features, run the example with --all-features:
@@ -192,6 +194,8 @@ impl EndpointArgs {
             }
         };
         builder = builder.secret_key(secret_key);
+
+        #[cfg(feature = "test-utils")]
         if Env::Dev == self.env {
             builder = builder.insecure_skip_relay_cert_verify(true);
         }
