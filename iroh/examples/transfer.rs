@@ -178,20 +178,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, snafu::Snafu)]
-enum FeatureError {
-    #[snafu(display("Must have the `test-utils` feature enabled when using the `--env=dev` flag"))]
-    Dev,
-    #[snafu(display(
-        "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
-    ))]
-    RelayOnly,
-    #[snafu(display(
-        "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
-    ))]
-    Mdns,
-}
-
 impl EndpointArgs {
     async fn bind_endpoint(self) -> Result<Endpoint> {
         let mut builder = Endpoint::builder();
@@ -215,7 +201,9 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                DevSnafu.fail()?;
+                snafu::whatever!(
+                    "Must have the `test-utils` feature enabled when using the `--env=dev` flag"
+                )
             }
         }
 
@@ -249,7 +237,9 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "discovery-local-network"))]
             {
-                MdnsSnafu.fail()?;
+                snafu::whatever!(
+                    "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
+                );
             }
         }
 
@@ -260,7 +250,9 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                RelayOnlySnafu.fail()?;
+                snafu::whatever!(
+                    "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
+                );
             }
         }
 
