@@ -737,6 +737,12 @@ enum TransportsSenderMessage {
     SendDatagram(transports::Addr, OwnedTransmit),
 }
 
+impl From<(transports::Addr, OwnedTransmit)> for TransportsSenderMessage {
+    fn from(source: (transports::Addr, OwnedTransmit)) -> Self {
+        Self::SendDatagram(source.0, source.1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;

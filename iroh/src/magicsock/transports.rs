@@ -314,7 +314,7 @@ pub(crate) struct Transmit<'a> {
 }
 
 /// An outgoing packet that can be sent across channels.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct OwnedTransmit {
     pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
     pub(crate) contents: Bytes,

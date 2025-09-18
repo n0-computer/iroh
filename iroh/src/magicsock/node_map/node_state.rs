@@ -13,9 +13,10 @@ use n0_future::{
 use n0_watcher::Watchable;
 use quinn::WeakConnectionHandle;
 use serde::{Deserialize, Serialize};
+use snafu::{ResultExt, Whatever};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::BroadcastStream;
-use tracing::{Level, debug, event, info, instrument, trace, warn};
+use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
@@ -711,16 +712,32 @@ impl NodeState {
 pub(super) struct NodeStateActor {
     /// The node ID of the remote node.
     node_id: NodeId,
+    /// Allowing us to directly send datagrams.
+    ///
+    /// Used for handling [`NodeStateMessage::SendDatagram`] messages.
     transports_sender: mpsc::Sender<TransportsSenderMessage>,
+    /// All connections we have to this remote node.
     connections: Vec<WeakConnectionHandle>,
+    /// Events emitted by Quinn about path changes.
     // TODO: Do we need to know which event comes from which connection?  We could store
     //    connections in an FxHashMap using a u64 counter as index and map event streams to
     //    this index if so.  Events only come with a PathId, so to know which actual path
     //    this refers to we need to know more.
     path_events: MergeUnbounded<BroadcastStream<quinn_proto::PathEvent>>,
+    /// All possible paths we are aware of.
+    ///
+    /// These paths might be entirely impossible to use, since they are added by discovery
+    /// mechanisms.  The are only potentially usable.
     // TODO: We probably need some indexes from (Connection, PathId) pairs to
     //    transports::Addr.
     paths: BTreeMap<transports::Addr, NewPathState>,
+    /// The path we currently consider the preferred path to the remote node.
+    ///
+    /// **We expect this path to work.** If we become aware this path is broken then it is
+    /// set back to `None`.  Having a selected path does not mean we may not be able to get
+    /// a better path: e.g. when the selected path is a relay path we still need to trigger
+    /// holepunching regularly.
+    selected_path: Option<transports::Addr>,
     metrics: Arc<MagicsockMetrics>,
 }
 
@@ -736,6 +753,7 @@ impl NodeStateActor {
             connections: Vec::new(),
             path_events: Default::default(),
             paths: BTreeMap::new(),
+            selected_path: None,
             metrics,
         }
     }
@@ -743,30 +761,42 @@ impl NodeStateActor {
     pub(super) fn start(mut self) -> NodeStateHandle {
         let (tx, rx) = mpsc::channel(16);
 
-        // No .instrument() on the task, run method has an #[instrument] attribute.
-        let task = tokio::spawn(async move {
-            self.run(rx).await;
-        });
+        let task = tokio::spawn(
+            async move {
+                if let Err(err) = self.run(rx).await {
+                    error!("actor failed: {err:#}");
+                }
+            }
+            .instrument(info_span!("NodeStateActor")),
+        );
         NodeStateHandle {
             sender: tx,
             _task: AbortOnDropHandle::new(task),
         }
     }
 
-    #[instrument(
-        name = "NodeStateActor",
-        skip_all,
-        fields(node_id = %self.node_id.fmt_short())
-    )]
-    async fn run(&mut self, mut inbox: mpsc::Receiver<NodeStateMessage>) {
+    #[instrument(skip_all, fields(node_id = %self.node_id.fmt_short()))]
+    async fn run(&mut self, mut inbox: mpsc::Receiver<NodeStateMessage>) -> Result<(), Whatever> {
         loop {
             if let Some(msg) = inbox.recv().await {
                 match msg {
                     NodeStateMessage::SendDatagram(transmit) => {
-                        // - do we have a currently selected path?
-                        // - if not initiate holepunching
-                        // - and then send along all paths
-                        todo!();
+                        if let Some(ref addr) = self.selected_path {
+                            self.transports_sender
+                                .send((addr.clone(), transmit).into())
+                                .await
+                                .whatever_context("TransportSenderActor stopped")?;
+                        } else {
+                            for addr in self.paths.keys() {
+                                self.transports_sender
+                                    .send((addr.clone(), transmit.clone()).into())
+                                    .await
+                                    .whatever_context("TransportSenerActor stopped")?;
+                                if addr.is_relay() {
+                                    self.call_me_maybe(addr.clone());
+                                }
+                            }
+                        }
                     }
                     NodeStateMessage::AddConnection(handle) => {
                         if let Some(conn) = handle.upgrade() {
@@ -787,8 +817,6 @@ impl NodeStateActor {
                             let path = self.paths.entry(addr).or_default();
                             path.sources.insert(source, Instant::now());
                         }
-                        // TODO: Now check if we need to start holepunching or something for
-                        //    any existing connections.
                     }
                 }
             } else {
@@ -796,6 +824,28 @@ impl NodeStateActor {
             }
         }
         trace!("actor terminating");
+        Ok(())
+    }
+
+    /// Tries to select a new path out of the available ones.
+    ///
+    /// We only want to accept any path which we know can be used.  If we do not know of any
+    /// working paths we must set it to `None`.
+    fn select_path(&mut self) {
+        // TODO
+        self.selected_path = None;
+    }
+
+    /// Sends a call-me-maybe message to the remote node.
+    ///
+    /// This will first send pings to any paths the remote advertised in their own
+    /// call-me-maybe message.
+    ///
+    /// If a call-me-maybe message was recently sent it will instead schedule a new
+    /// call-me-maybe after a delay if by then it is still needed.
+    fn call_me_maybe(&mut self, dst: transports::Addr) {
+        debug_assert!(dst.is_relay(), "must send call-me-maybe via a relay server");
+        todo!()
     }
 }
 

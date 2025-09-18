@@ -2261,7 +2261,6 @@ mod tests {
     }
 
     impl MagicSock {
-        #[track_caller]
         pub async fn add_test_addr(&self, node_addr: NodeAddr) {
             self.add_node_addr(
                 node_addr,
