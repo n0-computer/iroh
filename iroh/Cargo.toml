@@ -101,8 +101,6 @@ tracing-subscriber = { version = "0.3", features = [
 ], optional = true }
 indicatif = { version = "0.18", features = ["tokio"], optional = true }
 parse-size = { version = "=1.0.0", optional = true, features = ['std'] } # pinned version to avoid bumping msrv to 1.81
-anyhow = "1.0.99"
-
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
