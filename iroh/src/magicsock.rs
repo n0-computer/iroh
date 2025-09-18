@@ -442,9 +442,13 @@ impl MagicSock {
         self.node_map.get_direct_addrs(node_id)
     }
 
-    /// Add addresses for a node to the magic socket's addresbook.
+    /// Add potential addresses for a node to the [`NodeState`].
+    ///
+    /// This is used to add possible paths that the remote node might be reachable on.  They
+    /// will be used when there is no active connection to the node to attempt to establish
+    /// a connection.
     #[instrument(skip_all)]
-    pub fn add_node_addr(
+    pub(crate) async fn add_node_addr(
         &self,
         mut addr: NodeAddr,
         source: node_map::Source,
@@ -452,21 +456,25 @@ impl MagicSock {
         let mut pruned: usize = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
             if addr.direct_addresses.remove(&my_addr) {
-                warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
+                warn!(
+                    node_id = addr.node_id.fmt_short(),
+                    %my_addr,
+                    %source,
+                    "not adding our addr for node",
+                );
                 pruned += 1;
             }
         }
         if !addr.is_empty() {
             // Add addr to the internal NodeMap
-            self.node_map
-                .add_node_addr(addr.clone(), source, &self.metrics.magicsock);
+            self.node_map.add_node_addr(addr.clone(), source).await;
 
             if let Some(url) = addr.relay_url().cloned() {
                 self.node_map.relay_mapped_addrs.get(&(url, addr.node_id));
             }
 
-            // Add paths to the existing connections
-            self.add_paths(addr);
+            // // Add paths to the existing connections
+            // self.add_paths(addr);
 
             Ok(())
         } else if pruned != 0 {
@@ -1210,9 +1218,10 @@ impl Handle {
             let sender = transports.create_sender();
             #[cfg(any(test, feature = "test-utils"))]
             let nm =
-                NodeMap::load_from_vec(node_map, path_selection, metrics.magicsock.clone(), sender);
+                NodeMap::load_from_vec(node_map, path_selection, metrics.magicsock.clone(), sender)
+                    .await;
             #[cfg(not(any(test, feature = "test-utils")))]
-            let nm = NodeMap::load_from_vec(node_map, metrics.magicsock.clone(), sender);
+            let nm = NodeMap::load_from_vec(node_map, metrics.magicsock.clone(), sender).await;
             nm
         };
         // let node_map = node_map.unwrap_or_default();
@@ -1758,7 +1767,7 @@ impl Actor {
                         node_addr,
                         Source::Discovery {
                             name: provenance.to_string()
-                        }) {
+                        }).await {
                         let node_addr = discovery_item.to_node_addr();
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
@@ -2253,14 +2262,15 @@ mod tests {
 
     impl MagicSock {
         #[track_caller]
-        pub fn add_test_addr(&self, node_addr: NodeAddr) {
+        pub async fn add_test_addr(&self, node_addr: NodeAddr) {
             self.add_node_addr(
                 node_addr,
                 Source::NamedApp {
                     name: "test".into(),
                 },
             )
-            .unwrap()
+            .await
+            .ok();
         }
     }
 
@@ -2318,7 +2328,7 @@ mod tests {
     #[instrument(skip_all)]
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<JoinSet<()>> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_direct_addrs(
+        async fn update_direct_addrs(
             stacks: &[MagicStack],
             my_idx: usize,
             new_addrs: BTreeSet<DirectAddr>,
@@ -2334,7 +2344,7 @@ mod tests {
                     relay_url: None,
                     direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                 };
-                m.endpoint.magic_sock().add_test_addr(addr);
+                m.endpoint.magic_sock().add_test_addr(addr).await;
             }
         }
 
@@ -2349,7 +2359,7 @@ mod tests {
                 let mut stream = m.endpoint.direct_addresses().stream().filter_map(|i| i);
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                    update_direct_addrs(&stacks, my_idx, new_eps);
+                    update_direct_addrs(&stacks, my_idx, new_eps).await;
                 }
             });
         }
@@ -2909,6 +2919,7 @@ mod tests {
                     name: "test".into(),
                 },
             )
+            .await
             .unwrap();
         let addr = msock_1.get_mapping_addr(node_id_2).unwrap();
         let res = tokio::time::timeout(
@@ -2963,17 +2974,19 @@ mod tests {
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
         // Add an empty entry in the NodeMap of ep_1
-        msock_1.node_map.add_node_addr(
-            NodeAddr {
-                node_id: node_id_2,
-                relay_url: None,
-                direct_addresses: Default::default(),
-            },
-            Source::NamedApp {
-                name: "test".into(),
-            },
-            &msock_1.metrics.magicsock,
-        );
+        msock_1
+            .node_map
+            .add_node_addr(
+                NodeAddr {
+                    node_id: node_id_2,
+                    relay_url: None,
+                    direct_addresses: Default::default(),
+                },
+                Source::NamedApp {
+                    name: "test".into(),
+                },
+            )
+            .await;
 
         let addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
 
@@ -3018,6 +3031,7 @@ mod tests {
                     name: "test".into(),
                 },
             )
+            .await
             .unwrap();
 
         // We can now connect
@@ -3058,6 +3072,7 @@ mod tests {
             .endpoint
             .magic_sock()
             .add_node_addr(empty_addr, node_map::Source::App)
+            .await
             .unwrap_err();
         assert!(
             err.to_string()
@@ -3074,7 +3089,8 @@ mod tests {
         stack
             .endpoint
             .magic_sock()
-            .add_node_addr(addr, node_map::Source::App)?;
+            .add_node_addr(addr, node_map::Source::App)
+            .await?;
         assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 1);
 
         // addrs only
@@ -3086,7 +3102,8 @@ mod tests {
         stack
             .endpoint
             .magic_sock()
-            .add_node_addr(addr, node_map::Source::App)?;
+            .add_node_addr(addr, node_map::Source::App)
+            .await?;
         assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 2);
 
         // both
@@ -3098,7 +3115,8 @@ mod tests {
         stack
             .endpoint
             .magic_sock()
-            .add_node_addr(addr, node_map::Source::App)?;
+            .add_node_addr(addr, node_map::Source::App)
+            .await?;
         assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 3);
 
         Ok(())

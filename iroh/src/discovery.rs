@@ -648,7 +648,9 @@ impl DiscoveryTask {
                         continue;
                     }
                     debug!(%provenance, addr = ?node_addr, "new address found");
-                    ep.add_node_addr_with_source(node_addr, provenance).ok();
+                    ep.add_node_addr_with_source(node_addr, provenance)
+                        .await
+                        .ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }

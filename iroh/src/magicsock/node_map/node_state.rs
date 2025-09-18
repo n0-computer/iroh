@@ -712,8 +712,7 @@ pub(super) struct NodeStateActor {
     /// The node ID of the remote node.
     node_id: NodeId,
     transports_sender: mpsc::Sender<TransportsSenderMessage>,
-    // TODO: Turn this into a WeakConnectionHandle
-    connections: Vec<quinn::Connection>,
+    connections: Vec<WeakConnectionHandle>,
     // TODO: Do we need to know which event comes from which connection?  We could store
     //    connections in an FxHashMap using a u64 counter as index and map event streams to
     //    this index if so.  Events only come with a PathId, so to know which actual path
@@ -770,11 +769,14 @@ impl NodeStateActor {
                         todo!();
                     }
                     NodeStateMessage::AddConnection(handle) => {
-                        let events = BroadcastStream::new(handle.path_events());
-                        self.path_events.push(events);
-                        self.connections.push(handle);
+                        if let Some(conn) = handle.upgrade() {
+                            let events = BroadcastStream::new(conn.path_events());
+                            self.path_events.push(events);
+                            self.connections.push(handle);
+                        }
                     }
                     NodeStateMessage::PingReceived => todo!(),
+                    NodeStateMessage::AddNodeAddr(addr, source) => todo!(),
                 }
             } else {
                 break;
@@ -786,7 +788,7 @@ impl NodeStateActor {
 
 /// Messages to send to the [`NodeStateActor`].
 pub(crate) enum NodeStateMessage {
-    /// Send a datagram to all known paths.
+    /// Sends a datagram to all known paths.
     ///
     /// Used to send QUIC Initial packets.  If there is no working direct path this will
     /// trigger holepunching.
@@ -795,14 +797,16 @@ pub(crate) enum NodeStateMessage {
     /// operation with a bunch more copying.  So it should only be used for sending QUIC
     /// Initial packets.
     SendDatagram(OwnedTransmit),
-    /// Add an active connection to this remote node.
+    /// Adds an active connection to this remote node.
     ///
     /// The connection will now be managed by this actor.  Holepunching will happen when
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
-    AddConnection(quinn::Connection),
+    AddConnection(WeakConnectionHandle),
     // TODO: Add the transaction ID.
     PingReceived,
+    /// Adds a [`NodeAddr`] with locations where the node might be reachable.
+    AddNodeAddr(NodeAddr, Source),
 }
 
 /// A handle to a [`NodeStateActor`].

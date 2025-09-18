@@ -147,28 +147,33 @@ impl NodeMap {
 
     #[cfg(not(any(test, feature = "test-utils")))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) fn load_from_vec(
+    pub(super) async fn load_from_vec(
         nodes: Vec<NodeAddr>,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
     ) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes, metrics, sender))
+        let me = Self::from_inner(NodeMapInner::new(metrics, sender));
+        for addr in nodes {
+            me.add_node_addr(addr, Source::Saved).await;
+        }
+        me
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) fn load_from_vec(
+    pub(super) async fn load_from_vec(
         nodes: Vec<NodeAddr>,
         path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
     ) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(
-            nodes,
-            path_selection,
-            metrics,
-            sender,
-        ))
+        let mut inner = NodeMapInner::new(metrics, sender);
+        inner.path_selection = path_selection;
+        let me = Self::from_inner(inner);
+        for addr in nodes {
+            me.add_node_addr(addr, Source::Saved).await;
+        }
+        me
     }
 
     fn from_inner(inner: NodeMapInner) -> Self {
@@ -179,17 +184,21 @@ impl NodeMap {
         }
     }
 
-    /// Add the contact information for a node.
-    pub(super) fn add_node_addr(
-        &self,
-        node_addr: NodeAddr,
-        source: Source,
-        metrics: &MagicsockMetrics,
-    ) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .add_node_addr(node_addr, source, metrics)
+    /// Adds addresses where a node might be contactable.
+    pub(super) async fn add_node_addr(&self, node_addr: NodeAddr, source: Source) {
+        if let Some(ref relay_url) = node_addr.relay_url {
+            // Ensure we have a RelayMappedAddress for this.
+            self.relay_mapped_addrs
+                .get(&(relay_url.clone(), node_addr.node_id));
+        }
+        let node_state = self.node_state_actor(node_addr.node_id);
+
+        // This only fails if the sender is closed.  That means the NodeStateActor has
+        // stopped, which only happens during shutdown.
+        node_state
+            .send(NodeStateMessage::AddNodeAddr(node_addr, source))
+            .await
+            .ok();
     }
 
     /// Number of nodes currently listed.
@@ -328,18 +337,24 @@ impl NodeMap {
 
     /// Returns the sender for the [`NodeStateActor`].
     ///
+    /// If needed a new actor is started on demand.
+    ///
     /// [`NodeStateActor`]: node_state::NodeStateActor
     pub(super) fn node_state_actor(&self, node_id: NodeId) -> mpsc::Sender<NodeStateMessage> {
         let mut inner = self.inner.lock().expect("poisoned");
         match inner.node_states.get(&node_id) {
             Some(handle) => handle.sender.clone(),
             None => {
+                // Create a new NodeStateActor and insert it into the node map.
                 let sender = inner.transports_handle.inbox.clone();
                 let metrics = inner.metrics.clone();
                 let actor = NodeStateActor::new(node_id, sender, metrics);
                 let handle = actor.start();
                 let sender = handle.sender.clone();
                 inner.node_states.insert(node_id, handle);
+
+                // Ensure there is a NodeMappedAddr for this NodeId.
+                self.node_mapped_addrs.get(&node_id);
                 sender
             }
         }
@@ -347,7 +362,6 @@ impl NodeMap {
 }
 
 impl NodeMapInner {
-    #[cfg(any(test, feature = "test-utils"))]
     fn new(metrics: Arc<MagicsockMetrics>, sender: TransportsSender) -> Self {
         let transports_handle = Self::start_transports_sender(sender);
         Self {
@@ -358,93 +372,15 @@ impl NodeMapInner {
             by_quic_mapped_addr: Default::default(),
             by_id: Default::default(),
             next_id: 0,
+            #[cfg(any(test, feature = "test-utils"))]
             path_selection: Default::default(),
             node_states: Default::default(),
         }
     }
 
-    /// Creates a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    #[cfg(not(any(test, feature = "test-utils")))]
-    fn load_from_vec(
-        nodes: Vec<NodeAddr>,
-        metrics: Arc<MagicsockMetrics>,
-        sender: TransportsSender,
-    ) -> Self {
-        let transports_handle = Self::start_transports_sender(sender);
-        let mut me = Self {
-            metrics: metrics.clone(),
-            transports_handle,
-            by_node_key: Default::default(),
-            by_ip_port: Default::default(),
-            by_quic_mapped_addr: Default::default(),
-            by_id: Default::default(),
-            next_id: 0,
-            node_states: Default::default(),
-        };
-        for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved, &metrics);
-        }
-        me
-    }
-
-    /// Creates a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    #[cfg(any(test, feature = "test-utils"))]
-    fn load_from_vec(
-        nodes: Vec<NodeAddr>,
-        path_selection: PathSelection,
-        metrics: Arc<MagicsockMetrics>,
-        sender: TransportsSender,
-    ) -> Self {
-        let transports_handle = Self::start_transports_sender(sender);
-        let mut me = Self {
-            metrics: metrics.clone(),
-            transports_handle,
-            by_node_key: Default::default(),
-            by_ip_port: Default::default(),
-            by_quic_mapped_addr: Default::default(),
-            by_id: Default::default(),
-            next_id: 0,
-            path_selection,
-            node_states: Default::default(),
-        };
-        for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved, &metrics);
-        }
-        me
-    }
-
     fn start_transports_sender(sender: TransportsSender) -> TransportsSenderHandle {
         let actor = TransportsSenderActor::new(sender);
         actor.start()
-    }
-
-    /// Add the contact information for a node.
-    #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
-    fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source, metrics: &MagicsockMetrics) {
-        // TODO: Add to the NodeStateActor here.
-        let source0 = source.clone();
-        let node_id = node_addr.node_id;
-        let relay_url = node_addr.relay_url.clone();
-        #[cfg(any(test, feature = "test-utils"))]
-        let path_selection = self.path_selection;
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
-            node_id,
-            relay_url,
-            active: false,
-            source,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection,
-        });
-        node_state.update_from_node_addr(
-            node_addr.relay_url.as_ref(),
-            &node_addr.direct_addresses,
-            source0,
-            metrics,
-        );
-        let id = node_state.id();
-        for addr in node_addr.direct_addresses() {
-            self.set_node_state_for_ip_port(*addr, id);
-        }
     }
 
     /// Prunes direct addresses from nodes that claim to share an address we know points to us.
@@ -821,8 +757,7 @@ mod tests {
                 Source::NamedApp {
                     name: "test".into(),
                 },
-                &Default::default(),
-            )
+            );
         }
     }
 
@@ -873,7 +808,8 @@ mod tests {
             PathSelection::default(),
             Default::default(),
             transports.create_sender(),
-        );
+        )
+        .await;
 
         let mut loaded: Vec<NodeAddr> = loaded_node_map
             .list_remote_infos(Instant::now())

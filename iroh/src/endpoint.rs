@@ -726,7 +726,7 @@ impl Endpoint {
         ensure!(node_addr.node_id != self.node_id(), SelfConnectSnafu);
 
         if !node_addr.is_empty() {
-            self.add_node_addr(node_addr.clone())?;
+            self.add_node_addr(node_addr.clone()).await?;
         }
         let node_id = node_addr.node_id;
 
@@ -814,8 +814,9 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
+    pub async fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
         self.add_node_addr_inner(node_addr, magicsock::Source::App)
+            .await
     }
 
     /// Informs this [`Endpoint`] about addresses of the iroh node, noting the source.
@@ -837,7 +838,7 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn add_node_addr_with_source(
+    pub async fn add_node_addr_with_source(
         &self,
         node_addr: NodeAddr,
         source: &'static str,
@@ -848,16 +849,17 @@ impl Endpoint {
                 name: source.into(),
             },
         )
+        .await
     }
 
-    fn add_node_addr_inner(
+    async fn add_node_addr_inner(
         &self,
         node_addr: NodeAddr,
         source: magicsock::Source,
     ) -> Result<(), AddNodeAddrError> {
         // Connecting to ourselves is not supported.
         snafu::ensure!(node_addr.node_id != self.node_id(), OwnAddressSnafu);
-        self.msock.add_node_addr(node_addr, source)
+        self.msock.add_node_addr(node_addr, source).await
     }
 
     // # Getter methods for properties of this Endpoint itself.
@@ -2258,7 +2260,7 @@ mod tests {
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Connecting to ourself"));
 
-        let res = ep.add_node_addr(my_addr);
+        let res = ep.add_node_addr(my_addr).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Adding our own address"));
@@ -2394,7 +2396,7 @@ mod tests {
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), None).await?;
         assert_eq!(endpoint.remote_info_iter().count(), 0);
-        endpoint.add_node_addr(node_addr.clone())?;
+        endpoint.add_node_addr(node_addr.clone()).await?;
 
         // Grab the current addrs
         let node_addrs: Vec<NodeAddr> = endpoint.remote_info_iter().map(Into::into).collect();
@@ -2589,8 +2591,8 @@ mod tests {
 
         let ep1_nodeaddr = ep1.node_addr().initialized().await;
         let ep2_nodeaddr = ep2.node_addr().initialized().await;
-        ep1.add_node_addr(ep2_nodeaddr.clone())?;
-        ep2.add_node_addr(ep1_nodeaddr.clone())?;
+        ep1.add_node_addr(ep2_nodeaddr.clone()).await?;
+        ep2.add_node_addr(ep1_nodeaddr.clone()).await?;
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
         eprintln!("node id 1 {ep1_nodeid}");
