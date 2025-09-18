@@ -130,7 +130,6 @@ struct EndpointArgs {
     /// Do not resolve node info via DNS.
     #[clap(long)]
     no_dns_resolve: bool,
-    #[cfg(feature = "discovery-local-network")]
     #[clap(long)]
     /// Enable mDNS discovery.
     mdns: bool,
@@ -179,21 +178,23 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, snafu::Snafu)]
+enum FeatureError {
+    #[snafu(display("Must have the `test-utils` feature enabled when using the `--env=dev` flag"))]
+    Dev,
+    #[snafu(display(
+        "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
+    ))]
+    RelayOnly,
+    #[snafu(display(
+        "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
+    ))]
+    Mdns,
+}
+
 impl EndpointArgs {
     async fn bind_endpoint(self) -> Result<Endpoint> {
         let mut builder = Endpoint::builder();
-
-        #[cfg(not(feature = "test-utils"))]
-        snafu::ensure_whatever!(
-            self.env != Env::Dev,
-            "Must have `test-utils` feature enabled when using the `--env=dev` flag"
-        );
-
-        #[cfg(not(feature = "test-utils"))]
-        snafu::ensure_whatever!(
-            !self.relay_only,
-            "Must have `test-utils` feature enabled when using the `--relay-only` flag"
-        );
 
         let secret_key = match std::env::var("IROH_SECRET") {
             Ok(s) => SecretKey::from_str(&s)
@@ -207,9 +208,15 @@ impl EndpointArgs {
         };
         builder = builder.secret_key(secret_key);
 
-        #[cfg(feature = "test-utils")]
         if Env::Dev == self.env {
-            builder = builder.insecure_skip_relay_cert_verify(true);
+            #[cfg(feature = "test-utils")]
+            {
+                builder = builder.insecure_skip_relay_cert_verify(true);
+            }
+            #[cfg(not(feature = "test-utils"))]
+            {
+                DevSnafu.fail()?;
+            }
         }
 
         let relay_mode = if self.no_relay {
@@ -235,14 +242,26 @@ impl EndpointArgs {
             builder = builder.add_discovery(DnsDiscovery::builder(domain));
         }
 
-        #[cfg(feature = "discovery-local-network")]
         if self.mdns {
-            builder = builder.discovery_local_network();
+            #[cfg(feature = "discovery-local-network")]
+            {
+                builder = builder.discovery_local_network();
+            }
+            #[cfg(not(feature = "discovery-local-network"))]
+            {
+                MdnsSnafu.fail()?;
+            }
         }
 
-        #[cfg(feature = "test-utils")]
         if self.relay_only {
-            builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
+            #[cfg(feature = "test-utils")]
+            {
+                builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
+            }
+            #[cfg(not(feature = "test-utils"))]
+            {
+                RelayOnlySnafu.fail()?;
+            }
         }
 
         if let Some(host) = self.dns_server {
