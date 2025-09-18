@@ -31,7 +31,7 @@ use crate::{
 
 use super::{
     IpPort, Source, TransportsSenderMessage,
-    path_state::{PathState, summarize_node_paths},
+    path_state::{NewPathState, PathState, summarize_node_paths},
     udp_paths::{NodeUdpPaths, UdpSendAddr},
 };
 
@@ -776,7 +776,20 @@ impl NodeStateActor {
                         }
                     }
                     NodeStateMessage::PingReceived => todo!(),
-                    NodeStateMessage::AddNodeAddr(addr, source) => todo!(),
+                    NodeStateMessage::AddNodeAddr(node_addr, source) => {
+                        for sockaddr in node_addr.direct_addresses {
+                            let addr = transports::Addr::from(sockaddr);
+                            let path = self.paths.entry(addr).or_default();
+                            path.sources.insert(source.clone(), Instant::now());
+                        }
+                        if let Some(relay_url) = node_addr.relay_url {
+                            let addr = transports::Addr::from((relay_url, self.node_id));
+                            let path = self.paths.entry(addr).or_default();
+                            path.sources.insert(source, Instant::now());
+                        }
+                        // TODO: Now check if we need to start holepunching or something for
+                        //    any existing connections.
+                    }
                 }
             } else {
                 break;
@@ -816,10 +829,6 @@ pub(crate) enum NodeStateMessage {
 pub(super) struct NodeStateHandle {
     pub(super) sender: mpsc::Sender<NodeStateMessage>,
     _task: AbortOnDropHandle<()>,
-}
-
-struct NewPathState {
-    addr: transports::Addr,
 }
 
 impl From<RemoteInfo> for NodeAddr {

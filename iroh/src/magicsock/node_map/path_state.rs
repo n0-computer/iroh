@@ -190,3 +190,12 @@ pub(super) fn summarize_node_paths(paths: &BTreeMap<IpPort, PathState>) -> Strin
     write!(&mut w, "]").ok();
     w
 }
+
+#[derive(Debug, Default)]
+pub(super) struct NewPathState {
+    /// How we learned about this path, and when.
+    ///
+    /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
+    /// of the map of sources down to one entry per type of source.
+    pub(super) sources: HashMap<Source, Instant>,
+}

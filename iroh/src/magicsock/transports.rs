@@ -331,7 +331,7 @@ impl From<&quinn_udp::Transmit<'_>> for OwnedTransmit {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Addr {
     Ip(SocketAddr),
     Relay(RelayUrl, NodeId),
