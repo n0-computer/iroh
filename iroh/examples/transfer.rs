@@ -183,6 +183,18 @@ impl EndpointArgs {
     async fn bind_endpoint(self) -> Result<Endpoint> {
         let mut builder = Endpoint::builder();
 
+        #[cfg(not(feature = "test-utils"))]
+        snafu::ensure_whatever!(
+            self.env != Env::Dev,
+            "Must have `test-utils` feature enabled when using the `--env=dev` flag"
+        );
+
+        #[cfg(not(feature = "test-utils"))]
+        snafu::ensure_whatever!(
+            !self.relay_only,
+            "Must have `test-utils` feature enabled when using the `--relay-only` flag"
+        );
+
         let secret_key = match std::env::var("IROH_SECRET") {
             Ok(s) => SecretKey::from_str(&s)
                 .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
