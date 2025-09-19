@@ -388,7 +388,7 @@ impl MagicSock {
         let mut pruned: usize = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
             if addr.direct_addresses.remove(&my_addr) {
-                warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
+                warn!( node_id=%addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
                 pruned += 1;
             }
         }
@@ -804,7 +804,7 @@ impl MagicSock {
                         event!(
                             target: "iroh::_events::call-me-maybe::recv",
                             Level::DEBUG,
-                            remote_node = sender.fmt_short(),
+                            remote_node = %sender.fmt_short(),
                             via = ?url,
                             their_addrs = ?cm.my_numbers,
                         );
@@ -3082,7 +3082,7 @@ mod tests {
     /// connections using [`ALPN`].
     ///
     /// Use [`magicsock_connect`] to establish connections.
-    #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
+    #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
     async fn magicsock_ep(secret_key: SecretKey) -> Result<Handle> {
         let quic_server_config = tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
             .make_server_config(vec![ALPN.to_vec()], true);
@@ -3112,7 +3112,7 @@ mod tests {
     /// Connects from `ep` returned by [`magicsock_ep`] to the `node_id`.
     ///
     /// Uses [`ALPN`], `node_id`, must match `addr`.
-    #[instrument(name = "connect", skip_all, fields(me = ep_secret_key.public().fmt_short()))]
+    #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn magicsock_connect(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
@@ -3138,7 +3138,7 @@ mod tests {
     /// This version allows customising the transport config.
     ///
     /// Uses [`ALPN`], `node_id`, must match `addr`.
-    #[instrument(name = "connect", skip_all, fields(me = ep_secret_key.public().fmt_short()))]
+    #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn magicsock_connect_with_transport_config(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
@@ -3291,7 +3291,7 @@ mod tests {
                     error!("{err:#}");
                 }
             }
-            .instrument(info_span!("ep2.accept", me = node_id_2.fmt_short()))
+            .instrument(info_span!("ep2.accept", me = %node_id_2.fmt_short()))
         });
         let _accept_task = AbortOnDropHandle::new(accept_task);
 

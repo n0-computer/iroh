@@ -134,12 +134,20 @@ impl PublicKey {
 
     /// Convert to a hex string limited to the first 5 bytes for a friendly string
     /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        data_encoding::HEXLOWER.encode(&self.as_bytes()[..5])
+    pub fn fmt_short(&self) -> impl Display + 'static {
+        PublicKeyShort(*self)
     }
 
     /// The length of an ed25519 `PublicKey`, in bytes.
     pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
+}
+
+struct PublicKeyShort(PublicKey);
+
+impl Display for PublicKeyShort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        data_encoding::HEXLOWER.encode_write(&self.0.as_bytes()[..5], f)
+    }
 }
 
 impl TryFrom<&[u8]> for PublicKey {
