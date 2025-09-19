@@ -1313,7 +1313,7 @@ mod tests {
                             src,
                             datagrams,
                         } = recv;
-                        info!(from = src.fmt_short(), "Received datagram");
+                        info!(from = %src.fmt_short(), "Received datagram");
                         let send = RelaySendItem {
                             remote_node: src,
                             url: relay_url.clone(),

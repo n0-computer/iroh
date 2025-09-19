@@ -51,12 +51,12 @@ impl Clients {
     pub async fn register(&self, client_config: Config, metrics: Arc<Metrics>) {
         let node_id = client_config.node_id;
         let connection_id = self.get_connection_id();
-        trace!(remote_node = node_id.fmt_short(), "registering client");
+        trace!(remote_node = %node_id.fmt_short(), "registering client");
 
         let client = Client::new(client_config, connection_id, self, metrics);
         if let Some(old_client) = self.0.clients.insert(node_id, client) {
             debug!(
-                remote_node = node_id.fmt_short(),
+                remote_node = %node_id.fmt_short(),
                 "multiple connections found, pruning old connection",
             );
             old_client.shutdown().await;
@@ -74,7 +74,7 @@ impl Clients {
     /// Must be passed a matching connection_id.
     pub(super) fn unregister(&self, connection_id: u64, node_id: NodeId) {
         trace!(
-            node_id = node_id.fmt_short(),
+            node_id = %node_id.fmt_short(),
             connection_id, "unregistering client"
         );
 
@@ -89,13 +89,13 @@ impl Clients {
                         Ok(_) => {}
                         Err(TrySendError::Full(_)) => {
                             debug!(
-                                dst = key.fmt_short(),
+                                dst = %key.fmt_short(),
                                 "client too busy to receive packet, dropping packet"
                             );
                         }
                         Err(TrySendError::Closed(_)) => {
                             debug!(
-                                dst = key.fmt_short(),
+                                dst = %key.fmt_short(),
                                 "can no longer write to client, dropping packet"
                             );
                         }
@@ -114,7 +114,7 @@ impl Clients {
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
-            debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
+            debug!(dst = %dst.fmt_short(), "no connected client, dropped packet");
             metrics.send_packets_dropped.inc();
             return Ok(());
         };
@@ -126,14 +126,14 @@ impl Clients {
             }
             Err(TrySendError::Full(_)) => {
                 debug!(
-                    dst = dst.fmt_short(),
+                    dst = %dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
                 Err(ForwardPacketError::new(PacketScope::Data, SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
-                    dst = dst.fmt_short(),
+                    dst = %dst.fmt_short(),
                     "can no longer write to client, dropping message and pruning connection"
                 );
                 client.start_shutdown();
@@ -155,7 +155,7 @@ impl Clients {
     ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(
-                dst = dst.fmt_short(),
+                dst = %dst.fmt_short(),
                 "no connected client, dropped disco packet"
             );
             metrics.disco_packets_dropped.inc();
@@ -169,14 +169,14 @@ impl Clients {
             }
             Err(TrySendError::Full(_)) => {
                 debug!(
-                    dst = dst.fmt_short(),
+                    dst = %dst.fmt_short(),
                     "client too busy to receive disco packet, dropping packet"
                 );
                 Err(ForwardPacketError::new(PacketScope::Disco, SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
-                    dst = dst.fmt_short(),
+                    dst = %dst.fmt_short(),
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
                 client.start_shutdown();
