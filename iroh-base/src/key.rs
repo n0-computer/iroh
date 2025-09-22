@@ -135,7 +135,11 @@ impl PublicKey {
     /// Convert to a hex string limited to the first 5 bytes for a friendly string
     /// representation of the key.
     pub fn fmt_short(&self) -> impl Display + 'static {
-        PublicKeyShort(self.0.as_bytes()[0..5].try_into().unwrap())
+        PublicKeyShort(
+            self.0.as_bytes()[0..5]
+                .try_into()
+                .expect("slice with incorrect length"),
+        )
     }
 
     /// The length of an ed25519 `PublicKey`, in bytes.
