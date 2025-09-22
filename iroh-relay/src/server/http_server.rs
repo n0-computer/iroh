@@ -697,7 +697,7 @@ impl Inner {
         };
         trace!("accept: create client");
         let node_id = client_conn_builder.node_id;
-        trace!(node_id = node_id.fmt_short(), "create client");
+        trace!(node_id = %node_id.fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
         // connection
