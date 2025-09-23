@@ -29,6 +29,7 @@ use crate::{
         node_map::path_validity::PathValidity,
         transports::{self, OwnedTransmit},
     },
+    util::MaybeFuture,
 };
 
 use super::{
@@ -723,6 +724,8 @@ pub(super) struct NodeStateActor {
     /// Used for handling [`NodeStateMessage::SendDatagram`] messages.
     transports_sender: mpsc::Sender<TransportsSenderMessage>,
     /// Our local addresses.
+    ///
+    /// These are our local addresses and any reflexive transport addresses.
     local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
 
     // Internal state - Quinn Connections we are managing.
@@ -754,6 +757,8 @@ pub(super) struct NodeStateActor {
     /// a better path: e.g. when the selected path is a relay path we still need to trigger
     /// holepunching regularly.
     selected_path: Option<transports::Addr>,
+    /// Time at which we should schedule the next holepunch attempt.
+    scheduled_holepunch: Option<Instant>,
 }
 
 impl NodeStateActor {
@@ -773,6 +778,7 @@ impl NodeStateActor {
             paths: BTreeMap::new(),
             last_holepunch: None,
             selected_path: None,
+            scheduled_holepunch: None,
         }
     }
 
@@ -796,50 +802,67 @@ impl NodeStateActor {
     #[instrument(skip_all, fields(node_id = %self.node_id.fmt_short()))]
     async fn run(&mut self, mut inbox: mpsc::Receiver<NodeStateMessage>) -> Result<(), Whatever> {
         loop {
-            if let Some(msg) = inbox.recv().await {
-                match msg {
-                    NodeStateMessage::SendDatagram(transmit) => {
-                        if let Some(ref addr) = self.selected_path {
-                            self.transports_sender
-                                .send((addr.clone(), transmit).into())
-                                .await
-                                .whatever_context("TransportSenderActor stopped")?;
-                        } else {
-                            for addr in self.paths.keys() {
-                                self.transports_sender
-                                    .send((addr.clone(), transmit.clone()).into())
-                                    .await
-                                    .whatever_context("TransportSenerActor stopped")?;
-                            }
-                            self.trigger_holepunching();
-                        }
-                    }
-                    NodeStateMessage::AddConnection(handle) => {
-                        if let Some(conn) = handle.upgrade() {
-                            let events = BroadcastStream::new(conn.path_events());
-                            self.path_events.push(events);
-                            self.connections.push(handle);
-                        }
-                    }
-                    NodeStateMessage::PingReceived => todo!(),
-                    NodeStateMessage::AddNodeAddr(node_addr, source) => {
-                        for sockaddr in node_addr.direct_addresses {
-                            let addr = transports::Addr::from(sockaddr);
-                            let path = self.paths.entry(addr).or_default();
-                            path.sources.insert(source.clone(), Instant::now());
-                        }
-                        if let Some(relay_url) = node_addr.relay_url {
-                            let addr = transports::Addr::from((relay_url, self.node_id));
-                            let path = self.paths.entry(addr).or_default();
-                            path.sources.insert(source, Instant::now());
-                        }
+            let scheduled_hp = match self.scheduled_holepunch {
+                Some(when) => MaybeFuture::Some(tokio::time::sleep_until(when)),
+                None => MaybeFuture::None,
+            };
+            let mut scheduled_hp = std::pin::pin!(scheduled_hp);
+            tokio::select! {
+                biased;
+                msg = inbox.recv() => {
+                    match msg {
+                        Some(msg) => self.handle_message(msg).await?,
+                        None => break,
                     }
                 }
-            } else {
-                break;
+                _ = &mut scheduled_hp => {
+                    self.trigger_holepunching();
+                }
             }
         }
         trace!("actor terminating");
+        Ok(())
+    }
+
+    async fn handle_message(&mut self, msg: NodeStateMessage) -> Result<(), Whatever> {
+        match msg {
+            NodeStateMessage::SendDatagram(transmit) => {
+                if let Some(ref addr) = self.selected_path {
+                    self.transports_sender
+                        .send((addr.clone(), transmit).into())
+                        .await
+                        .whatever_context("TransportSenderActor stopped")?;
+                } else {
+                    for addr in self.paths.keys() {
+                        self.transports_sender
+                            .send((addr.clone(), transmit.clone()).into())
+                            .await
+                            .whatever_context("TransportSenerActor stopped")?;
+                    }
+                    self.trigger_holepunching();
+                }
+            }
+            NodeStateMessage::AddConnection(handle) => {
+                if let Some(conn) = handle.upgrade() {
+                    let events = BroadcastStream::new(conn.path_events());
+                    self.path_events.push(events);
+                    self.connections.push(handle);
+                }
+            }
+            NodeStateMessage::PingReceived => todo!(),
+            NodeStateMessage::AddNodeAddr(node_addr, source) => {
+                for sockaddr in node_addr.direct_addresses {
+                    let addr = transports::Addr::from(sockaddr);
+                    let path = self.paths.entry(addr).or_default();
+                    path.sources.insert(source.clone(), Instant::now());
+                }
+                if let Some(relay_url) = node_addr.relay_url {
+                    let addr = transports::Addr::from((relay_url, self.node_id));
+                    let path = self.paths.entry(addr).or_default();
+                    path.sources.insert(source, Instant::now());
+                }
+            }
+        }
         Ok(())
     }
 
@@ -855,12 +878,45 @@ impl NodeStateActor {
     /// - DISCO pings will be sent to addresses recently advertised in a call-me-maybe
     ///   message.
     /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
+    ///
+    /// If a next trigger needs to be scheduled the delay until when to call this again is
+    /// returned.
     fn trigger_holepunching(&mut self) {
-        const CALL_ME_MAYBE_VALIDITY: Duration = Duration::from_secs(30);
         const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
-        let remote_addrs: BTreeSet<SocketAddr> = self
-            .paths
+        let remote_addrs: BTreeSet<SocketAddr> = self.remote_hp_addrs();
+        let local_addrs: BTreeSet<SocketAddr> = self
+            .local_addrs
+            .get()
+            .unwrap_or_default()
+            .iter()
+            .map(|daddr| daddr.addr)
+            .collect();
+        let addrs_changed = self
+            .last_holepunch
+            .as_ref()
+            .map(|last_hp| {
+                last_hp.remote_addrs != remote_addrs || last_hp.local_addrs != local_addrs
+            })
+            .unwrap_or(true);
+        if !addrs_changed {
+            if let Some(ref last_hp) = self.last_holepunch {
+                let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
+                if next_hp > Instant::now() {
+                    self.scheduled_holepunch = Some(next_hp);
+                    return;
+                }
+            }
+        }
+
+        self.do_holepunching();
+    }
+
+    /// Returns the remote addresses to holepunch against.
+    fn remote_hp_addrs(&self) -> BTreeSet<SocketAddr> {
+        const CALL_ME_MAYBE_VALIDITY: Duration = Duration::from_secs(30);
+
+        self.paths
             .iter()
             .filter_map(|(addr, state)| match addr {
                 transports::Addr::Ip(socket_addr) => Some((socket_addr, state)),
@@ -873,29 +929,16 @@ impl NodeStateActor {
                     .map(|when| when.elapsed() >= CALL_ME_MAYBE_VALIDITY)
                     .and(Some(*addr))
             })
-            .collect();
-        let local_addrs: BTreeSet<SocketAddr> = self
-            .local_addrs
-            .get()
-            .unwrap_or_default()
-            .iter()
-            .map(|daddr| daddr.addr)
-            .collect();
-        // let local_addrs: BTreeSet<SocketAddr> = self.local_addrs.get();
-        let mut do_hp = true;
-        if let Some(ref last_hp) = self.last_holepunch {
-            do_hp = last_hp.when.elapsed() >= HOLEPUNCH_ATTEMPTS_INTERVAL;
-            if remote_addrs != last_hp.remote_addrs {
-                do_hp = true;
-            }
-            if local_addrs != last_hp.local_addrs {
-                do_hp = true;
-            }
-        }
-        if !do_hp {
-            return;
-        }
-        todo!()
+            .collect()
+    }
+
+    /// Unconditionally perform holepunching.
+    ///
+    /// - DISCO pings will be sent to addresses recently advertised in a call-me-maybe
+    ///   message.
+    /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
+    fn do_holepunching(&mut self) {
+        todo!();
     }
 }
 
@@ -956,6 +999,9 @@ struct HolepunchAttempt {
     /// This does not mean every address here participated in the holepunching.  E.g. we
     /// could have tried only a sub-set of the addresses because a previous attempt already
     /// covered part of the range.
+    ///
+    /// We do not store this as a [`DirectAddr`] because this is checked for equality and we
+    /// do not want to compare the sources of these addresses.
     local_addrs: BTreeSet<SocketAddr>,
     /// The set of remote addresses which could take part in holepunching.
     ///

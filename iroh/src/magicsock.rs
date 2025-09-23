@@ -2158,6 +2158,9 @@ fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
 /// Direct addresses are UDP socket addresses on which an iroh node could potentially be
 /// contacted.  These can come from various sources depending on the network topology of the
 /// iroh node, see [`DirectAddrType`] for the several kinds of sources.
+///
+/// This is essentially a combination of our local addresses combined with any reflexive
+/// transport addresses we disovered using QAD.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DirectAddr {
     /// The address.
