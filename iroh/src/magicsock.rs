@@ -955,7 +955,7 @@ impl MagicSock {
             ));
         }
 
-        let pkt = self.disco.encode_and_seal(self.public_key, dst_key, &msg);
+        let pkt = self.disco.encode_and_seal(dst_key, &msg);
 
         let transmit = transports::Transmit {
             contents: &pkt,
@@ -1204,7 +1204,6 @@ impl Handle {
         });
         let relay_transports = vec![relay_transport];
 
-        let secret_encryption_key = secret_ed_box(secret_key.secret());
         #[cfg(not(wasm_browser))]
         let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
@@ -1214,7 +1213,7 @@ impl Handle {
         let transports = Transports::new(relay_transports, max_receive_segments);
 
         let direct_addrs = DiscoveredDirectAddrs::default();
-        let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
+        let (disco, disco_receiver) = DiscoState::new(&secret_key);
 
         let node_map = {
             let node_map = node_map.unwrap_or_default();
@@ -1446,6 +1445,8 @@ fn default_quic_client_config() -> rustls::ClientConfig {
 
 #[derive(Debug, Clone)]
 struct DiscoState {
+    /// The NodeId/PublicKey of this node.
+    this_node_id: NodeId,
     /// Encryption key for this node.
     secret_encryption_key: Arc<crypto_box::SecretKey>,
     /// The state for an active DiscoKey.
@@ -1456,12 +1457,15 @@ struct DiscoState {
 
 impl DiscoState {
     fn new(
-        secret_encryption_key: crypto_box::SecretKey,
+        secret_key: &SecretKey,
     ) -> (Self, mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>) {
+        let this_node_id = secret_key.public();
+        let secret_encryption_key = secret_ed_box(secret_key.secret());
         let (disco_sender, disco_receiver) = mpsc::channel(256);
 
         (
             Self {
+                this_node_id,
                 secret_encryption_key: Arc::new(secret_encryption_key),
                 secrets: Default::default(),
                 sender: disco_sender,
@@ -1474,15 +1478,10 @@ impl DiscoState {
         self.sender.try_send((dst, node_id, msg)).is_ok()
     }
 
-    fn encode_and_seal(
-        &self,
-        this_node_id: NodeId,
-        other_node_id: NodeId,
-        msg: &disco::Message,
-    ) -> Bytes {
+    fn encode_and_seal(&self, other_node_id: NodeId, msg: &disco::Message) -> Bytes {
         let mut seal = msg.as_bytes();
         self.get_secret(other_node_id, |secret| secret.seal(&mut seal));
-        disco::encode_message(&this_node_id, seal).into()
+        disco::encode_message(&self.this_node_id, seal).into()
     }
 
     fn unseal_and_decode(

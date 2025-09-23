@@ -797,7 +797,7 @@ mod tests {
     async fn restore_from_vec() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
         let direct_addrs = DiscoveredDirectAddrs::default();
-        let (disco, _) = DiscoState::new(crypto_box::SecretKey::generate(&mut rand::rngs::OsRng));
+        let (disco, _) = DiscoState::new(&SecretKey::generate(&mut rand::rngs::OsRng));
         let node_map = NodeMap::new(
             Default::default(),
             transports.create_sender(),
@@ -878,7 +878,7 @@ mod tests {
     async fn test_prune_direct_addresses() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
         let direct_addrs = DiscoveredDirectAddrs::default();
-        let (disco, _) = DiscoState::new(crypto_box::SecretKey::generate(&mut rand::rngs::OsRng));
+        let (disco, _) = DiscoState::new(&SecretKey::generate(&mut rand::rngs::OsRng));
         let node_map = NodeMap::new(
             Default::default(),
             transports.create_sender(),
@@ -959,7 +959,7 @@ mod tests {
     async fn test_prune_inactive() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
         let direct_addrs = DiscoveredDirectAddrs::default();
-        let (disco, _) = DiscoState::new(crypto_box::SecretKey::generate(&mut rand::rngs::OsRng));
+        let (disco, _) = DiscoState::new(&SecretKey::generate(&mut rand::rngs::OsRng));
         let node_map = NodeMap::new(
             Default::default(),
             transports.create_sender(),

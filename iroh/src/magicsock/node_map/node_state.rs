@@ -951,6 +951,34 @@ impl NodeStateActor {
         // If direct addrs are out of date we need to schedule an update?
         todo!();
     }
+
+    #[instrument(skip(self, dst_key), fields(dst_key = %dst_key.fmt_short()))]
+    async fn send_disco_message(
+        &self,
+        dst: transports::Addr,
+        dst_key: PublicKey,
+        msg: disco::Message,
+    ) {
+        let pkt = self.disco.encode_and_seal(dst_key, &msg);
+        let transmit = transports::OwnedTransmit {
+            ecn: None,
+            contents: pkt,
+            segment_size: None,
+        };
+        let counter = match dst {
+            transports::Addr::Ip(_) => &self.metrics.send_disco_udp,
+            transports::Addr::Relay(_, _) => &self.metrics.send_disco_relay,
+        };
+        match self.transports_sender.send((dst, transmit).into()).await {
+            Ok(()) => {
+                trace!("sent");
+                counter.inc();
+            }
+            Err(err) => {
+                warn!("failed to send disco message: {err:#}");
+            }
+        }
+    }
 }
 
 /// Messages to send to the [`NodeStateActor`].
