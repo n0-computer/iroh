@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options};
+use super::DirectAddr;
 use super::mapped_addrs::{AddrMap, RelayMappedAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use super::transports::TransportsSender;
@@ -72,6 +73,7 @@ pub(super) struct NodeMapInner {
     metrics: Arc<MagicsockMetrics>,
     /// Handle to an actor that can send over the transports.
     transports_handle: TransportsSenderHandle,
+    local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
     by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
@@ -137,12 +139,18 @@ pub enum Source {
         /// The name of the application that added the node
         name: String,
     },
+    /// The address was advertised by a call-me-maybe DISCO message.
+    CallMeMaybe,
 }
 
 impl NodeMap {
     #[cfg(any(test, feature = "test-utils"))]
-    pub(super) fn new(metrics: Arc<MagicsockMetrics>, sender: TransportsSender) -> Self {
-        Self::from_inner(NodeMapInner::new(metrics, sender))
+    pub(super) fn new(
+        metrics: Arc<MagicsockMetrics>,
+        sender: TransportsSender,
+        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+    ) -> Self {
+        Self::from_inner(NodeMapInner::new(metrics, sender, local_addrs))
     }
 
     #[cfg(not(any(test, feature = "test-utils")))]
@@ -151,8 +159,9 @@ impl NodeMap {
         nodes: Vec<NodeAddr>,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
+        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
     ) -> Self {
-        let me = Self::from_inner(NodeMapInner::new(metrics, sender));
+        let me = Self::from_inner(NodeMapInner::new(metrics, sender, local_addrs));
         for addr in nodes {
             me.add_node_addr(addr, Source::Saved).await;
         }
@@ -166,8 +175,9 @@ impl NodeMap {
         path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
+        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
     ) -> Self {
-        let mut inner = NodeMapInner::new(metrics, sender);
+        let mut inner = NodeMapInner::new(metrics, sender, local_addrs);
         inner.path_selection = path_selection;
         let me = Self::from_inner(inner);
         for addr in nodes {
@@ -347,8 +357,9 @@ impl NodeMap {
             None => {
                 // Create a new NodeStateActor and insert it into the node map.
                 let sender = inner.transports_handle.inbox.clone();
+                let local_addrs = inner.local_addrs.clone();
                 let metrics = inner.metrics.clone();
-                let actor = NodeStateActor::new(node_id, sender, metrics);
+                let actor = NodeStateActor::new(node_id, sender, local_addrs, metrics);
                 let handle = actor.start();
                 let sender = handle.sender.clone();
                 inner.node_states.insert(node_id, handle);
@@ -362,11 +373,16 @@ impl NodeMap {
 }
 
 impl NodeMapInner {
-    fn new(metrics: Arc<MagicsockMetrics>, sender: TransportsSender) -> Self {
+    fn new(
+        metrics: Arc<MagicsockMetrics>,
+        sender: TransportsSender,
+        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+    ) -> Self {
         let transports_handle = Self::start_transports_sender(sender);
         Self {
             metrics,
             transports_handle,
+            local_addrs,
             by_node_key: Default::default(),
             by_ip_port: Default::default(),
             by_quic_mapped_addr: Default::default(),
@@ -753,6 +769,7 @@ mod tests {
 
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
     use crate::disco::SendAddr;
+    use crate::magicsock::DiscoveredDirectAddrs;
     use crate::magicsock::transports::Transports;
 
     impl NodeMap {
@@ -772,7 +789,12 @@ mod tests {
     #[traced_test]
     async fn restore_from_vec() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
-        let node_map = NodeMap::new(Default::default(), transports.create_sender());
+        let direct_addrs = DiscoveredDirectAddrs::default();
+        let node_map = NodeMap::new(
+            Default::default(),
+            transports.create_sender(),
+            direct_addrs.addrs.watch(),
+        );
 
         let mut rng = rand::thread_rng();
         let node_a = SecretKey::generate(&mut rng).public();
@@ -814,6 +836,7 @@ mod tests {
             PathSelection::default(),
             Default::default(),
             transports.create_sender(),
+            direct_addrs.addrs.watch(),
         )
         .await;
 
@@ -844,7 +867,12 @@ mod tests {
     #[traced_test]
     fn test_prune_direct_addresses() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
-        let node_map = NodeMap::new(Default::default(), transports.create_sender());
+        let direct_addrs = DiscoveredDirectAddrs::default();
+        let node_map = NodeMap::new(
+            Default::default(),
+            transports.create_sender(),
+            direct_addrs.addrs.watch(),
+        );
         let public_key = SecretKey::generate(rand::thread_rng()).public();
         let id = node_map
             .inner
@@ -918,7 +946,12 @@ mod tests {
     #[test]
     fn test_prune_inactive() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
-        let node_map = NodeMap::new(Default::default(), transports.create_sender());
+        let direct_addrs = DiscoveredDirectAddrs::default();
+        let node_map = NodeMap::new(
+            Default::default(),
+            transports.create_sender(),
+            direct_addrs.addrs.watch(),
+        );
         // add one active node and more than MAX_INACTIVE_NODES inactive nodes
         let active_node = SecretKey::generate(rand::thread_rng()).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);

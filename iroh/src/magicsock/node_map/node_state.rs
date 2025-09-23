@@ -10,7 +10,7 @@ use n0_future::{
     task::AbortOnDropHandle,
     time::{Duration, Instant},
 };
-use n0_watcher::Watchable;
+use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Whatever};
@@ -22,6 +22,7 @@ use tracing::{Instrument, Level, debug, error, event, info, info_span, instrumen
 use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
+    endpoint::DirectAddr,
     magicsock::{
         HEARTBEAT_INTERVAL, MagicsockMetrics,
         mapped_addrs::{MappedAddr, NodeIdMappedAddr},
@@ -712,10 +713,20 @@ impl NodeState {
 pub(super) struct NodeStateActor {
     /// The node ID of the remote node.
     node_id: NodeId,
+
+    // Hooks into the rest of the MagicSocket.
+    //
+    /// Metrics.
+    metrics: Arc<MagicsockMetrics>,
     /// Allowing us to directly send datagrams.
     ///
     /// Used for handling [`NodeStateMessage::SendDatagram`] messages.
     transports_sender: mpsc::Sender<TransportsSenderMessage>,
+    /// Our local addresses.
+    local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+
+    // Internal state - Quinn Connections we are managing.
+    //
     /// All connections we have to this remote node.
     connections: Vec<WeakConnectionHandle>,
     /// Events emitted by Quinn about path changes.
@@ -724,6 +735,9 @@ pub(super) struct NodeStateActor {
     //    this index if so.  Events only come with a PathId, so to know which actual path
     //    this refers to we need to know more.
     path_events: MergeUnbounded<BroadcastStream<quinn_proto::PathEvent>>,
+
+    // Internal state - Holepunching and path state.
+    //
     /// All possible paths we are aware of.
     ///
     /// These paths might be entirely impossible to use, since they are added by discovery
@@ -731,6 +745,8 @@ pub(super) struct NodeStateActor {
     // TODO: We probably need some indexes from (Connection, PathId) pairs to
     //    transports::Addr.
     paths: BTreeMap<transports::Addr, NewPathState>,
+    /// Information about the last holepunching attempt.
+    last_holepunch: Option<HolepunchAttempt>,
     /// The path we currently consider the preferred path to the remote node.
     ///
     /// **We expect this path to work.** If we become aware this path is broken then it is
@@ -738,23 +754,25 @@ pub(super) struct NodeStateActor {
     /// a better path: e.g. when the selected path is a relay path we still need to trigger
     /// holepunching regularly.
     selected_path: Option<transports::Addr>,
-    metrics: Arc<MagicsockMetrics>,
 }
 
 impl NodeStateActor {
     pub(super) fn new(
         node_id: NodeId,
         transports_sender: mpsc::Sender<TransportsSenderMessage>,
+        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
         metrics: Arc<MagicsockMetrics>,
     ) -> Self {
         Self {
             node_id,
+            metrics,
             transports_sender,
+            local_addrs,
             connections: Vec::new(),
             path_events: Default::default(),
             paths: BTreeMap::new(),
+            last_holepunch: None,
             selected_path: None,
-            metrics,
         }
     }
 
@@ -792,10 +810,8 @@ impl NodeStateActor {
                                     .send((addr.clone(), transmit.clone()).into())
                                     .await
                                     .whatever_context("TransportSenerActor stopped")?;
-                                if addr.is_relay() {
-                                    self.call_me_maybe(addr.clone());
-                                }
                             }
+                            self.trigger_holepunching();
                         }
                     }
                     NodeStateMessage::AddConnection(handle) => {
@@ -827,24 +843,58 @@ impl NodeStateActor {
         Ok(())
     }
 
-    /// Tries to select a new path out of the available ones.
+    /// Triggers holepunching to the remote node.
     ///
-    /// We only want to accept any path which we know can be used.  If we do not know of any
-    /// working paths we must set it to `None`.
-    fn select_path(&mut self) {
-        // TODO
-        self.selected_path = None;
-    }
+    /// This will manage the entire process of holepunching with the remote node.
+    ///
+    /// - If there is no relay address known, nothing happens.
+    /// - If there was a recent attempt, it will schedule holepunching instead.
+    ///   - Unless there are new addresses to try.
+    ///   - The scheduled attempt will only run if holepunching has not yet succeeded by
+    ///     then.
+    /// - DISCO pings will be sent to addresses recently advertised in a call-me-maybe
+    ///   message.
+    /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
+    fn trigger_holepunching(&mut self) {
+        const CALL_ME_MAYBE_VALIDITY: Duration = Duration::from_secs(30);
+        const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
-    /// Sends a call-me-maybe message to the remote node.
-    ///
-    /// This will first send pings to any paths the remote advertised in their own
-    /// call-me-maybe message.
-    ///
-    /// If a call-me-maybe message was recently sent it will instead schedule a new
-    /// call-me-maybe after a delay if by then it is still needed.
-    fn call_me_maybe(&mut self, dst: transports::Addr) {
-        debug_assert!(dst.is_relay(), "must send call-me-maybe via a relay server");
+        let remote_addrs: BTreeSet<SocketAddr> = self
+            .paths
+            .iter()
+            .filter_map(|(addr, state)| match addr {
+                transports::Addr::Ip(socket_addr) => Some((socket_addr, state)),
+                transports::Addr::Relay(_, _) => None,
+            })
+            .filter_map(|(addr, state)| {
+                state
+                    .sources
+                    .get(&Source::CallMeMaybe)
+                    .map(|when| when.elapsed() >= CALL_ME_MAYBE_VALIDITY)
+                    .and(Some(*addr))
+            })
+            .collect();
+        let local_addrs: BTreeSet<SocketAddr> = self
+            .local_addrs
+            .get()
+            .unwrap_or_default()
+            .iter()
+            .map(|daddr| daddr.addr)
+            .collect();
+        // let local_addrs: BTreeSet<SocketAddr> = self.local_addrs.get();
+        let mut do_hp = true;
+        if let Some(ref last_hp) = self.last_holepunch {
+            do_hp = last_hp.when.elapsed() >= HOLEPUNCH_ATTEMPTS_INTERVAL;
+            if remote_addrs != last_hp.remote_addrs {
+                do_hp = true;
+            }
+            if local_addrs != last_hp.local_addrs {
+                do_hp = true;
+            }
+        }
+        if !do_hp {
+            return;
+        }
         todo!()
     }
 }
@@ -895,6 +945,22 @@ impl From<RemoteInfo> for NodeAddr {
             direct_addresses,
         }
     }
+}
+
+/// Information about a holepunch attempt.
+#[derive(Debug)]
+struct HolepunchAttempt {
+    when: Instant,
+    /// The set of local addresses which could take part in holepunching.
+    ///
+    /// This does not mean every address here participated in the holepunching.  E.g. we
+    /// could have tried only a sub-set of the addresses because a previous attempt already
+    /// covered part of the range.
+    local_addrs: BTreeSet<SocketAddr>,
+    /// The set of remote addresses which could take part in holepunching.
+    ///
+    /// Like `local_addrs` we may not have used them.
+    remote_addrs: BTreeSet<SocketAddr>,
 }
 
 /// Whether to send a call-me-maybe message after sending pings to all known paths.

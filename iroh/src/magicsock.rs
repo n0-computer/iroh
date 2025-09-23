@@ -1213,22 +1213,30 @@ impl Handle {
         #[cfg(wasm_browser)]
         let transports = Transports::new(relay_transports, max_receive_segments);
 
+        let direct_addrs = DiscoveredDirectAddrs::default();
+
         let node_map = {
             let node_map = node_map.unwrap_or_default();
             let sender = transports.create_sender();
             #[cfg(any(test, feature = "test-utils"))]
-            let nm =
-                NodeMap::load_from_vec(node_map, path_selection, metrics.magicsock.clone(), sender)
-                    .await;
+            let nm = NodeMap::load_from_vec(
+                node_map,
+                path_selection,
+                metrics.magicsock.clone(),
+                sender,
+                direct_addrs.addrs.watch(),
+            )
+            .await;
             #[cfg(not(any(test, feature = "test-utils")))]
-            let nm = NodeMap::load_from_vec(node_map, metrics.magicsock.clone(), sender).await;
+            let nm = NodeMap::load_from_vec(
+                node_map,
+                metrics.magicsock.clone(),
+                sender,
+                direct_addrs.addrs.watch(),
+            )
+            .await;
             nm
         };
-        // let node_map = node_map.unwrap_or_default();
-        // #[cfg(any(test, feature = "test-utils"))]
-        // let node_map = NodeMap::load_from_vec(node_map, path_selection, &metrics.magicsock);
-        // #[cfg(not(any(test, feature = "test-utils")))]
-        // let node_map = NodeMap::load_from_vec(node_map, &metrics.magicsock);
 
         let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
@@ -1243,7 +1251,7 @@ impl Handle {
             connection_map: Default::default(),
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
-            direct_addrs: Default::default(),
+            direct_addrs,
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
