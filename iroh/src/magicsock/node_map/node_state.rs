@@ -24,7 +24,7 @@ use crate::{
     disco::{self, SendAddr},
     endpoint::DirectAddr,
     magicsock::{
-        HEARTBEAT_INTERVAL, MagicsockMetrics,
+        DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics,
         mapped_addrs::{MappedAddr, NodeIdMappedAddr},
         node_map::path_validity::PathValidity,
         transports::{self, OwnedTransmit},
@@ -727,6 +727,8 @@ pub(super) struct NodeStateActor {
     ///
     /// These are our local addresses and any reflexive transport addresses.
     local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+    /// Shared state to allow to encrypt DISCO messages to peers.
+    disco: DiscoState,
 
     // Internal state - Quinn Connections we are managing.
     //
@@ -766,6 +768,7 @@ impl NodeStateActor {
         node_id: NodeId,
         transports_sender: mpsc::Sender<TransportsSenderMessage>,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        disco: DiscoState,
         metrics: Arc<MagicsockMetrics>,
     ) -> Self {
         Self {
@@ -773,6 +776,7 @@ impl NodeStateActor {
             metrics,
             transports_sender,
             local_addrs,
+            disco,
             connections: Vec::new(),
             path_events: Default::default(),
             paths: BTreeMap::new(),
@@ -807,6 +811,8 @@ impl NodeStateActor {
                 None => MaybeFuture::None,
             };
             let mut scheduled_hp = std::pin::pin!(scheduled_hp);
+            // TODO: Watch our local direct addresses.  If they change we need to holepunch
+            // again.
             tokio::select! {
                 biased;
                 msg = inbox.recv() => {
@@ -814,6 +820,9 @@ impl NodeStateActor {
                         Some(msg) => self.handle_message(msg).await?,
                         None => break,
                     }
+                }
+                _ = self.local_addrs.updated() => {
+                    self.trigger_holepunching();
                 }
                 _ = &mut scheduled_hp => {
                     self.trigger_holepunching();
@@ -849,7 +858,6 @@ impl NodeStateActor {
                     self.connections.push(handle);
                 }
             }
-            NodeStateMessage::PingReceived => todo!(),
             NodeStateMessage::AddNodeAddr(node_addr, source) => {
                 for sockaddr in node_addr.direct_addresses {
                     let addr = transports::Addr::from(sockaddr);
@@ -862,6 +870,8 @@ impl NodeStateActor {
                     path.sources.insert(source, Instant::now());
                 }
             }
+            NodeStateMessage::CallMeMaybeReceived => todo!(),
+            NodeStateMessage::PingReceived => todo!(),
         }
         Ok(())
     }
@@ -938,6 +948,7 @@ impl NodeStateActor {
     ///   message.
     /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
     fn do_holepunching(&mut self) {
+        // If direct addrs are out of date we need to schedule an update?
         todo!();
     }
 }
@@ -959,10 +970,14 @@ pub(crate) enum NodeStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     AddConnection(WeakConnectionHandle),
-    // TODO: Add the transaction ID.
-    PingReceived,
     /// Adds a [`NodeAddr`] with locations where the node might be reachable.
     AddNodeAddr(NodeAddr, Source),
+    /// Process a received DISCO CallMeMaybe message.
+    // TODO: Add the message contents.
+    CallMeMaybeReceived,
+    /// Process a received DISCO Ping message.
+    // TODO: Add the transaction ID.
+    PingReceived,
 }
 
 /// A handle to a [`NodeStateActor`].

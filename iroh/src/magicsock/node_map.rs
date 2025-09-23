@@ -14,12 +14,12 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options};
-use super::DirectAddr;
 use super::mapped_addrs::{AddrMap, RelayMappedAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use super::transports::TransportsSender;
 #[cfg(not(any(test, feature = "test-utils")))]
 use super::transports::TransportsSender;
+use super::{DirectAddr, DiscoState};
 use super::{
     MagicsockMetrics,
     mapped_addrs::NodeIdMappedAddr,
@@ -74,6 +74,7 @@ pub(super) struct NodeMapInner {
     /// Handle to an actor that can send over the transports.
     transports_handle: TransportsSenderHandle,
     local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+    disco: DiscoState,
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
     by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
@@ -149,8 +150,9 @@ impl NodeMap {
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        disco: DiscoState,
     ) -> Self {
-        Self::from_inner(NodeMapInner::new(metrics, sender, local_addrs))
+        Self::from_inner(NodeMapInner::new(metrics, sender, local_addrs, disco))
     }
 
     #[cfg(not(any(test, feature = "test-utils")))]
@@ -160,8 +162,9 @@ impl NodeMap {
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        disco: DiscoState,
     ) -> Self {
-        let me = Self::from_inner(NodeMapInner::new(metrics, sender, local_addrs));
+        let me = Self::from_inner(NodeMapInner::new(metrics, sender, local_addrs, disco));
         for addr in nodes {
             me.add_node_addr(addr, Source::Saved).await;
         }
@@ -176,8 +179,9 @@ impl NodeMap {
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        disco: DiscoState,
     ) -> Self {
-        let mut inner = NodeMapInner::new(metrics, sender, local_addrs);
+        let mut inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
         inner.path_selection = path_selection;
         let me = Self::from_inner(inner);
         for addr in nodes {
@@ -358,8 +362,9 @@ impl NodeMap {
                 // Create a new NodeStateActor and insert it into the node map.
                 let sender = inner.transports_handle.inbox.clone();
                 let local_addrs = inner.local_addrs.clone();
+                let disco = inner.disco.clone();
                 let metrics = inner.metrics.clone();
-                let actor = NodeStateActor::new(node_id, sender, local_addrs, metrics);
+                let actor = NodeStateActor::new(node_id, sender, local_addrs, disco, metrics);
                 let handle = actor.start();
                 let sender = handle.sender.clone();
                 inner.node_states.insert(node_id, handle);
@@ -377,12 +382,14 @@ impl NodeMapInner {
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        disco: DiscoState,
     ) -> Self {
         let transports_handle = Self::start_transports_sender(sender);
         Self {
             metrics,
             transports_handle,
             local_addrs,
+            disco,
             by_node_key: Default::default(),
             by_ip_port: Default::default(),
             by_quic_mapped_addr: Default::default(),
@@ -773,14 +780,14 @@ mod tests {
     use crate::magicsock::transports::Transports;
 
     impl NodeMap {
-        #[track_caller]
-        fn add_test_addr(&self, node_addr: NodeAddr) {
+        async fn add_test_addr(&self, node_addr: NodeAddr) {
             self.add_node_addr(
                 node_addr,
                 Source::NamedApp {
                     name: "test".into(),
                 },
-            );
+            )
+            .await;
         }
     }
 
@@ -790,10 +797,12 @@ mod tests {
     async fn restore_from_vec() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
         let direct_addrs = DiscoveredDirectAddrs::default();
+        let (disco, _) = DiscoState::new(crypto_box::SecretKey::generate(&mut rand::rngs::OsRng));
         let node_map = NodeMap::new(
             Default::default(),
             transports.create_sender(),
             direct_addrs.addrs.watch(),
+            disco.clone(),
         );
 
         let mut rng = rand::thread_rng();
@@ -815,10 +824,10 @@ mod tests {
         let node_addr_c = NodeAddr::new(node_c).with_direct_addresses(direct_addresses_c);
         let node_addr_d = NodeAddr::new(node_d);
 
-        node_map.add_test_addr(node_addr_a);
-        node_map.add_test_addr(node_addr_b);
-        node_map.add_test_addr(node_addr_c);
-        node_map.add_test_addr(node_addr_d);
+        node_map.add_test_addr(node_addr_a).await;
+        node_map.add_test_addr(node_addr_b).await;
+        node_map.add_test_addr(node_addr_c).await;
+        node_map.add_test_addr(node_addr_d).await;
 
         let mut addrs: Vec<NodeAddr> = node_map
             .list_remote_infos(Instant::now())
@@ -837,6 +846,7 @@ mod tests {
             Default::default(),
             transports.create_sender(),
             direct_addrs.addrs.watch(),
+            disco,
         )
         .await;
 
@@ -863,15 +873,17 @@ mod tests {
         (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
     }
 
-    #[test]
+    #[tokio::test]
     #[traced_test]
-    fn test_prune_direct_addresses() {
+    async fn test_prune_direct_addresses() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
         let direct_addrs = DiscoveredDirectAddrs::default();
+        let (disco, _) = DiscoState::new(crypto_box::SecretKey::generate(&mut rand::rngs::OsRng));
         let node_map = NodeMap::new(
             Default::default(),
             transports.create_sender(),
             direct_addrs.addrs.watch(),
+            disco,
         );
         let public_key = SecretKey::generate(rand::thread_rng()).public();
         let id = node_map
@@ -899,7 +911,7 @@ mod tests {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
             // add address
-            node_map.add_test_addr(node_addr);
+            node_map.add_test_addr(node_addr).await;
             // make it active
             node_map.inner.lock().unwrap().receive_udp(addr);
         }
@@ -908,7 +920,7 @@ mod tests {
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
-            node_map.add_test_addr(node_addr);
+            node_map.add_test_addr(node_addr).await;
         }
 
         let mut node_map_inner = node_map.inner.lock().unwrap();
@@ -943,19 +955,23 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_prune_inactive() {
+    #[tokio::test]
+    async fn test_prune_inactive() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
         let direct_addrs = DiscoveredDirectAddrs::default();
+        let (disco, _) = DiscoState::new(crypto_box::SecretKey::generate(&mut rand::rngs::OsRng));
         let node_map = NodeMap::new(
             Default::default(),
             transports.create_sender(),
             direct_addrs.addrs.watch(),
+            disco,
         );
         // add one active node and more than MAX_INACTIVE_NODES inactive nodes
         let active_node = SecretKey::generate(rand::thread_rng()).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
+        node_map
+            .add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]))
+            .await;
         node_map
             .inner
             .lock()
@@ -965,7 +981,7 @@ mod tests {
 
         for _ in 0..MAX_INACTIVE_NODES + 1 {
             let node = SecretKey::generate(rand::thread_rng()).public();
-            node_map.add_test_addr(NodeAddr::new(node));
+            node_map.add_test_addr(NodeAddr::new(node)).await;
         }
 
         assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 2);

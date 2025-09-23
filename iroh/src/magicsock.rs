@@ -1214,6 +1214,7 @@ impl Handle {
         let transports = Transports::new(relay_transports, max_receive_segments);
 
         let direct_addrs = DiscoveredDirectAddrs::default();
+        let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
         let node_map = {
             let node_map = node_map.unwrap_or_default();
@@ -1225,6 +1226,7 @@ impl Handle {
                 metrics.magicsock.clone(),
                 sender,
                 direct_addrs.addrs.watch(),
+                disco.clone(),
             )
             .await;
             #[cfg(not(any(test, feature = "test-utils")))]
@@ -1233,12 +1235,11 @@ impl Handle {
                 metrics.magicsock.clone(),
                 sender,
                 direct_addrs.addrs.watch(),
+                disco.clone(),
             )
             .await;
             nm
         };
-
-        let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
         let msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
@@ -1443,12 +1444,12 @@ fn default_quic_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DiscoState {
     /// Encryption key for this node.
-    secret_encryption_key: crypto_box::SecretKey,
+    secret_encryption_key: Arc<crypto_box::SecretKey>,
     /// The state for an active DiscoKey.
-    secrets: Mutex<HashMap<PublicKey, SharedSecret>>,
+    secrets: Arc<Mutex<HashMap<PublicKey, SharedSecret>>>,
     /// Disco (ping) queue
     sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
 }
@@ -1461,7 +1462,7 @@ impl DiscoState {
 
         (
             Self {
-                secret_encryption_key,
+                secret_encryption_key: Arc::new(secret_encryption_key),
                 secrets: Default::default(),
                 sender: disco_sender,
             },
