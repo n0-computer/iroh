@@ -714,6 +714,8 @@ impl NodeState {
 pub(super) struct NodeStateActor {
     /// The node ID of the remote node.
     node_id: NodeId,
+    /// The node ID of the local node.
+    local_node_id: NodeId,
 
     // Hooks into the rest of the MagicSocket.
     //
@@ -766,6 +768,7 @@ pub(super) struct NodeStateActor {
 impl NodeStateActor {
     pub(super) fn new(
         node_id: NodeId,
+        local_node_id: NodeId,
         transports_sender: mpsc::Sender<TransportsSenderMessage>,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
         disco: DiscoState,
@@ -773,6 +776,7 @@ impl NodeStateActor {
     ) -> Self {
         Self {
             node_id,
+            local_node_id,
             metrics,
             transports_sender,
             local_addrs,
@@ -870,7 +874,32 @@ impl NodeStateActor {
                     path.sources.insert(source, Instant::now());
                 }
             }
-            NodeStateMessage::CallMeMaybeReceived => todo!(),
+            NodeStateMessage::CallMeMaybeReceived(msg) => {
+                event!(
+                    target: "iroh::_events::call-me-maybe::recv",
+                    Level::DEBUG,
+                    remote_node = self.node_id.fmt_short(),
+                    addrs = ?msg.my_numbers,
+                );
+                let now = Instant::now();
+                for addr in msg.my_numbers {
+                    let dst = transports::Addr::Ip(addr);
+                    let ping = disco::Ping::new(self.local_node_id);
+
+                    let path = self.paths.entry(dst.clone()).or_default();
+                    path.sources.insert(Source::CallMeMaybe, now);
+                    path.ping_sent = Some(ping.clone());
+
+                    event!(
+                        target: "iroh::_events::ping::sent",
+                        Level::DEBUG,
+                        remote_node = self.node_id.fmt_short(),
+                        ?dst,
+                    );
+                    self.send_disco_message(dst, disco::Message::Ping(ping))
+                        .await;
+                }
+            }
             NodeStateMessage::PingReceived(ping, src) => {
                 let transports::Addr::Ip(addr) = src else {
                     warn!("received ping via relay transport, ignored");
@@ -1029,7 +1058,7 @@ impl NodeStateActor {
 
         // Send DISCO Ping messages to all CallMeMaybe-advertised paths.
         for dst in remote_addrs.iter() {
-            let msg = disco::Ping::new(self.node_id);
+            let msg = disco::Ping::new(self.local_node_id);
             event!(
                 target: "iroh::_events::ping::sent",
                 Level::DEBUG,
@@ -1115,8 +1144,7 @@ pub(crate) enum NodeStateMessage {
     /// Adds a [`NodeAddr`] with locations where the node might be reachable.
     AddNodeAddr(NodeAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
-    // TODO: Add the message contents.
-    CallMeMaybeReceived,
+    CallMeMaybeReceived(disco::CallMeMaybe),
     /// Process a received DISCO Ping message.
     PingReceived(disco::Ping, transports::Addr),
     /// Process a received DISCO Pong message.

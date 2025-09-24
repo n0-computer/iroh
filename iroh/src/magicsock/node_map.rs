@@ -61,6 +61,8 @@ const MAX_INACTIVE_NODES: usize = 30;
 /// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
 #[derive(Debug)]
 pub(super) struct NodeMap {
+    /// The node ID of the local node.
+    local_node_id: NodeId,
     inner: Mutex<NodeMapInner>,
     /// The mapping between [`NodeId`]s and [`NodeIdMappedAddr`]s.
     pub(super) node_mapped_addrs: AddrMap<NodeId, NodeIdMappedAddr>,
@@ -149,24 +151,28 @@ pub enum Source {
 impl NodeMap {
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) fn new(
+        local_node_id: NodeId,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
         disco: DiscoState,
     ) -> Self {
-        Self::from_inner(NodeMapInner::new(metrics, sender, local_addrs, disco))
+        let inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
+        Self::from_inner(inner, local_node_id)
     }
 
     #[cfg(not(any(test, feature = "test-utils")))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     pub(super) async fn load_from_vec(
+        local_node_id: NodeId,
         nodes: Vec<NodeAddr>,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
         disco: DiscoState,
     ) -> Self {
-        let me = Self::from_inner(NodeMapInner::new(metrics, sender, local_addrs, disco));
+        let inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
+        let me = Self::from_inner(inner, local_node_id);
         for addr in nodes {
             me.add_node_addr(addr, Source::Saved).await;
         }
@@ -176,6 +182,7 @@ impl NodeMap {
     #[cfg(any(test, feature = "test-utils"))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     pub(super) async fn load_from_vec(
+        local_node_id: NodeId,
         nodes: Vec<NodeAddr>,
         path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
@@ -185,15 +192,16 @@ impl NodeMap {
     ) -> Self {
         let mut inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
         inner.path_selection = path_selection;
-        let me = Self::from_inner(inner);
+        let me = Self::from_inner(inner, local_node_id);
         for addr in nodes {
             me.add_node_addr(addr, Source::Saved).await;
         }
         me
     }
 
-    fn from_inner(inner: NodeMapInner) -> Self {
+    fn from_inner(inner: NodeMapInner, local_node_id: NodeId) -> Self {
         Self {
+            local_node_id,
             inner: Mutex::new(inner),
             node_mapped_addrs: Default::default(),
             relay_mapped_addrs: Default::default(),
@@ -261,18 +269,6 @@ impl NodeMap {
             .expect("poisoned")
             .get(NodeStateKey::NodeId(node_key))
             .map(|ep| ep.get_current_addr())
-    }
-
-    pub(super) fn handle_call_me_maybe(
-        &self,
-        sender: PublicKey,
-        cm: CallMeMaybe,
-        metrics: &MagicsockMetrics,
-    ) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .handle_call_me_maybe(sender, cm, metrics);
     }
 
     #[allow(clippy::type_complexity)]
@@ -366,7 +362,14 @@ impl NodeMap {
                 let local_addrs = inner.local_addrs.clone();
                 let disco = inner.disco.clone();
                 let metrics = inner.metrics.clone();
-                let actor = NodeStateActor::new(node_id, sender, local_addrs, disco, metrics);
+                let actor = NodeStateActor::new(
+                    node_id,
+                    self.local_node_id,
+                    sender,
+                    local_addrs,
+                    disco,
+                    metrics,
+                );
                 let handle = actor.start();
                 let sender = handle.sender.clone();
                 inner.node_states.insert(node_id, handle);
@@ -394,9 +397,18 @@ impl NodeMap {
     pub(super) fn handle_pong(&self, msg: disco::Pong, sender: NodeId, src: transports::Addr) {
         let node_state = self.node_state_actor(sender);
         if let Err(err) = node_state.try_send(NodeStateMessage::PongReceived(msg, src)) {
-            // TODO: This is really, really bad and will drop pings under load.  But
-            //    DISCO pings are going away with QUIC-NAT-TRAVERSAL so I don't care.
+            // TODO: This is really, really bad and will drop pongs under load.  But
+            //    DISCO pongs are going away with QUIC-NAT-TRAVERSAL so I don't care.
             warn!("DISCO Pong dropped: {err:#}");
+        }
+    }
+
+    pub(super) fn handle_call_me_maybe(&self, sender: NodeId, msg: CallMeMaybe) {
+        let node_state = self.node_state_actor(sender);
+        if let Err(err) = node_state.try_send(NodeStateMessage::CallMeMaybeReceived(msg)) {
+            // TODO: This is bad and will drop call-me-maybe's under load.  But
+            //    DISCO CallMeMaybe going away with QUIC-NAT-TRAVERSAL so I don't care.
+            warn!("DISCO CallMeMaybe dropped: {err:#}");
         }
     }
 }
@@ -821,8 +833,10 @@ mod tests {
     async fn restore_from_vec() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
         let direct_addrs = DiscoveredDirectAddrs::default();
-        let (disco, _) = DiscoState::new(&SecretKey::generate(&mut rand::rngs::OsRng));
+        let secret_key = SecretKey::generate(&mut rand::rngs::OsRng);
+        let (disco, _) = DiscoState::new(&secret_key);
         let node_map = NodeMap::new(
+            secret_key.public(),
             Default::default(),
             transports.create_sender(),
             direct_addrs.addrs.watch(),
@@ -865,6 +879,7 @@ mod tests {
             })
             .collect();
         let loaded_node_map = NodeMap::load_from_vec(
+            secret_key.public(),
             addrs.clone(),
             PathSelection::default(),
             Default::default(),
@@ -902,8 +917,10 @@ mod tests {
     async fn test_prune_direct_addresses() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
         let direct_addrs = DiscoveredDirectAddrs::default();
-        let (disco, _) = DiscoState::new(&SecretKey::generate(&mut rand::rngs::OsRng));
+        let secret_key = SecretKey::generate(&mut rand::rngs::OsRng);
+        let (disco, _) = DiscoState::new(&secret_key);
         let node_map = NodeMap::new(
+            secret_key.public(),
             Default::default(),
             transports.create_sender(),
             direct_addrs.addrs.watch(),
@@ -983,8 +1000,10 @@ mod tests {
     async fn test_prune_inactive() {
         let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
         let direct_addrs = DiscoveredDirectAddrs::default();
-        let (disco, _) = DiscoState::new(&SecretKey::generate(&mut rand::rngs::OsRng));
+        let secret_key = SecretKey::generate(&mut rand::rngs::OsRng);
+        let (disco, _) = DiscoState::new(&secret_key);
         let node_map = NodeMap::new(
+            secret_key.public(),
             Default::default(),
             transports.create_sender(),
             direct_addrs.addrs.watch(),

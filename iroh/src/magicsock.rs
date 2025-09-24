@@ -877,8 +877,7 @@ impl MagicSock {
                     direct_addresses: cm.my_numbers.iter().copied().collect(),
                 });
 
-                self.node_map
-                    .handle_call_me_maybe(sender, cm, &self.metrics.magicsock);
+                self.node_map.handle_call_me_maybe(sender, cm);
             }
         }
         trace!("disco message handled");
@@ -1225,6 +1224,7 @@ impl Handle {
             let sender = transports.create_sender();
             #[cfg(any(test, feature = "test-utils"))]
             let nm = NodeMap::load_from_vec(
+                secret_key.public(),
                 node_map,
                 path_selection,
                 metrics.magicsock.clone(),
@@ -1235,6 +1235,7 @@ impl Handle {
             .await;
             #[cfg(not(any(test, feature = "test-utils")))]
             let nm = NodeMap::load_from_vec(
+                secret_key.public(),
                 node_map,
                 metrics.magicsock.clone(),
                 sender,
