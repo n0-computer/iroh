@@ -844,8 +844,13 @@ impl MagicSock {
         let _guard = span.enter();
         trace!("receive disco message");
         match dm {
-            disco::Message::Ping(..) | disco::Message::Pong(..) => {
-                unreachable!("not used anymore");
+            disco::Message::Ping(ping) => {
+                self.metrics.magicsock.recv_disco_ping.inc();
+                self.node_map.handle_ping(ping, sender, src.clone());
+            }
+            disco::Message::Pong(pong) => {
+                self.metrics.magicsock.recv_disco_pong.inc();
+                self.node_map.handle_pong(pong, sender, src.clone());
             }
             disco::Message::CallMeMaybe(cm) => {
                 self.metrics.magicsock.recv_disco_call_me_maybe.inc();

@@ -871,7 +871,8 @@ impl NodeStateActor {
                 }
             }
             NodeStateMessage::CallMeMaybeReceived => todo!(),
-            NodeStateMessage::PingReceived => todo!(),
+            NodeStateMessage::PingReceived(msg, src) => todo!(),
+            NodeStateMessage::PongReceived(msg, src) => todo!(),
         }
         Ok(())
     }
@@ -906,7 +907,10 @@ impl NodeStateActor {
             .last_holepunch
             .as_ref()
             .map(|last_hp| {
-                last_hp.remote_addrs != remote_addrs || last_hp.local_addrs != local_addrs
+                // Addrs are allowed to disappear, but if there are new ones we need to
+                // holepunch again.
+                !remote_addrs.is_subset(&last_hp.remote_addrs)
+                    || !local_addrs.is_subset(&last_hp.local_addrs)
             })
             .unwrap_or(true);
         if !addrs_changed {
@@ -947,19 +951,62 @@ impl NodeStateActor {
     /// - DISCO pings will be sent to addresses recently advertised in a call-me-maybe
     ///   message.
     /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
-    fn do_holepunching(&mut self) {
-        // If direct addrs are out of date we need to schedule an update?
-        todo!();
+    async fn do_holepunching(&mut self) {
+        let Some(relay_addr) = self
+            .paths
+            .iter()
+            .filter_map(|(addr, state)| match addr {
+                transports::Addr::Ip(_) => None,
+                transports::Addr::Relay(_, _) => Some(addr),
+            })
+            .next()
+            .cloned()
+        else {
+            warn!("holepunching requested but have no relay address");
+            return;
+        };
+        let remote_addrs = self.remote_hp_addrs();
+
+        // Send DISCO Ping messages to all CallMeMaybe-advertised paths.
+        for dst in remote_addrs {
+            let msg = disco::Ping::new(self.node_id);
+            event!(
+                target: "iroh::_events::ping::sent",
+                Level::DEBUG,
+                remote_node = %self.node_id.fmt_short(),
+                ?dst,
+                txn = ?msg.tx_id,
+            );
+            let addr = transports::Addr::Ip(dst);
+            self.paths.entry(addr.clone()).or_default().ping = Some(msg.clone());
+            self.send_disco_message(addr, disco::Message::Ping(msg))
+                .await;
+        }
+
+        // Send the DISCO CallMeMaybe message over the relay.
+        let my_numbers: Vec<SocketAddr> = self
+            .local_addrs
+            .get()
+            .unwrap_or_default()
+            .iter()
+            .map(|daddr| daddr.addr)
+            .collect();
+        let msg = disco::CallMeMaybe { my_numbers };
+        event!(
+            target: "iroh::_events::call-me-maybe::sent",
+            Level::DEBUG,
+            remote_node = &self.node_id.fmt_short(),
+            dst = ?relay_addr,
+            my_numbers = ?msg.my_numbers,
+        );
+        self.send_disco_message(relay_addr, disco::Message::CallMeMaybe(msg))
+            .await;
     }
 
-    #[instrument(skip(self, dst_key), fields(dst_key = %dst_key.fmt_short()))]
-    async fn send_disco_message(
-        &self,
-        dst: transports::Addr,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) {
-        let pkt = self.disco.encode_and_seal(dst_key, &msg);
+    /// Sends a DISCO message to *this* remote node.
+    #[instrument(skip(self), fields(dst_node = self.node_id.fmt_short()))]
+    async fn send_disco_message(&self, dst: transports::Addr, msg: disco::Message) {
+        let pkt = self.disco.encode_and_seal(self.node_id, &msg);
         let transmit = transports::OwnedTransmit {
             ecn: None,
             contents: pkt,
@@ -1004,8 +1051,9 @@ pub(crate) enum NodeStateMessage {
     // TODO: Add the message contents.
     CallMeMaybeReceived,
     /// Process a received DISCO Ping message.
-    // TODO: Add the transaction ID.
-    PingReceived,
+    PingReceived(disco::Ping, transports::Addr),
+    /// Process a received DISCO Pong message.
+    PongReceived(disco::Pong, transports::Addr),
 }
 
 /// A handle to a [`NodeStateActor`].

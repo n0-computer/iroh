@@ -10,7 +10,7 @@ use super::{
     node_state::{ControlMsg, SESSION_ACTIVE_TIMEOUT},
 };
 use crate::{
-    disco::SendAddr,
+    disco::{self, SendAddr},
     magicsock::node_map::path_validity::{self, PathValidity},
 };
 
@@ -198,4 +198,6 @@ pub(super) struct NewPathState {
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
     /// of the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
+    /// The last ping sent on this path.
+    pub(super) ping: Option<disco::Ping>,
 }

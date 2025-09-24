@@ -25,7 +25,7 @@ use super::{
     mapped_addrs::NodeIdMappedAddr,
     transports::{self, OwnedTransmit},
 };
-use crate::disco::CallMeMaybe;
+use crate::disco::{self, CallMeMaybe};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
@@ -373,6 +373,28 @@ impl NodeMap {
                 self.node_mapped_addrs.get(&node_id);
                 sender
             }
+        }
+    }
+
+    pub(super) fn handle_ping(&self, msg: disco::Ping, sender: NodeId, src: transports::Addr) {
+        if msg.node_key != sender {
+            warn!("DISCO Ping NodeId mismatch, ignoring ping");
+            return;
+        }
+        let node_state = self.node_state_actor(sender);
+        if let Err(err) = node_state.try_send(NodeStateMessage::PingReceived(msg, src)) {
+            // TODO: This is really, really bad and will drop pings under load.  But
+            //    DISCO pings are going away with QUIC-NAT-TRAVERSAL so I don't care.
+            warn!("DISCO Ping dropped: {err:#}");
+        }
+    }
+
+    pub(super) fn handle_pong(&self, msg: disco::Pong, sender: NodeId, src: transports::Addr) {
+        let node_state = self.node_state_actor(sender);
+        if let Err(err) = node_state.try_send(NodeStateMessage::PongReceived(msg, src)) {
+            // TODO: This is really, really bad and will drop pings under load.  But
+            //    DISCO pings are going away with QUIC-NAT-TRAVERSAL so I don't care.
+            warn!("DISCO Pong dropped: {err:#}");
         }
     }
 }
