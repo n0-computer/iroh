@@ -365,6 +365,10 @@ impl Addr {
         matches!(self, Self::Relay(..))
     }
 
+    pub(crate) fn is_ip(&self) -> bool {
+        matches!(self, Self::Ip(_))
+    }
+
     /// Returns `None` if not an `Ip`.
     pub(crate) fn into_socket_addr(self) -> Option<SocketAddr> {
         match self {

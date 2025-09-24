@@ -142,6 +142,8 @@ pub enum Source {
     },
     /// The address was advertised by a call-me-maybe DISCO message.
     CallMeMaybe,
+    /// We received a ping on the path.
+    Ping,
 }
 
 impl NodeMap {

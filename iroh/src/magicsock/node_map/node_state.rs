@@ -871,8 +871,44 @@ impl NodeStateActor {
                 }
             }
             NodeStateMessage::CallMeMaybeReceived => todo!(),
-            NodeStateMessage::PingReceived(msg, src) => todo!(),
-            NodeStateMessage::PongReceived(msg, src) => todo!(),
+            NodeStateMessage::PingReceived(ping, src) => {
+                let transports::Addr::Ip(addr) = src else {
+                    warn!("received ping via relay transport, ignored");
+                    return Ok(());
+                };
+                event!(
+                    target: "iroh::_events::ping::recv",
+                    Level::DEBUG,
+                    remote_node = self.node_id.fmt_short(),
+                    ?src,
+                    txn = ?ping.tx_id,
+                );
+                let pong = disco::Pong {
+                    tx_id: ping.tx_id,
+                    ping_observed_addr: addr.into(),
+                };
+                event!(
+                    target: "iroh::_events::pong::sent",
+                    Level::DEBUG,
+                    remote_node = self.node_id.fmt_short(),
+                    dst = ?src,
+                    txn = ?pong.tx_id,
+                );
+                self.send_disco_message(src.clone(), disco::Message::Pong(pong))
+                    .await;
+
+                let path = self.paths.entry(src).or_default();
+                path.sources.insert(Source::Ping, Instant::now());
+
+                self.trigger_holepunching().await;
+            }
+            NodeStateMessage::PongReceived(msg, src) => {
+                for (path, state) in self.paths.iter() {
+                    if let Some(ref ping) = state.ping_sent {
+                        todo!();
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -881,6 +917,7 @@ impl NodeStateActor {
     ///
     /// This will manage the entire process of holepunching with the remote node.
     ///
+    /// - If there already is a direct connection, nothing happens.
     /// - If there is no relay address known, nothing happens.
     /// - If there was a recent attempt, it will schedule holepunching instead.
     ///   - Unless there are new addresses to try.
@@ -892,8 +929,19 @@ impl NodeStateActor {
     ///
     /// If a next trigger needs to be scheduled the delay until when to call this again is
     /// returned.
-    fn trigger_holepunching(&mut self) {
+    async fn trigger_holepunching(&mut self) {
         const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
+
+        if self
+            .selected_path
+            .as_ref()
+            .map(|addr| addr.is_ip())
+            .unwrap_or_default()
+        {
+            trace!("not holepunching, already have a direct connection");
+            // TODO: If the latency is kind of bad we should retry holepunching at times.
+            return;
+        }
 
         let remote_addrs: BTreeSet<SocketAddr> = self.remote_hp_addrs();
         let local_addrs: BTreeSet<SocketAddr> = self
@@ -903,7 +951,7 @@ impl NodeStateActor {
             .iter()
             .map(|daddr| daddr.addr)
             .collect();
-        let addrs_changed = self
+        let new_addrs = self
             .last_holepunch
             .as_ref()
             .map(|last_hp| {
@@ -913,17 +961,18 @@ impl NodeStateActor {
                     || !local_addrs.is_subset(&last_hp.local_addrs)
             })
             .unwrap_or(true);
-        if !addrs_changed {
+        if !new_addrs {
             if let Some(ref last_hp) = self.last_holepunch {
                 let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
                 if next_hp > Instant::now() {
+                    trace!(scheduled_in = ?next_hp, "not holepunching: no new addresses");
                     self.scheduled_holepunch = Some(next_hp);
                     return;
                 }
             }
         }
 
-        self.do_holepunching();
+        self.do_holepunching().await;
     }
 
     /// Returns the remote addresses to holepunch against.
@@ -937,11 +986,21 @@ impl NodeStateActor {
                 transports::Addr::Relay(_, _) => None,
             })
             .filter_map(|(addr, state)| {
-                state
+                if state
                     .sources
                     .get(&Source::CallMeMaybe)
                     .map(|when| when.elapsed() >= CALL_ME_MAYBE_VALIDITY)
-                    .and(Some(*addr))
+                    .unwrap_or_default()
+                    || state
+                        .sources
+                        .get(&Source::Ping)
+                        .map(|when| when.elapsed() >= CALL_ME_MAYBE_VALIDITY)
+                        .unwrap_or_default()
+                {
+                    Some(*addr)
+                } else {
+                    None
+                }
             })
             .collect()
     }
@@ -952,6 +1011,7 @@ impl NodeStateActor {
     ///   message.
     /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
     async fn do_holepunching(&mut self) {
+        trace!("holepunching");
         let Some(relay_addr) = self
             .paths
             .iter()
@@ -968,7 +1028,7 @@ impl NodeStateActor {
         let remote_addrs = self.remote_hp_addrs();
 
         // Send DISCO Ping messages to all CallMeMaybe-advertised paths.
-        for dst in remote_addrs {
+        for dst in remote_addrs.iter() {
             let msg = disco::Ping::new(self.node_id);
             event!(
                 target: "iroh::_events::ping::sent",
@@ -977,8 +1037,8 @@ impl NodeStateActor {
                 ?dst,
                 txn = ?msg.tx_id,
             );
-            let addr = transports::Addr::Ip(dst);
-            self.paths.entry(addr.clone()).or_default().ping = Some(msg.clone());
+            let addr = transports::Addr::Ip(*dst);
+            self.paths.entry(addr.clone()).or_default().ping_sent = Some(msg.clone());
             self.send_disco_message(addr, disco::Message::Ping(msg))
                 .await;
         }
@@ -991,6 +1051,7 @@ impl NodeStateActor {
             .iter()
             .map(|daddr| daddr.addr)
             .collect();
+        let local_addrs: BTreeSet<SocketAddr> = my_numbers.iter().copied().collect();
         let msg = disco::CallMeMaybe { my_numbers };
         event!(
             target: "iroh::_events::call-me-maybe::sent",
@@ -1001,6 +1062,12 @@ impl NodeStateActor {
         );
         self.send_disco_message(relay_addr, disco::Message::CallMeMaybe(msg))
             .await;
+
+        self.last_holepunch = Some(HolepunchAttempt {
+            when: Instant::now(),
+            local_addrs,
+            remote_addrs,
+        });
     }
 
     /// Sends a DISCO message to *this* remote node.
