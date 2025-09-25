@@ -368,6 +368,7 @@ impl NodeMap {
                     sender,
                     local_addrs,
                     disco,
+                    self.relay_mapped_addrs.clone(),
                     metrics,
                 );
                 let handle = actor.start();

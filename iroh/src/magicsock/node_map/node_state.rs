@@ -12,6 +12,7 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
+use quinn_proto::PathStatus;
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Whatever};
 use tokio::sync::mpsc;
@@ -24,8 +25,8 @@ use crate::{
     disco::{self, SendAddr},
     endpoint::DirectAddr,
     magicsock::{
-        DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics,
-        mapped_addrs::{MappedAddr, NodeIdMappedAddr},
+        DiscoState, HEARTBEAT_INTERVAL, MAX_IDLE_TIMEOUT, MagicsockMetrics,
+        mapped_addrs::{AddrMap, MappedAddr, NodeIdMappedAddr, RelayMappedAddr},
         node_map::path_validity::PathValidity,
         transports::{self, OwnedTransmit},
     },
@@ -731,6 +732,8 @@ pub(super) struct NodeStateActor {
     local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
     /// Shared state to allow to encrypt DISCO messages to peers.
     disco: DiscoState,
+    /// The mapping between nodes via a relay and their [`RelayMappedAddr`]s.
+    relay_mapped_addrs: AddrMap<(RelayUrl, NodeId), RelayMappedAddr>,
 
     // Internal state - Quinn Connections we are managing.
     //
@@ -760,6 +763,8 @@ pub(super) struct NodeStateActor {
     /// set back to `None`.  Having a selected path does not mean we may not be able to get
     /// a better path: e.g. when the selected path is a relay path we still need to trigger
     /// holepunching regularly.
+    ///
+    /// We only select a path once the path is functional in Quinn.
     selected_path: Option<transports::Addr>,
     /// Time at which we should schedule the next holepunch attempt.
     scheduled_holepunch: Option<Instant>,
@@ -772,6 +777,7 @@ impl NodeStateActor {
         transports_sender: mpsc::Sender<TransportsSenderMessage>,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
         disco: DiscoState,
+        relay_mapped_addrs: AddrMap<(RelayUrl, NodeId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
     ) -> Self {
         Self {
@@ -780,6 +786,7 @@ impl NodeStateActor {
             metrics,
             transports_sender,
             local_addrs,
+            relay_mapped_addrs,
             disco,
             connections: Vec::new(),
             path_events: Default::default(),
@@ -931,12 +938,26 @@ impl NodeStateActor {
 
                 self.trigger_holepunching().await;
             }
-            NodeStateMessage::PongReceived(msg, src) => {
-                for (path, state) in self.paths.iter() {
-                    if let Some(ref ping) = state.ping_sent {
-                        todo!();
-                    }
+            NodeStateMessage::PongReceived(pong, src) => {
+                let Some(state) = self.paths.get(&src) else {
+                    warn!(path = ?src, "ignoring DISCO Pong for unknown path");
+                    return Ok(());
+                };
+                let ping_tx = state.ping_sent.as_ref().map(|ping| ping.tx_id);
+                if ping_tx != Some(pong.tx_id) {
+                    debug!(path = ?src, ?ping_tx, pong_tx = ?pong.tx_id,
+                        "ignoring unknown DISCO Pong for path");
+                    return Ok(());
                 }
+                event!(
+                    target: "iroh::_events::pong::recv",
+                    Level::DEBUG,
+                    remote_node = self.node_id.fmt_short(),
+                    ?src,
+                    txn = ?pong.tx_id,
+                );
+
+                self.open_quic_path(src);
             }
         }
         Ok(())
@@ -1044,7 +1065,7 @@ impl NodeStateActor {
         let Some(relay_addr) = self
             .paths
             .iter()
-            .filter_map(|(addr, state)| match addr {
+            .filter_map(|(addr, _)| match addr {
                 transports::Addr::Ip(_) => None,
                 transports::Addr::Relay(_, _) => Some(addr),
             })
@@ -1119,6 +1140,37 @@ impl NodeStateActor {
             }
             Err(err) => {
                 warn!("failed to send disco message: {err:#}");
+            }
+        }
+    }
+
+    /// Asks Quinn to open a new path on connections, but only if we are the client.
+    async fn open_quic_path(&self, addr: transports::Addr) {
+        let path_status = match addr {
+            transports::Addr::Ip(_) => PathStatus::Available,
+            transports::Addr::Relay(_, _) => PathStatus::Backup,
+        };
+        let quic_addr = match &addr {
+            transports::Addr::Ip(socket_addr) => *socket_addr,
+            transports::Addr::Relay(relay_url, node_id) => self
+                .relay_mapped_addrs
+                .get(&(relay_url.clone(), *node_id))
+                .private_socket_addr(),
+        };
+        for conn in self
+            .connections
+            .iter()
+            .filter_map(|weak| weak.upgrade())
+            .filter(|conn| conn.side().is_client())
+        {
+            match conn.open_path(quic_addr, path_status).await {
+                Ok(path) => {
+                    path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
+                    path.set_max_idle_timeout(Some(MAX_IDLE_TIMEOUT)).ok();
+                }
+                Err(err) => {
+                    warn!(?addr, "Failed to open path: {err:#}");
+                }
             }
         }
     }
