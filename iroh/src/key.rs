@@ -3,7 +3,9 @@
 use std::fmt::Debug;
 
 use aead::Buffer;
+use crypto_box::aead::AeadInPlace;
 use nested_enum_utils::common_fields;
+use rand::TryRngCore;
 use snafu::{ResultExt, Snafu, ensure};
 
 pub(crate) const NONCE_LEN: usize = 24;
@@ -49,9 +51,13 @@ impl SharedSecret {
 
     /// Seals the provided cleartext.
     pub fn seal(&self, buffer: &mut dyn Buffer) {
-        use aead::{AeadCore, AeadInPlace, OsRng};
+        use aead::{AeadCore, AeadInPlace};
 
-        let nonce = crypto_box::ChaChaBox::generate_nonce(&mut OsRng);
+        let mut nonce = crypto_box::Nonce::default();
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut nonce)
+            .expect("failed to generate randomness");
+
         self.0
             .encrypt_in_place(&nonce, &[], buffer)
             .expect("encryption failed");
@@ -91,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_seal_open_roundtrip() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let key_a = iroh_base::SecretKey::generate(&mut rng);
         let key_b = iroh_base::SecretKey::generate(&mut rng);
 
@@ -113,7 +119,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_public_key() {
-        let key = crypto_box::SecretKey::generate(&mut rand::thread_rng());
+        let key = crypto_box::SecretKey::generate(&mut rand::rng());
         let public_bytes = *key.public_key().as_bytes();
         let public_key_back = crypto_box::PublicKey::from(public_bytes);
         assert_eq!(key.public_key(), public_key_back);
@@ -121,7 +127,7 @@ mod tests {
 
     #[test]
     fn test_same_public_key_api() {
-        let key = iroh_base::SecretKey::generate(rand::thread_rng());
+        let key = iroh_base::SecretKey::generate(rand::rng());
         let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().public());
         let public_key2: crypto_box::PublicKey = secret_ed_box(key.secret()).public_key();
 
@@ -130,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_same_public_key_low_level() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let key = ed25519_dalek::SigningKey::generate(&mut rng);
         let public_key1 = {
             let m = key.verifying_key().to_montgomery();

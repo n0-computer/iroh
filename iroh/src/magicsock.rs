@@ -2246,8 +2246,8 @@ impl Actor {
 fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
     // Pick a random duration between 20 and 26 seconds (just under 30s,
     // a common UDP NAT timeout on Linux,etc)
-    let mut rng = rand::thread_rng();
-    let d: Duration = rng.gen_range(Duration::from_secs(20)..=Duration::from_secs(26));
+    let mut rng = rand::rng();
+    let d: Duration = rng.random_range(Duration::from_secs(20)..=Duration::from_secs(26));
     if initial_delay {
         debug!("scheduling periodic_stun to run in {}s", d.as_secs());
         time::interval_at(time::Instant::now() + d, d)
@@ -2539,7 +2539,7 @@ mod tests {
 
     impl Default for Options {
         fn default() -> Self {
-            let secret_key = SecretKey::generate(rand::rngs::OsRng);
+            let secret_key = SecretKey::generate(rand::rng());
             let server_config = make_default_server_config(&secret_key);
             Options {
                 addr_v4: None,
@@ -2592,7 +2592,7 @@ mod tests {
 
     impl MagicStack {
         async fn new(relay_mode: RelayMode) -> Self {
-            let secret_key = SecretKey::generate(rand::thread_rng());
+            let secret_key = SecretKey::generate(rand::rng());
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -2865,7 +2865,7 @@ mod tests {
 
             info!("\n-- larger data");
             let mut data = vec![0u8; 10 * 1024];
-            rand::thread_rng().fill_bytes(&mut data);
+            rand::rng().fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
         }
@@ -2931,7 +2931,7 @@ mod tests {
         let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
         let offset = || {
-            let delay = rand::thread_rng().gen_range(10..=500);
+            let delay = rand::rng().random_range(10..=500);
             Duration::from_millis(delay)
         };
         let rounds = 5;
@@ -2956,7 +2956,7 @@ mod tests {
 
             println!("-- [m1 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
-            rand::thread_rng().fill_bytes(&mut data);
+            rand::rng().fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
         }
@@ -2983,7 +2983,7 @@ mod tests {
 
             println!("-- [m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
-            rand::thread_rng().fill_bytes(&mut data);
+            rand::rng().fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
         }
@@ -3011,7 +3011,7 @@ mod tests {
 
             println!("-- [m1 & m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
-            rand::thread_rng().fill_bytes(&mut data);
+            rand::rng().fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
         }
@@ -3359,7 +3359,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_node_addr() -> Result {
         let stack = MagicStack::new(RelayMode::Default).await;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 0);
 

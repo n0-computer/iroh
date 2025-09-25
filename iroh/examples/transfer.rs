@@ -20,6 +20,7 @@ use iroh_base::ticket::NodeTicket;
 use n0_future::task::AbortOnDropHandle;
 use n0_snafu::{Result, ResultExt};
 use n0_watcher::Watcher as _;
+use rand::TryRngCore;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
@@ -186,7 +187,7 @@ impl EndpointArgs {
             Ok(s) => SecretKey::from_str(&s)
                 .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
             Err(_) => {
-                let s = SecretKey::generate(rand::rngs::OsRng);
+                let s = SecretKey::generate(rand::rngs::OsRng.unwrap_err());
                 println!("Generated a new node secret. To reuse, set");
                 println!("\tIROH_SECRET={}", HEXLOWER.encode(&s.to_bytes()));
                 s

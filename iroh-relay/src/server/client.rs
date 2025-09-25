@@ -330,7 +330,7 @@ impl Actor {
 
         // Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
         let next_interval = || {
-            let random_secs = rand::rngs::OsRng.gen_range(1..=5);
+            let random_secs = rand::rng().random_range(1..=5);
             Duration::from_secs(random_secs) + PING_INTERVAL
         };
 
@@ -603,7 +603,7 @@ mod tests {
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let node_id = SecretKey::generate(rand::thread_rng()).public();
+        let node_id = SecretKey::generate(rand::rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Conn::test(io_rw);
         let stream = RelayedStream::test(io);
@@ -685,7 +685,7 @@ mod tests {
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
         assert_eq!(frame, RelayToClientMsg::Pong(*data));
 
-        let target = SecretKey::generate(rand::thread_rng()).public();
+        let target = SecretKey::generate(rand::rng()).public();
 
         // send packet
         println!("  send packet");
@@ -731,7 +731,7 @@ mod tests {
 
         // Prepare a frame to send, assert its size.
         let data = Datagrams::from(b"hello world!!!!!");
-        let target = SecretKey::generate(rand::thread_rng()).public();
+        let target = SecretKey::generate(rand::rng()).public();
         let frame = ClientToRelayMsg::Datagrams {
             dst_node_id: target,
             datagrams: data.clone(),

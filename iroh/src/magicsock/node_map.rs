@@ -743,7 +743,7 @@ mod tests {
     async fn restore_from_vec() {
         let node_map = NodeMap::default();
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let node_a = SecretKey::generate(&mut rng).public();
         let node_b = SecretKey::generate(&mut rng).public();
         let node_c = SecretKey::generate(&mut rng).public();
@@ -812,7 +812,7 @@ mod tests {
     #[traced_test]
     fn test_prune_direct_addresses() {
         let node_map = NodeMap::default();
-        let public_key = SecretKey::generate(rand::thread_rng()).public();
+        let public_key = SecretKey::generate(rand::rng()).public();
         let id = node_map
             .inner
             .lock()
@@ -886,7 +886,7 @@ mod tests {
     fn test_prune_inactive() {
         let node_map = NodeMap::default();
         // add one active node and more than MAX_INACTIVE_NODES inactive nodes
-        let active_node = SecretKey::generate(rand::thread_rng()).public();
+        let active_node = SecretKey::generate(rand::rng()).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map
@@ -897,7 +897,7 @@ mod tests {
             .expect("registered");
 
         for _ in 0..MAX_INACTIVE_NODES + 1 {
-            let node = SecretKey::generate(rand::thread_rng()).public();
+            let node = SecretKey::generate(rand::rng()).public();
             node_map.add_test_addr(NodeAddr::new(node));
         }
 
