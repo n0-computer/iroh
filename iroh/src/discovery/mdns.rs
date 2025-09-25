@@ -658,7 +658,7 @@ mod tests {
         }
 
         fn make_discoverer(advertise: bool) -> Result<(PublicKey, MdnsDiscovery)> {
-            let node_id = SecretKey::generate(rand::thread_rng()).public();
+            let node_id = SecretKey::generate(rand::rng()).public();
             Ok((node_id, MdnsDiscovery::new(node_id, advertise)?))
         }
     }

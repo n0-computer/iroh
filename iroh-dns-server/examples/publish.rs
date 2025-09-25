@@ -11,6 +11,7 @@ use iroh::{
     node_info::{IROH_TXT_NAME, NodeIdExt, NodeInfo},
 };
 use n0_snafu::{Result, ResultExt};
+use rand::TryRngCore;
 use url::Url;
 
 const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";
@@ -63,7 +64,7 @@ async fn main() -> Result<()> {
         Ok(s) => SecretKey::from_str(&s)
             .context("failed to parse IROH_SECRET environment variable as iroh secret key")?,
         Err(_) => {
-            let s = SecretKey::generate(rand::rngs::OsRng);
+            let s = SecretKey::generate(rand::rngs::OsRng.unwrap_err());
             println!("Generated a new node secret. To reuse, set");
             println!(
                 "\tIROH_SECRET={}",

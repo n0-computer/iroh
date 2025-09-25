@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_from_str() {
-        let key = SecretKey::generate(&mut rand::thread_rng());
+        let key = SecretKey::generate(rand::rng());
         assert_eq!(
             SecretKey::from_str(&HEXLOWER.encode(&key.to_bytes()))
                 .unwrap()

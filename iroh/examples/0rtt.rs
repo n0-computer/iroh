@@ -10,7 +10,6 @@ use iroh_base::ticket::NodeTicket;
 use n0_future::{StreamExt, future};
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
-use rand::thread_rng;
 use tracing::{info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
@@ -35,7 +34,7 @@ pub fn get_or_generate_secret_key() -> n0_snafu::Result<SecretKey> {
         SecretKey::from_str(&secret).context("Invalid secret key format")
     } else {
         // Generate a new random key
-        let secret_key = SecretKey::generate(&mut thread_rng());
+        let secret_key = SecretKey::generate(rand::rng());
         println!(
             "Generated new secret key: {}",
             HEXLOWER.encode(&secret_key.to_bytes())

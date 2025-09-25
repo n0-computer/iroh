@@ -141,7 +141,7 @@ mod tests {
     use crate::key::{PublicKey, SecretKey};
 
     fn make_ticket() -> NodeTicket {
-        let peer = SecretKey::generate(&mut rand::thread_rng()).public();
+        let peer = SecretKey::generate(rand::rng()).public();
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 1234));
         let relay_url = None;
         NodeTicket {
