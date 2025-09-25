@@ -167,7 +167,7 @@ mod tests {
 
         let origin = "irohdns.example.";
 
-        let secret_key = SecretKey::generate(rand::thread_rng());
+        let secret_key = SecretKey::generate(rand::rng());
         let node_id = secret_key.public();
         let pkarr = PkarrRelayClient::new(pkarr_relay);
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
@@ -231,7 +231,7 @@ mod tests {
         let origin = "irohdns.example.";
 
         // create a signed packet
-        let secret_key = SecretKey::generate(rand::thread_rng());
+        let secret_key = SecretKey::generate(rand::rng());
         let node_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
@@ -261,7 +261,7 @@ mod tests {
     }
 
     fn random_signed_packet() -> Result<SignedPacket> {
-        let secret_key = SecretKey::generate(rand::thread_rng());
+        let secret_key = SecretKey::generate(rand::rng());
         let node_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));

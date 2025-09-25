@@ -13,6 +13,7 @@ use std::str::FromStr;
 use clap::Parser;
 use iroh::{Endpoint, NodeId};
 use n0_snafu::ResultExt;
+use rand::TryRngCore;
 use tracing::warn;
 use url::Url;
 
@@ -62,7 +63,7 @@ fn build_discovery(args: Args) -> iroh::discovery::pkarr::dht::Builder {
 }
 
 async fn chat_server(args: Args) -> n0_snafu::Result<()> {
-    let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
+    let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng.unwrap_err());
     let node_id = secret_key.public();
     let discovery = build_discovery(args);
     let endpoint = Endpoint::builder()
@@ -106,7 +107,7 @@ async fn chat_server(args: Args) -> n0_snafu::Result<()> {
 
 async fn chat_client(args: Args) -> n0_snafu::Result<()> {
     let remote_node_id = args.node_id.unwrap();
-    let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
+    let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng.unwrap_err());
     let node_id = secret_key.public();
     // note: we don't pass a secret key here, because we don't need to publish our address, don't spam the DHT
     let discovery = build_discovery(args).no_publish();
