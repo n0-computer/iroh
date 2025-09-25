@@ -35,7 +35,7 @@ derive_more = { version = "2.0.1", features = [
     "deref",
     "from_str"
 ] }
-ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
+ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
 iroh-base = { version = "0.92.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.92", path = "../iroh-relay", default-features = false }
@@ -51,7 +51,7 @@ pkarr = { version = "3.7", default-features = false, features = [
 quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.7" }
-rand = "0.8"
+rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "stream",
@@ -141,7 +141,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.8" }
 clap = { version = "4", features = ["derive"] }
 pretty_assertions = "1.4"
-rand_chacha = "0.3.1"
+rand_chacha = "0.9"
 tokio = { version = "1", features = [
     "io-util",
     "sync",

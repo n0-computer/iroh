@@ -13,7 +13,7 @@ use curve25519_dalek::edwards::CompressedEdwardsY;
 pub use ed25519_dalek::{Signature, SignatureError};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use nested_enum_utils::common_fields;
-use rand_core::CryptoRngCore;
+use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
@@ -291,7 +291,7 @@ impl SecretKey {
     /// let mut rng = rand::rngs::OsRng;
     /// let _key = iroh_base::SecretKey::generate(&mut rng);
     /// ```
-    pub fn generate<R: CryptoRngCore>(mut csprng: R) -> Self {
+    pub fn generate<R: CryptoRng>(mut csprng: R) -> Self {
         let secret = SigningKey::generate(&mut csprng);
 
         Self { secret }

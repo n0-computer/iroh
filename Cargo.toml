@@ -40,3 +40,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+
+[patch.crates-io]
+pkarr = { git = "https://github.com/dignifiedquire/pkarr", branch = "feat-rand-09" }
