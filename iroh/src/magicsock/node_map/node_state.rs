@@ -1465,7 +1465,7 @@ mod tests {
 
         // endpoint with a `best_addr` that has a latency but no relay
         let (a_endpoint, a_socket_addr) = {
-            let key = SecretKey::generate(rand::thread_rng());
+            let key = SecretKey::generate(rand::rng());
             let node_id = key.public();
             let ip_port = IpPort {
                 ip: Ipv4Addr::UNSPECIFIED.into(),
@@ -1508,7 +1508,7 @@ mod tests {
         // endpoint w/ no best addr but a relay w/ latency
         let b_endpoint = {
             // let socket_addr = "0.0.0.0:9".parse().unwrap();
-            let key = SecretKey::generate(rand::thread_rng());
+            let key = SecretKey::generate(rand::rng());
             NodeState {
                 id: 1,
                 quic_mapped_addr: NodeIdMappedAddr::generate(),
@@ -1529,7 +1529,7 @@ mod tests {
         // endpoint w/ no best addr but a relay w/ no latency
         let c_endpoint = {
             // let socket_addr = "0.0.0.0:8".parse().unwrap();
-            let key = SecretKey::generate(rand::thread_rng());
+            let key = SecretKey::generate(rand::rng());
             NodeState {
                 id: 2,
                 quic_mapped_addr: NodeIdMappedAddr::generate(),
@@ -1558,7 +1558,7 @@ mod tests {
         // endpoint w/ expired best addr and relay w/ latency
         let (d_endpoint, d_socket_addr) = {
             let socket_addr: SocketAddr = "0.0.0.0:7".parse().unwrap();
-            let key = SecretKey::generate(rand::thread_rng());
+            let key = SecretKey::generate(rand::rng());
             let node_id = key.public();
             let endpoint_state = BTreeMap::from([(
                 IpPort::from(socket_addr),
@@ -1705,7 +1705,7 @@ mod tests {
         // When we handle a call-me-maybe with more than MAX_INACTIVE_DIRECT_ADDRESSES we do
         // not want to prune them right away but send pings to all of them.
 
-        let key = SecretKey::generate(rand::thread_rng());
+        let key = SecretKey::generate(rand::rng());
         let opts = Options {
             node_id: key.public(),
             relay_url: None,

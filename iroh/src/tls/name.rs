@@ -38,7 +38,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        let key = SecretKey::generate(rand::rngs::OsRng);
+        let key = SecretKey::generate(rand::rng());
         let node_id = key.public();
         println!("{}", super::encode(node_id));
         assert_eq!(Some(node_id), super::decode(&super::encode(node_id)));
