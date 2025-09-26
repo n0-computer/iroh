@@ -974,7 +974,7 @@ impl Endpoint {
     /// TODO: document me
     #[cfg(wasm_browser)]
     pub async fn online(&self) {
-        self.msock.home_relay().initialized()
+        self.msock.home_relay().initialized().await;
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
