@@ -42,7 +42,7 @@ use rand::seq::IteratorRandom;
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, debug, debug_span, error, info_span, trace, warn};
+use tracing::{Instrument, debug, error, trace, warn, warn_span};
 use url::Host;
 
 #[cfg(wasm_browser)]
@@ -134,7 +134,7 @@ impl Client {
             insecure_skip_relay_cert_verify,
             if_state,
         };
-        let task = task::spawn(actor.run().instrument(info_span!("reportgen.actor")));
+        let task = task::spawn(actor.run().instrument(warn_span!("reportgen-actor")));
         (
             Self {
                 _drop_guard: AbortOnDropHandle::new(task),
@@ -316,7 +316,7 @@ impl Actor {
                     };
                     ProbeFinished::CaptivePortal(res)
                 }
-                .instrument(debug_span!("captive-portal")),
+                .instrument(warn_span!("captive-portal")),
             );
         }
         token
@@ -389,11 +389,11 @@ impl Actor {
                         };
                         ProbeFinished::Regular(res)
                     }
-                    .instrument(debug_span!(
+                    .instrument(warn_span!(
                         "run-probe",
                         ?proto,
                         ?delay,
-                        ?relay_node
+                        ?relay_node,
                     )),
                 );
             }
