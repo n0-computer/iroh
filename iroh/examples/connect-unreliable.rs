@@ -10,7 +10,6 @@ use std::net::SocketAddr;
 use clap::Parser;
 use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
 use n0_snafu::ResultExt;
-use n0_watcher::Watcher as _;
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -52,7 +51,10 @@ async fn main() -> n0_snafu::Result<()> {
         .bind()
         .await?;
 
-    let node_addr = endpoint.node_addr().initialized().await;
+    // wait for the node to be online
+    endpoint.online().await;
+
+    let node_addr = endpoint.node_addr();
     let me = node_addr.node_id;
     println!("node id: {me}");
     println!("node listening addresses:");

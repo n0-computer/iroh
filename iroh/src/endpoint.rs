@@ -13,7 +13,6 @@
 
 use std::{
     any::Any,
-    collections::BTreeSet,
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
@@ -22,7 +21,7 @@ use std::{
 };
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
-use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+use iroh_base::{NodeAddr, NodeId, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
@@ -869,6 +868,26 @@ impl Endpoint {
         self.static_config.tls_config.secret_key.public()
     }
 
+    /// Returns the current [`NodeAddr`].
+    pub fn node_addr(&self) -> NodeAddr {
+        let node_id = self.node_id();
+        let relay_url = self.msock.home_relay().get().first().cloned();
+        let direct_addresses = self
+            .msock
+            .direct_addresses()
+            .get()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|addr| addr.addr)
+            .collect();
+
+        NodeAddr {
+            node_id,
+            relay_url,
+            direct_addresses,
+        }
+    }
+
     /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
     ///
     /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
@@ -884,15 +903,15 @@ impl Endpoint {
     ///     .alpns(vec![b"my-alpn".to_vec()])
     ///     .bind()
     ///     .await?;
-    /// let node_addr = endpoint.node_addr().initialized().await;
+    /// let node_addr = endpoint.watch_node_addr().initialized().await;
     /// # let _ = node_addr;
     /// # Ok(())
     /// # }
     /// ```
     #[cfg(not(wasm_browser))]
-    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
-        let watch_addrs = self.direct_addresses();
-        let watch_relay = self.home_relay();
+    pub fn watch_node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
+        let watch_addrs = self.msock.direct_addresses();
+        let watch_relay = self.msock.home_relay();
         let node_id = self.node_id();
 
         watch_addrs
@@ -916,7 +935,7 @@ impl Endpoint {
     /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
     #[cfg(wasm_browser)]
-    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
+    pub fn watch_node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
@@ -931,69 +950,16 @@ impl Endpoint {
             .expect("watchable is alive - cannot be disconnected yet")
     }
 
-    /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
+    /// Waits for the node to be considered online.
     ///
-    /// Every endpoint has a home Relay server which it chooses as the server with the
-    /// lowest latency out of the configured servers provided by [`Builder::relay_mode`].
-    /// This is the server other iroh nodes can use to reliably establish a connection
-    /// to this node.
+    /// This currently means at least one relay server was connected,
+    /// and at least one local IP address is available.
     ///
-    /// The watcher stores `None` if we are not connected to any Relay server.
-    ///
-    /// Note that this will store `None` right after the [`Endpoint`] is created since it takes
-    /// some time to connect to find and connect to the home relay server.
-    ///
-    /// # Examples
-    ///
-    /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
-    /// ```no_run
-    /// use iroh::{Endpoint, Watcher};
-    ///
-    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    /// # rt.block_on(async move {
-    /// let mep = Endpoint::builder().bind().await.unwrap();
-    /// let _relay_url = mep.home_relay().initialized().await;
-    /// # });
-    /// ```
-    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> + use<> {
-        self.msock.home_relay()
-    }
-
-    /// Returns a [`Watcher`] for the direct addresses of this [`Endpoint`].
-    ///
-    /// The direct addresses of the [`Endpoint`] are those that could be used by other
-    /// iroh nodes to establish direct connectivity, depending on the network
-    /// situation. The yielded lists of direct addresses contain both the locally-bound
-    /// addresses and the [`Endpoint`]'s publicly reachable addresses discovered through
-    /// mechanisms such as [QAD] and port mapping.  Hence usually only a subset of these
-    /// will be applicable to a certain remote iroh node.
-    ///
-    /// The [`Endpoint`] continuously monitors the direct addresses for changes as its own
-    /// location in the network might change.  Whenever changes are detected this stream
-    /// will yield a new list of direct addresses.
-    ///
-    /// When issuing the first call to this method the first direct address discovery might
-    /// still be underway, in this case the [`Watcher`] might not be initialized with [`Some`]
-    /// value yet.  Once the first set of local direct addresses are discovered the [`Watcher`]
-    /// will always return [`Some`] set of direct addresses immediately, which are the most
-    /// recently discovered direct addresses.
-    ///
-    /// # Examples
-    ///
-    /// To get the first set of direct addresses use [`Watcher::initialized`]:
-    /// ```no_run
-    /// use iroh::{Endpoint, Watcher as _};
-    ///
-    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    /// # rt.block_on(async move {
-    /// let ep = Endpoint::builder().bind().await.unwrap();
-    /// let _addrs = ep.direct_addresses().initialized().await;
-    /// # });
-    /// ```
-    ///
-    /// [QAD]: https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html
-    pub fn direct_addresses(&self) -> n0_watcher::Direct<Option<BTreeSet<DirectAddr>>> {
-        self.msock.direct_addresses()
+    /// This has no timeout, so if that is needed, you need to wrap it in a timeout.
+    pub async fn online(&self) {
+        let mut watch1 = self.msock.home_relay();
+        let mut watch2 = self.msock.direct_addresses();
+        tokio::join!(watch1.initialized(), watch2.initialized());
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -2222,7 +2188,7 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        let my_addr = ep.node_addr().initialized().await;
+        let my_addr = ep.watch_node_addr().initialized().await;
         let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
@@ -2251,7 +2217,7 @@ mod tests {
             .bind()
             .await?;
         // Wait for the endpoint to be reachable via relay
-        ep.home_relay().initialized().await;
+        ep.online().await;
 
         let server = tokio::spawn(
             async move {
@@ -2351,7 +2317,8 @@ mod tests {
             .bind()
             .await?;
         // Also make sure the server has a working relay connection
-        ep.home_relay().initialized().await;
+
+        ep.online().await;
 
         info!(time = ?test_start.elapsed(), "test setup done");
 
@@ -2471,7 +2438,7 @@ mod tests {
             }
         });
 
-        let addr = server.node_addr().initialized().await;
+        let addr = server.watch_node_addr().initialized().await;
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
         send.write_all(b"Hello, world!").await.e()?;
@@ -2503,8 +2470,8 @@ mod tests {
 
         let ep2 = ep2.bind().await?;
 
-        let ep1_nodeaddr = ep1.node_addr().initialized().await;
-        let ep2_nodeaddr = ep2.node_addr().initialized().await;
+        let ep1_nodeaddr = ep1.watch_node_addr().initialized().await;
+        let ep2_nodeaddr = ep2.watch_node_addr().initialized().await;
         ep1.add_node_addr(ep2_nodeaddr.clone())?;
         ep2.add_node_addr(ep1_nodeaddr.clone())?;
         let ep1_nodeid = ep1.node_id();
@@ -2629,7 +2596,7 @@ mod tests {
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
-        let ep1_nodeaddr = ep1.node_addr().initialized().await;
+        let ep1_nodeaddr = ep1.watch_node_addr().initialized().await;
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
             ep1_nodeaddr.relay_url()
@@ -2679,9 +2646,15 @@ mod tests {
             .bind()
             .await?;
 
-        tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().initialized())
-            .await
-            .e()?;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            ep.watch_node_addr()
+                .map(|addr| addr.map(|addr| addr.direct_addresses))
+                .unwrap()
+                .initialized(),
+        )
+        .await
+        .e()?;
         Ok(())
     }
 
@@ -2791,9 +2764,10 @@ mod tests {
         )
         .await?;
 
-        connect_client_0rtt_expect_err(&client, server.node_addr().initialized().await).await?;
+        connect_client_0rtt_expect_err(&client, server.watch_node_addr().initialized().await)
+            .await?;
         // The second 0rtt attempt should work
-        connect_client_0rtt_expect_ok(&client, server.node_addr().initialized().await, true)
+        connect_client_0rtt_expect_ok(&client, server.watch_node_addr().initialized().await, true)
             .await?;
 
         client.close().await;
@@ -2818,7 +2792,8 @@ mod tests {
         )
         .await?;
 
-        connect_client_0rtt_expect_err(&client, server.node_addr().initialized().await).await?;
+        connect_client_0rtt_expect_err(&client, server.watch_node_addr().initialized().await)
+            .await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
@@ -2827,10 +2802,11 @@ mod tests {
             info_span!("another"),
         )
         .await?;
-        connect_client_0rtt_expect_err(&client, another.node_addr().initialized().await).await?;
+        connect_client_0rtt_expect_err(&client, another.watch_node_addr().initialized().await)
+            .await?;
         another.close().await;
 
-        connect_client_0rtt_expect_ok(&client, server.node_addr().initialized().await, true)
+        connect_client_0rtt_expect_ok(&client, server.watch_node_addr().initialized().await, true)
             .await?;
 
         client.close().await;
@@ -2850,8 +2826,9 @@ mod tests {
         let server_key = SecretKey::generate(rand::thread_rng());
         let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.node_addr().initialized().await).await?;
-        connect_client_0rtt_expect_ok(&client, server.node_addr().initialized().await, true)
+        connect_client_0rtt_expect_err(&client, server.watch_node_addr().initialized().await)
+            .await?;
+        connect_client_0rtt_expect_ok(&client, server.watch_node_addr().initialized().await, true)
             .await?;
 
         server.close().await;
@@ -2861,7 +2838,7 @@ mod tests {
         // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
         // but the server will reject the early data because it discarded necessary state
         // to decrypt it when restarting.
-        connect_client_0rtt_expect_ok(&client, server.node_addr().initialized().await, false)
+        connect_client_0rtt_expect_ok(&client, server.watch_node_addr().initialized().await, false)
             .await?;
 
         client.close().await;
@@ -2878,7 +2855,7 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
-        let server_addr = server.node_addr().initialized().await;
+        let server_addr = server.watch_node_addr().initialized().await;
         let server_task = tokio::spawn(async move {
             let incoming = server.accept().await.e()?;
             let conn = incoming.await.e()?;
@@ -2928,7 +2905,7 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
-        let server_addr = server.node_addr().initialized().await;
+        let server_addr = server.watch_node_addr().initialized().await;
         let server_task = tokio::task::spawn(async move {
             let conn = server.accept().await.e()?.accept().e()?.await.e()?;
             let mut uni = conn.accept_uni().await.e()?;
@@ -2989,7 +2966,7 @@ mod tests {
             .alpns(accept_alpns)
             .bind()
             .await?;
-        let server_addr = server.node_addr().initialized().await;
+        let server_addr = server.watch_node_addr().initialized().await;
         let server_task = tokio::spawn({
             let server = server.clone();
             async move {
@@ -3113,7 +3090,7 @@ mod tests {
                 .bind()
                 .await
                 .e()?;
-            let addr = endpoint.node_addr().initialized().await;
+            let addr = endpoint.watch_node_addr().initialized().await;
             let router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
             Ok((router, addr))
         }
@@ -3142,7 +3119,7 @@ mod tests {
         // wait for the endpoint to be initialized. This should not be needed,
         // but we don't want to measure endpoint init time but connection time
         // from a fully initialized endpoint.
-        endpoint.node_addr().initialized().await;
+        endpoint.watch_node_addr().initialized().await;
         let t0 = Instant::now();
         for id in &ids {
             let conn = endpoint.connect(*id, NOOP_ALPN).await?;
