@@ -205,6 +205,7 @@ pub(crate) struct MagicSock {
     /// The DNS resolver to be used in this magicsock.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
+    relay_map: RelayMap,
 
     /// Disco
     disco: DiscoState,
@@ -357,6 +358,10 @@ impl MagicSock {
                 .collect()
         });
         res.expect("disconnected")
+    }
+
+    pub(crate) fn relay_map(&self) -> &RelayMap {
+        &self.relay_map
     }
 
     /// Returns a [`n0_watcher::Direct`] that reports the [`ConnectionType`] we have to the
@@ -1420,6 +1425,7 @@ impl Handle {
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
+            relay_map: relay_map.clone(),
             discovery_subscribers: DiscoverySubscribers::new(),
             metrics: metrics.clone(),
             local_addrs_watch: transports.local_addrs_watch(),
