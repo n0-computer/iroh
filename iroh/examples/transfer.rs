@@ -273,26 +273,22 @@ impl EndpointArgs {
         let node_id = endpoint.node_id();
         println!("Our node id:\n\t{node_id}");
 
-        let eps = endpoint.direct_addresses().initialized().await;
+        let node_addr = endpoint.watch_node_addr().initialized().await;
+
         println!("Our direct addresses:");
-        for local_endpoint in eps {
-            println!("\t{} (type: {:?})", local_endpoint.addr, local_endpoint.typ)
+        for addr in &node_addr.direct_addresses {
+            println!("\t{}", addr);
         }
 
-        if self.relay_only {
-            let relay_url = endpoint.home_relay().initialized().await;
-            println!("Our home relay server:\t{relay_url}");
-        } else if !self.no_relay {
-            let relay_url = tokio::time::timeout(Duration::from_secs(2), async {
-                endpoint.home_relay().initialized().await
-            })
-            .await
-            .ok();
-            if let Some(url) = relay_url {
-                println!("Our home relay server:\t{url}");
-            } else {
-                println!("No home relay server found");
-            }
+        if !self.no_relay {
+            tokio::time::timeout(Duration::from_secs(2), endpoint.online())
+                .await
+                .ok();
+        }
+        if let Some(url) = node_addr.relay_url {
+            println!("Our home relay server:\t{url}");
+        } else {
+            println!("No home relay server found");
         }
 
         println!();
@@ -303,11 +299,14 @@ impl EndpointArgs {
 async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     let node_id = endpoint.node_id();
 
-    let node_addr = endpoint.node_addr().initialized().await;
+    // wait for the node to be online
+    endpoint.online().await;
+
+    let node_addr = endpoint.node_addr();
     let ticket = NodeTicket::new(node_addr);
     println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
-    let mut node_addr = endpoint.node_addr().initialized().await;
+    let mut node_addr = endpoint.node_addr();
     node_addr.direct_addresses = Default::default();
     let ticket = NodeTicket::new(node_addr);
     println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);

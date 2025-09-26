@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use iroh::{Endpoint, RelayMode, SecretKey, endpoint::ConnectionError};
 use n0_snafu::ResultExt;
-use n0_watcher::Watcher as _;
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -39,19 +38,21 @@ async fn main() -> n0_snafu::Result<()> {
     println!("node id: {me}");
     println!("node listening addresses:");
 
-    let local_addrs = endpoint
-        .direct_addresses()
-        .initialized()
-        .await
-        .into_iter()
+    // wait for the node to be online
+    endpoint.online().await;
+    let node_addr = endpoint.node_addr();
+
+    let local_addrs = node_addr
+        .direct_addresses
+        .iter()
         .map(|addr| {
-            let addr = addr.addr.to_string();
+            let addr = addr.to_string();
             println!("\t{addr}");
             addr
         })
         .collect::<Vec<_>>()
         .join(" ");
-    let relay_url = endpoint.home_relay().initialized().await;
+    let relay_url = node_addr.relay_url.expect("missing relay");
     println!("node relay server url: {relay_url}");
     println!("\nin a separate terminal run:");
 
