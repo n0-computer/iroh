@@ -939,7 +939,7 @@ impl Endpoint {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
-        let watch_relay = self.home_relay();
+        let watch_relay = self.msock.home_relay();
         let node_id = self.node_id();
         watch_relay
             .map(move |mut relays| {
@@ -954,12 +954,27 @@ impl Endpoint {
     ///
     /// This currently means at least one relay server was connected,
     /// and at least one local IP address is available.
+    /// If no relays are configured, then this will not wait for a relay connection.
+    ///
+    /// Once this has been resolved once, this will always immediately resolve.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a timeout.
+    #[cfg(not(wasm_browser))]
     pub async fn online(&self) {
-        let mut watch1 = self.msock.home_relay();
-        let mut watch2 = self.msock.direct_addresses();
-        tokio::join!(watch1.initialized(), watch2.initialized());
+        if self.msock.relay_map().is_empty() {
+            // Don't wait on a relay if none are configured
+            self.msock.direct_addresses().initialized().await;
+        } else {
+            let mut watch1 = self.msock.home_relay();
+            let mut watch2 = self.msock.direct_addresses();
+            tokio::join!(watch1.initialized(), watch2.initialized());
+        }
+    }
+
+    /// TODO: document me
+    #[cfg(wasm_browser)]
+    pub async fn online(&self) {
+        self.msock.home_relay().initialized()
     }
 
     /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
