@@ -21,7 +21,7 @@ use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{Instrument, debug, debug_span, error, info, info_span, trace, warn};
+use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
 
 use super::{AccessConfig, SpawnError, clients::Clients, streams::InvalidBucketConfig};
 use crate::{
@@ -539,7 +539,7 @@ impl RelayService {
                     Err(err) => warn!("upgrade error: {err:#}"),
                 }
             }
-            .instrument(debug_span!("handler"))
+            .instrument(warn_span!("handler"))
         });
 
         // Now return a 101 Response saying we agree to the upgrade to the
