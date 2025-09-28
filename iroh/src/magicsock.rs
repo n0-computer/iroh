@@ -3062,7 +3062,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_local_endpoints() {
+    async fn test_direct_addresses() {
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
