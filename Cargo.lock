@@ -891,7 +891,7 @@ dependencies = [
 [[package]]
 name = "crypto_box"
 version = "0.9.1"
-source = "git+https://github.com/dignifiedquire/nacl-compat?branch=rand-09#7f58c670f90f4906ffd5e8d60e130e51954c5982"
+source = "git+https://github.com/dignifiedquire/nacl-compat?branch=rand-09#f7d92b0fac4c8883ee6d5ff0144e6d8d0a4a7d9e"
 dependencies = [
  "aead",
  "chacha20",
@@ -906,7 +906,7 @@ dependencies = [
 [[package]]
 name = "crypto_secretbox"
 version = "0.1.1"
-source = "git+https://github.com/dignifiedquire/nacl-compat?branch=rand-09#7f58c670f90f4906ffd5e8d60e130e51954c5982"
+source = "git+https://github.com/dignifiedquire/nacl-compat?branch=rand-09#f7d92b0fac4c8883ee6d5ff0144e6d8d0a4a7d9e"
 dependencies = [
  "aead",
  "chacha20",
