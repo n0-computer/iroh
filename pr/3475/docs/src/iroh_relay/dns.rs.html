@@ -550,7 +550,7 @@
 <a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>config, <span class="kw-2">mut </span>options) = <span class="kw">if </span>builder.use_system_defaults {
 <a href=#551 id=551 data-nosnippet>551</a>            <span class="self">Self</span>::system_defaults()
 <a href=#552 id=552 data-nosnippet>552</a>        } <span class="kw">else </span>{
-<a href=#553 id=553 data-nosnippet>553</a>            (Default::default(), Default::default())
+<a href=#553 id=553 data-nosnippet>553</a>            (ResolverConfig::new(), Default::default())
 <a href=#554 id=554 data-nosnippet>554</a>        };
 <a href=#555 id=555 data-nosnippet>555</a>
 <a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">for </span>(addr, proto) <span class="kw">in </span>builder.nameservers.iter() {
