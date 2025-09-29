@@ -21,7 +21,7 @@
 <a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>tracing::{Instrument, debug, debug_span, error, info, info_span, trace, warn};
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
 <a href=#25 id=25 data-nosnippet>25</a>
 <a href=#26 id=26 data-nosnippet>26</a><span class="kw">use super</span>::{AccessConfig, SpawnError, clients::Clients, streams::InvalidBucketConfig};
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">use crate</span>::{
@@ -539,7 +539,7 @@
 <a href=#539 id=539 data-nosnippet>539</a>                    <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">warn!</span>(<span class="string">"upgrade error: {err:#}"</span>),
 <a href=#540 id=540 data-nosnippet>540</a>                }
 <a href=#541 id=541 data-nosnippet>541</a>            }
-<a href=#542 id=542 data-nosnippet>542</a>            .instrument(<span class="macro">debug_span!</span>(<span class="string">"handler"</span>))
+<a href=#542 id=542 data-nosnippet>542</a>            .instrument(<span class="macro">warn_span!</span>(<span class="string">"handler"</span>))
 <a href=#543 id=543 data-nosnippet>543</a>        });
 <a href=#544 id=544 data-nosnippet>544</a>
 <a href=#545 id=545 data-nosnippet>545</a>        <span class="comment">// Now return a 101 Response saying we agree to the upgrade to the

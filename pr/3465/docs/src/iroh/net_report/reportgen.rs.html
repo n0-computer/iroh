@@ -42,7 +42,7 @@
 <a href=#42 id=42 data-nosnippet>42</a><span class="kw">use </span>snafu::{IntoError, OptionExt, ResultExt, Snafu};
 <a href=#43 id=43 data-nosnippet>43</a><span class="kw">use </span>tokio::sync::mpsc;
 <a href=#44 id=44 data-nosnippet>44</a><span class="kw">use </span>tokio_util::sync::CancellationToken;
-<a href=#45 id=45 data-nosnippet>45</a><span class="kw">use </span>tracing::{Instrument, debug, debug_span, error, info_span, trace, warn};
+<a href=#45 id=45 data-nosnippet>45</a><span class="kw">use </span>tracing::{Instrument, debug, error, trace, warn, warn_span};
 <a href=#46 id=46 data-nosnippet>46</a><span class="kw">use </span>url::Host;
 <a href=#47 id=47 data-nosnippet>47</a>
 <a href=#48 id=48 data-nosnippet>48</a><span class="attr">#[cfg(wasm_browser)]
@@ -134,7 +134,7 @@
 <a href=#134 id=134 data-nosnippet>134</a>            </span>insecure_skip_relay_cert_verify,
 <a href=#135 id=135 data-nosnippet>135</a>            if_state,
 <a href=#136 id=136 data-nosnippet>136</a>        };
-<a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>task = task::spawn(actor.run().instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)));
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>task = task::spawn(actor.run().instrument(<span class="macro">warn_span!</span>(<span class="string">"reportgen-actor"</span>)));
 <a href=#138 id=138 data-nosnippet>138</a>        (
 <a href=#139 id=139 data-nosnippet>139</a>            <span class="self">Self </span>{
 <a href=#140 id=140 data-nosnippet>140</a>                _drop_guard: AbortOnDropHandle::new(task),
@@ -316,7 +316,7 @@
 <a href=#316 id=316 data-nosnippet>316</a>                    };
 <a href=#317 id=317 data-nosnippet>317</a>                    ProbeFinished::CaptivePortal(res)
 <a href=#318 id=318 data-nosnippet>318</a>                }
-<a href=#319 id=319 data-nosnippet>319</a>                .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
+<a href=#319 id=319 data-nosnippet>319</a>                .instrument(<span class="macro">warn_span!</span>(<span class="string">"captive-portal"</span>)),
 <a href=#320 id=320 data-nosnippet>320</a>            );
 <a href=#321 id=321 data-nosnippet>321</a>        }
 <a href=#322 id=322 data-nosnippet>322</a>        token
@@ -389,11 +389,11 @@
 <a href=#389 id=389 data-nosnippet>389</a>                        };
 <a href=#390 id=390 data-nosnippet>390</a>                        ProbeFinished::Regular(res)
 <a href=#391 id=391 data-nosnippet>391</a>                    }
-<a href=#392 id=392 data-nosnippet>392</a>                    .instrument(<span class="macro">debug_span!</span>(
+<a href=#392 id=392 data-nosnippet>392</a>                    .instrument(<span class="macro">warn_span!</span>(
 <a href=#393 id=393 data-nosnippet>393</a>                        <span class="string">"run-probe"</span>,
 <a href=#394 id=394 data-nosnippet>394</a>                        <span class="question-mark">?</span>proto,
 <a href=#395 id=395 data-nosnippet>395</a>                        <span class="question-mark">?</span>delay,
-<a href=#396 id=396 data-nosnippet>396</a>                        <span class="question-mark">?</span>relay_node
+<a href=#396 id=396 data-nosnippet>396</a>                        <span class="question-mark">?</span>relay_node,
 <a href=#397 id=397 data-nosnippet>397</a>                    )),
 <a href=#398 id=398 data-nosnippet>398</a>                );
 <a href=#399 id=399 data-nosnippet>399</a>            }

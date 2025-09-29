@@ -395,7 +395,7 @@
 <a href=#395 id=395 data-nosnippet>395</a>        enough_relays: usize,
 <a href=#396 id=396 data-nosnippet>396</a>        do_full: bool,
 <a href=#397 id=397 data-nosnippet>397</a>    ) -&gt; Vec&lt;ProbeReport&gt; {
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">use </span>tracing::{Instrument, info_span};
+<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">use </span>tracing::{Instrument, warn_span};
 <a href=#399 id=399 data-nosnippet>399</a>
 <a href=#400 id=400 data-nosnippet>400</a>        <span class="macro">debug!</span>(<span class="string">"spawning QAD probes"</span>);
 <a href=#401 id=401 data-nosnippet>401</a>
@@ -450,7 +450,7 @@
 <a href=#450 id=450 data-nosnippet>450</a>                            PROBES_TIMEOUT,
 <a href=#451 id=451 data-nosnippet>451</a>                            run_probe_v4(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
 <a href=#452 id=452 data-nosnippet>452</a>                        ))
-<a href=#453 id=453 data-nosnippet>453</a>                        .instrument(<span class="macro">info_span!</span>(<span class="string">"QAD-IPv4"</span>, %relay_url)),
+<a href=#453 id=453 data-nosnippet>453</a>                        .instrument(<span class="macro">warn_span!</span>(<span class="string">"QAD-IPv4"</span>, %relay_url)),
 <a href=#454 id=454 data-nosnippet>454</a>                );
 <a href=#455 id=455 data-nosnippet>455</a>            }
 <a href=#456 id=456 data-nosnippet>456</a>
@@ -468,7 +468,7 @@
 <a href=#468 id=468 data-nosnippet>468</a>                            PROBES_TIMEOUT,
 <a href=#469 id=469 data-nosnippet>469</a>                            run_probe_v6(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
 <a href=#470 id=470 data-nosnippet>470</a>                        ))
-<a href=#471 id=471 data-nosnippet>471</a>                        .instrument(<span class="macro">info_span!</span>(<span class="string">"QAD-IPv6"</span>, %relay_url)),
+<a href=#471 id=471 data-nosnippet>471</a>                        .instrument(<span class="macro">warn_span!</span>(<span class="string">"QAD-IPv6"</span>, %relay_url)),
 <a href=#472 id=472 data-nosnippet>472</a>                );
 <a href=#473 id=473 data-nosnippet>473</a>            }
 <a href=#474 id=474 data-nosnippet>474</a>        }
