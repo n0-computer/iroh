@@ -7,7 +7,11 @@ use std::{
     sync::Arc,
 };
 
-use hickory_resolver::{TokioResolver, name_server::TokioConnectionProvider};
+use hickory_resolver::{
+    TokioResolver,
+    config::{ResolverConfig, ResolverOpts},
+    name_server::TokioConnectionProvider,
+};
 use iroh_base::NodeId;
 use n0_future::{
     StreamExt,
@@ -131,6 +135,68 @@ impl<E: std::fmt::Debug + std::fmt::Display> StaggeredError<E> {
     }
 }
 
+/// Builder for [`DnsResolver`].
+#[derive(Debug, Clone, Default)]
+pub struct Builder {
+    use_system_defaults: bool,
+    nameservers: Vec<(SocketAddr, DnsProtocol)>,
+}
+
+/// Protocols over which DNS records can be resolved.
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+pub enum DnsProtocol {
+    #[default]
+    /// DNS over UDP (the classic DNS protocol)
+    Udp,
+    /// DNS over TCP
+    Tcp,
+    /// DNS over TLS
+    Tls,
+    /// DNS over HTTPS
+    Https,
+}
+
+impl DnsProtocol {
+    fn to_hickory(self) -> hickory_proto::xfer::Protocol {
+        use hickory_proto::xfer::Protocol;
+        match self {
+            DnsProtocol::Udp => Protocol::Udp,
+            DnsProtocol::Tcp => Protocol::Tcp,
+            DnsProtocol::Tls => Protocol::Tls,
+            DnsProtocol::Https => Protocol::Https,
+        }
+    }
+}
+
+impl Builder {
+    /// Makes the builder respect the host system's DNS configuration.
+    pub fn with_system_defaults(mut self) -> Self {
+        self.use_system_defaults = true;
+        self
+    }
+
+    /// Adds a single nameserver.
+    pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
+        self.nameservers.push((addr, protocol));
+        self
+    }
+
+    /// Adds a list of nameservers.
+    pub fn with_nameservers(
+        mut self,
+        nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
+    ) -> Self {
+        self.nameservers.extend(nameservers);
+        self
+    }
+
+    /// Builds the DNS resolver.
+    pub fn build(self) -> DnsResolver {
+        let resolver = HickoryResolver::new(self);
+        DnsResolver(DnsResolverInner::Hickory(Arc::new(RwLock::new(resolver))))
+    }
+}
+
 /// The DNS resolver used throughout `iroh`.
 #[derive(Debug, Clone)]
 pub struct DnsResolver(DnsResolverInner);
@@ -142,25 +208,28 @@ impl DnsResolver {
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
     pub fn new() -> Self {
-        let resolver = HickoryResolver::new(HickoryResolverOpts::SystemDefaults);
-        Self(DnsResolverInner::Hickory(Arc::new(RwLock::new(resolver))))
-    }
-
-    /// Creates a new [`DnsResolver`] from a struct that implements [`Resolver`].
-    ///
-    /// [`Resolver`] is implemented for [`hickory_resolver::TokioResolver`], so you can construct
-    /// a [`TokioResolver`] and pass that to this function.
-    ///
-    /// To use a different DNS resolver, you need to implement [`Resolver`] for your custom resolver
-    /// and then pass to this function.
-    pub fn custom(resolver: impl Resolver) -> Self {
-        Self(DnsResolverInner::Custom(Arc::new(RwLock::new(resolver))))
+        Builder::default().with_system_defaults().build()
     }
 
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
-        let resolver = HickoryResolver::new(HickoryResolverOpts::SingleUdpNameserver(nameserver));
-        Self(DnsResolverInner::Hickory(Arc::new(RwLock::new(resolver))))
+        Builder::default()
+            .with_nameserver(nameserver, DnsProtocol::Udp)
+            .build()
+    }
+
+    /// Creates a builder to construct a DNS resolver with custom options.
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
+
+    /// Creates a new [`DnsResolver`] from a struct that implements [`Resolver`].
+    ///
+    /// If you need more customization for DNS resolving than the [`Builder`] allows, you can
+    /// implement the [`Resolver`] trait on a struct and implement DNS resolution
+    /// however you see fit.
+    pub fn custom(resolver: impl Resolver) -> Self {
+        Self(DnsResolverInner::Custom(Arc::new(RwLock::new(resolver))))
     }
 
     /// Removes all entries from the cache.
@@ -469,42 +538,38 @@ impl DnsResolverInner {
     }
 }
 
-#[derive(Debug, Clone)]
-enum HickoryResolverOpts {
-    SystemDefaults,
-    SingleUdpNameserver(SocketAddr),
-}
-
 #[derive(Debug)]
 struct HickoryResolver {
     resolver: TokioResolver,
-    opts: HickoryResolverOpts,
+    builder: Builder,
 }
 
 impl HickoryResolver {
-    fn new(opts: HickoryResolverOpts) -> Self {
-        let resolver = match opts {
-            HickoryResolverOpts::SystemDefaults => Self::with_system_defaults(),
-            HickoryResolverOpts::SingleUdpNameserver(addr) => Self::with_single_nameserver(addr),
+    fn new(builder: Builder) -> Self {
+        let (mut config, mut options) = if builder.use_system_defaults {
+            Self::system_defaults()
+        } else {
+            (Default::default(), Default::default())
         };
-        Self { resolver, opts }
-    }
 
-    fn with_single_nameserver(nameserver: SocketAddr) -> TokioResolver {
-        let mut config = hickory_resolver::config::ResolverConfig::new();
-        let nameserver_config = hickory_resolver::config::NameServerConfig::new(
-            nameserver,
-            hickory_resolver::proto::xfer::Protocol::Udp,
-        );
-        config.add_name_server(nameserver_config);
+        for (addr, proto) in builder.nameservers.iter() {
+            let nameserver =
+                hickory_resolver::config::NameServerConfig::new(*addr, proto.to_hickory());
+            config.add_name_server(nameserver);
+        }
 
-        let builder =
+        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
+        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
+
+        let mut hickory_builder =
             TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        builder.build()
+        *hickory_builder.options_mut() = options;
+        let resolver = hickory_builder.build();
+        Self { resolver, builder }
     }
 
-    fn with_system_defaults() -> TokioResolver {
-        let (system_config, mut options) =
+    fn system_defaults() -> (ResolverConfig, ResolverOpts) {
+        let (system_config, options) =
             hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
         // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
@@ -521,14 +586,7 @@ impl HickoryResolver {
                 config.add_name_server(nameserver_cfg.clone());
             }
         }
-
-        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
-        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
-
-        let mut builder =
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        *builder.options_mut() = options;
-        builder.build()
+        (config, options)
     }
 
     async fn lookup_ipv4(
@@ -575,7 +633,7 @@ impl HickoryResolver {
     }
 
     fn reset(&mut self) {
-        *self = Self::new(self.opts.clone());
+        *self = Self::new(self.builder.clone());
     }
 }
 
