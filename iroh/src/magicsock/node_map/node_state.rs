@@ -1,22 +1,24 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
+    pin::Pin,
     sync::{Arc, atomic::AtomicBool},
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use n0_future::{
-    MergeUnbounded,
+    MergeUnbounded, Stream, StreamExt,
     task::AbortOnDropHandle,
     time::{Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
-use quinn_proto::PathStatus;
+use quinn_proto::{PathEvent, PathId, PathStatus};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use snafu::{ResultExt, Whatever};
+use snafu::{OptionExt, ResultExt, Whatever};
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -738,13 +740,20 @@ pub(super) struct NodeStateActor {
     // Internal state - Quinn Connections we are managing.
     //
     /// All connections we have to this remote node.
-    connections: Vec<WeakConnectionHandle>,
+    ///
+    /// The key is the [`quinn::Connection::stable_id`].
+    connections: FxHashMap<usize, WeakConnectionHandle>,
     /// Events emitted by Quinn about path changes.
-    // TODO: Do we need to know which event comes from which connection?  We could store
-    //    connections in an FxHashMap using a u64 counter as index and map event streams to
-    //    this index if so.  Events only come with a PathId, so to know which actual path
-    //    this refers to we need to know more.
-    path_events: MergeUnbounded<BroadcastStream<quinn_proto::PathEvent>>,
+    // path_events: MergeUnbounded<BroadcastStream<PathEvent>>,
+    path_events: MergeUnbounded<
+        Pin<
+            Box<
+                dyn Stream<Item = (usize, Result<PathEvent, BroadcastStreamRecvError>)>
+                    + Send
+                    + Sync,
+            >,
+        >,
+    >,
 
     // Internal state - Holepunching and path state.
     //
@@ -752,9 +761,17 @@ pub(super) struct NodeStateActor {
     ///
     /// These paths might be entirely impossible to use, since they are added by discovery
     /// mechanisms.  The are only potentially usable.
-    // TODO: We probably need some indexes from (Connection, PathId) pairs to
-    //    transports::Addr.
-    paths: BTreeMap<transports::Addr, NewPathState>,
+    paths: FxHashMap<transports::Addr, NewPathState>,
+    /// Maps connections and path IDs to the transport addr.
+    ///
+    /// The [`transports::Addr`] can be looked up in [`Self::paths`].
+    ///
+    /// The `usize` is the [`Connection::stable_id`] of a connection.  It is important that
+    /// this map is cleared of the stable ID of a new connection received from
+    /// [`NodeStateMessage::AddConnection`], because this ID is only unique within
+    /// *currently active* connections.  So there could be conflicts if we did not yet know
+    /// a previous connection no longer exists.
+    path_id_map: FxHashMap<(usize, PathId), transports::Addr>,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
     /// The path we currently consider the preferred path to the remote node.
@@ -788,9 +805,10 @@ impl NodeStateActor {
             local_addrs,
             relay_mapped_addrs,
             disco,
-            connections: Vec::new(),
+            connections: FxHashMap::default(),
             path_events: Default::default(),
-            paths: BTreeMap::new(),
+            paths: FxHashMap::default(),
+            path_id_map: FxHashMap::default(),
             last_holepunch: None,
             selected_path: None,
             scheduled_holepunch: None,
@@ -822,8 +840,6 @@ impl NodeStateActor {
                 None => MaybeFuture::None,
             };
             let mut scheduled_hp = std::pin::pin!(scheduled_hp);
-            // TODO: Watch our local direct addresses.  If they change we need to holepunch
-            // again.
             tokio::select! {
                 biased;
                 msg = inbox.recv() => {
@@ -832,11 +848,15 @@ impl NodeStateActor {
                         None => break,
                     }
                 }
+                Some((id, evt)) = self.path_events.next() => {
+                    self.handle_path_event(id, evt).await?;
+                }
                 _ = self.local_addrs.updated() => {
-                    self.trigger_holepunching();
+                    self.trigger_holepunching().await;
                 }
                 _ = &mut scheduled_hp => {
-                    self.trigger_holepunching();
+                    self.scheduled_holepunch = None;
+                    self.trigger_holepunching().await;
                 }
             }
         }
@@ -864,9 +884,19 @@ impl NodeStateActor {
             }
             NodeStateMessage::AddConnection(handle) => {
                 if let Some(conn) = handle.upgrade() {
+                    // Remove any conflicting stable_ids from the local state.
+                    let stable_id = conn.stable_id();
+                    self.connections.remove(&stable_id);
+                    self.path_id_map.retain(|(id, _), _| *id != stable_id);
+
+                    // This is a good time to clean up connections.
+                    self.cleanup_connections();
+
+                    let stable_id = conn.stable_id();
                     let events = BroadcastStream::new(conn.path_events());
-                    self.path_events.push(events);
-                    self.connections.push(handle);
+                    let stream = events.map(move |evt| (stable_id, evt));
+                    self.path_events.push(Box::pin(stream));
+                    self.connections.insert(stable_id, handle);
                 }
             }
             NodeStateMessage::AddNodeAddr(node_addr, source) => {
@@ -1145,7 +1175,8 @@ impl NodeStateActor {
     }
 
     /// Asks Quinn to open a new path on connections, but only if we are the client.
-    async fn open_quic_path(&self, addr: transports::Addr) {
+    #[instrument(level = "warn", skip(self))]
+    fn open_quic_path(&mut self, addr: transports::Addr) {
         let path_status = match addr {
             transports::Addr::Ip(_) => PathStatus::Available,
             transports::Addr::Relay(_, _) => PathStatus::Backup,
@@ -1159,20 +1190,76 @@ impl NodeStateActor {
         };
         for conn in self
             .connections
-            .iter()
+            .values()
             .filter_map(|weak| weak.upgrade())
             .filter(|conn| conn.side().is_client())
         {
-            match conn.open_path(quic_addr, path_status).await {
-                Ok(path) => {
-                    path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
-                    path.set_max_idle_timeout(Some(MAX_IDLE_TIMEOUT)).ok();
+            match conn.open_path_ensure(quic_addr, path_status).path_id() {
+                Some(path_id) => {
+                    self.path_id_map
+                        .insert((conn.stable_id(), path_id), addr.clone());
                 }
-                Err(err) => {
-                    warn!(?addr, "Failed to open path: {err:#}");
+                None => {
+                    warn!("Opening path failed");
                 }
             }
         }
+    }
+
+    #[instrument(skip(self), fields(path_id))]
+    async fn handle_path_event(
+        &mut self,
+        stable_id: usize,
+        event: Result<PathEvent, BroadcastStreamRecvError>,
+    ) -> Result<(), Whatever> {
+        let Ok(event) = event else {
+            warn!("missed a PathEvent, NodeStateActor lagging");
+            // TODO: Is it possible to recover using the sync APIs to figure out what the
+            //    state of the connection and it's paths are?
+            return Ok(());
+        };
+        let Some(handle) = self.connections.get(&stable_id) else {
+            trace!("event for removed connection");
+            return Ok(());
+        };
+        let Some(conn) = handle.upgrade() else {
+            trace!("event for closed connection");
+            return Ok(());
+        };
+        match event {
+            PathEvent::Opened { id: path_id } => {
+                tracing::Span::current().record("path_id", tracing::field::debug(path_id));
+                let Some(path) = conn.path(path_id) else {
+                    trace!("event for unknown path");
+                    return Ok(());
+                };
+                path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
+                path.set_max_idle_timeout(Some(MAX_IDLE_TIMEOUT)).ok();
+            }
+            PathEvent::Closed { id, error_code } => todo!(),
+            PathEvent::Abandoned { id, path_stats } => todo!(),
+            PathEvent::LocallyClosed { id, error } => todo!(),
+            PathEvent::RemoteStatus { id, status } => todo!(),
+            PathEvent::ObservedAddr { id, addr } => todo!(),
+        }
+        Ok(())
+    }
+
+    /// Clean up connections which no longer exist.
+    // TODO: Call this on a schedule.
+    fn cleanup_connections(&mut self) {
+        self.connections
+            .retain(|_, handle| handle.upgrade().is_some());
+
+        let mut stable_ids = BTreeSet::new();
+        for handle in self.connections.values() {
+            handle
+                .upgrade()
+                .map(|conn| stable_ids.insert(conn.stable_id()));
+        }
+
+        self.path_id_map
+            .retain(|(stable_id, _), _| stable_ids.contains(stable_id));
     }
 }
 

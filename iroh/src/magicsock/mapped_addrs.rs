@@ -6,7 +6,6 @@
 //! Address ranges we use to keep track of the various "fake" address types we use.
 
 use std::{
-    collections::HashMap,
     hash::Hash,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
@@ -15,6 +14,7 @@ use std::{
     },
 };
 
+use rustc_hash::FxHashMap;
 use snafu::Snafu;
 
 /// The Prefix/L of all Unique Local Addresses.
@@ -262,8 +262,8 @@ impl<K: Eq + Hash + Clone, V: MappedAddr + Eq + Hash + Copy> AddrMap<K, V> {
 
 #[derive(Debug)]
 struct AddrMapInner<K, V> {
-    addrs: HashMap<K, V>,
-    lookup: HashMap<V, K>,
+    addrs: FxHashMap<K, V>,
+    lookup: FxHashMap<V, K>,
 }
 
 // Manual impl because derive ends up requiring T: Default.

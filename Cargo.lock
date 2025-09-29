@@ -2327,6 +2327,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "reqwest",
  "ring",
+ "rustc-hash",
  "rustls",
  "rustls-pki-types",
  "rustls-webpki",
