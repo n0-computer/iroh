@@ -754,312 +754,316 @@
 <a href=#754 id=754 data-nosnippet>754</a>    <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
 <a href=#755 id=755 data-nosnippet>755</a>    <span class="kw">use </span>n0_future::{FutureExt, SinkExt, StreamExt};
 <a href=#756 id=756 data-nosnippet>756</a>    <span class="kw">use </span>n0_snafu::Result;
-<a href=#757 id=757 data-nosnippet>757</a>    <span class="kw">use </span>tracing::{info, instrument};
-<a href=#758 id=758 data-nosnippet>758</a>    <span class="kw">use </span>tracing_test::traced_test;
-<a href=#759 id=759 data-nosnippet>759</a>
-<a href=#760 id=760 data-nosnippet>760</a>    <span class="kw">use super</span>::{
-<a href=#761 id=761 data-nosnippet>761</a>        Access, AccessConfig, NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER, RelayConfig,
-<a href=#762 id=762 data-nosnippet>762</a>        Server, ServerConfig, SpawnError,
-<a href=#763 id=763 data-nosnippet>763</a>    };
-<a href=#764 id=764 data-nosnippet>764</a>    <span class="kw">use crate</span>::{
-<a href=#765 id=765 data-nosnippet>765</a>        client::{ClientBuilder, ConnectError},
-<a href=#766 id=766 data-nosnippet>766</a>        dns::DnsResolver,
-<a href=#767 id=767 data-nosnippet>767</a>        protos::{
-<a href=#768 id=768 data-nosnippet>768</a>            handshake,
-<a href=#769 id=769 data-nosnippet>769</a>            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
-<a href=#770 id=770 data-nosnippet>770</a>        },
-<a href=#771 id=771 data-nosnippet>771</a>    };
-<a href=#772 id=772 data-nosnippet>772</a>
-<a href=#773 id=773 data-nosnippet>773</a>    <span class="kw">async fn </span>spawn_local_relay() -&gt; std::result::Result&lt;Server, SpawnError&gt; {
-<a href=#774 id=774 data-nosnippet>774</a>        Server::spawn(ServerConfig::&lt;(), ()&gt; {
-<a href=#775 id=775 data-nosnippet>775</a>            relay: <span class="prelude-val">Some</span>(RelayConfig::&lt;(), ()&gt; {
-<a href=#776 id=776 data-nosnippet>776</a>                http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-<a href=#777 id=777 data-nosnippet>777</a>                tls: <span class="prelude-val">None</span>,
-<a href=#778 id=778 data-nosnippet>778</a>                limits: Default::default(),
-<a href=#779 id=779 data-nosnippet>779</a>                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
-<a href=#780 id=780 data-nosnippet>780</a>                access: AccessConfig::Everyone,
-<a href=#781 id=781 data-nosnippet>781</a>            }),
-<a href=#782 id=782 data-nosnippet>782</a>            quic: <span class="prelude-val">None</span>,
-<a href=#783 id=783 data-nosnippet>783</a>            metrics_addr: <span class="prelude-val">None</span>,
-<a href=#784 id=784 data-nosnippet>784</a>        })
-<a href=#785 id=785 data-nosnippet>785</a>        .<span class="kw">await
-<a href=#786 id=786 data-nosnippet>786</a>    </span>}
-<a href=#787 id=787 data-nosnippet>787</a>
-<a href=#788 id=788 data-nosnippet>788</a>    <span class="attr">#[instrument]
-<a href=#789 id=789 data-nosnippet>789</a>    </span><span class="kw">async fn </span>try_send_recv(
-<a href=#790 id=790 data-nosnippet>790</a>        client_a: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
-<a href=#791 id=791 data-nosnippet>791</a>        client_b: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
-<a href=#792 id=792 data-nosnippet>792</a>        b_key: NodeId,
-<a href=#793 id=793 data-nosnippet>793</a>        msg: Datagrams,
-<a href=#794 id=794 data-nosnippet>794</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;RelayToClientMsg&gt; {
-<a href=#795 id=795 data-nosnippet>795</a>        <span class="comment">// try resend 10 times
-<a href=#796 id=796 data-nosnippet>796</a>        </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
-<a href=#797 id=797 data-nosnippet>797</a>            client_a
-<a href=#798 id=798 data-nosnippet>798</a>                .send(ClientToRelayMsg::Datagrams {
-<a href=#799 id=799 data-nosnippet>799</a>                    dst_node_id: b_key,
-<a href=#800 id=800 data-nosnippet>800</a>                    datagrams: msg.clone(),
-<a href=#801 id=801 data-nosnippet>801</a>                })
-<a href=#802 id=802 data-nosnippet>802</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#803 id=803 data-nosnippet>803</a>            <span class="kw">let </span><span class="prelude-val">Ok</span>(res) = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), client_b.next()).<span class="kw">await
-<a href=#804 id=804 data-nosnippet>804</a>            else </span>{
-<a href=#805 id=805 data-nosnippet>805</a>                <span class="kw">continue</span>;
-<a href=#806 id=806 data-nosnippet>806</a>            };
-<a href=#807 id=807 data-nosnippet>807</a>            <span class="kw">let </span>res = res.expect(<span class="string">"stream finished"</span>)<span class="question-mark">?</span>;
-<a href=#808 id=808 data-nosnippet>808</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(res);
-<a href=#809 id=809 data-nosnippet>809</a>        }
-<a href=#810 id=810 data-nosnippet>810</a>        <span class="macro">panic!</span>(<span class="string">"failed to send and recv message"</span>);
-<a href=#811 id=811 data-nosnippet>811</a>    }
-<a href=#812 id=812 data-nosnippet>812</a>
-<a href=#813 id=813 data-nosnippet>813</a>    <span class="kw">fn </span>dns_resolver() -&gt; DnsResolver {
-<a href=#814 id=814 data-nosnippet>814</a>        DnsResolver::new()
-<a href=#815 id=815 data-nosnippet>815</a>    }
-<a href=#816 id=816 data-nosnippet>816</a>
-<a href=#817 id=817 data-nosnippet>817</a>    <span class="attr">#[tokio::test]
-<a href=#818 id=818 data-nosnippet>818</a>    #[traced_test]
-<a href=#819 id=819 data-nosnippet>819</a>    </span><span class="kw">async fn </span>test_no_services() {
-<a href=#820 id=820 data-nosnippet>820</a>        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt;::default())
-<a href=#821 id=821 data-nosnippet>821</a>            .<span class="kw">await
-<a href=#822 id=822 data-nosnippet>822</a>            </span>.unwrap();
-<a href=#823 id=823 data-nosnippet>823</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), server.task_handle())
-<a href=#824 id=824 data-nosnippet>824</a>            .<span class="kw">await
-<a href=#825 id=825 data-nosnippet>825</a>            </span>.expect(<span class="string">"timeout, server not finished"</span>)
-<a href=#826 id=826 data-nosnippet>826</a>            .expect(<span class="string">"server task JoinError"</span>);
-<a href=#827 id=827 data-nosnippet>827</a>        <span class="macro">assert!</span>(res.is_err());
-<a href=#828 id=828 data-nosnippet>828</a>    }
-<a href=#829 id=829 data-nosnippet>829</a>
-<a href=#830 id=830 data-nosnippet>830</a>    <span class="attr">#[tokio::test]
-<a href=#831 id=831 data-nosnippet>831</a>    #[traced_test]
-<a href=#832 id=832 data-nosnippet>832</a>    </span><span class="kw">async fn </span>test_conflicting_bind() {
-<a href=#833 id=833 data-nosnippet>833</a>        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
-<a href=#834 id=834 data-nosnippet>834</a>            relay: <span class="prelude-val">Some</span>(RelayConfig {
-<a href=#835 id=835 data-nosnippet>835</a>                http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into(),
-<a href=#836 id=836 data-nosnippet>836</a>                tls: <span class="prelude-val">None</span>,
-<a href=#837 id=837 data-nosnippet>837</a>                limits: Default::default(),
-<a href=#838 id=838 data-nosnippet>838</a>                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
-<a href=#839 id=839 data-nosnippet>839</a>                access: AccessConfig::Everyone,
-<a href=#840 id=840 data-nosnippet>840</a>            }),
-<a href=#841 id=841 data-nosnippet>841</a>            quic: <span class="prelude-val">None</span>,
-<a href=#842 id=842 data-nosnippet>842</a>            metrics_addr: <span class="prelude-val">Some</span>((Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into()),
-<a href=#843 id=843 data-nosnippet>843</a>        })
-<a href=#844 id=844 data-nosnippet>844</a>        .<span class="kw">await
-<a href=#845 id=845 data-nosnippet>845</a>        </span>.unwrap();
-<a href=#846 id=846 data-nosnippet>846</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), server.task_handle())
-<a href=#847 id=847 data-nosnippet>847</a>            .<span class="kw">await
-<a href=#848 id=848 data-nosnippet>848</a>            </span>.expect(<span class="string">"timeout, server not finished"</span>)
-<a href=#849 id=849 data-nosnippet>849</a>            .expect(<span class="string">"server task JoinError"</span>);
-<a href=#850 id=850 data-nosnippet>850</a>        <span class="macro">assert!</span>(res.is_err()); <span class="comment">// AddrInUse
-<a href=#851 id=851 data-nosnippet>851</a>    </span>}
-<a href=#852 id=852 data-nosnippet>852</a>
-<a href=#853 id=853 data-nosnippet>853</a>    <span class="attr">#[tokio::test]
-<a href=#854 id=854 data-nosnippet>854</a>    #[traced_test]
-<a href=#855 id=855 data-nosnippet>855</a>    </span><span class="kw">async fn </span>test_root_handler() {
-<a href=#856 id=856 data-nosnippet>856</a>        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
-<a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
-<a href=#858 id=858 data-nosnippet>858</a>
-<a href=#859 id=859 data-nosnippet>859</a>        <span class="kw">let </span>response = reqwest::get(<span class="kw-2">&amp;</span>url).<span class="kw">await</span>.unwrap();
-<a href=#860 id=860 data-nosnippet>860</a>        <span class="macro">assert_eq!</span>(response.status(), <span class="number">200</span>);
-<a href=#861 id=861 data-nosnippet>861</a>        <span class="kw">let </span>body = response.text().<span class="kw">await</span>.unwrap();
-<a href=#862 id=862 data-nosnippet>862</a>        <span class="macro">assert!</span>(body.contains(<span class="string">"iroh.computer"</span>));
-<a href=#863 id=863 data-nosnippet>863</a>    }
-<a href=#864 id=864 data-nosnippet>864</a>
-<a href=#865 id=865 data-nosnippet>865</a>    <span class="attr">#[tokio::test]
-<a href=#866 id=866 data-nosnippet>866</a>    #[traced_test]
-<a href=#867 id=867 data-nosnippet>867</a>    </span><span class="kw">async fn </span>test_captive_portal_service() {
-<a href=#868 id=868 data-nosnippet>868</a>        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
-<a href=#869 id=869 data-nosnippet>869</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"http://{}/generate_204"</span>, server.http_addr().unwrap());
-<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw">let </span>challenge = <span class="string">"123az__."</span>;
-<a href=#871 id=871 data-nosnippet>871</a>
-<a href=#872 id=872 data-nosnippet>872</a>        <span class="kw">let </span>client = reqwest::Client::new();
-<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span>response = client
-<a href=#874 id=874 data-nosnippet>874</a>            .get(<span class="kw-2">&amp;</span>url)
-<a href=#875 id=875 data-nosnippet>875</a>            .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
-<a href=#876 id=876 data-nosnippet>876</a>            .send()
-<a href=#877 id=877 data-nosnippet>877</a>            .<span class="kw">await
-<a href=#878 id=878 data-nosnippet>878</a>            </span>.unwrap();
-<a href=#879 id=879 data-nosnippet>879</a>        <span class="macro">assert_eq!</span>(response.status(), StatusCode::NO_CONTENT);
-<a href=#880 id=880 data-nosnippet>880</a>        <span class="kw">let </span>header = response.headers().get(NO_CONTENT_RESPONSE_HEADER).unwrap();
-<a href=#881 id=881 data-nosnippet>881</a>        <span class="macro">assert_eq!</span>(header.to_str().unwrap(), <span class="macro">format!</span>(<span class="string">"response {challenge}"</span>));
-<a href=#882 id=882 data-nosnippet>882</a>        <span class="kw">let </span>body = response.text().<span class="kw">await</span>.unwrap();
-<a href=#883 id=883 data-nosnippet>883</a>        <span class="macro">assert!</span>(body.is_empty());
-<a href=#884 id=884 data-nosnippet>884</a>    }
-<a href=#885 id=885 data-nosnippet>885</a>
-<a href=#886 id=886 data-nosnippet>886</a>    <span class="attr">#[tokio::test]
-<a href=#887 id=887 data-nosnippet>887</a>    #[traced_test]
-<a href=#888 id=888 data-nosnippet>888</a>    </span><span class="kw">async fn </span>test_relay_clients() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#890 id=890 data-nosnippet>890</a>
-<a href=#891 id=891 data-nosnippet>891</a>        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
-<a href=#892 id=892 data-nosnippet>892</a>        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse()<span class="question-mark">?</span>;
-<a href=#893 id=893 data-nosnippet>893</a>
-<a href=#894 id=894 data-nosnippet>894</a>        <span class="comment">// set up client a
-<a href=#895 id=895 data-nosnippet>895</a>        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(rand::rng());
-<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span>a_key = a_secret_key.public();
-<a href=#897 id=897 data-nosnippet>897</a>        <span class="kw">let </span>resolver = dns_resolver();
-<a href=#898 id=898 data-nosnippet>898</a>        <span class="macro">info!</span>(<span class="string">"client a build &amp; connect"</span>);
-<a href=#899 id=899 data-nosnippet>899</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-<a href=#900 id=900 data-nosnippet>900</a>            .connect()
-<a href=#901 id=901 data-nosnippet>901</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#902 id=902 data-nosnippet>902</a>
-<a href=#903 id=903 data-nosnippet>903</a>        <span class="comment">// set up client b
-<a href=#904 id=904 data-nosnippet>904</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::rng());
-<a href=#905 id=905 data-nosnippet>905</a>        <span class="kw">let </span>b_key = b_secret_key.public();
-<a href=#906 id=906 data-nosnippet>906</a>        <span class="macro">info!</span>(<span class="string">"client b build &amp; connect"</span>);
-<a href=#907 id=907 data-nosnippet>907</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-<a href=#908 id=908 data-nosnippet>908</a>            .connect()
-<a href=#909 id=909 data-nosnippet>909</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#910 id=910 data-nosnippet>910</a>
-<a href=#911 id=911 data-nosnippet>911</a>        <span class="macro">info!</span>(<span class="string">"sending a -&gt; b"</span>);
+<a href=#757 id=757 data-nosnippet>757</a>    <span class="kw">use </span>rand::SeedableRng;
+<a href=#758 id=758 data-nosnippet>758</a>    <span class="kw">use </span>tracing::{info, instrument};
+<a href=#759 id=759 data-nosnippet>759</a>    <span class="kw">use </span>tracing_test::traced_test;
+<a href=#760 id=760 data-nosnippet>760</a>
+<a href=#761 id=761 data-nosnippet>761</a>    <span class="kw">use super</span>::{
+<a href=#762 id=762 data-nosnippet>762</a>        Access, AccessConfig, NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER, RelayConfig,
+<a href=#763 id=763 data-nosnippet>763</a>        Server, ServerConfig, SpawnError,
+<a href=#764 id=764 data-nosnippet>764</a>    };
+<a href=#765 id=765 data-nosnippet>765</a>    <span class="kw">use crate</span>::{
+<a href=#766 id=766 data-nosnippet>766</a>        client::{ClientBuilder, ConnectError},
+<a href=#767 id=767 data-nosnippet>767</a>        dns::DnsResolver,
+<a href=#768 id=768 data-nosnippet>768</a>        protos::{
+<a href=#769 id=769 data-nosnippet>769</a>            handshake,
+<a href=#770 id=770 data-nosnippet>770</a>            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+<a href=#771 id=771 data-nosnippet>771</a>        },
+<a href=#772 id=772 data-nosnippet>772</a>    };
+<a href=#773 id=773 data-nosnippet>773</a>
+<a href=#774 id=774 data-nosnippet>774</a>    <span class="kw">async fn </span>spawn_local_relay() -&gt; std::result::Result&lt;Server, SpawnError&gt; {
+<a href=#775 id=775 data-nosnippet>775</a>        Server::spawn(ServerConfig::&lt;(), ()&gt; {
+<a href=#776 id=776 data-nosnippet>776</a>            relay: <span class="prelude-val">Some</span>(RelayConfig::&lt;(), ()&gt; {
+<a href=#777 id=777 data-nosnippet>777</a>                http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+<a href=#778 id=778 data-nosnippet>778</a>                tls: <span class="prelude-val">None</span>,
+<a href=#779 id=779 data-nosnippet>779</a>                limits: Default::default(),
+<a href=#780 id=780 data-nosnippet>780</a>                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
+<a href=#781 id=781 data-nosnippet>781</a>                access: AccessConfig::Everyone,
+<a href=#782 id=782 data-nosnippet>782</a>            }),
+<a href=#783 id=783 data-nosnippet>783</a>            quic: <span class="prelude-val">None</span>,
+<a href=#784 id=784 data-nosnippet>784</a>            metrics_addr: <span class="prelude-val">None</span>,
+<a href=#785 id=785 data-nosnippet>785</a>        })
+<a href=#786 id=786 data-nosnippet>786</a>        .<span class="kw">await
+<a href=#787 id=787 data-nosnippet>787</a>    </span>}
+<a href=#788 id=788 data-nosnippet>788</a>
+<a href=#789 id=789 data-nosnippet>789</a>    <span class="attr">#[instrument]
+<a href=#790 id=790 data-nosnippet>790</a>    </span><span class="kw">async fn </span>try_send_recv(
+<a href=#791 id=791 data-nosnippet>791</a>        client_a: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
+<a href=#792 id=792 data-nosnippet>792</a>        client_b: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
+<a href=#793 id=793 data-nosnippet>793</a>        b_key: NodeId,
+<a href=#794 id=794 data-nosnippet>794</a>        msg: Datagrams,
+<a href=#795 id=795 data-nosnippet>795</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;RelayToClientMsg&gt; {
+<a href=#796 id=796 data-nosnippet>796</a>        <span class="comment">// try resend 10 times
+<a href=#797 id=797 data-nosnippet>797</a>        </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
+<a href=#798 id=798 data-nosnippet>798</a>            client_a
+<a href=#799 id=799 data-nosnippet>799</a>                .send(ClientToRelayMsg::Datagrams {
+<a href=#800 id=800 data-nosnippet>800</a>                    dst_node_id: b_key,
+<a href=#801 id=801 data-nosnippet>801</a>                    datagrams: msg.clone(),
+<a href=#802 id=802 data-nosnippet>802</a>                })
+<a href=#803 id=803 data-nosnippet>803</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#804 id=804 data-nosnippet>804</a>            <span class="kw">let </span><span class="prelude-val">Ok</span>(res) = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), client_b.next()).<span class="kw">await
+<a href=#805 id=805 data-nosnippet>805</a>            else </span>{
+<a href=#806 id=806 data-nosnippet>806</a>                <span class="kw">continue</span>;
+<a href=#807 id=807 data-nosnippet>807</a>            };
+<a href=#808 id=808 data-nosnippet>808</a>            <span class="kw">let </span>res = res.expect(<span class="string">"stream finished"</span>)<span class="question-mark">?</span>;
+<a href=#809 id=809 data-nosnippet>809</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(res);
+<a href=#810 id=810 data-nosnippet>810</a>        }
+<a href=#811 id=811 data-nosnippet>811</a>        <span class="macro">panic!</span>(<span class="string">"failed to send and recv message"</span>);
+<a href=#812 id=812 data-nosnippet>812</a>    }
+<a href=#813 id=813 data-nosnippet>813</a>
+<a href=#814 id=814 data-nosnippet>814</a>    <span class="kw">fn </span>dns_resolver() -&gt; DnsResolver {
+<a href=#815 id=815 data-nosnippet>815</a>        DnsResolver::new()
+<a href=#816 id=816 data-nosnippet>816</a>    }
+<a href=#817 id=817 data-nosnippet>817</a>
+<a href=#818 id=818 data-nosnippet>818</a>    <span class="attr">#[tokio::test]
+<a href=#819 id=819 data-nosnippet>819</a>    #[traced_test]
+<a href=#820 id=820 data-nosnippet>820</a>    </span><span class="kw">async fn </span>test_no_services() {
+<a href=#821 id=821 data-nosnippet>821</a>        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt;::default())
+<a href=#822 id=822 data-nosnippet>822</a>            .<span class="kw">await
+<a href=#823 id=823 data-nosnippet>823</a>            </span>.unwrap();
+<a href=#824 id=824 data-nosnippet>824</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), server.task_handle())
+<a href=#825 id=825 data-nosnippet>825</a>            .<span class="kw">await
+<a href=#826 id=826 data-nosnippet>826</a>            </span>.expect(<span class="string">"timeout, server not finished"</span>)
+<a href=#827 id=827 data-nosnippet>827</a>            .expect(<span class="string">"server task JoinError"</span>);
+<a href=#828 id=828 data-nosnippet>828</a>        <span class="macro">assert!</span>(res.is_err());
+<a href=#829 id=829 data-nosnippet>829</a>    }
+<a href=#830 id=830 data-nosnippet>830</a>
+<a href=#831 id=831 data-nosnippet>831</a>    <span class="attr">#[tokio::test]
+<a href=#832 id=832 data-nosnippet>832</a>    #[traced_test]
+<a href=#833 id=833 data-nosnippet>833</a>    </span><span class="kw">async fn </span>test_conflicting_bind() {
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">let </span><span class="kw-2">mut </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
+<a href=#835 id=835 data-nosnippet>835</a>            relay: <span class="prelude-val">Some</span>(RelayConfig {
+<a href=#836 id=836 data-nosnippet>836</a>                http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into(),
+<a href=#837 id=837 data-nosnippet>837</a>                tls: <span class="prelude-val">None</span>,
+<a href=#838 id=838 data-nosnippet>838</a>                limits: Default::default(),
+<a href=#839 id=839 data-nosnippet>839</a>                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
+<a href=#840 id=840 data-nosnippet>840</a>                access: AccessConfig::Everyone,
+<a href=#841 id=841 data-nosnippet>841</a>            }),
+<a href=#842 id=842 data-nosnippet>842</a>            quic: <span class="prelude-val">None</span>,
+<a href=#843 id=843 data-nosnippet>843</a>            metrics_addr: <span class="prelude-val">Some</span>((Ipv4Addr::LOCALHOST, <span class="number">1234</span>).into()),
+<a href=#844 id=844 data-nosnippet>844</a>        })
+<a href=#845 id=845 data-nosnippet>845</a>        .<span class="kw">await
+<a href=#846 id=846 data-nosnippet>846</a>        </span>.unwrap();
+<a href=#847 id=847 data-nosnippet>847</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), server.task_handle())
+<a href=#848 id=848 data-nosnippet>848</a>            .<span class="kw">await
+<a href=#849 id=849 data-nosnippet>849</a>            </span>.expect(<span class="string">"timeout, server not finished"</span>)
+<a href=#850 id=850 data-nosnippet>850</a>            .expect(<span class="string">"server task JoinError"</span>);
+<a href=#851 id=851 data-nosnippet>851</a>        <span class="macro">assert!</span>(res.is_err()); <span class="comment">// AddrInUse
+<a href=#852 id=852 data-nosnippet>852</a>    </span>}
+<a href=#853 id=853 data-nosnippet>853</a>
+<a href=#854 id=854 data-nosnippet>854</a>    <span class="attr">#[tokio::test]
+<a href=#855 id=855 data-nosnippet>855</a>    #[traced_test]
+<a href=#856 id=856 data-nosnippet>856</a>    </span><span class="kw">async fn </span>test_root_handler() {
+<a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+<a href=#858 id=858 data-nosnippet>858</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
+<a href=#859 id=859 data-nosnippet>859</a>
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="kw">let </span>response = reqwest::get(<span class="kw-2">&amp;</span>url).<span class="kw">await</span>.unwrap();
+<a href=#861 id=861 data-nosnippet>861</a>        <span class="macro">assert_eq!</span>(response.status(), <span class="number">200</span>);
+<a href=#862 id=862 data-nosnippet>862</a>        <span class="kw">let </span>body = response.text().<span class="kw">await</span>.unwrap();
+<a href=#863 id=863 data-nosnippet>863</a>        <span class="macro">assert!</span>(body.contains(<span class="string">"iroh.computer"</span>));
+<a href=#864 id=864 data-nosnippet>864</a>    }
+<a href=#865 id=865 data-nosnippet>865</a>
+<a href=#866 id=866 data-nosnippet>866</a>    <span class="attr">#[tokio::test]
+<a href=#867 id=867 data-nosnippet>867</a>    #[traced_test]
+<a href=#868 id=868 data-nosnippet>868</a>    </span><span class="kw">async fn </span>test_captive_portal_service() {
+<a href=#869 id=869 data-nosnippet>869</a>        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"http://{}/generate_204"</span>, server.http_addr().unwrap());
+<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw">let </span>challenge = <span class="string">"123az__."</span>;
+<a href=#872 id=872 data-nosnippet>872</a>
+<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span>client = reqwest::Client::new();
+<a href=#874 id=874 data-nosnippet>874</a>        <span class="kw">let </span>response = client
+<a href=#875 id=875 data-nosnippet>875</a>            .get(<span class="kw-2">&amp;</span>url)
+<a href=#876 id=876 data-nosnippet>876</a>            .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
+<a href=#877 id=877 data-nosnippet>877</a>            .send()
+<a href=#878 id=878 data-nosnippet>878</a>            .<span class="kw">await
+<a href=#879 id=879 data-nosnippet>879</a>            </span>.unwrap();
+<a href=#880 id=880 data-nosnippet>880</a>        <span class="macro">assert_eq!</span>(response.status(), StatusCode::NO_CONTENT);
+<a href=#881 id=881 data-nosnippet>881</a>        <span class="kw">let </span>header = response.headers().get(NO_CONTENT_RESPONSE_HEADER).unwrap();
+<a href=#882 id=882 data-nosnippet>882</a>        <span class="macro">assert_eq!</span>(header.to_str().unwrap(), <span class="macro">format!</span>(<span class="string">"response {challenge}"</span>));
+<a href=#883 id=883 data-nosnippet>883</a>        <span class="kw">let </span>body = response.text().<span class="kw">await</span>.unwrap();
+<a href=#884 id=884 data-nosnippet>884</a>        <span class="macro">assert!</span>(body.is_empty());
+<a href=#885 id=885 data-nosnippet>885</a>    }
+<a href=#886 id=886 data-nosnippet>886</a>
+<a href=#887 id=887 data-nosnippet>887</a>    <span class="attr">#[tokio::test]
+<a href=#888 id=888 data-nosnippet>888</a>    #[traced_test]
+<a href=#889 id=889 data-nosnippet>889</a>    </span><span class="kw">async fn </span>test_relay_clients() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#890 id=890 data-nosnippet>890</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#891 id=891 data-nosnippet>891</a>        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#892 id=892 data-nosnippet>892</a>
+<a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
+<a href=#894 id=894 data-nosnippet>894</a>        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse()<span class="question-mark">?</span>;
+<a href=#895 id=895 data-nosnippet>895</a>
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="comment">// set up client a
+<a href=#897 id=897 data-nosnippet>897</a>        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#898 id=898 data-nosnippet>898</a>        <span class="kw">let </span>a_key = a_secret_key.public();
+<a href=#899 id=899 data-nosnippet>899</a>        <span class="kw">let </span>resolver = dns_resolver();
+<a href=#900 id=900 data-nosnippet>900</a>        <span class="macro">info!</span>(<span class="string">"client a build &amp; connect"</span>);
+<a href=#901 id=901 data-nosnippet>901</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+<a href=#902 id=902 data-nosnippet>902</a>            .connect()
+<a href=#903 id=903 data-nosnippet>903</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#904 id=904 data-nosnippet>904</a>
+<a href=#905 id=905 data-nosnippet>905</a>        <span class="comment">// set up client b
+<a href=#906 id=906 data-nosnippet>906</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#907 id=907 data-nosnippet>907</a>        <span class="kw">let </span>b_key = b_secret_key.public();
+<a href=#908 id=908 data-nosnippet>908</a>        <span class="macro">info!</span>(<span class="string">"client b build &amp; connect"</span>);
+<a href=#909 id=909 data-nosnippet>909</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+<a href=#910 id=910 data-nosnippet>910</a>            .connect()
+<a href=#911 id=911 data-nosnippet>911</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#912 id=912 data-nosnippet>912</a>
-<a href=#913 id=913 data-nosnippet>913</a>        <span class="comment">// send message from a to b
-<a href=#914 id=914 data-nosnippet>914</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, b"</span>);
-<a href=#915 id=915 data-nosnippet>915</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_a, <span class="kw-2">&amp;mut </span>client_b, b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#916 id=916 data-nosnippet>916</a>        <span class="kw">let </span>RelayToClientMsg::Datagrams {
-<a href=#917 id=917 data-nosnippet>917</a>            remote_node_id,
-<a href=#918 id=918 data-nosnippet>918</a>            datagrams,
-<a href=#919 id=919 data-nosnippet>919</a>        } = res
-<a href=#920 id=920 data-nosnippet>920</a>        <span class="kw">else </span>{
-<a href=#921 id=921 data-nosnippet>921</a>            <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
-<a href=#922 id=922 data-nosnippet>922</a>        };
-<a href=#923 id=923 data-nosnippet>923</a>
-<a href=#924 id=924 data-nosnippet>924</a>        <span class="macro">assert_eq!</span>(a_key, remote_node_id);
-<a href=#925 id=925 data-nosnippet>925</a>        <span class="macro">assert_eq!</span>(msg, datagrams);
-<a href=#926 id=926 data-nosnippet>926</a>
-<a href=#927 id=927 data-nosnippet>927</a>        <span class="macro">info!</span>(<span class="string">"sending b -&gt; a"</span>);
-<a href=#928 id=928 data-nosnippet>928</a>        <span class="comment">// send message from b to a
-<a href=#929 id=929 data-nosnippet>929</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"howdy, a"</span>);
-<a href=#930 id=930 data-nosnippet>930</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_a, a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#931 id=931 data-nosnippet>931</a>
-<a href=#932 id=932 data-nosnippet>932</a>        <span class="kw">let </span>RelayToClientMsg::Datagrams {
-<a href=#933 id=933 data-nosnippet>933</a>            remote_node_id,
-<a href=#934 id=934 data-nosnippet>934</a>            datagrams,
-<a href=#935 id=935 data-nosnippet>935</a>        } = res
-<a href=#936 id=936 data-nosnippet>936</a>        <span class="kw">else </span>{
-<a href=#937 id=937 data-nosnippet>937</a>            <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
-<a href=#938 id=938 data-nosnippet>938</a>        };
-<a href=#939 id=939 data-nosnippet>939</a>
-<a href=#940 id=940 data-nosnippet>940</a>        <span class="macro">assert_eq!</span>(b_key, remote_node_id);
-<a href=#941 id=941 data-nosnippet>941</a>        <span class="macro">assert_eq!</span>(msg, datagrams);
-<a href=#942 id=942 data-nosnippet>942</a>
-<a href=#943 id=943 data-nosnippet>943</a>        <span class="prelude-val">Ok</span>(())
-<a href=#944 id=944 data-nosnippet>944</a>    }
-<a href=#945 id=945 data-nosnippet>945</a>
-<a href=#946 id=946 data-nosnippet>946</a>    <span class="attr">#[tokio::test]
-<a href=#947 id=947 data-nosnippet>947</a>    #[traced_test]
-<a href=#948 id=948 data-nosnippet>948</a>    </span><span class="kw">async fn </span>test_relay_access_control() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#949 id=949 data-nosnippet>949</a>        <span class="kw">let </span>current_span = <span class="macro">tracing::info_span!</span>(<span class="string">"this is a test"</span>);
-<a href=#950 id=950 data-nosnippet>950</a>        <span class="kw">let </span>_guard = current_span.enter();
-<a href=#951 id=951 data-nosnippet>951</a>
-<a href=#952 id=952 data-nosnippet>952</a>        <span class="kw">let </span>a_secret_key = SecretKey::generate(rand::rng());
-<a href=#953 id=953 data-nosnippet>953</a>        <span class="kw">let </span>a_key = a_secret_key.public();
+<a href=#913 id=913 data-nosnippet>913</a>        <span class="macro">info!</span>(<span class="string">"sending a -&gt; b"</span>);
+<a href=#914 id=914 data-nosnippet>914</a>
+<a href=#915 id=915 data-nosnippet>915</a>        <span class="comment">// send message from a to b
+<a href=#916 id=916 data-nosnippet>916</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, b"</span>);
+<a href=#917 id=917 data-nosnippet>917</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_a, <span class="kw-2">&amp;mut </span>client_b, b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#918 id=918 data-nosnippet>918</a>        <span class="kw">let </span>RelayToClientMsg::Datagrams {
+<a href=#919 id=919 data-nosnippet>919</a>            remote_node_id,
+<a href=#920 id=920 data-nosnippet>920</a>            datagrams,
+<a href=#921 id=921 data-nosnippet>921</a>        } = res
+<a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">else </span>{
+<a href=#923 id=923 data-nosnippet>923</a>            <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
+<a href=#924 id=924 data-nosnippet>924</a>        };
+<a href=#925 id=925 data-nosnippet>925</a>
+<a href=#926 id=926 data-nosnippet>926</a>        <span class="macro">assert_eq!</span>(a_key, remote_node_id);
+<a href=#927 id=927 data-nosnippet>927</a>        <span class="macro">assert_eq!</span>(msg, datagrams);
+<a href=#928 id=928 data-nosnippet>928</a>
+<a href=#929 id=929 data-nosnippet>929</a>        <span class="macro">info!</span>(<span class="string">"sending b -&gt; a"</span>);
+<a href=#930 id=930 data-nosnippet>930</a>        <span class="comment">// send message from b to a
+<a href=#931 id=931 data-nosnippet>931</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"howdy, a"</span>);
+<a href=#932 id=932 data-nosnippet>932</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_a, a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#933 id=933 data-nosnippet>933</a>
+<a href=#934 id=934 data-nosnippet>934</a>        <span class="kw">let </span>RelayToClientMsg::Datagrams {
+<a href=#935 id=935 data-nosnippet>935</a>            remote_node_id,
+<a href=#936 id=936 data-nosnippet>936</a>            datagrams,
+<a href=#937 id=937 data-nosnippet>937</a>        } = res
+<a href=#938 id=938 data-nosnippet>938</a>        <span class="kw">else </span>{
+<a href=#939 id=939 data-nosnippet>939</a>            <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
+<a href=#940 id=940 data-nosnippet>940</a>        };
+<a href=#941 id=941 data-nosnippet>941</a>
+<a href=#942 id=942 data-nosnippet>942</a>        <span class="macro">assert_eq!</span>(b_key, remote_node_id);
+<a href=#943 id=943 data-nosnippet>943</a>        <span class="macro">assert_eq!</span>(msg, datagrams);
+<a href=#944 id=944 data-nosnippet>944</a>
+<a href=#945 id=945 data-nosnippet>945</a>        <span class="prelude-val">Ok</span>(())
+<a href=#946 id=946 data-nosnippet>946</a>    }
+<a href=#947 id=947 data-nosnippet>947</a>
+<a href=#948 id=948 data-nosnippet>948</a>    <span class="attr">#[tokio::test]
+<a href=#949 id=949 data-nosnippet>949</a>    #[traced_test]
+<a href=#950 id=950 data-nosnippet>950</a>    </span><span class="kw">async fn </span>test_relay_access_control() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#951 id=951 data-nosnippet>951</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#952 id=952 data-nosnippet>952</a>        <span class="kw">let </span>current_span = <span class="macro">tracing::info_span!</span>(<span class="string">"this is a test"</span>);
+<a href=#953 id=953 data-nosnippet>953</a>        <span class="kw">let </span>_guard = current_span.enter();
 <a href=#954 id=954 data-nosnippet>954</a>
-<a href=#955 id=955 data-nosnippet>955</a>        <span class="kw">let </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
-<a href=#956 id=956 data-nosnippet>956</a>            relay: <span class="prelude-val">Some</span>(RelayConfig::&lt;(), ()&gt; {
-<a href=#957 id=957 data-nosnippet>957</a>                http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-<a href=#958 id=958 data-nosnippet>958</a>                tls: <span class="prelude-val">None</span>,
-<a href=#959 id=959 data-nosnippet>959</a>                limits: Default::default(),
-<a href=#960 id=960 data-nosnippet>960</a>                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
-<a href=#961 id=961 data-nosnippet>961</a>                access: AccessConfig::Restricted(Box::new(<span class="kw">move </span>|node_id| {
-<a href=#962 id=962 data-nosnippet>962</a>                    <span class="kw">async move </span>{
-<a href=#963 id=963 data-nosnippet>963</a>                        <span class="macro">info!</span>(<span class="string">"checking {}"</span>, node_id);
-<a href=#964 id=964 data-nosnippet>964</a>                        <span class="comment">// reject node a
-<a href=#965 id=965 data-nosnippet>965</a>                        </span><span class="kw">if </span>node_id == a_key {
-<a href=#966 id=966 data-nosnippet>966</a>                            Access::Deny
-<a href=#967 id=967 data-nosnippet>967</a>                        } <span class="kw">else </span>{
-<a href=#968 id=968 data-nosnippet>968</a>                            Access::Allow
-<a href=#969 id=969 data-nosnippet>969</a>                        }
-<a href=#970 id=970 data-nosnippet>970</a>                    }
-<a href=#971 id=971 data-nosnippet>971</a>                    .boxed()
-<a href=#972 id=972 data-nosnippet>972</a>                })),
-<a href=#973 id=973 data-nosnippet>973</a>            }),
-<a href=#974 id=974 data-nosnippet>974</a>            quic: <span class="prelude-val">None</span>,
-<a href=#975 id=975 data-nosnippet>975</a>            metrics_addr: <span class="prelude-val">None</span>,
-<a href=#976 id=976 data-nosnippet>976</a>        })
-<a href=#977 id=977 data-nosnippet>977</a>        .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#978 id=978 data-nosnippet>978</a>
-<a href=#979 id=979 data-nosnippet>979</a>        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
-<a href=#980 id=980 data-nosnippet>980</a>        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse()<span class="question-mark">?</span>;
+<a href=#955 id=955 data-nosnippet>955</a>        <span class="kw">let </span>a_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#956 id=956 data-nosnippet>956</a>        <span class="kw">let </span>a_key = a_secret_key.public();
+<a href=#957 id=957 data-nosnippet>957</a>
+<a href=#958 id=958 data-nosnippet>958</a>        <span class="kw">let </span>server = Server::spawn(ServerConfig::&lt;(), ()&gt; {
+<a href=#959 id=959 data-nosnippet>959</a>            relay: <span class="prelude-val">Some</span>(RelayConfig::&lt;(), ()&gt; {
+<a href=#960 id=960 data-nosnippet>960</a>                http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
+<a href=#961 id=961 data-nosnippet>961</a>                tls: <span class="prelude-val">None</span>,
+<a href=#962 id=962 data-nosnippet>962</a>                limits: Default::default(),
+<a href=#963 id=963 data-nosnippet>963</a>                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
+<a href=#964 id=964 data-nosnippet>964</a>                access: AccessConfig::Restricted(Box::new(<span class="kw">move </span>|node_id| {
+<a href=#965 id=965 data-nosnippet>965</a>                    <span class="kw">async move </span>{
+<a href=#966 id=966 data-nosnippet>966</a>                        <span class="macro">info!</span>(<span class="string">"checking {}"</span>, node_id);
+<a href=#967 id=967 data-nosnippet>967</a>                        <span class="comment">// reject node a
+<a href=#968 id=968 data-nosnippet>968</a>                        </span><span class="kw">if </span>node_id == a_key {
+<a href=#969 id=969 data-nosnippet>969</a>                            Access::Deny
+<a href=#970 id=970 data-nosnippet>970</a>                        } <span class="kw">else </span>{
+<a href=#971 id=971 data-nosnippet>971</a>                            Access::Allow
+<a href=#972 id=972 data-nosnippet>972</a>                        }
+<a href=#973 id=973 data-nosnippet>973</a>                    }
+<a href=#974 id=974 data-nosnippet>974</a>                    .boxed()
+<a href=#975 id=975 data-nosnippet>975</a>                })),
+<a href=#976 id=976 data-nosnippet>976</a>            }),
+<a href=#977 id=977 data-nosnippet>977</a>            quic: <span class="prelude-val">None</span>,
+<a href=#978 id=978 data-nosnippet>978</a>            metrics_addr: <span class="prelude-val">None</span>,
+<a href=#979 id=979 data-nosnippet>979</a>        })
+<a href=#980 id=980 data-nosnippet>980</a>        .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#981 id=981 data-nosnippet>981</a>
-<a href=#982 id=982 data-nosnippet>982</a>        <span class="comment">// set up client a
-<a href=#983 id=983 data-nosnippet>983</a>        </span><span class="kw">let </span>resolver = dns_resolver();
-<a href=#984 id=984 data-nosnippet>984</a>        <span class="kw">let </span>result = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
-<a href=#985 id=985 data-nosnippet>985</a>            .connect()
-<a href=#986 id=986 data-nosnippet>986</a>            .<span class="kw">await</span>;
-<a href=#987 id=987 data-nosnippet>987</a>
-<a href=#988 id=988 data-nosnippet>988</a>        <span class="macro">assert!</span>(
-<a href=#989 id=989 data-nosnippet>989</a>            <span class="macro">matches!</span>(result, <span class="prelude-val">Err</span>(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. }) <span class="kw">if </span>reason == <span class="string">"not authorized"</span>)
-<a href=#990 id=990 data-nosnippet>990</a>        );
-<a href=#991 id=991 data-nosnippet>991</a>
-<a href=#992 id=992 data-nosnippet>992</a>        <span class="comment">// test that another client has access
-<a href=#993 id=993 data-nosnippet>993</a>
-<a href=#994 id=994 data-nosnippet>994</a>        // set up client b
-<a href=#995 id=995 data-nosnippet>995</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::rng());
-<a href=#996 id=996 data-nosnippet>996</a>        <span class="kw">let </span>b_key = b_secret_key.public();
-<a href=#997 id=997 data-nosnippet>997</a>
-<a href=#998 id=998 data-nosnippet>998</a>        <span class="kw">let </span>resolver = dns_resolver();
-<a href=#999 id=999 data-nosnippet>999</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
-<a href=#1000 id=1000 data-nosnippet>1000</a>            .connect()
-<a href=#1001 id=1001 data-nosnippet>1001</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1002 id=1002 data-nosnippet>1002</a>
-<a href=#1003 id=1003 data-nosnippet>1003</a>        <span class="comment">// set up client c
-<a href=#1004 id=1004 data-nosnippet>1004</a>        </span><span class="kw">let </span>c_secret_key = SecretKey::generate(rand::rng());
-<a href=#1005 id=1005 data-nosnippet>1005</a>        <span class="kw">let </span>c_key = c_secret_key.public();
-<a href=#1006 id=1006 data-nosnippet>1006</a>
-<a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="kw">let </span>resolver = dns_resolver();
-<a href=#1008 id=1008 data-nosnippet>1008</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
-<a href=#1009 id=1009 data-nosnippet>1009</a>            .connect()
-<a href=#1010 id=1010 data-nosnippet>1010</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1011 id=1011 data-nosnippet>1011</a>
-<a href=#1012 id=1012 data-nosnippet>1012</a>        <span class="comment">// send message from b to c
-<a href=#1013 id=1013 data-nosnippet>1013</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, c"</span>);
-<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_c, c_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1015 id=1015 data-nosnippet>1015</a>
-<a href=#1016 id=1016 data-nosnippet>1016</a>        <span class="kw">if let </span>RelayToClientMsg::Datagrams {
-<a href=#1017 id=1017 data-nosnippet>1017</a>            remote_node_id,
-<a href=#1018 id=1018 data-nosnippet>1018</a>            datagrams,
-<a href=#1019 id=1019 data-nosnippet>1019</a>        } = res
-<a href=#1020 id=1020 data-nosnippet>1020</a>        {
-<a href=#1021 id=1021 data-nosnippet>1021</a>            <span class="macro">assert_eq!</span>(b_key, remote_node_id);
-<a href=#1022 id=1022 data-nosnippet>1022</a>            <span class="macro">assert_eq!</span>(msg, datagrams);
-<a href=#1023 id=1023 data-nosnippet>1023</a>        } <span class="kw">else </span>{
-<a href=#1024 id=1024 data-nosnippet>1024</a>            <span class="macro">panic!</span>(<span class="string">"client_c received unexpected message {res:?}"</span>);
-<a href=#1025 id=1025 data-nosnippet>1025</a>        }
-<a href=#1026 id=1026 data-nosnippet>1026</a>
-<a href=#1027 id=1027 data-nosnippet>1027</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1028 id=1028 data-nosnippet>1028</a>    }
+<a href=#982 id=982 data-nosnippet>982</a>        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
+<a href=#983 id=983 data-nosnippet>983</a>        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse()<span class="question-mark">?</span>;
+<a href=#984 id=984 data-nosnippet>984</a>
+<a href=#985 id=985 data-nosnippet>985</a>        <span class="comment">// set up client a
+<a href=#986 id=986 data-nosnippet>986</a>        </span><span class="kw">let </span>resolver = dns_resolver();
+<a href=#987 id=987 data-nosnippet>987</a>        <span class="kw">let </span>result = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+<a href=#988 id=988 data-nosnippet>988</a>            .connect()
+<a href=#989 id=989 data-nosnippet>989</a>            .<span class="kw">await</span>;
+<a href=#990 id=990 data-nosnippet>990</a>
+<a href=#991 id=991 data-nosnippet>991</a>        <span class="macro">assert!</span>(
+<a href=#992 id=992 data-nosnippet>992</a>            <span class="macro">matches!</span>(result, <span class="prelude-val">Err</span>(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. }) <span class="kw">if </span>reason == <span class="string">"not authorized"</span>)
+<a href=#993 id=993 data-nosnippet>993</a>        );
+<a href=#994 id=994 data-nosnippet>994</a>
+<a href=#995 id=995 data-nosnippet>995</a>        <span class="comment">// test that another client has access
+<a href=#996 id=996 data-nosnippet>996</a>
+<a href=#997 id=997 data-nosnippet>997</a>        // set up client b
+<a href=#998 id=998 data-nosnippet>998</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#999 id=999 data-nosnippet>999</a>        <span class="kw">let </span>b_key = b_secret_key.public();
+<a href=#1000 id=1000 data-nosnippet>1000</a>
+<a href=#1001 id=1001 data-nosnippet>1001</a>        <span class="kw">let </span>resolver = dns_resolver();
+<a href=#1002 id=1002 data-nosnippet>1002</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
+<a href=#1003 id=1003 data-nosnippet>1003</a>            .connect()
+<a href=#1004 id=1004 data-nosnippet>1004</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1005 id=1005 data-nosnippet>1005</a>
+<a href=#1006 id=1006 data-nosnippet>1006</a>        <span class="comment">// set up client c
+<a href=#1007 id=1007 data-nosnippet>1007</a>        </span><span class="kw">let </span>c_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1008 id=1008 data-nosnippet>1008</a>        <span class="kw">let </span>c_key = c_secret_key.public();
+<a href=#1009 id=1009 data-nosnippet>1009</a>
+<a href=#1010 id=1010 data-nosnippet>1010</a>        <span class="kw">let </span>resolver = dns_resolver();
+<a href=#1011 id=1011 data-nosnippet>1011</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
+<a href=#1012 id=1012 data-nosnippet>1012</a>            .connect()
+<a href=#1013 id=1013 data-nosnippet>1013</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1014 id=1014 data-nosnippet>1014</a>
+<a href=#1015 id=1015 data-nosnippet>1015</a>        <span class="comment">// send message from b to c
+<a href=#1016 id=1016 data-nosnippet>1016</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, c"</span>);
+<a href=#1017 id=1017 data-nosnippet>1017</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_c, c_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1018 id=1018 data-nosnippet>1018</a>
+<a href=#1019 id=1019 data-nosnippet>1019</a>        <span class="kw">if let </span>RelayToClientMsg::Datagrams {
+<a href=#1020 id=1020 data-nosnippet>1020</a>            remote_node_id,
+<a href=#1021 id=1021 data-nosnippet>1021</a>            datagrams,
+<a href=#1022 id=1022 data-nosnippet>1022</a>        } = res
+<a href=#1023 id=1023 data-nosnippet>1023</a>        {
+<a href=#1024 id=1024 data-nosnippet>1024</a>            <span class="macro">assert_eq!</span>(b_key, remote_node_id);
+<a href=#1025 id=1025 data-nosnippet>1025</a>            <span class="macro">assert_eq!</span>(msg, datagrams);
+<a href=#1026 id=1026 data-nosnippet>1026</a>        } <span class="kw">else </span>{
+<a href=#1027 id=1027 data-nosnippet>1027</a>            <span class="macro">panic!</span>(<span class="string">"client_c received unexpected message {res:?}"</span>);
+<a href=#1028 id=1028 data-nosnippet>1028</a>        }
 <a href=#1029 id=1029 data-nosnippet>1029</a>
-<a href=#1030 id=1030 data-nosnippet>1030</a>    <span class="attr">#[tokio::test]
-<a href=#1031 id=1031 data-nosnippet>1031</a>    #[traced_test]
-<a href=#1032 id=1032 data-nosnippet>1032</a>    </span><span class="kw">async fn </span>test_relay_clients_full() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#1033 id=1033 data-nosnippet>1033</a>        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
-<a href=#1034 id=1034 data-nosnippet>1034</a>        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
-<a href=#1035 id=1035 data-nosnippet>1035</a>        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
-<a href=#1036 id=1036 data-nosnippet>1036</a>
-<a href=#1037 id=1037 data-nosnippet>1037</a>        <span class="comment">// set up client a
-<a href=#1038 id=1038 data-nosnippet>1038</a>        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(rand::rng());
-<a href=#1039 id=1039 data-nosnippet>1039</a>        <span class="kw">let </span>resolver = dns_resolver();
-<a href=#1040 id=1040 data-nosnippet>1040</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-<a href=#1041 id=1041 data-nosnippet>1041</a>            .connect()
-<a href=#1042 id=1042 data-nosnippet>1042</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1043 id=1043 data-nosnippet>1043</a>
-<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="comment">// set up client b
-<a href=#1045 id=1045 data-nosnippet>1045</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::rng());
-<a href=#1046 id=1046 data-nosnippet>1046</a>        <span class="kw">let </span>b_key = b_secret_key.public();
-<a href=#1047 id=1047 data-nosnippet>1047</a>        <span class="kw">let </span>_client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-<a href=#1048 id=1048 data-nosnippet>1048</a>            .connect()
-<a href=#1049 id=1049 data-nosnippet>1049</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1050 id=1050 data-nosnippet>1050</a>
-<a href=#1051 id=1051 data-nosnippet>1051</a>        <span class="comment">// send messages from a to b, without b receiving anything.
-<a href=#1052 id=1052 data-nosnippet>1052</a>        // we should still keep succeeding to send, even if the packet won't be forwarded
-<a href=#1053 id=1053 data-nosnippet>1053</a>        // by the relay server because the server's send queue for b fills up.
-<a href=#1054 id=1054 data-nosnippet>1054</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, b"</span>);
-<a href=#1055 id=1055 data-nosnippet>1055</a>        <span class="kw">for </span>_i <span class="kw">in </span><span class="number">0</span>..<span class="number">1000 </span>{
-<a href=#1056 id=1056 data-nosnippet>1056</a>            client_a
-<a href=#1057 id=1057 data-nosnippet>1057</a>                .send(ClientToRelayMsg::Datagrams {
-<a href=#1058 id=1058 data-nosnippet>1058</a>                    dst_node_id: b_key,
-<a href=#1059 id=1059 data-nosnippet>1059</a>                    datagrams: msg.clone(),
-<a href=#1060 id=1060 data-nosnippet>1060</a>                })
-<a href=#1061 id=1061 data-nosnippet>1061</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1062 id=1062 data-nosnippet>1062</a>        }
-<a href=#1063 id=1063 data-nosnippet>1063</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1064 id=1064 data-nosnippet>1064</a>    }
-<a href=#1065 id=1065 data-nosnippet>1065</a>}</code></pre></div></section></main></body></html>
+<a href=#1030 id=1030 data-nosnippet>1030</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1031 id=1031 data-nosnippet>1031</a>    }
+<a href=#1032 id=1032 data-nosnippet>1032</a>
+<a href=#1033 id=1033 data-nosnippet>1033</a>    <span class="attr">#[tokio::test]
+<a href=#1034 id=1034 data-nosnippet>1034</a>    #[traced_test]
+<a href=#1035 id=1035 data-nosnippet>1035</a>    </span><span class="kw">async fn </span>test_relay_clients_full() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#1036 id=1036 data-nosnippet>1036</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#1037 id=1037 data-nosnippet>1037</a>        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+<a href=#1038 id=1038 data-nosnippet>1038</a>        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
+<a href=#1039 id=1039 data-nosnippet>1039</a>        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
+<a href=#1040 id=1040 data-nosnippet>1040</a>
+<a href=#1041 id=1041 data-nosnippet>1041</a>        <span class="comment">// set up client a
+<a href=#1042 id=1042 data-nosnippet>1042</a>        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1043 id=1043 data-nosnippet>1043</a>        <span class="kw">let </span>resolver = dns_resolver();
+<a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+<a href=#1045 id=1045 data-nosnippet>1045</a>            .connect()
+<a href=#1046 id=1046 data-nosnippet>1046</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1047 id=1047 data-nosnippet>1047</a>
+<a href=#1048 id=1048 data-nosnippet>1048</a>        <span class="comment">// set up client b
+<a href=#1049 id=1049 data-nosnippet>1049</a>        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1050 id=1050 data-nosnippet>1050</a>        <span class="kw">let </span>b_key = b_secret_key.public();
+<a href=#1051 id=1051 data-nosnippet>1051</a>        <span class="kw">let </span>_client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+<a href=#1052 id=1052 data-nosnippet>1052</a>            .connect()
+<a href=#1053 id=1053 data-nosnippet>1053</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1054 id=1054 data-nosnippet>1054</a>
+<a href=#1055 id=1055 data-nosnippet>1055</a>        <span class="comment">// send messages from a to b, without b receiving anything.
+<a href=#1056 id=1056 data-nosnippet>1056</a>        // we should still keep succeeding to send, even if the packet won't be forwarded
+<a href=#1057 id=1057 data-nosnippet>1057</a>        // by the relay server because the server's send queue for b fills up.
+<a href=#1058 id=1058 data-nosnippet>1058</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, b"</span>);
+<a href=#1059 id=1059 data-nosnippet>1059</a>        <span class="kw">for </span>_i <span class="kw">in </span><span class="number">0</span>..<span class="number">1000 </span>{
+<a href=#1060 id=1060 data-nosnippet>1060</a>            client_a
+<a href=#1061 id=1061 data-nosnippet>1061</a>                .send(ClientToRelayMsg::Datagrams {
+<a href=#1062 id=1062 data-nosnippet>1062</a>                    dst_node_id: b_key,
+<a href=#1063 id=1063 data-nosnippet>1063</a>                    datagrams: msg.clone(),
+<a href=#1064 id=1064 data-nosnippet>1064</a>                })
+<a href=#1065 id=1065 data-nosnippet>1065</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1066 id=1066 data-nosnippet>1066</a>        }
+<a href=#1067 id=1067 data-nosnippet>1067</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1068 id=1068 data-nosnippet>1068</a>    }
+<a href=#1069 id=1069 data-nosnippet>1069</a>}</code></pre></div></section></main></body></html>
