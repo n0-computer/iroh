@@ -550,7 +550,7 @@ impl HickoryResolver {
         let (mut config, mut options) = if builder.use_system_defaults {
             Self::system_defaults()
         } else {
-            (Default::default(), Default::default())
+            (ResolverConfig::new(), Default::default())
         };
 
         for (addr, proto) in builder.nameservers.iter() {
