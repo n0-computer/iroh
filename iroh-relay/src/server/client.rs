@@ -567,6 +567,7 @@ mod tests {
     use iroh_base::SecretKey;
     use n0_future::Stream;
     use n0_snafu::{Result, ResultExt};
+    use rand::SeedableRng;
     use tracing::info;
     use tracing_test::traced_test;
 
@@ -599,11 +600,13 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_client_actor_basic() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let node_id = SecretKey::generate(rand::rng()).public();
+        let node_id = SecretKey::generate(&mut rng).public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Conn::test(io_rw);
         let stream = RelayedStream::test(io);
@@ -685,7 +688,7 @@ mod tests {
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
         assert_eq!(frame, RelayToClientMsg::Pong(*data));
 
-        let target = SecretKey::generate(rand::rng()).public();
+        let target = SecretKey::generate(&mut rng).public();
 
         // send packet
         println!("  send packet");
@@ -723,6 +726,8 @@ mod tests {
         const LIMIT: u32 = 50;
         const MAX_FRAMES: u32 = 100;
 
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
         let mut frame_writer = Conn::test(io_write);
@@ -731,7 +736,7 @@ mod tests {
 
         // Prepare a frame to send, assert its size.
         let data = Datagrams::from(b"hello world!!!!!");
-        let target = SecretKey::generate(rand::rng()).public();
+        let target = SecretKey::generate(&mut rng).public();
         let frame = ClientToRelayMsg::Datagrams {
             dst_node_id: target,
             datagrams: data.clone(),

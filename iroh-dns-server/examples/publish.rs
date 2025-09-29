@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
         Ok(s) => SecretKey::from_str(&s)
             .context("failed to parse IROH_SECRET environment variable as iroh secret key")?,
         Err(_) => {
-            let s = SecretKey::generate(rand::rngs::OsRng.unwrap_err());
+            let s = SecretKey::generate(&mut rand::rngs::OsRng.unwrap_err());
             println!("Generated a new node secret. To reuse, set");
             println!(
                 "\tIROH_SECRET={}",
