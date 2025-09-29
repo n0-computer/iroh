@@ -144,6 +144,7 @@ pub struct Builder {
 
 /// Protocols over which DNS records can be resolved.
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum DnsProtocol {
     #[default]
     /// DNS over UDP (the classic DNS protocol)
