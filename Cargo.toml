@@ -43,5 +43,4 @@ unused-async = "warn"
 
 
 [patch.crates-io]
-pkarr = { git = "https://github.com/dignifiedquire/pkarr", branch = "feat-rand-09" }
 crypto_box = { git = "https://github.com/dignifiedquire/nacl-compat", branch = "rand-09" }

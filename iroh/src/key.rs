@@ -2,8 +2,7 @@
 
 use std::fmt::Debug;
 
-use aead::Buffer;
-use crypto_box::aead::AeadInPlace;
+use aead::{AeadInOut, Buffer};
 use nested_enum_utils::common_fields;
 use rand::TryRngCore;
 use snafu::{ResultExt, Snafu, ensure};
@@ -51,8 +50,6 @@ impl SharedSecret {
 
     /// Seals the provided cleartext.
     pub fn seal(&self, buffer: &mut dyn Buffer) {
-        use aead::{AeadCore, AeadInPlace};
-
         let mut nonce = crypto_box::Nonce::default();
         rand::rngs::OsRng
             .try_fill_bytes(&mut nonce)
@@ -67,7 +64,6 @@ impl SharedSecret {
 
     /// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
     pub fn open(&self, buffer: &mut dyn Buffer) -> Result<(), DecryptionError> {
-        use aead::AeadInPlace;
         ensure!(buffer.len() >= NONCE_LEN, InvalidNonceSnafu);
 
         let offset = buffer.len() - NONCE_LEN;
