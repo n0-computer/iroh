@@ -651,9 +651,8 @@ mod tests {
     use iroh_base::{NodeId, SecretKey};
     use n0_snafu::{Result, ResultExt};
 
-    use crate::dns::TxtRecordData;
-
     use super::{NodeData, NodeIdExt, NodeInfo};
+    use crate::dns::TxtRecordData;
 
     #[test]
     fn txt_attr_roundtrip() {
