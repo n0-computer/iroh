@@ -654,6 +654,8 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
+    ///
+    /// [`RelayUrl`]: crate::RelayUrl
     pub async fn connect(
         &self,
         node_addr: impl Into<NodeAddr>,
@@ -830,7 +832,8 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub(crate) fn add_node_addr_with_source(
+    /// [`RelayUrl`]: crate::RelayUrl
+    pub fn add_node_addr_with_source(
         &self,
         node_addr: NodeAddr,
         source: &'static str,
@@ -890,8 +893,7 @@ impl Endpoint {
 
     /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
     ///
-    /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
-    /// as they would be returned by [`Endpoint::home_relay`] and [`Endpoint::direct_addresses`].
+    /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses.
     ///
     /// Use [`Watcher::initialized`] to wait for a [`NodeAddr`] that is ready to be connected to:
     ///
@@ -908,6 +910,8 @@ impl Endpoint {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
     pub fn watch_node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
         let watch_addrs = self.msock.direct_addresses();
