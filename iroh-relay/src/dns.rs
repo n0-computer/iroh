@@ -151,21 +151,20 @@ pub enum DnsProtocol {
     Udp,
     /// DNS over TCP
     Tcp,
-    // TODO(Frando): Do we want to support these DNS protocols behind feature flags?
-    // /// DNS over TLS
-    // Tls,
-    // /// DNS over HTTPS
-    // Https,
+    /// DNS over TLS
+    Tls,
+    /// DNS over HTTPS
+    Https,
 }
 
 impl DnsProtocol {
-    fn to_hickory(self) -> hickory_proto::xfer::Protocol {
-        use hickory_proto::xfer::Protocol;
+    fn to_hickory(self) -> hickory_resolver::proto::xfer::Protocol {
+        use hickory_resolver::proto::xfer::Protocol;
         match self {
             DnsProtocol::Udp => Protocol::Udp,
             DnsProtocol::Tcp => Protocol::Tcp,
-            // DnsProtocol::Tls => Protocol::Tls,
-            // DnsProtocol::Https => Protocol::Https,
+            DnsProtocol::Tls => Protocol::Tls,
+            DnsProtocol::Https => Protocol::Https,
         }
     }
 }
