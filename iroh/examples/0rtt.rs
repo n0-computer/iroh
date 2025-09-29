@@ -34,7 +34,7 @@ pub fn get_or_generate_secret_key() -> n0_snafu::Result<SecretKey> {
         SecretKey::from_str(&secret).context("Invalid secret key format")
     } else {
         // Generate a new random key
-        let secret_key = SecretKey::generate(rand::rng());
+        let secret_key = SecretKey::generate(&mut rand::rng());
         println!(
             "Generated new secret key: {}",
             HEXLOWER.encode(&secret_key.to_bytes())

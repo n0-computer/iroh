@@ -196,7 +196,7 @@ pub(crate) enum VerificationError {
 impl ServerChallenge {
     /// Generates a new challenge.
     #[cfg(feature = "server")]
-    pub(crate) fn new(mut rng: impl CryptoRng) -> Self {
+    pub(crate) fn new<R: CryptoRng + ?Sized>(rng: &mut R) -> Self {
         let mut challenge = [0u8; 16];
         rng.fill_bytes(&mut challenge);
         Self { challenge }
@@ -432,7 +432,7 @@ pub(crate) async fn serverside(
         // We'll fall back to verification that takes another round trip more time.
     }
 
-    let challenge = ServerChallenge::new(rand::rng());
+    let challenge = ServerChallenge::new(&mut rand::rng());
     write_frame(io, &challenge).await?;
 
     let (_, frame) = read_frame(io, &[ClientAuth::TAG]).await?;
@@ -530,6 +530,7 @@ mod tests {
     use iroh_base::{PublicKey, SecretKey};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_snafu::{Result, ResultExt};
+    use rand::SeedableRng;
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use tracing::{Instrument, info_span};
     use tracing_test::traced_test;
@@ -662,7 +663,9 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_handshake_via_shared_secrets() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
+        let secret_key = SecretKey::generate(&mut rng);
         let (client, server) = simulate_handshake(&secret_key, Some(42), Some(42), None).await;
         client?;
         let (public_key, auth) = server?;
@@ -674,7 +677,9 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_handshake_via_challenge() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
+        let secret_key = SecretKey::generate(&mut rng);
         let (client, server) = simulate_handshake(&secret_key, None, None, None).await;
         client?;
         let (public_key, auth) = server?;
@@ -686,7 +691,9 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_handshake_mismatching_shared_secrets() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
+        let secret_key = SecretKey::generate(&mut rng);
         // mismatching shared secrets *might* happen with HTTPS proxies that don't also middle-man the shared secret
         let (client, server) = simulate_handshake(&secret_key, Some(10), Some(99), None).await;
         client?;
@@ -699,7 +706,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_handshake_challenge_fallback() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let secret_key = SecretKey::generate(&mut rng);
         // clients might not have access to shared secrets
         let (client, server) = simulate_handshake(&secret_key, None, Some(99), None).await;
         client?;
@@ -712,7 +720,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_handshake_with_auth_positive() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let secret_key = SecretKey::generate(&mut rng);
         let public_key = secret_key.public();
         let (client, server) = simulate_handshake(&secret_key, None, None, Some(public_key)).await;
         client?;
@@ -724,9 +733,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_handshake_with_auth_negative() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let secret_key = SecretKey::generate(&mut rng);
         let public_key = secret_key.public();
-        let wrong_secret_key = SecretKey::generate(rand::rng());
+        let wrong_secret_key = SecretKey::generate(&mut rng);
         let (client, server) =
             simulate_handshake(&wrong_secret_key, None, None, Some(public_key)).await;
         assert!(client.is_err());
@@ -737,9 +747,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_handshake_via_shared_secret_with_auth_negative() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let secret_key = SecretKey::generate(&mut rng);
         let public_key = secret_key.public();
-        let wrong_secret_key = SecretKey::generate(rand::rng());
+        let wrong_secret_key = SecretKey::generate(&mut rng);
         let (client, server) =
             simulate_handshake(&wrong_secret_key, Some(42), Some(42), Some(public_key)).await;
         assert!(client.is_err());
@@ -749,8 +760,9 @@ mod tests {
 
     #[test]
     fn test_client_auth_roundtrip() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
-        let challenge = ServerChallenge::new(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let secret_key = SecretKey::generate(&mut rng);
+        let challenge = ServerChallenge::new(&mut rng);
         let client_auth = ClientAuth::new(&secret_key, &challenge);
 
         let bytes = postcard::to_allocvec(&client_auth).e()?;
@@ -764,7 +776,8 @@ mod tests {
 
     #[test]
     fn test_km_client_auth_roundtrip() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let secret_key = SecretKey::generate(&mut rng);
         let client_auth = KeyMaterialClientAuth::new(
             &secret_key,
             &TestKeyingMaterial {
@@ -785,8 +798,9 @@ mod tests {
 
     #[test]
     fn test_challenge_verification() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
-        let challenge = ServerChallenge::new(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let secret_key = SecretKey::generate(&mut rng);
+        let challenge = ServerChallenge::new(&mut rng);
         let client_auth = ClientAuth::new(&secret_key, &challenge);
         assert!(client_auth.verify(&challenge).is_ok());
 
@@ -795,7 +809,8 @@ mod tests {
 
     #[test]
     fn test_key_material_verification() -> Result {
-        let secret_key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let secret_key = SecretKey::generate(&mut rng);
         let io = TestKeyingMaterial {
             inner: (),
             shared_secret: Some(42),

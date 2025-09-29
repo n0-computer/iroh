@@ -288,11 +288,11 @@ impl SecretKey {
     ///
     /// ```rust
     /// // use the OsRng option for OS depedndent most secure RNG.
-    /// let mut rng = rand::rngs::OsRng;
-    /// let _key = iroh_base::SecretKey::generate(&mut rng);
+    /// use rand::{TryRngCore, rngs::OsRng};
+    /// let _key = iroh_base::SecretKey::generate(&mut OsRng.unwrap_err());
     /// ```
-    pub fn generate<R: CryptoRng>(mut csprng: R) -> Self {
-        let secret = SigningKey::generate(&mut csprng);
+    pub fn generate<R: CryptoRng + ?Sized>(csprng: &mut R) -> Self {
+        let secret = SigningKey::generate(csprng);
 
         Self { secret }
     }
@@ -372,6 +372,7 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
+    use rand::SeedableRng;
 
     use super::*;
 
@@ -405,7 +406,8 @@ mod tests {
 
     #[test]
     fn test_from_str() {
-        let key = SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let key = SecretKey::generate(&mut rng);
         assert_eq!(
             SecretKey::from_str(&HEXLOWER.encode(&key.to_bytes()))
                 .unwrap()

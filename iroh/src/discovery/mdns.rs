@@ -532,6 +532,7 @@ mod tests {
         use iroh_base::SecretKey;
         use n0_future::StreamExt;
         use n0_snafu::{Error, Result, ResultExt};
+        use rand::{CryptoRng, SeedableRng};
         use snafu::whatever;
         use tracing_test::traced_test;
 
@@ -541,10 +542,12 @@ mod tests {
         #[tokio::test]
         #[traced_test]
         async fn mdns_publish_resolve() -> Result {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
             // Create discoverer A with advertise=false (only listens)
-            let (_, discovery_a) = make_discoverer(false)?;
+            let (_, discovery_a) = make_discoverer(&mut rng, false)?;
             // Create discoverer B with advertise=true (will broadcast)
-            let (node_id_b, discovery_b) = make_discoverer(true)?;
+            let (node_id_b, discovery_b) = make_discoverer(&mut rng, true)?;
 
             // make addr info for discoverer b
             let user_data: UserData = "foobar".parse()?;
@@ -593,8 +596,9 @@ mod tests {
         #[tokio::test]
         #[traced_test]
         async fn mdns_publish_expire() -> Result {
-            let (_, discovery_a) = make_discoverer(false)?;
-            let (node_id_b, discovery_b) = make_discoverer(true)?;
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+            let (_, discovery_a) = make_discoverer(&mut rng, false)?;
+            let (node_id_b, discovery_b) = make_discoverer(&mut rng, true)?;
 
             // publish discovery_b's address
             let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
@@ -648,15 +652,17 @@ mod tests {
         #[tokio::test]
         #[traced_test]
         async fn mdns_subscribe() -> Result {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
             let num_nodes = 5;
             let mut node_ids = BTreeSet::new();
             let mut discoverers = vec![];
 
-            let (_, discovery) = make_discoverer(false)?;
+            let (_, discovery) = make_discoverer(&mut rng, false)?;
             let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
 
             for i in 0..num_nodes {
-                let (node_id, discovery) = make_discoverer(true)?;
+                let (node_id, discovery) = make_discoverer(&mut rng, true)?;
                 let user_data: UserData = format!("node{i}").parse()?;
                 let node_data = node_data.clone().with_user_data(Some(user_data.clone()));
                 node_ids.insert((node_id, Some(user_data)));
@@ -693,10 +699,12 @@ mod tests {
         #[tokio::test]
         #[traced_test]
         async fn non_advertising_node_not_discovered() -> Result {
-            let (_, discovery_a) = make_discoverer(false)?;
-            let (node_id_b, discovery_b) = make_discoverer(false)?;
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-            let (node_id_c, discovery_c) = make_discoverer(true)?;
+            let (_, discovery_a) = make_discoverer(&mut rng, false)?;
+            let (node_id_b, discovery_b) = make_discoverer(&mut rng, false)?;
+
+            let (node_id_c, discovery_c) = make_discoverer(&mut rng, true)?;
             let node_data_c =
                 NodeData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
             discovery_c.publish(&node_data_c);
@@ -717,16 +725,6 @@ mod tests {
             );
 
             Ok(())
-        }
-
-        fn make_discoverer(advertise: bool) -> Result<(PublicKey, MdnsDiscovery)> {
-            let node_id = SecretKey::generate(rand::thread_rng()).public();
-            Ok((
-                node_id,
-                MdnsDiscovery::builder()
-                    .advertise(advertise)
-                    .build(node_id)?,
-            ))
         }
 
         #[tokio::test]
@@ -785,6 +783,19 @@ mod tests {
             );
 
             Ok(())
+        }
+
+        fn make_discoverer<R: CryptoRng + ?Sized>(
+            rng: &mut R,
+            advertise: bool,
+        ) -> Result<(PublicKey, MdnsDiscovery)> {
+            let node_id = SecretKey::generate(rng).public();
+            Ok((
+                node_id,
+                MdnsDiscovery::builder()
+                    .advertise(advertise)
+                    .build(node_id)?,
+            ))
         }
     }
 }

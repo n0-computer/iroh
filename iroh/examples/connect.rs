@@ -10,7 +10,6 @@ use std::net::SocketAddr;
 use clap::Parser;
 use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
 use n0_snafu::{Result, ResultExt};
-use rand::TryRngCore;
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -34,7 +33,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect example!\n");
     let args = Cli::parse();
-    let secret_key = SecretKey::generate(rand::rngs::OsRng.unwrap_err());
+    let secret_key = SecretKey::generate(&mut rand::rng());
     println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.

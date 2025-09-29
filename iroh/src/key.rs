@@ -81,6 +81,8 @@ impl SharedSecret {
 
 #[cfg(test)]
 mod tests {
+    use rand::SeedableRng;
+
     use super::*;
 
     fn shared(this: &iroh_base::SecretKey, other: &iroh_base::PublicKey) -> SharedSecret {
@@ -129,7 +131,8 @@ mod tests {
 
     #[test]
     fn test_same_public_key_api() {
-        let key = iroh_base::SecretKey::generate(rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let key = iroh_base::SecretKey::generate(&mut rng);
         let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().public());
         let public_key2: crypto_box::PublicKey = secret_ed_box(key.secret()).public_key();
 

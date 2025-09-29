@@ -2520,7 +2520,7 @@ mod tests {
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
-    use rand::{Rng, RngCore};
+    use rand::{Rng, RngCore, SeedableRng};
     use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
@@ -2539,7 +2539,8 @@ mod tests {
 
     impl Default for Options {
         fn default() -> Self {
-            let secret_key = SecretKey::generate(rand::rng());
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+            let secret_key = SecretKey::generate(&mut rng);
             let server_config = make_default_server_config(&secret_key);
             Options {
                 addr_v4: None,
@@ -2592,7 +2593,8 @@ mod tests {
 
     impl MagicStack {
         async fn new(relay_mode: RelayMode) -> Self {
-            let secret_key = SecretKey::generate(rand::rng());
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+            let secret_key = SecretKey::generate(&mut rng);
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));

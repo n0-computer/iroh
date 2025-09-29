@@ -151,10 +151,11 @@ impl Builder {
 
     /// Binds the magic endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
+        let mut rng = rand::rng();
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self
             .secret_key
-            .unwrap_or_else(|| SecretKey::generate(rand::rng()));
+            .unwrap_or_else(move || SecretKey::generate(&mut rng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
@@ -2261,8 +2262,9 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_connect_close() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, relay_url, _guard) = run_relay_server().await?;
-        let server_secret_key = SecretKey::generate(rand::rng());
+        let server_secret_key = SecretKey::generate(&mut rng);
         let server_peer_id = server_secret_key.public();
 
         // Wait for the endpoint to be started to make sure it's up before clients try to connect
