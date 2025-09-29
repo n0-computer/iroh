@@ -102,9 +102,9 @@ dependencies = [
 
 [[package]]
 name = "anstyle"
-version = "1.0.11"
+version = "1.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "862ed96ca487e809f1c8e5a8447f6ee2cf102f846893800b20cebdf541fc6bbd"
+checksum = "c900954614442c827787a2ffcd8c0602eb53ff7b95a8fbfcdaf5e406197bf3be"
 
 [[package]]
 name = "anstyle-parse"
@@ -891,7 +891,7 @@ dependencies = [
 [[package]]
 name = "crypto_box"
 version = "0.9.1"
-source = "git+https://github.com/dignifiedquire/nacl-compat?branch=rand-09#9f8cd8115def3a43aa017ff7ab9c94cb9b7f7b57"
+source = "git+https://github.com/dignifiedquire/nacl-compat?branch=rand-09#7f58c670f90f4906ffd5e8d60e130e51954c5982"
 dependencies = [
  "aead",
  "chacha20",
@@ -906,7 +906,7 @@ dependencies = [
 [[package]]
 name = "crypto_secretbox"
 version = "0.1.1"
-source = "git+https://github.com/dignifiedquire/nacl-compat?branch=rand-09#9f8cd8115def3a43aa017ff7ab9c94cb9b7f7b57"
+source = "git+https://github.com/dignifiedquire/nacl-compat?branch=rand-09#7f58c670f90f4906ffd5e8d60e130e51954c5982"
 dependencies = [
  "aead",
  "chacha20",
@@ -3488,9 +3488,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkarr"
-version = "3.11.0"
+version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7aca11bc0399b1e7e4a6d7d92ec1646990d9eb5197e199b46ed0c7eb4c45c07"
+checksum = "a3e29542b35f65c89fb347945819af996f8b003e5e46d1e66e1c9bebbd54ba09"
 dependencies = [
  "async-compat",
  "base32",

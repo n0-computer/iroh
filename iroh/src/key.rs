@@ -2,12 +2,13 @@
 
 use std::fmt::Debug;
 
-use aead::{AeadInOut, Buffer};
+use aead::{AeadCore, AeadInOut, Buffer};
 use nested_enum_utils::common_fields;
-use rand::TryRngCore;
 use snafu::{ResultExt, Snafu, ensure};
 
 pub(crate) const NONCE_LEN: usize = 24;
+
+const AEAD_DATA: &[u8] = &[];
 
 pub(super) fn public_ed_box(key: &ed25519_dalek::VerifyingKey) -> crypto_box::PublicKey {
     crypto_box::PublicKey::from(key.to_montgomery())
@@ -50,13 +51,11 @@ impl SharedSecret {
 
     /// Seals the provided cleartext.
     pub fn seal(&self, buffer: &mut dyn Buffer) {
-        let mut nonce = crypto_box::Nonce::default();
-        rand::rngs::OsRng
-            .try_fill_bytes(&mut nonce)
-            .expect("failed to generate randomness");
+        let nonce = crypto_box::ChaChaBox::try_generate_nonce_with_rng(&mut rand::rngs::OsRng)
+            .expect("not enough randomness");
 
         self.0
-            .encrypt_in_place(&nonce, &[], buffer)
+            .encrypt_in_place(&nonce, AEAD_DATA, buffer)
             .expect("encryption failed");
 
         buffer.extend_from_slice(&nonce).expect("buffer too small");
@@ -73,7 +72,7 @@ impl SharedSecret {
 
         buffer.truncate(offset);
         self.0
-            .decrypt_in_place(&nonce.into(), &[], buffer)
+            .decrypt_in_place(&nonce.into(), AEAD_DATA, buffer)
             .context(AeadSnafu)?;
 
         Ok(())
@@ -97,9 +96,15 @@ mod tests {
         let key_a = iroh_base::SecretKey::generate(&mut rng);
         let key_b = iroh_base::SecretKey::generate(&mut rng);
 
-        seal_open_roundtrip(&key_a, &key_b);
-        seal_open_roundtrip(&key_b, &key_a);
+        println!("a -> a");
         seal_open_roundtrip(&key_a, &key_a);
+        println!("b -> b");
+        seal_open_roundtrip(&key_b, &key_b);
+
+        println!("a -> b");
+        seal_open_roundtrip(&key_a, &key_b);
+        println!("b -> a");
+        seal_open_roundtrip(&key_b, &key_a);
     }
 
     fn seal_open_roundtrip(key_a: &iroh_base::SecretKey, key_b: &iroh_base::SecretKey) {
@@ -107,6 +112,7 @@ mod tests {
         let shared_a = shared(key_a, &key_b.public());
         let mut sealed_message = msg.clone();
         shared_a.seal(&mut sealed_message);
+
         let shared_b = shared(key_b, &key_a.public());
         let mut decrypted_message = sealed_message.clone();
         shared_b.open(&mut decrypted_message).unwrap();
