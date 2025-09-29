@@ -133,7 +133,7 @@ impl<E: std::fmt::Debug + std::fmt::Display> StaggeredError<E> {
 
 /// The DNS resolver used throughout `iroh`.
 #[derive(Debug, Clone)]
-pub struct DnsResolver(Arc<RwLock<DnsResolverInner>>);
+pub struct DnsResolver(DnsResolverInner);
 
 impl DnsResolver {
     /// Creates a new DNS resolver with sensible cross-platform defaults.
@@ -143,7 +143,7 @@ impl DnsResolver {
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
     pub fn new() -> Self {
         let resolver = HickoryResolver::new(HickoryResolverOpts::SystemDefaults);
-        Self(Arc::new(RwLock::new(DnsResolverInner::Hickory(resolver))))
+        Self(DnsResolverInner::Hickory(Arc::new(RwLock::new(resolver))))
     }
 
     /// Creates a new [`DnsResolver`] from a struct that implements [`Resolver`].
@@ -154,33 +154,23 @@ impl DnsResolver {
     /// To use a different DNS resolver, you need to implement [`Resolver`] for your custom resolver
     /// and then pass to this function.
     pub fn custom(resolver: impl Resolver) -> Self {
-        Self(Arc::new(RwLock::new(DnsResolverInner::Custom(Box::new(
-            resolver,
-        )))))
+        Self(DnsResolverInner::Custom(Arc::new(RwLock::new(resolver))))
     }
 
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         let resolver = HickoryResolver::new(HickoryResolverOpts::SingleUdpNameserver(nameserver));
-        Self(Arc::new(RwLock::new(DnsResolverInner::Hickory(resolver))))
+        Self(DnsResolverInner::Hickory(Arc::new(RwLock::new(resolver))))
     }
 
     /// Removes all entries from the cache.
     pub async fn clear_cache(&self) {
-        let this = self.0.read().await;
-        match &*this {
-            DnsResolverInner::Hickory(resolver) => resolver.clear_cache(),
-            DnsResolverInner::Custom(resolver) => resolver.clear_cache(),
-        }
+        self.0.clear_cache().await
     }
 
     /// Recreates the inner resolver.
     pub async fn reset(&self) {
-        let mut this = self.0.write().await;
-        match &mut *this {
-            DnsResolverInner::Hickory(resolver) => resolver.reset(),
-            DnsResolverInner::Custom(resolver) => resolver.reset(),
-        }
+        self.0.reset().await
     }
 
     /// Looks up a TXT record.
@@ -190,8 +180,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = TxtRecordData>, DnsError> {
         let host = host.to_string();
-        let this = self.0.read().await;
-        let res = time::timeout(timeout, this.lookup_txt(host)).await??;
+        let res = time::timeout(timeout, self.0.lookup_txt(host)).await??;
         Ok(res)
     }
 
@@ -202,9 +191,8 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let this = self.0.read().await;
-        let addrs = time::timeout(timeout, this.lookup_ipv4(host)).await??;
-        Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip)))
+        let addrs = time::timeout(timeout, self.0.lookup_ipv4(host)).await??;
+        Ok(addrs.into_iter().map(IpAddr::V4))
     }
 
     /// Performs an IPv6 lookup with a timeout.
@@ -214,9 +202,8 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let this = self.0.read().await;
-        let addrs = time::timeout(timeout, this.lookup_ipv6(host)).await??;
-        Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip)))
+        let addrs = time::timeout(timeout, self.0.lookup_ipv6(host)).await??;
+        Ok(addrs.into_iter().map(IpAddr::V6))
     }
 
     /// Resolves IPv4 and IPv6 in parallel with a timeout.
@@ -430,10 +417,10 @@ impl reqwest::dns::Resolve for DnsResolver {
 ///
 /// We do this to save the cost of boxing the futures and iterators when using
 /// default hickory resolver.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum DnsResolverInner {
-    Hickory(HickoryResolver),
-    Custom(Box<dyn Resolver>),
+    Hickory(Arc<RwLock<HickoryResolver>>),
+    Custom(Arc<RwLock<dyn Resolver>>),
 }
 
 impl DnsResolverInner {
@@ -442,8 +429,8 @@ impl DnsResolverInner {
         host: String,
     ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
         Ok(match self {
-            Self::Hickory(resolver) => Either::Left(resolver.lookup_ipv4(host).await?),
-            Self::Custom(resolver) => Either::Right(resolver.lookup_ipv4(host).await?),
+            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_ipv4(host).await?),
+            Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv4(host).await?),
         })
     }
 
@@ -452,8 +439,8 @@ impl DnsResolverInner {
         host: String,
     ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
         Ok(match self {
-            Self::Hickory(resolver) => Either::Left(resolver.lookup_ipv6(host).await?),
-            Self::Custom(resolver) => Either::Right(resolver.lookup_ipv6(host).await?),
+            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_ipv6(host).await?),
+            Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv6(host).await?),
         })
     }
 
@@ -462,9 +449,23 @@ impl DnsResolverInner {
         host: String,
     ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
         Ok(match self {
-            Self::Hickory(resolver) => Either::Left(resolver.lookup_txt(host).await?),
-            Self::Custom(resolver) => Either::Right(resolver.lookup_txt(host).await?),
+            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_txt(host).await?),
+            Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_txt(host).await?),
         })
+    }
+
+    async fn clear_cache(&self) {
+        match self {
+            Self::Hickory(resolver) => resolver.read().await.clear_cache(),
+            Self::Custom(resolver) => resolver.read().await.clear_cache(),
+        }
+    }
+
+    async fn reset(&self) {
+        match self {
+            Self::Hickory(resolver) => resolver.write().await.reset(),
+            Self::Custom(resolver) => resolver.write().await.reset(),
+        }
     }
 }
 
