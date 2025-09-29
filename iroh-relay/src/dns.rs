@@ -142,11 +142,8 @@ impl DnsResolver {
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
     pub fn new() -> Self {
-        let resolver = Self::new_inner();
-        Self(Arc::new(RwLock::new(DnsResolverInner::Hickory {
-            resolver,
-            nameserver: None,
-        })))
+        let resolver = HickoryResolver::new(HickoryResolverOpts::SystemDefaults);
+        Self(Arc::new(RwLock::new(DnsResolverInner::Hickory(resolver))))
     }
 
     /// Creates a new [`DnsResolver`] from a struct that implements [`Resolver`].
@@ -162,79 +159,27 @@ impl DnsResolver {
         )))))
     }
 
-    fn new_inner() -> TokioResolver {
-        let (system_config, mut options) =
-            hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
-
-        // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
-        // there is no easy way to do this.
-        let mut config = hickory_resolver::config::ResolverConfig::new();
-        if let Some(name) = system_config.domain() {
-            config.set_domain(name.clone());
-        }
-        for name in system_config.search() {
-            config.add_search(name.clone());
-        }
-        for nameserver_cfg in system_config.name_servers() {
-            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
-                config.add_name_server(nameserver_cfg.clone());
-            }
-        }
-
-        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
-        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
-
-        let mut builder =
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        *builder.options_mut() = options;
-        builder.build()
-    }
-
     /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
-        let resolver = Self::with_nameserver_inner(nameserver);
-        Self(Arc::new(RwLock::new(DnsResolverInner::Hickory {
-            resolver,
-            nameserver: None,
-        })))
-    }
-
-    fn with_nameserver_inner(nameserver: SocketAddr) -> TokioResolver {
-        let mut config = hickory_resolver::config::ResolverConfig::new();
-        let nameserver_config = hickory_resolver::config::NameServerConfig::new(
-            nameserver,
-            hickory_resolver::proto::xfer::Protocol::Udp,
-        );
-        config.add_name_server(nameserver_config);
-
-        let builder =
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        builder.build()
+        let resolver = HickoryResolver::new(HickoryResolverOpts::SingleUdpNameserver(nameserver));
+        Self(Arc::new(RwLock::new(DnsResolverInner::Hickory(resolver))))
     }
 
     /// Removes all entries from the cache.
     pub async fn clear_cache(&self) {
         let this = self.0.read().await;
-        this.clear_cache();
+        match &*this {
+            DnsResolverInner::Hickory(resolver) => resolver.clear_cache(),
+            DnsResolverInner::Custom(resolver) => resolver.clear_cache(),
+        }
     }
 
     /// Recreates the inner resolver.
     pub async fn reset(&self) {
         let mut this = self.0.write().await;
         match &mut *this {
-            DnsResolverInner::Hickory {
-                resolver,
-                nameserver,
-            } => {
-                *resolver = if let Some(nameserver) = *nameserver {
-                    Self::with_nameserver_inner(nameserver)
-                } else {
-                    Self::new_inner()
-                };
-            }
-            DnsResolverInner::Custom(resolver) => {
-                resolver.reset();
-            }
+            DnsResolverInner::Hickory(resolver) => resolver.reset(),
+            DnsResolverInner::Custom(resolver) => resolver.reset(),
         }
     }
 
@@ -487,32 +432,114 @@ impl reqwest::dns::Resolve for DnsResolver {
 /// default hickory resolver.
 #[derive(Debug)]
 enum DnsResolverInner {
-    Hickory {
-        resolver: hickory_resolver::TokioResolver,
-        nameserver: Option<SocketAddr>,
-    },
+    Hickory(HickoryResolver),
     Custom(Box<dyn Resolver>),
 }
 
 impl DnsResolverInner {
-    /// Looks up an IPv4 address.
     async fn lookup_ipv4(
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
-        match self {
-            DnsResolverInner::Hickory { resolver, .. } => {
-                let addrs = resolver
-                    .ipv4_lookup(host)
-                    .await?
-                    .into_iter()
-                    .map(Ipv4Addr::from);
-                Ok(Either::Left(addrs))
-            }
-            DnsResolverInner::Custom(resolver) => {
-                Ok(Either::Right(resolver.lookup_ipv4(host).await?))
+        Ok(match self {
+            Self::Hickory(resolver) => Either::Left(resolver.lookup_ipv4(host).await?),
+            Self::Custom(resolver) => Either::Right(resolver.lookup_ipv4(host).await?),
+        })
+    }
+
+    async fn lookup_ipv6(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
+        Ok(match self {
+            Self::Hickory(resolver) => Either::Left(resolver.lookup_ipv6(host).await?),
+            Self::Custom(resolver) => Either::Right(resolver.lookup_ipv6(host).await?),
+        })
+    }
+
+    async fn lookup_txt(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
+        Ok(match self {
+            Self::Hickory(resolver) => Either::Left(resolver.lookup_txt(host).await?),
+            Self::Custom(resolver) => Either::Right(resolver.lookup_txt(host).await?),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+enum HickoryResolverOpts {
+    SystemDefaults,
+    SingleUdpNameserver(SocketAddr),
+}
+
+#[derive(Debug)]
+struct HickoryResolver {
+    resolver: TokioResolver,
+    opts: HickoryResolverOpts,
+}
+
+impl HickoryResolver {
+    fn new(opts: HickoryResolverOpts) -> Self {
+        let resolver = match opts {
+            HickoryResolverOpts::SystemDefaults => Self::with_system_defaults(),
+            HickoryResolverOpts::SingleUdpNameserver(addr) => Self::with_single_nameserver(addr),
+        };
+        Self { resolver, opts }
+    }
+
+    fn with_single_nameserver(nameserver: SocketAddr) -> TokioResolver {
+        let mut config = hickory_resolver::config::ResolverConfig::new();
+        let nameserver_config = hickory_resolver::config::NameServerConfig::new(
+            nameserver,
+            hickory_resolver::proto::xfer::Protocol::Udp,
+        );
+        config.add_name_server(nameserver_config);
+
+        let builder =
+            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
+        builder.build()
+    }
+
+    fn with_system_defaults() -> TokioResolver {
+        let (system_config, mut options) =
+            hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
+
+        // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
+        // there is no easy way to do this.
+        let mut config = hickory_resolver::config::ResolverConfig::new();
+        if let Some(name) = system_config.domain() {
+            config.set_domain(name.clone());
+        }
+        for name in system_config.search() {
+            config.add_search(name.clone());
+        }
+        for nameserver_cfg in system_config.name_servers() {
+            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
+                config.add_name_server(nameserver_cfg.clone());
             }
         }
+
+        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
+        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
+
+        let mut builder =
+            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
+        *builder.options_mut() = options;
+        builder.build()
+    }
+
+    async fn lookup_ipv4(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
+        Ok(self
+            .resolver
+            .ipv4_lookup(host)
+            .await?
+            .into_iter()
+            .map(Ipv4Addr::from))
     }
 
     /// Looks up an IPv6 address.
@@ -520,19 +547,12 @@ impl DnsResolverInner {
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
-        match self {
-            DnsResolverInner::Hickory { resolver, .. } => {
-                let addrs = resolver
-                    .ipv6_lookup(host)
-                    .await?
-                    .into_iter()
-                    .map(Ipv6Addr::from);
-                Ok(Either::Left(addrs))
-            }
-            DnsResolverInner::Custom(resolver) => {
-                Ok(Either::Right(resolver.lookup_ipv6(host).await?))
-            }
-        }
+        Ok(self
+            .resolver
+            .ipv6_lookup(host)
+            .await?
+            .into_iter()
+            .map(Ipv6Addr::from))
     }
 
     /// Looks up TXT records.
@@ -540,27 +560,21 @@ impl DnsResolverInner {
         &self,
         host: String,
     ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
-        match self {
-            DnsResolverInner::Hickory { resolver, .. } => {
-                let lookup = resolver
-                    .txt_lookup(host)
-                    .await?
-                    .into_iter()
-                    .map(|txt| TxtRecordData::from_iter(txt.iter().cloned()));
-                Ok(Either::Left(lookup))
-            }
-            DnsResolverInner::Custom(resolver) => {
-                Ok(Either::Right(resolver.lookup_txt(host).await?))
-            }
-        }
+        Ok(self
+            .resolver
+            .txt_lookup(host)
+            .await?
+            .into_iter()
+            .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())))
     }
 
     /// Clears the internal cache.
     fn clear_cache(&self) {
-        match self {
-            DnsResolverInner::Hickory { resolver, .. } => resolver.clear_cache(),
-            DnsResolverInner::Custom(resolver) => resolver.clear_cache(),
-        }
+        self.resolver.clear_cache()
+    }
+
+    fn reset(&mut self) {
+        *self = Self::new(self.opts.clone());
     }
 }
 
