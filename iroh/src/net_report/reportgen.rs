@@ -574,7 +574,9 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    let mut builder = reqwest::Client::builder()
+        .use_rustls_tls()
+        .redirect(reqwest::redirect::Policy::none());
 
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
@@ -776,7 +778,7 @@ async fn run_https_probe(
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
-    let mut builder = reqwest::ClientBuilder::new();
+    let mut builder = reqwest::Client::builder().use_rustls_tls();
 
     #[cfg(not(wasm_browser))]
     {

@@ -856,7 +856,8 @@ mod tests {
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
-        let response = reqwest::get(&url).await.unwrap();
+        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let response = client.get(&url).send().await.unwrap();
         assert_eq!(response.status(), 200);
         let body = response.text().await.unwrap();
         assert!(body.contains("iroh.computer"));
@@ -869,7 +870,7 @@ mod tests {
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
         let response = client
             .get(&url)
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)

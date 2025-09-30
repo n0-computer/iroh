@@ -527,7 +527,10 @@ impl PkarrRelayClient {
     /// Creates a new client.
     pub fn new(pkarr_relay_url: Url) -> Self {
         Self {
-            http_client: reqwest::Client::new(),
+            http_client: reqwest::Client::builder()
+                .use_rustls_tls()
+                .build()
+                .expect("reqwest client builder"),
             pkarr_relay_url,
         }
     }
@@ -536,6 +539,7 @@ impl PkarrRelayClient {
     #[cfg(not(wasm_browser))]
     pub fn with_dns_resolver(pkarr_relay_url: Url, dns_resolver: crate::dns::DnsResolver) -> Self {
         let http_client = reqwest::Client::builder()
+            .use_rustls_tls()
             .dns_resolver(Arc::new(dns_resolver))
             .build()
             .expect("failed to create request client");
