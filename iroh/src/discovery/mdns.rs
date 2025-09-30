@@ -699,34 +699,56 @@ mod tests {
         #[tokio::test]
         #[traced_test]
         async fn test_service_names() -> Result {
+            // Create a discovery service using the default
+            // service name
             let id_a = SecretKey::generate(rand::thread_rng()).public();
             let discovery_a = MdnsDiscovery::builder().build(id_a)?;
 
+            // Create a discovery service using a custom
+            // service name
             let id_b = SecretKey::generate(rand::thread_rng()).public();
             let discovery_b = MdnsDiscovery::builder()
                 .service_name("different.name")
                 .build(id_b)?;
 
+            // Create a discovery service using the same
+            // custom service name
+            let id_c = SecretKey::generate(rand::thread_rng()).public();
+            let discovery_c = MdnsDiscovery::builder()
+                .service_name("different.name")
+                .build(id_c)?;
+
             let node_data_a =
-                NodeData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
             discovery_a.publish(&node_data_a);
 
             let node_data_b =
-                NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
             discovery_b.publish(&node_data_b);
+
+            let node_data_c =
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:33333".parse().unwrap()]));
+            discovery_c.publish(&node_data_c);
 
             let mut stream_a = discovery_a.resolve(id_b).unwrap();
             let result_a = tokio::time::timeout(Duration::from_secs(2), stream_a.next()).await;
             assert!(
                 result_a.is_err(),
-                "Node on a different service should not be discoverable"
+                "Node on a different service should NOT be discoverable"
+            );
+
+            let mut stream_b = discovery_b.resolve(id_c).unwrap();
+            let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
+            assert!(
+                result_b.is_ok(),
+                "Node on the same service should be discoverable"
             );
 
             let mut stream_b = discovery_b.resolve(id_a).unwrap();
             let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
             assert!(
                 result_b.is_err(),
-                "Node on a different service should not be discoverable"
+                "Node on a different service should NOT be discoverable"
             );
 
             Ok(())
