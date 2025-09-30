@@ -975,7 +975,7 @@ mod test_dns_pkarr {
     use iroh_relay::{RelayMap, node_info::UserData};
     use n0_future::time::Duration;
     use n0_snafu::{Error, Result, ResultExt};
-    use rand::SeedableRng;
+    use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -1066,11 +1066,13 @@ mod test_dns_pkarr {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_discover() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
-        let (ep2, _guard2) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
+        let (ep1, _guard1) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep2, _guard2) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
@@ -1083,12 +1085,12 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_discovery(
+    async fn ep_with_discovery<R: CryptoRng + ?Sized>(
+        rng: &mut R,
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let secret_key = SecretKey::generate(&mut rng);
+        let secret_key = SecretKey::generate(rng);
         let ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)

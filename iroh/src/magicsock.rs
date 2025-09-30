@@ -2520,7 +2520,7 @@ mod tests {
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
-    use rand::{Rng, RngCore, SeedableRng};
+    use rand::{CryptoRng, Rng, RngCore, SeedableRng};
     use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
@@ -2537,27 +2537,24 @@ mod tests {
 
     const ALPN: &[u8] = b"n0/test/1";
 
-    impl Default for Options {
-        fn default() -> Self {
-            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let secret_key = SecretKey::generate(&mut rng);
-            let server_config = make_default_server_config(&secret_key);
-            Options {
-                addr_v4: None,
-                addr_v6: None,
-                secret_key,
-                relay_map: RelayMap::empty(),
-                discovery: Default::default(),
-                proxy_url: None,
-                dns_resolver: DnsResolver::new(),
-                server_config,
-                #[cfg(any(test, feature = "test-utils"))]
-                insecure_skip_relay_cert_verify: false,
-                #[cfg(any(test, feature = "test-utils"))]
-                path_selection: PathSelection::default(),
-                discovery_user_data: None,
-                metrics: Default::default(),
-            }
+    fn default_options<R: CryptoRng + ?Sized>(rng: &mut R) -> Options {
+        let secret_key = SecretKey::generate(rng);
+        let server_config = make_default_server_config(&secret_key);
+        Options {
+            addr_v4: None,
+            addr_v6: None,
+            secret_key,
+            relay_map: RelayMap::empty(),
+            discovery: Default::default(),
+            proxy_url: None,
+            dns_resolver: DnsResolver::new(),
+            server_config,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: PathSelection::default(),
+            discovery_user_data: None,
+            metrics: Default::default(),
         }
     }
 
@@ -2592,9 +2589,8 @@ mod tests {
     }
 
     impl MagicStack {
-        async fn new(relay_mode: RelayMode) -> Self {
-            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let secret_key = SecretKey::generate(&mut rng);
+        async fn new<R: CryptoRng + ?Sized>(rng: &mut R, relay_mode: RelayMode) -> Self {
+            let secret_key = SecretKey::generate(rng);
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -2843,8 +2839,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result {
-        let m1 = MagicStack::new(RelayMode::Disabled).await;
-        let m2 = MagicStack::new(RelayMode::Disabled).await;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
+        let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
 
         let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
@@ -2867,7 +2864,7 @@ mod tests {
 
             info!("\n-- larger data");
             let mut data = vec![0u8; 10 * 1024];
-            rand::rng().fill_bytes(&mut data);
+            rng.fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
         }
@@ -2878,8 +2875,9 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_regression_network_change_rebind_wakes_connection_driver() -> n0_snafu::Result {
-        let m1 = MagicStack::new(RelayMode::Disabled).await;
-        let m2 = MagicStack::new(RelayMode::Disabled).await;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
+        let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
 
         println!("Net change");
         m1.endpoint.magic_sock().force_network_change(true).await;
@@ -2927,13 +2925,14 @@ mod tests {
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
     async fn test_two_devices_roundtrip_network_change_impl() -> Result {
-        let m1 = MagicStack::new(RelayMode::Disabled).await;
-        let m2 = MagicStack::new(RelayMode::Disabled).await;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
+        let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
 
         let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
-        let offset = || {
-            let delay = rand::rng().random_range(10..=500);
+        let offset = |rng: &mut rand_chacha::ChaCha8Rng| {
+            let delay = rng.random_range(10..=500);
             Duration::from_millis(delay)
         };
         let rounds = 5;
@@ -2941,11 +2940,12 @@ mod tests {
         // Regular network changes to m1 only.
         let m1_network_change_guard = {
             let m1 = m1.clone();
+            let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 loop {
                     println!("[m1] network change");
                     m1.endpoint.magic_sock().force_network_change(true).await;
-                    time::sleep(offset()).await;
+                    time::sleep(offset(&mut rng)).await;
                 }
             });
             AbortOnDropHandle::new(task)
@@ -2958,7 +2958,7 @@ mod tests {
 
             println!("-- [m1 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
-            rand::rng().fill_bytes(&mut data);
+            rng.fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
         }
@@ -2968,11 +2968,12 @@ mod tests {
         // Regular network changes to m2 only.
         let m2_network_change_guard = {
             let m2 = m2.clone();
+            let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 loop {
                     println!("[m2] network change");
                     m2.endpoint.magic_sock().force_network_change(true).await;
-                    time::sleep(offset()).await;
+                    time::sleep(offset(&mut rng)).await;
                 }
             });
             AbortOnDropHandle::new(task)
@@ -3001,7 +3002,7 @@ mod tests {
                 m1.endpoint.magic_sock().force_network_change(true).await;
                 println!("-- [m2] network change");
                 m2.endpoint.magic_sock().force_network_change(true).await;
-                time::sleep(offset()).await;
+                time::sleep(offset(&mut rng)).await;
             });
             AbortOnDropHandle::new(task)
         };
@@ -3025,11 +3026,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
     async fn test_two_devices_setup_teardown() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         for i in 0..10 {
             println!("-- round {i}");
             println!("setting up magic stack");
-            let m1 = MagicStack::new(RelayMode::Disabled).await;
-            let m2 = MagicStack::new(RelayMode::Disabled).await;
+            let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
+            let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
 
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
@@ -3048,6 +3050,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_direct_addresses() {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
@@ -3360,8 +3363,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_node_addr() -> Result {
-        let stack = MagicStack::new(RelayMode::Default).await;
-        let mut rng = rand::rng();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let stack = MagicStack::new(&mut rng, RelayMode::Default).await;
 
         assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 0);
 
