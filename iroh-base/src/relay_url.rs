@@ -49,9 +49,8 @@ impl RelayUrl {
     pub fn without_final_dot(&self) -> Url {
         let mut url = self.0.deref().clone();
         if let Some(domain) = url.domain() {
-            if domain.ends_with('.') {
-                let domain_without_dot = domain[..(domain.len() - 1)].to_string();
-                url.set_host(Some(&domain_without_dot)).ok();
+            if let Some(stripped) = domain.strip_suffix('.') {
+                url.set_host(Some(&stripped.to_string())).ok();
             }
         }
         url
@@ -64,9 +63,8 @@ impl RelayUrl {
     /// See [`Self::without_final_dot`] for details on when you might want to use this.
     pub fn host_str_without_final_dot(&self) -> Option<&str> {
         if let Some(domain) = self.0.domain() {
-            if domain.ends_with('.') {
-                let domain_without_dot = &domain[..(domain.len() - 1)];
-                Some(domain_without_dot)
+            if let Some(stripped) = domain.strip_suffix('.') {
+                Some(stripped)
             } else {
                 Some(domain)
             }
