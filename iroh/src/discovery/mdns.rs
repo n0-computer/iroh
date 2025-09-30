@@ -50,15 +50,15 @@ use tracing::{Instrument, debug, error, info_span, trace, warn};
 use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 use crate::discovery::{Discovery, DiscoveryEvent, DiscoveryItem, NodeData, NodeInfo};
 
-/// The n0 local swarm node discovery name
-const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
+/// The n0 local service name
+const N0_SERVICE_NAME: &str = "irohv1";
 
 /// Name of this discovery service.
 ///
 /// Used as the `provenance` field in [`DiscoveryItem`]s.
 ///
 /// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
-pub const NAME: &str = "local.swarm.discovery";
+pub const NAME: &str = "mdns";
 
 /// The key of the attribute under which the `UserData` is stored in
 /// the TXT record supported by swarm-discovery.
@@ -130,12 +130,16 @@ impl Subscribers {
 #[derive(Debug)]
 pub struct MdnsDiscoveryBuilder {
     advertise: bool,
+    service_name: String,
 }
 
 impl MdnsDiscoveryBuilder {
     /// Creates a new [`MdnsDiscoveryBuilder`] with default settings.
-    pub fn new() -> Self {
-        Self { advertise: true }
+    fn new() -> Self {
+        Self {
+            advertise: true,
+            service_name: N0_SERVICE_NAME.to_string(),
+        }
     }
 
     /// Sets whether this node should advertise its presence.
@@ -146,9 +150,22 @@ impl MdnsDiscoveryBuilder {
         self
     }
 
+    /// Sets a custom service name.
+    ///
+    /// The default is `irohv1`, which will show up on a record in the
+    /// following form:
+    /// `NODE_ID._irohv1._upd.local`
+    ///
+    /// Any custom service name will take the form:
+    /// `NODE_ID._{service_name}.upd.local`
+    pub fn service_name(mut self, service_name: impl Into<String>) -> Self {
+        self.service_name = service_name.into();
+        self
+    }
+
     /// Builds an [`MdnsDiscovery`] instance with the configured settings.
     pub fn build(self, node_id: NodeId) -> Result<MdnsDiscovery, IntoDiscoveryError> {
-        MdnsDiscovery::new(node_id, self.advertise)
+        MdnsDiscovery::new(node_id, self.advertise, self.service_name)
     }
 }
 
@@ -183,7 +200,11 @@ impl MdnsDiscovery {
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    pub fn new(node_id: NodeId, advertise: bool) -> Result<Self, IntoDiscoveryError> {
+    fn new(
+        node_id: NodeId,
+        advertise: bool,
+        service_name: String,
+    ) -> Result<Self, IntoDiscoveryError> {
         debug!("Creating new MdnsDiscovery service");
         let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
@@ -193,6 +214,7 @@ impl MdnsDiscovery {
             advertise,
             task_sender.clone(),
             BTreeSet::new(),
+            service_name,
             &rt,
         )?;
 
@@ -359,6 +381,7 @@ impl MdnsDiscovery {
         advertise: bool,
         sender: mpsc::Sender<Message>,
         socketaddrs: BTreeSet<SocketAddr>,
+        service_name: String,
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard, IntoDiscoveryError> {
         let spawn_rt = rt.clone();
@@ -379,7 +402,7 @@ impl MdnsDiscovery {
         let node_id_str = data_encoding::BASE32_NOPAD
             .encode(node_id.as_bytes())
             .to_ascii_lowercase();
-        let mut discoverer = Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id_str)
+        let mut discoverer = Discoverer::new_interactive(service_name, node_id_str)
             .with_callback(callback)
             .with_ip_class(IpClass::Auto);
         if advertise {
@@ -659,7 +682,13 @@ mod tests {
 
         fn make_discoverer(advertise: bool) -> Result<(PublicKey, MdnsDiscovery)> {
             let node_id = SecretKey::generate(rand::thread_rng()).public();
-            Ok((node_id, MdnsDiscovery::new(node_id, advertise)?))
+            Ok((
+                node_id,
+                MdnsDiscovery::builder()
+                    .advertise(advertise)
+                    .service_name("test")
+                    .build(node_id)?,
+            ))
         }
     }
 }
