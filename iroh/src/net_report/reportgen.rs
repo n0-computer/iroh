@@ -55,8 +55,11 @@ use super::{
 use super::{defaults::timeouts::DNS_TIMEOUT, ip_mapped_addrs::IpMappedAddresses};
 #[cfg(not(wasm_browser))]
 use crate::discovery::dns::DNS_STAGGERING_MS;
-use crate::net_report::defaults::timeouts::{
-    CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
+use crate::{
+    net_report::defaults::timeouts::{
+        CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
+    },
+    util::reqwest_client_builder,
 };
 
 /// Holds the state for a single report generation.
@@ -556,6 +559,8 @@ async fn check_captive_portal(
     // If we have a preferred relay node and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
 
+    use crate::util::reqwest_client_builder;
+
     let preferred_relay = preferred_relay.and_then(|url| dm.get_node(&url).map(|_| url));
 
     let url = match preferred_relay {
@@ -574,7 +579,7 @@ async fn check_captive_portal(
         }
     };
 
-    let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    let mut builder = reqwest_client_builder().redirect(reqwest::redirect::Policy::none());
 
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
@@ -776,7 +781,7 @@ async fn run_https_probe(
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
-    let mut builder = reqwest::ClientBuilder::new();
+    let mut builder = reqwest_client_builder();
 
     #[cfg(not(wasm_browser))]
     {

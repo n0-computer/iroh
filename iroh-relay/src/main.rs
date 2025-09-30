@@ -237,7 +237,10 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                 }))
             }
             AccessConfig::Http(mut config) => {
-                let client = reqwest::Client::default();
+                let client = reqwest::Client::builder()
+                    .use_rustls_tls()
+                    .build()
+                    .expect("request client builder");
                 // Allow to set bearer token via environment variable as well.
                 if let Ok(token) = std::env::var(ENV_HTTP_BEARER_TOKEN) {
                     config.bearer_token = Some(token);
