@@ -187,7 +187,7 @@ impl IntoDiscovery for MdnsDiscoveryBuilder {
 impl MdnsDiscovery {
     /// Returns a [`MdnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
     pub fn builder() -> MdnsDiscoveryBuilder {
-        MdnsDiscoveryBuilder::new()
+        MdnsDiscoveryBuilder::default()
     }
 
     /// Create a new [`MdnsDiscovery`] Service.
@@ -686,9 +686,44 @@ mod tests {
                 node_id,
                 MdnsDiscovery::builder()
                     .advertise(advertise)
-                    .service_name("test")
                     .build(node_id)?,
             ))
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn test_service_names() -> Result {
+            let id_a = SecretKey::generate(rand::thread_rng()).public();
+            let discovery_a = MdnsDiscovery::builder().build(id_a)?;
+
+            let id_b = SecretKey::generate(rand::thread_rng()).public();
+            let discovery_b = MdnsDiscovery::builder()
+                .service_name("different.name")
+                .build(id_b)?;
+
+            let node_data_a =
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
+            discovery_a.publish(&node_data_a);
+
+            let node_data_b =
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+            discovery_b.publish(&node_data_b);
+
+            let mut stream_a = discovery_a.resolve(id_b).unwrap();
+            let result_a = tokio::time::timeout(Duration::from_secs(2), stream_a.next()).await;
+            assert!(
+                result_a.is_err(),
+                "Node on a different service should not be discoverable"
+            );
+
+            let mut stream_b = discovery_b.resolve(id_a).unwrap();
+            let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
+            assert!(
+                result_b.is_err(),
+                "Node on a different service should not be discoverable"
+            );
+
+            Ok(())
         }
     }
 }
