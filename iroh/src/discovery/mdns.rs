@@ -153,11 +153,11 @@ impl MdnsDiscoveryBuilder {
     /// Sets a custom service name.
     ///
     /// The default is `irohv1`, which will show up on a record in the
-    /// following form:
-    /// `NODE_ID._irohv1._upd.local`
+    /// following form, for example:
+    /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._irohv1._udp.local`
     ///
-    /// Any custom service name will take the form:
-    /// `NODE_ID._{service_name}.upd.local`
+    /// Any custom service name will take the form, for example:
+    /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._{service_name}.upd.local`
     pub fn service_name(mut self, service_name: impl Into<String>) -> Self {
         self.service_name = service_name.into();
         self
