@@ -191,6 +191,12 @@ pub(super) fn summarize_node_paths(paths: &BTreeMap<IpPort, PathState>) -> Strin
     w
 }
 
+/// The state of a single path to the remote endpoint.
+///
+/// Each path is identified by the destination [`transports::Addr`] and they are stored in
+/// the [`NodeStateActor::paths`] map.
+///
+/// [`NodeStateActor::paths`]: super::node_state::NodeStateActor
 #[derive(Debug, Default)]
 pub(super) struct NewPathState {
     /// How we learned about this path, and when.

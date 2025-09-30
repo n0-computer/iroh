@@ -849,7 +849,7 @@ impl NodeStateActor {
                     }
                 }
                 Some((id, evt)) = self.path_events.next() => {
-                    self.handle_path_event(id, evt).await?;
+                    self.handle_path_event(id, evt).await;
                 }
                 _ = self.local_addrs.updated() => {
                     self.trigger_holepunching().await;
@@ -1211,30 +1211,32 @@ impl NodeStateActor {
         &mut self,
         stable_id: usize,
         event: Result<PathEvent, BroadcastStreamRecvError>,
-    ) -> Result<(), Whatever> {
+    ) {
         let Ok(event) = event else {
             warn!("missed a PathEvent, NodeStateActor lagging");
             // TODO: Is it possible to recover using the sync APIs to figure out what the
             //    state of the connection and it's paths are?
-            return Ok(());
+            return;
         };
         let Some(handle) = self.connections.get(&stable_id) else {
             trace!("event for removed connection");
-            return Ok(());
+            return;
         };
         let Some(conn) = handle.upgrade() else {
             trace!("event for closed connection");
-            return Ok(());
+            return;
         };
         match event {
             PathEvent::Opened { id: path_id } => {
                 tracing::Span::current().record("path_id", tracing::field::debug(path_id));
                 let Some(path) = conn.path(path_id) else {
                     trace!("event for unknown path");
-                    return Ok(());
+                    return;
                 };
                 path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
                 path.set_max_idle_timeout(Some(MAX_IDLE_TIMEOUT)).ok();
+
+                self.select_path();
             }
             PathEvent::Closed { id, error_code } => todo!(),
             PathEvent::Abandoned { id, path_stats } => todo!(),
@@ -1242,7 +1244,6 @@ impl NodeStateActor {
             PathEvent::RemoteStatus { id, status } => todo!(),
             PathEvent::ObservedAddr { id, addr } => todo!(),
         }
-        Ok(())
     }
 
     /// Clean up connections which no longer exist.
@@ -1260,6 +1261,113 @@ impl NodeStateActor {
 
         self.path_id_map
             .retain(|(stable_id, _), _| stable_ids.contains(stable_id));
+    }
+
+    /// Selects the path with the lowest RTT, prefers direct paths.
+    ///
+    /// If there are direct paths, this selects the direct path with the lowest RTT.  If
+    /// there are only relay paths, the relay path with the lowest RTT is chosen.
+    ///
+    /// Any unused direct paths are closed.
+    fn select_path(&mut self) {
+        // Find the lowest RTT across all connections for each open path.  The long way, so
+        // we get to trace-log ALL RTTs.
+        let mut all_path_rtts: FxHashMap<transports::Addr, Vec<Duration>> = FxHashMap::default();
+        for (conn_id, conn) in self
+            .connections
+            .iter()
+            .filter_map(|(id, handle)| handle.upgrade().map(|conn| (*id, conn)))
+        {
+            let stats = conn.stats();
+            for (path_id, stats) in stats.paths {
+                if let Some(addr) = self.path_id_map.get(&(conn_id, path_id)) {
+                    all_path_rtts
+                        .entry(addr.clone())
+                        .or_default()
+                        .push(stats.rtt);
+                } else {
+                    trace!(?path_id, "unknown PathId in ConnectionStats");
+                }
+            }
+        }
+        trace!(?all_path_rtts, "dumping all path RTTs");
+        let path_rtts: FxHashMap<transports::Addr, Duration> = all_path_rtts
+            .into_iter()
+            .filter_map(|(addr, rtts)| rtts.into_iter().min().map(|rtt| (addr, rtt)))
+            .collect();
+
+        // Find the fastest direct path.
+        const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
+        let direct_path = path_rtts
+            .iter()
+            .filter(|(addr, _rtt)| addr.is_ip())
+            .map(|(addr, rtt)| {
+                if addr.is_ipv4() {
+                    (*rtt + IPV6_RTT_ADVANTAGE, addr)
+                } else {
+                    (*rtt, addr)
+                }
+            })
+            .min()
+            .map(|(_rtt, addr)| addr.clone());
+        if let Some(addr) = direct_path {
+            let prev = self.selected_path.replace(addr.clone());
+            if prev.as_ref() != Some(&addr) {
+                debug!(?addr, ?prev, "selected new direct path");
+            }
+            self.close_redundant_paths(addr);
+            return;
+        }
+
+        // Still here?  Find the fastest relay path.
+        let relay_path = path_rtts
+            .iter()
+            .filter(|(addr, _rtt)| addr.is_relay())
+            .map(|(addr, rtt)| (rtt, addr))
+            .min()
+            .map(|(_rtt, addr)| addr.clone());
+        if let Some(addr) = relay_path {
+            let prev = self.selected_path.replace(addr.clone());
+            if prev.as_ref() != Some(&addr) {
+                debug!(?addr, ?prev, "selected new relay path");
+            }
+            self.close_redundant_paths(addr);
+            return;
+        }
+    }
+
+    /// Closes any direct paths not selected.
+    fn close_redundant_paths(&mut self, selected_path: transports::Addr) {
+        // TODO: Quinn should just do this.  Also, I made this value up.
+        const APPLICATION_ABANDON_PATH: u8 = 30;
+
+        debug_assert_eq!(self.selected_path.as_ref(), Some(&selected_path));
+
+        self.path_id_map.retain(|(conn_id, path_id), addr| {
+            if !addr.is_ip() || *addr == selected_path {
+                return true;
+            }
+            if let Some(conn) = self
+                .connections
+                .get(conn_id)
+                .map(|handle| handle.upgrade())
+                .flatten()
+            {
+                trace!(?addr, ?conn_id, ?path_id, "closing direct path");
+                if let Some(path) = conn.path(*path_id) {
+                    match path.close(APPLICATION_ABANDON_PATH.into()) {
+                        Err(quinn_proto::ClosePathError::LastOpenPath) => {
+                            error!("could not close last open path");
+                        }
+                        Err(quinn_proto::ClosePathError::ClosedPath) => (),
+                        Ok(_fut) => {
+                            // TODO: Should investigate if we care about this future.
+                        }
+                    }
+                }
+            }
+            false
+        });
     }
 }
 

@@ -369,6 +369,20 @@ impl Addr {
         matches!(self, Self::Ip(_))
     }
 
+    pub(crate) fn is_ipv4(&self) -> bool {
+        match self {
+            Addr::Ip(socket_addr) => socket_addr.is_ipv4(),
+            Addr::Relay(_, _) => false,
+        }
+    }
+
+    pub(crate) fn is_ipv6(&self) -> bool {
+        match self {
+            Addr::Ip(socket_addr) => socket_addr.is_ipv6(),
+            Addr::Relay(_, _) => false,
+        }
+    }
+
     /// Returns `None` if not an `Ip`.
     pub(crate) fn into_socket_addr(self) -> Option<SocketAddr> {
         match self {
