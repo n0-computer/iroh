@@ -38,6 +38,44 @@ impl From<Url> for RelayUrl {
     }
 }
 
+impl RelayUrl {
+    /// Returns the URL while removing the final dot in the relay URL's domain name.
+    ///
+    /// By default, we add a final dot to relay URLs to make sure that DNS resolution always
+    /// considers them as top-level domains without appending a search suffix. When using
+    /// the URL for TLS hostname verification, usually a domain name without a final
+    /// dot is expected. So when using the URL in the context of HTTPS or TLS, use
+    /// this function to get the URL without the final dot.
+    pub fn without_final_dot(&self) -> Url {
+        let mut url = self.0.deref().clone();
+        if let Some(domain) = url.domain() {
+            if domain.ends_with('.') {
+                let domain_without_dot = domain[..(domain.len() - 1)].to_string();
+                url.set_host(Some(&domain_without_dot)).ok();
+            }
+        }
+        url
+    }
+
+    /// Return the string representation of the host (domain or IP address) for this URL, if any.
+    ///
+    /// If the host is a domain, and the domain ends with a final dot, the final dot is removed.
+    ///
+    /// See [`Self::without_final_dot`] for details on when you might want to use this.
+    pub fn host_str_without_final_dot(&self) -> Option<&str> {
+        if let Some(domain) = self.0.domain() {
+            if domain.ends_with('.') {
+                let domain_without_dot = &domain[..(domain.len() - 1)];
+                Some(domain_without_dot)
+            } else {
+                Some(domain)
+            }
+        } else {
+            self.0.host_str()
+        }
+    }
+}
+
 /// Can occur when parsing a string into a [`RelayUrl`].
 #[derive(Debug, Snafu)]
 #[snafu(display("Failed to parse"))]
