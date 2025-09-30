@@ -1410,7 +1410,6 @@ enum DiscoBoxError {
 
 #[derive(Debug)]
 enum ActorMessage {
-    PingActions(Vec<PingAction>),
     NetworkChange,
     ScheduleDirectAddrUpdate(UpdateReason, Option<(NodeId, RelayUrl)>),
     #[cfg(test)]
@@ -1627,8 +1626,6 @@ impl Actor {
                         // TODO: this might trigger too many packets at once, pace this
 
                         self.msock.node_map.prune_inactive();
-                        let msgs = self.msock.node_map.nodes_stayin_alive();
-                        self.handle_ping_actions(&sender, msgs).await;
                     }
                 }
                 state = self.netmon_watcher.updated() => {
@@ -1693,13 +1690,6 @@ impl Actor {
             .schedule_run(why, state.into());
     }
 
-    #[instrument(skip_all)]
-    async fn handle_ping_actions(&mut self, sender: &TransportsSender, msgs: Vec<PingAction>) {
-        if let Err(err) = self.msock.send_ping_actions(sender, msgs).await {
-            warn!("Failed to send ping actions: {err:#}");
-        }
-    }
-
     /// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
@@ -1719,9 +1709,6 @@ impl Actor {
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major).await;
-            }
-            ActorMessage::PingActions(ping_actions) => {
-                self.handle_ping_actions(sender, ping_actions).await;
             }
         }
     }
