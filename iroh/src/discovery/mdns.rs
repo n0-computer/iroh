@@ -164,6 +164,12 @@ impl MdnsDiscoveryBuilder {
     }
 
     /// Builds an [`MdnsDiscovery`] instance with the configured settings.
+    ///
+    /// # Errors
+    /// Returns an error if the network does not allow ipv4 OR ipv6.
+    ///
+    /// # Panics
+    /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     pub fn build(self, node_id: NodeId) -> Result<MdnsDiscovery, IntoDiscoveryError> {
         MdnsDiscovery::new(node_id, self.advertise, self.service_name)
     }
