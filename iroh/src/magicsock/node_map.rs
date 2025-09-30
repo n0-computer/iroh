@@ -3,6 +3,7 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
+    time::Duration,
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
@@ -308,6 +309,10 @@ impl NodeMap {
         self.inner.lock().expect("poisoned").conn_type(node_id)
     }
 
+    pub(super) fn latency(&self, node_id: NodeId) -> Option<Duration> {
+        self.inner.lock().expect("poisoned").latency(node_id)
+    }
+
     /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.inner.lock().expect("poisoned").remote_info(node_id)
@@ -507,6 +512,11 @@ impl NodeMapInner {
     fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.conn_type())
+    }
+
+    fn latency(&self, node_id: NodeId) -> Option<Duration> {
+        self.get(NodeStateKey::NodeId(node_id))
+            .and_then(|ep| ep.latency())
     }
 
     fn handle_pong(&mut self, sender: NodeId, src: &transports::Addr, pong: Pong) {

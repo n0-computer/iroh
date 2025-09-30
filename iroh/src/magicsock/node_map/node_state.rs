@@ -208,10 +208,8 @@ impl NodeState {
         self.conn_type.watch()
     }
 
-    /// Returns info about this node.
-    pub(super) fn info(&self, now: Instant) -> RemoteInfo {
-        let conn_type = self.conn_type.get();
-        let latency = match conn_type {
+    pub(super) fn latency(&self) -> Option<Duration> {
+        match self.conn_type.get() {
             ConnectionType::Direct(addr) => self
                 .udp_paths
                 .paths()
@@ -236,7 +234,13 @@ impl NodeState {
                 addr_latency.min(relay_latency)
             }
             ConnectionType::None => None,
-        };
+        }
+    }
+
+    /// Returns info about this node.
+    pub(super) fn info(&self, now: Instant) -> RemoteInfo {
+        let conn_type = self.conn_type.get();
+        let latency = self.latency();
 
         let addrs = self
             .udp_paths
