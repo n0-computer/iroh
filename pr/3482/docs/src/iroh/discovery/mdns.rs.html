@@ -699,37 +699,59 @@
 <a href=#699 id=699 data-nosnippet>699</a>        <span class="attr">#[tokio::test]
 <a href=#700 id=700 data-nosnippet>700</a>        #[traced_test]
 <a href=#701 id=701 data-nosnippet>701</a>        </span><span class="kw">async fn </span>test_service_names() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#702 id=702 data-nosnippet>702</a>            <span class="kw">let </span>id_a = SecretKey::generate(rand::thread_rng()).public();
-<a href=#703 id=703 data-nosnippet>703</a>            <span class="kw">let </span>discovery_a = MdnsDiscovery::builder().build(id_a)<span class="question-mark">?</span>;
-<a href=#704 id=704 data-nosnippet>704</a>
-<a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">let </span>id_b = SecretKey::generate(rand::thread_rng()).public();
-<a href=#706 id=706 data-nosnippet>706</a>            <span class="kw">let </span>discovery_b = MdnsDiscovery::builder()
-<a href=#707 id=707 data-nosnippet>707</a>                .service_name(<span class="string">"different.name"</span>)
-<a href=#708 id=708 data-nosnippet>708</a>                .build(id_b)<span class="question-mark">?</span>;
-<a href=#709 id=709 data-nosnippet>709</a>
-<a href=#710 id=710 data-nosnippet>710</a>            <span class="kw">let </span>node_data_a =
-<a href=#711 id=711 data-nosnippet>711</a>                NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:22222"</span>.parse().unwrap()]));
-<a href=#712 id=712 data-nosnippet>712</a>            discovery_a.publish(<span class="kw-2">&amp;</span>node_data_a);
+<a href=#702 id=702 data-nosnippet>702</a>            <span class="comment">// Create a discovery service using the default
+<a href=#703 id=703 data-nosnippet>703</a>            // service name
+<a href=#704 id=704 data-nosnippet>704</a>            </span><span class="kw">let </span>id_a = SecretKey::generate(rand::thread_rng()).public();
+<a href=#705 id=705 data-nosnippet>705</a>            <span class="kw">let </span>discovery_a = MdnsDiscovery::builder().build(id_a)<span class="question-mark">?</span>;
+<a href=#706 id=706 data-nosnippet>706</a>
+<a href=#707 id=707 data-nosnippet>707</a>            <span class="comment">// Create a discovery service using a custom
+<a href=#708 id=708 data-nosnippet>708</a>            // service name
+<a href=#709 id=709 data-nosnippet>709</a>            </span><span class="kw">let </span>id_b = SecretKey::generate(rand::thread_rng()).public();
+<a href=#710 id=710 data-nosnippet>710</a>            <span class="kw">let </span>discovery_b = MdnsDiscovery::builder()
+<a href=#711 id=711 data-nosnippet>711</a>                .service_name(<span class="string">"different.name"</span>)
+<a href=#712 id=712 data-nosnippet>712</a>                .build(id_b)<span class="question-mark">?</span>;
 <a href=#713 id=713 data-nosnippet>713</a>
-<a href=#714 id=714 data-nosnippet>714</a>            <span class="kw">let </span>node_data_b =
-<a href=#715 id=715 data-nosnippet>715</a>                NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse().unwrap()]));
-<a href=#716 id=716 data-nosnippet>716</a>            discovery_b.publish(<span class="kw-2">&amp;</span>node_data_b);
-<a href=#717 id=717 data-nosnippet>717</a>
-<a href=#718 id=718 data-nosnippet>718</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_a = discovery_a.resolve(id_b).unwrap();
-<a href=#719 id=719 data-nosnippet>719</a>            <span class="kw">let </span>result_a = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_a.next()).<span class="kw">await</span>;
-<a href=#720 id=720 data-nosnippet>720</a>            <span class="macro">assert!</span>(
-<a href=#721 id=721 data-nosnippet>721</a>                result_a.is_err(),
-<a href=#722 id=722 data-nosnippet>722</a>                <span class="string">"Node on a different service should not be discoverable"
-<a href=#723 id=723 data-nosnippet>723</a>            </span>);
+<a href=#714 id=714 data-nosnippet>714</a>            <span class="comment">// Create a discovery service using the same
+<a href=#715 id=715 data-nosnippet>715</a>            // custom service name
+<a href=#716 id=716 data-nosnippet>716</a>            </span><span class="kw">let </span>id_c = SecretKey::generate(rand::thread_rng()).public();
+<a href=#717 id=717 data-nosnippet>717</a>            <span class="kw">let </span>discovery_c = MdnsDiscovery::builder()
+<a href=#718 id=718 data-nosnippet>718</a>                .service_name(<span class="string">"different.name"</span>)
+<a href=#719 id=719 data-nosnippet>719</a>                .build(id_c)<span class="question-mark">?</span>;
+<a href=#720 id=720 data-nosnippet>720</a>
+<a href=#721 id=721 data-nosnippet>721</a>            <span class="kw">let </span>node_data_a =
+<a href=#722 id=722 data-nosnippet>722</a>                NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse().unwrap()]));
+<a href=#723 id=723 data-nosnippet>723</a>            discovery_a.publish(<span class="kw-2">&amp;</span>node_data_a);
 <a href=#724 id=724 data-nosnippet>724</a>
-<a href=#725 id=725 data-nosnippet>725</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_b = discovery_b.resolve(id_a).unwrap();
-<a href=#726 id=726 data-nosnippet>726</a>            <span class="kw">let </span>result_b = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_b.next()).<span class="kw">await</span>;
-<a href=#727 id=727 data-nosnippet>727</a>            <span class="macro">assert!</span>(
-<a href=#728 id=728 data-nosnippet>728</a>                result_b.is_err(),
-<a href=#729 id=729 data-nosnippet>729</a>                <span class="string">"Node on a different service should not be discoverable"
-<a href=#730 id=730 data-nosnippet>730</a>            </span>);
-<a href=#731 id=731 data-nosnippet>731</a>
-<a href=#732 id=732 data-nosnippet>732</a>            <span class="prelude-val">Ok</span>(())
-<a href=#733 id=733 data-nosnippet>733</a>        }
-<a href=#734 id=734 data-nosnippet>734</a>    }
-<a href=#735 id=735 data-nosnippet>735</a>}</code></pre></div></section></main></body></html>
+<a href=#725 id=725 data-nosnippet>725</a>            <span class="kw">let </span>node_data_b =
+<a href=#726 id=726 data-nosnippet>726</a>                NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:22222"</span>.parse().unwrap()]));
+<a href=#727 id=727 data-nosnippet>727</a>            discovery_b.publish(<span class="kw-2">&amp;</span>node_data_b);
+<a href=#728 id=728 data-nosnippet>728</a>
+<a href=#729 id=729 data-nosnippet>729</a>            <span class="kw">let </span>node_data_c =
+<a href=#730 id=730 data-nosnippet>730</a>                NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:33333"</span>.parse().unwrap()]));
+<a href=#731 id=731 data-nosnippet>731</a>            discovery_c.publish(<span class="kw-2">&amp;</span>node_data_c);
+<a href=#732 id=732 data-nosnippet>732</a>
+<a href=#733 id=733 data-nosnippet>733</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_a = discovery_a.resolve(id_b).unwrap();
+<a href=#734 id=734 data-nosnippet>734</a>            <span class="kw">let </span>result_a = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_a.next()).<span class="kw">await</span>;
+<a href=#735 id=735 data-nosnippet>735</a>            <span class="macro">assert!</span>(
+<a href=#736 id=736 data-nosnippet>736</a>                result_a.is_err(),
+<a href=#737 id=737 data-nosnippet>737</a>                <span class="string">"Node on a different service should NOT be discoverable"
+<a href=#738 id=738 data-nosnippet>738</a>            </span>);
+<a href=#739 id=739 data-nosnippet>739</a>
+<a href=#740 id=740 data-nosnippet>740</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_b = discovery_b.resolve(id_c).unwrap();
+<a href=#741 id=741 data-nosnippet>741</a>            <span class="kw">let </span>result_b = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_b.next()).<span class="kw">await</span>;
+<a href=#742 id=742 data-nosnippet>742</a>            <span class="macro">assert!</span>(
+<a href=#743 id=743 data-nosnippet>743</a>                result_b.is_ok(),
+<a href=#744 id=744 data-nosnippet>744</a>                <span class="string">"Node on the same service should be discoverable"
+<a href=#745 id=745 data-nosnippet>745</a>            </span>);
+<a href=#746 id=746 data-nosnippet>746</a>
+<a href=#747 id=747 data-nosnippet>747</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_b = discovery_b.resolve(id_a).unwrap();
+<a href=#748 id=748 data-nosnippet>748</a>            <span class="kw">let </span>result_b = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_b.next()).<span class="kw">await</span>;
+<a href=#749 id=749 data-nosnippet>749</a>            <span class="macro">assert!</span>(
+<a href=#750 id=750 data-nosnippet>750</a>                result_b.is_err(),
+<a href=#751 id=751 data-nosnippet>751</a>                <span class="string">"Node on a different service should NOT be discoverable"
+<a href=#752 id=752 data-nosnippet>752</a>            </span>);
+<a href=#753 id=753 data-nosnippet>753</a>
+<a href=#754 id=754 data-nosnippet>754</a>            <span class="prelude-val">Ok</span>(())
+<a href=#755 id=755 data-nosnippet>755</a>        }
+<a href=#756 id=756 data-nosnippet>756</a>    }
+<a href=#757 id=757 data-nosnippet>757</a>}</code></pre></div></section></main></body></html>
