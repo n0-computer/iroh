@@ -165,5 +165,16 @@ mod tests {
 
         let url3 = RelayUrl::from(Url::parse("https://example.com/").unwrap());
         assert_eq!(url, url3);
+
+        // tests `RelayUrl::without_final_dot`
+        assert_eq!(url.deref(), &Url::parse("https://example.com.").unwrap());
+        assert_eq!(
+            url.without_final_dot(),
+            Url::parse("https://example.com").unwrap()
+        );
+
+        // tests `RelayUrl::host_str_without_final_dot`
+        assert_eq!(url.host_str(), Some("example.com."));
+        assert_eq!(url.host_str_without_final_dot(), Some("example.com"));
     }
 }
