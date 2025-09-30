@@ -50,129 +50,130 @@
 <a href=#50 id=50 data-nosnippet>50</a>        <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.<span class="number">0</span>.deref().clone();
 <a href=#51 id=51 data-nosnippet>51</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(domain) = url.domain() {
 <a href=#52 id=52 data-nosnippet>52</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(stripped) = domain.strip_suffix(<span class="string">'.'</span>) {
-<a href=#53 id=53 data-nosnippet>53</a>                url.set_host(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>stripped.to_string())).ok();
-<a href=#54 id=54 data-nosnippet>54</a>            }
-<a href=#55 id=55 data-nosnippet>55</a>        }
-<a href=#56 id=56 data-nosnippet>56</a>        url
-<a href=#57 id=57 data-nosnippet>57</a>    }
-<a href=#58 id=58 data-nosnippet>58</a>
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="doccomment">/// Return the string representation of the host (domain or IP address) for this URL, if any.
-<a href=#60 id=60 data-nosnippet>60</a>    ///
-<a href=#61 id=61 data-nosnippet>61</a>    /// If the host is a domain, and the domain ends with a final dot, the final dot is removed.
-<a href=#62 id=62 data-nosnippet>62</a>    ///
-<a href=#63 id=63 data-nosnippet>63</a>    /// See [`Self::without_final_dot`] for details on when you might want to use this.
-<a href=#64 id=64 data-nosnippet>64</a>    </span><span class="kw">pub fn </span>host_str_without_final_dot(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>str&gt; {
-<a href=#65 id=65 data-nosnippet>65</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(domain) = <span class="self">self</span>.<span class="number">0</span>.domain() {
-<a href=#66 id=66 data-nosnippet>66</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(stripped) = domain.strip_suffix(<span class="string">'.'</span>) {
-<a href=#67 id=67 data-nosnippet>67</a>                <span class="prelude-val">Some</span>(stripped)
-<a href=#68 id=68 data-nosnippet>68</a>            } <span class="kw">else </span>{
-<a href=#69 id=69 data-nosnippet>69</a>                <span class="prelude-val">Some</span>(domain)
-<a href=#70 id=70 data-nosnippet>70</a>            }
-<a href=#71 id=71 data-nosnippet>71</a>        } <span class="kw">else </span>{
-<a href=#72 id=72 data-nosnippet>72</a>            <span class="self">self</span>.<span class="number">0</span>.host_str()
-<a href=#73 id=73 data-nosnippet>73</a>        }
-<a href=#74 id=74 data-nosnippet>74</a>    }
-<a href=#75 id=75 data-nosnippet>75</a>}
-<a href=#76 id=76 data-nosnippet>76</a>
-<a href=#77 id=77 data-nosnippet>77</a><span class="doccomment">/// Can occur when parsing a string into a [`RelayUrl`].
-<a href=#78 id=78 data-nosnippet>78</a></span><span class="attr">#[derive(Debug, Snafu)]
-<a href=#79 id=79 data-nosnippet>79</a>#[snafu(display(<span class="string">"Failed to parse"</span>))]
-<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub struct </span>RelayUrlParseError {
-<a href=#81 id=81 data-nosnippet>81</a>    source: url::ParseError,
-<a href=#82 id=82 data-nosnippet>82</a>    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
-<a href=#83 id=83 data-nosnippet>83</a>}
-<a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a><span class="doccomment">/// Support for parsing strings directly.
-<a href=#86 id=86 data-nosnippet>86</a>///
-<a href=#87 id=87 data-nosnippet>87</a>/// If you need more control over the error first create a [`Url`] and use [`RelayUrl::from`]
-<a href=#88 id=88 data-nosnippet>88</a>/// instead.
-<a href=#89 id=89 data-nosnippet>89</a></span><span class="kw">impl </span>FromStr <span class="kw">for </span>RelayUrl {
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= RelayUrlParseError;
-<a href=#91 id=91 data-nosnippet>91</a>
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">let </span>inner = Url::from_str(s).context(RelayUrlParseSnafu)<span class="question-mark">?</span>;
-<a href=#94 id=94 data-nosnippet>94</a>        <span class="prelude-val">Ok</span>(RelayUrl::from(inner))
-<a href=#95 id=95 data-nosnippet>95</a>    }
-<a href=#96 id=96 data-nosnippet>96</a>}
-<a href=#97 id=97 data-nosnippet>97</a>
-<a href=#98 id=98 data-nosnippet>98</a><span class="kw">impl </span>From&lt;RelayUrl&gt; <span class="kw">for </span>Url {
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">fn </span>from(value: RelayUrl) -&gt; <span class="self">Self </span>{
-<a href=#100 id=100 data-nosnippet>100</a>        Arc::unwrap_or_clone(value.<span class="number">0</span>)
-<a href=#101 id=101 data-nosnippet>101</a>    }
-<a href=#102 id=102 data-nosnippet>102</a>}
-<a href=#103 id=103 data-nosnippet>103</a>
-<a href=#104 id=104 data-nosnippet>104</a><span class="doccomment">/// Dereferences to the wrapped [`Url`].
-<a href=#105 id=105 data-nosnippet>105</a>///
-<a href=#106 id=106 data-nosnippet>106</a>/// Note that [`DerefMut`] is not implemented on purpose, so this type has more flexibility
-<a href=#107 id=107 data-nosnippet>107</a>/// to change the inner later.
-<a href=#108 id=108 data-nosnippet>108</a>///
-<a href=#109 id=109 data-nosnippet>109</a>/// [`DerefMut`]: std::ops::DerefMut
-<a href=#110 id=110 data-nosnippet>110</a></span><span class="kw">impl </span>Deref <span class="kw">for </span>RelayUrl {
-<a href=#111 id=111 data-nosnippet>111</a>    <span class="kw">type </span>Target = Url;
-<a href=#112 id=112 data-nosnippet>112</a>
-<a href=#113 id=113 data-nosnippet>113</a>    <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
-<a href=#114 id=114 data-nosnippet>114</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0
-<a href=#115 id=115 data-nosnippet>115</a>    </span>}
-<a href=#116 id=116 data-nosnippet>116</a>}
-<a href=#117 id=117 data-nosnippet>117</a>
-<a href=#118 id=118 data-nosnippet>118</a><span class="kw">impl </span>fmt::Debug <span class="kw">for </span>RelayUrl {
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
-<a href=#120 id=120 data-nosnippet>120</a>        f.debug_tuple(<span class="string">"RelayUrl"</span>)
-<a href=#121 id=121 data-nosnippet>121</a>            .field(<span class="kw-2">&amp;</span>DbgStr(<span class="self">self</span>.<span class="number">0</span>.as_str()))
-<a href=#122 id=122 data-nosnippet>122</a>            .finish()
-<a href=#123 id=123 data-nosnippet>123</a>    }
-<a href=#124 id=124 data-nosnippet>124</a>}
-<a href=#125 id=125 data-nosnippet>125</a>
-<a href=#126 id=126 data-nosnippet>126</a><span class="doccomment">/// Helper struct to format a &amp;str without allocating a String.
-<a href=#127 id=127 data-nosnippet>127</a>///
-<a href=#128 id=128 data-nosnippet>128</a>/// Maybe this is entirely unneeded and the compiler would be smart enough to never allocate
-<a href=#129 id=129 data-nosnippet>129</a>/// the String anyway.  Who knows.  Writing this was faster than checking the assembler
-<a href=#130 id=130 data-nosnippet>130</a>/// output.
-<a href=#131 id=131 data-nosnippet>131</a></span><span class="kw">struct </span>DbgStr&lt;<span class="lifetime">'a</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str);
-<a href=#132 id=132 data-nosnippet>132</a>
-<a href=#133 id=133 data-nosnippet>133</a><span class="kw">impl </span>fmt::Debug <span class="kw">for </span>DbgStr&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="macro">write!</span>(f, <span class="string">r#""{}""#</span>, <span class="self">self</span>.<span class="number">0</span>)
-<a href=#136 id=136 data-nosnippet>136</a>    }
-<a href=#137 id=137 data-nosnippet>137</a>}
-<a href=#138 id=138 data-nosnippet>138</a>
-<a href=#139 id=139 data-nosnippet>139</a><span class="attr">#[cfg(test)]
-<a href=#140 id=140 data-nosnippet>140</a></span><span class="kw">mod </span>tests {
-<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#142 id=142 data-nosnippet>142</a>
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="attr">#[test]
-<a href=#144 id=144 data-nosnippet>144</a>    </span><span class="kw">fn </span>test_relay_url_debug_display() {
-<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">let </span>url = RelayUrl::from(Url::parse(<span class="string">"https://example.com"</span>).unwrap());
-<a href=#146 id=146 data-nosnippet>146</a>
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="macro">assert_eq!</span>(<span class="macro">format!</span>(<span class="string">"{url:?}"</span>), <span class="string">r#"RelayUrl("https://example.com./")"#</span>);
-<a href=#148 id=148 data-nosnippet>148</a>
-<a href=#149 id=149 data-nosnippet>149</a>        <span class="macro">assert_eq!</span>(<span class="macro">format!</span>(<span class="string">"{url}"</span>), <span class="string">"https://example.com./"</span>);
-<a href=#150 id=150 data-nosnippet>150</a>    }
-<a href=#151 id=151 data-nosnippet>151</a>
-<a href=#152 id=152 data-nosnippet>152</a>    <span class="attr">#[test]
-<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">fn </span>test_relay_url_absolute() {
-<a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">let </span>url = RelayUrl::from(Url::parse(<span class="string">"https://example.com"</span>).unwrap());
-<a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="macro">assert_eq!</span>(url.domain(), <span class="prelude-val">Some</span>(<span class="string">"example.com."</span>));
-<a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw">let </span>url1 = RelayUrl::from(Url::parse(<span class="string">"https://example.com."</span>).unwrap());
-<a href=#159 id=159 data-nosnippet>159</a>        <span class="macro">assert_eq!</span>(url, url1);
-<a href=#160 id=160 data-nosnippet>160</a>
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="kw">let </span>url2 = RelayUrl::from(Url::parse(<span class="string">"https://example.com./"</span>).unwrap());
-<a href=#162 id=162 data-nosnippet>162</a>        <span class="macro">assert_eq!</span>(url, url2);
-<a href=#163 id=163 data-nosnippet>163</a>
-<a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>url3 = RelayUrl::from(Url::parse(<span class="string">"https://example.com/"</span>).unwrap());
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="macro">assert_eq!</span>(url, url3);
-<a href=#166 id=166 data-nosnippet>166</a>
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="comment">// tests `RelayUrl::without_final_dot`
-<a href=#168 id=168 data-nosnippet>168</a>        </span><span class="macro">assert_eq!</span>(url.deref(), <span class="kw-2">&amp;</span>Url::parse(<span class="string">"https://example.com."</span>).unwrap());
-<a href=#169 id=169 data-nosnippet>169</a>        <span class="macro">assert_eq!</span>(
-<a href=#170 id=170 data-nosnippet>170</a>            url.without_final_dot(),
-<a href=#171 id=171 data-nosnippet>171</a>            Url::parse(<span class="string">"https://example.com"</span>).unwrap()
-<a href=#172 id=172 data-nosnippet>172</a>        );
-<a href=#173 id=173 data-nosnippet>173</a>
-<a href=#174 id=174 data-nosnippet>174</a>        <span class="comment">// tests `RelayUrl::host_str_without_final_dot`
-<a href=#175 id=175 data-nosnippet>175</a>        </span><span class="macro">assert_eq!</span>(url.host_str(), <span class="prelude-val">Some</span>(<span class="string">"example.com."</span>));
-<a href=#176 id=176 data-nosnippet>176</a>        <span class="macro">assert_eq!</span>(url.host_str_without_final_dot(), <span class="prelude-val">Some</span>(<span class="string">"example.com"</span>));
-<a href=#177 id=177 data-nosnippet>177</a>    }
-<a href=#178 id=178 data-nosnippet>178</a>}</code></pre></div></section></main></body></html>
+<a href=#53 id=53 data-nosnippet>53</a>                <span class="kw">let </span>stripped = stripped.to_string();
+<a href=#54 id=54 data-nosnippet>54</a>                url.set_host(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>stripped)).ok();
+<a href=#55 id=55 data-nosnippet>55</a>            }
+<a href=#56 id=56 data-nosnippet>56</a>        }
+<a href=#57 id=57 data-nosnippet>57</a>        url
+<a href=#58 id=58 data-nosnippet>58</a>    }
+<a href=#59 id=59 data-nosnippet>59</a>
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Return the string representation of the host (domain or IP address) for this URL, if any.
+<a href=#61 id=61 data-nosnippet>61</a>    ///
+<a href=#62 id=62 data-nosnippet>62</a>    /// If the host is a domain, and the domain ends with a final dot, the final dot is removed.
+<a href=#63 id=63 data-nosnippet>63</a>    ///
+<a href=#64 id=64 data-nosnippet>64</a>    /// See [`Self::without_final_dot`] for details on when you might want to use this.
+<a href=#65 id=65 data-nosnippet>65</a>    </span><span class="kw">pub fn </span>host_str_without_final_dot(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>str&gt; {
+<a href=#66 id=66 data-nosnippet>66</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(domain) = <span class="self">self</span>.<span class="number">0</span>.domain() {
+<a href=#67 id=67 data-nosnippet>67</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(stripped) = domain.strip_suffix(<span class="string">'.'</span>) {
+<a href=#68 id=68 data-nosnippet>68</a>                <span class="prelude-val">Some</span>(stripped)
+<a href=#69 id=69 data-nosnippet>69</a>            } <span class="kw">else </span>{
+<a href=#70 id=70 data-nosnippet>70</a>                <span class="prelude-val">Some</span>(domain)
+<a href=#71 id=71 data-nosnippet>71</a>            }
+<a href=#72 id=72 data-nosnippet>72</a>        } <span class="kw">else </span>{
+<a href=#73 id=73 data-nosnippet>73</a>            <span class="self">self</span>.<span class="number">0</span>.host_str()
+<a href=#74 id=74 data-nosnippet>74</a>        }
+<a href=#75 id=75 data-nosnippet>75</a>    }
+<a href=#76 id=76 data-nosnippet>76</a>}
+<a href=#77 id=77 data-nosnippet>77</a>
+<a href=#78 id=78 data-nosnippet>78</a><span class="doccomment">/// Can occur when parsing a string into a [`RelayUrl`].
+<a href=#79 id=79 data-nosnippet>79</a></span><span class="attr">#[derive(Debug, Snafu)]
+<a href=#80 id=80 data-nosnippet>80</a>#[snafu(display(<span class="string">"Failed to parse"</span>))]
+<a href=#81 id=81 data-nosnippet>81</a></span><span class="kw">pub struct </span>RelayUrlParseError {
+<a href=#82 id=82 data-nosnippet>82</a>    source: url::ParseError,
+<a href=#83 id=83 data-nosnippet>83</a>    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+<a href=#84 id=84 data-nosnippet>84</a>}
+<a href=#85 id=85 data-nosnippet>85</a>
+<a href=#86 id=86 data-nosnippet>86</a><span class="doccomment">/// Support for parsing strings directly.
+<a href=#87 id=87 data-nosnippet>87</a>///
+<a href=#88 id=88 data-nosnippet>88</a>/// If you need more control over the error first create a [`Url`] and use [`RelayUrl::from`]
+<a href=#89 id=89 data-nosnippet>89</a>/// instead.
+<a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">impl </span>FromStr <span class="kw">for </span>RelayUrl {
+<a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= RelayUrlParseError;
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="kw">let </span>inner = Url::from_str(s).context(RelayUrlParseSnafu)<span class="question-mark">?</span>;
+<a href=#95 id=95 data-nosnippet>95</a>        <span class="prelude-val">Ok</span>(RelayUrl::from(inner))
+<a href=#96 id=96 data-nosnippet>96</a>    }
+<a href=#97 id=97 data-nosnippet>97</a>}
+<a href=#98 id=98 data-nosnippet>98</a>
+<a href=#99 id=99 data-nosnippet>99</a><span class="kw">impl </span>From&lt;RelayUrl&gt; <span class="kw">for </span>Url {
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">fn </span>from(value: RelayUrl) -&gt; <span class="self">Self </span>{
+<a href=#101 id=101 data-nosnippet>101</a>        Arc::unwrap_or_clone(value.<span class="number">0</span>)
+<a href=#102 id=102 data-nosnippet>102</a>    }
+<a href=#103 id=103 data-nosnippet>103</a>}
+<a href=#104 id=104 data-nosnippet>104</a>
+<a href=#105 id=105 data-nosnippet>105</a><span class="doccomment">/// Dereferences to the wrapped [`Url`].
+<a href=#106 id=106 data-nosnippet>106</a>///
+<a href=#107 id=107 data-nosnippet>107</a>/// Note that [`DerefMut`] is not implemented on purpose, so this type has more flexibility
+<a href=#108 id=108 data-nosnippet>108</a>/// to change the inner later.
+<a href=#109 id=109 data-nosnippet>109</a>///
+<a href=#110 id=110 data-nosnippet>110</a>/// [`DerefMut`]: std::ops::DerefMut
+<a href=#111 id=111 data-nosnippet>111</a></span><span class="kw">impl </span>Deref <span class="kw">for </span>RelayUrl {
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">type </span>Target = Url;
+<a href=#113 id=113 data-nosnippet>113</a>
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
+<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0
+<a href=#116 id=116 data-nosnippet>116</a>    </span>}
+<a href=#117 id=117 data-nosnippet>117</a>}
+<a href=#118 id=118 data-nosnippet>118</a>
+<a href=#119 id=119 data-nosnippet>119</a><span class="kw">impl </span>fmt::Debug <span class="kw">for </span>RelayUrl {
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
+<a href=#121 id=121 data-nosnippet>121</a>        f.debug_tuple(<span class="string">"RelayUrl"</span>)
+<a href=#122 id=122 data-nosnippet>122</a>            .field(<span class="kw-2">&amp;</span>DbgStr(<span class="self">self</span>.<span class="number">0</span>.as_str()))
+<a href=#123 id=123 data-nosnippet>123</a>            .finish()
+<a href=#124 id=124 data-nosnippet>124</a>    }
+<a href=#125 id=125 data-nosnippet>125</a>}
+<a href=#126 id=126 data-nosnippet>126</a>
+<a href=#127 id=127 data-nosnippet>127</a><span class="doccomment">/// Helper struct to format a &amp;str without allocating a String.
+<a href=#128 id=128 data-nosnippet>128</a>///
+<a href=#129 id=129 data-nosnippet>129</a>/// Maybe this is entirely unneeded and the compiler would be smart enough to never allocate
+<a href=#130 id=130 data-nosnippet>130</a>/// the String anyway.  Who knows.  Writing this was faster than checking the assembler
+<a href=#131 id=131 data-nosnippet>131</a>/// output.
+<a href=#132 id=132 data-nosnippet>132</a></span><span class="kw">struct </span>DbgStr&lt;<span class="lifetime">'a</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'a </span>str);
+<a href=#133 id=133 data-nosnippet>133</a>
+<a href=#134 id=134 data-nosnippet>134</a><span class="kw">impl </span>fmt::Debug <span class="kw">for </span>DbgStr&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="macro">write!</span>(f, <span class="string">r#""{}""#</span>, <span class="self">self</span>.<span class="number">0</span>)
+<a href=#137 id=137 data-nosnippet>137</a>    }
+<a href=#138 id=138 data-nosnippet>138</a>}
+<a href=#139 id=139 data-nosnippet>139</a>
+<a href=#140 id=140 data-nosnippet>140</a><span class="attr">#[cfg(test)]
+<a href=#141 id=141 data-nosnippet>141</a></span><span class="kw">mod </span>tests {
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#143 id=143 data-nosnippet>143</a>
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="attr">#[test]
+<a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">fn </span>test_relay_url_debug_display() {
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">let </span>url = RelayUrl::from(Url::parse(<span class="string">"https://example.com"</span>).unwrap());
+<a href=#147 id=147 data-nosnippet>147</a>
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="macro">assert_eq!</span>(<span class="macro">format!</span>(<span class="string">"{url:?}"</span>), <span class="string">r#"RelayUrl("https://example.com./")"#</span>);
+<a href=#149 id=149 data-nosnippet>149</a>
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="macro">assert_eq!</span>(<span class="macro">format!</span>(<span class="string">"{url}"</span>), <span class="string">"https://example.com./"</span>);
+<a href=#151 id=151 data-nosnippet>151</a>    }
+<a href=#152 id=152 data-nosnippet>152</a>
+<a href=#153 id=153 data-nosnippet>153</a>    <span class="attr">#[test]
+<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">fn </span>test_relay_url_absolute() {
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">let </span>url = RelayUrl::from(Url::parse(<span class="string">"https://example.com"</span>).unwrap());
+<a href=#156 id=156 data-nosnippet>156</a>
+<a href=#157 id=157 data-nosnippet>157</a>        <span class="macro">assert_eq!</span>(url.domain(), <span class="prelude-val">Some</span>(<span class="string">"example.com."</span>));
+<a href=#158 id=158 data-nosnippet>158</a>
+<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">let </span>url1 = RelayUrl::from(Url::parse(<span class="string">"https://example.com."</span>).unwrap());
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="macro">assert_eq!</span>(url, url1);
+<a href=#161 id=161 data-nosnippet>161</a>
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span>url2 = RelayUrl::from(Url::parse(<span class="string">"https://example.com./"</span>).unwrap());
+<a href=#163 id=163 data-nosnippet>163</a>        <span class="macro">assert_eq!</span>(url, url2);
+<a href=#164 id=164 data-nosnippet>164</a>
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="kw">let </span>url3 = RelayUrl::from(Url::parse(<span class="string">"https://example.com/"</span>).unwrap());
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="macro">assert_eq!</span>(url, url3);
+<a href=#167 id=167 data-nosnippet>167</a>
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="comment">// tests `RelayUrl::without_final_dot`
+<a href=#169 id=169 data-nosnippet>169</a>        </span><span class="macro">assert_eq!</span>(url.deref(), <span class="kw-2">&amp;</span>Url::parse(<span class="string">"https://example.com."</span>).unwrap());
+<a href=#170 id=170 data-nosnippet>170</a>        <span class="macro">assert_eq!</span>(
+<a href=#171 id=171 data-nosnippet>171</a>            url.without_final_dot(),
+<a href=#172 id=172 data-nosnippet>172</a>            Url::parse(<span class="string">"https://example.com"</span>).unwrap()
+<a href=#173 id=173 data-nosnippet>173</a>        );
+<a href=#174 id=174 data-nosnippet>174</a>
+<a href=#175 id=175 data-nosnippet>175</a>        <span class="comment">// tests `RelayUrl::host_str_without_final_dot`
+<a href=#176 id=176 data-nosnippet>176</a>        </span><span class="macro">assert_eq!</span>(url.host_str(), <span class="prelude-val">Some</span>(<span class="string">"example.com."</span>));
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="macro">assert_eq!</span>(url.host_str_without_final_dot(), <span class="prelude-val">Some</span>(<span class="string">"example.com"</span>));
+<a href=#178 id=178 data-nosnippet>178</a>    }
+<a href=#179 id=179 data-nosnippet>179</a>}</code></pre></div></section></main></body></html>
