@@ -50,7 +50,8 @@ impl RelayUrl {
         let mut url = self.0.deref().clone();
         if let Some(domain) = url.domain() {
             if let Some(stripped) = domain.strip_suffix('.') {
-                url.set_host(Some(&stripped.to_string())).ok();
+                let stripped = stripped.to_string();
+                url.set_host(Some(&stripped)).ok();
             }
         }
         url
