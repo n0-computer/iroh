@@ -378,12 +378,12 @@
 <a href=#378 id=378 data-nosnippet>378</a>    }
 <a href=#379 id=379 data-nosnippet>379</a>
 <a href=#380 id=380 data-nosnippet>380</a>    <span class="attr">#[cfg(not(wasm_browser))]
-<a href=#381 id=381 data-nosnippet>381</a>    </span><span class="doccomment">/// Parses a [`NodeInfo`] from a TXT records lookup.
-<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_txt_lookup(
-<a href=#383 id=383 data-nosnippet>383</a>        name: String,
+<a href=#381 id=381 data-nosnippet>381</a>    </span><span class="doccomment">/// Parses a [`NodeInfo`] from DNS TXT lookup.
+<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">pub fn </span>from_txt_lookup(
+<a href=#383 id=383 data-nosnippet>383</a>        domain_name: String,
 <a href=#384 id=384 data-nosnippet>384</a>        lookup: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">crate</span>::dns::TxtRecordData&gt;,
 <a href=#385 id=385 data-nosnippet>385</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
-<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">let </span>attrs = TxtAttrs::from_txt_lookup(name, lookup)<span class="question-mark">?</span>;
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">let </span>attrs = TxtAttrs::from_txt_lookup(domain_name, lookup)<span class="question-mark">?</span>;
 <a href=#387 id=387 data-nosnippet>387</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::from(attrs))
 <a href=#388 id=388 data-nosnippet>388</a>    }
 <a href=#389 id=389 data-nosnippet>389</a>
