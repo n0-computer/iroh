@@ -378,12 +378,12 @@ impl NodeInfo {
     }
 
     #[cfg(not(wasm_browser))]
-    /// Parses a [`NodeInfo`] from a TXT records lookup.
-    pub(crate) fn from_txt_lookup(
-        name: String,
+    /// Parses a [`NodeInfo`] from DNS TXT lookup.
+    pub fn from_txt_lookup(
+        domain_name: String,
         lookup: impl Iterator<Item = crate::dns::TxtRecordData>,
     ) -> Result<Self, ParseError> {
-        let attrs = TxtAttrs::from_txt_lookup(name, lookup)?;
+        let attrs = TxtAttrs::from_txt_lookup(domain_name, lookup)?;
         Ok(Self::from(attrs))
     }
 
