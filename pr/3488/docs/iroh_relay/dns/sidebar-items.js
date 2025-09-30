@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["N0_DNS_NODE_ORIGIN_PROD","N0_DNS_NODE_ORIGIN_STAGING"],"enum":["DnsError","LookupError"],"struct":["DnsResolver","StaggeredError","TxtRecordData"],"trait":["Resolver"],"type":["BoxIter"]};
