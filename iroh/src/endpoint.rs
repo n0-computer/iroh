@@ -70,7 +70,7 @@ pub use quinn_proto::{
 use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
     AddNodeAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    RemoteInfo, Source,
+    Source,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -108,8 +108,6 @@ pub struct Builder {
     discovery: Vec<Box<dyn DynIntoDiscovery>>,
     discovery_user_data: Option<UserData>,
     proxy_url: Option<Url>,
-    /// List of known nodes. See [`Builder::known_nodes`].
-    node_map: Option<Vec<NodeAddr>>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
@@ -134,7 +132,6 @@ impl Default for Builder {
             discovery: Default::default(),
             discovery_user_data: Default::default(),
             proxy_url: None,
-            node_map: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
@@ -195,7 +192,6 @@ impl Builder {
             addr_v6: self.addr_v6,
             secret_key,
             relay_map,
-            node_map: self.node_map,
             discovery,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
@@ -389,12 +385,6 @@ impl Builder {
     /// for applications to parse and use.
     pub fn user_data_for_discovery(mut self, user_data: UserData) -> Self {
         self.discovery_user_data = Some(user_data);
-        self
-    }
-
-    /// Optionally set a list of known nodes.
-    pub fn known_nodes(mut self, nodes: Vec<NodeAddr>) -> Self {
-        self.node_map = Some(nodes);
         self
     }
 
@@ -842,7 +832,7 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
+    fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
         self.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
 
@@ -865,7 +855,7 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn add_node_addr_with_source(
+    pub(crate) fn add_node_addr_with_source(
         &self,
         node_addr: NodeAddr,
         source: &'static str,
@@ -1076,35 +1066,6 @@ impl Endpoint {
     }
 
     // # Getter methods for information about other nodes.
-
-    /// Returns information about the remote node identified by a [`NodeId`].
-    ///
-    /// The [`Endpoint`] keeps some information about remote iroh nodes, which it uses to find
-    /// the best path to a node. Having information on a remote node, however, does not mean we have
-    /// ever connected to it to or even whether a connection is even possible. The information about a
-    /// remote node will change over time, as the [`Endpoint`] learns more about the node. Future
-    /// calls may return different information. Furthermore, node information may even be
-    /// completely evicted as it becomes stale.
-    ///
-    /// See also [`Endpoint::remote_info_iter`] which returns information on all nodes known
-    /// by this [`Endpoint`].
-    pub fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.msock.remote_info(node_id)
-    }
-
-    /// Returns information about all the remote nodes this [`Endpoint`] knows about.
-    ///
-    /// This returns the same information as [`Endpoint::remote_info`] for each node known to this
-    /// [`Endpoint`].
-    ///
-    /// The [`Endpoint`] keeps some information about remote iroh nodes, which it uses to find
-    /// the best path to a node. This returns all the nodes it knows about, regardless of whether a
-    /// connection was ever made or is even possible.
-    ///
-    /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
-    pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> + use<> {
-        self.msock.list_remote_infos().into_iter()
-    }
 
     /// Returns a stream of all remote nodes discovered through the endpoint's discovery services.
     ///
@@ -1377,6 +1338,29 @@ impl Endpoint {
     }
 
     // # Remaining private methods
+
+    /// Checks if the given `NodeId` needs discovery.
+    pub(crate) fn needs_discovery(&self, node_id: NodeId, max_age: Duration) -> bool {
+        match self.msock.remote_info(node_id) {
+            // No info means no path to node -> start discovery.
+            None => true,
+            Some(info) => {
+                match (
+                    info.last_received(),
+                    info.relay_url.as_ref().and_then(|r| r.last_alive),
+                ) {
+                    // No path to node -> start discovery.
+                    (None, None) => true,
+                    // If we haven't received on direct addresses or the relay for MAX_AGE,
+                    // start discovery.
+                    (Some(elapsed), Some(elapsed_relay)) => {
+                        elapsed > max_age && elapsed_relay > max_age
+                    }
+                    (Some(elapsed), _) | (_, Some(elapsed)) => elapsed > max_age,
+                }
+            }
+        }
+    }
 
     /// Return the quic mapped address for this `node_id` and possibly start discovery
     /// services if discovery is enabled on this magic endpoint.
@@ -2260,10 +2244,7 @@ fn is_cgi() -> bool {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
-    use std::{
-        net::SocketAddr,
-        time::{Duration, Instant},
-    };
+    use std::time::{Duration, Instant};
 
     use iroh_base::{NodeAddr, NodeId, SecretKey};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
@@ -2278,7 +2259,7 @@ mod tests {
     use crate::{
         RelayMode,
         discovery::static_provider::StaticProvider,
-        endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
+        endpoint::{ConnectOptions, Connection, ConnectionType},
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{run_relay_server, run_relay_server_with},
     };
@@ -2398,60 +2379,6 @@ mod tests {
         .e()?;
         server.e()??;
         client.e()??;
-        Ok(())
-    }
-
-    /// Test that peers are properly restored
-    #[tokio::test]
-    #[traced_test]
-    async fn restore_peers() -> Result {
-        let secret_key = SecretKey::generate(rand::thread_rng());
-
-        /// Create an endpoint for the test.
-        async fn new_endpoint(
-            secret_key: SecretKey,
-            nodes: Option<Vec<NodeAddr>>,
-        ) -> Result<Endpoint> {
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-
-            let mut builder = Endpoint::builder()
-                .secret_key(secret_key.clone())
-                .transport_config(transport_config);
-            if let Some(nodes) = nodes {
-                builder = builder.known_nodes(nodes);
-            }
-            Ok(builder.alpns(vec![TEST_ALPN.to_vec()]).bind().await?)
-        }
-
-        // create the peer that will be added to the peer map
-        let peer_id = SecretKey::generate(rand::thread_rng()).public();
-        let direct_addr: SocketAddr =
-            (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 8758u16).into();
-        let node_addr = NodeAddr::new(peer_id).with_direct_addresses([direct_addr]);
-
-        info!("setting up first endpoint");
-        // first time, create a magic endpoint without peers but a peers file and add addressing
-        // information for a peer
-        let endpoint = new_endpoint(secret_key.clone(), None).await?;
-        assert_eq!(endpoint.remote_info_iter().count(), 0);
-        endpoint.add_node_addr(node_addr.clone())?;
-
-        // Grab the current addrs
-        let node_addrs: Vec<NodeAddr> = endpoint.remote_info_iter().map(Into::into).collect();
-        assert_eq!(node_addrs.len(), 1);
-        assert_eq!(node_addrs[0], node_addr);
-
-        info!("closing endpoint");
-        // close the endpoint and restart it
-        endpoint.close().await;
-
-        info!("restarting endpoint");
-        // now restart it and check the addressing info of the peer
-        let endpoint = new_endpoint(secret_key, Some(node_addrs)).await?;
-        let RemoteInfo { mut addrs, .. } = endpoint.remote_info(peer_id).e()?;
-        let conn_addr = addrs.pop().unwrap().addr;
-        assert_eq!(conn_addr, direct_addr);
         Ok(())
     }
 

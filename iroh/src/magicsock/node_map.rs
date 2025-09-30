@@ -22,8 +22,8 @@ mod path_state;
 mod path_validity;
 mod udp_paths;
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
+pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo};
+pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, RemoteInfo, SendPing};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -285,6 +285,7 @@ impl NodeMap {
     }
 
     /// Returns the [`RemoteInfo`]s for each node in the node map.
+    #[cfg(test)]
     pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
         // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
         // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
@@ -473,6 +474,7 @@ impl NodeMapInner {
         *node_state.quic_mapped_addr()
     }
 
+    #[cfg(test)]
     fn node_states(&self) -> impl Iterator<Item = (&usize, &NodeState)> {
         self.by_id.iter()
     }
@@ -482,6 +484,7 @@ impl NodeMapInner {
     }
 
     /// Get the [`RemoteInfo`]s for all nodes.
+    #[cfg(test)]
     fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
         self.node_states().map(move |(_, ep)| ep.info(now))
     }

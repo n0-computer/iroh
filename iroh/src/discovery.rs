@@ -562,7 +562,7 @@ impl DiscoveryTask {
         delay: Option<Duration>,
     ) -> Result<Option<Self>, DiscoveryError> {
         // If discovery is not needed, don't even spawn a task.
-        if !Self::needs_discovery(ep, node_id) {
+        if !ep.needs_discovery(node_id, MAX_AGE) {
             return Ok(None);
         }
         ensure!(ep.discovery().is_some(), NoServiceConfiguredSnafu);
@@ -574,7 +574,7 @@ impl DiscoveryTask {
                 // If delay is set, wait and recheck if discovery is needed. If not, early-exit.
                 if let Some(delay) = delay {
                     time::sleep(delay).await;
-                    if !Self::needs_discovery(&ep, node_id) {
+                    if !ep.needs_discovery(node_id, MAX_AGE) {
                         debug!("no discovery needed, abort");
                         on_first_tx.send(Ok(())).ok();
                         return;
@@ -608,30 +608,6 @@ impl DiscoveryTask {
             .resolve(node_id)
             .ok_or(NoResultsSnafu { node_id }.build())?;
         Ok(stream)
-    }
-
-    /// We need discovery if we have no paths to the node, or if the paths we do have
-    /// have timed out.
-    fn needs_discovery(ep: &Endpoint, node_id: NodeId) -> bool {
-        match ep.remote_info(node_id) {
-            // No info means no path to node -> start discovery.
-            None => true,
-            Some(info) => {
-                match (
-                    info.last_received(),
-                    info.relay_url.as_ref().and_then(|r| r.last_alive),
-                ) {
-                    // No path to node -> start discovery.
-                    (None, None) => true,
-                    // If we haven't received on direct addresses or the relay for MAX_AGE,
-                    // start discovery.
-                    (Some(elapsed), Some(elapsed_relay)) => {
-                        elapsed > MAX_AGE && elapsed_relay > MAX_AGE
-                    }
-                    (Some(elapsed), _) | (_, Some(elapsed)) => elapsed > MAX_AGE,
-                }
-            }
-        }
     }
 
     async fn run(

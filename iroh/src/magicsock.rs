@@ -73,6 +73,7 @@ use crate::{
     disco::{self, SendAddr},
     discovery::{Discovery, DiscoveryEvent, DiscoverySubscribers, NodeData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
+    magicsock::node_map::RemoteInfo,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, IpMappedAddresses, Report},
 };
@@ -86,7 +87,7 @@ pub use node_map::Source;
 
 pub use self::{
     metrics::Metrics,
-    node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
+    node_map::{ConnectionType, ControlMsg, DirectAddrInfo},
 };
 
 /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
@@ -112,9 +113,6 @@ pub(crate) struct Options {
 
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
     pub(crate) relay_map: RelayMap,
-
-    /// An optional [`NodeMap`], to restore information about nodes.
-    pub(crate) node_map: Option<Vec<NodeAddr>>,
 
     /// Optional node discovery mechanism.
     pub(crate) discovery: Option<Box<dyn Discovery>>,
@@ -290,6 +288,7 @@ impl MagicSock {
     }
 
     /// Return the [`RemoteInfo`]s of all nodes in the node map.
+    #[cfg(test)]
     pub(crate) fn list_remote_infos(&self) -> Vec<RemoteInfo> {
         self.node_map.list_remote_infos(Instant::now())
     }
@@ -380,7 +379,7 @@ impl MagicSock {
 
     /// Add addresses for a node to the magic socket's addresbook.
     #[instrument(skip_all)]
-    pub fn add_node_addr(
+    pub(crate) fn add_node_addr(
         &self,
         mut addr: NodeAddr,
         source: node_map::Source,
@@ -1342,7 +1341,6 @@ impl Handle {
             addr_v6,
             secret_key,
             relay_map,
-            node_map,
             discovery,
             discovery_user_data,
             #[cfg(not(wasm_browser))]
@@ -1369,9 +1367,8 @@ impl Handle {
         let ipv6_reported = false;
 
         // load the node data
-        let node_map = node_map.unwrap_or_default();
         let node_map = NodeMap::load_from_vec(
-            node_map,
+            Vec::new(),
             #[cfg(any(test, feature = "test-utils"))]
             path_selection,
             ipv6_reported,
@@ -2562,7 +2559,6 @@ mod tests {
                 addr_v6: None,
                 secret_key,
                 relay_map: RelayMap::empty(),
-                node_map: None,
                 discovery: None,
                 proxy_url: None,
                 dns_resolver: DnsResolver::new(),
@@ -3095,7 +3091,6 @@ mod tests {
             addr_v6: None,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
-            node_map: None,
             discovery: None,
             discovery_user_data: None,
             dns_resolver,
