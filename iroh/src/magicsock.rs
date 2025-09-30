@@ -40,14 +40,13 @@ use nested_enum_utils::common_fields;
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
-use quinn::{ServerConfig, WeakConnectionHandle};
+use node_map::NodeStateMessage;
+use quinn::ServerConfig;
 use rand::Rng;
 use snafu::{ResultExt, Snafu};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
-use tracing::{
-    Instrument, Level, debug, event, info, info_span, instrument, trace, trace_span, warn,
-};
+use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, MagicTransport};
 use url::Url;
 
@@ -202,8 +201,6 @@ pub(crate) struct MagicSock {
     ipv6_reported: Arc<AtomicBool>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
-    /// Tracks existing connections
-    connection_map: ConnectionMap,
 
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
@@ -227,22 +224,6 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
-}
-
-#[derive(Default, Debug)]
-struct ConnectionMap {
-    map: std::sync::Mutex<BTreeMap<NodeId, Vec<WeakConnectionHandle>>>,
-}
-
-impl ConnectionMap {
-    fn insert(&self, remote: NodeId, handle: WeakConnectionHandle) {
-        self.map
-            .lock()
-            .expect("poisoned")
-            .entry(remote)
-            .or_default()
-            .push(handle);
-    }
 }
 
 #[allow(missing_docs)]
@@ -303,31 +284,22 @@ impl MagicSock {
     pub(crate) fn register_connection(&self, remote: NodeId, conn: &quinn::Connection) {
         debug!(%remote, "register connection");
         let weak_handle = conn.weak_handle();
-        self.connection_map.insert(remote, weak_handle);
-
-        // TODO: track task
-        // TODO: find a good home for this
-        let mut path_events = conn.path_events();
-        let _task = task::spawn(
-            async move {
-                loop {
-                    match path_events.recv().await {
-                        Ok(event) => {
-                            info!(remote = %remote, "path event: {:?}", event);
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                            warn!("lagged path events");
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
+        let node_state = self.node_map.node_state_actor(remote);
+        let mut msg = NodeStateMessage::AddConnection(weak_handle);
+        loop {
+            match node_state.try_send(msg) {
+                Ok(()) => break,
+                Err(mpsc::error::TrySendError::Closed(msg)) => {
+                    error!(?msg, "NodeStateActor closed");
+                    break;
+                }
+                Err(mpsc::error::TrySendError::Full(ret_msg)) => {
+                    warn!("NodeStateActor inbox full when adding new connection");
+                    msg = ret_msg;
+                    // TODO: Yikes!
+                    tokio::task::yield_now();
                 }
             }
-            .instrument(info_span!("path events", %remote)),
-        );
-
-        // open additional paths
-        if let Some(addr) = self.node_map.get_current_addr(remote) {
-            self.add_paths(addr);
         }
     }
 
@@ -438,10 +410,6 @@ impl MagicSock {
         self.node_map.get_all_paths_addr_for_node(node_id)
     }
 
-    pub(crate) fn get_direct_addrs(&self, node_id: NodeId) -> Vec<SocketAddr> {
-        self.node_map.get_direct_addrs(node_id)
-    }
-
     /// Add potential addresses for a node to the [`NodeState`].
     ///
     /// This is used to add possible paths that the remote node might be reachable on.  They
@@ -481,74 +449,6 @@ impl MagicSock {
             Err(EmptyPrunedSnafu { pruned }.build())
         } else {
             Err(EmptySnafu.build())
-        }
-    }
-
-    /// Adds all available addresses in the given `addr` as paths
-    fn add_paths(&self, addr: NodeAddr) {
-        let mut map = self.connection_map.map.lock().expect("poisoned");
-        let mut to_delete = Vec::new();
-        if let Some(conns) = map.get_mut(&addr.node_id) {
-            for (i, conn) in conns.into_iter().enumerate() {
-                if let Some(conn) = conn.upgrade() {
-                    for addr in addr.direct_addresses() {
-                        let conn = conn.clone();
-                        let addr = *addr;
-                        task::spawn(
-                            async move {
-                                debug!(%addr, "open path IP");
-                                match conn
-                                    .open_path_ensure(addr, quinn_proto::PathStatus::Available)
-                                    .await
-                                {
-                                    Ok(path) => {
-                                        path.set_max_idle_timeout(Some(MAX_IDLE_TIMEOUT)).ok();
-                                        path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
-                                    }
-                                    Err(err) => {
-                                        warn!("failed to open path {:?}", err);
-                                    }
-                                }
-                            }
-                            .instrument(info_span!("open path IP")),
-                        );
-                    }
-                    // Insert the relay addr
-                    if let Some(addr) = self.get_mapping_addr(addr.node_id) {
-                        let conn = conn.clone();
-                        let addr = addr.private_socket_addr();
-                        task::spawn(
-                            async move {
-                                debug!(%addr, "open path relay");
-                                match conn
-                                    .open_path_ensure(addr, quinn_proto::PathStatus::Backup)
-                                    .await
-                                {
-                                    Ok(path) => {
-                                        // Keep the relay path open
-                                        path.set_max_idle_timeout(None).ok();
-                                        path.set_keep_alive_interval(None).ok();
-                                    }
-                                    Err(err) => {
-                                        warn!("failed to open path {:?}", err);
-                                    }
-                                }
-                            }
-                            .instrument(info_span!("open path relay")),
-                        );
-                    }
-                } else {
-                    to_delete.push(i);
-                }
-            }
-            // cleanup dead connections
-            let mut i = 0;
-            conns.retain(|_| {
-                let remove = to_delete.contains(&i);
-                i += 1;
-
-                !remove
-            });
         }
     }
 
@@ -840,9 +740,7 @@ impl MagicSock {
             self.metrics.magicsock.recv_disco_udp.inc();
         }
 
-        let span = trace_span!("handle_disco", ?dm);
-        let _guard = span.enter();
-        trace!("receive disco message");
+        trace!(?dm, "receive disco message");
         match dm {
             disco::Message::Ping(ping) => {
                 self.metrics.magicsock.recv_disco_ping.inc();
@@ -854,33 +752,9 @@ impl MagicSock {
             }
             disco::Message::CallMeMaybe(cm) => {
                 self.metrics.magicsock.recv_disco_call_me_maybe.inc();
-                match src {
-                    transports::Addr::Relay(url, _) => {
-                        event!(
-                            target: "iroh::_events::call-me-maybe::recv",
-                            Level::DEBUG,
-                            remote_node = sender.fmt_short(),
-                            via = ?url,
-                            their_addrs = ?cm.my_numbers,
-                        );
-                    }
-                    _ => {
-                        warn!("call-me-maybe packets should only come via relay");
-                        return;
-                    }
-                }
-
-                // Add new addresses as paths
-                self.add_paths(NodeAddr {
-                    node_id: sender,
-                    relay_url: None,
-                    direct_addresses: cm.my_numbers.iter().copied().collect(),
-                });
-
-                self.node_map.handle_call_me_maybe(sender, cm);
+                self.node_map.handle_call_me_maybe(cm, sender, src.clone());
             }
         }
-        trace!("disco message handled");
     }
 
     /// Send the given ping actions out.
@@ -1254,7 +1128,6 @@ impl Handle {
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             node_map,
-            connection_map: Default::default(),
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs,

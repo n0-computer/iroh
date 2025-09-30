@@ -16,7 +16,7 @@ use quinn::WeakConnectionHandle;
 use quinn_proto::{PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use snafu::{OptionExt, ResultExt, Whatever};
+use snafu::{ResultExt, Whatever};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
@@ -53,10 +53,13 @@ const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
 /// How long since the last activity we try to keep an established endpoint peering alive.
+///
 /// It's also the idle time at which we stop doing QAD queries to keep NAT mappings alive.
 pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// How often we try to upgrade to a better patheven if we have some non-relay route that works.
+/// How often we try to upgrade to a better path.
+///
+/// Even if we have some non-relay route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The value which we close paths.
@@ -1258,7 +1261,7 @@ impl NodeStateActor {
                 for (conn_id, path_id) in self
                     .path_id_map
                     .iter()
-                    .filter(|(key, path_addr)| *path_addr == addr)
+                    .filter(|(_, path_addr)| *path_addr == addr)
                     .map(|(key, _)| key)
                 {
                     if let Some(conn) = self
@@ -1270,7 +1273,7 @@ impl NodeStateActor {
                         if let Some(path) = conn.path(*path_id) {
                             trace!(?addr, ?conn_id, ?path_id, "closing path");
                             if let Err(err) = path.close(APPLICATION_ABANDON_PATH.into()) {
-                                trace!(?addr, ?conn_id, ?path_id, "path close failed");
+                                trace!(?addr, ?conn_id, ?path_id, "path close failed: {err:#}");
                             }
                         }
                     }
@@ -1405,6 +1408,7 @@ impl NodeStateActor {
 }
 
 /// Messages to send to the [`NodeStateActor`].
+#[derive(Debug)]
 pub(crate) enum NodeStateMessage {
     /// Sends a datagram to all known paths.
     ///

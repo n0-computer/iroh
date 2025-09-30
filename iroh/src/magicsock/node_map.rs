@@ -404,7 +404,16 @@ impl NodeMap {
         }
     }
 
-    pub(super) fn handle_call_me_maybe(&self, sender: NodeId, msg: CallMeMaybe) {
+    pub(super) fn handle_call_me_maybe(
+        &self,
+        msg: disco::CallMeMaybe,
+        sender: NodeId,
+        src: transports::Addr,
+    ) {
+        if !src.is_relay() {
+            warn!("DISCO CallMeMaybe packets should only come via relay");
+            return;
+        }
         let node_state = self.node_state_actor(sender);
         if let Err(err) = node_state.try_send(NodeStateMessage::CallMeMaybeReceived(msg)) {
             // TODO: This is bad and will drop call-me-maybe's under load.  But
