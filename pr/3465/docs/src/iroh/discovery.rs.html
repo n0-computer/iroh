@@ -1122,7 +1122,7 @@
 <a href=#1122 id=1122 data-nosnippet>1122</a>    <span class="kw">use </span>iroh_relay::{RelayMap, node_info::UserData};
 <a href=#1123 id=1123 data-nosnippet>1123</a>    <span class="kw">use </span>n0_future::time::Duration;
 <a href=#1124 id=1124 data-nosnippet>1124</a>    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
-<a href=#1125 id=1125 data-nosnippet>1125</a>    <span class="kw">use </span>rand::SeedableRng;
+<a href=#1125 id=1125 data-nosnippet>1125</a>    <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
 <a href=#1126 id=1126 data-nosnippet>1126</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <a href=#1127 id=1127 data-nosnippet>1127</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#1128 id=1128 data-nosnippet>1128</a>
@@ -1213,52 +1213,54 @@
 <a href=#1213 id=1213 data-nosnippet>1213</a>    <span class="attr">#[tokio::test]
 <a href=#1214 id=1214 data-nosnippet>1214</a>    #[traced_test]
 <a href=#1215 id=1215 data-nosnippet>1215</a>    </span><span class="kw">async fn </span>pkarr_publish_dns_discover() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#1216 id=1216 data-nosnippet>1216</a>        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span>.context(<span class="string">"DnsPkarrServer run"</span>)<span class="question-mark">?</span>;
-<a href=#1217 id=1217 data-nosnippet>1217</a>        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1218 id=1218 data-nosnippet>1218</a>
-<a href=#1219 id=1219 data-nosnippet>1219</a>        <span class="kw">let </span>(ep1, _guard1) = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1220 id=1220 data-nosnippet>1220</a>        <span class="kw">let </span>(ep2, _guard2) = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1221 id=1221 data-nosnippet>1221</a>
-<a href=#1222 id=1222 data-nosnippet>1222</a>        <span class="comment">// wait until our shared state received the update from pkarr publishing
-<a href=#1223 id=1223 data-nosnippet>1223</a>        </span>dns_pkarr_server
-<a href=#1224 id=1224 data-nosnippet>1224</a>            .on_node(<span class="kw-2">&amp;</span>ep1.node_id(), PUBLISH_TIMEOUT)
-<a href=#1225 id=1225 data-nosnippet>1225</a>            .<span class="kw">await
-<a href=#1226 id=1226 data-nosnippet>1226</a>            </span>.context(<span class="string">"wait for on node update"</span>)<span class="question-mark">?</span>;
-<a href=#1227 id=1227 data-nosnippet>1227</a>
-<a href=#1228 id=1228 data-nosnippet>1228</a>        <span class="comment">// we connect only by node id!
-<a href=#1229 id=1229 data-nosnippet>1229</a>        </span><span class="kw">let </span>_conn = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1230 id=1230 data-nosnippet>1230</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1231 id=1231 data-nosnippet>1231</a>    }
-<a href=#1232 id=1232 data-nosnippet>1232</a>
-<a href=#1233 id=1233 data-nosnippet>1233</a>    <span class="kw">async fn </span>ep_with_discovery(
-<a href=#1234 id=1234 data-nosnippet>1234</a>        relay_map: <span class="kw-2">&amp;</span>RelayMap,
-<a href=#1235 id=1235 data-nosnippet>1235</a>        dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
-<a href=#1236 id=1236 data-nosnippet>1236</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
-<a href=#1237 id=1237 data-nosnippet>1237</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#1238 id=1238 data-nosnippet>1238</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#1239 id=1239 data-nosnippet>1239</a>        <span class="kw">let </span>ep = Endpoint::builder()
-<a href=#1240 id=1240 data-nosnippet>1240</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
-<a href=#1241 id=1241 data-nosnippet>1241</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-<a href=#1242 id=1242 data-nosnippet>1242</a>            .secret_key(secret_key.clone())
-<a href=#1243 id=1243 data-nosnippet>1243</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#1244 id=1244 data-nosnippet>1244</a>            .dns_resolver(dns_pkarr_server.dns_resolver())
-<a href=#1245 id=1245 data-nosnippet>1245</a>            .discovery(dns_pkarr_server.discovery(secret_key))
-<a href=#1246 id=1246 data-nosnippet>1246</a>            .bind()
-<a href=#1247 id=1247 data-nosnippet>1247</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1248 id=1248 data-nosnippet>1248</a>
-<a href=#1249 id=1249 data-nosnippet>1249</a>        <span class="kw">let </span>handle = tokio::spawn({
-<a href=#1250 id=1250 data-nosnippet>1250</a>            <span class="kw">let </span>ep = ep.clone();
-<a href=#1251 id=1251 data-nosnippet>1251</a>            <span class="kw">async move </span>{
-<a href=#1252 id=1252 data-nosnippet>1252</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
-<a href=#1253 id=1253 data-nosnippet>1253</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
-<a href=#1254 id=1254 data-nosnippet>1254</a>                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
-<a href=#1255 id=1255 data-nosnippet>1255</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
-<a href=#1256 id=1256 data-nosnippet>1256</a>                </span>}
-<a href=#1257 id=1257 data-nosnippet>1257</a>
-<a href=#1258 id=1258 data-nosnippet>1258</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
-<a href=#1259 id=1259 data-nosnippet>1259</a>            }
-<a href=#1260 id=1260 data-nosnippet>1260</a>        });
-<a href=#1261 id=1261 data-nosnippet>1261</a>
-<a href=#1262 id=1262 data-nosnippet>1262</a>        <span class="prelude-val">Ok</span>((ep, AbortOnDropHandle::new(handle)))
-<a href=#1263 id=1263 data-nosnippet>1263</a>    }
-<a href=#1264 id=1264 data-nosnippet>1264</a>}</code></pre></div></section></main></body></html>
+<a href=#1216 id=1216 data-nosnippet>1216</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#1217 id=1217 data-nosnippet>1217</a>
+<a href=#1218 id=1218 data-nosnippet>1218</a>        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span>.context(<span class="string">"DnsPkarrServer run"</span>)<span class="question-mark">?</span>;
+<a href=#1219 id=1219 data-nosnippet>1219</a>        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1220 id=1220 data-nosnippet>1220</a>
+<a href=#1221 id=1221 data-nosnippet>1221</a>        <span class="kw">let </span>(ep1, _guard1) = ep_with_discovery(<span class="kw-2">&amp;mut </span>rng, <span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1222 id=1222 data-nosnippet>1222</a>        <span class="kw">let </span>(ep2, _guard2) = ep_with_discovery(<span class="kw-2">&amp;mut </span>rng, <span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1223 id=1223 data-nosnippet>1223</a>
+<a href=#1224 id=1224 data-nosnippet>1224</a>        <span class="comment">// wait until our shared state received the update from pkarr publishing
+<a href=#1225 id=1225 data-nosnippet>1225</a>        </span>dns_pkarr_server
+<a href=#1226 id=1226 data-nosnippet>1226</a>            .on_node(<span class="kw-2">&amp;</span>ep1.node_id(), PUBLISH_TIMEOUT)
+<a href=#1227 id=1227 data-nosnippet>1227</a>            .<span class="kw">await
+<a href=#1228 id=1228 data-nosnippet>1228</a>            </span>.context(<span class="string">"wait for on node update"</span>)<span class="question-mark">?</span>;
+<a href=#1229 id=1229 data-nosnippet>1229</a>
+<a href=#1230 id=1230 data-nosnippet>1230</a>        <span class="comment">// we connect only by node id!
+<a href=#1231 id=1231 data-nosnippet>1231</a>        </span><span class="kw">let </span>_conn = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1232 id=1232 data-nosnippet>1232</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1233 id=1233 data-nosnippet>1233</a>    }
+<a href=#1234 id=1234 data-nosnippet>1234</a>
+<a href=#1235 id=1235 data-nosnippet>1235</a>    <span class="kw">async fn </span>ep_with_discovery&lt;R: CryptoRng + <span class="question-mark">?</span>Sized&gt;(
+<a href=#1236 id=1236 data-nosnippet>1236</a>        rng: <span class="kw-2">&amp;mut </span>R,
+<a href=#1237 id=1237 data-nosnippet>1237</a>        relay_map: <span class="kw-2">&amp;</span>RelayMap,
+<a href=#1238 id=1238 data-nosnippet>1238</a>        dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
+<a href=#1239 id=1239 data-nosnippet>1239</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
+<a href=#1240 id=1240 data-nosnippet>1240</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
+<a href=#1241 id=1241 data-nosnippet>1241</a>        <span class="kw">let </span>ep = Endpoint::builder()
+<a href=#1242 id=1242 data-nosnippet>1242</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
+<a href=#1243 id=1243 data-nosnippet>1243</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+<a href=#1244 id=1244 data-nosnippet>1244</a>            .secret_key(secret_key.clone())
+<a href=#1245 id=1245 data-nosnippet>1245</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+<a href=#1246 id=1246 data-nosnippet>1246</a>            .dns_resolver(dns_pkarr_server.dns_resolver())
+<a href=#1247 id=1247 data-nosnippet>1247</a>            .discovery(dns_pkarr_server.discovery(secret_key))
+<a href=#1248 id=1248 data-nosnippet>1248</a>            .bind()
+<a href=#1249 id=1249 data-nosnippet>1249</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1250 id=1250 data-nosnippet>1250</a>
+<a href=#1251 id=1251 data-nosnippet>1251</a>        <span class="kw">let </span>handle = tokio::spawn({
+<a href=#1252 id=1252 data-nosnippet>1252</a>            <span class="kw">let </span>ep = ep.clone();
+<a href=#1253 id=1253 data-nosnippet>1253</a>            <span class="kw">async move </span>{
+<a href=#1254 id=1254 data-nosnippet>1254</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
+<a href=#1255 id=1255 data-nosnippet>1255</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+<a href=#1256 id=1256 data-nosnippet>1256</a>                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#1257 id=1257 data-nosnippet>1257</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
+<a href=#1258 id=1258 data-nosnippet>1258</a>                </span>}
+<a href=#1259 id=1259 data-nosnippet>1259</a>
+<a href=#1260 id=1260 data-nosnippet>1260</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
+<a href=#1261 id=1261 data-nosnippet>1261</a>            }
+<a href=#1262 id=1262 data-nosnippet>1262</a>        });
+<a href=#1263 id=1263 data-nosnippet>1263</a>
+<a href=#1264 id=1264 data-nosnippet>1264</a>        <span class="prelude-val">Ok</span>((ep, AbortOnDropHandle::new(handle)))
+<a href=#1265 id=1265 data-nosnippet>1265</a>    }
+<a href=#1266 id=1266 data-nosnippet>1266</a>}</code></pre></div></section></main></body></html>
