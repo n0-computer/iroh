@@ -21,6 +21,7 @@ use n0_future::{
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, GenerateImplicitData, OptionExt, ResultExt, Snafu};
 use tokio::sync::RwLock;
+use tracing::debug;
 use url::Url;
 
 use crate::{
@@ -183,6 +184,10 @@ impl DnsProtocol {
 
 impl Builder {
     /// Makes the builder respect the host system's DNS configuration.
+    ///
+    /// We first try to read the system's resolver from `/etc/resolv.conf`.
+    /// This does not work at least on some Androids, therefore we fallback
+    /// to a default config which uses Google's `8.8.8.8` or `8.8.4.4`.
     pub fn with_system_defaults(mut self) -> Self {
         self.use_system_defaults = true;
         self
@@ -559,10 +564,21 @@ struct HickoryResolver {
 
 impl HickoryResolver {
     fn new(builder: Builder) -> Self {
+        let resolver = Self::build_resolver(&builder);
+        Self { resolver, builder }
+    }
+
+    fn build_resolver(builder: &Builder) -> TokioResolver {
         let (mut config, mut options) = if builder.use_system_defaults {
-            Self::system_defaults()
+            match Self::system_config() {
+                Ok((config, options)) => (config, options),
+                Err(error) => {
+                    debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
+                    (ResolverConfig::google(), ResolverOpts::default())
+                }
+            }
         } else {
-            (ResolverConfig::new(), Default::default())
+            (ResolverConfig::new(), ResolverOpts::default())
         };
 
         for (addr, proto) in builder.nameservers.iter() {
@@ -577,13 +593,11 @@ impl HickoryResolver {
         let mut hickory_builder =
             TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
         *hickory_builder.options_mut() = options;
-        let resolver = hickory_builder.build();
-        Self { resolver, builder }
+        hickory_builder.build()
     }
 
-    fn system_defaults() -> (ResolverConfig, ResolverOpts) {
-        let (system_config, options) =
-            hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
+    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::ResolveError> {
+        let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
 
         // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
         // there is no easy way to do this.
@@ -599,7 +613,7 @@ impl HickoryResolver {
                 config.add_name_server(nameserver_cfg.clone());
             }
         }
-        (config, options)
+        Ok((config, options))
     }
 
     async fn lookup_ipv4(
@@ -646,7 +660,7 @@ impl HickoryResolver {
     }
 
     fn reset(&mut self) {
-        *self = Self::new(self.builder.clone());
+        self.resolver = Self::build_resolver(&self.builder);
     }
 }
 
