@@ -33,8 +33,6 @@ use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{
-    StreamExt,
-    boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -72,8 +70,8 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::{
-        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryEvent, DiscoverySubscribers,
-        DynIntoDiscovery, IntoDiscoveryError, NodeData, UserData,
+        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoverySubscribers, DynIntoDiscovery,
+        IntoDiscoveryError, NodeData, UserData,
     },
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     magicsock::node_map::RemoteInfo,
@@ -1879,15 +1877,6 @@ impl Actor {
             .port_mapper
             .watch_external_address();
 
-        let mut discovery_events: BoxStream<DiscoveryEvent> = Box::pin(n0_future::stream::empty());
-        {
-            let d = self.msock.discovery();
-
-            if let Some(events) = d.subscribe() {
-                discovery_events = events;
-            }
-        }
-
         let mut receiver_closed = false;
         #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
@@ -2020,27 +2009,6 @@ impl Actor {
                     current_netmon_state = state;
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
-                }
-                // Even if `discovery_events` yields `None`, it could begin to yield
-                // `Some` again in the future, so we don't want to disable this branch
-                // forever like we do with the other branches that yield `Option`s
-                Some(discovery_item) = discovery_events.next() => {
-                    trace!("tick: discovery event, address discovered: {discovery_item:?}");
-                    if let DiscoveryEvent::Discovered(discovery_item) = &discovery_item {
-                        let provenance = discovery_item.provenance();
-                        let node_addr = discovery_item.to_node_addr();
-                        if let Err(e) = self.msock.add_node_addr(
-                            node_addr,
-                            Source::Discovery {
-                                name: provenance.to_string()
-                            }) {
-                            let node_addr = discovery_item.to_node_addr();
-                            warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
-                        }
-                    }
-
-                    // Send the discovery item to the subscribers of the discovery broadcast stream.
-                    self.msock.discovery_subscribers.send(discovery_item);
                 }
                 Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
                     if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {

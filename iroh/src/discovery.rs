@@ -329,32 +329,6 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         None
     }
-
-    /// Subscribe to all addresses that get *passively* discovered.
-    ///
-    /// An implementation may choose to defer emitting passively discovered nodes
-    /// until the stream is actually polled. To avoid missing discovered nodes,
-    /// poll the stream as soon as possible.
-    ///
-    /// If you do not regularly poll the stream, you may miss discovered nodes.
-    ///
-    /// Any discovery systems that only discover when explicitly resolving a
-    /// specific [`NodeId`] do not need to implement this method. Any nodes or
-    /// addresses that are discovered by calling `resolve` should NOT be added
-    /// to the `subscribe` stream.
-    ///
-    /// Discovery systems that are capable of receiving information about [`NodeId`]s
-    /// and their addressing information without explicitly calling `resolve`, i.e.,
-    /// systems that do "passive" discovery, should implement this method. If
-    /// `subscribe` is called multiple times, the passively discovered addresses
-    /// should be sent on all streams.
-    ///
-    /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
-    /// and add the discovered addresses to the internal address book as they arrive
-    /// on this stream.
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
-        None
-    }
 }
 
 impl<T: Discovery> Discovery for Arc<T> {}
@@ -521,19 +495,6 @@ impl Discovery for ConcurrentDiscovery {
         let streams = services
             .iter()
             .filter_map(|service| service.resolve(node_id));
-
-        let streams = n0_future::MergeBounded::from_iter(streams);
-        Some(Box::pin(streams))
-    }
-
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
-        let services = self.services.read().expect("poisoned");
-        let mut streams = vec![];
-        for service in &*services {
-            if let Some(stream) = service.subscribe() {
-                streams.push(stream)
-            }
-        }
 
         let streams = n0_future::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
@@ -742,19 +703,9 @@ mod tests {
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
         nodes: Arc<Mutex<InfoStore>>,
-        watchers: tokio::sync::broadcast::Sender<DiscoveryEvent>,
-    }
-
-    impl Default for TestDiscoveryShared {
-        fn default() -> Self {
-            Self {
-                nodes: Default::default(),
-                watchers: tokio::sync::broadcast::Sender::new(1024),
-            }
-        }
     }
 
     impl TestDiscoveryShared {
@@ -776,10 +727,6 @@ mod tests {
                 resolve_wrong: true,
                 delay: Duration::from_millis(100),
             }
-        }
-
-        pub fn send_passive(&self, item: DiscoveryEvent) {
-            self.watchers.send(item).ok();
         }
     }
 
@@ -837,13 +784,6 @@ mod tests {
                 None => n0_future::stream::empty().boxed(),
             };
             Some(stream)
-        }
-
-        fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
-            let recv = self.shared.watchers.subscribe();
-            let stream =
-                tokio_stream::wrappers::BroadcastStream::new(recv).filter_map(|item| item.ok());
-            Some(Box::pin(stream))
         }
     }
 
@@ -1000,61 +940,6 @@ mod tests {
             direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
         };
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn endpoint_discovery_watch() -> Result {
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) = {
-            let secret = SecretKey::generate(rand::thread_rng());
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
-        let (ep2, _guard2) = {
-            let secret = SecretKey::generate(rand::thread_rng());
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
-
-        let mut stream = ep1.discovery_stream();
-
-        // wait for ep2 node addr to be updated and connect from ep1 -> discovery via resolve
-        ep2.node_addr().initialized().await;
-        let _ = ep1.connect(ep2.node_id(), TEST_ALPN).await?;
-
-        let DiscoveryEvent::Discovered(item) =
-            tokio::time::timeout(Duration::from_secs(1), stream.next())
-                .await
-                .expect("timeout")
-                .expect("stream closed")
-                .expect("stream lagged")
-        else {
-            panic!("Returned unexpected discovery event!");
-        };
-
-        assert_eq!(item.node_id(), ep2.node_id());
-        assert_eq!(item.provenance(), "test-disco");
-
-        // inject item into discovery passively
-        let passive_node_id = SecretKey::generate(rand::thread_rng()).public();
-        let node_info = NodeInfo::new(passive_node_id);
-        let passive_item = DiscoveryItem::new(node_info, "test-disco-passive", None);
-        disco_shared.send_passive(DiscoveryEvent::Discovered(passive_item.clone()));
-
-        let DiscoveryEvent::Discovered(item) =
-            tokio::time::timeout(Duration::from_secs(1), stream.next())
-                .await
-                .expect("timeout")
-                .expect("stream closed")
-                .expect("stream lagged")
-        else {
-            panic!("Returned unexpected discovery event!");
-        };
-        assert_eq!(item.node_id(), passive_node_id);
-        assert_eq!(item.provenance(), "test-disco-passive");
-
         Ok(())
     }
 

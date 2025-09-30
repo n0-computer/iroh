@@ -13,31 +13,38 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let recent = Duration::from_secs(600); // 10 minutes in seconds
-//!
-//!     let endpoint = Endpoint::builder().bind().await.unwrap();
-//!     let remotes = endpoint.remote_info_iter();
-//!     let locally_discovered: Vec<_> = remotes
-//!         .filter(|remote| {
-//!             remote.sources().iter().any(|(source, duration)| {
-//!                 if let Source::Discovery { name } = source {
-//!                     name == iroh::discovery::mdns::NAME && *duration <= recent
-//!                 } else {
-//!                     false
+//!     let node_key = SecretKey::generate(rand::thread_rng());
+//!     let node_id = node_key.public();
+//!     let mdns = MdnsDiscovery::builder().build(node_id).uwrap();
+//!     let endpoint = Endpoint::builder()
+//!         .add_discovery(mdns.clone())
+//!         .bind()
+//!         .await
+//!         .unwrap();
+//!     let events = mdns.subscribe();
+//!     tokio::pin!(events);
+//!     while let Some(event) = events.next().await {
+//!         match event {
+//!             DiscoveryEvent::Discovered(item) => {
+//!                 if item.provenance() == iroh::discovery::mdns::NAME {
+//!                     println!("locally discovered: {:?}", item.node_info());
 //!                 }
-//!             })
-//!         })
-//!         .collect();
-//!     println!("locally discovered nodes: {locally_discovered:?}");
+//!             }
+//!             _ => {}
+//!         }
+//!     }
 //! }
 //! ```
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
     str::FromStr,
+    sync::Arc,
 };
 
 use iroh_base::{NodeId, PublicKey};
 use n0_future::{
+    Stream,
     boxed::BoxStream,
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration},
@@ -68,10 +75,10 @@ const USER_DATA_ATTRIBUTE: &str = "user-data";
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 
 /// Discovery using `swarm-discovery`, a variation on mdns
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MdnsDiscovery {
     #[allow(dead_code)]
-    handle: AbortOnDropHandle<()>,
+    handle: Arc<AbortOnDropHandle<()>>,
     sender: mpsc::Sender<Message>,
     advertise: bool,
     /// When `local_addrs` changes, we re-publish our info.
@@ -375,11 +382,24 @@ impl MdnsDiscovery {
         };
         let handle = task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
-            handle: AbortOnDropHandle::new(handle),
+            handle: Arc::new(AbortOnDropHandle::new(handle)),
             sender: send,
             advertise,
             local_addrs,
         })
+    }
+
+    /// Subscribe to discovered nodes
+    pub fn subscribe(&self) -> impl Stream<Item = DiscoveryEvent> + use<> {
+        use futures_util::FutureExt;
+
+        let (sender, recv) = mpsc::channel(20);
+        let discovery_sender = self.sender.clone();
+        let stream = async move {
+            discovery_sender.send(Message::Subscribe(sender)).await.ok();
+            tokio_stream::wrappers::ReceiverStream::new(recv)
+        };
+        stream.flatten_stream()
     }
 
     fn spawn_discoverer(
@@ -480,18 +500,6 @@ impl Discovery for MdnsDiscovery {
             self.local_addrs.set(Some(data.clone())).ok();
         }
     }
-
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
-        use futures_util::FutureExt;
-
-        let (sender, recv) = mpsc::channel(20);
-        let discovery_sender = self.sender.clone();
-        let stream = async move {
-            discovery_sender.send(Message::Subscribe(sender)).await.ok();
-            tokio_stream::wrappers::ReceiverStream::new(recv)
-        };
-        Some(Box::pin(stream.flatten_stream()))
-    }
 }
 
 #[cfg(test)]
@@ -523,20 +531,16 @@ mod tests {
                 .with_user_data(Some(user_data.clone()));
 
             // resolve twice to ensure we can create separate streams for the same node_id
-            let mut s1 = discovery_a
-                .subscribe()
-                .unwrap()
-                .filter(|event| match event {
-                    DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
-                    _ => false,
-                });
-            let mut s2 = discovery_a
-                .subscribe()
-                .unwrap()
-                .filter(|event| match event {
-                    DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
-                    _ => false,
-                });
+            let s1 = discovery_a.subscribe().filter(|event| match event {
+                DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
+                _ => false,
+            });
+            tokio::pin!(s1);
+            let s2 = discovery_a.subscribe().filter(|event| match event {
+                DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
+                _ => false,
+            });
+            tokio::pin!(s2);
 
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
@@ -574,7 +578,8 @@ mod tests {
                 .with_user_data(Some("".parse()?));
             discovery_b.publish(&node_data);
 
-            let mut s1 = discovery_a.subscribe().unwrap();
+            let s1 = discovery_a.subscribe();
+            tokio::pin!(s1);
             tracing::debug!(?node_id_b, "Discovering node id b");
 
             // Wait for the specific node to be discovered
@@ -633,7 +638,8 @@ mod tests {
                 discoverers.push(discovery);
             }
 
-            let mut events = discovery.subscribe().unwrap();
+            let events = discovery.subscribe();
+            tokio::pin!(events);
 
             let test = async move {
                 let mut got_ids = BTreeSet::new();
