@@ -38,9 +38,8 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryEvent,
-        DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
-        Lagged, UserData, pkarr::PkarrPublisher,
+        ConcurrentDiscovery, DiscoveryError, DiscoveryEvent, DiscoverySubscribers, DiscoveryTask,
+        DynIntoDiscovery, IntoDiscovery, Lagged, UserData, pkarr::PkarrPublisher,
     },
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
@@ -167,24 +166,6 @@ impl Builder {
         #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
 
-        let discovery: Option<Box<dyn Discovery>> = {
-            let context = DiscoveryContext {
-                secret_key: &secret_key,
-                #[cfg(not(wasm_browser))]
-                dns_resolver: &dns_resolver,
-            };
-            let discovery = self
-                .discovery
-                .into_iter()
-                .map(|builder| builder.into_discovery(&context))
-                .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
-            match discovery.len() {
-                0 => None,
-                1 => Some(discovery.into_iter().next().expect("checked length")),
-                _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
-            }
-        };
-
         let metrics = EndpointMetrics::default();
 
         let msock_opts = magicsock::Options {
@@ -192,7 +173,7 @@ impl Builder {
             addr_v6: self.addr_v6,
             secret_key,
             relay_map,
-            discovery,
+            discovery: self.discovery,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
@@ -587,10 +568,6 @@ pub enum BindError {
     #[snafu(transparent)]
     MagicSpawn {
         source: magicsock::CreateHandleError,
-    },
-    #[snafu(transparent)]
-    Discovery {
-        source: crate::discovery::IntoDiscoveryError,
     },
 }
 
@@ -1137,7 +1114,7 @@ impl Endpoint {
     /// Returns the discovery mechanism, if configured.
     ///
     /// See [`Builder::discovery`].
-    pub fn discovery(&self) -> Option<&dyn Discovery> {
+    pub fn discovery(&self) -> &ConcurrentDiscovery {
         self.msock.discovery()
     }
 

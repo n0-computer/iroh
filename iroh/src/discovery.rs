@@ -109,7 +109,7 @@
 //! [`MdnsDiscovery`]: mdns::MdnsDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
@@ -459,9 +459,9 @@ impl From<DiscoveryItem> for NodeInfo {
 /// A discovery service that combines multiple discovery sources.
 ///
 /// The discovery services will resolve concurrently.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ConcurrentDiscovery {
-    services: Vec<Box<dyn Discovery>>,
+    services: Arc<RwLock<Vec<Box<dyn Discovery>>>>,
 }
 
 impl ConcurrentDiscovery {
@@ -472,12 +472,27 @@ impl ConcurrentDiscovery {
 
     /// Creates a new [`ConcurrentDiscovery`].
     pub fn from_services(services: Vec<Box<dyn Discovery>>) -> Self {
-        Self { services }
+        Self {
+            services: Arc::new(RwLock::new(services)),
+        }
     }
 
     /// Adds a [`Discovery`] service.
     pub fn add(&mut self, service: impl Discovery + 'static) {
-        self.services.push(Box::new(service));
+        self.services
+            .write()
+            .expect("poisoned")
+            .push(Box::new(service));
+    }
+
+    /// Is there any services configured?
+    pub fn is_empty(&self) -> bool {
+        self.services.read().expect("poisoned").is_empty()
+    }
+
+    /// How many services are configured
+    pub fn len(&self) -> usize {
+        self.services.read().expect("poisoned").len()
     }
 }
 
@@ -487,20 +502,23 @@ where
 {
     fn from(iter: T) -> Self {
         let services = iter.into_iter().collect::<Vec<_>>();
-        Self { services }
+        Self {
+            services: Arc::new(RwLock::new(services)),
+        }
     }
 }
 
 impl Discovery for ConcurrentDiscovery {
     fn publish(&self, data: &NodeData) {
-        for service in &self.services {
+        let services = self.services.read().expect("poisoned");
+        for service in &*services {
             service.publish(data);
         }
     }
 
     fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
-        let streams = self
-            .services
+        let services = self.services.read().expect("poisoned");
+        let streams = services
             .iter()
             .filter_map(|service| service.resolve(node_id));
 
@@ -509,8 +527,9 @@ impl Discovery for ConcurrentDiscovery {
     }
 
     fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
+        let services = self.services.read().expect("poisoned");
         let mut streams = vec![];
-        for service in self.services.iter() {
+        for service in &*services {
             if let Some(stream) = service.subscribe() {
                 streams.push(stream)
             }
@@ -534,7 +553,7 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Starts a discovery task.
     pub(super) fn start(ep: Endpoint, node_id: NodeId) -> Result<Self, DiscoveryError> {
-        ensure!(ep.discovery().is_some(), NoServiceConfiguredSnafu);
+        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.node_id();
         let task = task::spawn(
@@ -565,7 +584,7 @@ impl DiscoveryTask {
         if !ep.needs_discovery(node_id, MAX_AGE) {
             return Ok(None);
         }
-        ensure!(ep.discovery().is_some(), NoServiceConfiguredSnafu);
+        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.node_id();
@@ -603,8 +622,9 @@ impl DiscoveryTask {
         ep: &Endpoint,
         node_id: NodeId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
-        let discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())?;
-        let stream = discovery
+        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
+        let stream = ep
+            .discovery()
             .resolve(node_id)
             .ok_or(NoResultsSnafu { node_id }.build())?;
         Ok(stream)
