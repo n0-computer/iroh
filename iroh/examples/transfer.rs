@@ -280,7 +280,9 @@ impl EndpointArgs {
             println!("\t{}", addr);
         }
 
-        if !self.no_relay {
+        if self.relay_only {
+            endpoint.online().await;
+        } else if !self.no_relay {
             tokio::time::timeout(Duration::from_secs(2), endpoint.online())
                 .await
                 .ok();
@@ -298,9 +300,6 @@ impl EndpointArgs {
 
 async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     let node_id = endpoint.node_id();
-
-    // wait for the node to be online
-    endpoint.online().await;
 
     let node_addr = endpoint.node_addr();
     let ticket = NodeTicket::new(node_addr);
