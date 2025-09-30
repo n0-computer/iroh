@@ -68,6 +68,7 @@ use crate::dns::DnsResolver;
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
+    util::reqwest_client_builder,
 };
 
 #[cfg(feature = "discovery-pkarr-dht")]
@@ -527,10 +528,9 @@ impl PkarrRelayClient {
     /// Creates a new client.
     pub fn new(pkarr_relay_url: Url) -> Self {
         Self {
-            http_client: reqwest::Client::builder()
-                .use_rustls_tls()
+            http_client: reqwest_client_builder()
                 .build()
-                .expect("reqwest client builder"),
+                .expect("failed to create reqwest client"),
             pkarr_relay_url,
         }
     }
@@ -538,8 +538,7 @@ impl PkarrRelayClient {
     /// Creates a new client while passing a DNS resolver to use.
     #[cfg(not(wasm_browser))]
     pub fn with_dns_resolver(pkarr_relay_url: Url, dns_resolver: crate::dns::DnsResolver) -> Self {
-        let http_client = reqwest::Client::builder()
-            .use_rustls_tls()
+        let http_client = reqwest_client_builder()
             .dns_resolver(Arc::new(dns_resolver))
             .build()
             .expect("failed to create request client");
