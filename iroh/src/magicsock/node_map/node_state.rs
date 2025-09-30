@@ -1489,20 +1489,6 @@ enum SendCallMeMaybe {
     IfNoRecent,
 }
 
-/// The reason why a discovery ping message was sent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DiscoPingPurpose {
-    /// The purpose of a ping was to see if a path was valid.
-    Discovery,
-    /// Ping to ensure the current route is still valid.
-    StayinAlive,
-    /// When a ping was received and no direct connection exists yet.
-    ///
-    /// When a ping was received we suspect a direct connection is possible.  If we do not
-    /// yet have one that triggers a ping, indicated with this reason.
-    PingBack,
-}
-
 /// The type of control message we have received.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, derive_more::Display)]
 pub enum ControlMsg {

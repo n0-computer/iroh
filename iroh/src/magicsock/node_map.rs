@@ -13,7 +13,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::node_state::{NodeState, Options};
+use crate::disco::{self};
+#[cfg(any(test, feature = "test-utils"))]
+use crate::endpoint::PathSelection;
+
 use super::mapped_addrs::{AddrMap, RelayMappedAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use super::transports::TransportsSender;
@@ -25,16 +28,15 @@ use super::{
     mapped_addrs::NodeIdMappedAddr,
     transports::{self, OwnedTransmit},
 };
-use crate::disco::{self, CallMeMaybe};
-#[cfg(any(test, feature = "test-utils"))]
-use crate::endpoint::PathSelection;
+
+use self::node_state::{NodeState, Options};
 
 mod node_state;
 mod path_state;
 mod path_validity;
 mod udp_paths;
 
-pub(super) use node_state::{NodeStateMessage, PingAction};
+pub(super) use node_state::NodeStateMessage;
 
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
 
@@ -253,58 +255,12 @@ impl NodeMap {
             .map(|ep| *ep.all_paths_mapped_addr())
     }
 
-    pub(super) fn get_direct_addrs(&self, node_key: NodeId) -> Vec<SocketAddr> {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .get(NodeStateKey::NodeId(node_key))
-            .map(|ep| ep.direct_addresses().map(Into::into).collect())
-            .unwrap_or_default()
-    }
-
-    /// Returns a [`NodeAddr`] with all the currently known direct addresses and the relay URL.
-    pub(super) fn get_current_addr(&self, node_key: NodeId) -> Option<NodeAddr> {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .get(NodeStateKey::NodeId(node_key))
-            .map(|ep| ep.get_current_addr())
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub(super) fn get_send_addrs(
-        &self,
-        addr: NodeIdMappedAddr,
-        have_ipv6: bool,
-        metrics: &MagicsockMetrics,
-    ) -> Option<(
-        PublicKey,
-        Option<SocketAddr>,
-        Option<RelayUrl>,
-        Vec<PingAction>,
-    )> {
-        let mut inner = self.inner.lock().expect("poisoned");
-        let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
-        let public_key = *ep.public_key();
-        trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
-        let (udp_addr, relay_url, ping_actions) = ep.get_send_addrs(have_ipv6, metrics);
-        Some((public_key, udp_addr, relay_url, ping_actions))
-    }
-
     pub(super) fn reset_node_states(&self) {
         let now = Instant::now();
         let mut inner = self.inner.lock().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
             ep.note_connectivity_change(now);
         }
-    }
-
-    pub(super) fn nodes_stayin_alive(&self) -> Vec<PingAction> {
-        let mut inner = self.inner.lock().expect("poisoned");
-        inner
-            .node_states_mut()
-            .flat_map(|(_idx, node_state)| node_state.stayin_alive())
-            .collect()
     }
 
     /// Returns the [`RemoteInfo`]s for each node in the node map.
@@ -581,32 +537,6 @@ impl NodeMapInner {
             .map(|ep| ep.conn_type())
     }
 
-    fn handle_call_me_maybe(
-        &mut self,
-        sender: NodeId,
-        cm: CallMeMaybe,
-        metrics: &MagicsockMetrics,
-    ) {
-        let ns_id = NodeStateKey::NodeId(sender);
-        if let Some(id) = self.get_id(ns_id.clone()) {
-            for number in &cm.my_numbers {
-                // ensure the new addrs are known
-                self.set_node_state_for_ip_port(*number, id);
-            }
-        }
-        match self.get_mut(ns_id) {
-            None => {
-                debug!("received call-me-maybe: ignore, node is unknown");
-                metrics.recv_disco_call_me_maybe_bad_disco.inc();
-            }
-            Some(ns) => {
-                debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
-
-                ns.handle_call_me_maybe(cm);
-            }
-        }
-    }
-
     /// Inserts a new node into the [`NodeMap`].
     fn insert_node(&mut self, options: Options) -> &mut NodeState {
         info!(
@@ -626,31 +556,6 @@ impl NodeMapInner {
 
         self.by_id.insert(id, node_state);
         self.by_id.get_mut(&id).expect("just inserted")
-    }
-
-    /// Makes future node lookups by ipp return the same endpoint as a lookup by nk.
-    ///
-    /// This should only be called with a fully verified mapping of ipp to
-    /// nk, because calling this function defines the endpoint we hand to
-    /// WireGuard for packets received from ipp.
-    fn set_node_key_for_ip_port(&mut self, ipp: impl Into<IpPort>, nk: &PublicKey) {
-        let ipp = ipp.into();
-        if let Some(id) = self.by_ip_port.get(&ipp) {
-            if !self.by_node_key.contains_key(nk) {
-                self.by_node_key.insert(*nk, *id);
-            }
-            self.by_ip_port.remove(&ipp);
-        }
-        if let Some(id) = self.by_node_key.get(nk) {
-            trace!("insert ip -> id: {:?} -> {}", ipp, id);
-            self.by_ip_port.insert(ipp, *id);
-        }
-    }
-
-    fn set_node_state_for_ip_port(&mut self, ipp: impl Into<IpPort>, id: usize) {
-        let ipp = ipp.into();
-        trace!(?ipp, ?id, "set endpoint for ip:port");
-        self.by_ip_port.insert(ipp, id);
     }
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.

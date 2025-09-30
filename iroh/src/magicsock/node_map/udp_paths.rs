@@ -51,17 +51,6 @@ pub(super) enum UdpSendAddr {
     None,
 }
 
-impl UdpSendAddr {
-    pub fn get_addr(&self) -> Option<SocketAddr> {
-        match self {
-            UdpSendAddr::Valid(addr)
-            | UdpSendAddr::Outdated(addr)
-            | UdpSendAddr::Unconfirmed(addr) => Some(*addr),
-            UdpSendAddr::None => None,
-        }
-    }
-}
-
 /// The UDP paths for a single node.
 ///
 /// Paths are identified by the [`IpPort`] of their UDP address.

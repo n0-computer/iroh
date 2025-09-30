@@ -69,7 +69,7 @@ use crate::{
 use self::transports::IpTransport;
 use self::{
     metrics::Metrics as MagicsockMetrics,
-    node_map::{NodeMap, PingAction},
+    node_map::NodeMap,
     transports::{RelayActorConfig, RelayTransport, Transports, TransportsSender},
 };
 
@@ -755,61 +755,6 @@ impl MagicSock {
                 self.node_map.handle_call_me_maybe(cm, sender, src.clone());
             }
         }
-    }
-
-    /// Send the given ping actions out.
-    async fn send_ping_actions(
-        &self,
-        _sender: &TransportsSender,
-        msgs: Vec<PingAction>,
-    ) -> io::Result<()> {
-        for msg in msgs {
-            // Abort sending as soon as we know we are shutting down.
-            if self.is_closing() || self.is_closed() {
-                return Ok(());
-            }
-            match msg {
-                PingAction::SendCallMeMaybe {
-                    relay_url,
-                    dst_node,
-                } => {
-                    // Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
-                    //
-                    // To send the call-me-maybe message, we need to know our current direct addresses.  If
-                    // this information is too stale, the call-me-maybe is queued while a net_report run is
-                    // scheduled.  Once this run finishes, the call-me-maybe will be sent.
-                    match self.direct_addrs.fresh_enough() {
-                        Ok(()) => {
-                            let msg = disco::Message::CallMeMaybe(
-                                self.direct_addrs.to_call_me_maybe_message(),
-                            );
-                            if !self.disco.try_send(
-                                SendAddr::Relay(relay_url.clone()),
-                                dst_node,
-                                msg.clone(),
-                            ) {
-                                warn!(dstkey = %dst_node.fmt_short(), %relay_url, "relay channel full, dropping call-me-maybe");
-                            } else {
-                                debug!(dstkey = %dst_node.fmt_short(), %relay_url, "call-me-maybe sent");
-                            }
-                        }
-                        Err(last_refresh_ago) => {
-                            debug!(
-                                ?last_refresh_ago,
-                                "want call-me-maybe but direct addrs stale; queuing after restun",
-                            );
-                            self.actor_sender
-                                .try_send(ActorMessage::ScheduleDirectAddrUpdate(
-                                    UpdateReason::RefreshForPeering,
-                                    Some((dst_node, relay_url)),
-                                ))
-                                .ok();
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     /// Sends out a disco message.
@@ -1549,7 +1494,7 @@ impl Actor {
 
                     trace!(?msg, "tick: msg");
                     self.msock.metrics.magicsock.actor_tick_msg.inc();
-                    self.handle_actor_message(msg, &sender).await;
+                    self.handle_actor_message(msg).await;
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
@@ -1693,7 +1638,7 @@ impl Actor {
     /// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
-    async fn handle_actor_message(&mut self, msg: ActorMessage, sender: &TransportsSender) {
+    async fn handle_actor_message(&mut self, msg: ActorMessage) {
         match msg {
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
@@ -1969,28 +1914,6 @@ impl DiscoveredDirectAddrs {
             .into_iter()
             .map(|da| da.addr)
             .collect()
-    }
-
-    /// Whether the direct addr information is considered "fresh".
-    ///
-    /// If not fresh you should probably update the direct addresses before using this info.
-    ///
-    /// Returns `Ok(())` if fresh enough and `Err(elapsed)` if not fresh enough.
-    /// `elapsed` is the time elapsed since the direct addresses were last updated.
-    ///
-    /// If there is no direct address information `Err(Duration::ZERO)` is returned.
-    fn fresh_enough(&self) -> Result<(), Duration> {
-        match *self.updated_at.read().expect("poisoned") {
-            None => Err(Duration::ZERO),
-            Some(time) => {
-                let elapsed = time.elapsed();
-                if elapsed <= ENDPOINTS_FRESH_ENOUGH_DURATION {
-                    Ok(())
-                } else {
-                    Err(elapsed)
-                }
-            }
-        }
     }
 
     fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {

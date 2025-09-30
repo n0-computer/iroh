@@ -179,21 +179,6 @@ pub enum SendAddr {
     Relay(RelayUrl),
 }
 
-impl SendAddr {
-    /// Returns if this is a `relay` addr.
-    pub fn is_relay(&self) -> bool {
-        matches!(self, Self::Relay(_))
-    }
-
-    /// Returns the `Some(Url)` if it is a relay addr.
-    pub fn relay_url(&self) -> Option<RelayUrl> {
-        match self {
-            Self::Relay(url) => Some(url.clone()),
-            Self::Udp(_) => None,
-        }
-    }
-}
-
 impl From<transports::Addr> for SendAddr {
     fn from(addr: transports::Addr) -> Self {
         match addr {
