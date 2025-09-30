@@ -44,3 +44,4 @@ unused-async = "warn"
 
 [patch.crates-io]
 crypto_box = { git = "https://github.com/dignifiedquire/nacl-compat", branch = "rand-09" }
+mainline = { git = "https://github.com/dignifiedquire/mainline", branch = "feat-rand-09" }

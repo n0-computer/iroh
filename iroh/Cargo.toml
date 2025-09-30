@@ -26,7 +26,7 @@ backon = { version = "1.4" }
 bytes = "1.7"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
-der = { version = "0.7", features = ["alloc", "derive"] }
+der = { version = "0.8.0-rc.9", features = ["alloc", "derive"] }
 derive_more = { version = "2.0.1", features = [
     "debug",
     "display",
@@ -81,8 +81,6 @@ z32 = "1.0.3"
 # fix minimal versions
 # for n0-futures
 futures-buffered = "0.2.11"
-# for ed25519-dalek
-spki = { version = "0.7.3", features = ["std"] }
 
 # metrics
 iroh-metrics = { version = "0.35", default-features = false }
