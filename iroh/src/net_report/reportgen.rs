@@ -606,7 +606,7 @@ async fn check_captive_portal(
     // length is limited; see is_challenge_char in bin/iroh-relay for more
     // details.
 
-    let host_name = url.host_str().unwrap_or_default();
+    let host_name = url.host_str_without_final_dot().unwrap_or_default();
     let challenge = format!("ts_{host_name}");
     let portal_url = format!("http://{host_name}/generate_204");
     let res = client
@@ -789,7 +789,9 @@ async fn run_https_probe(
     #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
-    let url = relay.join(RELAY_PROBE_PATH)?;
+    // Convert the relay URL to a URL that has no final dot, because the final dot
+    // may trip up the certificate verification.
+    let url = relay.without_final_dot().join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
@@ -802,7 +804,9 @@ async fn run_https_probe(
     }
 
     #[cfg(not(wasm_browser))]
-    if let Some(Host::Domain(domain)) = url.host() {
+    if let (Some(Host::Domain(domain_for_dns)), Some(Host::Domain(domain_for_reqwest))) =
+        (relay.host(), url.host())
+    {
         // Use our own resolver rather than getaddrinfo
         //
         // Be careful, a non-zero port will override the port in the URI.
@@ -811,12 +815,12 @@ async fn run_https_probe(
         // but staggered for reliability.  Ideally this tries to resolve **both** IPv4 and
         // IPv6 though.  But our resolver does not have a function for that yet.
         let addrs: Vec<_> = dns_resolver
-            .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
+            .lookup_ipv4_ipv6_staggered(domain_for_dns, DNS_TIMEOUT, DNS_STAGGERING_MS)
             .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
         trace!(?addrs, "resolved addrs");
-        builder = builder.resolve_to_addrs(domain, &addrs);
+        builder = builder.resolve_to_addrs(domain_for_reqwest, &addrs);
     }
 
     #[cfg(all(not(wasm_browser), any(test, feature = "test-utils")))]

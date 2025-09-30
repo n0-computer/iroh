@@ -779,7 +779,7 @@ async fn run_probe_v4(
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
     let host = relay
         .url
-        .host_str()
+        .host_str_without_final_dot()
         .ok_or_else(|| e!(QadProbeError::MissingHost))?;
     let conn = quic_client
         .create_conn(relay_addr, host)
@@ -853,7 +853,7 @@ async fn run_probe_v6(
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
     let host = relay
         .url
-        .host_str()
+        .host_str_without_final_dot()
         .ok_or_else(|| e!(QadProbeError::MissingHost))?;
     let conn = quic_client
         .create_conn(relay_addr, host)
