@@ -59,6 +59,10 @@ pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 /// How often we try to upgrade to a better patheven if we have some non-relay route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
+/// The value which we close paths.
+// TODO: Quinn should just do this.  Also, I made this value up.
+const APPLICATION_ABANDON_PATH: u8 = 30;
+
 #[derive(Debug)]
 pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
@@ -771,6 +775,8 @@ pub(super) struct NodeStateActor {
     /// [`NodeStateMessage::AddConnection`], because this ID is only unique within
     /// *currently active* connections.  So there could be conflicts if we did not yet know
     /// a previous connection no longer exists.
+    // TODO: We do exhaustive searches through this map to find items based on
+    //    transports::Addr.  Perhaps a bi-directional map could be considered.
     path_id_map: FxHashMap<(usize, PathId), transports::Addr>,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
@@ -1206,10 +1212,10 @@ impl NodeStateActor {
         }
     }
 
-    #[instrument(skip(self), fields(path_id))]
+    #[instrument(skip(self))]
     async fn handle_path_event(
         &mut self,
-        stable_id: usize,
+        conn_id: usize,
         event: Result<PathEvent, BroadcastStreamRecvError>,
     ) {
         let Ok(event) = event else {
@@ -1218,7 +1224,7 @@ impl NodeStateActor {
             //    state of the connection and it's paths are?
             return;
         };
-        let Some(handle) = self.connections.get(&stable_id) else {
+        let Some(handle) = self.connections.get(&conn_id) else {
             trace!("event for removed connection");
             return;
         };
@@ -1226,11 +1232,11 @@ impl NodeStateActor {
             trace!("event for closed connection");
             return;
         };
+        trace!("path event");
         match event {
             PathEvent::Opened { id: path_id } => {
-                tracing::Span::current().record("path_id", tracing::field::debug(path_id));
                 let Some(path) = conn.path(path_id) else {
-                    trace!("event for unknown path");
+                    trace!("path open event for unknown path");
                     return;
                 };
                 path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
@@ -1238,11 +1244,41 @@ impl NodeStateActor {
 
                 self.select_path();
             }
-            PathEvent::Closed { id, error_code } => todo!(),
-            PathEvent::Abandoned { id, path_stats } => todo!(),
-            PathEvent::LocallyClosed { id, error } => todo!(),
-            PathEvent::RemoteStatus { id, status } => todo!(),
-            PathEvent::ObservedAddr { id, addr } => todo!(),
+            PathEvent::Abandoned { id, path_stats } => {
+                trace!(?path_stats, "path abandoned");
+                // This is the last event for this path.
+                self.path_id_map.remove(&(conn_id, id));
+            }
+            PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
+                // If one connection closes this path, close it on all connections.
+                let Some(addr) = self.path_id_map.get(&(conn_id, id)) else {
+                    debug!("path not in path_id_map");
+                    return;
+                };
+                for (conn_id, path_id) in self
+                    .path_id_map
+                    .iter()
+                    .filter(|(key, path_addr)| *path_addr == addr)
+                    .map(|(key, _)| key)
+                {
+                    if let Some(conn) = self
+                        .connections
+                        .get(&conn_id)
+                        .map(|handle| handle.upgrade())
+                        .flatten()
+                    {
+                        if let Some(path) = conn.path(*path_id) {
+                            trace!(?addr, ?conn_id, ?path_id, "closing path");
+                            if let Err(err) = path.close(APPLICATION_ABANDON_PATH.into()) {
+                                trace!(?addr, ?conn_id, ?path_id, "path close failed");
+                            }
+                        }
+                    }
+                }
+            }
+            PathEvent::RemoteStatus { .. } | PathEvent::ObservedAddr { .. } => {
+                // Nothing to do for these events.
+            }
         }
     }
 
@@ -1338,9 +1374,6 @@ impl NodeStateActor {
 
     /// Closes any direct paths not selected.
     fn close_redundant_paths(&mut self, selected_path: transports::Addr) {
-        // TODO: Quinn should just do this.  Also, I made this value up.
-        const APPLICATION_ABANDON_PATH: u8 = 30;
-
         debug_assert_eq!(self.selected_path.as_ref(), Some(&selected_path));
 
         self.path_id_map.retain(|(conn_id, path_id), addr| {
