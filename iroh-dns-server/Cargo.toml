@@ -64,7 +64,7 @@ criterion = "0.5.1"
 data-encoding = "2.3.3"
 hickory-resolver = "0.25.0"
 iroh = { path = "../iroh" }
-rand = "0.9"
+rand = "0.9.2"
 rand_chacha = "0.9"
 tracing-test = "0.2.5"
 

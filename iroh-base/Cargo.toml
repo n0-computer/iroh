@@ -21,7 +21,7 @@ ed25519-dalek = { version = "=3.0.0-pre.1", features = ["serde", "rand_core", "z
 derive_more = { version = "2.0.1", features = ["display"], optional = true }
 url = { version = "2.5.3", features = ["serde"], optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
-rand_core = { version = "0.9", optional = true }
+rand_core = { version = "0.9.3", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 snafu = { version = "0.8.5", features = ["rust_1_81"], optional = true }
 n0-snafu = "0.2.2"
@@ -30,7 +30,7 @@ nested_enum_utils = "0.2.0"
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }
 proptest = "1.0.0"
-rand = "0.9"
+rand = "0.9.2"
 rand_chacha = "0.9"
 serde_json = "1"
 serde_test = "1"
