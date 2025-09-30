@@ -146,14 +146,26 @@ pub struct Builder {
 #[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum DnsProtocol {
+    /// DNS over UDP
+    ///
+    /// This is the classic DNS protocol and supported by most DNS servers.
     #[default]
-    /// DNS over UDP (the classic DNS protocol)
     Udp,
     /// DNS over TCP
+    ///
+    /// This is specified in the original DNS RFCs, but is not supported by all DNS servers.
     Tcp,
     /// DNS over TLS
+    ///
+    /// Performs DNS lookups over TLS-encrypted TCP connections, as defined in [RFC 7858].
+    ///
+    /// [RFC 7858]: https://www.rfc-editor.org/rfc/rfc7858.html
     Tls,
     /// DNS over HTTPS
+    ///
+    /// Performs DNS lookups over HTTPS, as defined in [RFC 8484].
+    ///
+    /// [RFC 8484]: https://www.rfc-editor.org/rfc/rfc8484.html
     Https,
 }
 
