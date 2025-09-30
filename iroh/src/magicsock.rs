@@ -286,21 +286,24 @@ impl MagicSock {
         let weak_handle = conn.weak_handle();
         let node_state = self.node_map.node_state_actor(remote);
         let mut msg = NodeStateMessage::AddConnection(weak_handle);
-        loop {
-            match node_state.try_send(msg) {
-                Ok(()) => break,
-                Err(mpsc::error::TrySendError::Closed(msg)) => {
-                    error!(?msg, "NodeStateActor closed");
-                    break;
-                }
-                Err(mpsc::error::TrySendError::Full(ret_msg)) => {
-                    warn!("NodeStateActor inbox full when adding new connection");
-                    msg = ret_msg;
-                    // TODO: Yikes!
-                    tokio::task::yield_now();
+
+        tokio::task::block_in_place(move || {
+            loop {
+                match node_state.try_send(msg) {
+                    Ok(()) => break,
+                    Err(mpsc::error::TrySendError::Closed(msg)) => {
+                        error!(?msg, "NodeStateActor closed");
+                        break;
+                    }
+                    Err(mpsc::error::TrySendError::Full(ret_msg)) => {
+                        warn!("NodeStateActor inbox full when adding new connection");
+                        msg = ret_msg;
+                        // TODO: Yikes!
+                        std::thread::yield_now();
+                    }
                 }
             }
-        }
+        });
     }
 
     #[cfg(not(wasm_browser))]
