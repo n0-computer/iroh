@@ -82,7 +82,7 @@ futures-buffered = "0.2.11"
 pkcs8 = "0.11.0-rc.7"
 
 # metrics
-iroh-metrics = { version = "0.35", default-features = false }
+iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "arqu/histograms", default-features = false }
 
 # local-swarm-discovery
 swarm-discovery = { version = "0.4", optional = true }

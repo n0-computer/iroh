@@ -2591,8 +2591,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.35.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8922c169f1b84d39d325c02ef1bbe1419d4de6e35f0403462b3c7e60cc19634"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=arqu%2Fhistograms#19db719a58a798f6147cc3972ff30195bd02ea3c"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2601,6 +2600,7 @@ dependencies = [
  "itoa",
  "postcard",
  "reqwest",
+ "ryu",
  "serde",
  "snafu",
  "tokio",
@@ -2610,8 +2610,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics-derive"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d12f5c45c4ed2436302a4e03cad9a0ad34b2962ad0c5791e1019c0ee30eeb09"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=arqu%2Fhistograms#19db719a58a798f6147cc3972ff30195bd02ea3c"
 dependencies = [
  "heck",
  "proc-macro2",

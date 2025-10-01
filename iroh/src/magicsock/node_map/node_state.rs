@@ -441,7 +441,12 @@ impl NodeState {
 
     /// Cleanup the expired ping for the passed in txid.
     #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
-    pub(super) fn ping_timeout(&mut self, txid: stun_rs::TransactionId, now: Instant) {
+    pub(super) fn ping_timeout(
+        &mut self,
+        txid: stun_rs::TransactionId,
+        now: Instant,
+        metrics: &MagicsockMetrics,
+    ) {
         if let Some(sp) = self.sent_pings.remove(&txid) {
             debug!(tx = %HEXLOWER.encode(&txid), addr = %sp.to, "pong not received in timeout");
             match sp.to {
@@ -460,6 +465,10 @@ impl NodeState {
                             // pong.  Both are used to select this path again, but we know
                             // it's not a usable path now.
                             path_state.validity = PathValidity::empty();
+                            metrics.path_ping_failures.inc();
+
+                            path_state.validity.record_metrics(metrics);
+                            metrics.path_marked_outdated.inc();
                         }
                     }
                 }
@@ -524,6 +533,7 @@ impl NodeState {
             SendAddr::Udp(addr) => {
                 if let Some(st) = self.udp_paths.access_mut(now).paths().get_mut(&addr.into()) {
                     st.last_ping.replace(now);
+                    st.validity.record_ping_sent();
                     path_found = true
                 }
             }
@@ -870,9 +880,10 @@ impl NodeState {
     /// Called when connectivity changes enough that we should question our earlier
     /// assumptions about which paths work.
     #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
-    pub(super) fn note_connectivity_change(&mut self, now: Instant) {
+    pub(super) fn note_connectivity_change(&mut self, now: Instant, metrics: &MagicsockMetrics) {
         let mut guard = self.udp_paths.access_mut(now);
         for es in guard.paths().values_mut() {
+            es.validity.record_metrics(metrics);
             es.clear();
         }
     }
@@ -880,11 +891,12 @@ impl NodeState {
     /// Handles a Pong message (a reply to an earlier ping).
     ///
     /// It reports the address and key that should be inserted for the endpoint if any.
-    #[instrument(skip(self))]
+    #[instrument(skip(self, metrics))]
     pub(super) fn handle_pong(
         &mut self,
         m: &disco::Pong,
         src: SendAddr,
+        metrics: &MagicsockMetrics,
     ) -> Option<(SocketAddr, PublicKey)> {
         event!(
             target: "iroh::_events::pong::recv",
@@ -928,12 +940,15 @@ impl NodeState {
                             }
                             Some(st) => {
                                 node_map_insert = Some((addr, self.node_id));
-                                st.add_pong_reply(PongReply {
-                                    latency,
-                                    pong_at: now,
-                                    from: src,
-                                    pong_src: m.ping_observed_addr.clone(),
-                                });
+                                st.add_pong_reply(
+                                    PongReply {
+                                        latency,
+                                        pong_at: now,
+                                        from: src,
+                                        pong_src: m.ping_observed_addr.clone(),
+                                    },
+                                    metrics,
+                                );
                             }
                         }
                         debug!(
@@ -943,12 +958,15 @@ impl NodeState {
                     }
                     SendAddr::Relay(ref url) => match self.relay_url.as_mut() {
                         Some((home_url, state)) if home_url == url => {
-                            state.add_pong_reply(PongReply {
-                                latency,
-                                pong_at: now,
-                                from: src,
-                                pong_src: m.ping_observed_addr.clone(),
-                            });
+                            state.add_pong_reply(
+                                PongReply {
+                                    latency,
+                                    pong_at: now,
+                                    from: src,
+                                    pong_src: m.ping_observed_addr.clone(),
+                                },
+                                metrics,
+                            );
                         }
                         other => {
                             // if we are here then we sent this ping, but the url changed
@@ -985,7 +1003,11 @@ impl NodeState {
     /// had any [`IpPort`]s to send pings to and our pings might end up blocked.  But at
     /// least open the firewalls on our side, giving the other side another change of making
     /// it through when it pings in response.
-    pub(super) fn handle_call_me_maybe(&mut self, m: disco::CallMeMaybe) -> Vec<PingAction> {
+    pub(super) fn handle_call_me_maybe(
+        &mut self,
+        m: disco::CallMeMaybe,
+        metrics: &MagicsockMetrics,
+    ) -> Vec<PingAction> {
         let now = Instant::now();
         let mut call_me_maybe_ipps = BTreeSet::new();
 
@@ -1026,6 +1048,7 @@ impl NodeState {
                 // thinks it has this IpPort as an available path.
                 if !st.validity.is_empty() {
                     debug!(path=?ipp ,"clearing recent pong");
+                    st.validity.record_metrics(metrics);
                     st.validity = PathValidity::empty();
                 }
             }
@@ -1707,7 +1730,8 @@ mod tests {
             .collect();
         let call_me_maybe = disco::CallMeMaybe { my_numbers };
 
-        let ping_messages = ep.handle_call_me_maybe(call_me_maybe);
+        let metrics = MagicsockMetrics::default();
+        let ping_messages = ep.handle_call_me_maybe(call_me_maybe, &metrics);
 
         // We have no relay server and no previous direct addresses, so we should get the same
         // number of pings as direct addresses in the call-me-maybe.

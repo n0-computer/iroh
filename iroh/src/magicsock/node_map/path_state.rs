@@ -13,7 +13,7 @@ use super::{
 use crate::{
     disco::SendAddr,
     magicsock::{
-        HEARTBEAT_INTERVAL,
+        HEARTBEAT_INTERVAL, Metrics as MagicsockMetrics,
         node_map::path_validity::{self, PathValidity},
     },
 };
@@ -112,7 +112,7 @@ impl PathState {
         new
     }
 
-    pub(super) fn add_pong_reply(&mut self, r: PongReply) {
+    pub(super) fn add_pong_reply(&mut self, r: PongReply, metrics: &MagicsockMetrics) {
         if let SendAddr::Udp(ref path) = self.path {
             if self.validity.is_empty() {
                 event!(
@@ -125,7 +125,9 @@ impl PathState {
             }
         }
 
-        self.validity = PathValidity::new(r.pong_at, r.latency);
+        self.validity.update_pong(r.pong_at, r.latency);
+
+        self.validity.record_metrics(metrics);
     }
 
     pub(super) fn receive_payload(&mut self, now: Instant) {
