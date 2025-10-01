@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use iroh::{
-    Endpoint, NodeId, SecretKey,
+    Endpoint, NodeId,
     discovery::{DiscoveryEvent, mdns::MdnsDiscovery},
     node_info::UserData,
 };
@@ -19,15 +19,11 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("Discovering Local Nodes Example!");
 
-    let key = SecretKey::generate(rand::thread_rng());
-    let node_id = key.public();
-    let mdns = MdnsDiscovery::builder().build(node_id)?;
-    let ep = Endpoint::builder()
-        .secret_key(key)
-        .add_discovery(mdns.clone())
-        .bind()
-        .await?;
+    let ep = Endpoint::builder().bind().await?;
     let node_id = ep.node_id();
+
+    let mdns = MdnsDiscovery::builder().build(node_id)?;
+    ep.discovery().clone().add(mdns.clone());
 
     println!("Created endpoint {}", node_id.fmt_short());
 
