@@ -8,7 +8,11 @@
 //! ```
 //! use std::time::Duration;
 //!
-//! use iroh::endpoint::{Endpoint, Source};
+//! use iroh::{
+//!    discovery::{DiscoveryEvent, mdns::MdnsDiscovery},
+//!    endpoint::{Endpoint, Source},
+//!    SecretKey,
+//! }
 //!
 //! #[tokio::main]
 //! async fn main() {
@@ -17,6 +21,7 @@
 //!     let node_id = node_key.public();
 //!     let mdns = MdnsDiscovery::builder().build(node_id).uwrap();
 //!     let endpoint = Endpoint::builder()
+//!         .secret_key(node_key)
 //!         .add_discovery(mdns.clone())
 //!         .bind()
 //!         .await
