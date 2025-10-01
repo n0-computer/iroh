@@ -647,37 +647,16 @@ impl MagicSock {
                     }
                     #[cfg(not(wasm_browser))]
                     transports::Addr::Ip(addr) => {
-                        // UDP
-
-                        // Update the NodeMap and remap RecvMeta to the NodeIdMappedAddr.
-                        match self.node_map.receive_udp(*addr) {
-                            None => {
-                                trace!(
-                                    src = %addr,
-                                    count = %quic_datagram_count,
-                                    len = quinn_meta.len,
-                                    "UDP recv quic packets",
-                                );
-
-                                quic_packets_total += quic_datagram_count;
-                                quinn_meta.addr = *addr;
-                            }
-                            Some((node_id, quic_mapped_addr)) => {
-                                trace!(
-                                    src = %addr,
-                                    node = %node_id.fmt_short(),
-                                    count = %quic_datagram_count,
-                                    len = quinn_meta.len,
-                                    "UDP recv quic packets",
-                                );
-                                quic_packets_total += quic_datagram_count;
-                                quinn_meta.addr = quic_mapped_addr.private_socket_addr();
-                            }
-                        }
+                        trace!(
+                            src = ?addr,
+                            count = %quic_datagram_count,
+                            len = quinn_meta.len,
+                            "UDP recv QUIC packets",
+                        );
+                        quic_packets_total += quic_datagram_count;
                     }
                     transports::Addr::Relay(src_url, src_node) => {
                         // Relay
-                        let _quic_mapped_addr = self.node_map.receive_relay(src_url, *src_node);
                         let mapped_addr = self
                             .node_map
                             .relay_mapped_addrs
