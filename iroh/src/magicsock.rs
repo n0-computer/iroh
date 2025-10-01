@@ -97,6 +97,19 @@ const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Jitter range for heartbeat intervals (±25% of base interval).
+/// This prevents synchronized heartbeat storms across many nodes.
+const HEARTBEAT_JITTER_PCT: f64 = 0.25;
+
+/// Create a jittered interval to prevent synchronized heartbeat storms.
+fn jittered_interval(base: Duration) -> time::Interval {
+    let jitter_range = base.as_secs_f64() * HEARTBEAT_JITTER_PCT;
+    let jitter = rand::thread_rng().gen_range(-jitter_range..=jitter_range);
+    let jittered = base.as_secs_f64() + jitter;
+    let duration = Duration::from_secs_f64(jittered.max(0.1));
+    time::interval(duration)
+}
+
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
 pub(crate) struct Options {
@@ -1864,7 +1877,7 @@ impl Actor {
         let mut current_netmon_state = self.netmon_watcher.get();
 
         #[cfg(not(wasm_browser))]
-        let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
+        let mut direct_addr_heartbeat_timer = jittered_interval(HEARTBEAT_INTERVAL);
 
         #[cfg(not(wasm_browser))]
         let mut portmap_watcher = self

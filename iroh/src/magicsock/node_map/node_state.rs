@@ -464,11 +464,21 @@ impl NodeState {
                             // which we should have received the pong, clear best addr and
                             // pong.  Both are used to select this path again, but we know
                             // it's not a usable path now.
-                            path_state.validity = PathValidity::empty();
+                            // Record ping failure and only clear validity after threshold
+                            path_state.validity.record_ping_failure();
                             metrics.path_ping_failures.inc();
 
                             path_state.validity.record_metrics(metrics);
-                            metrics.path_marked_outdated.inc();
+
+                            if path_state.validity.should_mark_outdated() {
+                                debug!(
+                                    "path {} marked outdated after {} consecutive failures",
+                                    addr,
+                                    path_state.validity.consecutive_failures()
+                                );
+                                metrics.path_marked_outdated.inc();
+                                path_state.validity = PathValidity::empty();
+                            }
                         }
                     }
                 }

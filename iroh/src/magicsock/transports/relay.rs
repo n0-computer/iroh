@@ -39,11 +39,14 @@ pub(crate) struct RelayTransport {
 
 impl RelayTransport {
     pub(crate) fn new(config: RelayActorConfig) -> Self {
-        let (relay_datagram_send_tx, relay_datagram_send_rx) = mpsc::channel(256);
+        // Increased from 256 to 1024 to better handle congestion and burst traffic
+        let (relay_datagram_send_tx, relay_datagram_send_rx) = mpsc::channel(1024);
 
-        let (relay_datagram_recv_tx, relay_datagram_recv_rx) = mpsc::channel(512);
+        // Increased from 512 to 2048 to reduce drops under load
+        let (relay_datagram_recv_tx, relay_datagram_recv_rx) = mpsc::channel(2048);
 
-        let (actor_sender, actor_receiver) = mpsc::channel(256);
+        // Increased from 256 to 512 for actor control messages
+        let (actor_sender, actor_receiver) = mpsc::channel(512);
 
         let my_node_id = config.secret_key.public();
         let my_relay = config.my_relay.clone();

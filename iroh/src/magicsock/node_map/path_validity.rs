@@ -9,7 +9,14 @@ use crate::magicsock::Metrics as MagicsockMetrics;
 /// currently trusted.
 ///
 /// If trust goes away, it can be brought back with another valid DISCO UDP pong.
-const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
+///
+/// Increased from 6.5s to 12s to be more resilient under congestion.
+const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_secs(12);
+
+/// Number of consecutive ping failures required before marking a path as outdated.
+///
+/// This implements a tolerance to prevent temporary packet loss from causing path degradation.
+const PING_FAILURE_THRESHOLD: u8 = 3;
 
 /// Tracks a path's validity.
 ///
@@ -27,6 +34,7 @@ struct Inner {
     latest_pong: Instant,
     latency: Duration,
     trust_until: Instant,
+    consecutive_failures: u8,
     congestion_metrics: CongestionMetrics,
 }
 
@@ -150,6 +158,7 @@ impl PathValidity {
             trust_until: pong_at + Source::ReceivedPong.trust_duration(),
             latest_pong: pong_at,
             latency,
+            consecutive_failures: 0,
             congestion_metrics: metrics,
         }))
     }
@@ -161,6 +170,7 @@ impl PathValidity {
                 inner.trust_until = pong_at + Source::ReceivedPong.trust_duration();
                 inner.latest_pong = pong_at;
                 inner.latency = latency;
+                inner.consecutive_failures = 0;
                 inner.congestion_metrics.add_latency_sample(latency);
             }
             None => {
@@ -226,6 +236,31 @@ impl PathValidity {
         Some(self.0.as_ref()?.latest_pong)
     }
 
+    /// Record a ping failure (timeout or no response).
+    ///
+    /// Only marks the path as outdated after PING_FAILURE_THRESHOLD consecutive failures.
+    pub(super) fn record_ping_failure(&mut self) {
+        let Some(state) = self.0.as_mut() else {
+            return;
+        };
+        state.consecutive_failures = state.consecutive_failures.saturating_add(1);
+    }
+
+    /// Check if path should be considered outdated based on consecutive failures.
+    pub(super) fn should_mark_outdated(&self) -> bool {
+        self.0
+            .as_ref()
+            .map(|state| state.consecutive_failures >= PING_FAILURE_THRESHOLD)
+            .unwrap_or(false)
+    }
+
+    /// Reset consecutive failure counter (called when we receive activity).
+    pub(super) fn reset_failures(&mut self) {
+        if let Some(state) = self.0.as_mut() {
+            state.consecutive_failures = 0;
+        }
+    }
+
     /// Record that a ping was sent on this path.
     pub(super) fn record_ping_sent(&mut self) {
         if let Some(state) = self.0.as_mut() {
@@ -267,6 +302,14 @@ impl PathValidity {
             .and_then(|state| state.congestion_metrics.avg_latency())
     }
 
+    /// Get the number of consecutive failures.
+    pub(super) fn consecutive_failures(&self) -> u8 {
+        self.0
+            .as_ref()
+            .map(|state| state.consecutive_failures)
+            .unwrap_or(0)
+    }
+
     /// Record congestion metrics to the metrics system.
     /// Should be called periodically or on significant events.
     pub(super) fn record_metrics(&self, metrics: &MagicsockMetrics) {
@@ -302,7 +345,7 @@ impl Inner {
 mod tests {
     use n0_future::time::{Duration, Instant};
 
-    use super::{PathValidity, Source, TRUST_UDP_ADDR_DURATION};
+    use super::{PING_FAILURE_THRESHOLD, PathValidity, Source, TRUST_UDP_ADDR_DURATION};
 
     #[tokio::test(start_paused = true)]
     async fn test_basic_path_validity_lifetime() {
@@ -330,6 +373,32 @@ mod tests {
         assert!(!validity.is_valid(Instant::now()));
         assert!(validity.is_outdated(Instant::now()));
     }
+
+    #[tokio::test]
+    async fn test_multiple_ping_failures() {
+        let mut validity = PathValidity::new(Instant::now(), Duration::from_millis(20));
+
+        // First failure should not mark as outdated
+        validity.record_ping_failure();
+        assert!(!validity.should_mark_outdated());
+        assert_eq!(validity.consecutive_failures(), 1);
+
+        // Second failure should not mark as outdated
+        validity.record_ping_failure();
+        assert!(!validity.should_mark_outdated());
+        assert_eq!(validity.consecutive_failures(), 2);
+
+        // Third failure should mark as outdated (threshold = 3)
+        validity.record_ping_failure();
+        assert!(validity.should_mark_outdated());
+        assert_eq!(validity.consecutive_failures(), PING_FAILURE_THRESHOLD);
+
+        // Receiving pong should reset failures
+        validity.update_pong(Instant::now(), Duration::from_millis(20));
+        assert_eq!(validity.consecutive_failures(), 0);
+        assert!(!validity.should_mark_outdated());
+    }
+
     #[tokio::test]
     async fn test_congestion_metrics() {
         let mut validity = PathValidity::new(Instant::now(), Duration::from_millis(10));
