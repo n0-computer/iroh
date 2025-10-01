@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::{
-    collections::{BTreeSet, HashMap, hash_map::Entry},
+    collections::{BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
@@ -8,10 +8,10 @@ use std::{
 
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
 use n0_future::{task::AbortOnDropHandle, time::Instant};
-use node_state::{NodeStateActor, NodeStateHandle};
+use node_state::{NodeState, NodeStateActor, NodeStateHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{Instrument, debug, info_span, trace, warn};
+use tracing::{Instrument, info_span, trace, warn};
 
 use crate::disco::{self};
 #[cfg(any(test, feature = "test-utils"))]
@@ -28,8 +28,6 @@ use super::{
     mapped_addrs::NodeIdMappedAddr,
     transports::{self, OwnedTransmit},
 };
-
-use self::node_state::NodeState;
 
 mod node_state;
 mod path_state;
@@ -235,14 +233,6 @@ impl NodeMap {
         self.node_mapped_addrs.get(&node_id)
     }
 
-    pub(super) fn reset_node_states(&self) {
-        let now = Instant::now();
-        let mut inner = self.inner.lock().expect("poisoned");
-        for (_, ep) in inner.node_states_mut() {
-            ep.note_connectivity_change(now);
-        }
-    }
-
     /// Returns the [`RemoteInfo`]s for each node in the node map.
     pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
         // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
@@ -269,13 +259,6 @@ impl NodeMap {
     /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.inner.lock().expect("poisoned").remote_info(node_id)
-    }
-
-    pub(crate) fn on_direct_addr_discovered(&self, discovered: BTreeSet<SocketAddr>) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .on_direct_addr_discovered(discovered, Instant::now());
     }
 
     /// Returns the sender for the [`NodeStateActor`].
@@ -382,35 +365,6 @@ impl NodeMapInner {
         actor.start()
     }
 
-    /// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    pub(super) fn on_direct_addr_discovered(
-        &mut self,
-        discovered: BTreeSet<SocketAddr>,
-        now: Instant,
-    ) {
-        for addr in discovered {
-            self.remove_by_ipp(addr.into(), now, "matches our local addr")
-        }
-    }
-
-    /// Removes a direct address from a node.
-    fn remove_by_ipp(&mut self, ipp: IpPort, now: Instant, why: &'static str) {
-        if let Some(id) = self.by_ip_port.remove(&ipp) {
-            if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
-                let node = entry.get_mut();
-                node.remove_direct_addr(&ipp, now, why);
-                if node.direct_addresses().count() == 0 {
-                    let node_id = node.public_key();
-                    let mapped_addr = node.all_paths_mapped_addr();
-                    self.by_node_key.remove(node_id);
-                    self.by_quic_mapped_addr.remove(mapped_addr);
-                    debug!(node_id=%node_id.fmt_short(), why, "removing node");
-                    entry.remove();
-                }
-            }
-        }
-    }
-
     fn get_id(&self, id: NodeStateKey) -> Option<usize> {
         match id {
             NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
@@ -431,11 +385,6 @@ impl NodeMapInner {
     fn node_states(&self) -> impl Iterator<Item = (&usize, &NodeState)> {
         self.by_id.iter()
     }
-
-    fn node_states_mut(&mut self) -> impl Iterator<Item = (&usize, &mut NodeState)> {
-        self.by_id.iter_mut()
-    }
-
     /// Get the [`RemoteInfo`]s for all nodes.
     fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
         self.node_states().map(move |(_, ep)| ep.info(now))
@@ -456,52 +405,8 @@ impl NodeMapInner {
     ///
     /// Will return `None` if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.get(NodeStateKey::NodeId(node_id))
-            .map(|ep| ep.conn_type())
-    }
-
-    /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
-    fn prune_inactive(&mut self) {
-        let now = Instant::now();
-        let mut prune_candidates: Vec<_> = self
-            .by_id
-            .values()
-            .filter(|node| !node.is_active(&now))
-            .map(|node| (*node.public_key(), node.last_used()))
-            .collect();
-
-        let prune_count = prune_candidates.len().saturating_sub(MAX_INACTIVE_NODES);
-        if prune_count == 0 {
-            // within limits
-            return;
-        }
-
-        prune_candidates.sort_unstable_by_key(|(_pk, last_used)| *last_used);
-        prune_candidates.truncate(prune_count);
-        for (public_key, last_used) in prune_candidates.into_iter() {
-            let node = public_key.fmt_short();
-            match last_used.map(|instant| instant.elapsed()) {
-                Some(last_used) => trace!(%node, ?last_used, "pruning inactive"),
-                None => trace!(%node, last_used=%"never", "pruning inactive"),
-            }
-
-            let Some(id) = self.by_node_key.remove(&public_key) else {
-                debug_assert!(false, "missing by_node_key entry for pk in by_id");
-                continue;
-            };
-
-            let Some(ep) = self.by_id.remove(&id) else {
-                debug_assert!(false, "missing by_id entry for id in by_node_key");
-                continue;
-            };
-
-            for ip_port in ep.direct_addresses() {
-                self.by_ip_port.remove(&ip_port);
-            }
-
-            self.by_quic_mapped_addr.remove(ep.all_paths_mapped_addr());
-        }
+    fn conn_type(&self, _node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
+        todo!();
     }
 }
 
@@ -623,112 +528,26 @@ impl From<(transports::Addr, OwnedTransmit)> for TransportsSenderMessage {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-    use std::sync::Arc;
 
-    use iroh_base::SecretKey;
     use tracing_test::traced_test;
 
-    use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
-    use crate::magicsock::DiscoveredDirectAddrs;
-    use crate::magicsock::transports::Transports;
+    // use super::*;
 
-    impl NodeMap {
-        async fn add_test_addr(&self, node_addr: NodeAddr) {
-            self.add_node_addr(
-                node_addr,
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
-            .await;
-        }
-    }
+    // impl NodeMap {
+    //     async fn add_test_addr(&self, node_addr: NodeAddr) {
+    //         self.add_node_addr(
+    //             node_addr,
+    //             Source::NamedApp {
+    //                 name: "test".into(),
+    //             },
+    //         )
+    //         .await;
+    //     }
+    // }
 
-    /// Test persisting and loading of known nodes.
-    #[tokio::test]
-    #[traced_test]
-    async fn restore_from_vec() {
-        let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
-        let direct_addrs = DiscoveredDirectAddrs::default();
-        let secret_key = SecretKey::generate(&mut rand::rngs::OsRng);
-        let (disco, _) = DiscoState::new(&secret_key);
-        let node_map = NodeMap::new(
-            secret_key.public(),
-            Default::default(),
-            transports.create_sender(),
-            direct_addrs.addrs.watch(),
-            disco.clone(),
-        );
-
-        let mut rng = rand::thread_rng();
-        let node_a = SecretKey::generate(&mut rng).public();
-        let node_b = SecretKey::generate(&mut rng).public();
-        let node_c = SecretKey::generate(&mut rng).public();
-        let node_d = SecretKey::generate(&mut rng).public();
-
-        let relay_x: RelayUrl = "https://my-relay-1.com".parse().unwrap();
-        let relay_y: RelayUrl = "https://my-relay-2.com".parse().unwrap();
-
-        let direct_addresses_a = [addr(4000), addr(4001)];
-        let direct_addresses_c = [addr(5000)];
-
-        let node_addr_a = NodeAddr::new(node_a)
-            .with_relay_url(relay_x)
-            .with_direct_addresses(direct_addresses_a);
-        let node_addr_b = NodeAddr::new(node_b).with_relay_url(relay_y);
-        let node_addr_c = NodeAddr::new(node_c).with_direct_addresses(direct_addresses_c);
-        let node_addr_d = NodeAddr::new(node_d);
-
-        node_map.add_test_addr(node_addr_a).await;
-        node_map.add_test_addr(node_addr_b).await;
-        node_map.add_test_addr(node_addr_c).await;
-        node_map.add_test_addr(node_addr_d).await;
-
-        let mut addrs: Vec<NodeAddr> = node_map
-            .list_remote_infos(Instant::now())
-            .into_iter()
-            .filter_map(|info| {
-                let addr: NodeAddr = info.into();
-                if addr.is_empty() {
-                    return None;
-                }
-                Some(addr)
-            })
-            .collect();
-        let loaded_node_map = NodeMap::load_from_vec(
-            secret_key.public(),
-            addrs.clone(),
-            PathSelection::default(),
-            Default::default(),
-            transports.create_sender(),
-            direct_addrs.addrs.watch(),
-            disco,
-        )
-        .await;
-
-        let mut loaded: Vec<NodeAddr> = loaded_node_map
-            .list_remote_infos(Instant::now())
-            .into_iter()
-            .filter_map(|info| {
-                let addr: NodeAddr = info.into();
-                if addr.is_empty() {
-                    return None;
-                }
-                Some(addr)
-            })
-            .collect();
-
-        loaded.sort_unstable();
-        addrs.sort_unstable();
-
-        // compare the node maps via their known nodes
-        assert_eq!(addrs, loaded);
-    }
-
-    fn addr(port: u16) -> SocketAddr {
-        (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
-    }
+    // fn addr(port: u16) -> SocketAddr {
+    //     (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
+    // }
 
     #[tokio::test]
     #[traced_test]

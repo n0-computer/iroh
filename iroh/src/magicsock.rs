@@ -469,8 +469,6 @@ impl MagicSock {
     pub(super) fn store_direct_addresses(&self, addrs: BTreeSet<DirectAddr>) {
         let updated = self.direct_addrs.update(addrs);
         if updated {
-            self.node_map
-                .on_direct_addr_discovered(self.direct_addrs.sockaddrs());
             self.publish_my_addr();
         }
     }
@@ -1591,7 +1589,6 @@ impl Actor {
             #[cfg(not(wasm_browser))]
             self.msock.dns_resolver.reset().await;
             self.re_stun(UpdateReason::LinkChangeMajor);
-            self.reset_endpoint_states();
         } else {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
@@ -1792,13 +1789,6 @@ impl Actor {
 
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report.as_ref());
-    }
-
-    /// Resets the preferred address for all nodes.
-    /// This is called when connectivity changes enough that we no longer trust the old routes.
-    #[instrument(skip_all)]
-    fn reset_endpoint_states(&mut self) {
-        self.msock.node_map.reset_node_states()
     }
 }
 

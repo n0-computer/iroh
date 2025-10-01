@@ -542,6 +542,8 @@ impl NodeStateActor {
             .map(|addr| addr.is_ip())
             .unwrap_or_default()
         {
+            // TODO: We should ping this path to make sure it still works.  Because we now
+            // know things could be broken.
             trace!("not holepunching: already have a direct connection");
             // TODO: If the latency is kind of bad we should retry holepunching at times.
             return;
