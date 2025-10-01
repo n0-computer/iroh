@@ -17,7 +17,7 @@ use quinn_proto::{PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Whatever};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 
@@ -826,6 +826,7 @@ impl NodeStateActor {
 
     pub(super) fn start(mut self) -> NodeStateHandle {
         let (tx, rx) = mpsc::channel(16);
+        let node_id = self.node_id;
 
         let task = tokio::spawn(
             async move {
@@ -833,7 +834,7 @@ impl NodeStateActor {
                     error!("actor failed: {err:#}");
                 }
             }
-            .instrument(info_span!("NodeStateActor")),
+            .instrument(info_span!("NodeStateActor", node_id = node_id.fmt_short())),
         );
         NodeStateHandle {
             sender: tx,
@@ -841,8 +842,8 @@ impl NodeStateActor {
         }
     }
 
-    #[instrument(skip_all, fields(node_id = %self.node_id.fmt_short()))]
     async fn run(&mut self, mut inbox: mpsc::Receiver<NodeStateMessage>) -> Result<(), Whatever> {
+        trace!("actor started");
         loop {
             let scheduled_hp = match self.scheduled_holepunch {
                 Some(when) => MaybeFuture::Some(tokio::time::sleep_until(when)),
@@ -861,9 +862,11 @@ impl NodeStateActor {
                     self.handle_path_event(id, evt).await;
                 }
                 _ = self.local_addrs.updated() => {
+                    trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching().await;
                 }
                 _ = &mut scheduled_hp => {
+                    trace!("triggering scheduled holepunching");
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching().await;
                 }
@@ -873,7 +876,9 @@ impl NodeStateActor {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     async fn handle_message(&mut self, msg: NodeStateMessage) -> Result<(), Whatever> {
+        trace!("handling message");
         match msg {
             NodeStateMessage::SendDatagram(transmit) => {
                 if let Some(ref addr) = self.selected_path {
@@ -888,7 +893,8 @@ impl NodeStateActor {
                             .await
                             .whatever_context("TransportSenerActor stopped")?;
                     }
-                    self.trigger_holepunching();
+                    trace!("connecting without selected path: triggering holepunching");
+                    self.trigger_holepunching().await;
                 }
             }
             NodeStateMessage::AddConnection(handle) => {
@@ -975,6 +981,7 @@ impl NodeStateActor {
                 let path = self.paths.entry(src).or_default();
                 path.sources.insert(Source::Ping, Instant::now());
 
+                trace!("ping received, triggering holepunching");
                 self.trigger_holepunching().await;
             }
             NodeStateMessage::PongReceived(pong, src) => {
@@ -997,6 +1004,10 @@ impl NodeStateActor {
                 );
 
                 self.open_quic_path(src);
+            }
+            NodeStateMessage::CanSend(tx) => {
+                let can_send = !self.paths.is_empty();
+                tx.send(can_send).ok();
             }
         }
         Ok(())
@@ -1021,13 +1032,18 @@ impl NodeStateActor {
     async fn trigger_holepunching(&mut self) {
         const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
+        if self.connections.is_empty() {
+            trace!("not holepunching: no connections");
+            return;
+        }
+
         if self
             .selected_path
             .as_ref()
             .map(|addr| addr.is_ip())
             .unwrap_or_default()
         {
-            trace!("not holepunching, already have a direct connection");
+            trace!("not holepunching: already have a direct connection");
             // TODO: If the latency is kind of bad we should retry holepunching at times.
             return;
         }
@@ -1408,7 +1424,7 @@ impl NodeStateActor {
 }
 
 /// Messages to send to the [`NodeStateActor`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub(crate) enum NodeStateMessage {
     /// Sends a datagram to all known paths.
     ///
@@ -1418,12 +1434,14 @@ pub(crate) enum NodeStateMessage {
     /// This is not acceptable to use on the normal send path, as it is an async send
     /// operation with a bunch more copying.  So it should only be used for sending QUIC
     /// Initial packets.
+    #[debug("SendDatagram(OwnedTransmit)")]
     SendDatagram(OwnedTransmit),
     /// Adds an active connection to this remote node.
     ///
     /// The connection will now be managed by this actor.  Holepunching will happen when
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
+    #[debug("AddConnection(WeakConnectionHandle)")]
     AddConnection(WeakConnectionHandle),
     /// Adds a [`NodeAddr`] with locations where the node might be reachable.
     AddNodeAddr(NodeAddr, Source),
@@ -1433,6 +1451,11 @@ pub(crate) enum NodeStateMessage {
     PingReceived(disco::Ping, transports::Addr),
     /// Process a received DISCO Pong message.
     PongReceived(disco::Pong, transports::Addr),
+    /// Asks if there is any possible path that could be used.
+    ///
+    /// This does not mean there is any guarantee that the remote endpoint is reachable.
+    #[debug("CanSend(onseshot::Sender<bool>)")]
+    CanSend(oneshot::Sender<bool>),
 }
 
 /// A handle to a [`NodeStateActor`].

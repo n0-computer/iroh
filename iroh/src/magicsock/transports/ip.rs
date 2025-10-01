@@ -144,7 +144,6 @@ impl IpSender {
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
-        trace!("sending to {}", destination);
         let total_bytes = transmit.contents.len() as u64;
         let res = self
             .sender
@@ -156,10 +155,10 @@ impl IpSender {
                 src_ip: src,
             })
             .await;
-        trace!("send res: {:?}", res);
 
         match res {
             Ok(res) => {
+                trace!(dst = ?destination, "sent on IP");
                 match destination {
                     SocketAddr::V4(_) => {
                         self.metrics.send_ipv4.inc_by(total_bytes);
@@ -170,7 +169,10 @@ impl IpSender {
                 }
                 Ok(res)
             }
-            Err(err) => Err(err),
+            Err(err) => {
+                trace!(dst = ?destination, "IP send error: {err:#}");
+                Err(err)
+            }
         }
     }
 

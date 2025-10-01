@@ -729,6 +729,7 @@ impl Endpoint {
             self.add_node_addr(node_addr.clone()).await?;
         }
         let node_id = node_addr.node_id;
+        trace!(dst_node_id = node_id.fmt_short(), "connecting");
 
         // When we start a connection we want to send the QUIC Initial packets on all the
         // known paths for the remote node.  For this we use an AllPathsMappedAddr as
@@ -747,7 +748,6 @@ impl Endpoint {
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
 
-        debug!(?mapped_addr, "Attempting connection...");
         let client_config = {
             let mut alpn_protocols = vec![alpn.to_vec()];
             alpn_protocols.extend(options.additional_alpns);
@@ -1373,8 +1373,8 @@ impl Endpoint {
 
         // Only return a mapped addr if we have some way of dialing this node, in other
         // words, we have either a relay URL or at least one direct address.
-        let addr = if self.msock.has_send_address(node_id) {
-            self.msock.get_mapping_addr(node_id)
+        let addr = if self.msock.has_send_address(node_id).await {
+            Some(self.msock.get_node_mapped_addr(node_id))
         } else {
             None
         };
@@ -1405,11 +1405,8 @@ impl Endpoint {
                     .first_arrived()
                     .await
                     .context(get_mapping_address_error::DiscoverSnafu)?;
-                if let Some(addr) = self.msock.get_mapping_addr(node_id) {
-                    Ok((addr, Some(discovery)))
-                } else {
-                    Err(get_mapping_address_error::NoAddressSnafu.build())
-                }
+                let addr = self.msock.get_node_mapped_addr(node_id);
+                Ok((addr, Some(discovery)))
             }
         }
     }
@@ -2234,7 +2231,7 @@ mod tests {
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
-    use tracing::{Instrument, error_span, info, info_span};
+    use tracing::{Instrument, error_span, info, info_span, instrument};
     use tracing_test::traced_test;
 
     use super::Endpoint;
@@ -2571,6 +2568,63 @@ mod tests {
         server.close().await;
 
         assert_eq!(&data, b"Hello, world!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_two_direct_only() -> Result {
+        // Connect two endpoints on the same network, without a relay server.
+        // let discovery = StaticProvider::new();
+        let ep1 = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            // .discovery(discovery.clone())
+            .bind()
+            .await?;
+        let ep2 = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Disabled)
+            // .discovery(discovery.clone())
+            .bind()
+            .await?;
+        ep1.direct_addresses().initialized().await;
+        ep2.direct_addresses().initialized().await;
+        let ep1_nodeaddr = ep1.node_addr().initialized().await;
+        // let ep2_nodeaddr = ep2.node_addr().initialized().await;
+        // discovery.set_node_info(ep1_nodeaddr.clone());
+        // discovery.set_node_info(ep2_nodeaddr.clone());
+
+        #[instrument(name = "connect", skip_all)]
+        async fn connect(ep: Endpoint, dst: NodeAddr) -> Result<quinn::ConnectionError> {
+            info!(me = ep.node_id().fmt_short(), "connect starting");
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+            let mut send = conn.open_uni().await.e()?;
+            send.write_all(b"hello").await.e()?;
+            send.finish().e()?;
+            Ok(conn.closed().await)
+        }
+
+        #[instrument(name = "accept", skip_all)]
+        async fn accept(ep: Endpoint, src: NodeId) -> Result {
+            info!(me = ep.node_id().fmt_short(), "accept starting");
+            let conn = ep.accept().await.e()?.await.e()?;
+            let node_id = conn.remote_node_id()?;
+            assert_eq!(node_id, src);
+            let mut recv = conn.accept_uni().await.e()?;
+            let msg = recv.read_to_end(100).await.e()?;
+            assert_eq!(msg, b"hello");
+            // Dropping the connection closes it just fine.
+            Ok(())
+        }
+
+        let ep1_accept = tokio::spawn(accept(ep1.clone(), ep2.node_id()));
+        let ep2_connect = tokio::spawn(connect(ep2.clone(), ep1_nodeaddr));
+
+        ep1_accept.await.e()??;
+        let conn_closed = ep2_connect.await.e()??;
+        assert_eq!(conn_closed, quinn::ConnectionError::CidsExhausted);
 
         Ok(())
     }

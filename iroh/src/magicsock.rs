@@ -44,7 +44,7 @@ use node_map::NodeStateMessage;
 use quinn::ServerConfig;
 use rand::Rng;
 use snafu::{ResultExt, Snafu};
-use tokio::sync::{Mutex as AsyncMutex, mpsc};
+use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, MagicTransport};
@@ -318,10 +318,17 @@ impl MagicSock {
     }
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
-    pub(crate) fn has_send_address(&self, node_key: PublicKey) -> bool {
-        self.remote_info(node_key)
-            .map(|info| info.has_send_address())
-            .unwrap_or(false)
+    pub(crate) async fn has_send_address(&self, node_id: NodeId) -> bool {
+        let node_state = self.node_map.node_state_actor(node_id);
+        let (tx, rx) = oneshot::channel();
+        if node_state
+            .send(NodeStateMessage::CanSend(tx))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        rx.await.unwrap_or(false)
     }
 
     /// Return the [`RemoteInfo`]s of all nodes in the node map.
@@ -409,8 +416,8 @@ impl MagicSock {
     }
 
     /// Returns the socket address which can be used by the QUIC layer to *dial* this node.
-    pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<NodeIdMappedAddr> {
-        self.node_map.get_all_paths_addr_for_node(node_id)
+    pub(crate) fn get_node_mapped_addr(&self, node_id: NodeId) -> NodeIdMappedAddr {
+        self.node_map.node_mapped_addr(node_id)
     }
 
     /// Add potential addresses for a node to the [`NodeState`].
@@ -2723,7 +2730,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let addr = msock_1.get_mapping_addr(node_id_2).unwrap();
+        let addr = msock_1.get_node_mapped_addr(node_id_2);
         let res = tokio::time::timeout(
             Duration::from_secs(10),
             magicsock_connect(msock_1.endpoint(), secret_key_1.clone(), addr, node_id_2),
@@ -2790,7 +2797,7 @@ mod tests {
             )
             .await;
 
-        let addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
+        let addr_2 = msock_1.get_node_mapped_addr(node_id_2);
 
         // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
         // not take forever.  You need to check the log output to verify this is really

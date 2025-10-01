@@ -11,7 +11,7 @@ use n0_future::{task::AbortOnDropHandle, time::Instant};
 use node_state::{NodeStateActor, NodeStateHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, info, instrument, trace, warn};
+use tracing::{Instrument, debug, info, info_span, instrument, trace, warn};
 
 use crate::disco::{self};
 #[cfg(any(test, feature = "test-utils"))]
@@ -247,12 +247,8 @@ impl NodeMap {
             .receive_relay(relay_url, src)
     }
 
-    pub(super) fn get_all_paths_addr_for_node(&self, node_id: NodeId) -> Option<NodeIdMappedAddr> {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .get(NodeStateKey::NodeId(node_id))
-            .map(|ep| *ep.all_paths_mapped_addr())
+    pub(super) fn node_mapped_addr(&self, node_id: NodeId) -> NodeIdMappedAddr {
+        self.node_mapped_addrs.get(&node_id)
     }
 
     pub(super) fn reset_node_states(&self) {
@@ -662,17 +658,18 @@ impl TransportsSenderActor {
         // can.  No need to introduce extra buffering.
         let (tx, rx) = mpsc::channel(1);
 
-        // No .instrument() on task, run method has an #[instrument] attribute.
-        let task = tokio::spawn(async move {
-            self.run(rx).await;
-        });
+        let task = tokio::spawn(
+            async move {
+                self.run(rx).await;
+            }
+            .instrument(info_span!("TransportsSenderActor")),
+        );
         TransportsSenderHandle {
             inbox: tx,
             _task: AbortOnDropHandle::new(task),
         }
     }
 
-    #[instrument(name = "TransportsSenderActor", skip_all)]
     async fn run(self, mut inbox: mpsc::Receiver<TransportsSenderMessage>) {
         use TransportsSenderMessage::SendDatagram;
 
