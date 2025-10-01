@@ -9,10 +9,11 @@
 //! use std::time::Duration;
 //!
 //! use iroh::{
-//!    discovery::{DiscoveryEvent, mdns::MdnsDiscovery},
-//!    endpoint::{Endpoint, Source},
-//!    SecretKey,
+//!     SecretKey,
+//!     discovery::{DiscoveryEvent, mdns::MdnsDiscovery},
+//!     endpoint::{Endpoint, Source},
 //! };
+//! use n0_future::StreamExt;
 //!
 //! #[tokio::main]
 //! async fn main() {
