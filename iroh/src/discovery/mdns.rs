@@ -50,15 +50,15 @@ use tracing::{Instrument, debug, error, info_span, trace, warn};
 use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 use crate::discovery::{Discovery, DiscoveryEvent, DiscoveryItem, NodeData, NodeInfo};
 
-/// The n0 local swarm node discovery name
-const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
+/// The n0 local service name
+const N0_SERVICE_NAME: &str = "irohv1";
 
 /// Name of this discovery service.
 ///
 /// Used as the `provenance` field in [`DiscoveryItem`]s.
 ///
 /// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
-pub const NAME: &str = "local.swarm.discovery";
+pub const NAME: &str = "mdns";
 
 /// The key of the attribute under which the `UserData` is stored in
 /// the TXT record supported by swarm-discovery.
@@ -130,12 +130,16 @@ impl Subscribers {
 #[derive(Debug)]
 pub struct MdnsDiscoveryBuilder {
     advertise: bool,
+    service_name: String,
 }
 
 impl MdnsDiscoveryBuilder {
     /// Creates a new [`MdnsDiscoveryBuilder`] with default settings.
-    pub fn new() -> Self {
-        Self { advertise: true }
+    fn new() -> Self {
+        Self {
+            advertise: true,
+            service_name: N0_SERVICE_NAME.to_string(),
+        }
     }
 
     /// Sets whether this node should advertise its presence.
@@ -146,9 +150,28 @@ impl MdnsDiscoveryBuilder {
         self
     }
 
+    /// Sets a custom service name.
+    ///
+    /// The default is `irohv1`, which will show up on a record in the
+    /// following form, for example:
+    /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._irohv1._udp.local`
+    ///
+    /// Any custom service name will take the form, for example:
+    /// `7rutqynuzu65fcdgoerbt4uoh3p62wuto2mp56x3uvhitqzssxga._{service_name}.upd.local`
+    pub fn service_name(mut self, service_name: impl Into<String>) -> Self {
+        self.service_name = service_name.into();
+        self
+    }
+
     /// Builds an [`MdnsDiscovery`] instance with the configured settings.
+    ///
+    /// # Errors
+    /// Returns an error if the network does not allow ipv4 OR ipv6.
+    ///
+    /// # Panics
+    /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     pub fn build(self, node_id: NodeId) -> Result<MdnsDiscovery, IntoDiscoveryError> {
-        MdnsDiscovery::new(node_id, self.advertise)
+        MdnsDiscovery::new(node_id, self.advertise, self.service_name)
     }
 }
 
@@ -170,7 +193,7 @@ impl IntoDiscovery for MdnsDiscoveryBuilder {
 impl MdnsDiscovery {
     /// Returns a [`MdnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
     pub fn builder() -> MdnsDiscoveryBuilder {
-        MdnsDiscoveryBuilder::new()
+        MdnsDiscoveryBuilder::default()
     }
 
     /// Create a new [`MdnsDiscovery`] Service.
@@ -183,7 +206,11 @@ impl MdnsDiscovery {
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    pub fn new(node_id: NodeId, advertise: bool) -> Result<Self, IntoDiscoveryError> {
+    fn new(
+        node_id: NodeId,
+        advertise: bool,
+        service_name: String,
+    ) -> Result<Self, IntoDiscoveryError> {
         debug!("Creating new MdnsDiscovery service");
         let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
@@ -193,6 +220,7 @@ impl MdnsDiscovery {
             advertise,
             task_sender.clone(),
             BTreeSet::new(),
+            service_name,
             &rt,
         )?;
 
@@ -359,6 +387,7 @@ impl MdnsDiscovery {
         advertise: bool,
         sender: mpsc::Sender<Message>,
         socketaddrs: BTreeSet<SocketAddr>,
+        service_name: String,
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard, IntoDiscoveryError> {
         let spawn_rt = rt.clone();
@@ -379,7 +408,7 @@ impl MdnsDiscovery {
         let node_id_str = data_encoding::BASE32_NOPAD
             .encode(node_id.as_bytes())
             .to_ascii_lowercase();
-        let mut discoverer = Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id_str)
+        let mut discoverer = Discoverer::new_interactive(service_name, node_id_str)
             .with_callback(callback)
             .with_ip_class(IpClass::Auto);
         if advertise {
@@ -659,7 +688,70 @@ mod tests {
 
         fn make_discoverer(advertise: bool) -> Result<(PublicKey, MdnsDiscovery)> {
             let node_id = SecretKey::generate(rand::thread_rng()).public();
-            Ok((node_id, MdnsDiscovery::new(node_id, advertise)?))
+            Ok((
+                node_id,
+                MdnsDiscovery::builder()
+                    .advertise(advertise)
+                    .build(node_id)?,
+            ))
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn test_service_names() -> Result {
+            // Create a discovery service using the default
+            // service name
+            let id_a = SecretKey::generate(rand::thread_rng()).public();
+            let discovery_a = MdnsDiscovery::builder().build(id_a)?;
+
+            // Create a discovery service using a custom
+            // service name
+            let id_b = SecretKey::generate(rand::thread_rng()).public();
+            let discovery_b = MdnsDiscovery::builder()
+                .service_name("different.name")
+                .build(id_b)?;
+
+            // Create a discovery service using the same
+            // custom service name
+            let id_c = SecretKey::generate(rand::thread_rng()).public();
+            let discovery_c = MdnsDiscovery::builder()
+                .service_name("different.name")
+                .build(id_c)?;
+
+            let node_data_a =
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+            discovery_a.publish(&node_data_a);
+
+            let node_data_b =
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
+            discovery_b.publish(&node_data_b);
+
+            let node_data_c =
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:33333".parse().unwrap()]));
+            discovery_c.publish(&node_data_c);
+
+            let mut stream_a = discovery_a.resolve(id_b).unwrap();
+            let result_a = tokio::time::timeout(Duration::from_secs(2), stream_a.next()).await;
+            assert!(
+                result_a.is_err(),
+                "Node on a different service should NOT be discoverable"
+            );
+
+            let mut stream_b = discovery_b.resolve(id_c).unwrap();
+            let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
+            assert!(
+                result_b.is_ok(),
+                "Node on the same service should be discoverable"
+            );
+
+            let mut stream_b = discovery_b.resolve(id_a).unwrap();
+            let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
+            assert!(
+                result_b.is_err(),
+                "Node on a different service should NOT be discoverable"
+            );
+
+            Ok(())
         }
     }
 }
