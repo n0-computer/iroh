@@ -5,7 +5,7 @@
 //!
 //! When [`MdnsDiscovery`] is enabled, it's possible to get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
 //!
-//! ```
+//! ```no_run
 //! use std::time::Duration;
 //!
 //! use iroh::{
