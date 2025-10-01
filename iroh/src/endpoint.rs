@@ -24,7 +24,7 @@ use std::{
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
-use n0_future::{Stream, time::Duration};
+use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
@@ -38,8 +38,8 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        ConcurrentDiscovery, DiscoveryError, DiscoveryEvent, DiscoverySubscribers, DiscoveryTask,
-        DynIntoDiscovery, IntoDiscovery, Lagged, UserData, pkarr::PkarrPublisher,
+        ConcurrentDiscovery, DiscoveryError, DiscoveryTask, DynIntoDiscovery, IntoDiscovery,
+        UserData, pkarr::PkarrPublisher,
     },
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
@@ -76,7 +76,7 @@ pub use super::magicsock::{
 ///
 /// When a connection is attempted with a [`NodeAddr`] containing direct addresses the
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
-/// is still no connection the configured [`Discovery`] will be used however.
+/// is still no connection the configured [`iroh::discovery::Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Defines the mode of path selection for all traffic flowing through
@@ -274,7 +274,7 @@ impl Builder {
     /// If no discovery service is set, connecting to a node without providing its
     /// direct addresses or relay URLs will fail.
     ///
-    /// See the documentation of the [`Discovery`] trait for details.
+    /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
     pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
         self.discovery.clear();
         self.discovery.push(Box::new(discovery));
@@ -296,7 +296,7 @@ impl Builder {
     ///
     /// To clear all discovery services, use [`Builder::clear_discovery`].
     ///
-    /// See the documentation of the [`Discovery`] trait for details.
+    /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
     pub fn add_discovery(mut self, discovery: impl IntoDiscovery) -> Self {
         self.discovery.push(Box::new(discovery));
         self
@@ -644,9 +644,8 @@ impl Endpoint {
     /// establish a direct connection without involving a relay server.
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`NodeAddr`] it
-    /// may still be possible a connection can be established.  This depends on other calls
-    /// to [`Endpoint::add_node_addr`] which may provide contact information, or via the
-    /// [`Discovery`] service configured using [`Builder::discovery`].  The discovery
+    /// may still be possible a connection can be established.  This depends on which, if any,
+    /// [`crate::discovery::Discovery`] services were configured using [`Builder::discovery`].  The discovery
     /// service will also be used if the remote node is not reachable on the provided direct
     /// addresses and there is no [`RelayUrl`].
     ///
@@ -1042,36 +1041,6 @@ impl Endpoint {
             .collect()
     }
 
-    // # Getter methods for information about other nodes.
-
-    /// Returns a stream of all remote nodes discovered through the endpoint's discovery services.
-    ///
-    /// Whenever a node is discovered via the endpoint's discovery service, the corresponding
-    /// [`DiscoveryEvent`] is yielded from this stream. This includes nodes discovered actively
-    /// through [`Discovery::resolve`], which is invoked automatically when calling
-    /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
-    /// nodes that the endpoint discovers passively from discovery services that implement
-    /// [`Discovery::subscribe`], which e.g. [`MdnsDiscovery`] does.
-    ///
-    /// The stream does not yield information about nodes that are added manually to the endpoint's
-    /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
-    /// [`Endpoint::connect`]. It also does not yield information about nodes that we only
-    /// know about because they connected to us. When using the [`StaticProvider`] discovery,
-    /// discovery info is only emitted once connecting to a node added to the static provider, not
-    /// at the time of adding it to the static provider.
-    ///
-    /// The stream should be processed in a loop. If the stream is not processed fast enough,
-    /// [`Lagged`] may be yielded, indicating that items were missed.
-    ///
-    /// See also [`Endpoint::remote_info_iter`], which returns an iterator over all remotes
-    /// the endpoint knows about at a specific point in time.
-    ///
-    /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
-    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryEvent, Lagged>> + use<> {
-        self.msock.discovery_subscribers().subscribe()
-    }
-
     // # Methods for less common getters.
     //
     // Partially they return things passed into the builder.
@@ -1406,11 +1375,6 @@ impl Endpoint {
                 }
             }
         }
-    }
-
-    /// Returns a reference to the subscribers channel for discovery events.
-    pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
-        self.msock.discovery_subscribers()
     }
 
     #[cfg(test)]

@@ -85,8 +85,7 @@ enum NodeStateKey {
 /// sources can be associated with a single address, if we have discovered this
 /// address through multiple means.
 ///
-/// Each time a [`NodeAddr`] is added to the node map, usually through
-/// [`crate::endpoint::Endpoint::add_node_addr_with_source`], a [`Source`] must be supplied to indicate
+/// Each time a [`NodeAddr`] is added to the node map a [`Source`] must be supplied to indicate
 /// how the address was obtained.
 ///
 /// A [`Source`] can describe a variety of places that an address or node was

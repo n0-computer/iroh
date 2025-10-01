@@ -7,8 +7,7 @@
 //! connect directly with a [`NodeId`].
 //!
 //! For this to work however, the endpoint has to get the addressing  information by
-//! other means.  This can be done by manually calling [`Endpoint::add_node_addr`],
-//! but that still requires knowing the other addressing information.
+//! other means.
 //!
 //! Node discovery is an automated system for an [`Endpoint`] to retrieve this addressing
 //! information.  Each iroh node will automatically publish their own addressing
@@ -113,7 +112,6 @@ use std::sync::{Arc, RwLock};
 
 use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
-    Stream, TryStreamExt,
     boxed::BoxStream,
     stream::StreamExt,
     task::{self, AbortOnDropHandle},
@@ -345,8 +343,8 @@ pub enum DiscoveryEvent {
 
 /// Node discovery results from [`Discovery`] services.
 ///
-/// This is the item in the streams returned from [`Discovery::resolve`] and
-/// [`Discovery::subscribe`]. It contains the [`NodeData`] about the discovered node,
+/// This is the item in the streams returned from [`Discovery::resolve`].
+/// It contains the [`NodeData`] about the discovered node,
 /// and some additional metadata about the discovery.
 ///
 /// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
@@ -620,9 +618,6 @@ impl DiscoveryTask {
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
-                    // Send the discovery item to the subscribers of the discovery broadcast stream.
-                    ep.discovery_subscribers()
-                        .send(DiscoveryEvent::Discovered(r));
                 }
                 Some(Err(err)) => {
                     warn!(?err, "discovery service produced error");
@@ -634,50 +629,6 @@ impl DiscoveryTask {
         if let Some(tx) = on_first_tx.take() {
             tx.send(Err(NoResultsSnafu { node_id }.build())).ok();
         }
-    }
-}
-
-/// Error returned when a discovery watch stream lagged too far behind.
-///
-/// The stream returned from [`Endpoint::discovery_stream`] yields this error
-/// if the loop in which the stream is processed cannot keep up with the emitted
-/// discovery events. Attempting to read the next item from the channel afterwards
-/// will return the oldest [`DiscoveryItem`] that is still retained.
-///
-/// Includes the number of skipped messages.
-#[derive(Debug, Snafu)]
-#[snafu(display("channel lagged by {val}"))]
-pub struct Lagged {
-    /// The number of skipped messages
-    pub val: u64,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct DiscoverySubscribers {
-    inner: tokio::sync::broadcast::Sender<DiscoveryEvent>,
-}
-
-impl DiscoverySubscribers {
-    pub(crate) fn new() -> Self {
-        // TODO: Make capacity configurable from the endpoint builder?
-        // This is the maximum number of [`DiscoveryItem`]s held by the channel if
-        // subscribers are stalled.
-        const CAPACITY: usize = 128;
-        Self {
-            inner: tokio::sync::broadcast::Sender::new(CAPACITY),
-        }
-    }
-
-    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryEvent, Lagged>> + use<> {
-        use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
-        let recv = self.inner.subscribe();
-        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })
-    }
-
-    pub(crate) fn send(&self, item: DiscoveryEvent) {
-        // `broadcast::Sender::send` returns an error if the channel has no subscribers,
-        // which we don't care about.
-        self.inner.send(item).ok();
     }
 }
 

@@ -1302,10 +1302,7 @@ pub struct DirectAddrInfo {
     ///
     /// The elapsed time since *any* confirmation of the path's existence was received is
     /// returned.  If the remote node moved networks and no longer has this path, this could
-    /// be a long duration.  If the path was added via [`Endpoint::add_node_addr`] or some
-    /// node discovery the path may never have been known to exist.
-    ///
-    /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
+    /// be a long duration.
     pub last_alive: Option<Duration>,
     /// A [`HashMap`] of [`Source`]s to [`Duration`]s.
     ///

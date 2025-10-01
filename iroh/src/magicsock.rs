@@ -70,8 +70,8 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::{
-        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoverySubscribers, DynIntoDiscovery,
-        IntoDiscoveryError, NodeData, UserData,
+        ConcurrentDiscovery, Discovery, DiscoveryContext, DynIntoDiscovery, IntoDiscoveryError,
+        NodeData, UserData,
     },
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     magicsock::node_map::RemoteInfo,
@@ -213,8 +213,6 @@ pub(crate) struct MagicSock {
     discovery: ConcurrentDiscovery,
     /// Optional user-defined discover data.
     discovery_user_data: RwLock<Option<UserData>>,
-    /// Broadcast channel for listening to discovery updates.
-    discovery_subscribers: DiscoverySubscribers,
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
@@ -448,11 +446,6 @@ impl MagicSock {
             .send(ActorMessage::NetworkChange)
             .await
             .ok();
-    }
-
-    /// Returns a reference to the subscribers channel for discovery events.
-    pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
-        &self.discovery_subscribers
     }
 
     #[cfg(test)]
@@ -1440,7 +1433,6 @@ impl Handle {
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
-            discovery_subscribers: DiscoverySubscribers::new(),
             metrics: metrics.clone(),
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
