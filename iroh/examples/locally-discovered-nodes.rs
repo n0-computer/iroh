@@ -5,7 +5,11 @@
 //! This is an async, non-determinate process, so the number of NodeIDs discovered each time may be different. If you have other iroh endpoints or iroh nodes with [`MdnsDiscovery`] enabled, it may discover those nodes as well.
 use std::time::Duration;
 
-use iroh::{Endpoint, NodeId, discovery::DiscoveryEvent, node_info::UserData};
+use iroh::{
+    Endpoint, NodeId, SecretKey,
+    discovery::{DiscoveryEvent, mdns::MdnsDiscovery},
+    node_info::UserData,
+};
 use n0_future::StreamExt;
 use n0_snafu::Result;
 use tokio::task::JoinSet;
@@ -15,24 +19,29 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("Discovering Local Nodes Example!");
 
-    let ep = Endpoint::builder().discovery_local_network().bind().await?;
+    let key = SecretKey::generate(rand::thread_rng());
+    let node_id = key.public();
+    let mdns = MdnsDiscovery::builder().build(node_id)?;
+    let ep = Endpoint::builder()
+        .secret_key(key)
+        .add_discovery(mdns.clone())
+        .bind()
+        .await?;
     let node_id = ep.node_id();
+
     println!("Created endpoint {}", node_id.fmt_short());
 
     let user_data = UserData::try_from(String::from("local-nodes-example"))?;
 
-    let mut discovery_stream = ep.discovery_stream();
-
     let ud = user_data.clone();
     let discovery_stream_task = tokio::spawn(async move {
+        let discovery_stream = mdns.subscribe();
+        tokio::pin!(discovery_stream);
+
         let mut discovered_nodes: Vec<NodeId> = vec![];
-        while let Some(item) = discovery_stream.next().await {
-            match item {
-                Err(e) => {
-                    tracing::error!("{e}");
-                    return;
-                }
-                Ok(DiscoveryEvent::Discovered(item)) => {
+        while let Some(event) = discovery_stream.next().await {
+            match event {
+                DiscoveryEvent::Discovered(item) => {
                     // if there is no user data, or the user data
                     // does not indicate that the discovered node
                     // is a part of the example, ignore it
@@ -53,7 +62,7 @@ async fn main() -> Result<()> {
                         println!("Found node {}!", item.node_id().fmt_short());
                     }
                 }
-                Ok(DiscoveryEvent::Expired(_)) => {}
+                DiscoveryEvent::Expired(_) => {}
             };
         }
     });

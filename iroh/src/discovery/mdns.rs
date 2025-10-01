@@ -12,14 +12,14 @@
 //!    discovery::{DiscoveryEvent, mdns::MdnsDiscovery},
 //!    endpoint::{Endpoint, Source},
 //!    SecretKey,
-//! }
+//! };
 //!
 //! #[tokio::main]
 //! async fn main() {
 //!     let recent = Duration::from_secs(600); // 10 minutes in seconds
 //!     let node_key = SecretKey::generate(rand::thread_rng());
 //!     let node_id = node_key.public();
-//!     let mdns = MdnsDiscovery::builder().build(node_id).uwrap();
+//!     let mdns = MdnsDiscovery::builder().build(node_id).unwrap();
 //!     let endpoint = Endpoint::builder()
 //!         .secret_key(node_key)
 //!         .add_discovery(mdns.clone())

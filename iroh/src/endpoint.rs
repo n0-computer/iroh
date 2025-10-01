@@ -76,7 +76,7 @@ pub use super::magicsock::{
 ///
 /// When a connection is attempted with a [`NodeAddr`] containing direct addresses the
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
-/// is still no connection the configured [`iroh::discovery::Discovery`] will be used however.
+/// is still no connection the configured [`crate::discovery::Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Defines the mode of path selection for all traffic flowing through
