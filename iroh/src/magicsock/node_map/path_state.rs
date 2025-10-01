@@ -125,7 +125,14 @@ impl PathState {
             }
         }
 
+        let had_failures = self.validity.consecutive_failures() > 0;
+
         self.validity.update_pong(r.pong_at, r.latency);
+        self.validity.reset_failures();
+
+        if had_failures {
+            metrics.path_failure_resets.inc();
+        }
 
         self.validity.record_metrics(metrics);
     }
@@ -134,17 +141,20 @@ impl PathState {
         self.last_payload_msg = Some(now);
         self.validity
             .receive_payload(now, path_validity::Source::QuicPayload);
+        self.validity.reset_failures();
     }
 
     #[cfg(test)]
     pub(super) fn with_pong_reply(node_id: NodeId, r: PongReply) -> Self {
+        let mut validity = PathValidity::new(r.pong_at, r.latency);
+        validity.reset_failures();
         PathState {
             node_id,
             path: r.from.clone(),
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            validity: PathValidity::new(r.pong_at, r.latency),
+            validity,
             last_payload_msg: None,
             sources: HashMap::new(),
         }
