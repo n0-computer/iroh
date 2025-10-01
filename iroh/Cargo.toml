@@ -85,7 +85,7 @@ futures-buffered = "0.2.11"
 spki = { version = "0.7.3", features = ["std"] }
 
 # metrics
-iroh-metrics = { version = "0.35", default-features = false }
+iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "arqu/histograms", default-features = false }
 
 # local-swarm-discovery
 swarm-discovery = { version = "0.4", optional = true }
