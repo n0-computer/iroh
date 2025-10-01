@@ -1434,9 +1434,6 @@ impl Actor {
         let mut current_netmon_state = self.netmon_watcher.get();
 
         #[cfg(not(wasm_browser))]
-        let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
-
-        #[cfg(not(wasm_browser))]
         let mut portmap_watcher = self
             .direct_addr_update_state
             .port_mapper
@@ -1461,11 +1458,6 @@ impl Actor {
             let portmap_watcher_changed = portmap_watcher.changed();
             #[cfg(wasm_browser)]
             let portmap_watcher_changed = n0_future::future::pending();
-
-            #[cfg(not(wasm_browser))]
-            let direct_addr_heartbeat_timer_tick = direct_addr_heartbeat_timer.tick();
-            #[cfg(wasm_browser)]
-            let direct_addr_heartbeat_timer_tick = n0_future::future::pending();
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
@@ -1549,19 +1541,6 @@ impl Actor {
                     #[cfg(wasm_browser)]
                     let _unused_in_browsers = change;
                 },
-                _ = direct_addr_heartbeat_timer_tick => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!(
-                            "tick: direct addr heartbeat {} direct addrs",
-                            self.msock.node_map.node_count(),
-                        );
-                        self.msock.metrics.magicsock.actor_tick_direct_addr_heartbeat.inc();
-                        // TODO: this might trigger too many packets at once, pace this
-
-                        self.msock.node_map.prune_inactive();
-                    }
-                }
                 state = self.netmon_watcher.updated() => {
                     let Ok(state) = state else {
                         trace!("tick: link change receiver closed");
