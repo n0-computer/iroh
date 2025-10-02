@@ -46,7 +46,7 @@ use rand::Rng;
 use snafu::{ResultExt, Snafu};
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, debug, event, info, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, MagicTransport};
 use url::Url;
 
@@ -276,33 +276,35 @@ impl MagicSock {
         self.local_addrs_watch.clone().get()
     }
 
-    /// Registers the connection in the connection map and opens additional paths.
+    /// Registers the connection in the [`NodeStateActor`].
     ///
-    /// In addition to storing the connection reference this requests the current
-    /// [`NodeAddr`] for remote node from the [`NodeMap`] and adds all paths to the
-    /// connection.  It also listens and logs path events.
+    /// The actor is responsible for holepunching and opening additional paths to this
+    /// connection.
+    ///
+    /// [`NodeStateActor`]: crate::magicsock::node_map::node_state::NodeStateActor
     pub(crate) fn register_connection(&self, remote: NodeId, conn: &quinn::Connection) {
+        // TODO: Spawning tasks like this is obviously bad.  But it is solvable:
+        //   - This is only called from inside Connection::new.
+        //   - Connection::new is called from:
+        //     - impl Future for IncomingFuture
+        //     - impl Future for Connecting
+        //     - Connecting::into_0rtt()
+        //
+        // The first two can keep returning Pending until this message is also sent.  It'll
+        // require storing the pinned future but it'll work.
+        //
+        // The last one is trickier.  But we can make that function async.  Or more likely
+        // we'll end up changing Connecting::into_0rtt() to return a ZrttConnection.  Then
+        // have a ZrttConnection::into_connection() function which can be async and actually
+        // send this.  Before the handshake has completed we don't have anything useful to
+        // do with this connection inside of the NodeStateActor anyway.
         debug!(%remote, "register connection");
         let weak_handle = conn.weak_handle();
         let node_state = self.node_map.node_state_actor(remote);
-        let mut msg = NodeStateMessage::AddConnection(weak_handle);
+        let msg = NodeStateMessage::AddConnection(weak_handle);
 
-        tokio::task::block_in_place(move || {
-            loop {
-                match node_state.try_send(msg) {
-                    Ok(()) => break,
-                    Err(mpsc::error::TrySendError::Closed(msg)) => {
-                        error!(?msg, "NodeStateActor closed");
-                        break;
-                    }
-                    Err(mpsc::error::TrySendError::Full(ret_msg)) => {
-                        warn!("NodeStateActor inbox full when adding new connection");
-                        msg = ret_msg;
-                        // TODO: Yikes!
-                        std::thread::yield_now();
-                    }
-                }
-            }
+        tokio::task::spawn(async move {
+            node_state.send(msg).await.ok();
         });
     }
 

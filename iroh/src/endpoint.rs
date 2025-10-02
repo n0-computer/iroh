@@ -2632,7 +2632,10 @@ mod tests {
 
         ep1_accept.await.e()??;
         let conn_closed = ep2_connect.await.e()??;
-        assert_eq!(conn_closed, quinn::ConnectionError::CidsExhausted);
+        assert!(matches!(
+            conn_closed,
+            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+        ));
 
         Ok(())
     }
