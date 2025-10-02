@@ -272,9 +272,14 @@ impl SignedPacketStore {
                 )
             })?;
         }
-        let db = Database::builder()
+        let mut db = Database::builder()
             .create(path)
             .context("failed to open packet database")?;
+        match db.upgrade() {
+            Ok(true) => info!("Database was upgraded to redb v3 compatible format"),
+            Ok(false) => {}
+            Err(err) => warn!("Database upgrade to redb v3 compatible format failed: {err:#}"),
+        }
         Self::open(db, options, metrics)
     }
 

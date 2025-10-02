@@ -100,7 +100,7 @@ serde_bytes = "0.11.17"
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.25.1", features = ["tokio"] }
+hickory-resolver = { version = "0.25.1", features = ["tokio", "https-ring"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",

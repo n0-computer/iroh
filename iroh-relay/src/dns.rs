@@ -3,24 +3,30 @@
 use std::{
     fmt,
     future::Future,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
 };
 
-use hickory_resolver::{TokioResolver, name_server::TokioConnectionProvider};
+use hickory_resolver::{
+    TokioResolver,
+    config::{ResolverConfig, ResolverOpts},
+    name_server::TokioConnectionProvider,
+};
 use iroh_base::NodeId;
 use n0_future::{
     StreamExt,
+    boxed::BoxFuture,
     time::{self, Duration},
 };
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, GenerateImplicitData, OptionExt, Snafu};
+use snafu::{Backtrace, GenerateImplicitData, OptionExt, ResultExt, Snafu};
 use tokio::sync::RwLock;
+use tracing::debug;
 use url::Url;
 
 use crate::{
     defaults::timeouts::DNS_TIMEOUT,
-    node_info::{LookupError, NodeInfo},
+    node_info::{self, NodeInfo, ParseError},
 };
 
 /// The n0 testing DNS node origin, for production.
@@ -30,6 +36,30 @@ pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
 /// Percent of total delay to jitter. 20 means +/- 20% of delay.
 const MAX_JITTER_PERCENT: u64 = 20;
+
+/// Trait for DNS resolvers used in iroh.
+pub trait Resolver: fmt::Debug + Send + Sync + 'static {
+    /// Looks up an IPv4 address.
+    fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>>;
+
+    /// Looks up an IPv6 address.
+    fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>>;
+
+    /// Looks up TXT records.
+    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>>;
+
+    /// Clears the internal cache.
+    fn clear_cache(&self);
+
+    /// Completely resets the DNS resolver.
+    ///
+    /// This is called when the host's network changes majorly. Implementations should rebind all sockets
+    /// and refresh the nameserver configuration if read from the host system.
+    fn reset(&mut self);
+}
+
+/// Boxed iterator alias.
+pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to dns.
 #[common_fields({
@@ -61,6 +91,29 @@ pub enum DnsError {
     InvalidResponse {},
 }
 
+#[cfg(not(wasm_browser))]
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
+pub enum LookupError {
+    #[snafu(display("Malformed txt from lookup"))]
+    ParseError {
+        #[snafu(source(from(ParseError, Box::new)))]
+        source: Box<ParseError>,
+    },
+    #[snafu(display("Failed to resolve TXT record"))]
+    LookupFailed {
+        #[snafu(source(from(DnsError, Box::new)))]
+        source: Box<DnsError>,
+    },
+}
+
 /// Error returned when an input value is too long for [`crate::node_info::UserData`].
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
@@ -83,131 +136,164 @@ impl<E: std::fmt::Debug + std::fmt::Display> StaggeredError<E> {
     }
 }
 
-/// The DNS resolver used throughout `iroh`.
-#[derive(Debug, Clone)]
-pub struct DnsResolver {
-    resolver: Arc<RwLock<TokioResolver>>,
-    nameserver: Option<SocketAddr>,
+/// Builder for [`DnsResolver`].
+#[derive(Debug, Clone, Default)]
+pub struct Builder {
+    use_system_defaults: bool,
+    nameservers: Vec<(SocketAddr, DnsProtocol)>,
 }
 
+/// Protocols over which DNS records can be resolved.
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DnsProtocol {
+    /// DNS over UDP
+    ///
+    /// This is the classic DNS protocol and supported by most DNS servers.
+    #[default]
+    Udp,
+    /// DNS over TCP
+    ///
+    /// This is specified in the original DNS RFCs, but is not supported by all DNS servers.
+    Tcp,
+    /// DNS over TLS
+    ///
+    /// Performs DNS lookups over TLS-encrypted TCP connections, as defined in [RFC 7858].
+    ///
+    /// [RFC 7858]: https://www.rfc-editor.org/rfc/rfc7858.html
+    Tls,
+    /// DNS over HTTPS
+    ///
+    /// Performs DNS lookups over HTTPS, as defined in [RFC 8484].
+    ///
+    /// [RFC 8484]: https://www.rfc-editor.org/rfc/rfc8484.html
+    Https,
+}
+
+impl DnsProtocol {
+    fn to_hickory(self) -> hickory_resolver::proto::xfer::Protocol {
+        use hickory_resolver::proto::xfer::Protocol;
+        match self {
+            DnsProtocol::Udp => Protocol::Udp,
+            DnsProtocol::Tcp => Protocol::Tcp,
+            DnsProtocol::Tls => Protocol::Tls,
+            DnsProtocol::Https => Protocol::Https,
+        }
+    }
+}
+
+impl Builder {
+    /// Makes the builder respect the host system's DNS configuration.
+    ///
+    /// We first try to read the system's resolver from `/etc/resolv.conf`.
+    /// This does not work at least on some Androids, therefore we fallback
+    /// to a default config which uses Google's `8.8.8.8` or `8.8.4.4`.
+    pub fn with_system_defaults(mut self) -> Self {
+        self.use_system_defaults = true;
+        self
+    }
+
+    /// Adds a single nameserver.
+    pub fn with_nameserver(mut self, addr: SocketAddr, protocol: DnsProtocol) -> Self {
+        self.nameservers.push((addr, protocol));
+        self
+    }
+
+    /// Adds a list of nameservers.
+    pub fn with_nameservers(
+        mut self,
+        nameservers: impl IntoIterator<Item = (SocketAddr, DnsProtocol)>,
+    ) -> Self {
+        self.nameservers.extend(nameservers);
+        self
+    }
+
+    /// Builds the DNS resolver.
+    pub fn build(self) -> DnsResolver {
+        let resolver = HickoryResolver::new(self);
+        DnsResolver(DnsResolverInner::Hickory(Arc::new(RwLock::new(resolver))))
+    }
+}
+
+/// The DNS resolver used throughout `iroh`.
+#[derive(Debug, Clone)]
+pub struct DnsResolver(DnsResolverInner);
+
 impl DnsResolver {
-    /// Create a new DNS resolver with sensible cross-platform defaults.
+    /// Creates a new DNS resolver with sensible cross-platform defaults.
     ///
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
     pub fn new() -> Self {
-        let resolver = Self::new_inner();
-        Self {
-            resolver: Arc::new(RwLock::new(resolver)),
-            nameserver: None,
-        }
+        Builder::default().with_system_defaults().build()
     }
 
-    fn new_inner() -> TokioResolver {
-        let (system_config, mut options) =
-            hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
-
-        // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
-        // there is no easy way to do this.
-        let mut config = hickory_resolver::config::ResolverConfig::new();
-        if let Some(name) = system_config.domain() {
-            config.set_domain(name.clone());
-        }
-        for name in system_config.search() {
-            config.add_search(name.clone());
-        }
-        for nameserver_cfg in system_config.name_servers() {
-            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
-                config.add_name_server(nameserver_cfg.clone());
-            }
-        }
-
-        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
-        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
-
-        let mut builder =
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        *builder.options_mut() = options;
-        builder.build()
-    }
-
-    /// Create a new DNS resolver configured with a single UDP DNS nameserver.
+    /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
-        let resolver = Self::with_nameserver_inner(nameserver);
-        Self {
-            resolver: Arc::new(RwLock::new(resolver)),
-            nameserver: Some(nameserver),
-        }
+        Builder::default()
+            .with_nameserver(nameserver, DnsProtocol::Udp)
+            .build()
     }
 
-    fn with_nameserver_inner(nameserver: SocketAddr) -> TokioResolver {
-        let mut config = hickory_resolver::config::ResolverConfig::new();
-        let nameserver_config = hickory_resolver::config::NameServerConfig::new(
-            nameserver,
-            hickory_resolver::proto::xfer::Protocol::Udp,
-        );
-        config.add_name_server(nameserver_config);
+    /// Creates a builder to construct a DNS resolver with custom options.
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
 
-        let builder =
-            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        builder.build()
+    /// Creates a new [`DnsResolver`] from a struct that implements [`Resolver`].
+    ///
+    /// If you need more customization for DNS resolving than the [`Builder`] allows, you can
+    /// implement the [`Resolver`] trait on a struct and implement DNS resolution
+    /// however you see fit.
+    pub fn custom(resolver: impl Resolver) -> Self {
+        Self(DnsResolverInner::Custom(Arc::new(RwLock::new(resolver))))
     }
 
     /// Removes all entries from the cache.
     pub async fn clear_cache(&self) {
-        self.resolver.read().await.clear_cache();
+        self.0.clear_cache().await
     }
 
-    /// Recreate the inner resolver
+    /// Recreates the inner resolver.
     pub async fn reset(&self) {
-        let mut this = self.resolver.write().await;
-        let resolver = if let Some(nameserver) = self.nameserver {
-            Self::with_nameserver_inner(nameserver)
-        } else {
-            Self::new_inner()
-        };
-
-        *this = resolver;
+        self.0.reset().await
     }
 
-    /// Lookup a TXT record.
+    /// Looks up a TXT record.
     pub async fn lookup_txt<T: ToString>(
         &self,
         host: T,
         timeout: Duration,
-    ) -> Result<TxtLookup, DnsError> {
+    ) -> Result<impl Iterator<Item = TxtRecordData>, DnsError> {
         let host = host.to_string();
-        let this = self.resolver.read().await;
-        let res = time::timeout(timeout, this.txt_lookup(host)).await??;
-        Ok(TxtLookup(res))
+        let res = time::timeout(timeout, self.0.lookup_txt(host)).await??;
+        Ok(res)
     }
 
-    /// Perform an ipv4 lookup with a timeout.
+    /// Performs an IPv4 lookup with a timeout.
     pub async fn lookup_ipv4<T: ToString>(
         &self,
         host: T,
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let this = self.resolver.read().await;
-        let addrs = time::timeout(timeout, this.ipv4_lookup(host)).await??;
-        Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)))
+        let addrs = time::timeout(timeout, self.0.lookup_ipv4(host)).await??;
+        Ok(addrs.into_iter().map(IpAddr::V4))
     }
 
-    /// Perform an ipv6 lookup with a timeout.
+    /// Performs an IPv6 lookup with a timeout.
     pub async fn lookup_ipv6<T: ToString>(
         &self,
         host: T,
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let this = self.resolver.read().await;
-        let addrs = time::timeout(timeout, this.ipv6_lookup(host)).await??;
-        Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip.0)))
+        let addrs = time::timeout(timeout, self.0.lookup_ipv6(host)).await??;
+        Ok(addrs.into_iter().map(IpAddr::V6))
     }
 
-    /// Resolve IPv4 and IPv6 in parallel with a timeout.
+    /// Resolves IPv4 and IPv6 in parallel with a timeout.
     ///
     /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
     /// not usable on the stack, so we manually query both lookups concurrently and time them out
@@ -235,7 +321,7 @@ impl DnsResolver {
         }
     }
 
-    /// Resolve a hostname from a URL to an IP address.
+    /// Resolves a hostname from a URL to an IP address.
     pub async fn resolve_host(
         &self,
         url: &Url,
@@ -273,7 +359,7 @@ impl DnsResolver {
         }
     }
 
-    /// Perform an ipv4 lookup with a timeout in a staggered fashion.
+    /// Performs an IPv4 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
@@ -290,7 +376,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Perform an ipv6 lookup with a timeout in a staggered fashion.
+    /// Performs an IPv6 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
@@ -307,7 +393,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
+    /// Races an IPv4 and IPv6 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
@@ -334,20 +420,24 @@ impl DnsResolver {
         node_id: &NodeId,
         origin: &str,
     ) -> Result<NodeInfo, LookupError> {
-        let attrs = crate::node_info::TxtAttrs::<crate::node_info::IrohAttr>::lookup_by_id(
-            self, node_id, origin,
-        )
-        .await?;
-        let info = attrs.into();
+        let name = node_info::node_domain(node_id, origin);
+        let name = node_info::ensure_iroh_txt_label(name);
+        let lookup = self
+            .lookup_txt(name.clone(), DNS_TIMEOUT)
+            .await
+            .context(LookupFailedSnafu)?;
+        let info = NodeInfo::from_txt_lookup(name, lookup).context(ParseSnafu)?;
         Ok(info)
     }
 
     /// Looks up node info by DNS name.
     pub async fn lookup_node_by_domain_name(&self, name: &str) -> Result<NodeInfo, LookupError> {
-        let attrs =
-            crate::node_info::TxtAttrs::<crate::node_info::IrohAttr>::lookup_by_name(self, name)
-                .await?;
-        let info = attrs.into();
+        let name = node_info::ensure_iroh_txt_label(name.to_string());
+        let lookup = self
+            .lookup_txt(name.clone(), DNS_TIMEOUT)
+            .await
+            .context(LookupFailedSnafu)?;
+        let info = NodeInfo::from_txt_lookup(name, lookup).context(ParseSnafu)?;
         Ok(info)
     }
 
@@ -389,15 +479,6 @@ impl Default for DnsResolver {
     }
 }
 
-impl From<TokioResolver> for DnsResolver {
-    fn from(resolver: TokioResolver) -> Self {
-        DnsResolver {
-            resolver: Arc::new(RwLock::new(resolver)),
-            nameserver: None,
-        }
-    }
-}
-
 impl reqwest::dns::Resolve for DnsResolver {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let this = self.clone();
@@ -419,40 +500,226 @@ impl reqwest::dns::Resolve for DnsResolver {
     }
 }
 
-/// TXT records returned from [`DnsResolver::lookup_txt`]
+/// Wrapper enum that contains either a hickory resolver or a custom resolver.
+///
+/// We do this to save the cost of boxing the futures and iterators when using
+/// default hickory resolver.
 #[derive(Debug, Clone)]
-pub struct TxtLookup(pub(crate) hickory_resolver::lookup::TxtLookup);
+enum DnsResolverInner {
+    Hickory(Arc<RwLock<HickoryResolver>>),
+    Custom(Arc<RwLock<dyn Resolver>>),
+}
 
-impl From<hickory_resolver::lookup::TxtLookup> for TxtLookup {
-    fn from(value: hickory_resolver::lookup::TxtLookup) -> Self {
-        Self(value)
+impl DnsResolverInner {
+    async fn lookup_ipv4(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
+        Ok(match self {
+            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_ipv4(host).await?),
+            Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv4(host).await?),
+        })
+    }
+
+    async fn lookup_ipv6(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
+        Ok(match self {
+            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_ipv6(host).await?),
+            Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_ipv6(host).await?),
+        })
+    }
+
+    async fn lookup_txt(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
+        Ok(match self {
+            Self::Hickory(resolver) => Either::Left(resolver.read().await.lookup_txt(host).await?),
+            Self::Custom(resolver) => Either::Right(resolver.read().await.lookup_txt(host).await?),
+        })
+    }
+
+    async fn clear_cache(&self) {
+        match self {
+            Self::Hickory(resolver) => resolver.read().await.clear_cache(),
+            Self::Custom(resolver) => resolver.read().await.clear_cache(),
+        }
+    }
+
+    async fn reset(&self) {
+        match self {
+            Self::Hickory(resolver) => resolver.write().await.reset(),
+            Self::Custom(resolver) => resolver.write().await.reset(),
+        }
     }
 }
 
-impl IntoIterator for TxtLookup {
-    type Item = TXT;
+#[derive(Debug)]
+struct HickoryResolver {
+    resolver: TokioResolver,
+    builder: Builder,
+}
 
-    type IntoIter = Box<dyn Iterator<Item = TXT>>;
+impl HickoryResolver {
+    fn new(builder: Builder) -> Self {
+        let resolver = Self::build_resolver(&builder);
+        Self { resolver, builder }
+    }
 
-    fn into_iter(self) -> Self::IntoIter {
-        Box::new(self.0.into_iter().map(TXT))
+    fn build_resolver(builder: &Builder) -> TokioResolver {
+        let (mut config, mut options) = if builder.use_system_defaults {
+            match Self::system_config() {
+                Ok((config, options)) => (config, options),
+                Err(error) => {
+                    debug!(%error, "Failed to read the system's DNS config, using fallback DNS servers.");
+                    (ResolverConfig::google(), ResolverOpts::default())
+                }
+            }
+        } else {
+            (ResolverConfig::new(), ResolverOpts::default())
+        };
+
+        for (addr, proto) in builder.nameservers.iter() {
+            let nameserver =
+                hickory_resolver::config::NameServerConfig::new(*addr, proto.to_hickory());
+            config.add_name_server(nameserver);
+        }
+
+        // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
+        options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
+
+        let mut hickory_builder =
+            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
+        *hickory_builder.options_mut() = options;
+        hickory_builder.build()
+    }
+
+    fn system_config() -> Result<(ResolverConfig, ResolverOpts), hickory_resolver::ResolveError> {
+        let (system_config, options) = hickory_resolver::system_conf::read_system_conf()?;
+
+        // Copy all of the system config, but strip the bad windows nameservers.  Unfortunately
+        // there is no easy way to do this.
+        let mut config = hickory_resolver::config::ResolverConfig::new();
+        if let Some(name) = system_config.domain() {
+            config.set_domain(name.clone());
+        }
+        for name in system_config.search() {
+            config.add_search(name.clone());
+        }
+        for nameserver_cfg in system_config.name_servers() {
+            if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
+                config.add_name_server(nameserver_cfg.clone());
+            }
+        }
+        Ok((config, options))
+    }
+
+    async fn lookup_ipv4(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = Ipv4Addr> + use<>, DnsError> {
+        Ok(self
+            .resolver
+            .ipv4_lookup(host)
+            .await?
+            .into_iter()
+            .map(Ipv4Addr::from))
+    }
+
+    /// Looks up an IPv6 address.
+    async fn lookup_ipv6(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = Ipv6Addr> + use<>, DnsError> {
+        Ok(self
+            .resolver
+            .ipv6_lookup(host)
+            .await?
+            .into_iter()
+            .map(Ipv6Addr::from))
+    }
+
+    /// Looks up TXT records.
+    async fn lookup_txt(
+        &self,
+        host: String,
+    ) -> Result<impl Iterator<Item = TxtRecordData> + use<>, DnsError> {
+        Ok(self
+            .resolver
+            .txt_lookup(host)
+            .await?
+            .into_iter()
+            .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())))
+    }
+
+    /// Clears the internal cache.
+    fn clear_cache(&self) {
+        self.resolver.clear_cache()
+    }
+
+    fn reset(&mut self) {
+        self.resolver = Self::build_resolver(&self.builder);
     }
 }
 
-/// Record data for a TXT record
+/// Record data for a TXT record.
+///
+/// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
+///
+/// [`TxtRecordData`] implements [`fmt::Display`], so you can call [`ToString::to_string`] to
+/// convert the record data into a string. This will parse each character string with
+/// [`String::from_utf8_lossy`] and then concatenate all strings without a separator.
+///
+/// If you want to process each character string individually, use [`Self::iter`].
+///
+/// [RFC 1035 Section 3.3.14]: https://datatracker.ietf.org/doc/html/rfc1035#section-3.3.14
 #[derive(Debug, Clone)]
-pub struct TXT(hickory_resolver::proto::rr::rdata::TXT);
+pub struct TxtRecordData(Box<[Box<[u8]>]>);
 
-impl TXT {
-    /// Returns the raw character strings of this TXT record.
-    pub fn txt_data(&self) -> &[Box<[u8]>] {
-        self.0.txt_data()
+impl TxtRecordData {
+    /// Returns an iterator over the character strings contained in this TXT record.
+    pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        self.0.iter().map(|x| x.as_ref())
     }
 }
 
-impl fmt::Display for TXT {
+impl fmt::Display for TxtRecordData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        for s in self.iter() {
+            write!(f, "{}", &String::from_utf8_lossy(s))?
+        }
+        Ok(())
+    }
+}
+
+impl FromIterator<Box<[u8]>> for TxtRecordData {
+    fn from_iter<T: IntoIterator<Item = Box<[u8]>>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
+impl From<Vec<Box<[u8]>>> for TxtRecordData {
+    fn from(value: Vec<Box<[u8]>>) -> Self {
+        Self(value.into_boxed_slice())
+    }
+}
+
+/// Helper enum to give a unified type to either of two iterators
+enum Either<A, B> {
+    Left(A),
+    Right(B),
+}
+
+impl<T, A: Iterator<Item = T>, B: Iterator<Item = T>> Iterator for Either<A, B> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Either::Left(iter) => iter.next(),
+            Either::Right(iter) => iter.next(),
+        }
     }
 }
 
@@ -589,5 +856,57 @@ pub(crate) mod tests {
         for _ in 0..100 {
             assert!(add_jitter(&delay) < Duration::from_millis(delay * 12 / 10));
         }
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn custom_resolver() {
+        #[derive(Debug)]
+        struct MyResolver;
+        impl Resolver for MyResolver {
+            fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>, DnsError>> {
+                Box::pin(async move {
+                    let addr = if host == "foo.example" {
+                        Ipv4Addr::new(1, 1, 1, 1)
+                    } else {
+                        return Err(NoResponseSnafu.build());
+                    };
+                    let iter: BoxIter<Ipv4Addr> = Box::new(vec![addr].into_iter());
+                    Ok(iter)
+                })
+            }
+
+            fn lookup_ipv6(&self, _host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>, DnsError>> {
+                todo!()
+            }
+
+            fn lookup_txt(
+                &self,
+                _host: String,
+            ) -> BoxFuture<Result<BoxIter<TxtRecordData>, DnsError>> {
+                todo!()
+            }
+
+            fn clear_cache(&self) {
+                todo!()
+            }
+
+            fn reset(&mut self) {
+                todo!()
+            }
+        }
+
+        let resolver = DnsResolver::custom(MyResolver);
+        let mut iter = resolver
+            .lookup_ipv4("foo.example", Duration::from_secs(1))
+            .await
+            .expect("not to fail");
+        let addr = iter.next().expect("one result");
+        assert_eq!(addr, "1.1.1.1".parse::<IpAddr>().unwrap());
+
+        let res = resolver
+            .lookup_ipv4("bar.example", Duration::from_secs(1))
+            .await;
+        assert!(matches!(res, Err(DnsError::NoResponse { .. })))
     }
 }
