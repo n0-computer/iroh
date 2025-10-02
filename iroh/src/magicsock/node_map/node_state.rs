@@ -404,7 +404,9 @@ impl NodeStateActor {
                             .whatever_context("TransportSenerActor stopped")?;
                     }
                     trace!("connecting without selected path: triggering holepunching");
-                    self.trigger_holepunching().await;
+                    // This message is received *before* a connection is added.  So we do
+                    // not yet have a connection to holepunch.  Instead we trigger
+                    // holepunching when AddConnection is received.
                 }
             }
             NodeStateMessage::AddConnection(handle) => {
@@ -422,6 +424,7 @@ impl NodeStateActor {
                     let stream = events.map(move |evt| (stable_id, evt));
                     self.path_events.push(Box::pin(stream));
                     self.connections.insert(stable_id, handle);
+                    self.trigger_holepunching().await;
                 }
             }
             NodeStateMessage::AddNodeAddr(node_addr, source) => {
