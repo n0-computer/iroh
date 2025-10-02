@@ -19,7 +19,6 @@
 //! async fn main() {
 //!     let recent = Duration::from_secs(600); // 10 minutes in seconds
 //!     let endpoint = Endpoint::builder()
-//!         .add_discovery(mdns.clone())
 //!         .bind()
 //!         .await
 //!         .unwrap();
