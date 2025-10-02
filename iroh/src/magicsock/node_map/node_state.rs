@@ -325,15 +325,26 @@ impl NodeStateActor {
 
     pub(super) fn start(mut self) -> NodeStateHandle {
         let (tx, rx) = mpsc::channel(16);
+        let me = self.local_node_id;
         let node_id = self.node_id;
 
+        // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
+        // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
+        // we don't explicitly set a span we get the spans from whatever call happens to
+        // first create the actor, which is often very confusing as it then keeps those
+        // spans for all logging of the actor.
         let task = tokio::spawn(
             async move {
                 if let Err(err) = self.run(rx).await {
                     error!("actor failed: {err:#}");
                 }
             }
-            .instrument(info_span!("NodeStateActor", node_id = node_id.fmt_short())),
+            .instrument(info_span!(
+                parent: None,
+                "NodeStateActor",
+                me = me.fmt_short(),
+                node_id = node_id.fmt_short(),
+            )),
         );
         NodeStateHandle {
             sender: tx,

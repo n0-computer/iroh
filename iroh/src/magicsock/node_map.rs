@@ -494,9 +494,7 @@ impl TransportsSenderActor {
                 };
                 let len = transmit.contents.len();
                 match self.sender.send(&dst, None, &transmit).await {
-                    Ok(()) => {
-                        trace!(?dst, %len, "sent transmit");
-                    }
+                    Ok(()) => {}
                     Err(err) => {
                         trace!(?dst, %len, "transmit failed to send: {err:#}");
                     }

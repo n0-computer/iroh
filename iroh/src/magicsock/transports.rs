@@ -395,16 +395,15 @@ pub(crate) struct TransportsSender {
 }
 
 impl TransportsSender {
+    #[instrument(skip(self, transmit), fields(len = transmit.contents.len()))]
     pub(crate) async fn send(
         &self,
-        destination: &Addr,
+        dst: &Addr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
-        trace!(?destination, "sending");
-
         let mut any_match = false;
-        match destination {
+        match dst {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
             #[cfg(not(wasm_browser))]
@@ -414,6 +413,7 @@ impl TransportsSender {
                         any_match = true;
                         match sender.send(*addr, src, transmit).await {
                             Ok(()) => {
+                                trace!("sent");
                                 return Ok(());
                             }
                             Err(err) => {
@@ -429,6 +429,7 @@ impl TransportsSender {
                         any_match = true;
                         match sender.send(url.clone(), *node_id, transmit).await {
                             Ok(()) => {
+                                trace!("sent");
                                 return Ok(());
                             }
                             Err(err) => {
@@ -446,16 +447,15 @@ impl TransportsSender {
         }
     }
 
+    #[instrument(name = "poll_send", skip(self, cx, transmit), fields(len = transmit.contents.len()))]
     pub(crate) fn inner_poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
-        destination: &Addr,
+        dst: &Addr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        trace!(?destination, "sending");
-
-        match destination {
+        match dst {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
                 return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
@@ -466,7 +466,13 @@ impl TransportsSender {
                     if sender.is_valid_send_addr(addr) {
                         match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
                             Poll::Pending => {}
-                            Poll::Ready(res) => return Poll::Ready(res),
+                            Poll::Ready(res) => {
+                                match &res {
+                                    Ok(()) => trace!("sent"),
+                                    Err(err) => trace!("send failed: {err:#}"),
+                                }
+                                return Poll::Ready(res);
+                            }
                         }
                     }
                 }
@@ -476,7 +482,13 @@ impl TransportsSender {
                     if sender.is_valid_send_addr(url, node_id) {
                         match sender.poll_send(cx, url.clone(), *node_id, transmit) {
                             Poll::Pending => {}
-                            Poll::Ready(res) => return Poll::Ready(res),
+                            Poll::Ready(res) => {
+                                match &res {
+                                    Ok(()) => trace!("sent"),
+                                    Err(err) => trace!("send failed: {err:#}"),
+                                }
+                                return Poll::Ready(res);
+                            }
                         }
                     }
                 }
@@ -486,15 +498,14 @@ impl TransportsSender {
     }
 
     /// Best effort sending
+    #[instrument(name = "try_send", skip(self, transmit), fields(len = transmit.contents.len()))]
     fn inner_try_send(
         &self,
-        destination: &Addr,
+        dst: &Addr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
-        trace!(?destination, "sending, best effort");
-
-        match destination {
+        match dst {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
             #[cfg(not(wasm_browser))]
@@ -502,8 +513,12 @@ impl TransportsSender {
                 for transport in &self.ip {
                     if transport.is_valid_send_addr(addr) {
                         match transport.try_send(*addr, src, transmit) {
-                            Ok(()) => return Ok(()),
-                            Err(_err) => {
+                            Ok(()) => {
+                                trace!("sent");
+                                return Ok(());
+                            }
+                            Err(err) => {
+                                trace!("send failed: {err:#}");
                                 continue;
                             }
                         }
@@ -514,8 +529,12 @@ impl TransportsSender {
                 for transport in &self.relay {
                     if transport.is_valid_send_addr(url, node_id) {
                         match transport.try_send(url.clone(), *node_id, transmit) {
-                            Ok(()) => return Ok(()),
-                            Err(_err) => {
+                            Ok(()) => {
+                                trace!("sent");
+                                return Ok(());
+                            }
+                            Err(err) => {
+                                trace!("send failed: {err:#}");
                                 continue;
                             }
                         }
@@ -643,14 +662,7 @@ impl MagicSender {
             ));
         }
 
-        let addr = MultipathMappedAddr::from(transmit.destination);
-        trace!(
-            dst = ?addr,
-            src = ?transmit.src_ip,
-            len = %transmit.contents.len(),
-            "sending",
-        );
-        Ok(addr)
+        Ok(MultipathMappedAddr::from(transmit.destination))
     }
 }
 
@@ -674,15 +686,11 @@ impl quinn::UdpSender for MagicSender {
 
         let transport_addr = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
-                // TODO: Would be nicer to log the NodeId of this, but we only get an actor
-                //   sender for it.
-                tracing::Span::current().record("dst", tracing::field::debug(&mapped_addr));
                 let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(&mapped_addr)
                 else {
-                    error!("unknown NodeIdMappedAddr, dropped transmit");
+                    error!(dst = ?mapped_addr, "unknown NodeIdMappedAddr, dropped transmit");
                     return Poll::Ready(Ok(()));
                 };
-                tracing::Span::current().record("node_id", node_id.fmt_short());
 
                 // Note we drop the src_ip set in the Quinn Transmit.  This is only the
                 // Initial packet we are sending, so we do not yet have an src address we
@@ -695,7 +703,7 @@ impl quinn::UdpSender for MagicSender {
                 let transmit = OwnedTransmit::from(quinn_transmit);
                 return match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
                     Ok(()) => {
-                        trace!("sent transmit",);
+                        trace!(dst = ?mapped_addr, node_id = node_id.fmt_short(), "sent transmit");
                         Poll::Ready(Ok(()))
                     }
                     Err(err) => {
@@ -703,7 +711,8 @@ impl quinn::UdpSender for MagicSender {
                         // different transport.  Instead we let Quinn handle this as
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
-                        debug!("NodeStateActor inbox full ({err:#}), dropped transmit");
+                        debug!(dst = ?mapped_addr, node_id = node_id.fmt_short(),
+                            "NodeStateActor inbox {err:#}, dropped transmit");
                         Poll::Ready(Ok(()))
                     }
                 };
@@ -724,7 +733,6 @@ impl quinn::UdpSender for MagicSender {
             }
             MultipathMappedAddr::Ip(socket_addr) => Addr::Ip(socket_addr),
         };
-        tracing::Span::current().record("dst", tracing::field::debug(&transport_addr));
 
         let transmit = Transmit {
             ecn: quinn_transmit.ecn,
@@ -737,10 +745,7 @@ impl quinn::UdpSender for MagicSender {
             .sender
             .inner_poll_send(cx, &transport_addr, quinn_transmit.src_ip, &transmit)
         {
-            Poll::Ready(Ok(())) => {
-                trace!("sent transmit",);
-                Poll::Ready(Ok(()))
-            }
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(ref err)) => {
                 warn!("dropped transmit: {err:#}");
                 Poll::Ready(Ok(()))

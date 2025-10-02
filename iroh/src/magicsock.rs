@@ -606,11 +606,11 @@ impl MagicSock {
                 // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
                 // which we do in Endpoint::bind.
                 if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
-                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: disco packet");
+                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: DISCO packet");
                     self.handle_disco_message(sender, sealed_box, source_addr);
                     datagram[0] = 0u8;
                 } else {
-                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: quic packet");
+                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: QUIC packet");
                     match source_addr {
                         transports::Addr::Ip(SocketAddr::V4(..)) => {
                             self.metrics
@@ -644,17 +644,10 @@ impl MagicSock {
                         panic!("cannot use IP based addressing in the browser");
                     }
                     #[cfg(not(wasm_browser))]
-                    transports::Addr::Ip(addr) => {
-                        trace!(
-                            src = ?addr,
-                            count = %quic_datagram_count,
-                            len = quinn_meta.len,
-                            "UDP recv QUIC packets",
-                        );
+                    transports::Addr::Ip(_addr) => {
                         quic_packets_total += quic_datagram_count;
                     }
                     transports::Addr::Relay(src_url, src_node) => {
-                        // Relay
                         let mapped_addr = self
                             .node_map
                             .relay_mapped_addrs

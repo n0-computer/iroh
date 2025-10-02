@@ -2577,18 +2577,26 @@ mod tests {
     async fn endpoint_two_direct_only() -> Result {
         // Connect two endpoints on the same network, without a relay server.
         // let discovery = StaticProvider::new();
-        let ep1 = Endpoint::builder()
-            .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            // .discovery(discovery.clone())
-            .bind()
-            .await?;
-        let ep2 = Endpoint::builder()
-            .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            // .discovery(discovery.clone())
-            .bind()
-            .await?;
+        let ep1 = {
+            let span = info_span!("server");
+            let _guard = span.enter();
+            Endpoint::builder()
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .relay_mode(RelayMode::Disabled)
+                // .discovery(discovery.clone())
+                .bind()
+                .await?
+        };
+        let ep2 = {
+            let span = info_span!("client");
+            let _guard = span.enter();
+            Endpoint::builder()
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .relay_mode(RelayMode::Disabled)
+                // .discovery(discovery.clone())
+                .bind()
+                .await?
+        };
         ep1.direct_addresses().initialized().await;
         ep2.direct_addresses().initialized().await;
         let ep1_nodeaddr = ep1.node_addr().initialized().await;
@@ -2596,9 +2604,9 @@ mod tests {
         // discovery.set_node_info(ep1_nodeaddr.clone());
         // discovery.set_node_info(ep2_nodeaddr.clone());
 
-        #[instrument(name = "connect", skip_all)]
+        #[instrument(name = "client", skip_all)]
         async fn connect(ep: Endpoint, dst: NodeAddr) -> Result<quinn::ConnectionError> {
-            info!(me = ep.node_id().fmt_short(), "connect starting");
+            info!(me = ep.node_id().fmt_short(), "client starting");
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.e()?;
             send.write_all(b"hello").await.e()?;
@@ -2606,9 +2614,9 @@ mod tests {
             Ok(conn.closed().await)
         }
 
-        #[instrument(name = "accept", skip_all)]
+        #[instrument(name = "server", skip_all)]
         async fn accept(ep: Endpoint, src: NodeId) -> Result {
-            info!(me = ep.node_id().fmt_short(), "accept starting");
+            info!(me = ep.node_id().fmt_short(), "server starting");
             let conn = ep.accept().await.e()?.await.e()?;
             let node_id = conn.remote_node_id()?;
             assert_eq!(node_id, src);

@@ -6,6 +6,7 @@
 //! Address ranges we use to keep track of the various "fake" address types we use.
 
 use std::{
+    fmt,
     hash::Hash,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
@@ -16,6 +17,7 @@ use std::{
 
 use rustc_hash::FxHashMap;
 use snafu::Snafu;
+use tracing::trace;
 
 /// The Prefix/L of all Unique Local Addresses.
 const ADDR_PREFIXL: u8 = 0xfd;
@@ -239,7 +241,9 @@ impl<K, V> Default for AddrMap<K, V> {
     }
 }
 
-impl<K: Eq + Hash + Clone, V: MappedAddr + Eq + Hash + Copy> AddrMap<K, V> {
+impl<K: Eq + Hash + Clone + fmt::Debug, V: MappedAddr + Eq + Hash + Copy + fmt::Debug>
+    AddrMap<K, V>
+{
     /// Returns the [`MappedAddr`], generating one if needed.
     pub(super) fn get(&self, key: &K) -> V {
         let mut inner = self.inner.lock().expect("poisoned");
@@ -248,6 +252,7 @@ impl<K: Eq + Hash + Clone, V: MappedAddr + Eq + Hash + Copy> AddrMap<K, V> {
             None => {
                 let addr = V::generate();
                 inner.lookup.insert(addr, key.clone());
+                trace!(?addr, ?key, "generated new addr");
                 addr
             }
         }

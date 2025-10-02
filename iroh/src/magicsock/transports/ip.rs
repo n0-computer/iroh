@@ -140,7 +140,7 @@ impl IpSender {
 
     pub(super) async fn send(
         &self,
-        destination: SocketAddr,
+        dst: SocketAddr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
@@ -148,7 +148,7 @@ impl IpSender {
         let res = self
             .sender
             .send(&quinn_udp::Transmit {
-                destination,
+                destination: dst,
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
@@ -158,8 +158,7 @@ impl IpSender {
 
         match res {
             Ok(res) => {
-                trace!(dst = ?destination, "sent on IP");
-                match destination {
+                match dst {
                     SocketAddr::V4(_) => {
                         self.metrics.send_ipv4.inc_by(total_bytes);
                     }
@@ -169,25 +168,21 @@ impl IpSender {
                 }
                 Ok(res)
             }
-            Err(err) => {
-                trace!(dst = ?destination, "IP send error: {err:#}");
-                Err(err)
-            }
+            Err(err) => Err(err),
         }
     }
 
     pub(super) fn poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
-        destination: SocketAddr,
+        dst: SocketAddr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        trace!("sending to {}", destination);
         let total_bytes = transmit.contents.len() as u64;
         let res = Pin::new(&mut self.sender).poll_send(
             &quinn_udp::Transmit {
-                destination,
+                destination: dst,
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
@@ -195,11 +190,10 @@ impl IpSender {
             },
             cx,
         );
-        trace!("send res: {:?}", res);
 
         match res {
             Poll::Ready(Ok(res)) => {
-                match destination {
+                match dst {
                     SocketAddr::V4(_) => {
                         self.metrics.send_ipv4.inc_by(total_bytes);
                     }
@@ -220,7 +214,6 @@ impl IpSender {
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
-        trace!("sending to {}", destination);
         let total_bytes = transmit.contents.len() as u64;
         let res = self.sender.try_send(&quinn_udp::Transmit {
             destination,
@@ -229,7 +222,6 @@ impl IpSender {
             segment_size: transmit.segment_size,
             src_ip: src,
         });
-        trace!("send res: {:?}", res);
 
         match res {
             Ok(res) => {
