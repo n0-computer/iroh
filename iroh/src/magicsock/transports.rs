@@ -10,7 +10,6 @@ use bytes::Bytes;
 use iroh_base::{NodeId, RelayUrl};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
-use tokio::sync::mpsc;
 use tracing::{debug, error, instrument, trace, warn};
 
 use crate::net_report::Report;
@@ -667,10 +666,6 @@ impl MagicSender {
 }
 
 impl quinn::UdpSender for MagicSender {
-    #[instrument(
-        skip_all,
-        fields(src = ?quinn_transmit.src_ip, len = quinn_transmit.contents.len(), dst, node_id),
-    )]
     fn poll_send(
         self: Pin<&mut Self>,
         quinn_transmit: &quinn_udp::Transmit,
@@ -696,14 +691,15 @@ impl quinn::UdpSender for MagicSender {
                 // Initial packet we are sending, so we do not yet have an src address we
                 // need to respond from.
                 if let Some(src_ip) = quinn_transmit.src_ip {
-                    warn!(?src_ip, "oops, flub didn't think this would happen");
+                    warn!(dst = ?mapped_addr, ?src_ip, dst_node = node_id.fmt_short(),
+                        "oops, flub didn't think this would happen");
                 }
 
                 let sender = self.msock.node_map.node_state_actor(node_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
                 return match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
                     Ok(()) => {
-                        trace!(dst = ?mapped_addr, node_id = node_id.fmt_short(), "sent transmit");
+                        trace!(dst = ?mapped_addr, dst_node = node_id.fmt_short(), "sent transmit");
                         Poll::Ready(Ok(()))
                     }
                     Err(err) => {
@@ -711,7 +707,7 @@ impl quinn::UdpSender for MagicSender {
                         // different transport.  Instead we let Quinn handle this as
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
-                        debug!(dst = ?mapped_addr, node_id = node_id.fmt_short(),
+                        debug!(dst = ?mapped_addr, dst_node = node_id.fmt_short(),
                             "NodeStateActor inbox {err:#}, dropped transmit");
                         Poll::Ready(Ok(()))
                     }
@@ -763,99 +759,5 @@ impl quinn::UdpSender for MagicSender {
 
     fn max_transmit_segments(&self) -> usize {
         self.sender.max_transmit_segments
-    }
-
-    #[instrument(
-        skip_all,
-        fields(src = ?quinn_transmit.src_ip, len = quinn_transmit.contents.len(), dst, node_id),
-    )]
-    fn try_send(self: Pin<&mut Self>, quinn_transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        // As opposed to poll_send this method does return normal IO errors.  Calls to this
-        // are one-off fire-and-forget calls with no implications for the EndpointDriver.
-        let mapped_addr = self.mapped_addr(quinn_transmit)?;
-
-        let transport_addr = match mapped_addr {
-            MultipathMappedAddr::Mixed(mapped_addr) => {
-                // TODO: Would be nicer to log the NodeId of this, but we only get an actor
-                //   sender for it.
-                tracing::Span::current().record("dst", tracing::field::debug(&mapped_addr));
-                let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(&mapped_addr)
-                else {
-                    error!("unknown NodeIdMappedAddr, dropped transmit");
-                    return Err(io::Error::new(
-                        io::ErrorKind::HostUnreachable,
-                        "Unknown NodeIdMappedAddr",
-                    ));
-                };
-                tracing::Span::current().record("node_id", node_id.fmt_short());
-
-                // Note we drop the src_ip set in the Quinn Transmit.  This is only the
-                // Initial packet we are sending, so we do not yet have an src address we
-                // need to respond from.
-                if let Some(src_ip) = quinn_transmit.src_ip {
-                    warn!(?src_ip, "oops, flub didn't think this would happen");
-                }
-                let sender = self.msock.node_map.node_state_actor(node_id);
-                let transmit = OwnedTransmit::from(quinn_transmit);
-                return match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
-                    Ok(()) => {
-                        trace!("sent transmit",);
-                        Ok(())
-                    }
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        debug!("NodeStateActor inbox full, dropped transmit");
-                        Err(io::Error::new(
-                            io::ErrorKind::WouldBlock,
-                            "NodeStateActor inbox full",
-                        ))
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => {
-                        debug!("NodeStateActor inbox closed, dropped transmit");
-                        Err(io::Error::new(
-                            io::ErrorKind::NetworkDown,
-                            "NodeStateActor inbox closed",
-                        ))
-                    }
-                };
-            }
-            MultipathMappedAddr::Relay(relay_mapped_addr) => {
-                match self
-                    .msock
-                    .node_map
-                    .relay_mapped_addrs
-                    .lookup(&relay_mapped_addr)
-                {
-                    Some((relay_url, node_id)) => Addr::Relay(relay_url, node_id),
-                    None => {
-                        error!("unknown RelayMappedAddr, dropped transmit");
-                        return Err(io::Error::new(
-                            io::ErrorKind::HostUnreachable,
-                            "unknown RelayMappedAddr",
-                        ));
-                    }
-                }
-            }
-            MultipathMappedAddr::Ip(socket_addr) => Addr::Ip(socket_addr),
-        };
-        tracing::Span::current().record("dst", tracing::field::debug(&transport_addr));
-
-        let transmit = Transmit {
-            ecn: quinn_transmit.ecn,
-            contents: quinn_transmit.contents,
-            segment_size: quinn_transmit.segment_size,
-        };
-        match self
-            .sender
-            .inner_try_send(&transport_addr, quinn_transmit.src_ip, &transmit)
-        {
-            Ok(()) => {
-                trace!("sent transmit",);
-                Ok(())
-            }
-            Err(err) => {
-                warn!("transmit failed to send: {err:#}");
-                Err(err)
-            }
-        }
     }
 }
