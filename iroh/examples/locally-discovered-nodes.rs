@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     let node_id = ep.node_id();
 
     let mdns = MdnsDiscovery::builder().build(node_id)?;
-    ep.discovery().clone().add(mdns.clone());
+    ep.discovery().add(mdns.clone());
 
     println!("Created endpoint {}", node_id.fmt_short());
 

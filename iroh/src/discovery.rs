@@ -440,7 +440,7 @@ impl ConcurrentDiscovery {
     }
 
     /// Adds a [`Discovery`] service.
-    pub fn add(&mut self, service: impl Discovery + 'static) {
+    pub fn add(&self, service: impl Discovery + 'static) {
         self.services
             .write()
             .expect("poisoned")
@@ -780,7 +780,7 @@ mod tests {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_discovery(secret.public());
-            let mut disco = ConcurrentDiscovery::empty();
+            let disco = ConcurrentDiscovery::empty();
             disco.add(disco1);
             disco.add(disco2);
             new_endpoint(secret, disco).await
@@ -812,7 +812,7 @@ mod tests {
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_lying_discovery(secret.public());
             let disco3 = disco_shared.create_discovery(secret.public());
-            let mut disco = ConcurrentDiscovery::empty();
+            let disco = ConcurrentDiscovery::empty();
             disco.add(disco1);
             disco.add(disco2);
             disco.add(disco3);
