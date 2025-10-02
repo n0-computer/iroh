@@ -196,6 +196,7 @@ mod tests {
     use iroh_base::SecretKey;
     use n0_future::{Stream, StreamExt};
     use n0_snafu::{Result, ResultExt};
+    use rand::SeedableRng;
 
     use super::*;
     use crate::{
@@ -242,8 +243,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_clients() -> Result {
-        let a_key = SecretKey::generate(rand::thread_rng()).public();
-        let b_key = SecretKey::generate(rand::thread_rng()).public();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let a_key = SecretKey::generate(&mut rng).public();
+        let b_key = SecretKey::generate(&mut rng).public();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key);
 

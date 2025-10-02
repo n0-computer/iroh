@@ -186,7 +186,7 @@ impl EndpointArgs {
             Ok(s) => SecretKey::from_str(&s)
                 .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
             Err(_) => {
-                let s = SecretKey::generate(rand::rngs::OsRng);
+                let s = SecretKey::generate(&mut rand::rng());
                 println!("Generated a new node secret. To reuse, set");
                 println!("\tIROH_SECRET={}", HEXLOWER.encode(&s.to_bytes()));
                 s
