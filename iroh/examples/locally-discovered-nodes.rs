@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use iroh::{
     Endpoint, NodeId,
-    discovery::{DiscoveryEvent, mdns::MdnsDiscovery},
+    discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
     node_info::UserData,
 };
 use n0_future::StreamExt;
@@ -37,11 +37,11 @@ async fn main() -> Result<()> {
         let mut discovered_nodes: Vec<NodeId> = vec![];
         while let Some(event) = discovery_stream.next().await {
             match event {
-                DiscoveryEvent::Discovered(item) => {
+                DiscoveryEvent::Discovered { node_info, .. } => {
                     // if there is no user data, or the user data
                     // does not indicate that the discovered node
                     // is a part of the example, ignore it
-                    match item.node_info().data.user_data() {
+                    match node_info.data.user_data() {
                         Some(user_data) if &ud == user_data => {}
                         _ => {
                             tracing::error!("found node with unexpected user data, ignoring it");
@@ -51,14 +51,14 @@ async fn main() -> Result<()> {
 
                     // if we've already found this node, ignore it
                     // otherwise announce that we have found a new node
-                    if discovered_nodes.contains(&item.node_id()) {
+                    if discovered_nodes.contains(&node_info.node_id) {
                         continue;
                     } else {
-                        discovered_nodes.push(item.node_id());
-                        println!("Found node {}!", item.node_id().fmt_short());
+                        discovered_nodes.push(node_info.node_id);
+                        println!("Found node {}!", node_info.node_id.fmt_short());
                     }
                 }
-                DiscoveryEvent::Expired(_) => {}
+                DiscoveryEvent::Expired { .. } => {}
             };
         }
     });

@@ -10,7 +10,7 @@
 //!
 //! use iroh::{
 //!     SecretKey,
-//!     discovery::{DiscoveryEvent, mdns::MdnsDiscovery},
+//!     discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
 //!     endpoint::{Endpoint, Source},
 //! };
 //! use n0_future::StreamExt;
@@ -31,10 +31,8 @@
 //!     tokio::pin!(events);
 //!     while let Some(event) = events.next().await {
 //!         match event {
-//!             DiscoveryEvent::Discovered(item) => {
-//!                 if item.provenance() == iroh::discovery::mdns::NAME {
-//!                     println!("locally discovered: {:?}", item.node_info());
-//!                 }
+//!             DiscoveryEvent::Discovered { node_info, .. } => {
+//!                 println!("locally discovered: {:?}", node_info);
 //!             }
 //!             _ => {}
 //!         }
@@ -61,7 +59,7 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{Instrument, debug, error, info_span, trace, warn};
 
 use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
-use crate::discovery::{Discovery, DiscoveryEvent, DiscoveryItem, NodeData, NodeInfo};
+use crate::discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 
 /// The n0 local service name
 const N0_SERVICE_NAME: &str = "irohv1";
@@ -203,6 +201,24 @@ impl IntoDiscovery for MdnsDiscoveryBuilder {
     }
 }
 
+/// An event emitted from the [`MdnsDiscovery`] service.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum DiscoveryEvent {
+    /// A peer was discovered or it's information was updated.
+    Discovered {
+        /// The node info for the node, as discovered.
+        node_info: NodeInfo,
+        /// Optional timestamp when this node address info was last updated.
+        last_updated: Option<u64>,
+    },
+    /// A peer was expired due to being inactive, unreachable, or otherwise
+    /// unavailable.
+    Expired {
+        /// The id of the node that expired.
+        node_id: NodeId,
+    },
+}
+
 impl MdnsDiscovery {
     /// Returns a [`MdnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
     pub fn builder() -> MdnsDiscoveryBuilder {
@@ -308,7 +324,9 @@ impl MdnsDiscovery {
                                 "removing node from MdnsDiscovery address book"
                             );
                             node_addrs.remove(&discovered_node_id);
-                            subscribers.send(DiscoveryEvent::Expired(discovered_node_id));
+                            subscribers.send(DiscoveryEvent::Expired {
+                                node_id: discovered_node_id,
+                            });
                             continue;
                         }
 
@@ -341,7 +359,10 @@ impl MdnsDiscovery {
                         // in other words, nodes sent to the `subscribers` should only be the ones that
                         // have been "passively" discovered
                         if !resolved {
-                            subscribers.send(DiscoveryEvent::Discovered(item));
+                            subscribers.send(DiscoveryEvent::Discovered {
+                                node_info: item.node_info,
+                                last_updated: item.last_updated,
+                            });
                         }
                     }
                     Message::Resolve(node_id, sender) => {
@@ -538,12 +559,12 @@ mod tests {
 
             // resolve twice to ensure we can create separate streams for the same node_id
             let s1 = discovery_a.subscribe().filter(|event| match event {
-                DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
+                DiscoveryEvent::Discovered { node_info, .. } => node_info.node_id == node_id_b,
                 _ => false,
             });
             tokio::pin!(s1);
             let s2 = discovery_a.subscribe().filter(|event| match event {
-                DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
+                DiscoveryEvent::Discovered { node_info, .. } => node_info.node_id == node_id_b,
                 _ => false,
             });
             tokio::pin!(s2);
@@ -551,24 +572,28 @@ mod tests {
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
             discovery_b.publish(&node_data);
-            let DiscoveryEvent::Discovered(s1_res) =
-                tokio::time::timeout(Duration::from_secs(5), s1.next())
-                    .await
-                    .context("timeout")?
-                    .unwrap()
+            let DiscoveryEvent::Discovered {
+                node_info: s1_node_info,
+                ..
+            } = tokio::time::timeout(Duration::from_secs(5), s1.next())
+                .await
+                .context("timeout")?
+                .unwrap()
             else {
                 panic!("Received unexpected discovery event");
             };
-            let DiscoveryEvent::Discovered(s2_res) =
-                tokio::time::timeout(Duration::from_secs(5), s2.next())
-                    .await
-                    .context("timeout")?
-                    .unwrap()
+            let DiscoveryEvent::Discovered {
+                node_info: s2_node_info,
+                ..
+            } = tokio::time::timeout(Duration::from_secs(5), s2.next())
+                .await
+                .context("timeout")?
+                .unwrap()
             else {
                 panic!("Received unexpected discovery event");
             };
-            assert_eq!(s1_res.node_info().data, node_data);
-            assert_eq!(s2_res.node_info().data, node_data);
+            assert_eq!(s1_node_info.data, node_data);
+            assert_eq!(s2_node_info.data, node_data);
 
             Ok(())
         }
@@ -596,7 +621,9 @@ mod tests {
                     .expect("Stream should not be closed");
 
                 match event {
-                    DiscoveryEvent::Discovered(item) if item.node_info().node_id == node_id_b => {
+                    DiscoveryEvent::Discovered { node_info, .. }
+                        if node_info.node_id == node_id_b =>
+                    {
                         break;
                     }
                     _ => continue, // Ignore other discovery events
@@ -615,7 +642,9 @@ mod tests {
                     .expect("Stream should not be closed");
 
                 match event {
-                    DiscoveryEvent::Expired(expired_node_id) if expired_node_id == node_id_b => {
+                    DiscoveryEvent::Expired {
+                        node_id: expired_node_id,
+                    } if expired_node_id == node_id_b => {
                         break;
                     }
                     _ => continue, // Ignore other events
@@ -650,9 +679,11 @@ mod tests {
             let test = async move {
                 let mut got_ids = BTreeSet::new();
                 while got_ids.len() != num_nodes {
-                    if let Some(DiscoveryEvent::Discovered(item)) = events.next().await {
-                        if node_ids.contains(&(item.node_id(), item.user_data())) {
-                            got_ids.insert((item.node_id(), item.user_data()));
+                    if let Some(DiscoveryEvent::Discovered { node_info, .. }) = events.next().await
+                    {
+                        let data = node_info.data.user_data().cloned();
+                        if node_ids.contains(&(node_info.node_id, data.clone())) {
+                            got_ids.insert((node_info.node_id, data));
                         }
                     } else {
                         whatever!(

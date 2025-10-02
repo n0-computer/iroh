@@ -331,16 +331,6 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
 
 impl<T: Discovery> Discovery for Arc<T> {}
 
-/// An event emitted from [`Discovery`] services.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum DiscoveryEvent {
-    /// A peer was discovered or it's information was updated.
-    Discovered(DiscoveryItem),
-    /// A peer was expired due to being inactive, unreachable, or otherwise
-    /// unavailable.
-    Expired(NodeId),
-}
-
 /// Node discovery results from [`Discovery`] services.
 ///
 /// This is the item in the streams returned from [`Discovery::resolve`].
