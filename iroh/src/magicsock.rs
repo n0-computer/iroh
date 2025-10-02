@@ -79,6 +79,7 @@ use crate::{
     net_report::{self, IfStateDetails, IpMappedAddresses, Report},
 };
 
+mod interface_priority;
 mod metrics;
 mod node_map;
 
@@ -87,6 +88,7 @@ pub(crate) mod transports;
 pub use node_map::Source;
 
 pub use self::{
+    interface_priority::InterfacePriority,
     metrics::Metrics,
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo},
 };
@@ -104,7 +106,7 @@ const HEARTBEAT_JITTER_PCT: f64 = 0.25;
 /// Create a jittered interval to prevent synchronized heartbeat storms.
 fn jittered_interval(base: Duration) -> time::Interval {
     let jitter_range = base.as_secs_f64() * HEARTBEAT_JITTER_PCT;
-    let jitter = rand::thread_rng().gen_range(-jitter_range..=jitter_range);
+    let jitter = rand::rng().random_range(-jitter_range..=jitter_range);
     let jittered = base.as_secs_f64() + jitter;
     let duration = Duration::from_secs_f64(jittered.max(0.1));
     time::interval(duration)
@@ -156,6 +158,12 @@ pub(crate) struct Options {
     /// Configuration for what path selection to use
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) path_selection: PathSelection,
+
+    /// Interface-based path prioritization configuration.
+    ///
+    /// Allows preferring certain network interfaces over others when multiple paths exist.
+    /// Useful for scenarios like preferring Ethernet over Wi-Fi.
+    pub(crate) interface_priority: InterfacePriority,
 
     pub(crate) metrics: EndpointMetrics,
 }
@@ -685,7 +693,7 @@ impl MagicSock {
                         // UDP
 
                         // Update the NodeMap and remap RecvMeta to the NodeIdMappedAddr.
-                        match self.node_map.receive_udp(*addr) {
+                        match self.node_map.receive_udp(*addr, quinn_meta.dst_ip) {
                             None => {
                                 // Check if this address is mapped to an IpMappedAddr
                                 if let Some(ip_mapped_addr) =
@@ -1365,6 +1373,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection,
+            interface_priority,
             metrics,
         } = opts;
 
@@ -1384,6 +1393,23 @@ impl Handle {
             }
         };
 
+        // Load interface priority from environment if not explicitly set
+        let interface_priority = if interface_priority.is_empty() {
+            match InterfacePriority::from_env() {
+                Ok(Some(priority)) => {
+                    info!("Loaded interface priority from IROH_INTERFACE_PRIORITY");
+                    priority
+                }
+                Ok(None) => InterfacePriority::default(),
+                Err(e) => {
+                    warn!("Failed to parse IROH_INTERFACE_PRIORITY: {}", e);
+                    InterfacePriority::default()
+                }
+            }
+        } else {
+            interface_priority
+        };
+
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
         #[cfg(not(wasm_browser))]
@@ -1397,13 +1423,7 @@ impl Handle {
         let ipv6_reported = false;
 
         // load the node data
-        let node_map = NodeMap::load_from_vec(
-            Vec::new(),
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection,
-            ipv6_reported,
-            &metrics.magicsock,
-        );
+        let node_addrs = Vec::new();
 
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
@@ -1430,6 +1450,35 @@ impl Handle {
         #[cfg(wasm_browser)]
         let transports = Transports::new(relay_transports);
 
+        // Create network monitor early, so we can build the interface map
+        let network_monitor = netmon::Monitor::new()
+            .await
+            .context(CreateNetmonMonitorSnafu)?;
+
+        // Build interface map from bind addresses and network state
+        #[cfg(not(wasm_browser))]
+        let ip_to_interface = {
+            let netmon_state = network_monitor.interface_state().get();
+            let bind_addrs = transports.ip_bind_addrs();
+            interface_priority::build_interface_map(&bind_addrs, &netmon_state)
+        };
+        #[cfg(wasm_browser)]
+        let ip_to_interface = Default::default();
+
+        // Create NodeMap with the interface map
+        let node_map = NodeMap::load_from_vec(
+            node_addrs,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
+            interface_priority.clone(),
+            ip_to_interface,
+            #[cfg(not(wasm_browser))]
+            ipv6,
+            #[cfg(wasm_browser)]
+            false,
+            &metrics.magicsock,
+        );
+
         let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
         let msock = Arc::new(MagicSock {
@@ -1438,7 +1487,7 @@ impl Handle {
             closed: AtomicBool::new(false),
             disco,
             actor_sender: actor_sender.clone(),
-            ipv6_reported,
+            ipv6_reported: ipv6_reported.clone(),
             node_map,
             ip_mapped_addrs: ip_mapped_addrs.clone(),
             discovery,
@@ -1478,10 +1527,6 @@ impl Handle {
             Arc::new(crate::web_runtime::WebRuntime),
         )
         .context(CreateQuinnEndpointSnafu)?;
-
-        let network_monitor = netmon::Monitor::new()
-            .await
-            .context(CreateNetmonMonitorSnafu)?;
 
         let qad_endpoint = endpoint.clone();
 
@@ -2570,6 +2615,7 @@ mod tests {
             insecure_skip_relay_cert_verify: false,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
+            interface_priority: Default::default(),
             discovery_user_data: None,
             metrics: Default::default(),
         }
@@ -3105,6 +3151,7 @@ mod tests {
             server_config,
             insecure_skip_relay_cert_verify: false,
             path_selection: PathSelection::default(),
+            interface_priority: Default::default(),
             metrics: Default::default(),
         };
         let msock = MagicSock::spawn(opts).await?;

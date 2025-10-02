@@ -52,7 +52,7 @@ pub(super) struct NodeMap {
     inner: Mutex<NodeMapInner>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub(super) struct NodeMapInner {
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
@@ -61,6 +61,10 @@ pub(super) struct NodeMapInner {
     next_id: usize,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
+    interface_priority: crate::magicsock::InterfacePriority,
+    /// Mapping from local IP addresses to interface names.
+    /// Built from bind addresses at startup and updated on network changes.
+    ip_to_interface: HashMap<std::net::IpAddr, String>,
 }
 
 /// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -122,6 +126,8 @@ impl NodeMap {
     pub(super) fn load_from_vec(
         nodes: Vec<NodeAddr>,
         #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
+        interface_priority: crate::magicsock::InterfacePriority,
+        ip_to_interface: HashMap<std::net::IpAddr, String>,
         have_ipv6: bool,
         metrics: &Metrics,
     ) -> Self {
@@ -129,6 +135,8 @@ impl NodeMap {
             nodes,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection,
+            interface_priority,
+            ip_to_interface,
             have_ipv6,
             metrics,
         ))
@@ -163,8 +171,12 @@ impl NodeMap {
     pub(super) fn receive_udp(
         &self,
         udp_addr: SocketAddr,
+        dst_ip: Option<std::net::IpAddr>,
     ) -> Option<(PublicKey, NodeIdMappedAddr)> {
-        self.inner.lock().expect("poisoned").receive_udp(udp_addr)
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .receive_udp(udp_addr, dst_ip)
     }
 
     pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
@@ -346,12 +358,16 @@ impl NodeMapInner {
     fn load_from_vec(
         nodes: Vec<NodeAddr>,
         #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
+        interface_priority: crate::magicsock::InterfacePriority,
+        ip_to_interface: HashMap<std::net::IpAddr, String>,
         have_ipv6: bool,
         metrics: &Metrics,
     ) -> Self {
         let mut me = Self {
             #[cfg(any(test, feature = "test-utils"))]
             path_selection,
+            interface_priority,
+            ip_to_interface,
             ..Default::default()
         };
         for node_addr in nodes {
@@ -374,6 +390,7 @@ impl NodeMapInner {
         let relay_url = node_addr.relay_url.clone();
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
+        let interface_priority = self.interface_priority.clone();
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url,
@@ -381,6 +398,7 @@ impl NodeMapInner {
             source,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection,
+            interface_priority,
         });
         node_state.update_from_node_addr(
             node_addr.relay_url.as_ref(),
@@ -460,13 +478,19 @@ impl NodeMapInner {
 
     /// Marks the node we believe to be at `ipp` as recently used.
     #[cfg(not(wasm_browser))]
-    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, NodeIdMappedAddr)> {
+    fn receive_udp(
+        &mut self,
+        udp_addr: SocketAddr,
+        dst_ip: Option<std::net::IpAddr>,
+    ) -> Option<(NodeId, NodeIdMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
+        let interface_name = dst_ip.and_then(|ip| self.ip_to_interface.get(&ip).cloned());
+
         let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
             trace!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
             return None;
         };
-        node_state.receive_udp(ip_port, Instant::now());
+        node_state.receive_udp(ip_port, interface_name.as_deref(), Instant::now());
         Some((*node_state.public_key(), *node_state.quic_mapped_addr()))
     }
 
@@ -474,6 +498,7 @@ impl NodeMapInner {
     fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
+        let interface_priority = self.interface_priority.clone();
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
             trace!("packets from unknown node, insert into node map");
             Options {
@@ -483,6 +508,7 @@ impl NodeMapInner {
                 source: Source::Relay,
                 #[cfg(any(test, feature = "test-utils"))]
                 path_selection,
+                interface_priority,
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
@@ -578,6 +604,7 @@ impl NodeMapInner {
     fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
+        let interface_priority = self.interface_priority.clone();
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(sender), || {
             debug!("received ping: node unknown, add to node map");
             let source = if src.is_relay() {
@@ -592,6 +619,7 @@ impl NodeMapInner {
                 source,
                 #[cfg(any(test, feature = "test-utils"))]
                 path_selection,
+                interface_priority,
             }
         });
 
@@ -799,6 +827,8 @@ mod tests {
         let loaded_node_map = NodeMap::load_from_vec(
             addrs.clone(),
             PathSelection::default(),
+            Default::default(),
+            Default::default(),
             true,
             &Default::default(),
         );
@@ -844,6 +874,7 @@ mod tests {
                     name: "test".into(),
                 },
                 path_selection: PathSelection::default(),
+                interface_priority: Default::default(),
             })
             .id();
 
@@ -859,7 +890,7 @@ mod tests {
             // add address
             node_map.add_test_addr(node_addr);
             // make it active
-            node_map.inner.lock().unwrap().receive_udp(addr);
+            node_map.inner.lock().unwrap().receive_udp(addr, None);
         }
 
         info!("Adding offline/inactive addresses");
@@ -914,7 +945,7 @@ mod tests {
             .inner
             .lock()
             .unwrap()
-            .receive_udp(addr)
+            .receive_udp(addr, None)
             .expect("registered");
 
         for _ in 0..MAX_INACTIVE_NODES + 1 {

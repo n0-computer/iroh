@@ -90,6 +90,8 @@ pub(super) struct NodeUdpPaths {
     ///
     /// Follows the same logic as `best` above, but doesn't include any IPv6 addresses.
     best_ipv4: UdpSendAddr,
+    /// Interface priority configuration for path selection.
+    pub(super) interface_priority: crate::magicsock::InterfacePriority,
 }
 
 pub(super) struct MutAccess<'a> {
@@ -126,6 +128,7 @@ impl NodeUdpPaths {
             paths,
             best_ipv4: best, // we only use ipv4 addrs in tests
             best,
+            interface_priority: Default::default(),
         }
     }
 
@@ -194,25 +197,41 @@ impl NodeUdpPaths {
     /// If we don't have any addresses, returns [`UdpSendAddr::None`].
     ///
     /// If `have_ipv6` is false, we only search among ipv4 candidates.
+    ///
+    /// Path selection considers:
+    /// 1. Validity (Valid > Outdated > Unconfirmed)
+    /// 2. Interface priority (if configured via IROH_INTERFACE_PRIORITY)
+    /// 3. Latency (lower is better)
+    /// 4. IPv6 preference (tie-breaker)
     fn best_addr(&self, have_ipv6: bool, now: Instant) -> UdpSendAddr {
         let Some((ipp, path)) = self
             .paths
             .iter()
             .filter(|(ipp, _)| have_ipv6 || ipp.ip.is_ipv4())
             .max_by_key(|(ipp, path)| {
-                // We find the best by sorting on a key of type (Option<ReverseOrd<Duration>>, Option<ReverseOrd<Duration>>, bool)
-                // where the first is set to Some(ReverseOrd(latency)) iff path.is_valid(now) and
-                // the second is set to Some(ReverseOrd(latency)) if path.is_outdated(now) and
-                // the third is set to whether the ipp is ipv6.
-                // This makes max_by_key sort for the lowest valid latency first, then sort for
-                // the lowest outdated latency second, and if latencies are equal, it'll sort IPv6 paths first.
+                // Sorting key: (validity_tier, interface_priority, latency, ipv6)
+                // We use Option<ReverseOrd<Duration>> for latencies to sort lowest first
+                // Interface priority is u32 where higher values = higher priority
+
                 let is_ipv6 = ipp.ip.is_ipv6();
-                if let Some(latency) = path.validity.latency_if_valid(now) {
-                    (Some(ReverseOrd(latency)), None, is_ipv6)
-                } else if let Some(latency) = path.validity.latency_if_outdated(now) {
-                    (None, Some(ReverseOrd(latency)), is_ipv6)
+
+                // Get interface priority for this path
+                // Try interface_name first (if populated) otherwise fall back to flat weight of 1
+                let interface_weight = if let Some(name) = path.interface_name() {
+                    self.interface_priority.weight(name)
                 } else {
-                    (None, None, is_ipv6)
+                    1
+                };
+
+                if let Some(latency) = path.validity.latency_if_valid(now) {
+                    // Valid paths: sort by interface priority, then latency
+                    (Some(ReverseOrd(latency)), None, interface_weight, is_ipv6)
+                } else if let Some(latency) = path.validity.latency_if_outdated(now) {
+                    // Outdated paths: sort by interface priority, then latency
+                    (None, Some(ReverseOrd(latency)), interface_weight, is_ipv6)
+                } else {
+                    // Unconfirmed paths: sort by interface priority only
+                    (None, None, interface_weight, is_ipv6)
                 }
             })
         else {
@@ -230,9 +249,6 @@ impl NodeUdpPaths {
 }
 
 /// Implements the reverse [`Ord`] implementation for the wrapped type.
-///
-/// Literally calls [`std::cmp::Ordering::reverse`] on the inner value's
-/// ordering.
 #[derive(PartialEq, Eq)]
 struct ReverseOrd<N: PartialOrd + Ord + PartialEq + Eq>(N);
 
