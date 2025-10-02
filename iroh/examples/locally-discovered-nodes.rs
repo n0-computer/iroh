@@ -31,9 +31,7 @@ async fn main() -> Result<()> {
 
     let ud = user_data.clone();
     let discovery_stream_task = tokio::spawn(async move {
-        let discovery_stream = mdns.subscribe();
-        tokio::pin!(discovery_stream);
-
+        let mut discovery_stream = mdns.subscribe().await;
         let mut discovered_nodes: Vec<NodeId> = vec![];
         while let Some(event) = discovery_stream.next().await {
             match event {

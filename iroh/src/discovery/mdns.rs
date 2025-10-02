@@ -27,8 +27,7 @@
 //!         .bind()
 //!         .await
 //!         .unwrap();
-//!     let events = mdns.subscribe();
-//!     tokio::pin!(events);
+//!     let mut events = mdns.subscribe().await;
 //!     while let Some(event) = events.next().await {
 //!         match event {
 //!             DiscoveryEvent::Discovered { node_info, .. } => {
@@ -417,16 +416,11 @@ impl MdnsDiscovery {
     }
 
     /// Subscribe to discovered nodes
-    pub fn subscribe(&self) -> impl Stream<Item = DiscoveryEvent> + use<> {
-        use futures_util::FutureExt;
-
+    pub async fn subscribe(&self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
         let (sender, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
-        let stream = async move {
-            discovery_sender.send(Message::Subscribe(sender)).await.ok();
-            tokio_stream::wrappers::ReceiverStream::new(recv)
-        };
-        stream.flatten_stream()
+        discovery_sender.send(Message::Subscribe(sender)).await.ok();
+        tokio_stream::wrappers::ReceiverStream::new(recv)
     }
 
     fn spawn_discoverer(
@@ -558,16 +552,14 @@ mod tests {
                 .with_user_data(Some(user_data.clone()));
 
             // resolve twice to ensure we can create separate streams for the same node_id
-            let s1 = discovery_a.subscribe().filter(|event| match event {
+            let mut s1 = discovery_a.subscribe().await.filter(|event| match event {
                 DiscoveryEvent::Discovered { node_info, .. } => node_info.node_id == node_id_b,
                 _ => false,
             });
-            tokio::pin!(s1);
-            let s2 = discovery_a.subscribe().filter(|event| match event {
+            let mut s2 = discovery_a.subscribe().await.filter(|event| match event {
                 DiscoveryEvent::Discovered { node_info, .. } => node_info.node_id == node_id_b,
                 _ => false,
             });
-            tokio::pin!(s2);
 
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
@@ -609,8 +601,7 @@ mod tests {
                 .with_user_data(Some("".parse()?));
             discovery_b.publish(&node_data);
 
-            let s1 = discovery_a.subscribe();
-            tokio::pin!(s1);
+            let mut s1 = discovery_a.subscribe().await;
             tracing::debug!(?node_id_b, "Discovering node id b");
 
             // Wait for the specific node to be discovered
@@ -673,8 +664,7 @@ mod tests {
                 discoverers.push(discovery);
             }
 
-            let events = discovery.subscribe();
-            tokio::pin!(events);
+            let mut events = discovery.subscribe().await;
 
             let test = async move {
                 let mut got_ids = BTreeSet::new();
