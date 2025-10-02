@@ -62,6 +62,10 @@ pub(super) struct PathState {
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size of
     /// the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
+    /// Network interface name this path uses, if known.
+    ///
+    /// Used for interface-based path prioritization (e.g., preferring Ethernet over Wi-Fi).
+    pub(super) interface_name: Option<String>,
 }
 
 impl PathState {
@@ -77,6 +81,7 @@ impl PathState {
             validity: PathValidity::empty(),
             last_payload_msg: None,
             sources,
+            interface_name: None,
         }
     }
 
@@ -97,6 +102,7 @@ impl PathState {
             validity: PathValidity::empty(),
             last_payload_msg: Some(now),
             sources,
+            interface_name: None,
         }
     }
 
@@ -157,7 +163,16 @@ impl PathState {
             validity,
             last_payload_msg: None,
             sources: HashMap::new(),
+            interface_name: None,
         }
+    }
+
+    pub(super) fn set_interface_name(&mut self, interface_name: Option<String>) {
+        self.interface_name = interface_name;
+    }
+
+    pub(super) fn interface_name(&self) -> Option<&str> {
+        self.interface_name.as_deref()
     }
 
     /// Check whether this path is considered active.
