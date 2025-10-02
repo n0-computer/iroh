@@ -730,21 +730,23 @@ mod tests {
         #[tokio::test]
         #[traced_test]
         async fn test_service_names() -> Result {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
             // Create a discovery service using the default
             // service name
-            let id_a = SecretKey::generate(rand::rng()).public();
+            let id_a = SecretKey::generate(&mut rng).public();
             let discovery_a = MdnsDiscovery::builder().build(id_a)?;
 
             // Create a discovery service using a custom
             // service name
-            let id_b = SecretKey::generate(rand::rng()).public();
+            let id_b = SecretKey::generate(&mut rng).public();
             let discovery_b = MdnsDiscovery::builder()
                 .service_name("different.name")
                 .build(id_b)?;
 
             // Create a discovery service using the same
             // custom service name
-            let id_c = SecretKey::generate(rand::rng()).public();
+            let id_c = SecretKey::generate(&mut rng).public();
             let discovery_c = MdnsDiscovery::builder()
                 .service_name("different.name")
                 .build(id_c)?;
