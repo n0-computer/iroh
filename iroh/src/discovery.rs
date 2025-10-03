@@ -7,8 +7,7 @@
 //! connect directly with a [`NodeId`].
 //!
 //! For this to work however, the endpoint has to get the addressing  information by
-//! other means.  This can be done by manually calling [`Endpoint::add_node_addr`],
-//! but that still requires knowing the other addressing information.
+//! other means.
 //!
 //! Node discovery is an automated system for an [`Endpoint`] to retrieve this addressing
 //! information.  Each iroh node will automatically publish their own addressing
@@ -109,11 +108,10 @@
 //! [`MdnsDiscovery`]: mdns::MdnsDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
-    Stream, TryStreamExt,
     boxed::BoxStream,
     stream::StreamExt,
     task::{self, AbortOnDropHandle},
@@ -329,50 +327,14 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         None
     }
-
-    /// Subscribe to all addresses that get *passively* discovered.
-    ///
-    /// An implementation may choose to defer emitting passively discovered nodes
-    /// until the stream is actually polled. To avoid missing discovered nodes,
-    /// poll the stream as soon as possible.
-    ///
-    /// If you do not regularly poll the stream, you may miss discovered nodes.
-    ///
-    /// Any discovery systems that only discover when explicitly resolving a
-    /// specific [`NodeId`] do not need to implement this method. Any nodes or
-    /// addresses that are discovered by calling `resolve` should NOT be added
-    /// to the `subscribe` stream.
-    ///
-    /// Discovery systems that are capable of receiving information about [`NodeId`]s
-    /// and their addressing information without explicitly calling `resolve`, i.e.,
-    /// systems that do "passive" discovery, should implement this method. If
-    /// `subscribe` is called multiple times, the passively discovered addresses
-    /// should be sent on all streams.
-    ///
-    /// The [`crate::endpoint::Endpoint`] will `subscribe` to the discovery system
-    /// and add the discovered addresses to the internal address book as they arrive
-    /// on this stream.
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
-        None
-    }
 }
 
 impl<T: Discovery> Discovery for Arc<T> {}
 
-/// An event emitted from [`Discovery`] services.
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub enum DiscoveryEvent {
-    /// A peer was discovered or it's information was updated.
-    Discovered(DiscoveryItem),
-    /// A peer was expired due to being inactive, unreachable, or otherwise
-    /// unavailable.
-    Expired(NodeId),
-}
-
 /// Node discovery results from [`Discovery`] services.
 ///
-/// This is the item in the streams returned from [`Discovery::resolve`] and
-/// [`Discovery::subscribe`]. It contains the [`NodeData`] about the discovered node,
+/// This is the item in the streams returned from [`Discovery::resolve`].
+/// It contains the [`NodeData`] about the discovered node,
 /// and some additional metadata about the discovery.
 ///
 /// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
@@ -459,9 +421,9 @@ impl From<DiscoveryItem> for NodeInfo {
 /// A discovery service that combines multiple discovery sources.
 ///
 /// The discovery services will resolve concurrently.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct ConcurrentDiscovery {
-    services: Vec<Box<dyn Discovery>>,
+    services: Arc<RwLock<Vec<Box<dyn Discovery>>>>,
 }
 
 impl ConcurrentDiscovery {
@@ -472,12 +434,27 @@ impl ConcurrentDiscovery {
 
     /// Creates a new [`ConcurrentDiscovery`].
     pub fn from_services(services: Vec<Box<dyn Discovery>>) -> Self {
-        Self { services }
+        Self {
+            services: Arc::new(RwLock::new(services)),
+        }
     }
 
     /// Adds a [`Discovery`] service.
-    pub fn add(&mut self, service: impl Discovery + 'static) {
-        self.services.push(Box::new(service));
+    pub fn add(&self, service: impl Discovery + 'static) {
+        self.services
+            .write()
+            .expect("poisoned")
+            .push(Box::new(service));
+    }
+
+    /// Is there any services configured?
+    pub fn is_empty(&self) -> bool {
+        self.services.read().expect("poisoned").is_empty()
+    }
+
+    /// How many services are configured
+    pub fn len(&self) -> usize {
+        self.services.read().expect("poisoned").len()
     }
 }
 
@@ -487,34 +464,25 @@ where
 {
     fn from(iter: T) -> Self {
         let services = iter.into_iter().collect::<Vec<_>>();
-        Self { services }
+        Self {
+            services: Arc::new(RwLock::new(services)),
+        }
     }
 }
 
 impl Discovery for ConcurrentDiscovery {
     fn publish(&self, data: &NodeData) {
-        for service in &self.services {
+        let services = self.services.read().expect("poisoned");
+        for service in &*services {
             service.publish(data);
         }
     }
 
     fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
-        let streams = self
-            .services
+        let services = self.services.read().expect("poisoned");
+        let streams = services
             .iter()
             .filter_map(|service| service.resolve(node_id));
-
-        let streams = n0_future::MergeBounded::from_iter(streams);
-        Some(Box::pin(streams))
-    }
-
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
-        let mut streams = vec![];
-        for service in self.services.iter() {
-            if let Some(stream) = service.subscribe() {
-                streams.push(stream)
-            }
-        }
 
         let streams = n0_future::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
@@ -534,7 +502,7 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Starts a discovery task.
     pub(super) fn start(ep: Endpoint, node_id: NodeId) -> Result<Self, DiscoveryError> {
-        ensure!(ep.discovery().is_some(), NoServiceConfiguredSnafu);
+        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.node_id();
         let task = task::spawn(
@@ -562,10 +530,10 @@ impl DiscoveryTask {
         delay: Option<Duration>,
     ) -> Result<Option<Self>, DiscoveryError> {
         // If discovery is not needed, don't even spawn a task.
-        if !Self::needs_discovery(ep, node_id) {
+        if !ep.needs_discovery(node_id, MAX_AGE) {
             return Ok(None);
         }
-        ensure!(ep.discovery().is_some(), NoServiceConfiguredSnafu);
+        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.node_id();
@@ -574,7 +542,7 @@ impl DiscoveryTask {
                 // If delay is set, wait and recheck if discovery is needed. If not, early-exit.
                 if let Some(delay) = delay {
                     time::sleep(delay).await;
-                    if !Self::needs_discovery(&ep, node_id) {
+                    if !ep.needs_discovery(node_id, MAX_AGE) {
                         debug!("no discovery needed, abort");
                         on_first_tx.send(Ok(())).ok();
                         return;
@@ -603,35 +571,12 @@ impl DiscoveryTask {
         ep: &Endpoint,
         node_id: NodeId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
-        let discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())?;
-        let stream = discovery
+        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
+        let stream = ep
+            .discovery()
             .resolve(node_id)
             .ok_or(NoResultsSnafu { node_id }.build())?;
         Ok(stream)
-    }
-
-    /// We need discovery if we have no paths to the node, or if the paths we do have
-    /// have timed out.
-    fn needs_discovery(ep: &Endpoint, node_id: NodeId) -> bool {
-        match ep.remote_info(node_id) {
-            // No info means no path to node -> start discovery.
-            None => true,
-            Some(info) => {
-                match (
-                    info.last_received(),
-                    info.relay_url.as_ref().and_then(|r| r.last_alive),
-                ) {
-                    // No path to node -> start discovery.
-                    (None, None) => true,
-                    // If we haven't received on direct addresses or the relay for MAX_AGE,
-                    // start discovery.
-                    (Some(elapsed), Some(elapsed_relay)) => {
-                        elapsed > MAX_AGE && elapsed_relay > MAX_AGE
-                    }
-                    (Some(elapsed), _) | (_, Some(elapsed)) => elapsed > MAX_AGE,
-                }
-            }
-        }
     }
 
     async fn run(
@@ -663,9 +608,6 @@ impl DiscoveryTask {
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
-                    // Send the discovery item to the subscribers of the discovery broadcast stream.
-                    ep.discovery_subscribers()
-                        .send(DiscoveryEvent::Discovered(r));
                 }
                 Some(Err(err)) => {
                     warn!(?err, "discovery service produced error");
@@ -677,50 +619,6 @@ impl DiscoveryTask {
         if let Some(tx) = on_first_tx.take() {
             tx.send(Err(NoResultsSnafu { node_id }.build())).ok();
         }
-    }
-}
-
-/// Error returned when a discovery watch stream lagged too far behind.
-///
-/// The stream returned from [`Endpoint::discovery_stream`] yields this error
-/// if the loop in which the stream is processed cannot keep up with the emitted
-/// discovery events. Attempting to read the next item from the channel afterwards
-/// will return the oldest [`DiscoveryItem`] that is still retained.
-///
-/// Includes the number of skipped messages.
-#[derive(Debug, Snafu)]
-#[snafu(display("channel lagged by {val}"))]
-pub struct Lagged {
-    /// The number of skipped messages
-    pub val: u64,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct DiscoverySubscribers {
-    inner: tokio::sync::broadcast::Sender<DiscoveryEvent>,
-}
-
-impl DiscoverySubscribers {
-    pub(crate) fn new() -> Self {
-        // TODO: Make capacity configurable from the endpoint builder?
-        // This is the maximum number of [`DiscoveryItem`]s held by the channel if
-        // subscribers are stalled.
-        const CAPACITY: usize = 128;
-        Self {
-            inner: tokio::sync::broadcast::Sender::new(CAPACITY),
-        }
-    }
-
-    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryEvent, Lagged>> + use<> {
-        use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
-        let recv = self.inner.subscribe();
-        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })
-    }
-
-    pub(crate) fn send(&self, item: DiscoveryEvent) {
-        // `broadcast::Sender::send` returns an error if the channel has no subscribers,
-        // which we don't care about.
-        self.inner.send(item).ok();
     }
 }
 
@@ -746,19 +644,9 @@ mod tests {
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
         nodes: Arc<Mutex<InfoStore>>,
-        watchers: tokio::sync::broadcast::Sender<DiscoveryEvent>,
-    }
-
-    impl Default for TestDiscoveryShared {
-        fn default() -> Self {
-            Self {
-                nodes: Default::default(),
-                watchers: tokio::sync::broadcast::Sender::new(1024),
-            }
-        }
     }
 
     impl TestDiscoveryShared {
@@ -780,10 +668,6 @@ mod tests {
                 resolve_wrong: true,
                 delay: Duration::from_millis(100),
             }
-        }
-
-        pub fn send_passive(&self, item: DiscoveryEvent) {
-            self.watchers.send(item).ok();
         }
     }
 
@@ -842,13 +726,6 @@ mod tests {
             };
             Some(stream)
         }
-
-        fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
-            let recv = self.shared.watchers.subscribe();
-            let stream =
-                tokio_stream::wrappers::BroadcastStream::new(recv).filter_map(|item| item.ok());
-            Some(Box::pin(stream))
-        }
     }
 
     #[derive(Debug, Clone)]
@@ -903,7 +780,7 @@ mod tests {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_discovery(secret.public());
-            let mut disco = ConcurrentDiscovery::empty();
+            let disco = ConcurrentDiscovery::empty();
             disco.add(disco1);
             disco.add(disco2);
             new_endpoint(secret, disco).await
@@ -935,7 +812,7 @@ mod tests {
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_lying_discovery(secret.public());
             let disco3 = disco_shared.create_discovery(secret.public());
-            let mut disco = ConcurrentDiscovery::empty();
+            let disco = ConcurrentDiscovery::empty();
             disco.add(disco1);
             disco.add(disco2);
             disco.add(disco3);
@@ -1004,61 +881,6 @@ mod tests {
             direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
         };
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn endpoint_discovery_watch() -> Result {
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) = {
-            let secret = SecretKey::generate(rand::thread_rng());
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
-        let (ep2, _guard2) = {
-            let secret = SecretKey::generate(rand::thread_rng());
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
-
-        let mut stream = ep1.discovery_stream();
-
-        // wait for ep2 node addr to be updated and connect from ep1 -> discovery via resolve
-        ep2.node_addr().initialized().await;
-        let _ = ep1.connect(ep2.node_id(), TEST_ALPN).await?;
-
-        let DiscoveryEvent::Discovered(item) =
-            tokio::time::timeout(Duration::from_secs(1), stream.next())
-                .await
-                .expect("timeout")
-                .expect("stream closed")
-                .expect("stream lagged")
-        else {
-            panic!("Returned unexpected discovery event!");
-        };
-
-        assert_eq!(item.node_id(), ep2.node_id());
-        assert_eq!(item.provenance(), "test-disco");
-
-        // inject item into discovery passively
-        let passive_node_id = SecretKey::generate(rand::thread_rng()).public();
-        let node_info = NodeInfo::new(passive_node_id);
-        let passive_item = DiscoveryItem::new(node_info, "test-disco-passive", None);
-        disco_shared.send_passive(DiscoveryEvent::Discovered(passive_item.clone()));
-
-        let DiscoveryEvent::Discovered(item) =
-            tokio::time::timeout(Duration::from_secs(1), stream.next())
-                .await
-                .expect("timeout")
-                .expect("stream closed")
-                .expect("stream lagged")
-        else {
-            panic!("Returned unexpected discovery event!");
-        };
-        assert_eq!(item.node_id(), passive_node_id);
-        assert_eq!(item.provenance(), "test-disco-passive");
-
         Ok(())
     }
 

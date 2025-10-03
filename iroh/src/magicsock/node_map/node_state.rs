@@ -208,10 +208,8 @@ impl NodeState {
         self.conn_type.watch()
     }
 
-    /// Returns info about this node.
-    pub(super) fn info(&self, now: Instant) -> RemoteInfo {
-        let conn_type = self.conn_type.get();
-        let latency = match conn_type {
+    pub(super) fn latency(&self) -> Option<Duration> {
+        match self.conn_type.get() {
             ConnectionType::Direct(addr) => self
                 .udp_paths
                 .paths()
@@ -236,7 +234,13 @@ impl NodeState {
                 addr_latency.min(relay_latency)
             }
             ConnectionType::None => None,
-        };
+        }
+    }
+
+    /// Returns info about this node.
+    pub(super) fn info(&self, now: Instant) -> RemoteInfo {
+        let conn_type = self.conn_type.get();
+        let latency = self.latency();
 
         let addrs = self
             .udp_paths
@@ -1298,10 +1302,7 @@ pub struct DirectAddrInfo {
     ///
     /// The elapsed time since *any* confirmation of the path's existence was received is
     /// returned.  If the remote node moved networks and no longer has this path, this could
-    /// be a long duration.  If the path was added via [`Endpoint::add_node_addr`] or some
-    /// node discovery the path may never have been known to exist.
-    ///
-    /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
+    /// be a long duration.
     pub last_alive: Option<Duration>,
     /// A [`HashMap`] of [`Source`]s to [`Duration`]s.
     ///
@@ -1349,7 +1350,7 @@ impl From<RelayUrlInfo> for RelayUrl {
 ///
 /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RemoteInfo {
+pub(crate) struct RemoteInfo {
     /// The globally unique identifier for this node.
     pub node_id: NodeId,
     /// Relay server information, if available.
@@ -1374,7 +1375,7 @@ pub struct RemoteInfo {
 impl RemoteInfo {
     /// Get the duration since the last activity we received from this endpoint
     /// on any of its direct addresses.
-    pub fn last_received(&self) -> Option<Duration> {
+    pub(crate) fn last_received(&self) -> Option<Duration> {
         self.addrs
             .iter()
             .filter_map(|addr| addr.last_control.map(|x| x.0).min(addr.last_payload))
@@ -1385,29 +1386,8 @@ impl RemoteInfo {
     ///
     /// Note that this does not provide any guarantees of whether any network path is
     /// usable.
-    pub fn has_send_address(&self) -> bool {
+    pub(crate) fn has_send_address(&self) -> bool {
         self.relay_url.is_some() || !self.addrs.is_empty()
-    }
-
-    /// Returns a deduplicated list of [`Source`]s merged from all address in the [`RemoteInfo`].
-    ///
-    /// Deduplication is on the (`Source`, `Duration`) tuple, so you will get multiple [`Source`]s
-    /// for each `Source` variant, if different addresses were discovered from the same [`Source`]
-    /// at different times.
-    ///
-    /// The list is sorted from least to most recent [`Source`].
-    pub fn sources(&self) -> Vec<(Source, Duration)> {
-        let mut sources = vec![];
-        for addr in &self.addrs {
-            for source in &addr.sources {
-                let source = (source.0.clone(), *source.1);
-                if !sources.contains(&source) {
-                    sources.push(source)
-                }
-            }
-        }
-        sources.sort_by(|a, b| b.1.cmp(&a.1));
-        sources
     }
 }
 
