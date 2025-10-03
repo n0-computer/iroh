@@ -275,6 +275,7 @@ pub use iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
 pub use iroh_relay::{RelayMap, RelayNode, node_info};
+pub use magicsock::InterfacePriority;
 pub use n0_watcher::Watcher;
 
 #[cfg(any(test, feature = "test-utils"))]
