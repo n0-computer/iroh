@@ -329,7 +329,15 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     }
 }
 
-impl<T: Discovery> Discovery for Arc<T> {}
+impl<T: Discovery> Discovery for Arc<T> {
+    fn publish(&self, data: &NodeData) {
+        self.as_ref().publish(data);
+    }
+
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        self.as_ref().resolve(node_id)
+    }
+}
 
 /// Node discovery results from [`Discovery`] services.
 ///
@@ -766,6 +774,31 @@ mod tests {
         Ok(())
     }
 
+    /// This is a smoke test to ensure a discovery service can be
+    /// `Arc`-d, and discovery will still work
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_discovery_simple_shared_with_arc() -> Result {
+        let disco_shared = TestDiscoveryShared::default();
+        let (ep1, _guard1) = {
+            let secret = SecretKey::generate(rand::thread_rng());
+            let disco = disco_shared.create_discovery(secret.public());
+            let disco = Arc::new(disco);
+            new_endpoint(secret, disco).await
+        };
+        let (ep2, _guard2) = {
+            let secret = SecretKey::generate(rand::thread_rng());
+            let disco = disco_shared.create_discovery(secret.public());
+            let disco = Arc::new(disco);
+            new_endpoint(secret, disco).await
+        };
+        let ep1_addr = NodeAddr::new(ep1.node_id());
+        // wait for our address to be updated and thus published at least once
+        ep1.node_addr().initialized().await;
+        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
+        Ok(())
+    }
+
     /// This test adds an empty discovery which provides no addresses.
     #[tokio::test]
     #[traced_test]
@@ -890,7 +923,7 @@ mod tests {
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let ep = Endpoint::builder()
             .secret_key(secret)
-            .discovery(disco)
+            .add_discovery(disco)
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
