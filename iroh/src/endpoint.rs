@@ -2575,15 +2575,14 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_two_direct_only() -> Result {
-        // Connect two endpoints on the same network, without a relay server.
-        // let discovery = StaticProvider::new();
+        // Connect two endpoints on the same network, without a relay server, without
+        // discovery.
         let ep1 = {
             let span = info_span!("server");
             let _guard = span.enter();
             Endpoint::builder()
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .relay_mode(RelayMode::Disabled)
-                // .discovery(discovery.clone())
                 .bind()
                 .await?
         };
@@ -2593,16 +2592,12 @@ mod tests {
             Endpoint::builder()
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .relay_mode(RelayMode::Disabled)
-                // .discovery(discovery.clone())
                 .bind()
                 .await?
         };
         ep1.direct_addresses().initialized().await;
         ep2.direct_addresses().initialized().await;
         let ep1_nodeaddr = ep1.node_addr().initialized().await;
-        // let ep2_nodeaddr = ep2.node_addr().initialized().await;
-        // discovery.set_node_info(ep1_nodeaddr.clone());
-        // discovery.set_node_info(ep2_nodeaddr.clone());
 
         #[instrument(name = "client", skip_all)]
         async fn connect(ep: Endpoint, dst: NodeAddr) -> Result<quinn::ConnectionError> {
@@ -2632,6 +2627,74 @@ mod tests {
 
         ep1_accept.await.e()??;
         let conn_closed = dbg!(ep2_connect.await.e()??);
+        assert!(matches!(
+            conn_closed,
+            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_two_relay_only() -> Result {
+        // Connect two endpoints on the same network, via a relay server, without
+        // discovery.
+        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
+        let server = {
+            let span = info_span!("server");
+            let _guard = span.enter();
+            Endpoint::builder()
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map.clone()))
+                .bind()
+                .await?
+        };
+        let client = {
+            let span = info_span!("client");
+            let _guard = span.enter();
+            Endpoint::builder()
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?
+        };
+        let server_node_addr = NodeAddr {
+            node_id: server.node_id(),
+            relay_url: Some(server.home_relay().initialized().await),
+            direct_addresses: Default::default(),
+        };
+
+        #[instrument(name = "client", skip_all)]
+        async fn connect(ep: Endpoint, dst: NodeAddr) -> Result<quinn::ConnectionError> {
+            info!(me = ep.node_id().fmt_short(), "client starting");
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+            let mut send = conn.open_uni().await.e()?;
+            send.write_all(b"hello").await.e()?;
+            send.finish().e()?;
+            Ok(conn.closed().await)
+        }
+
+        #[instrument(name = "server", skip_all)]
+        async fn accept(ep: Endpoint, src: NodeId) -> Result {
+            info!(me = ep.node_id().fmt_short(), "server starting");
+            let conn = ep.accept().await.e()?.await.e()?;
+            let node_id = conn.remote_node_id()?;
+            assert_eq!(node_id, src);
+            let mut recv = conn.accept_uni().await.e()?;
+            let msg = recv.read_to_end(100).await.e()?;
+            assert_eq!(msg, b"hello");
+            // Dropping the connection closes it just fine.
+            Ok(())
+        }
+
+        let server_task = tokio::spawn(accept(server.clone(), client.node_id()));
+        let client_task = tokio::spawn(connect(client.clone(), server_node_addr));
+
+        server_task.await.e()??;
+        let conn_closed = dbg!(client_task.await.e()??);
         assert!(matches!(
             conn_closed,
             ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
