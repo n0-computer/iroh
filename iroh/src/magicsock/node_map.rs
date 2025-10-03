@@ -109,15 +109,6 @@ enum NodeStateKey {
 /// A [`Source`] helps track how and where an address was learned. Multiple
 /// sources can be associated with a single address, if we have discovered this
 /// address through multiple means.
-///
-/// Each time a [`NodeAddr`] is added to the node map, usually through
-/// [`crate::endpoint::Endpoint::add_node_addr_with_source`], a [`Source`] must be supplied to indicate
-/// how the address was obtained.
-///
-/// A [`Source`] can describe a variety of places that an address or node was
-/// discovered, such as a configured discovery service, the network itself
-/// (if another node has reached out to us), or as a user supplied [`NodeAddr`].
-
 #[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Source {
@@ -145,6 +136,14 @@ pub enum Source {
     CallMeMaybe,
     /// We received a ping on the path.
     Ping,
+    /// We established a connection on this address.
+    ///
+    /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
+    /// was added to the [`NodeStateActor`].
+    ///
+    /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
+    /// [`NodeStateActor`]: self::node_state::NodeStateActor
+    Connection,
 }
 
 impl NodeMap {

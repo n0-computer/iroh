@@ -28,7 +28,9 @@ use crate::{
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MAX_IDLE_TIMEOUT, MagicsockMetrics,
-        mapped_addrs::{AddrMap, MappedAddr, NodeIdMappedAddr, RelayMappedAddr},
+        mapped_addrs::{
+            AddrMap, MappedAddr, MultipathMappedAddr, NodeIdMappedAddr, RelayMappedAddr,
+        },
         transports::{self, OwnedTransmit},
     },
     util::MaybeFuture,
@@ -343,7 +345,7 @@ impl NodeStateActor {
                 parent: None,
                 "NodeStateActor",
                 me = me.fmt_short(),
-                node_id = node_id.fmt_short(),
+                remote_node = node_id.fmt_short(),
             )),
         );
         NodeStateHandle {
@@ -423,8 +425,20 @@ impl NodeStateActor {
                     let events = BroadcastStream::new(conn.path_events());
                     let stream = events.map(move |evt| (stable_id, evt));
                     self.path_events.push(Box::pin(stream));
-                    self.connections.insert(stable_id, handle);
-                    self.trigger_holepunching().await;
+                    self.connections.insert(stable_id, handle.clone());
+                    if let Some(conn) = handle.upgrade() {
+                        if let Some(addr) = self.path_transports_addr(&conn, PathId::ZERO) {
+                            self.paths
+                                .entry(addr)
+                                .or_default()
+                                .sources
+                                .insert(Source::Connection, Instant::now());
+                            self.select_path();
+                        }
+                        // TODO: Make sure we are adding the relay path if we're on a direct
+                        // path.
+                        self.trigger_holepunching().await;
+                    }
                 }
             }
             NodeStateMessage::AddNodeAddr(node_addr, source) => {
@@ -840,8 +854,11 @@ impl NodeStateActor {
     ///
     /// Any unused direct paths are closed.
     fn select_path(&mut self) {
+        // TODO: Make sure we **add** the best path to any connections that don't have it
+        // yet.
+
         // Find the lowest RTT across all connections for each open path.  The long way, so
-        // we get to trace-log ALL RTTs.
+        // we get to trace-log *all* RTTs.
         let mut all_path_rtts: FxHashMap<transports::Addr, Vec<Duration>> = FxHashMap::default();
         for (conn_id, conn) in self
             .connections
@@ -935,6 +952,36 @@ impl NodeStateActor {
             }
             false
         });
+    }
+
+    /// Returns the remote [`transports::Addr`] for a path.
+    fn path_transports_addr(
+        &self,
+        conn: &quinn::Connection,
+        path_id: PathId,
+    ) -> Option<transports::Addr> {
+        conn.path(path_id)
+            .map(|path| {
+                path.remote_address().map_or(None, |remote| {
+                    match MultipathMappedAddr::from(remote) {
+                        MultipathMappedAddr::Mixed(_) => {
+                            error!("Mixed addr in use for path");
+                            None
+                        }
+                        MultipathMappedAddr::Relay(mapped) => {
+                            match self.relay_mapped_addrs.lookup(&mapped) {
+                                Some(parts) => Some(transports::Addr::from(parts)),
+                                None => {
+                                    error!("Unknown RelayMappedAddr in path");
+                                    None
+                                }
+                            }
+                        }
+                        MultipathMappedAddr::Ip(addr) => Some(addr.into()),
+                    }
+                })
+            })
+            .flatten()
     }
 }
 

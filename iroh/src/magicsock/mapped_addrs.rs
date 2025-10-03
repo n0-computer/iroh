@@ -82,13 +82,19 @@ impl From<SocketAddr> for MultipathMappedAddr {
                 if let Ok(addr) = NodeIdMappedAddr::try_from(addr) {
                     return Self::Mixed(addr);
                 }
-                #[cfg(not(wasm_browser))]
                 if let Ok(addr) = RelayMappedAddr::try_from(addr) {
                     return Self::Relay(addr);
                 }
+                #[cfg(not(wasm_browser))]
                 Self::Ip(value)
             }
         }
+    }
+}
+
+impl MultipathMappedAddr {
+    pub(crate) fn is_ip(&self) -> bool {
+        matches!(self, Self::Ip(_))
     }
 }
 

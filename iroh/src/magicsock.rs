@@ -298,7 +298,6 @@ impl MagicSock {
         // have a ZrttConnection::into_connection() function which can be async and actually
         // send this.  Before the handshake has completed we don't have anything useful to
         // do with this connection inside of the NodeStateActor anyway.
-        debug!(%remote, "register connection");
         let weak_handle = conn.weak_handle();
         let node_state = self.node_map.node_state_actor(remote);
         let msg = NodeStateMessage::AddConnection(weak_handle);
