@@ -18,10 +18,7 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let recent = Duration::from_secs(600); // 10 minutes in seconds
-//!     let endpoint = Endpoint::builder()
-//!         .bind()
-//!         .await
-//!         .unwrap();
+//!     let endpoint = Endpoint::builder().bind().await.unwrap();
 //!
 //!     // Register the discovery services with the endpoint
 //!     let mdns = MdnsDiscovery::builder().build(endpoint.node_id()).unwrap();
