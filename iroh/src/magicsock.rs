@@ -33,8 +33,6 @@ use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{
-    StreamExt,
-    boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -71,8 +69,12 @@ use crate::net_report::{IpMappedAddr, QuicConfig};
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
-    discovery::{Discovery, DiscoveryEvent, DiscoverySubscribers, NodeData, UserData},
+    discovery::{
+        ConcurrentDiscovery, Discovery, DiscoveryContext, DynIntoDiscovery, IntoDiscoveryError,
+        NodeData, UserData,
+    },
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
+    magicsock::node_map::RemoteInfo,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, IpMappedAddresses, Report},
 };
@@ -86,7 +88,7 @@ pub use node_map::Source;
 
 pub use self::{
     metrics::Metrics,
-    node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
+    node_map::{ConnectionType, ControlMsg, DirectAddrInfo},
 };
 
 /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
@@ -113,11 +115,8 @@ pub(crate) struct Options {
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
     pub(crate) relay_map: RelayMap,
 
-    /// An optional [`NodeMap`], to restore information about nodes.
-    pub(crate) node_map: Option<Vec<NodeAddr>>,
-
-    /// Optional node discovery mechanism.
-    pub(crate) discovery: Option<Box<dyn Discovery>>,
+    /// Optional node discovery mechanisms.
+    pub(crate) discovery: Vec<Box<dyn DynIntoDiscovery>>,
 
     /// Optional user-defined discovery data.
     pub(crate) discovery_user_data: Option<UserData>,
@@ -211,11 +210,9 @@ pub(crate) struct MagicSock {
 
     // - Discovery
     /// Optional discovery service
-    discovery: Option<Box<dyn Discovery>>,
+    discovery: ConcurrentDiscovery,
     /// Optional user-defined discover data.
     discovery_user_data: RwLock<Option<UserData>>,
-    /// Broadcast channel for listening to discovery updates.
-    discovery_subscribers: DiscoverySubscribers,
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
@@ -290,6 +287,7 @@ impl MagicSock {
     }
 
     /// Return the [`RemoteInfo`]s of all nodes in the node map.
+    #[cfg(test)]
     pub(crate) fn list_remote_infos(&self) -> Vec<RemoteInfo> {
         self.node_map.list_remote_infos(Instant::now())
     }
@@ -373,6 +371,10 @@ impl MagicSock {
         self.node_map.conn_type(node_id)
     }
 
+    pub(crate) fn latency(&self, node_id: NodeId) -> Option<Duration> {
+        self.node_map.latency(node_id)
+    }
+
     /// Returns the socket address which can be used by the QUIC layer to dial this node.
     pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<NodeIdMappedAddr> {
         self.node_map.get_quic_mapped_addr_for_node_key(node_id)
@@ -380,7 +382,7 @@ impl MagicSock {
 
     /// Add addresses for a node to the magic socket's addresbook.
     #[instrument(skip_all)]
-    pub fn add_node_addr(
+    pub(crate) fn add_node_addr(
         &self,
         mut addr: NodeAddr,
         source: node_map::Source,
@@ -423,9 +425,9 @@ impl MagicSock {
         &self.dns_resolver
     }
 
-    /// Reference to optional discovery service
-    pub(crate) fn discovery(&self) -> Option<&dyn Discovery> {
-        self.discovery.as_ref().map(Box::as_ref)
+    /// Reference to the internal discovery service
+    pub(crate) fn discovery(&self) -> &ConcurrentDiscovery {
+        &self.discovery
     }
 
     /// Updates the user-defined discovery data for this node.
@@ -444,11 +446,6 @@ impl MagicSock {
             .send(ActorMessage::NetworkChange)
             .await
             .ok();
-    }
-
-    /// Returns a reference to the subscribers channel for discovery events.
-    pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
-        &self.discovery_subscribers
     }
 
     #[cfg(test)]
@@ -1134,23 +1131,21 @@ impl MagicSock {
     ///
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
-        if let Some(ref discovery) = self.discovery {
-            let relay_url = self.my_relay();
-            let direct_addrs = self.direct_addrs.sockaddrs();
+        let relay_url = self.my_relay();
+        let direct_addrs = self.direct_addrs.sockaddrs();
 
-            let user_data = self
-                .discovery_user_data
-                .read()
-                .expect("lock poisened")
-                .clone();
-            if relay_url.is_none() && direct_addrs.is_empty() && user_data.is_none() {
-                // do not bother publishing if we don't have any information
-                return;
-            }
-
-            let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
-            discovery.publish(&data);
+        let user_data = self
+            .discovery_user_data
+            .read()
+            .expect("lock poisened")
+            .clone();
+        if relay_url.is_none() && direct_addrs.is_empty() && user_data.is_none() {
+            // do not bother publishing if we don't have any information
+            return;
         }
+
+        let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
+        self.discovery.publish(&data);
     }
 }
 
@@ -1332,6 +1327,10 @@ pub enum CreateHandleError {
     CreateNetmonMonitor { source: netmon::Error },
     #[snafu(display("Failed to subscribe netmon monitor"))]
     SubscribeNetmonMonitor { source: netmon::Error },
+    #[snafu(transparent)]
+    Discovery {
+        source: crate::discovery::IntoDiscoveryError,
+    },
 }
 
 impl Handle {
@@ -1342,7 +1341,6 @@ impl Handle {
             addr_v6,
             secret_key,
             relay_map,
-            node_map,
             discovery,
             discovery_user_data,
             #[cfg(not(wasm_browser))]
@@ -1355,6 +1353,22 @@ impl Handle {
             path_selection,
             metrics,
         } = opts;
+
+        let discovery = {
+            let context = DiscoveryContext {
+                secret_key: &secret_key,
+                #[cfg(not(wasm_browser))]
+                dns_resolver: &dns_resolver,
+            };
+            let discovery = discovery
+                .into_iter()
+                .map(|builder| builder.into_discovery(&context))
+                .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
+            match discovery.len() {
+                0 => ConcurrentDiscovery::default(),
+                _ => ConcurrentDiscovery::from_services(discovery),
+            }
+        };
 
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
@@ -1369,9 +1383,8 @@ impl Handle {
         let ipv6_reported = false;
 
         // load the node data
-        let node_map = node_map.unwrap_or_default();
         let node_map = NodeMap::load_from_vec(
-            node_map,
+            Vec::new(),
             #[cfg(any(test, feature = "test-utils"))]
             path_selection,
             ipv6_reported,
@@ -1420,7 +1433,6 @@ impl Handle {
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
-            discovery_subscribers: DiscoverySubscribers::new(),
             metrics: metrics.clone(),
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
@@ -1857,13 +1869,6 @@ impl Actor {
             .port_mapper
             .watch_external_address();
 
-        let mut discovery_events: BoxStream<DiscoveryEvent> = Box::pin(n0_future::stream::empty());
-        if let Some(d) = self.msock.discovery() {
-            if let Some(events) = d.subscribe() {
-                discovery_events = events;
-            }
-        }
-
         let mut receiver_closed = false;
         #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
@@ -1996,27 +2001,6 @@ impl Actor {
                     current_netmon_state = state;
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
-                }
-                // Even if `discovery_events` yields `None`, it could begin to yield
-                // `Some` again in the future, so we don't want to disable this branch
-                // forever like we do with the other branches that yield `Option`s
-                Some(discovery_item) = discovery_events.next() => {
-                    trace!("tick: discovery event, address discovered: {discovery_item:?}");
-                    if let DiscoveryEvent::Discovered(discovery_item) = &discovery_item {
-                        let provenance = discovery_item.provenance();
-                        let node_addr = discovery_item.to_node_addr();
-                        if let Err(e) = self.msock.add_node_addr(
-                            node_addr,
-                            Source::Discovery {
-                                name: provenance.to_string()
-                            }) {
-                            let node_addr = discovery_item.to_node_addr();
-                            warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
-                        }
-                    }
-
-                    // Send the discovery item to the subscribers of the discovery broadcast stream.
-                    self.msock.discovery_subscribers.send(discovery_item);
                 }
                 Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
                     if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
@@ -2562,8 +2546,7 @@ mod tests {
                 addr_v6: None,
                 secret_key,
                 relay_map: RelayMap::empty(),
-                node_map: None,
-                discovery: None,
+                discovery: Default::default(),
                 proxy_url: None,
                 dns_resolver: DnsResolver::new(),
                 server_config,
@@ -3095,8 +3078,7 @@ mod tests {
             addr_v6: None,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
-            node_map: None,
-            discovery: None,
+            discovery: Default::default(),
             discovery_user_data: None,
             dns_resolver,
             proxy_url: None,
