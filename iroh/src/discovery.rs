@@ -333,6 +333,7 @@ impl<T: Discovery> Discovery for Arc<T> {
     fn publish(&self, data: &NodeData) {
         self.as_ref().publish(data);
     }
+
     fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         self.as_ref().resolve(node_id)
     }
