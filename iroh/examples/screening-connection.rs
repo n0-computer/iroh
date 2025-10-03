@@ -7,17 +7,17 @@
 //! ## Usage
 //!
 //!     cargo run --example screening-connection --features=examples
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
-use iroh::endpoint::Connecting;
 use iroh::{
-    endpoint::Connection,
+    Endpoint, NodeAddr, Watcher,
+    endpoint::{Connecting, Connection},
     protocol::{AcceptError, ProtocolHandler, Router},
-    Endpoint, NodeAddr,
 };
 use n0_snafu::{Result, ResultExt};
-use n0_watcher::Watcher as _;
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -28,7 +28,7 @@ const ALPN: &[u8] = b"iroh-example/screening-connection/0";
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = start_accept_side().await?;
-    let node_addr = router.endpoint().node_addr().initialized().await?;
+    let node_addr = router.endpoint().node_addr().initialized().await;
 
     // call connect three times. connection index 1 will be an odd number, and rejected.
     connect_side(&node_addr).await?;
@@ -90,7 +90,8 @@ async fn start_accept_side() -> Result<Router> {
 }
 
 /// This is the same as the echo example, but keeps an internal count of the
-/// number of connections that have been attempted
+/// number of connections that have been attempted. This is to demonstrate how
+/// to plumb state into the protocol handler
 #[derive(Debug, Clone)]
 struct ScreenedEcho {
     conn_attempt_count: Arc<AtomicU64>,
@@ -110,13 +111,13 @@ impl ProtocolHandler for ScreenedEcho {
             return Err(AcceptError::NotAllowed {});
         }
 
-        // To allow the connection to consturct as normal, we simply await the
-        // connecting future & return the newly-fromed connection
+        // To allow normal connection construction, await the connecting future & return
         let conn = connecting.await?;
         Ok(conn)
     }
 
     /// The `accept` method is called for each incoming connection for our ALPN.
+    /// This is the primary place to kick off work in response to a new connection.
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
