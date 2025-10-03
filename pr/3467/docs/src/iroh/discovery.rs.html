@@ -794,7 +794,7 @@
 <a href=#794 id=794 data-nosnippet>794</a>        </span>};
 <a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
 <a href=#796 id=796 data-nosnippet>796</a>        <span class="comment">// wait for our address to be updated and thus published at least once
-<a href=#797 id=797 data-nosnippet>797</a>        </span>ep1.node_addr().initialized().<span class="kw">await</span>;
+<a href=#797 id=797 data-nosnippet>797</a>        </span>ep1.watch_node_addr().initialized().<span class="kw">await</span>;
 <a href=#798 id=798 data-nosnippet>798</a>        <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#799 id=799 data-nosnippet>799</a>        <span class="prelude-val">Ok</span>(())
 <a href=#800 id=800 data-nosnippet>800</a>    }
