@@ -12,7 +12,6 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_snafu::{Result, ResultExt};
-use n0_watcher::Watcher as _;
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -23,9 +22,11 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = start_accept_side().await?;
-    let node_addr = router.endpoint().node_addr().initialized().await;
 
-    connect_side(node_addr).await?;
+    // wait for the node to be online
+    router.endpoint().online().await;
+
+    connect_side(router.endpoint().node_addr()).await?;
 
     // This makes sure the endpoint in the router is closed properly and connections close gracefully
     router.shutdown().await.e()?;
