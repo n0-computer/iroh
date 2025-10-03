@@ -874,6 +874,24 @@ impl Endpoint {
     }
 
     /// Returns the current [`NodeAddr`].
+    ///
+    /// If this is called right after the [`Endpoint`] has been created, there is
+    /// a good chance these fields will be empty.
+    ///
+    /// Use the [`Endpoint::online`] method to ensure that the endpoint is considered
+    /// "online" (has contacted a  relay server and has at least one local addresses)
+    /// before calling this method, if you want to ensure that the `NodeAddr` will
+    /// contain enough information to allow this endpoint to be dialable by
+    /// a remote endpoint.
+    ///
+    /// Or, use the [`Endpoint::watch_node_addr`] method to get updates when the
+    /// `NodeAddr` changes.
+    ///
+    /// The `NodeAddr` will change as:
+    /// - network conditions change
+    /// - the endpoint connects to a relay server
+    /// - the endpoint changes its preferred relay server
+    /// - more addresses are discovered for this endpoint
     pub fn node_addr(&self) -> NodeAddr {
         let node_id = self.node_id();
         let relay_url = self.msock.home_relay().get().first().cloned();
