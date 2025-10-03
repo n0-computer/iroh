@@ -2631,7 +2631,7 @@ mod tests {
         let ep2_connect = tokio::spawn(connect(ep2.clone(), ep1_nodeaddr));
 
         ep1_accept.await.e()??;
-        let conn_closed = ep2_connect.await.e()??;
+        let conn_closed = dbg!(ep2_connect.await.e()??);
         assert!(matches!(
             conn_closed,
             ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })

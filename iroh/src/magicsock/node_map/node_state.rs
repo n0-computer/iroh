@@ -924,11 +924,32 @@ impl NodeStateActor {
     }
 
     /// Closes any direct paths not selected.
+    ///
+    /// Makes sure not to close the last direct path.  Relay paths are never closed
+    /// currently, because we only have one relay path at this time.
     fn close_redundant_paths(&mut self, selected_path: transports::Addr) {
         debug_assert_eq!(self.selected_path.as_ref(), Some(&selected_path));
 
+        // We create this to make sure we do not close the last direct path.
+        let mut paths_per_conn: FxHashMap<usize, Vec<PathId>> = FxHashMap::default();
+        for ((conn_id, path_id), addr) in self.path_id_map.iter() {
+            if !addr.is_ip() {
+                continue;
+            }
+            paths_per_conn.entry(*conn_id).or_default().push(*path_id);
+        }
+
         self.path_id_map.retain(|(conn_id, path_id), addr| {
             if !addr.is_ip() || *addr == selected_path {
+                // This not a direct path or is the selected path.
+                return true;
+            }
+            if paths_per_conn
+                .get(conn_id)
+                .map(|paths| paths.len() == 1)
+                .unwrap_or_default()
+            {
+                // This is the only direct path on this connection.
                 return true;
             }
             if let Some(conn) = self
