@@ -19,7 +19,7 @@ use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync:
 
 use derive_more::Debug;
 use http::{
-    HeaderMap, Method, Request, Response, StatusCode, header::InvalidHeaderValue,
+    HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header::InvalidHeaderValue,
     response::Builder as ResponseBuilder,
 };
 use hyper::body::Incoming;
@@ -56,8 +56,11 @@ pub use self::{
     resolver::{DEFAULT_CERT_RELOAD_INTERVAL, ReloadingResolver},
 };
 
-const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
-const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
+// TODO: remove before 1.0
+const NO_CONTENT_CHALLENGE_HEADER_LEGACY: &str = "X-Tailscale-Challenge";
+const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Iroh-Challenge";
+const NO_CONTENT_RESPONSE_HEADER_LEGACY: &str = "X-Tailscale-Response";
+const NO_CONTENT_RESPONSE_HEADER: &str = "X-Iroh-Response";
 const NOTFOUND: &[u8] = b"Not Found";
 const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
 const INDEX: &[u8] = br#"<html><body>
@@ -640,16 +643,23 @@ fn serve_no_content_handler<B: hyper::body::Body>(
     r: Request<B>,
     mut response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
+    let check = |c: &HeaderValue| {
+        !c.is_empty() && c.len() < 64 && c.as_bytes().iter().all(|c| is_challenge_char(*c as char))
+    };
+
     if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
-        if !challenge.is_empty()
-            && challenge.len() < 64
-            && challenge
-                .as_bytes()
-                .iter()
-                .all(|c| is_challenge_char(*c as char))
-        {
+        if check(challenge) {
             response = response.header(
                 NO_CONTENT_RESPONSE_HEADER,
+                format!("response {}", challenge.to_str()?),
+            );
+        }
+    }
+
+    if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER_LEGACY) {
+        if check(challenge) {
+            response = response.header(
+                NO_CONTENT_RESPONSE_HEADER_LEGACY,
                 format!("response {}", challenge.to_str()?),
             );
         }
