@@ -16,8 +16,8 @@
 <a href=#16 id=16 data-nosnippet>16</a>        <span class="self">self</span>,
 <a href=#17 id=17 data-nosnippet>17</a>        op::ResponseCode,
 <a href=#18 id=18 data-nosnippet>18</a>        rr::{
-<a href=#19 id=19 data-nosnippet>19</a>            rdata::{<span class="self">self</span>},
-<a href=#20 id=20 data-nosnippet>20</a>            LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
+<a href=#19 id=19 data-nosnippet>19</a>            LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
+<a href=#20 id=20 data-nosnippet>20</a>            rdata::{<span class="self">self</span>},
 <a href=#21 id=21 data-nosnippet>21</a>        },
 <a href=#22 id=22 data-nosnippet>22</a>        serialize::{binary::BinEncoder, txt::RDataParser},
 <a href=#23 id=23 data-nosnippet>23</a>        xfer::Protocol,
@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>    server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
 <a href=#26 id=26 data-nosnippet>26</a>    store::in_memory::InMemoryAuthority,
 <a href=#27 id=27 data-nosnippet>27</a>};
-<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>n0_snafu::{format_err, <span class="prelude-ty">Result</span>, ResultExt};
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt, format_err};
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>tokio::{
 <a href=#31 id=31 data-nosnippet>31</a>    net::{TcpListener, UdpSocket},
@@ -270,7 +270,7 @@
 <a href=#270 id=270 data-nosnippet>270</a>    }
 <a href=#271 id=271 data-nosnippet>271</a>
 <a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span>static_authority = InMemoryAuthority::new(Name::root(), records, ZoneType::Primary, <span class="bool-val">false</span>)
-<a href=#273 id=273 data-nosnippet>273</a>        .map_err(|e| <span class="macro">format_err!</span>(<span class="string">"new authority: {}"</span>, e))<span class="question-mark">?</span>;
+<a href=#273 id=273 data-nosnippet>273</a>        .map_err(|e| <span class="macro">format_err!</span>(<span class="string">"new authority: {e}"</span>))<span class="question-mark">?</span>;
 <a href=#274 id=274 data-nosnippet>274</a>
 <a href=#275 id=275 data-nosnippet>275</a>    <span class="prelude-val">Ok</span>((static_authority, serial))
 <a href=#276 id=276 data-nosnippet>276</a>}

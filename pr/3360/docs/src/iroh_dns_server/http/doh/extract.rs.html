@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>    },
 <a href=#26 id=26 data-nosnippet>26</a>    server::Request <span class="kw">as </span>DNSRequest,
 <a href=#27 id=27 data-nosnippet>27</a>};
-<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>http::{header, request::Parts, HeaderValue, StatusCode};
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>http::{HeaderValue, StatusCode, header, request::Parts};
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>serde::Deserialize;
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>tracing::info;
 <a href=#31 id=31 data-nosnippet>31</a>
@@ -257,7 +257,7 @@
 <a href=#257 id=257 data-nosnippet>257</a>        }
 <a href=#258 id=258 data-nosnippet>258</a>        <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(AppError::new(
 <a href=#259 id=259 data-nosnippet>259</a>            StatusCode::BAD_REQUEST,
-<a href=#260 id=260 data-nosnippet>260</a>            <span class="prelude-val">Some</span>(<span class="macro">format!</span>(<span class="string">"Invalid DNS message: {}"</span>, err)),
+<a href=#260 id=260 data-nosnippet>260</a>            <span class="prelude-val">Some</span>(<span class="macro">format!</span>(<span class="string">"Invalid DNS message: {err}"</span>)),
 <a href=#261 id=261 data-nosnippet>261</a>        )),
 <a href=#262 id=262 data-nosnippet>262</a>    }
 <a href=#263 id=263 data-nosnippet>263</a>}</code></pre></div></section></main></body></html>

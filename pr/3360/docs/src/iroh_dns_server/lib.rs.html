@@ -22,19 +22,19 @@
 <a href=#22 id=22 data-nosnippet>22</a>    };
 <a href=#23 id=23 data-nosnippet>23</a>
 <a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">use </span>iroh::{
-<a href=#25 id=25 data-nosnippet>25</a>        discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
-<a href=#26 id=26 data-nosnippet>26</a>        SecretKey,
+<a href=#25 id=25 data-nosnippet>25</a>        RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
+<a href=#26 id=26 data-nosnippet>26</a>        node_info::NodeInfo,
 <a href=#27 id=27 data-nosnippet>27</a>    };
 <a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">use </span>pkarr::{SignedPacket, Timestamp};
 <a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#31 id=31 data-nosnippet>31</a>
 <a href=#32 id=32 data-nosnippet>32</a>    <span class="kw">use crate</span>::{
-<a href=#33 id=33 data-nosnippet>33</a>        config::BootstrapOption,
-<a href=#34 id=34 data-nosnippet>34</a>        server::Server,
-<a href=#35 id=35 data-nosnippet>35</a>        store::{PacketSource, ZoneStoreOptions},
-<a href=#36 id=36 data-nosnippet>36</a>        util::PublicKeyBytes,
-<a href=#37 id=37 data-nosnippet>37</a>        ZoneStore,
+<a href=#33 id=33 data-nosnippet>33</a>        ZoneStore,
+<a href=#34 id=34 data-nosnippet>34</a>        config::BootstrapOption,
+<a href=#35 id=35 data-nosnippet>35</a>        server::Server,
+<a href=#36 id=36 data-nosnippet>36</a>        store::{PacketSource, ZoneStoreOptions},
+<a href=#37 id=37 data-nosnippet>37</a>        util::PublicKeyBytes,
 <a href=#38 id=38 data-nosnippet>38</a>    };
 <a href=#39 id=39 data-nosnippet>39</a>
 <a href=#40 id=40 data-nosnippet>40</a>    <span class="kw">const </span>DNS_TIMEOUT: Duration = Duration::from_secs(<span class="number">1</span>);
