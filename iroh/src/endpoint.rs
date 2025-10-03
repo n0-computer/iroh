@@ -809,6 +809,7 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
+    /// [`RelayUrl`]: crate::RelayUrl
     fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
         self.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
@@ -832,6 +833,7 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
+    ///
     /// [`RelayUrl`]: crate::RelayUrl
     pub fn add_node_addr_with_source(
         &self,
