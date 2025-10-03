@@ -15,7 +15,7 @@ use netwatch::netmon;
 /// # Examples
 ///
 /// ```no_run
-/// use iroh::magicsock::InterfacePriority;
+/// use iroh::InterfacePriority;
 ///
 /// // Prefer Infiniband (ib*) over Ethernet (eth*, en*)
 /// let priority = InterfacePriority::new(vec![
