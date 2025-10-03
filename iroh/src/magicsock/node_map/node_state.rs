@@ -530,7 +530,7 @@ impl NodeStateActor {
                     txn = ?pong.tx_id,
                 );
 
-                self.open_quic_path(src);
+                self.open_path(&src);
             }
             NodeStateMessage::CanSend(tx) => {
                 let can_send = !self.paths.is_empty();
@@ -728,30 +728,43 @@ impl NodeStateActor {
         }
     }
 
-    /// Asks Quinn to open a new path on connections, but only if we are the client.
+    /// Open the path on all connections.
+    ///
+    /// This goes through all the connections for which we are the client, and makes sure
+    /// the path exists, or opens it.
     #[instrument(level = "warn", skip(self))]
-    fn open_quic_path(&mut self, addr: transports::Addr) {
-        let path_status = match addr {
+    fn open_path(&mut self, open_addr: &transports::Addr) {
+        let path_status = match open_addr {
             transports::Addr::Ip(_) => PathStatus::Available,
             transports::Addr::Relay(_, _) => PathStatus::Backup,
         };
-        let quic_addr = match &addr {
+        let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
             transports::Addr::Relay(relay_url, node_id) => self
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *node_id))
                 .private_socket_addr(),
         };
+
+        // The connections that already have this path.
+        let mut conns_with_path = BTreeSet::new();
+        for ((conn_id, _), addr) in self.path_id_map.iter() {
+            if addr == open_addr {
+                conns_with_path.insert(*conn_id);
+            }
+        }
+
         for conn in self
             .connections
-            .values()
-            .filter_map(|weak| weak.upgrade())
+            .iter()
+            .filter_map(|(conn_id, handle)| (!conns_with_path.contains(conn_id)).then_some(handle))
+            .filter_map(|handle| handle.upgrade())
             .filter(|conn| conn.side().is_client())
         {
             match conn.open_path_ensure(quic_addr, path_status).path_id() {
                 Some(path_id) => {
                     self.path_id_map
-                        .insert((conn.stable_id(), path_id), addr.clone());
+                        .insert((conn.stable_id(), path_id), open_addr.clone());
                 }
                 None => {
                     warn!("Opening path failed");
@@ -852,11 +865,9 @@ impl NodeStateActor {
     /// If there are direct paths, this selects the direct path with the lowest RTT.  If
     /// there are only relay paths, the relay path with the lowest RTT is chosen.
     ///
-    /// Any unused direct paths are closed.
+    /// The selected path is added to any connections which do not yet have it.  Any unused
+    /// direct paths are close from all connections.
     fn select_path(&mut self) {
-        // TODO: Make sure we **add** the best path to any connections that don't have it
-        // yet.
-
         // Find the lowest RTT across all connections for each open path.  The long way, so
         // we get to trace-log *all* RTTs.
         let mut all_path_rtts: FxHashMap<transports::Addr, Vec<Duration>> = FxHashMap::default();
@@ -902,7 +913,8 @@ impl NodeStateActor {
             if prev.as_ref() != Some(&addr) {
                 debug!(?addr, ?prev, "selected new direct path");
             }
-            self.close_redundant_paths(addr);
+            self.open_path(&addr);
+            self.close_redundant_paths(&addr);
             return;
         }
 
@@ -918,7 +930,8 @@ impl NodeStateActor {
             if prev.as_ref() != Some(&addr) {
                 debug!(?addr, ?prev, "selected new relay path");
             }
-            self.close_redundant_paths(addr);
+            self.open_path(&addr);
+            self.close_redundant_paths(&addr);
             return;
         }
     }
@@ -927,8 +940,8 @@ impl NodeStateActor {
     ///
     /// Makes sure not to close the last direct path.  Relay paths are never closed
     /// currently, because we only have one relay path at this time.
-    fn close_redundant_paths(&mut self, selected_path: transports::Addr) {
-        debug_assert_eq!(self.selected_path.as_ref(), Some(&selected_path));
+    fn close_redundant_paths(&mut self, selected_path: &transports::Addr) {
+        debug_assert_eq!(self.selected_path.as_ref(), Some(selected_path));
 
         // We create this to make sure we do not close the last direct path.
         let mut paths_per_conn: FxHashMap<usize, Vec<PathId>> = FxHashMap::default();
@@ -940,7 +953,7 @@ impl NodeStateActor {
         }
 
         self.path_id_map.retain(|(conn_id, path_id), addr| {
-            if !addr.is_ip() || *addr == selected_path {
+            if !addr.is_ip() || addr == selected_path {
                 // This not a direct path or is the selected path.
                 return true;
             }
