@@ -794,7 +794,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for our address to be updated and thus published at least once
-        ep1.node_addr().initialized().await;
+        ep1.watch_node_addr().initialized().await;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
