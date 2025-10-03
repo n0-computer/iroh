@@ -16,8 +16,7 @@ was discovered.</p>
 <p>A <a href="enum.Source.html" title="enum iroh::endpoint::Source"><code>Source</code></a> helps track how and where an address was learned. Multiple
 sources can be associated with a single address, if we have discovered this
 address through multiple means.</p>
-<p>Each time a <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a> is added to the node map, usually through
-<a href="struct.Endpoint.html#method.add_node_addr_with_source" title="method iroh::endpoint::Endpoint::add_node_addr_with_source"><code>crate::endpoint::Endpoint::add_node_addr_with_source</code></a>, a <a href="enum.Source.html" title="enum iroh::endpoint::Source"><code>Source</code></a> must be supplied to indicate
+<p>Each time a <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a> is added to the node map a <a href="enum.Source.html" title="enum iroh::endpoint::Source"><code>Source</code></a> must be supplied to indicate
 how the address was obtained.</p>
 <p>A <a href="enum.Source.html" title="enum iroh::endpoint::Source"><code>Source</code></a> can describe a variety of places that an address or node was
 discovered, such as a configured discovery service, the network itself
