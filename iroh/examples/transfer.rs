@@ -277,7 +277,7 @@ impl EndpointArgs {
 
         println!("Our direct addresses:");
         for addr in &node_addr.direct_addresses {
-            println!("\t{}", addr);
+            println!("\t{addr}");
         }
 
         if self.relay_only {

@@ -911,6 +911,14 @@ impl Endpoint {
     /// # }
     /// ```
     ///
+    /// The [`Endpoint::online`] method can be used as a convenience method to
+    /// understand if the endpoint has ever been considered "online". But after
+    /// that initial call to [`Endpoint::online`], to understand if your
+    /// endpoint is no longer able to be connected to by endpoints outside
+    /// of the private or local network, watch for changes in it's [`NodeAddr`].
+    /// If the `relay_url` is `None` or if there are no `direct_addresses` in
+    /// the [`NodeAddr`], you may not be dialable by other endpoints on the internet.
+    ///
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
     pub fn watch_node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
@@ -954,25 +962,24 @@ impl Endpoint {
             .expect("watchable is alive - cannot be disconnected yet")
     }
 
-    /// Waits for the node to be considered online.
+    /// A convenience method that waits for the endpoint to be considered "online".
     ///
     /// This currently means at least one relay server was connected,
     /// and at least one local IP address is available.
-    /// If no relays are configured, then this will not wait for a relay connection.
+    /// Event if no relays are configured, this will still wait for a relay connection.
     ///
     /// Once this has been resolved once, this will always immediately resolve.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a timeout.
+    ///
+    /// To understand if the endpoint has gone back "offline",
+    /// you must use the [`Endpoint::watch_node_addr`] method, to
+    /// get information on the current relay and direct address information.
     #[cfg(not(wasm_browser))]
     pub async fn online(&self) {
-        if self.msock.relay_map().is_empty() {
-            // Don't wait on a relay if none are configured
-            self.msock.direct_addresses().initialized().await;
-        } else {
-            let mut watch1 = self.msock.home_relay();
-            let mut watch2 = self.msock.direct_addresses();
-            tokio::join!(watch1.initialized(), watch2.initialized());
-        }
+        let mut watch1 = self.msock.home_relay();
+        let mut watch2 = self.msock.direct_addresses();
+        tokio::join!(watch1.initialized(), watch2.initialized());
     }
 
     /// TODO: document me
