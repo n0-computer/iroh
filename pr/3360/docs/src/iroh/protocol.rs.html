@@ -629,7 +629,7 @@
 <a href=#629 id=629 data-nosnippet>629</a>        </span><span class="kw">let </span>proto = AccessLimit::new(Echo, |_node_id| <span class="bool-val">false</span>);
 <a href=#630 id=630 data-nosnippet>630</a>        <span class="kw">let </span>r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 <a href=#631 id=631 data-nosnippet>631</a>
-<a href=#632 id=632 data-nosnippet>632</a>        <span class="kw">let </span>addr1 = r1.endpoint().node_addr().initialized().<span class="kw">await</span>;
+<a href=#632 id=632 data-nosnippet>632</a>        <span class="kw">let </span>addr1 = r1.endpoint().watch_node_addr().initialized().<span class="kw">await</span>;
 <a href=#633 id=633 data-nosnippet>633</a>        <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>addr1);
 <a href=#634 id=634 data-nosnippet>634</a>        <span class="kw">let </span>e2 = Endpoint::builder()
 <a href=#635 id=635 data-nosnippet>635</a>            .relay_mode(RelayMode::Disabled)
@@ -682,7 +682,7 @@
 <a href=#682 id=682 data-nosnippet>682</a>            .accept(TEST_ALPN, TestProtocol::default())
 <a href=#683 id=683 data-nosnippet>683</a>            .spawn();
 <a href=#684 id=684 data-nosnippet>684</a>        <span class="macro">eprintln!</span>(<span class="string">"waiting for node addr"</span>);
-<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">let </span>addr = router.endpoint().node_addr().initialized().<span class="kw">await</span>;
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="kw">let </span>addr = router.endpoint().watch_node_addr().initialized().<span class="kw">await</span>;
 <a href=#686 id=686 data-nosnippet>686</a>
 <a href=#687 id=687 data-nosnippet>687</a>        <span class="macro">eprintln!</span>(<span class="string">"creating ep2"</span>);
 <a href=#688 id=688 data-nosnippet>688</a>        <span class="kw">let </span>endpoint2 = Endpoint::builder()

@@ -2512,7 +2512,7 @@
 <a href=#2512 id=2512 data-nosnippet>2512</a>
 <a href=#2513 id=2513 data-nosnippet>2513</a><span class="attr">#[cfg(test)]
 <a href=#2514 id=2514 data-nosnippet>2514</a></span><span class="kw">mod </span>tests {
-<a href=#2515 id=2515 data-nosnippet>2515</a>    <span class="kw">use </span>std::{collections::BTreeSet, sync::Arc, time::Duration};
+<a href=#2515 id=2515 data-nosnippet>2515</a>    <span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 <a href=#2516 id=2516 data-nosnippet>2516</a>
 <a href=#2517 id=2517 data-nosnippet>2517</a>    <span class="kw">use </span>data_encoding::HEXLOWER;
 <a href=#2518 id=2518 data-nosnippet>2518</a>    <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey};
@@ -2530,7 +2530,7 @@
 <a href=#2530 id=2530 data-nosnippet>2530</a>    <span class="kw">use crate</span>::{
 <a href=#2531 id=2531 data-nosnippet>2531</a>        Endpoint, RelayMap, RelayMode, SecretKey,
 <a href=#2532 id=2532 data-nosnippet>2532</a>        dns::DnsResolver,
-<a href=#2533 id=2533 data-nosnippet>2533</a>        endpoint::{DirectAddr, PathSelection, Source},
+<a href=#2533 id=2533 data-nosnippet>2533</a>        endpoint::{PathSelection, Source},
 <a href=#2534 id=2534 data-nosnippet>2534</a>        magicsock::{Handle, MagicSock, node_map},
 <a href=#2535 id=2535 data-nosnippet>2535</a>        tls::{<span class="self">self</span>, DEFAULT_MAX_TLS_TICKETS},
 <a href=#2536 id=2536 data-nosnippet>2536</a>    };
@@ -2640,7 +2640,7 @@
 <a href=#2640 id=2640 data-nosnippet>2640</a>        </span><span class="kw">fn </span>update_direct_addrs(
 <a href=#2641 id=2641 data-nosnippet>2641</a>            stacks: <span class="kw-2">&amp;</span>[MagicStack],
 <a href=#2642 id=2642 data-nosnippet>2642</a>            my_idx: usize,
-<a href=#2643 id=2643 data-nosnippet>2643</a>            new_addrs: BTreeSet&lt;DirectAddr&gt;,
+<a href=#2643 id=2643 data-nosnippet>2643</a>            new_addrs: BTreeSet&lt;SocketAddr&gt;,
 <a href=#2644 id=2644 data-nosnippet>2644</a>        ) {
 <a href=#2645 id=2645 data-nosnippet>2645</a>            <span class="kw">let </span>me = <span class="kw-2">&amp;</span>stacks[my_idx];
 <a href=#2646 id=2646 data-nosnippet>2646</a>            <span class="kw">for </span>(i, m) <span class="kw">in </span>stacks.iter().enumerate() {
@@ -2651,7 +2651,7 @@
 <a href=#2651 id=2651 data-nosnippet>2651</a>                <span class="kw">let </span>addr = NodeAddr {
 <a href=#2652 id=2652 data-nosnippet>2652</a>                    node_id: me.public(),
 <a href=#2653 id=2653 data-nosnippet>2653</a>                    relay_url: <span class="prelude-val">None</span>,
-<a href=#2654 id=2654 data-nosnippet>2654</a>                    direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
+<a href=#2654 id=2654 data-nosnippet>2654</a>                    direct_addresses: new_addrs.clone(),
 <a href=#2655 id=2655 data-nosnippet>2655</a>                };
 <a href=#2656 id=2656 data-nosnippet>2656</a>                m.endpoint.magic_sock().add_test_addr(addr);
 <a href=#2657 id=2657 data-nosnippet>2657</a>            }
@@ -2665,10 +2665,10 @@
 <a href=#2665 id=2665 data-nosnippet>2665</a>            <span class="kw">let </span>stacks = stacks.clone();
 <a href=#2666 id=2666 data-nosnippet>2666</a>            tasks.spawn(<span class="kw">async move </span>{
 <a href=#2667 id=2667 data-nosnippet>2667</a>                <span class="kw">let </span>me = m.endpoint.node_id().fmt_short();
-<a href=#2668 id=2668 data-nosnippet>2668</a>                <span class="kw">let </span><span class="kw-2">mut </span>stream = m.endpoint.direct_addresses().stream().filter_map(|i| i);
-<a href=#2669 id=2669 data-nosnippet>2669</a>                <span class="kw">while let </span><span class="prelude-val">Some</span>(new_eps) = stream.next().<span class="kw">await </span>{
-<a href=#2670 id=2670 data-nosnippet>2670</a>                    <span class="macro">info!</span>(%me, <span class="string">"conn{} endpoints update: {:?}"</span>, my_idx + <span class="number">1</span>, new_eps);
-<a href=#2671 id=2671 data-nosnippet>2671</a>                    update_direct_addrs(<span class="kw-2">&amp;</span>stacks, my_idx, new_eps);
+<a href=#2668 id=2668 data-nosnippet>2668</a>                <span class="kw">let </span><span class="kw-2">mut </span>stream = m.endpoint.watch_node_addr().stream().filter_map(|i| i);
+<a href=#2669 id=2669 data-nosnippet>2669</a>                <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = stream.next().<span class="kw">await </span>{
+<a href=#2670 id=2670 data-nosnippet>2670</a>                    <span class="macro">info!</span>(%me, <span class="string">"conn{} endpoints update: {:?}"</span>, my_idx + <span class="number">1</span>, addr.direct_addresses);
+<a href=#2671 id=2671 data-nosnippet>2671</a>                    update_direct_addrs(<span class="kw-2">&amp;</span>stacks, my_idx, addr.direct_addresses);
 <a href=#2672 id=2672 data-nosnippet>2672</a>                }
 <a href=#2673 id=2673 data-nosnippet>2673</a>            });
 <a href=#2674 id=2674 data-nosnippet>2674</a>        }
@@ -2901,7 +2901,7 @@
 <a href=#2901 id=2901 data-nosnippet>2901</a>        <span class="macro">println!</span>(<span class="string">"first conn!"</span>);
 <a href=#2902 id=2902 data-nosnippet>2902</a>        <span class="kw">let </span>conn = m1
 <a href=#2903 id=2903 data-nosnippet>2903</a>            .endpoint
-<a href=#2904 id=2904 data-nosnippet>2904</a>            .connect(m2.endpoint.node_addr().initialized().<span class="kw">await</span>, ALPN)
+<a href=#2904 id=2904 data-nosnippet>2904</a>            .connect(m2.endpoint.watch_node_addr().initialized().<span class="kw">await</span>, ALPN)
 <a href=#2905 id=2905 data-nosnippet>2905</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2906 id=2906 data-nosnippet>2906</a>        <span class="macro">println!</span>(<span class="string">"Closing first conn"</span>);
 <a href=#2907 id=2907 data-nosnippet>2907</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye lolz"</span>);

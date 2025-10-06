@@ -769,7 +769,7 @@
 <a href=#769 id=769 data-nosnippet>769</a>        </span>};
 <a href=#770 id=770 data-nosnippet>770</a>        <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
 <a href=#771 id=771 data-nosnippet>771</a>        <span class="comment">// wait for our address to be updated and thus published at least once
-<a href=#772 id=772 data-nosnippet>772</a>        </span>ep1.node_addr().initialized().<span class="kw">await</span>;
+<a href=#772 id=772 data-nosnippet>772</a>        </span>ep1.watch_node_addr().initialized().<span class="kw">await</span>;
 <a href=#773 id=773 data-nosnippet>773</a>        <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#774 id=774 data-nosnippet>774</a>        <span class="prelude-val">Ok</span>(())
 <a href=#775 id=775 data-nosnippet>775</a>    }
@@ -794,7 +794,7 @@
 <a href=#794 id=794 data-nosnippet>794</a>        </span>};
 <a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
 <a href=#796 id=796 data-nosnippet>796</a>        <span class="comment">// wait for our address to be updated and thus published at least once
-<a href=#797 id=797 data-nosnippet>797</a>        </span>ep1.node_addr().initialized().<span class="kw">await</span>;
+<a href=#797 id=797 data-nosnippet>797</a>        </span>ep1.watch_node_addr().initialized().<span class="kw">await</span>;
 <a href=#798 id=798 data-nosnippet>798</a>        <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#799 id=799 data-nosnippet>799</a>        <span class="prelude-val">Ok</span>(())
 <a href=#800 id=800 data-nosnippet>800</a>    }
@@ -820,7 +820,7 @@
 <a href=#820 id=820 data-nosnippet>820</a>        </span>};
 <a href=#821 id=821 data-nosnippet>821</a>        <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
 <a href=#822 id=822 data-nosnippet>822</a>        <span class="comment">// wait for out address to be updated and thus published at least once
-<a href=#823 id=823 data-nosnippet>823</a>        </span>ep1.node_addr().initialized().<span class="kw">await</span>;
+<a href=#823 id=823 data-nosnippet>823</a>        </span>ep1.watch_node_addr().initialized().<span class="kw">await</span>;
 <a href=#824 id=824 data-nosnippet>824</a>        <span class="kw">let </span>_conn = ep2
 <a href=#825 id=825 data-nosnippet>825</a>            .connect(ep1_addr, TEST_ALPN)
 <a href=#826 id=826 data-nosnippet>826</a>            .<span class="kw">await
@@ -852,7 +852,7 @@
 <a href=#852 id=852 data-nosnippet>852</a>            new_endpoint(secret, disco).<span class="kw">await
 <a href=#853 id=853 data-nosnippet>853</a>        </span>};
 <a href=#854 id=854 data-nosnippet>854</a>        <span class="comment">// wait for out address to be updated and thus published at least once
-<a href=#855 id=855 data-nosnippet>855</a>        </span>ep1.node_addr().initialized().<span class="kw">await</span>;
+<a href=#855 id=855 data-nosnippet>855</a>        </span>ep1.watch_node_addr().initialized().<span class="kw">await</span>;
 <a href=#856 id=856 data-nosnippet>856</a>        <span class="kw">let </span>_conn = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#857 id=857 data-nosnippet>857</a>        <span class="prelude-val">Ok</span>(())
 <a href=#858 id=858 data-nosnippet>858</a>    }
@@ -874,7 +874,7 @@
 <a href=#874 id=874 data-nosnippet>874</a>            new_endpoint(secret, disco).<span class="kw">await
 <a href=#875 id=875 data-nosnippet>875</a>        </span>};
 <a href=#876 id=876 data-nosnippet>876</a>        <span class="comment">// wait for out address to be updated and thus published at least once
-<a href=#877 id=877 data-nosnippet>877</a>        </span>ep1.node_addr().initialized().<span class="kw">await</span>;
+<a href=#877 id=877 data-nosnippet>877</a>        </span>ep1.watch_node_addr().initialized().<span class="kw">await</span>;
 <a href=#878 id=878 data-nosnippet>878</a>
 <a href=#879 id=879 data-nosnippet>879</a>        <span class="comment">// 10x faster test via a 3s idle timeout instead of the 30s default
 <a href=#880 id=880 data-nosnippet>880</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>config = TransportConfig::default();
@@ -907,7 +907,7 @@
 <a href=#907 id=907 data-nosnippet>907</a>            new_endpoint(secret, disco).<span class="kw">await
 <a href=#908 id=908 data-nosnippet>908</a>        </span>};
 <a href=#909 id=909 data-nosnippet>909</a>        <span class="comment">// wait for out address to be updated and thus published at least once
-<a href=#910 id=910 data-nosnippet>910</a>        </span>ep1.node_addr().initialized().<span class="kw">await</span>;
+<a href=#910 id=910 data-nosnippet>910</a>        </span>ep1.watch_node_addr().initialized().<span class="kw">await</span>;
 <a href=#911 id=911 data-nosnippet>911</a>        <span class="kw">let </span>ep1_wrong_addr = NodeAddr {
 <a href=#912 id=912 data-nosnippet>912</a>            node_id: ep1.node_id(),
 <a href=#913 id=913 data-nosnippet>913</a>            relay_url: <span class="prelude-val">None</span>,
