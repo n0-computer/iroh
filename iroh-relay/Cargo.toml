@@ -69,7 +69,7 @@ webpki = { package = "rustls-webpki", version = "0.103" }
 webpki-roots = "0.26"
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 data-encoding = "2.6.0"
-lru = "0.13"
+lru = "0.16"
 z32 = "1.0.3"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
 n0-snafu = "0.2.2"

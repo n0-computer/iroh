@@ -2566,7 +2566,7 @@ dependencies = [
  "humantime-serde",
  "iroh",
  "iroh-metrics",
- "lru 0.13.0",
+ "lru 0.16.1",
  "n0-future",
  "n0-snafu",
  "pkarr",
@@ -2708,7 +2708,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
- "lru 0.13.0",
+ "lru 0.16.1",
  "n0-future",
  "n0-snafu",
  "nested_enum_utils",
@@ -2895,15 +2895,15 @@ name = "lru"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "227748d55f2f0ab4735d87fd623798cb6b664512fe979705f829c9f81c934465"
-dependencies = [
- "hashbrown 0.15.5",
-]
 
 [[package]]
 name = "lru"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfe949189f46fabb938b3a9a0be30fdd93fd8a09260da863399a8cf3db756ec8"
+dependencies = [
+ "hashbrown 0.15.5",
+]
 
 [[package]]
 name = "lru-slab"
