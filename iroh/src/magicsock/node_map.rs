@@ -147,10 +147,9 @@ pub enum Source {
 }
 
 impl NodeMap {
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) async fn load_from_vec(
+    /// Creates a new [`NodeMap`].
+    pub(super) fn new(
         local_node_id: NodeId,
-        nodes: Vec<NodeAddr>,
         #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
@@ -164,14 +163,6 @@ impl NodeMap {
             inner.path_selection = path_selection;
         }
 
-        let me = Self::from_inner(inner, local_node_id);
-        for addr in nodes {
-            me.add_node_addr(addr, Source::Saved).await;
-        }
-        me
-    }
-
-    fn from_inner(inner: NodeMapInner, local_node_id: NodeId) -> Self {
         Self {
             local_node_id,
             inner: Mutex::new(inner),

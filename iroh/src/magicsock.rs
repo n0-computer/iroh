@@ -1039,9 +1039,8 @@ impl Handle {
 
         let node_map = {
             let sender = transports.create_sender();
-            NodeMap::load_from_vec(
+            NodeMap::new(
                 secret_key.public(),
-                Vec::new(), // TODO
                 #[cfg(any(test, feature = "test-utils"))]
                 path_selection,
                 metrics.magicsock.clone(),
@@ -1049,7 +1048,6 @@ impl Handle {
                 direct_addrs.addrs.watch(),
                 disco.clone(),
             )
-            .await
         };
 
         let msock = Arc::new(MagicSock {
