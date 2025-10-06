@@ -2986,7 +2986,7 @@ mod tests {
 
             println!("-- [m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
-            rand::rng().fill_bytes(&mut data);
+            rng.fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
         }
@@ -2997,6 +2997,7 @@ mod tests {
         let m1_m2_network_change_guard = {
             let m1 = m1.clone();
             let m2 = m2.clone();
+            let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 println!("-- [m1] network change");
                 m1.endpoint.magic_sock().force_network_change(true).await;
@@ -3014,7 +3015,7 @@ mod tests {
 
             println!("-- [m1 & m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
-            rand::rng().fill_bytes(&mut data);
+            rng.fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
         }

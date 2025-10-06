@@ -288,8 +288,7 @@ impl SecretKey {
     ///
     /// ```rust
     /// // use the OsRng option for OS depedndent most secure RNG.
-    /// use rand::{TryRngCore, rngs::OsRng};
-    /// let _key = iroh_base::SecretKey::generate(&mut OsRng.unwrap_err());
+    /// let _key = iroh_base::SecretKey::generate(&mut rand::rng());
     /// ```
     pub fn generate<R: CryptoRng + ?Sized>(csprng: &mut R) -> Self {
         let secret = SigningKey::generate(csprng);

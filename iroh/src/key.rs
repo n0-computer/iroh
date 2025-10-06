@@ -51,7 +51,7 @@ impl SharedSecret {
 
     /// Seals the provided cleartext.
     pub fn seal(&self, buffer: &mut dyn Buffer) {
-        let nonce = crypto_box::ChaChaBox::try_generate_nonce_with_rng(&mut rand::rngs::OsRng)
+        let nonce = crypto_box::ChaChaBox::try_generate_nonce_with_rng(&mut rand::rng())
             .expect("not enough randomness");
 
         self.0
@@ -94,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_seal_open_roundtrip() {
-        let mut rng = rand::rng();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let key_a = iroh_base::SecretKey::generate(&mut rng);
         let key_b = iroh_base::SecretKey::generate(&mut rng);
 
@@ -123,7 +123,8 @@ mod tests {
 
     #[test]
     fn test_roundtrip_public_key() {
-        let key = crypto_box::SecretKey::generate(&mut rand::rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let key = crypto_box::SecretKey::generate(&mut rng);
         let public_bytes = *key.public_key().as_bytes();
         let public_key_back = crypto_box::PublicKey::from(public_bytes);
         assert_eq!(key.public_key(), public_key_back);
@@ -141,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_same_public_key_low_level() {
-        let mut rng = rand::rng();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let key = ed25519_dalek::SigningKey::generate(&mut rng);
         let public_key1 = {
             let m = key.verifying_key().to_montgomery();

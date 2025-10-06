@@ -744,7 +744,7 @@ mod tests {
     async fn restore_from_vec() {
         let node_map = NodeMap::default();
 
-        let mut rng = rand::rng();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let node_a = SecretKey::generate(&mut rng).public();
         let node_b = SecretKey::generate(&mut rng).public();
         let node_c = SecretKey::generate(&mut rng).public();
