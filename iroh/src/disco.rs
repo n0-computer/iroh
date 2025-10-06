@@ -426,6 +426,7 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 #[cfg(test)]
 mod tests {
     use iroh_base::SecretKey;
+    use rand::SeedableRng;
 
     use super::*;
     use crate::key::{SharedSecret, public_ed_box, secret_ed_box};
@@ -506,8 +507,9 @@ mod tests {
 
     #[test]
     fn test_extraction() {
-        let sender_key = SecretKey::generate(rand::thread_rng());
-        let recv_key = SecretKey::generate(rand::thread_rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let sender_key = SecretKey::generate(&mut rng);
+        let recv_key = SecretKey::generate(&mut rng);
 
         let msg = Message::Ping(Ping {
             tx_id: stun_rs::TransactionId::default(),

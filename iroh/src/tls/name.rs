@@ -35,10 +35,12 @@ pub(crate) fn decode(name: &str) -> Option<NodeId> {
 #[cfg(test)]
 mod tests {
     use iroh_base::SecretKey;
+    use rand::SeedableRng;
 
     #[test]
     fn test_roundtrip() {
-        let key = SecretKey::generate(rand::rngs::OsRng);
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let key = SecretKey::generate(&mut rng);
         let node_id = key.public();
         println!("{}", super::encode(node_id));
         assert_eq!(Some(node_id), super::decode(&super::encode(node_id)));

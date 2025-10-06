@@ -559,9 +559,7 @@ async fn check_captive_portal(
                 return Ok(false);
             }
 
-            let i = (0..urls.len())
-                .choose(&mut rand::thread_rng())
-                .unwrap_or_default();
+            let i = (0..urls.len()).choose(&mut rand::rng()).unwrap_or_default();
             urls[i].clone()
         }
     };

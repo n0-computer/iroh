@@ -1,14 +1,20 @@
-//! Very basic example to showcase how to use iroh's APIs.
-//!
-//! This example implements a simple protocol that echos any data sent to it in the first stream.
+//! Very basic example to showcase how to write a protocol that rejects new
+//! connections based on internal state. Useful when you want an endpoint to
+//! stop accepting new connections for some reason only known to the node. Maybe
+//! it's doing a migration, starting up, in a "maintenance mode", or serving
+//! too many connections.
 //!
 //! ## Usage
 //!
-//!     cargo run --example echo --features=examples
+//!     cargo run --example screening-connection --features=examples
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use iroh::{
     Endpoint, NodeAddr,
-    endpoint::Connection,
+    endpoint::{Connecting, Connection},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_snafu::{Result, ResultExt};
@@ -17,16 +23,21 @@ use n0_snafu::{Result, ResultExt};
 ///
 /// The ALPN, or application-layer protocol negotiation, is exchanged in the connection handshake,
 /// and the connection is aborted unless both nodes pass the same bytestring.
-const ALPN: &[u8] = b"iroh-example/echo/0";
+const ALPN: &[u8] = b"iroh-example/screening-connection/0";
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = start_accept_side().await?;
-
-    // wait for the node to be online
+    // Wait for the endpoint to be reachable
     router.endpoint().online().await;
+    let node_addr = router.endpoint().node_addr();
 
-    connect_side(router.endpoint().node_addr()).await?;
+    // call connect three times. connection index 1 will be an odd number, and rejected.
+    connect_side(&node_addr).await?;
+    if let Err(err) = connect_side(&node_addr).await {
+        println!("Error connecting: {}", err);
+    }
+    connect_side(&node_addr).await?;
 
     // This makes sure the endpoint in the router is closed properly and connections close gracefully
     router.shutdown().await.e()?;
@@ -34,11 +45,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn connect_side(addr: NodeAddr) -> Result<()> {
+async fn connect_side(addr: &NodeAddr) -> Result<()> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Open a connection to the accepting node
-    let conn = endpoint.connect(addr, ALPN).await?;
+    let conn = endpoint.connect(addr.clone(), ALPN).await?;
 
     // Open a bidirectional QUIC stream
     let (mut send, mut recv) = conn.open_bi().await.e()?;
@@ -70,17 +81,45 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
 async fn start_accept_side() -> Result<Router> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
+    let echo = ScreenedEcho {
+        conn_attempt_count: Arc::new(AtomicU64::new(0)),
+    };
+
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
-    let router = Router::builder(endpoint).accept(ALPN, Echo).spawn();
+    let router = Router::builder(endpoint).accept(ALPN, echo).spawn();
 
     Ok(router)
 }
 
+/// This is the same as the echo example, but keeps an internal count of the
+/// number of connections that have been attempted. This is to demonstrate how
+/// to plumb state into the protocol handler
 #[derive(Debug, Clone)]
-struct Echo;
+struct ScreenedEcho {
+    conn_attempt_count: Arc<AtomicU64>,
+}
 
-impl ProtocolHandler for Echo {
+impl ProtocolHandler for ScreenedEcho {
+    /// `on_connecting` allows us to intercept a connection as it's being formed,
+    /// which is the right place to cut off a connection as early as possible.
+    /// This is an optional method on the ProtocolHandler trait.
+    async fn on_connecting(&self, connecting: Connecting) -> Result<Connection, AcceptError> {
+        self.conn_attempt_count.fetch_add(1, Ordering::Relaxed);
+        let count = self.conn_attempt_count.load(Ordering::Relaxed);
+
+        // reject every other connection
+        if count % 2 == 0 {
+            println!("rejecting connection");
+            return Err(AcceptError::NotAllowed {});
+        }
+
+        // To allow normal connection construction, await the connecting future & return
+        let conn = connecting.await?;
+        Ok(conn)
+    }
+
     /// The `accept` method is called for each incoming connection for our ALPN.
+    /// This is the primary place to kick off work in response to a new connection.
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
