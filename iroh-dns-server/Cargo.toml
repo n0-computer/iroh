@@ -41,7 +41,7 @@ rustls-pemfile = { version = "2.1" }
 serde = { version = "1", features = ["derive"] }
 struct_iterable = "0.1.1"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
-strum = { version = "0.26", features = ["derive"] }
+strum = { version = "0.27", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
