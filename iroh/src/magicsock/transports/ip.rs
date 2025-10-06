@@ -207,35 +207,4 @@ impl IpSender {
             Poll::Pending => Poll::Pending,
         }
     }
-
-    pub(super) fn try_send(
-        &self,
-        destination: SocketAddr,
-        src: Option<IpAddr>,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        let total_bytes = transmit.contents.len() as u64;
-        let res = self.sender.try_send(&quinn_udp::Transmit {
-            destination,
-            ecn: transmit.ecn,
-            contents: transmit.contents,
-            segment_size: transmit.segment_size,
-            src_ip: src,
-        });
-
-        match res {
-            Ok(res) => {
-                match destination {
-                    SocketAddr::V4(_) => {
-                        self.metrics.send_ipv4.inc_by(total_bytes);
-                    }
-                    SocketAddr::V6(_) => {
-                        self.metrics.send_ipv6.inc_by(total_bytes);
-                    }
-                }
-                Ok(res)
-            }
-            Err(err) => Err(err),
-        }
-    }
 }

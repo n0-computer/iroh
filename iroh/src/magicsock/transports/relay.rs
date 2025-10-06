@@ -324,49 +324,6 @@ impl RelaySender {
             }
         }
     }
-
-    pub(super) fn try_send(
-        &self,
-        dest_url: RelayUrl,
-        dest_node: NodeId,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        let contents = datagrams_from_transmit(transmit);
-
-        let item = RelaySendItem {
-            remote_node: dest_node,
-            url: dest_url.clone(),
-            datagrams: contents,
-        };
-
-        let dest_node = item.remote_node;
-        let dest_url = item.url.clone();
-
-        let Some(sender) = self.sender.get_ref() else {
-            return Err(io::Error::other("channel closed"));
-        };
-
-        match sender.try_send(item) {
-            Ok(_) => {
-                trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                       "send relay: message queued");
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                    "send relay: message dropped, channel to actor is closed");
-                Err(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    "channel to actor is closed",
-                ))
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                      "send relay: message dropped, channel to actor is full");
-                Err(io::Error::new(io::ErrorKind::WouldBlock, "channel full"))
-            }
-        }
-    }
 }
 
 /// Translate a UDP transmit to the `Datagrams` type for sending over the relay.

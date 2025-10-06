@@ -489,57 +489,6 @@ impl TransportsSender {
         }
         Poll::Pending
     }
-
-    /// Best effort sending
-    #[instrument(name = "try_send", skip(self, transmit), fields(len = transmit.contents.len()))]
-    fn inner_try_send(
-        &self,
-        dst: &Addr,
-        src: Option<IpAddr>,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        match dst {
-            #[cfg(wasm_browser)]
-            Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
-            #[cfg(not(wasm_browser))]
-            Addr::Ip(addr) => {
-                for transport in &self.ip {
-                    if transport.is_valid_send_addr(addr) {
-                        match transport.try_send(*addr, src, transmit) {
-                            Ok(()) => {
-                                trace!("sent");
-                                return Ok(());
-                            }
-                            Err(err) => {
-                                trace!("send failed: {err:#}");
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-            Addr::Relay(url, node_id) => {
-                for transport in &self.relay {
-                    if transport.is_valid_send_addr(url, node_id) {
-                        match transport.try_send(url.clone(), *node_id, transmit) {
-                            Ok(()) => {
-                                trace!("sent");
-                                return Ok(());
-                            }
-                            Err(err) => {
-                                trace!("send failed: {err:#}");
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "no transport ready",
-        ))
-    }
 }
 
 /// A [`Transports`] that works with [`MultipathMappedAddr`]s and their IPv6 representation.
