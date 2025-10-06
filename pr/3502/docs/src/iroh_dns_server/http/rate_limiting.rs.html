@@ -36,9 +36,9 @@
 <a href=#36 id=36 data-nosnippet>36</a><span class="doccomment">/// Create the default rate-limiting layer.
 <a href=#37 id=37 data-nosnippet>37</a>///
 <a href=#38 id=38 data-nosnippet>38</a>/// This spawns a background thread to clean up the rate limiting cache.
-<a href=#39 id=39 data-nosnippet>39</a></span><span class="kw">pub fn </span>create(
+<a href=#39 id=39 data-nosnippet>39</a></span><span class="kw">pub fn </span>create&lt;RespBody&gt;(
 <a href=#40 id=40 data-nosnippet>40</a>    rate_limit_config: <span class="kw-2">&amp;</span>RateLimitConfig,
-<a href=#41 id=41 data-nosnippet>41</a>) -&gt; <span class="prelude-ty">Option</span>&lt;GovernorLayer&lt;PeerIpKeyExtractor, NoOpMiddleware&lt;QuantaInstant&gt;&gt;&gt; {
+<a href=#41 id=41 data-nosnippet>41</a>) -&gt; <span class="prelude-ty">Option</span>&lt;GovernorLayer&lt;PeerIpKeyExtractor, NoOpMiddleware&lt;QuantaInstant&gt;, RespBody&gt;&gt; {
 <a href=#42 id=42 data-nosnippet>42</a>    <span class="kw">let </span>use_smart_extractor = <span class="kw">match </span>rate_limit_config {
 <a href=#43 id=43 data-nosnippet>43</a>        RateLimitConfig::Disabled =&gt; {
 <a href=#44 id=44 data-nosnippet>44</a>            <span class="macro">tracing::info!</span>(<span class="string">"Rate limiting disabled"</span>);
@@ -79,7 +79,5 @@
 <a href=#79 id=79 data-nosnippet>79</a>        }
 <a href=#80 id=80 data-nosnippet>80</a>    });
 <a href=#81 id=81 data-nosnippet>81</a>
-<a href=#82 id=82 data-nosnippet>82</a>    <span class="prelude-val">Some</span>(GovernorLayer {
-<a href=#83 id=83 data-nosnippet>83</a>        config: governor_conf,
-<a href=#84 id=84 data-nosnippet>84</a>    })
-<a href=#85 id=85 data-nosnippet>85</a>}</code></pre></div></section></main></body></html>
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="prelude-val">Some</span>(GovernorLayer::new(governor_conf))
+<a href=#83 id=83 data-nosnippet>83</a>}</code></pre></div></section></main></body></html>
