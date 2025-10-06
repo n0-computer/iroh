@@ -744,7 +744,7 @@
 <a href=#744 id=744 data-nosnippet>744</a>    </span><span class="kw">async fn </span>restore_from_vec() {
 <a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">let </span>node_map = NodeMap::default();
 <a href=#746 id=746 data-nosnippet>746</a>
-<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::rng();
+<a href=#747 id=747 data-nosnippet>747</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>node_a = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
 <a href=#749 id=749 data-nosnippet>749</a>        <span class="kw">let </span>node_b = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
 <a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">let </span>node_c = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();

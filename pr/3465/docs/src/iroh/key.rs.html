@@ -51,7 +51,7 @@
 <a href=#51 id=51 data-nosnippet>51</a>
 <a href=#52 id=52 data-nosnippet>52</a>    <span class="doccomment">/// Seals the provided cleartext.
 <a href=#53 id=53 data-nosnippet>53</a>    </span><span class="kw">pub fn </span>seal(<span class="kw-2">&amp;</span><span class="self">self</span>, buffer: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>Buffer) {
-<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>nonce = crypto_box::ChaChaBox::try_generate_nonce_with_rng(<span class="kw-2">&amp;mut </span>rand::rngs::OsRng)
+<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>nonce = crypto_box::ChaChaBox::try_generate_nonce_with_rng(<span class="kw-2">&amp;mut </span>rand::rng())
 <a href=#55 id=55 data-nosnippet>55</a>            .expect(<span class="string">"not enough randomness"</span>);
 <a href=#56 id=56 data-nosnippet>56</a>
 <a href=#57 id=57 data-nosnippet>57</a>        <span class="self">self</span>.<span class="number">0
@@ -94,7 +94,7 @@
 <a href=#94 id=94 data-nosnippet>94</a>
 <a href=#95 id=95 data-nosnippet>95</a>    <span class="attr">#[test]
 <a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">fn </span>test_seal_open_roundtrip() {
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::rng();
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#98 id=98 data-nosnippet>98</a>        <span class="kw">let </span>key_a = iroh_base::SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>key_b = iroh_base::SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#100 id=100 data-nosnippet>100</a>
@@ -123,37 +123,38 @@
 <a href=#123 id=123 data-nosnippet>123</a>
 <a href=#124 id=124 data-nosnippet>124</a>    <span class="attr">#[test]
 <a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">fn </span>test_roundtrip_public_key() {
-<a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">let </span>key = crypto_box::SecretKey::generate(<span class="kw-2">&amp;mut </span>rand::rng());
-<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">let </span>public_bytes = <span class="kw-2">*</span>key.public_key().as_bytes();
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">let </span>public_key_back = crypto_box::PublicKey::from(public_bytes);
-<a href=#129 id=129 data-nosnippet>129</a>        <span class="macro">assert_eq!</span>(key.public_key(), public_key_back);
-<a href=#130 id=130 data-nosnippet>130</a>    }
-<a href=#131 id=131 data-nosnippet>131</a>
-<a href=#132 id=132 data-nosnippet>132</a>    <span class="attr">#[test]
-<a href=#133 id=133 data-nosnippet>133</a>    </span><span class="kw">fn </span>test_same_public_key_api() {
-<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span>key = iroh_base::SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">let </span>public_key1: crypto_box::PublicKey = public_ed_box(<span class="kw-2">&amp;</span>key.public().public());
-<a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>public_key2: crypto_box::PublicKey = secret_ed_box(key.secret()).public_key();
-<a href=#138 id=138 data-nosnippet>138</a>
-<a href=#139 id=139 data-nosnippet>139</a>        <span class="macro">assert_eq!</span>(public_key1, public_key2);
-<a href=#140 id=140 data-nosnippet>140</a>    }
-<a href=#141 id=141 data-nosnippet>141</a>
-<a href=#142 id=142 data-nosnippet>142</a>    <span class="attr">#[test]
-<a href=#143 id=143 data-nosnippet>143</a>    </span><span class="kw">fn </span>test_same_public_key_low_level() {
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::rng();
-<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">let </span>key = ed25519_dalek::SigningKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">let </span>public_key1 = {
-<a href=#147 id=147 data-nosnippet>147</a>            <span class="kw">let </span>m = key.verifying_key().to_montgomery();
-<a href=#148 id=148 data-nosnippet>148</a>            crypto_box::PublicKey::from(m)
-<a href=#149 id=149 data-nosnippet>149</a>        };
-<a href=#150 id=150 data-nosnippet>150</a>
-<a href=#151 id=151 data-nosnippet>151</a>        <span class="kw">let </span>public_key2 = {
-<a href=#152 id=152 data-nosnippet>152</a>            <span class="kw">let </span>s = key.to_scalar();
-<a href=#153 id=153 data-nosnippet>153</a>            <span class="kw">let </span>cs = crypto_box::SecretKey::from(s);
-<a href=#154 id=154 data-nosnippet>154</a>            cs.public_key()
-<a href=#155 id=155 data-nosnippet>155</a>        };
-<a href=#156 id=156 data-nosnippet>156</a>
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="macro">assert_eq!</span>(public_key1, public_key2);
-<a href=#158 id=158 data-nosnippet>158</a>    }
-<a href=#159 id=159 data-nosnippet>159</a>}</code></pre></div></section></main></body></html>
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">let </span>key = crypto_box::SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">let </span>public_bytes = <span class="kw-2">*</span>key.public_key().as_bytes();
+<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">let </span>public_key_back = crypto_box::PublicKey::from(public_bytes);
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="macro">assert_eq!</span>(key.public_key(), public_key_back);
+<a href=#131 id=131 data-nosnippet>131</a>    }
+<a href=#132 id=132 data-nosnippet>132</a>
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="attr">#[test]
+<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">fn </span>test_same_public_key_api() {
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">let </span>key = iroh_base::SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>public_key1: crypto_box::PublicKey = public_ed_box(<span class="kw-2">&amp;</span>key.public().public());
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">let </span>public_key2: crypto_box::PublicKey = secret_ed_box(key.secret()).public_key();
+<a href=#139 id=139 data-nosnippet>139</a>
+<a href=#140 id=140 data-nosnippet>140</a>        <span class="macro">assert_eq!</span>(public_key1, public_key2);
+<a href=#141 id=141 data-nosnippet>141</a>    }
+<a href=#142 id=142 data-nosnippet>142</a>
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="attr">#[test]
+<a href=#144 id=144 data-nosnippet>144</a>    </span><span class="kw">fn </span>test_same_public_key_low_level() {
+<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">let </span>key = ed25519_dalek::SigningKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">let </span>public_key1 = {
+<a href=#148 id=148 data-nosnippet>148</a>            <span class="kw">let </span>m = key.verifying_key().to_montgomery();
+<a href=#149 id=149 data-nosnippet>149</a>            crypto_box::PublicKey::from(m)
+<a href=#150 id=150 data-nosnippet>150</a>        };
+<a href=#151 id=151 data-nosnippet>151</a>
+<a href=#152 id=152 data-nosnippet>152</a>        <span class="kw">let </span>public_key2 = {
+<a href=#153 id=153 data-nosnippet>153</a>            <span class="kw">let </span>s = key.to_scalar();
+<a href=#154 id=154 data-nosnippet>154</a>            <span class="kw">let </span>cs = crypto_box::SecretKey::from(s);
+<a href=#155 id=155 data-nosnippet>155</a>            cs.public_key()
+<a href=#156 id=156 data-nosnippet>156</a>        };
+<a href=#157 id=157 data-nosnippet>157</a>
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="macro">assert_eq!</span>(public_key1, public_key2);
+<a href=#159 id=159 data-nosnippet>159</a>    }
+<a href=#160 id=160 data-nosnippet>160</a>}</code></pre></div></section></main></body></html>
