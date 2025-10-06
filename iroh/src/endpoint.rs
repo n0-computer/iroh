@@ -2704,9 +2704,15 @@ mod tests {
             .bind()
             .await?;
 
-        tokio::time::timeout(Duration::from_secs(10), ep.watch_node_addr().initialized())
-            .await
-            .e()?;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            ep.watch_node_addr()
+                .map(|addr| addr.map(|addr| addr.direct_addresses))
+                .unwrap()
+                .initialized(),
+        )
+        .await
+        .e()?;
         Ok(())
     }
 
