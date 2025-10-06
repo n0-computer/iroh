@@ -23,7 +23,7 @@ derive_more = { version = "2.0.1", features = [
     "from",
 ] }
 dirs-next = "2.0.0"
-governor = "0.8"
+governor = "0.10"
 hickory-server = { version = "0.25.1", features = ["https-ring"] }
 http = "1.0.0"
 humantime = "2.2.0"
