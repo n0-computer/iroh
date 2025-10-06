@@ -151,10 +151,11 @@ impl Builder {
 
     /// Binds the magic endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
+        let mut rng = rand::rng();
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self
             .secret_key
-            .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
+            .unwrap_or_else(move || SecretKey::generate(&mut rng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
@@ -2261,8 +2262,9 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_connect_close() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, relay_url, _guard) = run_relay_server().await?;
-        let server_secret_key = SecretKey::generate(rand::thread_rng());
+        let server_secret_key = SecretKey::generate(&mut rng);
         let server_peer_id = server_secret_key.public();
 
         // Wait for the endpoint to be started to make sure it's up before clients try to connect
@@ -2374,7 +2376,6 @@ mod tests {
             .bind()
             .await?;
         // Also make sure the server has a working relay connection
-
         ep.online().await;
 
         info!(time = ?test_start.elapsed(), "test setup done");
@@ -2811,15 +2812,12 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_0rtt() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let server = spawn_0rtt_server(
-            SecretKey::generate(rand::thread_rng()),
-            info_span!("server"),
-        )
-        .await?;
+        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.watch_node_addr().initialized().await)
             .await?;
@@ -2839,26 +2837,20 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_0rtt_non_consecutive() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let server = spawn_0rtt_server(
-            SecretKey::generate(rand::thread_rng()),
-            info_span!("server"),
-        )
-        .await?;
+        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.watch_node_addr().initialized().await)
             .await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
-        let another = spawn_0rtt_server(
-            SecretKey::generate(rand::thread_rng()),
-            info_span!("another"),
-        )
-        .await?;
+        let another =
+            spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("another")).await?;
         connect_client_0rtt_expect_err(&client, another.watch_node_addr().initialized().await)
             .await?;
         another.close().await;
@@ -2876,11 +2868,12 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let server_key = SecretKey::generate(rand::thread_rng());
+        let server_key = SecretKey::generate(&mut rng);
         let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
         connect_client_0rtt_expect_err(&client, server.watch_node_addr().initialized().await)
