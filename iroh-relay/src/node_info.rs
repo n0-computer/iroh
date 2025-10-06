@@ -624,7 +624,7 @@ pub(crate) fn ensure_iroh_txt_label(name: String) -> String {
     if parts.next() == Some(IROH_TXT_NAME) {
         name
     } else {
-        format!("{}.{}", IROH_TXT_NAME, name)
+        format!("{IROH_TXT_NAME}.{name}")
     }
 }
 

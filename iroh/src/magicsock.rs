@@ -2512,7 +2512,7 @@ impl Display for DirectAddrType {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, sync::Arc, time::Duration};
+    use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
     use iroh_base::{NodeAddr, NodeId, PublicKey};
@@ -2530,7 +2530,7 @@ mod tests {
     use crate::{
         Endpoint, RelayMap, RelayMode, SecretKey,
         dns::DnsResolver,
-        endpoint::{DirectAddr, PathSelection, Source},
+        endpoint::{PathSelection, Source},
         magicsock::{Handle, MagicSock, node_map},
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
@@ -2640,7 +2640,7 @@ mod tests {
         fn update_direct_addrs(
             stacks: &[MagicStack],
             my_idx: usize,
-            new_addrs: BTreeSet<DirectAddr>,
+            new_addrs: BTreeSet<SocketAddr>,
         ) {
             let me = &stacks[my_idx];
             for (i, m) in stacks.iter().enumerate() {
@@ -2651,7 +2651,7 @@ mod tests {
                 let addr = NodeAddr {
                     node_id: me.public(),
                     relay_url: None,
-                    direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
+                    direct_addresses: new_addrs.clone(),
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -2665,10 +2665,10 @@ mod tests {
             let stacks = stacks.clone();
             tasks.spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
-                let mut stream = m.endpoint.direct_addresses().stream().filter_map(|i| i);
-                while let Some(new_eps) = stream.next().await {
-                    info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                    update_direct_addrs(&stacks, my_idx, new_eps);
+                let mut stream = m.endpoint.watch_node_addr().stream().filter_map(|i| i);
+                while let Some(addr) = stream.next().await {
+                    info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, addr.direct_addresses);
+                    update_direct_addrs(&stacks, my_idx, addr.direct_addresses);
                 }
             });
         }
@@ -2901,7 +2901,7 @@ mod tests {
         println!("first conn!");
         let conn = m1
             .endpoint
-            .connect(m2.endpoint.node_addr().initialized().await, ALPN)
+            .connect(m2.endpoint.watch_node_addr().initialized().await, ALPN)
             .await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
