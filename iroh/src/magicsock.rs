@@ -22,7 +22,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::{
         Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -30,8 +30,6 @@ use bytes::Bytes;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{
-    StreamExt,
-    boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -59,8 +57,12 @@ use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
-    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
+    discovery::{
+        ConcurrentDiscovery, Discovery, DiscoveryContext, DynIntoDiscovery, IntoDiscoveryError,
+        NodeData, UserData,
+    },
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
+    magicsock::node_map::RemoteInfo,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -81,9 +83,10 @@ pub(crate) mod transports;
 
 use mapped_addrs::{MappedAddr, NodeIdMappedAddr};
 
-pub use metrics::Metrics;
-pub use node_map::Source;
-pub use node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
+pub use self::{
+    metrics::Metrics,
+    node_map::{ConnectionType, ControlMsg, DirectAddrInfo},
+};
 
 /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -119,11 +122,8 @@ pub(crate) struct Options {
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
     pub(crate) relay_map: RelayMap,
 
-    /// An optional [`NodeMap`], to restore information about nodes.
-    pub(crate) node_map: Option<Vec<NodeAddr>>,
-
-    /// Optional node discovery mechanism.
-    pub(crate) discovery: Option<Box<dyn Discovery>>,
+    /// Optional node discovery mechanisms.
+    pub(crate) discovery: Vec<Box<dyn DynIntoDiscovery>>,
 
     /// Optional user-defined discovery data.
     pub(crate) discovery_user_data: Option<UserData>,
@@ -216,11 +216,9 @@ pub(crate) struct MagicSock {
 
     // - Discovery
     /// Optional discovery service
-    discovery: Option<Box<dyn Discovery>>,
+    discovery: ConcurrentDiscovery,
     /// Optional user-defined discover data.
     discovery_user_data: RwLock<Option<UserData>>,
-    /// Broadcast channel for listening to discovery updates.
-    discovery_subscribers: DiscoverySubscribers,
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
@@ -333,6 +331,7 @@ impl MagicSock {
     }
 
     /// Return the [`RemoteInfo`]s of all nodes in the node map.
+    #[cfg(test)]
     pub(crate) fn list_remote_infos(&self) -> Vec<RemoteInfo> {
         self.node_map.list_remote_infos(Instant::now())
     }
@@ -416,7 +415,16 @@ impl MagicSock {
         self.node_map.conn_type(node_id)
     }
 
-    /// Returns the socket address which can be used by the QUIC layer to *dial* this node.
+    // TODO: Build better info to expose to the user about remote nodes.  We probably want
+    // to expose this as part of path information instead.
+    pub(crate) async fn latency(&self, node_id: NodeId) -> Option<Duration> {
+        let node_state = self.node_map.node_state_actor(node_id);
+        let (tx, rx) = oneshot::channel();
+        node_state.send(NodeStateMessage::Latency(tx)).await.ok();
+        rx.await.unwrap_or_default()
+    }
+
+    /// Returns the socket address which can be used by the QUIC layer to dial this node.
     pub(crate) fn get_node_mapped_addr(&self, node_id: NodeId) -> NodeIdMappedAddr {
         self.node_map.node_mapped_addr(node_id)
     }
@@ -436,7 +444,7 @@ impl MagicSock {
         for my_addr in self.direct_addrs.sockaddrs() {
             if addr.direct_addresses.remove(&my_addr) {
                 warn!(
-                    node_id = addr.node_id.fmt_short(),
+                    node_id = %addr.node_id.fmt_short(),
                     %my_addr,
                     %source,
                     "not adding our addr for node",
@@ -480,9 +488,9 @@ impl MagicSock {
         &self.dns_resolver
     }
 
-    /// Reference to optional discovery service
-    pub(crate) fn discovery(&self) -> Option<&dyn Discovery> {
-        self.discovery.as_ref().map(Box::as_ref)
+    /// Reference to the internal discovery service
+    pub(crate) fn discovery(&self) -> &ConcurrentDiscovery {
+        &self.discovery
     }
 
     /// Updates the user-defined discovery data for this node.
@@ -501,11 +509,6 @@ impl MagicSock {
             .send(ActorMessage::NetworkChange)
             .await
             .ok();
-    }
-
-    /// Returns a reference to the subscribers channel for discovery events.
-    pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
-        &self.discovery_subscribers
     }
 
     #[cfg(test)]
@@ -786,23 +789,21 @@ impl MagicSock {
     ///
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
-        if let Some(ref discovery) = self.discovery {
-            let relay_url = self.my_relay();
-            let direct_addrs = self.direct_addrs.sockaddrs();
+        let relay_url = self.my_relay();
+        let direct_addrs = self.direct_addrs.sockaddrs();
 
-            let user_data = self
-                .discovery_user_data
-                .read()
-                .expect("lock poisened")
-                .clone();
-            if relay_url.is_none() && direct_addrs.is_empty() && user_data.is_none() {
-                // do not bother publishing if we don't have any information
-                return;
-            }
-
-            let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
-            discovery.publish(&data);
+        let user_data = self
+            .discovery_user_data
+            .read()
+            .expect("lock poisened")
+            .clone();
+        if relay_url.is_none() && direct_addrs.is_empty() && user_data.is_none() {
+            // do not bother publishing if we don't have any information
+            return;
         }
+
+        let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
+        self.discovery.publish(&data);
     }
 }
 
@@ -958,6 +959,10 @@ pub enum CreateHandleError {
     CreateNetmonMonitor { source: netmon::Error },
     #[snafu(display("Failed to subscribe netmon monitor"))]
     SubscribeNetmonMonitor { source: netmon::Error },
+    #[snafu(transparent)]
+    Discovery {
+        source: crate::discovery::IntoDiscoveryError,
+    },
 }
 
 impl Handle {
@@ -968,7 +973,6 @@ impl Handle {
             addr_v6,
             secret_key,
             relay_map,
-            node_map,
             discovery,
             discovery_user_data,
             #[cfg(not(wasm_browser))]
@@ -982,6 +986,22 @@ impl Handle {
             metrics,
         } = opts;
 
+        let discovery = {
+            let context = DiscoveryContext {
+                secret_key: &secret_key,
+                #[cfg(not(wasm_browser))]
+                dns_resolver: &dns_resolver,
+            };
+            let discovery = discovery
+                .into_iter()
+                .map(|builder| builder.into_discovery(&context))
+                .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
+            match discovery.len() {
+                0 => ConcurrentDiscovery::default(),
+                _ => ConcurrentDiscovery::from_services(discovery),
+            }
+        };
+
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
         #[cfg(not(wasm_browser))]
@@ -992,7 +1012,6 @@ impl Handle {
 
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(false));
-        let max_receive_segments = Arc::new(AtomicUsize::new(1));
 
         let relay_transport = RelayTransport::new(RelayActorConfig {
             my_relay: my_relay.clone(),
@@ -1001,7 +1020,6 @@ impl Handle {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
-            max_receive_segments: max_receive_segments.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
@@ -1012,38 +1030,26 @@ impl Handle {
         let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
         #[cfg(not(wasm_browser))]
-        let transports = Transports::new(ip_transports, relay_transports, max_receive_segments);
+        let transports = Transports::new(ip_transports, relay_transports);
         #[cfg(wasm_browser)]
-        let transports = Transports::new(relay_transports, max_receive_segments);
+        let transports = Transports::new(relay_transports);
 
         let direct_addrs = DiscoveredDirectAddrs::default();
         let (disco, disco_receiver) = DiscoState::new(&secret_key);
 
         let node_map = {
-            let node_map = node_map.unwrap_or_default();
             let sender = transports.create_sender();
-            #[cfg(any(test, feature = "test-utils"))]
-            let nm = NodeMap::load_from_vec(
+            NodeMap::load_from_vec(
                 secret_key.public(),
-                node_map,
+                Vec::new(), // TODO
+                #[cfg(any(test, feature = "test-utils"))]
                 path_selection,
                 metrics.magicsock.clone(),
                 sender,
                 direct_addrs.addrs.watch(),
                 disco.clone(),
             )
-            .await;
-            #[cfg(not(any(test, feature = "test-utils")))]
-            let nm = NodeMap::load_from_vec(
-                secret_key.public(),
-                node_map,
-                metrics.magicsock.clone(),
-                sender,
-                direct_addrs.addrs.watch(),
-                disco.clone(),
-            )
-            .await;
-            nm
+            .await
         };
 
         let msock = Arc::new(MagicSock {
@@ -1060,7 +1066,6 @@ impl Handle {
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
-            discovery_subscribers: DiscoverySubscribers::new(),
             metrics: metrics.clone(),
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
@@ -1431,13 +1436,6 @@ impl Actor {
             .port_mapper
             .watch_external_address();
 
-        let mut discovery_events: BoxStream<DiscoveryItem> = Box::pin(n0_future::stream::empty());
-        if let Some(d) = self.msock.discovery() {
-            if let Some(events) = d.subscribe() {
-                discovery_events = events;
-            }
-        }
-
         let mut receiver_closed = false;
         #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
@@ -1540,28 +1538,15 @@ impl Actor {
                         continue;
                     };
                     let is_major = state.is_major_change(&current_netmon_state);
+                    event!(
+                        target: "iroh::_events::link_change",
+                        Level::DEBUG,
+                        ?state,
+                        is_major
+                    );
                     current_netmon_state = state;
-                    trace!("tick: link change {}", is_major);
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
-                }
-                // Even if `discovery_events` yields `None`, it could begin to yield
-                // `Some` again in the future, so we don't want to disable this branch
-                // forever like we do with the other branches that yield `Option`s
-                Some(discovery_item) = discovery_events.next() => {
-                    trace!("tick: discovery event, address discovered: {discovery_item:?}");
-                    let provenance = discovery_item.provenance();
-                    let node_addr = discovery_item.to_node_addr();
-                    if let Err(e) = self.msock.add_node_addr(
-                        node_addr,
-                        Source::Discovery {
-                            name: provenance.to_string()
-                        }).await {
-                        let node_addr = discovery_item.to_node_addr();
-                        warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
-                    }
-                    // Send the discovery item to the subscribers of the discovery broadcast stream.
-                    self.msock.discovery_subscribers.send(discovery_item);
                 }
                 Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
                     if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
@@ -1573,11 +1558,11 @@ impl Actor {
     }
 
     async fn handle_network_change(&mut self, is_major: bool) {
-        debug!("link change detected: major? {}", is_major);
+        debug!(is_major, "link change detected");
 
         if is_major {
             if let Err(err) = self.network_change_sender.rebind() {
-                warn!("failed to rebind transports: {:?}", err);
+                warn!("failed to rebind transports: {err:?}");
             }
 
             #[cfg(not(wasm_browser))]
@@ -1970,12 +1955,12 @@ mod tests {
     use crate::{
         Endpoint, RelayMap, RelayMode, SecretKey,
         dns::DnsResolver,
-        endpoint::{DirectAddr, PathSelection, Source},
+        endpoint::{DirectAddr, PathSelection},
         magicsock::{Handle, MagicSock, node_map},
-        tls,
+        tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
 
-    use super::{NodeIdMappedAddr, Options, mapped_addrs::MappedAddr};
+    use super::{NodeIdMappedAddr, Options, mapped_addrs::MappedAddr, node_map::Source};
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -1988,8 +1973,7 @@ mod tests {
                 addr_v6: None,
                 secret_key,
                 relay_map: RelayMap::empty(),
-                node_map: None,
-                discovery: None,
+                discovery: Default::default(),
                 proxy_url: None,
                 dns_resolver: DnsResolver::new(),
                 server_config,
@@ -2006,7 +1990,8 @@ mod tests {
     /// Generate a server config with no ALPNS and a default transport configuration
     fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
         let quic_server_config =
-            crate::tls::TlsConfig::new(secret_key.clone()).make_server_config(vec![], false);
+            crate::tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
+                .make_server_config(vec![], false);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
         server_config
@@ -2491,7 +2476,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_local_endpoints() {
+    async fn test_direct_addresses() {
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
@@ -2511,10 +2496,10 @@ mod tests {
     /// connections using [`ALPN`].
     ///
     /// Use [`magicsock_connect`] to establish connections.
-    #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
+    #[instrument(name = "ep", skip_all, fields(me = %secret_key.public().fmt_short()))]
     async fn magicsock_ep(secret_key: SecretKey) -> Result<Handle> {
-        let quic_server_config =
-            tls::TlsConfig::new(secret_key.clone()).make_server_config(vec![ALPN.to_vec()], true);
+        let quic_server_config = tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
+            .make_server_config(vec![ALPN.to_vec()], true);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
@@ -2524,8 +2509,7 @@ mod tests {
             addr_v6: None,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
-            node_map: None,
-            discovery: None,
+            discovery: Default::default(),
             discovery_user_data: None,
             dns_resolver,
             proxy_url: None,
@@ -2541,7 +2525,7 @@ mod tests {
     /// Connects from `ep` returned by [`magicsock_ep`] to the `node_id`.
     ///
     /// Uses [`ALPN`], `node_id`, must match `addr`.
-    #[instrument(name = "connect", skip_all, fields(me = ep_secret_key.public().fmt_short()))]
+    #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn magicsock_connect(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
@@ -2567,7 +2551,7 @@ mod tests {
     /// This version allows customising the transport config.
     ///
     /// Uses [`ALPN`], `node_id`, must match `addr`.
-    #[instrument(name = "connect", skip_all, fields(me = ep_secret_key.public().fmt_short()))]
+    #[instrument(name = "connect", skip_all, fields(me = %ep_secret_key.public().fmt_short()))]
     async fn magicsock_connect_with_transport_config(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
@@ -2577,7 +2561,8 @@ mod tests {
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls::TlsConfig::new(ep_secret_key.clone()).make_client_config(alpns, true);
+            tls::TlsConfig::new(ep_secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
+                .make_client_config(alpns, true);
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep
@@ -2720,7 +2705,7 @@ mod tests {
                     error!("{err:#}");
                 }
             }
-            .instrument(info_span!("ep2.accept", me = node_id_2.fmt_short()))
+            .instrument(info_span!("ep2.accept", me = %node_id_2.fmt_short()))
         });
         let _accept_task = AbortOnDropHandle::new(accept_task);
 

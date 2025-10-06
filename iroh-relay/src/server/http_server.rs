@@ -21,7 +21,7 @@ use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{Instrument, debug, debug_span, error, info, info_span, trace, warn};
+use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
 
 use super::{AccessConfig, SpawnError, clients::Clients, streams::InvalidBucketConfig};
 use crate::{
@@ -539,7 +539,7 @@ impl RelayService {
                     Err(err) => warn!("upgrade error: {err:#}"),
                 }
             }
-            .instrument(debug_span!("handler"))
+            .instrument(warn_span!("handler"))
         });
 
         // Now return a 101 Response saying we agree to the upgrade to the
@@ -665,7 +665,6 @@ impl Inner {
         let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone())
             .context(RateLimitingMisconfiguredSnafu)?;
 
-        self.metrics.accepts.inc();
         // Create a server builder with default config
         let websocket = tokio_websockets::ServerBuilder::new()
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
@@ -698,7 +697,7 @@ impl Inner {
         };
         trace!("accept: create client");
         let node_id = client_conn_builder.node_id;
-        trace!(node_id = node_id.fmt_short(), "create client");
+        trace!(node_id = %node_id.fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
         // connection
@@ -1115,13 +1114,14 @@ mod tests {
     #[traced_test]
     async fn test_server_basic() -> Result {
         info!("Create the server.");
+        let metrics = Arc::new(Metrics::default());
         let service = RelayService::new(
             Default::default(),
             Default::default(),
             None,
             KeyCache::test(),
             AccessConfig::Everyone,
-            Default::default(),
+            metrics.clone(),
         );
 
         info!("Create client A and connect it to the server.");
@@ -1199,6 +1199,14 @@ mod tests {
             .await;
         assert!(res.is_err());
         assert!(client_b.next().await.is_none());
+
+        drop(client_a);
+        drop(client_b);
+
+        service.shutdown().await;
+
+        assert_eq!(metrics.accepts.get(), metrics.disconnects.get());
+
         Ok(())
     }
 

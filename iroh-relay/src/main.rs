@@ -47,9 +47,6 @@ struct Cli {
     #[clap(long, default_value_t = false)]
     dev: bool,
     /// Path to the configuration file.
-    ///
-    /// If provided and no configuration file exists the default configuration will be
-    /// written to the file.
     #[clap(long, short)]
     config_path: Option<PathBuf>,
 }
@@ -113,8 +110,13 @@ struct Config {
     ///
     /// Defaults to `true`.
     ///
-    /// Disabling will leave only the quic server.  The `http_bind_addr` and `tls`
-    /// configuration options will be ignored.
+    /// When disabled, the relay will not proxy traffic between nodes. This leaves only
+    /// the QUIC server running (if `enable_quic_addr_discovery` is `true`), which helps
+    /// with NAT traversal by reporting observed addresses but does not relay any data.
+    /// This is useful for holepunching-only relay servers.
+    ///
+    /// When disabled, the `http_bind_addr` and `tls` configuration options are only used
+    /// if `enable_quic_addr_discovery` is enabled (TLS is required for QUIC).
     #[serde(default = "cfg_defaults::enable_relay")]
     enable_relay: bool,
     /// The socket address to bind the Relay HTTP server on.
@@ -235,7 +237,10 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                 }))
             }
             AccessConfig::Http(mut config) => {
-                let client = reqwest::Client::default();
+                let client = reqwest::Client::builder()
+                    .use_rustls_tls()
+                    .build()
+                    .expect("request client builder");
                 // Allow to set bearer token via environment variable as well.
                 if let Ok(token) = std::env::var(ENV_HTTP_BEARER_TOKEN) {
                     config.bearer_token = Some(token);
@@ -694,17 +699,21 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         None => Default::default(),
     };
 
-    let relay_config = relay::RelayConfig {
-        http_bind_addr: cfg.http_bind_addr(),
-        // if `dangerous_http_only` is set, do not pass in any tls configuration
-        tls: relay_tls.and_then(|tls| if dangerous_http_only { None } else { Some(tls) }),
-        limits,
-        key_cache_capacity: cfg.key_cache_capacity,
-        access: cfg.access.clone().into(),
+    let relay_config = if cfg.enable_relay {
+        Some(relay::RelayConfig {
+            http_bind_addr: cfg.http_bind_addr(),
+            // if `dangerous_http_only` is set, do not pass in any tls configuration
+            tls: relay_tls.and_then(|tls| if dangerous_http_only { None } else { Some(tls) }),
+            limits,
+            key_cache_capacity: cfg.key_cache_capacity,
+            access: cfg.access.clone().into(),
+        })
+    } else {
+        None
     };
 
     Ok(relay::ServerConfig {
-        relay: Some(relay_config),
+        relay: relay_config,
         quic: quic_config,
         #[cfg(feature = "metrics")]
         metrics_addr: Some(cfg.metrics_bind_addr()).filter(|_| cfg.enable_metrics),
@@ -828,6 +837,30 @@ mod tests {
                 bearer_token: Some("foo".to_string())
             })
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enable_relay_config() -> Result {
+        let config = "
+            enable_relay = false
+        ";
+        let config = Config::from_str(config)?;
+        let relay_config = build_relay_config(config).await?;
+        assert!(relay_config.relay.is_none());
+
+        let config = "
+            enable_relay = true
+        ";
+        let config = Config::from_str(config)?;
+        let relay_config = build_relay_config(config).await?;
+        assert!(relay_config.relay.is_some());
+
+        let config = "";
+        let config = Config::from_str(config)?;
+        let relay_config = build_relay_config(config).await?;
+        assert!(relay_config.relay.is_some());
+
         Ok(())
     }
 }

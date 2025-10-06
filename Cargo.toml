@@ -43,7 +43,7 @@ unused-async = "warn"
 
 
 [patch.crates-io]
-rustls = { git = "https://github.com/n0-computer/rustls", rev = "c636f89ae00aee19ddd5e6df4150cec5c031fa31" }
+rustls = { git = "https://github.com/n0-computer/rustls", rev = "da7b54c6621fdeb2defff38242c5b56ef4c5a920" }
 netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "feat-multipath" }
 
 [patch."https://github.com/n0-computer/quinn"]

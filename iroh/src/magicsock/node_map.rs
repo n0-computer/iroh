@@ -34,9 +34,9 @@ mod path_state;
 mod path_validity;
 mod udp_paths;
 
-pub(super) use node_state::NodeStateMessage;
+pub(super) use node_state::{NodeStateMessage, RemoteInfo};
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
+pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -147,49 +147,23 @@ pub enum Source {
 }
 
 impl NodeMap {
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(super) fn new(
-        local_node_id: NodeId,
-        metrics: Arc<MagicsockMetrics>,
-        sender: TransportsSender,
-        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
-        disco: DiscoState,
-    ) -> Self {
-        let inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
-        Self::from_inner(inner, local_node_id)
-    }
-
-    #[cfg(not(any(test, feature = "test-utils")))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     pub(super) async fn load_from_vec(
         local_node_id: NodeId,
         nodes: Vec<NodeAddr>,
-        metrics: Arc<MagicsockMetrics>,
-        sender: TransportsSender,
-        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
-        disco: DiscoState,
-    ) -> Self {
-        let inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
-        let me = Self::from_inner(inner, local_node_id);
-        for addr in nodes {
-            me.add_node_addr(addr, Source::Saved).await;
-        }
-        me
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) async fn load_from_vec(
-        local_node_id: NodeId,
-        nodes: Vec<NodeAddr>,
-        path_selection: PathSelection,
+        #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
         disco: DiscoState,
     ) -> Self {
         let mut inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
-        inner.path_selection = path_selection;
+
+        #[cfg(any(test, feature = "test-utils"))]
+        {
+            inner.path_selection = path_selection;
+        }
+
         let me = Self::from_inner(inner, local_node_id);
         for addr in nodes {
             me.add_node_addr(addr, Source::Saved).await;
@@ -233,6 +207,7 @@ impl NodeMap {
     }
 
     /// Returns the [`RemoteInfo`]s for each node in the node map.
+    #[cfg(test)]
     pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
         // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
         // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
@@ -385,6 +360,7 @@ impl NodeMapInner {
         self.by_id.iter()
     }
     /// Get the [`RemoteInfo`]s for all nodes.
+    #[cfg(test)]
     fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
         self.node_states().map(move |(_, ep)| ep.info(now))
     }

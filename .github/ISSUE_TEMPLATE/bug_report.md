@@ -16,6 +16,22 @@ assignees: ''
 **Expected behavior**
 <!-- A clear and concise description of what you expected to happen. -->
 
+**Iroh**
+
+Version:
+
+<!-- If possible use cargo tree: -->
+
+```
+[paste output from `cargo tree -i -e features -p iroh` here]
+```
+
+<!-- Otherwise, please list the iroh version and/or commit hash. -->
+
+Endpoint configuration:<!-- (please complete the following information) -->
+
+[e.g. are you using `.n0_discovery()`, a custom relay map, etc]
+
 **Platform(s)**
 Desktop<!-- (please complete the following information) -->:
  - OS: [e.g. iOS]

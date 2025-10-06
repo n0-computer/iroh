@@ -5,7 +5,11 @@
 //! This is an async, non-determinate process, so the number of NodeIDs discovered each time may be different. If you have other iroh endpoints or iroh nodes with [`MdnsDiscovery`] enabled, it may discover those nodes as well.
 use std::time::Duration;
 
-use iroh::{Endpoint, NodeId, node_info::UserData};
+use iroh::{
+    Endpoint, NodeId,
+    discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
+    node_info::UserData,
+};
 use n0_future::StreamExt;
 use n0_snafu::Result;
 use tokio::task::JoinSet;
@@ -15,28 +19,27 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("Discovering Local Nodes Example!");
 
-    let ep = Endpoint::builder().discovery_local_network().bind().await?;
+    let ep = Endpoint::builder().bind().await?;
     let node_id = ep.node_id();
+
+    let mdns = MdnsDiscovery::builder().build(node_id)?;
+    ep.discovery().add(mdns.clone());
+
     println!("Created endpoint {}", node_id.fmt_short());
 
     let user_data = UserData::try_from(String::from("local-nodes-example"))?;
 
-    let mut discovery_stream = ep.discovery_stream();
-
     let ud = user_data.clone();
     let discovery_stream_task = tokio::spawn(async move {
+        let mut discovery_stream = mdns.subscribe().await;
         let mut discovered_nodes: Vec<NodeId> = vec![];
-        while let Some(item) = discovery_stream.next().await {
-            match item {
-                Err(e) => {
-                    tracing::error!("{e}");
-                    return;
-                }
-                Ok(item) => {
+        while let Some(event) = discovery_stream.next().await {
+            match event {
+                DiscoveryEvent::Discovered { node_info, .. } => {
                     // if there is no user data, or the user data
                     // does not indicate that the discovered node
                     // is a part of the example, ignore it
-                    match item.node_info().data.user_data() {
+                    match node_info.data.user_data() {
                         Some(user_data) if &ud == user_data => {}
                         _ => {
                             tracing::error!("found node with unexpected user data, ignoring it");
@@ -46,13 +49,14 @@ async fn main() -> Result<()> {
 
                     // if we've already found this node, ignore it
                     // otherwise announce that we have found a new node
-                    if discovered_nodes.contains(&item.node_id()) {
+                    if discovered_nodes.contains(&node_info.node_id) {
                         continue;
                     } else {
-                        discovered_nodes.push(item.node_id());
-                        println!("Found node {}!", item.node_id().fmt_short());
+                        discovered_nodes.push(node_info.node_id);
+                        println!("Found node {}!", node_info.node_id.fmt_short());
                     }
                 }
+                DiscoveryEvent::Expired { .. } => {}
             };
         }
     });

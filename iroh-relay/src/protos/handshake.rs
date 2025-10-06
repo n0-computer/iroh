@@ -26,6 +26,7 @@
 //! [RFC 5705]: https://datatracker.ietf.org/doc/html/rfc5705
 use bytes::{BufMut, Bytes, BytesMut};
 use data_encoding::BASE32HEX_NOPAD as HEX;
+#[cfg(not(wasm_browser))]
 use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
@@ -47,6 +48,7 @@ use crate::ExportKeyingMaterial;
 const DOMAIN_SEP_CHALLENGE: &str = "iroh-relay handshake v1 challenge signature";
 
 /// Domain separation label for [`KeyMaterialClientAuth`]'s use of [`ExportKeyingMaterial`]
+#[cfg(not(wasm_browser))]
 const DOMAIN_SEP_TLS_EXPORT_LABEL: &[u8] = b"iroh-relay handshake v1";
 
 /// Authentication message from the client.

@@ -35,7 +35,6 @@ pub(crate) struct Transports {
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
 
-    max_receive_segments: Arc<AtomicUsize>,
     poll_recv_counter: AtomicUsize,
 }
 
@@ -65,13 +64,11 @@ impl Transports {
     pub(crate) fn new(
         #[cfg(not(wasm_browser))] ip: Vec<IpTransport>,
         relay: Vec<RelayTransport>,
-        max_receive_segments: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
-            max_receive_segments,
             poll_recv_counter: Default::default(),
         }
     }
@@ -202,7 +199,6 @@ impl Transports {
 
     #[cfg(not(wasm_browser))]
     pub(crate) fn max_receive_segments(&self) -> usize {
-        use std::sync::atomic::Ordering::Relaxed;
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
         // that quinn creates. Having buffers slightly bigger than necessary
         // isn't terrible, and makes sure a single socket can read the maximum
@@ -211,9 +207,7 @@ impl Transports {
         // and it's impossible and unnecessary to be refactored that way.
 
         let res = self.ip.iter().map(|t| t.max_receive_segments()).max();
-        let segments = res.unwrap_or(1);
-        self.max_receive_segments.store(segments, Relaxed);
-        segments
+        res.unwrap_or(1)
     }
 
     #[cfg(wasm_browser)]
@@ -691,7 +685,7 @@ impl quinn::UdpSender for MagicSender {
                 // Initial packet we are sending, so we do not yet have an src address we
                 // need to respond from.
                 if let Some(src_ip) = quinn_transmit.src_ip {
-                    warn!(dst = ?mapped_addr, ?src_ip, dst_node = node_id.fmt_short(),
+                    warn!(dst = ?mapped_addr, ?src_ip, dst_node = %node_id.fmt_short(),
                         "oops, flub didn't think this would happen");
                 }
 
@@ -699,7 +693,7 @@ impl quinn::UdpSender for MagicSender {
                 let transmit = OwnedTransmit::from(quinn_transmit);
                 return match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
                     Ok(()) => {
-                        trace!(dst = ?mapped_addr, dst_node = node_id.fmt_short(), "sent transmit");
+                        trace!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(), "sent transmit");
                         Poll::Ready(Ok(()))
                     }
                     Err(err) => {
@@ -707,7 +701,7 @@ impl quinn::UdpSender for MagicSender {
                         // different transport.  Instead we let Quinn handle this as
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
-                        debug!(dst = ?mapped_addr, dst_node = node_id.fmt_short(),
+                        debug!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(),
                             "NodeStateActor inbox {err:#}, dropped transmit");
                         Poll::Ready(Ok(()))
                     }

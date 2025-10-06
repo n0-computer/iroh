@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.91.0"
+version = "0.92.0"
 edition = "2024"
 readme = "README.md"
 description = "p2p quic connections dialed by public key"
@@ -37,13 +37,13 @@ derive_more = { version = "2.0.1", features = [
 ] }
 ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
-iroh-base = { version = "0.91.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
-iroh-relay = { version = "0.91", path = "../iroh-relay", default-features = false }
+iroh-base = { version = "0.92.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-relay = { version = "0.92", path = "../iroh-relay", default-features = false }
 n0-future = "0.1.2"
-n0-snafu = "0.2.1"
+n0-snafu = "0.2.2"
 n0-watcher = "0.3"
 nested_enum_utils = "0.2.1"
-netwatch = { version = "0.8" }
+netwatch = { version = "0.9" }
 pin-project = "1"
 pkarr = { version = "3.7", default-features = false, features = [
     "relays",
@@ -103,13 +103,12 @@ tracing-subscriber = { version = "0.3", features = [
 indicatif = { version = "0.18", features = ["tokio"], optional = true }
 parse-size = { version = "=1.0.0", optional = true, features = ['std'] } # pinned version to avoid bumping msrv to 1.81
 
-
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.36.0" }
-portmapper = { version = "0.8", default-features = false }
+portmapper = { version = "0.9", default-features = false }
 quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "multipath-quinn-0.11.x", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",

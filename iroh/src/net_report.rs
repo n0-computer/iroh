@@ -390,7 +390,7 @@ impl Client {
         enough_relays: usize,
         do_full: bool,
     ) -> Vec<ProbeReport> {
-        use tracing::{Instrument, info_span};
+        use tracing::{Instrument, warn_span};
 
         debug!("spawning QAD probes");
 
@@ -444,7 +444,7 @@ impl Client {
                             PROBES_TIMEOUT,
                             run_probe_v4(relay_node, quic_client, dns_resolver),
                         ))
-                        .instrument(info_span!("QAD-IPv4", %relay_url)),
+                        .instrument(warn_span!("QAD-IPv4", %relay_url)),
                 );
             }
 
@@ -461,7 +461,7 @@ impl Client {
                             PROBES_TIMEOUT,
                             run_probe_v6(relay_node, quic_client, dns_resolver),
                         ))
-                        .instrument(info_span!("QAD-IPv6", %relay_url)),
+                        .instrument(warn_span!("QAD-IPv6", %relay_url)),
                 );
             }
         }

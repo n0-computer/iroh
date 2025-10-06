@@ -36,7 +36,9 @@ use crate::{NodeId, PublicKey, RelayUrl};
 /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
 /// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
 /// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
-#[derive(derive_more::Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    derive_more::Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub struct NodeAddr {
     /// The node's identifier.
     #[debug("{}", node_id.fmt_short())]

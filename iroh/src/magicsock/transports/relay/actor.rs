@@ -33,7 +33,7 @@ use std::{
     pin::{Pin, pin},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -149,8 +149,6 @@ struct ActiveRelayActor {
     /// last datagram sent to the relay, received datagrams will trigger QUIC ACKs which is
     /// sufficient to keep active connections open.
     inactive_timeout: Pin<Box<time::Sleep>>,
-    /// The last known value for the magic socket's `AsyncUdpSocket::max_receive_segments`.
-    max_receive_segments: Arc<AtomicUsize>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
@@ -195,7 +193,6 @@ struct ActiveRelayActorOptions {
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     connection_opts: RelayConnectionOptions,
-    max_receive_segments: Arc<AtomicUsize>,
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
 }
@@ -279,7 +276,6 @@ impl ActiveRelayActor {
             relay_datagrams_send,
             relay_datagrams_recv,
             connection_opts,
-            max_receive_segments,
             stop_token,
             metrics,
         } = opts;
@@ -293,7 +289,6 @@ impl ActiveRelayActor {
             relay_client_builder,
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
-            max_receive_segments,
             stop_token,
             metrics,
         }
@@ -684,27 +679,12 @@ impl ActiveRelayActor {
                     state.nodes_present.insert(remote_node_id);
                 }
 
-                let max_segments = self
-                    .max_receive_segments
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                // We might receive a datagram batch that's bigger than our magic socket's
-                // `AsyncUdpSocket::max_receive_segments`, if the other endpoint behind the relay
-                // has a higher `AsyncUdpSocket::max_transmit_segments` than we do.
-                // This happens e.g. when a linux machine (max transmit segments is usually 64)
-                // talks to a windows machine or a macos machine (max transmit segments is usually 1).
-                let re_batched = DatagramReBatcher {
-                    max_segments,
+                if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
+                    url: self.url.clone(),
+                    src: remote_node_id,
                     datagrams,
-                };
-                for datagrams in re_batched {
-                    if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
-                        url: self.url.clone(),
-                        src: remote_node_id,
-                        datagrams,
-                    }) {
-                        warn!("Dropping received relay packet: {err:#}");
-                        break; // No need to hot-loop in that case.
-                    }
+                }) {
+                    warn!("Dropping received relay packet: {err:#}");
                 }
             }
             RelayToClientMsg::NodeGone(node_id) => {
@@ -880,8 +860,6 @@ pub struct Config {
     pub proxy_url: Option<Url>,
     /// If the last net_report report, reports IPv6 to be available.
     pub ipv6_reported: Arc<AtomicBool>,
-    /// The last known return value of the magic socket's `AsyncUdpSocket::max_receive_segments` value
-    pub max_receive_segments: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub insecure_skip_relay_cert_verify: bool,
     pub metrics: Arc<MagicsockMetrics>,
@@ -1137,7 +1115,6 @@ impl RelayActor {
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
             connection_opts,
-            max_receive_segments: self.config.max_receive_segments.clone(),
             stop_token: self.cancel_token.child_token(),
             metrics: self.config.metrics.clone(),
         };
@@ -1249,34 +1226,13 @@ pub(crate) struct RelayRecvDatagram {
     pub(crate) datagrams: Datagrams,
 }
 
-/// Turns a datagrams batch into multiple datagram batches of maximum `max_segments` size.
-///
-/// If the given datagram isn't batched, it just returns that datagram once.
-struct DatagramReBatcher {
-    max_segments: usize,
-    datagrams: Datagrams,
-}
-
-impl Iterator for DatagramReBatcher {
-    type Item = Datagrams;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.datagrams.take_segments(self.max_segments)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
-        num::NonZeroU16,
-        sync::{
-            Arc,
-            atomic::{AtomicBool, AtomicUsize},
-        },
+        sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
 
-    use bytes::Bytes;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use iroh_relay::{PingTracker, protos::relay::Datagrams};
     use n0_snafu::{Error, Result, ResultExt};
@@ -1290,9 +1246,7 @@ mod tests {
         RELAY_INACTIVE_CLEANUP_TIME, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem,
         UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
-    use crate::{
-        dns::DnsResolver, magicsock::transports::relay::actor::DatagramReBatcher, test_utils,
-    };
+    use crate::{dns::DnsResolver, test_utils};
 
     /// Starts a new [`ActiveRelayActor`].
     #[allow(clippy::too_many_arguments)]
@@ -1319,7 +1273,6 @@ mod tests {
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 insecure_skip_cert_verify: true,
             },
-            max_receive_segments: Arc::new(AtomicUsize::new(1)),
             stop_token,
             metrics: Default::default(),
         };
@@ -1360,7 +1313,7 @@ mod tests {
                             src,
                             datagrams,
                         } = recv;
-                        info!(from = src.fmt_short(), "Received datagram");
+                        info!(from = %src.fmt_short(), "Received datagram");
                         let send = RelaySendItem {
                             remote_node: src,
                             url: relay_url.clone(),
@@ -1617,40 +1570,5 @@ mod tests {
 
         let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
         assert!(res.is_err(), "ping timeout should only happen once");
-    }
-
-    fn run_datagram_re_batcher(max_segments: usize, expected_lengths: Vec<usize>) {
-        let contents = Bytes::from_static(
-            b"Hello world! There's lots of stuff to talk about when you need a big buffer.",
-        );
-        let datagrams = Datagrams {
-            contents: contents.clone(),
-            ecn: None,
-            segment_size: NonZeroU16::new(10),
-        };
-
-        let re_batched_lengths = DatagramReBatcher {
-            datagrams,
-            max_segments,
-        }
-        .map(|d| d.contents.len())
-        .collect::<Vec<_>>();
-
-        assert_eq!(expected_lengths, re_batched_lengths);
-    }
-
-    #[test]
-    fn test_datagram_re_batcher_small_batches() {
-        run_datagram_re_batcher(3, vec![30, 30, 16]);
-    }
-
-    #[test]
-    fn test_datagram_re_batcher_batch_full() {
-        run_datagram_re_batcher(10, vec![76]);
-    }
-
-    #[test]
-    fn test_datagram_re_batcher_unbatch() {
-        run_datagram_re_batcher(1, vec![10, 10, 10, 10, 10, 10, 10, 6]);
     }
 }

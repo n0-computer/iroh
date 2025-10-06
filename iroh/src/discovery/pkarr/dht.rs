@@ -216,7 +216,7 @@ impl Builder {
                 }
                 if let Some(url) = &self.pkarr_relay {
                     builder
-                        .relays(&[url.clone()])
+                        .relays(std::slice::from_ref(url))
                         .map_err(|e| IntoDiscoveryError::from_err("pkarr", e))?;
                 }
                 builder

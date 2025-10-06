@@ -119,14 +119,43 @@ impl NodeState {
         self.conn_type.watch()
     }
 
+    pub(super) fn latency(&self) -> Option<Duration> {
+        match self.conn_type.get() {
+            ConnectionType::Direct(addr) => self
+                .udp_paths
+                .paths()
+                .get(&addr.into())
+                .and_then(|state| state.latency()),
+            ConnectionType::Relay(ref url) => self
+                .relay_url
+                .as_ref()
+                .filter(|(relay_url, _)| relay_url == url)
+                .and_then(|(_, state)| state.latency()),
+            ConnectionType::Mixed(addr, ref url) => {
+                let addr_latency = self
+                    .udp_paths
+                    .paths()
+                    .get(&addr.into())
+                    .and_then(|state| state.latency());
+                let relay_latency = self
+                    .relay_url
+                    .as_ref()
+                    .filter(|(relay_url, _)| relay_url == url)
+                    .and_then(|(_, state)| state.latency());
+                addr_latency.min(relay_latency)
+            }
+            ConnectionType::None => None,
+        }
+    }
+
     /// Returns info about this node.
     pub(super) fn info(&self, now: Instant) -> RemoteInfo {
         let conn_type = self.conn_type.get();
-        let latency = None;
+        let latency = self.latency();
 
         let addrs = self
             .udp_paths
-            .paths
+            .paths()
             .iter()
             .map(|(addr, path_state)| DirectAddrInfo {
                 addr: SocketAddr::from(*addr),
@@ -161,7 +190,7 @@ impl NodeState {
     ///
     /// If this is also the best address, it will be cleared as well.
     pub(super) fn remove_direct_addr(&mut self, ip_port: &IpPort, now: Instant, why: &'static str) {
-        let Some(state) = self.udp_paths.paths.remove(ip_port) else {
+        let Some(state) = self.udp_paths.access_mut(now).paths().remove(ip_port) else {
             return;
         };
 
@@ -169,18 +198,16 @@ impl NodeState {
             Some(last_alive) => debug!(%ip_port, ?last_alive, why, "pruning address"),
             None => debug!(%ip_port, last_seen=%"never", why, "pruning address"),
         }
-
-        self.udp_paths.update_to_best_addr(now);
     }
 
     /// Called when connectivity changes enough that we should question our earlier
     /// assumptions about which paths work.
     #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(super) fn note_connectivity_change(&mut self, now: Instant) {
-        for es in self.udp_paths.paths.values_mut() {
+        let mut guard = self.udp_paths.access_mut(now);
+        for es in guard.paths().values_mut() {
             es.clear();
         }
-        self.udp_paths.update_to_best_addr(now);
     }
 
     /// Checks if this `Endpoint` is currently actively being used.
@@ -205,12 +232,12 @@ impl NodeState {
 
     /// Get the direct addresses for this endpoint.
     pub(super) fn direct_addresses(&self) -> impl Iterator<Item = IpPort> + '_ {
-        self.udp_paths.paths.keys().copied()
+        self.udp_paths.paths().keys().copied()
     }
 
     #[cfg(test)]
     pub(super) fn direct_address_states(&self) -> impl Iterator<Item = (&IpPort, &PathState)> + '_ {
-        self.udp_paths.paths.iter()
+        self.udp_paths.paths().iter()
     }
 
     pub(super) fn last_used(&self) -> Option<Instant> {
@@ -344,8 +371,8 @@ impl NodeStateActor {
             .instrument(info_span!(
                 parent: None,
                 "NodeStateActor",
-                me = me.fmt_short(),
-                remote_node = node_id.fmt_short(),
+                me = %me.fmt_short(),
+                remote_node = %node_id.fmt_short(),
             )),
         );
         NodeStateHandle {
@@ -457,7 +484,7 @@ impl NodeStateActor {
                 event!(
                     target: "iroh::_events::call-me-maybe::recv",
                     Level::DEBUG,
-                    remote_node = self.node_id.fmt_short(),
+                    remote_node = %self.node_id.fmt_short(),
                     addrs = ?msg.my_numbers,
                 );
                 let now = Instant::now();
@@ -472,7 +499,7 @@ impl NodeStateActor {
                     event!(
                         target: "iroh::_events::ping::sent",
                         Level::DEBUG,
-                        remote_node = self.node_id.fmt_short(),
+                        remote_node = %self.node_id.fmt_short(),
                         ?dst,
                     );
                     self.send_disco_message(dst, disco::Message::Ping(ping))
@@ -487,7 +514,7 @@ impl NodeStateActor {
                 event!(
                     target: "iroh::_events::ping::recv",
                     Level::DEBUG,
-                    remote_node = self.node_id.fmt_short(),
+                    remote_node = %self.node_id.fmt_short(),
                     ?src,
                     txn = ?ping.tx_id,
                 );
@@ -498,7 +525,7 @@ impl NodeStateActor {
                 event!(
                     target: "iroh::_events::pong::sent",
                     Level::DEBUG,
-                    remote_node = self.node_id.fmt_short(),
+                    remote_node = %self.node_id.fmt_short(),
                     dst = ?src,
                     txn = ?pong.tx_id,
                 );
@@ -525,7 +552,7 @@ impl NodeStateActor {
                 event!(
                     target: "iroh::_events::pong::recv",
                     Level::DEBUG,
-                    remote_node = self.node_id.fmt_short(),
+                    remote_node = %self.node_id.fmt_short(),
                     ?src,
                     txn = ?pong.tx_id,
                 );
@@ -535,6 +562,27 @@ impl NodeStateActor {
             NodeStateMessage::CanSend(tx) => {
                 let can_send = !self.paths.is_empty();
                 tx.send(can_send).ok();
+            }
+            NodeStateMessage::Latency(tx) => {
+                let rtt = self.selected_path.as_ref().and_then(|addr| {
+                    for (conn_id, path_id) in self
+                        .path_id_map
+                        .iter()
+                        .filter_map(|(key, path)| (path == addr).then_some(key))
+                    {
+                        if let Some(conn) = self
+                            .connections
+                            .get(conn_id)
+                            .and_then(|handle| handle.upgrade())
+                        {
+                            if let Some(path_stats) = conn.stats().paths.get(path_id) {
+                                return Some(path_stats.rtt);
+                            }
+                        }
+                    }
+                    None
+                });
+                tx.send(rtt).ok();
             }
         }
         Ok(())
@@ -690,7 +738,7 @@ impl NodeStateActor {
         event!(
             target: "iroh::_events::call-me-maybe::sent",
             Level::DEBUG,
-            remote_node = &self.node_id.fmt_short(),
+            remote_node = %self.node_id.fmt_short(),
             dst = ?relay_addr,
             my_numbers = ?msg.my_numbers,
         );
@@ -705,7 +753,7 @@ impl NodeStateActor {
     }
 
     /// Sends a DISCO message to *this* remote node.
-    #[instrument(skip(self), fields(dst_node = self.node_id.fmt_short()))]
+    #[instrument(skip(self), fields(dst_node = %self.node_id.fmt_short()))]
     async fn send_disco_message(&self, dst: transports::Addr, msg: disco::Message) {
         let pkt = self.disco.encode_and_seal(self.node_id, &msg);
         let transmit = transports::OwnedTransmit {
@@ -1052,6 +1100,10 @@ pub(crate) enum NodeStateMessage {
     /// This does not mean there is any guarantee that the remote endpoint is reachable.
     #[debug("CanSend(onseshot::Sender<bool>)")]
     CanSend(oneshot::Sender<bool>),
+    /// Returns the current latency to the remote endpoint.
+    ///
+    /// TODO: This is more of a placeholder message currently.  Check MagicSock::latency.
+    Latency(oneshot::Sender<Option<Duration>>),
 }
 
 /// A handle to a [`NodeStateActor`].
@@ -1159,10 +1211,7 @@ pub struct DirectAddrInfo {
     ///
     /// The elapsed time since *any* confirmation of the path's existence was received is
     /// returned.  If the remote node moved networks and no longer has this path, this could
-    /// be a long duration.  If the path was added via [`Endpoint::add_node_addr`] or some
-    /// node discovery the path may never have been known to exist.
-    ///
-    /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
+    /// be a long duration.
     pub last_alive: Option<Duration>,
     /// A [`HashMap`] of [`Source`]s to [`Duration`]s.
     ///
@@ -1210,7 +1259,7 @@ impl From<RelayUrlInfo> for RelayUrl {
 ///
 /// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RemoteInfo {
+pub(crate) struct RemoteInfo {
     /// The globally unique identifier for this node.
     pub node_id: NodeId,
     /// Relay server information, if available.
@@ -1235,7 +1284,7 @@ pub struct RemoteInfo {
 impl RemoteInfo {
     /// Get the duration since the last activity we received from this endpoint
     /// on any of its direct addresses.
-    pub fn last_received(&self) -> Option<Duration> {
+    pub(crate) fn last_received(&self) -> Option<Duration> {
         self.addrs
             .iter()
             .filter_map(|addr| addr.last_control.map(|x| x.0).min(addr.last_payload))
@@ -1246,29 +1295,8 @@ impl RemoteInfo {
     ///
     /// Note that this does not provide any guarantees of whether any network path is
     /// usable.
-    pub fn has_send_address(&self) -> bool {
+    pub(crate) fn has_send_address(&self) -> bool {
         self.relay_url.is_some() || !self.addrs.is_empty()
-    }
-
-    /// Returns a deduplicated list of [`Source`]s merged from all address in the [`RemoteInfo`].
-    ///
-    /// Deduplication is on the (`Source`, `Duration`) tuple, so you will get multiple [`Source`]s
-    /// for each `Source` variant, if different addresses were discovered from the same [`Source`]
-    /// at different times.
-    ///
-    /// The list is sorted from least to most recent [`Source`].
-    pub fn sources(&self) -> Vec<(Source, Duration)> {
-        let mut sources = vec![];
-        for addr in &self.addrs {
-            for source in &addr.sources {
-                let source = (source.0.clone(), *source.1);
-                if !sources.contains(&source) {
-                    sources.push(source)
-                }
-            }
-        }
-        sources.sort_by(|a, b| b.1.cmp(&a.1));
-        sources
     }
 }
 

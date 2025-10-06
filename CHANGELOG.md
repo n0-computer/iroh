@@ -2,7 +2,69 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.91.0](https://github.com/n0-computer/iroh/compare/v0.90.0..0.91.0) - 2025-07-30
+## [0.92.0](https://github.com/n0-computer/iroh/compare/v0.91.2..0.92.0) - 2025-09-18
+
+### ⛰️  Features
+
+- *(iroh)* [**breaking**] Add passive mode for mdns discovery ([#3401](https://github.com/n0-computer/iroh/issues/3401)) ([#3403](https://github.com/n0-computer/iroh/issues/3403)) - ([c5a623c](https://github.com/n0-computer/iroh/commit/c5a623c102490a92df0f9ece73f0b0c94ed68b2d))
+- *(iroh)* [**breaking**] Emit mDNS expiry events ([#3409](https://github.com/n0-computer/iroh/issues/3409)) - ([150b841](https://github.com/n0-computer/iroh/commit/150b8411435c5f49c5242ae3018d7be15f263ba6))
+- *(iroh-base)* Impl Deref for PublicKey ([#3438](https://github.com/n0-computer/iroh/issues/3438)) - ([fa1e946](https://github.com/n0-computer/iroh/commit/fa1e946c528d31ff305c675401e82747367ac5bd))
+- Allow configuring the max number of TLS tickets ([#3442](https://github.com/n0-computer/iroh/issues/3442)) - ([d6f4fa9](https://github.com/n0-computer/iroh/commit/d6f4fa98ab60512830cb533d6f6f63dd80093ef8))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Add jitter to dns retry calls ([#3447](https://github.com/n0-computer/iroh/issues/3447)) - ([f3da758](https://github.com/n0-computer/iroh/commit/f3da7586b6d1c9a625ff3923ddff7c7ebd843ef1))
+
+### 🚜 Refactor
+
+- *(iroh)* Re-batch datagrams inside `RelayTransport` instead of the `ActiveRelayActor` ([#3421](https://github.com/n0-computer/iroh/issues/3421)) - ([b791123](https://github.com/n0-computer/iroh/commit/b791123fc6657167b02aa37e489321f3abf35ef9))
+
+### 📚 Documentation
+
+- *(iroh-relay)* Remove incorrect help text about default config file creation ([#3258](https://github.com/n0-computer/iroh/issues/3258)) ([#3446](https://github.com/n0-computer/iroh/issues/3446)) - ([4583b12](https://github.com/n0-computer/iroh/commit/4583b1280b8f5ab9d264940102382956ddbbb1a8))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(github)* Update issue template ([#3450](https://github.com/n0-computer/iroh/issues/3450)) - ([5e185bd](https://github.com/n0-computer/iroh/commit/5e185bdd53086f2ee916fecfedf1ce7e9ccf77eb))
+- Update some dependencies ([#3453](https://github.com/n0-computer/iroh/issues/3453)) - ([048001d](https://github.com/n0-computer/iroh/commit/048001d0362a6465101d66654a2e797e74f782ca))
+- Make net reports serde ([#3454](https://github.com/n0-computer/iroh/issues/3454)) - ([e8eb1dd](https://github.com/n0-computer/iroh/commit/e8eb1dd9d9008874b0ad48c3d05f5ee8cb8ec2e3))
+- Add `test-utils` cfg for `insecure_cert` call in the transfer example ([#3458](https://github.com/n0-computer/iroh/issues/3458)) - ([c81fe21](https://github.com/n0-computer/iroh/commit/c81fe21538b976d7bb3f900cfb0c452d55c77631))
+
+### Cargo
+
+- Add aarch64-linux-gnu-gcc linker ([#3441](https://github.com/n0-computer/iroh/issues/3441)) - ([fb37550](https://github.com/n0-computer/iroh/commit/fb37550c859cc87bb03256fbe1b3071b9c21b608))
+
+## [0.91.2](https://github.com/n0-computer/iroh/compare/v0.91.1..v0.91.2) - 2025-08-18
+
+### ⛰️  Features
+
+- *(iroh-base)* Derive Hash for NodeAddr ([#3428](https://github.com/n0-computer/iroh/issues/3428)) - ([2308388](https://github.com/n0-computer/iroh/commit/2308388da774ea0c796e68ef920c586230704dbe))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Fix very slow initial connection establishment ([#3434](https://github.com/n0-computer/iroh/issues/3434)) - ([59d1432](https://github.com/n0-computer/iroh/commit/59d1432a10e6c6414f355947aecd0d8927b72b6c))
+- *(iroh-relay)* Don't double-count connection accepts ([#3436](https://github.com/n0-computer/iroh/issues/3436)) - ([8c558a1](https://github.com/n0-computer/iroh/commit/8c558a1c2e6d53ca0a20b0c2a4d78efe3beab45a))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([d9dbbe6](https://github.com/n0-computer/iroh/commit/d9dbbe6aaff3f06d21de1951110b4741af8eda3c))
+
+## [0.91.1](https://github.com/n0-computer/iroh/compare/v0.91.0..v0.91.1) - 2025-08-04
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Always update the best addr after changes ([#3422](https://github.com/n0-computer/iroh/issues/3422)) - ([36842d5](https://github.com/n0-computer/iroh/commit/36842d5c601c66fd1c06a17b4195170020d0c05d))
+- *(iroh)* Use valid available IPv6 address, ignoring `have_ipv6` ([#3419](https://github.com/n0-computer/iroh/issues/3419)) - ([fe7240d](https://github.com/n0-computer/iroh/commit/fe7240dd971b791c39354cd9621b7d23edaf5b7b))
+
+### 📚 Documentation
+
+- Grammar nitpick ([#3383](https://github.com/n0-computer/iroh/issues/3383)) - ([026dffc](https://github.com/n0-computer/iroh/commit/026dffc6cc5229411599188bd7d6e24df7dae9d3))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([e30c788](https://github.com/n0-computer/iroh/commit/e30c788f968265bd9d181e5ca92d02eb61ef3d0d))
+
+## [0.91.0](https://github.com/n0-computer/iroh/compare/v0.90.0..v0.91.0) - 2025-07-30
 
 ### ⛰️  Features
 
@@ -40,6 +102,7 @@ All notable changes to iroh will be documented in this file.
 
 - *(iroh)* Update `n0-watcher` ([#3405](https://github.com/n0-computer/iroh/issues/3405)) - ([2ce6a73](https://github.com/n0-computer/iroh/commit/2ce6a73412ec8a0343696a11fa531601bc5a76a1))
 - *(iroh)* Update portmapper ([#3410](https://github.com/n0-computer/iroh/issues/3410)) - ([ee08341](https://github.com/n0-computer/iroh/commit/ee08341b3e621f3ff311f7d77cc6d73e49c70bd7))
+- Release - ([36ddb5b](https://github.com/n0-computer/iroh/commit/36ddb5bfc5805085efab667630721ea755d96654))
 
 ## [0.90.0](https://github.com/n0-computer/iroh/compare/v0.35.0..v0.90.0) - 2025-06-26
 

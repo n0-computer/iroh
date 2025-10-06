@@ -40,6 +40,8 @@ const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 ///
 /// --relay-only needs the `test-utils` feature
 ///
+/// --dev needs the `test-utils` feature
+///
 /// --mdns needs the `discovery-local-network` feature
 ///
 /// To enable all features, run the example with --all-features:
@@ -128,7 +130,6 @@ struct EndpointArgs {
     /// Do not resolve node info via DNS.
     #[clap(long)]
     no_dns_resolve: bool,
-    #[cfg(feature = "discovery-local-network")]
     #[clap(long)]
     /// Enable mDNS discovery.
     mdns: bool,
@@ -192,8 +193,18 @@ impl EndpointArgs {
             }
         };
         builder = builder.secret_key(secret_key);
+
         if Env::Dev == self.env {
-            builder = builder.insecure_skip_relay_cert_verify(true);
+            #[cfg(feature = "test-utils")]
+            {
+                builder = builder.insecure_skip_relay_cert_verify(true);
+            }
+            #[cfg(not(feature = "test-utils"))]
+            {
+                snafu::whatever!(
+                    "Must have the `test-utils` feature enabled when using the `--env=dev` flag"
+                )
+            }
         }
 
         let relay_mode = if self.no_relay {
@@ -219,14 +230,30 @@ impl EndpointArgs {
             builder = builder.add_discovery(DnsDiscovery::builder(domain));
         }
 
-        #[cfg(feature = "discovery-local-network")]
         if self.mdns {
-            builder = builder.discovery_local_network();
+            #[cfg(feature = "discovery-local-network")]
+            {
+                builder = builder.discovery_local_network();
+            }
+            #[cfg(not(feature = "discovery-local-network"))]
+            {
+                snafu::whatever!(
+                    "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
+                );
+            }
         }
 
-        #[cfg(feature = "test-utils")]
         if self.relay_only {
-            builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
+            #[cfg(feature = "test-utils")]
+            {
+                builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
+            }
+            #[cfg(not(feature = "test-utils"))]
+            {
+                snafu::whatever!(
+                    "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
+                );
+            }
         }
 
         if let Some(host) = self.dns_server {
