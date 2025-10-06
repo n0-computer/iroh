@@ -1002,7 +1002,18 @@ impl Endpoint {
         tokio::join!(watch1.initialized(), watch2.initialized());
     }
 
-    /// TODO: document me
+    /// A convenience method that waits for the endpoint to be considered "online".
+    ///
+    /// This currently means at least one relay server was connected.
+    /// Event if no relays are configured, this will still wait for a relay connection.
+    ///
+    /// Once this has been resolved once, this will always immediately resolve.
+    ///
+    /// This has no timeout, so if that is needed, you need to wrap it in a timeout.
+    ///
+    /// To understand if the endpoint has gone back "offline",
+    /// you must use the [`Endpoint::watch_node_addr`] method, to
+    /// get information on the current relay and direct address information.
     #[cfg(wasm_browser)]
     pub async fn online(&self) {
         self.msock.home_relay().initialized().await;
