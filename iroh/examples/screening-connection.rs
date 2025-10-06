@@ -13,7 +13,7 @@ use std::sync::{
 };
 
 use iroh::{
-    Endpoint, NodeAddr, Watcher,
+    Endpoint, NodeAddr,
     endpoint::{Connecting, Connection},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
@@ -28,7 +28,9 @@ const ALPN: &[u8] = b"iroh-example/screening-connection/0";
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = start_accept_side().await?;
-    let node_addr = router.endpoint().node_addr().initialized().await;
+    // Wait for the endpoint to be reachable
+    router.endpoint().online().await;
+    let node_addr = router.endpoint().node_addr();
 
     // call connect three times. connection index 1 will be an odd number, and rejected.
     connect_side(&node_addr).await?;
