@@ -643,7 +643,7 @@ mod tests {
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher as _;
     use quinn::{IdleTimeout, TransportConfig};
-    use rand::Rng;
+    use rand::{Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -707,7 +707,7 @@ mod tests {
         ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             let addr_info = if self.resolve_wrong {
                 let ts = system_time_now() - 100_000;
-                let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
+                let port: u16 = rand::rng().random_range(10_000..20_000);
                 // "240.0.0.0/4" is reserved and unreachable
                 let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
                 let data = NodeData::new(None, BTreeSet::from([addr]));
@@ -756,14 +756,16 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_discovery_simple_shared() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
@@ -779,15 +781,16 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_discovery_simple_shared_with_arc() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             let disco = Arc::new(disco);
             new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             let disco = Arc::new(disco);
             new_endpoint(secret, disco).await
@@ -803,14 +806,15 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_discovery_combined_with_empty() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_discovery(secret.public());
             let disco = ConcurrentDiscovery::empty();
@@ -834,14 +838,15 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_discovery_combined_with_empty_and_wrong() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_lying_discovery(secret.public());
             let disco3 = disco_shared.create_discovery(secret.public());
@@ -861,14 +866,16 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_discovery_combined_wrong_only() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco1 = disco_shared.create_lying_discovery(secret.public());
             let disco = ConcurrentDiscovery::from_services(vec![Box::new(disco1)]);
             new_endpoint(secret, disco).await
@@ -895,14 +902,16 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_discovery_with_wrong_existing_addr() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
@@ -967,6 +976,7 @@ mod test_dns_pkarr {
     use iroh_relay::{RelayMap, node_info::UserData};
     use n0_future::time::Duration;
     use n0_snafu::{Error, Result, ResultExt};
+    use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -985,13 +995,14 @@ mod test_dns_pkarr {
     #[tokio::test]
     #[traced_test]
     async fn dns_resolve() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let origin = "testdns.example".to_string();
         let state = State::new(origin.clone());
         let (nameserver, _dns_drop_guard) = run_dns_server(state.clone())
             .await
             .context("Running DNS server")?;
 
-        let secret_key = SecretKey::generate(rand::thread_rng());
+        let secret_key = SecretKey::generate(&mut rng);
         let node_info = NodeInfo::new(secret_key.public())
             .with_relay_url(Some("https://relay.example".parse().unwrap()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
@@ -1013,12 +1024,13 @@ mod test_dns_pkarr {
     #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
         let origin = "testdns.example".to_string();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
             .await
             .context("DnsPkarrServer")?;
 
-        let secret_key = SecretKey::generate(rand::thread_rng());
+        let secret_key = SecretKey::generate(&mut rng);
         let node_id = secret_key.public();
 
         let relay_url = Some("https://relay.example".parse().unwrap());
@@ -1055,11 +1067,13 @@ mod test_dns_pkarr {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_discover() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
-        let (ep2, _guard2) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
+        let (ep1, _guard1) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep2, _guard2) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
@@ -1072,11 +1086,12 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_discovery(
+    async fn ep_with_discovery<R: CryptoRng + ?Sized>(
+        rng: &mut R,
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
-        let secret_key = SecretKey::generate(rand::thread_rng());
+        let secret_key = SecretKey::generate(rng);
         let ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)

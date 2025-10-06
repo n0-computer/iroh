@@ -16,7 +16,7 @@ const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 async fn main() -> n0_snafu::Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nlisten example!\n");
-    let secret_key = SecretKey::generate(rand::rngs::OsRng);
+    let secret_key = SecretKey::generate(&mut rand::rng());
     println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.

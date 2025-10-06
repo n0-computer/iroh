@@ -21,12 +21,12 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
-aead = { version = "0.5.2", features = ["bytes", "std"] }
+aead = { version = "=0.6.0-rc.2", features = ["bytes"] }
 backon = { version = "1.4" }
 bytes = "1.7"
-crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
+crypto_box = { version = "0.10.0-pre.0", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
-der = { version = "0.7", features = ["alloc", "derive"] }
+der = { version = "0.8.0-rc.9", features = ["alloc", "derive"] }
 derive_more = { version = "2.0.1", features = [
     "debug",
     "display",
@@ -35,7 +35,7 @@ derive_more = { version = "2.0.1", features = [
     "deref",
     "from_str"
 ] }
-ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
+ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
 iroh-base = { version = "0.92.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.92", path = "../iroh-relay", default-features = false }
@@ -45,13 +45,11 @@ n0-watcher = "0.3"
 nested_enum_utils = "0.2.1"
 netwatch = { version = "0.9" }
 pin-project = "1"
-pkarr = { version = "3.7", default-features = false, features = [
-    "relays",
-] }
+pkarr = { version = "5", default-features = false, features = ["relays"] }
 quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.7" }
-rand = "0.8"
+rand = "0.9.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "stream",
@@ -81,8 +79,7 @@ z32 = "1.0.3"
 # fix minimal versions
 # for n0-futures
 futures-buffered = "0.2.11"
-# for ed25519-dalek
-spki = { version = "0.7.3", features = ["std"] }
+pkcs8 = "0.11.0-rc.7"
 
 # metrics
 iroh-metrics = { version = "0.35", default-features = false }
@@ -135,13 +132,14 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 console_error_panic_hook = "0.1"
 postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand_chacha = "0.9"
 
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 axum = { version = "0.8" }
 clap = { version = "4", features = ["derive"] }
 pretty_assertions = "1.4"
-rand_chacha = "0.3.1"
+rand_chacha = "0.9"
 tokio = { version = "1", features = [
     "io-util",
     "sync",
