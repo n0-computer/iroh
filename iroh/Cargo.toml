@@ -24,7 +24,7 @@ workspace = true
 aead = { version = "=0.6.0-rc.2", features = ["bytes"] }
 backon = { version = "1.4" }
 bytes = "1.7"
-crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
+crypto_box = { version = "0.10.0-pre.0", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
 der = { version = "0.8.0-rc.9", features = ["alloc", "derive"] }
 derive_more = { version = "2.0.1", features = [
@@ -45,9 +45,7 @@ n0-watcher = "0.3"
 nested_enum_utils = "0.2.1"
 netwatch = { version = "0.9" }
 pin-project = "1"
-pkarr = { version = "4", default-features = false, features = [
-    "relays",
-] }
+pkarr = { version = "5", default-features = false, features = ["relays"] }
 quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.7" }

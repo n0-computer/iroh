@@ -781,15 +781,16 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_discovery_simple_shared_with_arc() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             let disco = Arc::new(disco);
             new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
-            let secret = SecretKey::generate(rand::thread_rng());
+            let secret = SecretKey::generate(&mut rng);
             let disco = disco_shared.create_discovery(secret.public());
             let disco = Arc::new(disco);
             new_endpoint(secret, disco).await

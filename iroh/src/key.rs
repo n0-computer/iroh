@@ -46,7 +46,7 @@ impl Debug for SharedSecret {
 
 impl SharedSecret {
     pub fn new(this: &crypto_box::SecretKey, other: &crypto_box::PublicKey) -> Self {
-        SharedSecret(crypto_box::ChaChaBox::from_clamped(other, this))
+        SharedSecret(crypto_box::ChaChaBox::new_from_clamped(other, this))
     }
 
     /// Seals the provided cleartext.

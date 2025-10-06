@@ -32,7 +32,7 @@ iroh-metrics = { version = "0.35", features = ["service"] }
 lru = "0.13"
 n0-future = "0.1.2"
 n0-snafu = "0.2.2"
-pkarr = { version = "4", features = ["relays", "dht"], default-features = false }
+pkarr = { version = "5", features = ["relays", "dht"], default-features = false }
 rcgen = "0.13"
 redb = "2.6.3"
 regex = "1.10.3"

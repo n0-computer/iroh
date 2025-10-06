@@ -3051,7 +3051,7 @@ mod tests {
     #[traced_test]
     async fn test_direct_addresses() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let ms = Handle::new(Default::default()).await.unwrap();
+        let ms = Handle::new(default_options(&mut rng)).await.unwrap();
 
         // See if we can get endpoints.
         let eps0 = ms.direct_addresses().initialized().await;

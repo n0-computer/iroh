@@ -2216,25 +2216,17 @@ fn is_cgi() -> bool {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
-    use iroh_base::{NodeAddr, NodeId, SecretKey};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
+    use iroh_base::{NodeAddr, SecretKey};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
-    use quinn::ConnectionError;
     use rand::SeedableRng;
-    use tracing::{Instrument, error_span, info, info_span};
+    use tracing::{Instrument, info, info_span};
     use tracing_test::traced_test;
 
     use super::Endpoint;
-    use crate::{
-        RelayMode,
-        discovery::static_provider::StaticProvider,
-        endpoint::{ConnectOptions, Connection, ConnectionType},
-        protocol::{AcceptError, ProtocolHandler, Router},
-        test_utils::{run_relay_server, run_relay_server_with},
-    };
+    use crate::{RelayMode, test_utils::run_relay_server};
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
