@@ -39,6 +39,8 @@ use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use node_map::NodeStateMessage;
+#[cfg(test)]
+use node_map::RemoteInfo;
 use quinn::ServerConfig;
 use rand::Rng;
 use snafu::{ResultExt, Snafu};
@@ -62,7 +64,6 @@ use crate::{
         NodeData, UserData,
     },
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
-    magicsock::node_map::RemoteInfo,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -334,11 +335,6 @@ impl MagicSock {
     #[cfg(test)]
     pub(crate) fn list_remote_infos(&self) -> Vec<RemoteInfo> {
         self.node_map.list_remote_infos(Instant::now())
-    }
-
-    /// Return the [`RemoteInfo`] for a single node in the node map.
-    pub(crate) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.node_map.remote_info(node_id)
     }
 
     /// Returns a [`Watcher`] for this socket's direct addresses.

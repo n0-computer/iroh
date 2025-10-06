@@ -92,12 +92,6 @@ impl From<SocketAddr> for MultipathMappedAddr {
     }
 }
 
-impl MultipathMappedAddr {
-    pub(crate) fn is_ip(&self) -> bool {
-        matches!(self, Self::Ip(_))
-    }
-}
-
 /// An address used to address a node on any or all paths.
 ///
 /// This is only used for initially connecting to a remote node.  We instruct Quinn to send

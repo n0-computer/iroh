@@ -1290,14 +1290,6 @@ impl RemoteInfo {
             .filter_map(|addr| addr.last_control.map(|x| x.0).min(addr.last_payload))
             .min()
     }
-
-    /// Whether there is a possible known network path to the remote node.
-    ///
-    /// Note that this does not provide any guarantees of whether any network path is
-    /// usable.
-    pub(crate) fn has_send_address(&self) -> bool {
-        self.relay_url.is_some() || !self.addrs.is_empty()
-    }
 }
 
 /// The type of connection we have to the endpoint.

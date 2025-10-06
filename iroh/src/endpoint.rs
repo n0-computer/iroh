@@ -1280,29 +1280,6 @@ impl Endpoint {
 
     // # Remaining private methods
 
-    /// Checks if the given `NodeId` needs discovery.
-    pub(crate) fn needs_discovery(&self, node_id: NodeId, max_age: Duration) -> bool {
-        match self.msock.remote_info(node_id) {
-            // No info means no path to node -> start discovery.
-            None => true,
-            Some(info) => {
-                match (
-                    info.last_received(),
-                    info.relay_url.as_ref().and_then(|r| r.last_alive),
-                ) {
-                    // No path to node -> start discovery.
-                    (None, None) => true,
-                    // If we haven't received on direct addresses or the relay for MAX_AGE,
-                    // start discovery.
-                    (Some(elapsed), Some(elapsed_relay)) => {
-                        elapsed > max_age && elapsed_relay > max_age
-                    }
-                    (Some(elapsed), _) | (_, Some(elapsed)) => elapsed > max_age,
-                }
-            }
-        }
-    }
-
     /// Return the quic mapped address for this `node_id` and possibly start discovery
     /// services if discovery is enabled on this magic endpoint.
     ///

@@ -221,11 +221,6 @@ impl NodeMap {
         self.inner.lock().expect("poisoned").conn_type(node_id)
     }
 
-    /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
-    pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.inner.lock().expect("poisoned").remote_info(node_id)
-    }
-
     /// Returns the sender for the [`NodeStateActor`].
     ///
     /// If needed a new actor is started on demand.
