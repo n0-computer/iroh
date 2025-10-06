@@ -79,7 +79,7 @@ nested_enum_utils = "0.2.0"
 clap = { version = "4", features = ["derive"], optional = true }
 dashmap = { version = "6.1.0", optional = true }
 ahash = { version = "0.8.11", optional = true } # minimal version fix
-governor = { version = "0.8.0", optional = true }
+governor = { version = "0.10.1", optional = true }
 hickory-proto = { version = "0.25.1", default-features = false, optional = true }
 rcgen = { version = "0.14", optional = true }
 regex = { version = "1.7.1", optional = true }
