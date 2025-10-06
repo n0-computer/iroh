@@ -524,30 +524,19 @@ impl DiscoveryTask {
     /// If `delay` is set, the [`DiscoveryTask`] will first wait for `delay` and then check again
     /// if we recently received messages from remote endpoint. If true, the task will abort.
     /// Otherwise, or if no `delay` is set, the discovery will be started.
-    pub(super) fn maybe_start_after_delay(
+    pub(super) fn start_after_delay(
         ep: &Endpoint,
         node_id: NodeId,
-        delay: Option<Duration>,
+        delay: Duration,
     ) -> Result<Option<Self>, DiscoveryError> {
         // If discovery is not needed, don't even spawn a task.
-        if !ep.needs_discovery(node_id, MAX_AGE) {
-            return Ok(None);
-        }
         ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.node_id();
         let task = task::spawn(
             async move {
-                // If delay is set, wait and recheck if discovery is needed. If not, early-exit.
-                if let Some(delay) = delay {
-                    time::sleep(delay).await;
-                    if !ep.needs_discovery(node_id, MAX_AGE) {
-                        debug!("no discovery needed, abort");
-                        on_first_tx.send(Ok(())).ok();
-                        return;
-                    }
-                }
+                time::sleep(delay).await;
                 Self::run(ep, node_id, on_first_tx).await
             }
             .instrument(

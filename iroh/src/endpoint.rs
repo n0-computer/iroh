@@ -73,10 +73,10 @@ pub use super::magicsock::{
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///
-/// When a connection is attempted with a [`NodeAddr`] containing direct addresses the
-/// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
-/// is still no connection the configured [`crate::discovery::Discovery`] will be used however.
-const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
+/// When a connection is attempted and we have some addressing info for the remote, we
+/// assume that one of these probably works.  If after this delay there is still no
+/// connection, discovery will be started.
+const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(150);
 
 /// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
@@ -1331,17 +1331,12 @@ impl Endpoint {
         };
         match addr {
             Some(maddr) => {
-                // We have some way of dialing this node, but that doesn't actually mean
-                // we can actually connect to any of these addresses.
-                // Therefore, we will invoke the discovery service if we haven't received from the
-                // endpoint on any of the existing paths recently.
-                // If the user provided addresses in this connect call, we will add a delay
-                // followed by a recheck before starting the discovery, to give the magicsocket a
-                // chance to test the newly provided addresses.
-                let delay = (!node_addr.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
-                let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
-                    .ok()
-                    .flatten();
+                // We have some way of dialing this node, but that doesn't mean we can
+                // connect to any of these addresses.  Start discovery after a small delay.
+                let discovery =
+                    DiscoveryTask::start_after_delay(self, node_id, DISCOVERY_WAIT_PERIOD)
+                        .ok()
+                        .flatten();
                 Ok((maddr, discovery))
             }
 
