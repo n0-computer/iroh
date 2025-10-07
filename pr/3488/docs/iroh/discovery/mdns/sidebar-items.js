@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["NAME"],"struct":["MdnsDiscovery","MdnsDiscoveryBuilder"]};
+window.SIDEBAR_ITEMS = {"constant":["NAME"],"enum":["DiscoveryEvent"],"struct":["MdnsDiscovery","MdnsDiscoveryBuilder"]};
