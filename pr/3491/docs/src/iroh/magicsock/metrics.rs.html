@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/magicsock/metrics.rs`."><title>metrics.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-6c3ea77c.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.87.0-nightly (f280acf4c 2025-02-19)" data-channel="nightly" data-search-js="search-f7327375.js" data-settings-js="settings-6dad6058.js" ><script src="../../../static.files/storage-3a5871a4.js"></script><script defer src="../../../static.files/src-script-b8d3f215.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5332ae0c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/magicsock/</div>metrics.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>iroh_metrics::{Counter, Histogram, MetricsGroup};
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/magicsock/metrics.rs`."><title>metrics.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-6c3ea77c.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.87.0-nightly (f280acf4c 2025-02-19)" data-channel="nightly" data-search-js="search-f7327375.js" data-settings-js="settings-6dad6058.js" ><script src="../../../static.files/storage-3a5871a4.js"></script><script defer src="../../../static.files/src-script-b8d3f215.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5332ae0c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/magicsock/</div>metrics.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-2"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>iroh_metrics::{Counter, Histogram, MetricsGroup};
 <a href=#2 id=2 data-nosnippet>2</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#3 id=3 data-nosnippet>3</a>
 <a href=#4 id=4 data-nosnippet>4</a><span class="doccomment">/// Enum of metrics for the module
@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a></span><span class="attr">#[allow(missing_docs)]
 <a href=#7 id=7 data-nosnippet>7</a>#[derive(Debug, Serialize, Deserialize, MetricsGroup)]
 <a href=#8 id=8 data-nosnippet>8</a>#[non_exhaustive]
-<a href=#9 id=9 data-nosnippet>9</a>#[metrics(name = <span class="string">"magicsock"</span>)]
+<a href=#9 id=9 data-nosnippet>9</a>#[metrics(name = <span class="string">"magicsock"</span>, default)]
 <a href=#10 id=10 data-nosnippet>10</a></span><span class="kw">pub struct </span>Metrics {
 <a href=#11 id=11 data-nosnippet>11</a>    <span class="kw">pub </span>update_direct_addrs: Counter,
 <a href=#12 id=12 data-nosnippet>12</a>
@@ -88,77 +88,12 @@
 <a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// Number of consecutive failure resets (path recovered).
 <a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub </span>path_failure_resets: Counter,
 <a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Histogram of packet loss rates (0.0-1.0) observed on UDP paths.
-<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">pub </span>path_packet_loss_rate: Histogram,
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// Histogram of RTT variance (in milliseconds) as a congestion indicator.
-<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">pub </span>path_rtt_variance_ms: Histogram,
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// Histogram of path quality scores (0.0-1.0).
-<a href=#95 id=95 data-nosnippet>95</a>    </span><span class="kw">pub </span>path_quality_score: Histogram,
-<a href=#96 id=96 data-nosnippet>96</a>}
-<a href=#97 id=97 data-nosnippet>97</a>
-<a href=#98 id=98 data-nosnippet>98</a><span class="kw">impl </span>Default <span class="kw">for </span>Metrics {
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-<a href=#100 id=100 data-nosnippet>100</a>        <span class="self">Self </span>{
-<a href=#101 id=101 data-nosnippet>101</a>            update_direct_addrs: Counter::default(),
-<a href=#102 id=102 data-nosnippet>102</a>            send_ipv4: Counter::default(),
-<a href=#103 id=103 data-nosnippet>103</a>            send_ipv6: Counter::default(),
-<a href=#104 id=104 data-nosnippet>104</a>            send_relay: Counter::default(),
-<a href=#105 id=105 data-nosnippet>105</a>            send_relay_error: Counter::default(),
-<a href=#106 id=106 data-nosnippet>106</a>            send_data: Counter::default(),
-<a href=#107 id=107 data-nosnippet>107</a>            send_data_network_down: Counter::default(),
-<a href=#108 id=108 data-nosnippet>108</a>            recv_data_relay: Counter::default(),
-<a href=#109 id=109 data-nosnippet>109</a>            recv_data_ipv4: Counter::default(),
-<a href=#110 id=110 data-nosnippet>110</a>            recv_data_ipv6: Counter::default(),
-<a href=#111 id=111 data-nosnippet>111</a>            recv_datagrams: Counter::default(),
-<a href=#112 id=112 data-nosnippet>112</a>            recv_gro_datagrams: Counter::default(),
-<a href=#113 id=113 data-nosnippet>113</a>            send_disco_udp: Counter::default(),
-<a href=#114 id=114 data-nosnippet>114</a>            send_disco_relay: Counter::default(),
-<a href=#115 id=115 data-nosnippet>115</a>            sent_disco_udp: Counter::default(),
-<a href=#116 id=116 data-nosnippet>116</a>            sent_disco_relay: Counter::default(),
-<a href=#117 id=117 data-nosnippet>117</a>            sent_disco_ping: Counter::default(),
-<a href=#118 id=118 data-nosnippet>118</a>            sent_disco_pong: Counter::default(),
-<a href=#119 id=119 data-nosnippet>119</a>            sent_disco_call_me_maybe: Counter::default(),
-<a href=#120 id=120 data-nosnippet>120</a>            recv_disco_bad_key: Counter::default(),
-<a href=#121 id=121 data-nosnippet>121</a>            recv_disco_bad_parse: Counter::default(),
-<a href=#122 id=122 data-nosnippet>122</a>            recv_disco_udp: Counter::default(),
-<a href=#123 id=123 data-nosnippet>123</a>            recv_disco_relay: Counter::default(),
-<a href=#124 id=124 data-nosnippet>124</a>            recv_disco_ping: Counter::default(),
-<a href=#125 id=125 data-nosnippet>125</a>            recv_disco_pong: Counter::default(),
-<a href=#126 id=126 data-nosnippet>126</a>            recv_disco_call_me_maybe: Counter::default(),
-<a href=#127 id=127 data-nosnippet>127</a>            recv_disco_call_me_maybe_bad_disco: Counter::default(),
-<a href=#128 id=128 data-nosnippet>128</a>            relay_home_change: Counter::default(),
-<a href=#129 id=129 data-nosnippet>129</a>            num_direct_conns_added: Counter::default(),
-<a href=#130 id=130 data-nosnippet>130</a>            num_direct_conns_removed: Counter::default(),
-<a href=#131 id=131 data-nosnippet>131</a>            num_relay_conns_added: Counter::default(),
-<a href=#132 id=132 data-nosnippet>132</a>            num_relay_conns_removed: Counter::default(),
-<a href=#133 id=133 data-nosnippet>133</a>            actor_tick_main: Counter::default(),
-<a href=#134 id=134 data-nosnippet>134</a>            actor_tick_msg: Counter::default(),
-<a href=#135 id=135 data-nosnippet>135</a>            actor_tick_re_stun: Counter::default(),
-<a href=#136 id=136 data-nosnippet>136</a>            actor_tick_portmap_changed: Counter::default(),
-<a href=#137 id=137 data-nosnippet>137</a>            actor_tick_direct_addr_heartbeat: Counter::default(),
-<a href=#138 id=138 data-nosnippet>138</a>            actor_link_change: Counter::default(),
-<a href=#139 id=139 data-nosnippet>139</a>            actor_tick_other: Counter::default(),
-<a href=#140 id=140 data-nosnippet>140</a>            nodes_contacted: Counter::default(),
-<a href=#141 id=141 data-nosnippet>141</a>            nodes_contacted_directly: Counter::default(),
-<a href=#142 id=142 data-nosnippet>142</a>            connection_handshake_success: Counter::default(),
-<a href=#143 id=143 data-nosnippet>143</a>            connection_became_direct: Counter::default(),
-<a href=#144 id=144 data-nosnippet>144</a>            path_marked_outdated: Counter::default(),
-<a href=#145 id=145 data-nosnippet>145</a>            path_ping_failures: Counter::default(),
-<a href=#146 id=146 data-nosnippet>146</a>            path_failure_resets: Counter::default(),
-<a href=#147 id=147 data-nosnippet>147</a>            path_packet_loss_rate: packet_loss_buckets(),
-<a href=#148 id=148 data-nosnippet>148</a>            path_rtt_variance_ms: rtt_variance_buckets(),
-<a href=#149 id=149 data-nosnippet>149</a>            path_quality_score: quality_score_buckets(),
-<a href=#150 id=150 data-nosnippet>150</a>        }
-<a href=#151 id=151 data-nosnippet>151</a>    }
-<a href=#152 id=152 data-nosnippet>152</a>}
-<a href=#153 id=153 data-nosnippet>153</a>
-<a href=#154 id=154 data-nosnippet>154</a><span class="kw">fn </span>packet_loss_buckets() -&gt; Histogram {
-<a href=#155 id=155 data-nosnippet>155</a>    Histogram::new(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.01</span>, <span class="number">0.05</span>, <span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">0.5</span>, <span class="number">1.0</span>])
-<a href=#156 id=156 data-nosnippet>156</a>}
-<a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a><span class="kw">fn </span>rtt_variance_buckets() -&gt; Histogram {
-<a href=#159 id=159 data-nosnippet>159</a>    Histogram::new(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">1.0</span>, <span class="number">5.0</span>, <span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">50.0</span>, <span class="number">100.0</span>, <span class="number">200.0</span>])
-<a href=#160 id=160 data-nosnippet>160</a>}
-<a href=#161 id=161 data-nosnippet>161</a>
-<a href=#162 id=162 data-nosnippet>162</a><span class="kw">fn </span>quality_score_buckets() -&gt; Histogram {
-<a href=#163 id=163 data-nosnippet>163</a>    Histogram::new(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.3</span>, <span class="number">0.5</span>, <span class="number">0.7</span>, <span class="number">0.85</span>, <span class="number">0.95</span>, <span class="number">1.0</span>])
-<a href=#164 id=164 data-nosnippet>164</a>}</code></pre></div></section></main></body></html>
+<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="attr">#[default(Histogram::new(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.01</span>, <span class="number">0.05</span>, <span class="number">0.1</span>, <span class="number">0.2</span>, <span class="number">0.5</span>, <span class="number">1.0</span>]</span>))]
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">pub </span>path_packet_loss_rate: Histogram,
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// Histogram of RTT variance (in milliseconds) as a congestion indicator.
+<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="attr">#[default(Histogram::new(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">1.0</span>, <span class="number">5.0</span>, <span class="number">10.0</span>, <span class="number">20.0</span>, <span class="number">50.0</span>, <span class="number">100.0</span>, <span class="number">200.0</span>]</span>))]
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="kw">pub </span>path_rtt_variance_ms: Histogram,
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="doccomment">/// Histogram of path quality scores (0.0-1.0).
+<a href=#97 id=97 data-nosnippet>97</a>    </span><span class="attr">#[default(Histogram::new(<span class="macro">vec!</span>[<span class="number">0.0</span>, <span class="number">0.3</span>, <span class="number">0.5</span>, <span class="number">0.7</span>, <span class="number">0.85</span>, <span class="number">0.95</span>, <span class="number">1.0</span>]</span>))]
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="kw">pub </span>path_quality_score: Histogram,
+<a href=#99 id=99 data-nosnippet>99</a>}</code></pre></div></section></main></body></html>
