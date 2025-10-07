@@ -606,7 +606,7 @@
 <a href=#606 id=606 data-nosnippet>606</a>    <span class="kw">let </span>portal_url = <span class="macro">format!</span>(<span class="string">"http://{host_name}/generate_204"</span>);
 <a href=#607 id=607 data-nosnippet>607</a>    <span class="kw">let </span>res = client
 <a href=#608 id=608 data-nosnippet>608</a>        .request(reqwest::Method::GET, portal_url)
-<a href=#609 id=609 data-nosnippet>609</a>        .header(<span class="string">"X-Tailscale-Challenge"</span>, <span class="kw-2">&amp;</span>challenge)
+<a href=#609 id=609 data-nosnippet>609</a>        .header(<span class="string">"X-Iroh-Challenge"</span>, <span class="kw-2">&amp;</span>challenge)
 <a href=#610 id=610 data-nosnippet>610</a>        .send()
 <a href=#611 id=611 data-nosnippet>611</a>        .<span class="kw">await
 <a href=#612 id=612 data-nosnippet>612</a>        </span>.context(captive_portal_error::HttpRequestSnafu)<span class="question-mark">?</span>;
@@ -614,7 +614,7 @@
 <a href=#614 id=614 data-nosnippet>614</a>    <span class="kw">let </span>expected_response = <span class="macro">format!</span>(<span class="string">"response {challenge}"</span>);
 <a href=#615 id=615 data-nosnippet>615</a>    <span class="kw">let </span>is_valid_response = res
 <a href=#616 id=616 data-nosnippet>616</a>        .headers()
-<a href=#617 id=617 data-nosnippet>617</a>        .get(<span class="string">"X-Tailscale-Response"</span>)
+<a href=#617 id=617 data-nosnippet>617</a>        .get(<span class="string">"X-Iroh-Response"</span>)
 <a href=#618 id=618 data-nosnippet>618</a>        .map(|s| s.to_str().unwrap_or_default())
 <a href=#619 id=619 data-nosnippet>619</a>        == <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>expected_response);
 <a href=#620 id=620 data-nosnippet>620</a>
