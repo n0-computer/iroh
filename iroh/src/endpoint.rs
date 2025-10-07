@@ -2729,8 +2729,18 @@ mod tests {
         tokio::spawn({
             let server = server.clone();
             async move {
+                tracing::trace!("Server accept loop started");
                 while let Some(incoming) = server.accept().await {
-                    let connecting = incoming.accept().e()?;
+                    tracing::trace!("Server received incoming connection");
+                    // Handle connection errors gracefully instead of exiting the task
+                    let connecting = match incoming.accept() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!("Failed to accept incoming connection: {e:?}");
+                            continue;
+                        }
+                    };
+
                     let conn = match connecting.into_0rtt() {
                         Ok((conn, _)) => {
                             info!("0rtt accepted");
@@ -2738,17 +2748,48 @@ mod tests {
                         }
                         Err(connecting) => {
                             info!("0rtt denied");
-                            connecting.await.e()?
+                            match connecting.await {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    tracing::warn!("Connection failed: {e:?}");
+                                    continue;
+                                }
+                            }
                         }
                     };
-                    let (mut send, mut recv) = conn.accept_bi().await.e()?;
-                    let data = recv.read_to_end(10_000_000).await.e()?;
-                    send.write_all(&data).await.e()?;
-                    send.finish().e()?;
+
+                    // Handle stream errors gracefully
+                    let (mut send, mut recv) = match conn.accept_bi().await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Failed to accept bi stream: {e:?}");
+                            continue;
+                        }
+                    };
+
+                    let data = match recv.read_to_end(10_000_000).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            tracing::warn!("Failed to read data: {e:?}");
+                            continue;
+                        }
+                    };
+
+                    if let Err(e) = send.write_all(&data).await {
+                        tracing::warn!("Failed to write data: {e:?}");
+                        continue;
+                    }
+
+                    if let Err(e) = send.finish() {
+                        tracing::warn!("Failed to finish send: {e:?}");
+                        continue;
+                    }
 
                     // Stay alive until the other side closes the connection.
                     conn.closed().await;
+                    tracing::trace!("Connection closed, ready for next");
                 }
+                tracing::trace!("Server accept loop exiting");
                 Ok::<_, Error>(())
             }
             .instrument(log_span)
@@ -2780,6 +2821,7 @@ mod tests {
         server_addr: NodeAddr,
         expect_server_accepts: bool,
     ) -> Result {
+        tracing::trace!(?server_addr, "Client connecting with 0-RTT");
         let (conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
@@ -2787,12 +2829,15 @@ mod tests {
             .ok()
             .e()?;
 
+        tracing::trace!("Client established 0-RTT connection");
         // This is how we send data in 0-RTT:
         let (mut send, recv) = conn.open_bi().await.e()?;
         send.write_all(b"hello").await.e()?;
         send.finish().e()?;
+        tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
         let accepted = accepted_0rtt.await;
+        tracing::trace!(?accepted, "Server responded to 0-RTT");
         assert_eq!(accepted, expect_server_accepts);
         let mut recv = if accepted {
             recv
