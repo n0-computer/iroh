@@ -478,70 +478,6 @@ impl MagicSock {
         }
     }
 
-    #[cfg(not(wasm_browser))]
-    fn collect_local_addresses(
-        &self,
-        netmon_watcher: &mut n0_watcher::Direct<netmon::State>,
-        addrs: &mut BTreeMap<SocketAddr, DirectAddrType>,
-    ) {
-        let local_addrs: Vec<(SocketAddr, SocketAddr)> = self
-            .ip_bind_addrs()
-            .iter()
-            .copied()
-            .zip(self.ip_local_addrs())
-            .collect();
-
-        let has_ipv4_unspecified = local_addrs.iter().find_map(|(_, a)| {
-            if a.is_ipv4() && a.ip().is_unspecified() {
-                Some(a.port())
-            } else {
-                None
-            }
-        });
-        let has_ipv6_unspecified = local_addrs.iter().find_map(|(_, a)| {
-            if a.is_ipv6() && a.ip().is_unspecified() {
-                Some(a.port())
-            } else {
-                None
-            }
-        });
-
-        // If a socket is bound to the unspecified address, create SocketAddrs for
-        // each local IP address by pairing it with the port the socket is bound on.
-        if local_addrs
-            .iter()
-            .any(|(_, local)| local.ip().is_unspecified())
-        {
-            let LocalAddresses {
-                regular: mut ips,
-                loopback,
-            } = netmon_watcher.get().local_addresses;
-            if ips.is_empty() && addrs.is_empty() {
-                // Include loopback addresses only if there are no other interfaces
-                // or public addresses, this allows testing offline.
-                ips = loopback;
-            }
-
-            for ip in ips {
-                let port_if_unspecified = match ip {
-                    IpAddr::V4(_) => has_ipv4_unspecified,
-                    IpAddr::V6(_) => has_ipv6_unspecified,
-                };
-                if let Some(port) = port_if_unspecified {
-                    let addr = SocketAddr::new(ip, port);
-                    addrs.entry(addr).or_insert(DirectAddrType::Local);
-                }
-            }
-        }
-
-        // If a socket is bound to a specific address, add it.
-        for (bound, local) in local_addrs {
-            if !bound.ip().is_unspecified() {
-                addrs.entry(local).or_insert(DirectAddrType::Local);
-            }
-        }
-    }
-
     /// Searches the `node_map` to determine the current transports to be used.
     #[instrument(skip_all)]
     fn prepare_send(
@@ -2196,8 +2132,7 @@ impl Actor {
             }
         }
 
-        self.msock
-            .collect_local_addresses(&mut self.netmon_watcher, &mut addrs);
+        self.collect_local_addresses(&mut addrs);
 
         // Finally create and store store all these direct addresses and send any
         // queued call-me-maybe messages.
@@ -2211,6 +2146,70 @@ impl Actor {
                 .collect(),
         );
         self.send_queued_call_me_maybes();
+    }
+
+    #[cfg(not(wasm_browser))]
+    fn collect_local_addresses(&mut self, addrs: &mut BTreeMap<SocketAddr, DirectAddrType>) {
+        // Matches the addresses that have been bound vs the requested ones.
+        let local_addrs: Vec<(SocketAddr, SocketAddr)> = self
+            .msock
+            .ip_bind_addrs()
+            .iter()
+            .copied()
+            .zip(self.msock.ip_local_addrs())
+            .collect();
+
+        // Do we listen on any IPv4 unspecified address?
+        let has_ipv4_unspecified = local_addrs.iter().find_map(|(_, a)| {
+            if a.is_ipv4() && a.ip().is_unspecified() {
+                Some(a.port())
+            } else {
+                None
+            }
+        });
+        // Do we listen on any IPv6 unspecified address?
+        let has_ipv6_unspecified = local_addrs.iter().find_map(|(_, a)| {
+            if a.is_ipv6() && a.ip().is_unspecified() {
+                Some(a.port())
+            } else {
+                None
+            }
+        });
+
+        // If a socket is bound to the unspecified address, create SocketAddrs for
+        // each local IP address by pairing it with the port the socket is bound on.
+        if local_addrs
+            .iter()
+            .any(|(_, local)| local.ip().is_unspecified())
+        {
+            let LocalAddresses {
+                regular: mut ips,
+                loopback,
+            } = self.netmon_watcher.get().local_addresses;
+            if ips.is_empty() && addrs.is_empty() {
+                // Include loopback addresses only if there are no other interfaces
+                // or public addresses, this allows testing offline.
+                ips = loopback;
+            }
+
+            for ip in ips {
+                let port_if_unspecified = match ip {
+                    IpAddr::V4(_) => has_ipv4_unspecified,
+                    IpAddr::V6(_) => has_ipv6_unspecified,
+                };
+                if let Some(port) = port_if_unspecified {
+                    let addr = SocketAddr::new(ip, port);
+                    addrs.entry(addr).or_insert(DirectAddrType::Local);
+                }
+            }
+        }
+
+        // If a socket is bound to a specific address, add it.
+        for (bound, local) in local_addrs {
+            if !bound.ip().is_unspecified() {
+                addrs.entry(local).or_insert(DirectAddrType::Local);
+            }
+        }
     }
 
     fn send_queued_call_me_maybes(&mut self) {
