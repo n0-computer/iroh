@@ -15,7 +15,7 @@ use super::Source;
 ///
 /// [`NodeStateActor::paths`]: super::node_state::NodeStateActor
 #[derive(Debug, Default)]
-pub(super) struct NewPathState {
+pub(super) struct PathState {
     /// How we learned about this path, and when.
     ///
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size

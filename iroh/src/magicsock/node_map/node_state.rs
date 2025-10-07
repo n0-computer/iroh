@@ -29,7 +29,7 @@ use crate::{
     util::MaybeFuture,
 };
 
-use super::{Source, TransportsSenderMessage, path_state::NewPathState};
+use super::{Source, TransportsSenderMessage, path_state::PathState};
 
 /// Number of addresses that are not active that we keep around per node.
 ///
@@ -107,7 +107,7 @@ pub(super) struct NodeStateActor {
     ///
     /// These paths might be entirely impossible to use, since they are added by discovery
     /// mechanisms.  The are only potentially usable.
-    paths: FxHashMap<transports::Addr, NewPathState>,
+    paths: FxHashMap<transports::Addr, PathState>,
     /// Maps connections and path IDs to the transport addr.
     ///
     /// The [`transports::Addr`] can be looked up in [`Self::paths`].
