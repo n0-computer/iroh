@@ -1936,7 +1936,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{NodeAddr, NodeId, PublicKey};
-    use n0_future::{StreamExt, time};
+    use n0_future::{MergeBounded, StreamExt, task::JoinHandle, time};
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
@@ -1948,6 +1948,7 @@ mod tests {
 
     use crate::{
         Endpoint, RelayMap, RelayMode, SecretKey,
+        discovery::static_provider::StaticProvider,
         dns::DnsResolver,
         endpoint::PathSelection,
         magicsock::{Handle, MagicSock, node_map},
@@ -2002,126 +2003,10 @@ mod tests {
         }
     }
 
-    /// Magicsock plus wrappers for sending packets
-    #[derive(Clone)]
-    struct MagicStack {
-        secret_key: SecretKey,
-        endpoint: Endpoint,
-    }
-
-    impl MagicStack {
-        async fn new<R: CryptoRng + ?Sized>(rng: &mut R, relay_mode: RelayMode) -> Self {
-            let secret_key = SecretKey::generate(rng);
-
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-
-            let endpoint = Endpoint::builder()
-                .secret_key(secret_key.clone())
-                .transport_config(transport_config)
-                .relay_mode(relay_mode)
-                .alpns(vec![ALPN.to_vec()])
-                .bind()
-                .await
-                .unwrap();
-
-            Self {
-                secret_key,
-                endpoint,
-            }
-        }
-
-        fn tracked_endpoints(&self) -> Vec<PublicKey> {
-            self.endpoint
-                .magic_sock()
-                .list_remote_infos()
-                .into_iter()
-                .map(|ep| ep.node_id)
-                .collect()
-        }
-
-        fn public(&self) -> PublicKey {
-            self.secret_key.public()
-        }
-    }
-
-    /// Monitors endpoint changes and plumbs things together.
-    ///
-    /// This is a way of connecting endpoints without a relay server.  Whenever the local
-    /// endpoints of a magic endpoint change this address is added to the other magic
-    /// sockets.  This function will await until the endpoints are connected the first time
-    /// before returning.
-    ///
-    /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
-    #[instrument(skip_all)]
-    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<JoinSet<()>> {
-        /// Registers endpoint addresses of a node to all other nodes.
-        async fn update_direct_addrs(
-            stacks: &[MagicStack],
-            my_idx: usize,
-            new_addrs: BTreeSet<SocketAddr>,
-        ) {
-            let me = &stacks[my_idx];
-            for (i, m) in stacks.iter().enumerate() {
-                if i == my_idx {
-                    continue;
-                }
-
-                let addr = NodeAddr {
-                    node_id: me.public(),
-                    relay_url: None,
-                    direct_addresses: new_addrs.clone(),
-                };
-                m.endpoint.magic_sock().add_test_addr(addr).await;
-            }
-        }
-
-        // For each node, start a task which monitors its local endpoints and registers them
-        // with the other nodes as local endpoints become known.
-        let mut tasks = JoinSet::new();
-        for (my_idx, m) in stacks.iter().enumerate() {
-            let m = m.clone();
-            let stacks = stacks.clone();
-            tasks.spawn(async move {
-                let me = m.endpoint.node_id().fmt_short();
-                let mut stream = m.endpoint.watch_node_addr().stream().filter_map(|i| i);
-                while let Some(addr) = stream.next().await {
-                    info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, addr.direct_addresses);
-                    update_direct_addrs(&stacks, my_idx, addr.direct_addresses);
-                }
-            });
-        }
-
-        // Wait for all nodes to be registered with each other.
-        time::timeout(Duration::from_secs(10), async move {
-            let all_node_ids: Vec<_> = stacks.iter().map(|ms| ms.endpoint.node_id()).collect();
-            loop {
-                let mut ready = Vec::with_capacity(stacks.len());
-                for ms in stacks.iter() {
-                    let endpoints = ms.tracked_endpoints();
-                    let my_node_id = ms.endpoint.node_id();
-                    let all_nodes_meshed = all_node_ids
-                        .iter()
-                        .filter(|node_id| **node_id != my_node_id)
-                        .all(|node_id| endpoints.contains(node_id));
-                    ready.push(all_nodes_meshed);
-                }
-                if ready.iter().all(|meshed| *meshed) {
-                    break;
-                }
-                time::sleep(Duration::from_millis(200)).await;
-            }
-        })
-        .await
-        .context("timeout")?;
-        info!("all nodes meshed");
-        Ok(tasks)
-    }
-
-    #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> Result {
+    #[instrument(skip_all, fields(me = %ep.node_id().fmt_short()))]
+    async fn echo_receiver(ep: Endpoint, loss: ExpectedLoss) -> Result {
         info!("accepting conn");
-        let conn = ep.endpoint.accept().await.expect("no conn");
+        let conn = ep.accept().await.expect("no conn");
 
         info!("connecting");
         let conn = conn.await.context("connecting")?;
@@ -2158,21 +2043,16 @@ mod tests {
         info!("close");
         conn.close(0u32.into(), b"done");
         info!("wait idle");
-        ep.endpoint.endpoint().wait_idle().await;
+        ep.endpoint().wait_idle().await;
 
         Ok(())
     }
 
-    #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_sender(
-        ep: MagicStack,
-        dest_id: PublicKey,
-        msg: &[u8],
-        loss: ExpectedLoss,
-    ) -> Result {
+    #[instrument(skip_all, fields(me = %ep.node_id().fmt_short()))]
+    async fn echo_sender(ep: Endpoint, dest_id: NodeId, msg: &[u8], loss: ExpectedLoss) -> Result {
         info!("connecting to {}", dest_id.fmt_short());
         let dest = NodeAddr::new(dest_id);
-        let conn = ep.endpoint.connect(dest, ALPN).await?;
+        let conn = ep.connect(dest, ALPN).await?;
 
         info!("opening bi");
         let (mut send_bi, mut recv_bi) = conn.open_bi().await.context("open bi")?;
@@ -2211,7 +2091,7 @@ mod tests {
         info!("close");
         conn.close(0u32.into(), b"done");
         info!("wait idle");
-        ep.endpoint.endpoint().wait_idle().await;
+        ep.endpoint().wait_idle().await;
         Ok(())
     }
 
@@ -2223,13 +2103,13 @@ mod tests {
 
     /// Runs a roundtrip between the [`echo_sender`] and [`echo_receiver`].
     async fn run_roundtrip(
-        sender: MagicStack,
-        receiver: MagicStack,
+        sender: Endpoint,
+        receiver: Endpoint,
         payload: &[u8],
         loss: ExpectedLoss,
     ) {
-        let send_node_id = sender.endpoint.node_id();
-        let recv_node_id = receiver.endpoint.node_id();
+        let send_node_id = sender.node_id();
+        let recv_node_id = receiver.node_id();
         info!("\nroundtrip: {send_node_id:#} -> {recv_node_id:#}");
 
         let receiver_task = tokio::spawn(echo_receiver(receiver, loss));
@@ -2261,14 +2141,50 @@ mod tests {
         }
     }
 
+    /// Returns a pair of endpoints with a shared [`StaticDiscovery`].
+    ///
+    /// The endpoints do not use a relay server but can connect to each other via local
+    /// addresses.  Dialing by [`NodeId`] is possible, and the addresses get updated even if
+    /// the endpoints rebind.
+    async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
+        let discovery = StaticProvider::new();
+        let ep1 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .alpns(vec![ALPN.to_vec()])
+            .discovery(discovery.clone())
+            .bind()
+            .await
+            .unwrap();
+        let ep2 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .alpns(vec![ALPN.to_vec()])
+            .discovery(discovery.clone())
+            .bind()
+            .await
+            .unwrap();
+        discovery.add_node_info(ep1.local_ready().await);
+        discovery.add_node_info(ep2.local_ready().await);
+
+        let ep1_addr_stream = ep1.watch_node_addr().stream();
+        let ep2_addr_stream = ep2.watch_node_addr().stream();
+        let mut addr_stream = MergeBounded::from_iter([ep1_addr_stream, ep2_addr_stream]);
+        let task = tokio::spawn(async move {
+            loop {
+                while let Some(item) = addr_stream.next().await {
+                    if let Some(addr) = item {
+                        discovery.add_node_info(addr);
+                    }
+                }
+            }
+        });
+
+        (AbortOnDropHandle::new(task), ep1, ep2)
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-        let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+        let (_guard, m1, m2) = endpoint_pair().await;
 
         for i in 0..5 {
             info!("\n-- round {i}");
@@ -2289,6 +2205,7 @@ mod tests {
 
             info!("\n-- larger data");
             let mut data = vec![0u8; 10 * 1024];
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             rng.fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
@@ -2300,18 +2217,14 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_regression_network_change_rebind_wakes_connection_driver() -> n0_snafu::Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-        let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
+        let (_guard, m1, m2) = endpoint_pair().await;
 
         println!("Net change");
-        m1.endpoint.magic_sock().force_network_change(true).await;
+        m1.magic_sock().force_network_change(true).await;
         tokio::time::sleep(Duration::from_secs(1)).await; // wait for socket rebinding
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
-
         let _handle = AbortOnDropHandle::new(tokio::spawn({
-            let endpoint = m2.endpoint.clone();
+            let endpoint = m2.clone();
             async move {
                 while let Some(incoming) = endpoint.accept().await {
                     println!("Incoming first conn!");
@@ -2325,8 +2238,7 @@ mod tests {
 
         println!("first conn!");
         let conn = m1
-            .endpoint
-            .connect(m2.endpoint.watch_node_addr().initialized().await, ALPN)
+            .connect(m2.watch_node_addr().initialized().await, ALPN)
             .await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
@@ -2351,10 +2263,7 @@ mod tests {
     /// with (simulated) network changes.
     async fn test_two_devices_roundtrip_network_change_impl() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-        let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+        let (_guard, m1, m2) = endpoint_pair().await;
 
         let offset = |rng: &mut rand_chacha::ChaCha8Rng| {
             let delay = rng.random_range(10..=500);
@@ -2369,7 +2278,7 @@ mod tests {
             let task = tokio::spawn(async move {
                 loop {
                     println!("[m1] network change");
-                    m1.endpoint.magic_sock().force_network_change(true).await;
+                    m1.magic_sock().force_network_change(true).await;
                     time::sleep(offset(&mut rng)).await;
                 }
             });
@@ -2397,7 +2306,7 @@ mod tests {
             let task = tokio::spawn(async move {
                 loop {
                     println!("[m2] network change");
-                    m2.endpoint.magic_sock().force_network_change(true).await;
+                    m2.magic_sock().force_network_change(true).await;
                     time::sleep(offset(&mut rng)).await;
                 }
             });
@@ -2425,9 +2334,9 @@ mod tests {
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 println!("-- [m1] network change");
-                m1.endpoint.magic_sock().force_network_change(true).await;
+                m1.magic_sock().force_network_change(true).await;
                 println!("-- [m2] network change");
-                m2.endpoint.magic_sock().force_network_change(true).await;
+                m2.magic_sock().force_network_change(true).await;
                 time::sleep(offset(&mut rng)).await;
             });
             AbortOnDropHandle::new(task)
@@ -2452,20 +2361,16 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
     async fn test_two_devices_setup_teardown() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         for i in 0..10 {
             println!("-- round {i}");
             println!("setting up magic stack");
-            let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-            let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-
-            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
+            let (_guard, m1, m2) = endpoint_pair().await;
 
             println!("closing endpoints");
-            let msock1 = m1.endpoint.magic_sock();
-            let msock2 = m2.endpoint.magic_sock();
-            m1.endpoint.close().await;
-            m2.endpoint.close().await;
+            let msock1 = m1.magic_sock();
+            let msock2 = m2.magic_sock();
+            m1.close().await;
+            m2.close().await;
 
             assert!(msock1.msock.is_closed());
             assert!(msock2.msock.is_closed());
@@ -2794,9 +2699,13 @@ mod tests {
     #[tokio::test]
     async fn test_add_node_addr() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let stack = MagicStack::new(&mut rng, RelayMode::Default).await;
+        let ep = Endpoint::builder()
+            .relay_mode(RelayMode::Default)
+            .bind()
+            .await
+            .unwrap();
 
-        assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 0);
+        assert_eq!(ep.magic_sock().node_map.node_count(), 0);
 
         // Empty
         let empty_addr = NodeAddr {
@@ -2804,8 +2713,7 @@ mod tests {
             relay_url: None,
             direct_addresses: Default::default(),
         };
-        let err = stack
-            .endpoint
+        let err = ep
             .magic_sock()
             .add_node_addr(empty_addr, node_map::Source::App)
             .await
@@ -2822,12 +2730,10 @@ mod tests {
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: Default::default(),
         };
-        stack
-            .endpoint
-            .magic_sock()
+        ep.magic_sock()
             .add_node_addr(addr, node_map::Source::App)
             .await?;
-        assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 1);
+        assert_eq!(ep.magic_sock().node_map.node_count(), 1);
 
         // addrs only
         let addr = NodeAddr {
@@ -2835,12 +2741,10 @@ mod tests {
             relay_url: None,
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
         };
-        stack
-            .endpoint
-            .magic_sock()
+        ep.magic_sock()
             .add_node_addr(addr, node_map::Source::App)
             .await?;
-        assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 2);
+        assert_eq!(ep.magic_sock().node_map.node_count(), 2);
 
         // both
         let addr = NodeAddr {
@@ -2848,12 +2752,10 @@ mod tests {
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
         };
-        stack
-            .endpoint
-            .magic_sock()
+        ep.magic_sock()
             .add_node_addr(addr, node_map::Source::App)
             .await?;
-        assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 3);
+        assert_eq!(ep.magic_sock().node_map.node_count(), 3);
 
         Ok(())
     }
