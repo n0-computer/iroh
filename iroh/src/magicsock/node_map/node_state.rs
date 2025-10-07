@@ -945,23 +945,6 @@ struct HolepunchAttempt {
     remote_addrs: BTreeSet<SocketAddr>,
 }
 
-/// Information about the network path to a remote node via a relay server.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RelayUrlInfo {
-    /// The relay URL.
-    pub relay_url: RelayUrl,
-    /// Elapsed time since this relay path last received payload or control data.
-    pub last_alive: Option<Duration>,
-    /// Latency to the remote node over this relayed network path.
-    pub latency: Option<Duration>,
-}
-
-impl From<RelayUrlInfo> for RelayUrl {
-    fn from(value: RelayUrlInfo) -> Self {
-        value.relay_url
-    }
-}
-
 /// The type of connection we have to the endpoint.
 #[derive(derive_more::Display, Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {

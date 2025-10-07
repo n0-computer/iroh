@@ -83,17 +83,6 @@ pub(super) struct NodeMapInner {
     node_states: HashMap<NodeId, NodeStateHandle>,
 }
 
-/// Identifier to look up a [`NodeState`] in the [`NodeMap`].
-///
-/// You can look up entries in [`NodeMap`] with various keys, depending on the context you
-/// have for the node.  These are all the keys the [`NodeMap`] can use.
-#[derive(Debug, Clone)]
-enum NodeStateKey {
-    NodeId(NodeId),
-    NodeIdMappedAddr(NodeIdMappedAddr),
-    IpPort(IpPort),
-}
-
 /// The origin or *source* through which an address associated with a remote node
 /// was discovered.
 ///
