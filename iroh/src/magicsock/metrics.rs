@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[allow(missing_docs)]
 #[derive(Debug, Serialize, Deserialize, MetricsGroup)]
 #[non_exhaustive]
-#[metrics(name = "magicsock")]
+#[metrics(name = "magicsock", default)]
 pub struct Metrics {
     pub update_direct_addrs: Counter,
 
@@ -88,77 +88,12 @@ pub struct Metrics {
     /// Number of consecutive failure resets (path recovered).
     pub path_failure_resets: Counter,
     /// Histogram of packet loss rates (0.0-1.0) observed on UDP paths.
+    #[default(Histogram::new(vec![0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0]))]
     pub path_packet_loss_rate: Histogram,
     /// Histogram of RTT variance (in milliseconds) as a congestion indicator.
+    #[default(Histogram::new(vec![0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0]))]
     pub path_rtt_variance_ms: Histogram,
     /// Histogram of path quality scores (0.0-1.0).
+    #[default(Histogram::new(vec![0.0, 0.3, 0.5, 0.7, 0.85, 0.95, 1.0]))]
     pub path_quality_score: Histogram,
-}
-
-impl Default for Metrics {
-    fn default() -> Self {
-        Self {
-            update_direct_addrs: Counter::default(),
-            send_ipv4: Counter::default(),
-            send_ipv6: Counter::default(),
-            send_relay: Counter::default(),
-            send_relay_error: Counter::default(),
-            send_data: Counter::default(),
-            send_data_network_down: Counter::default(),
-            recv_data_relay: Counter::default(),
-            recv_data_ipv4: Counter::default(),
-            recv_data_ipv6: Counter::default(),
-            recv_datagrams: Counter::default(),
-            recv_gro_datagrams: Counter::default(),
-            send_disco_udp: Counter::default(),
-            send_disco_relay: Counter::default(),
-            sent_disco_udp: Counter::default(),
-            sent_disco_relay: Counter::default(),
-            sent_disco_ping: Counter::default(),
-            sent_disco_pong: Counter::default(),
-            sent_disco_call_me_maybe: Counter::default(),
-            recv_disco_bad_key: Counter::default(),
-            recv_disco_bad_parse: Counter::default(),
-            recv_disco_udp: Counter::default(),
-            recv_disco_relay: Counter::default(),
-            recv_disco_ping: Counter::default(),
-            recv_disco_pong: Counter::default(),
-            recv_disco_call_me_maybe: Counter::default(),
-            recv_disco_call_me_maybe_bad_disco: Counter::default(),
-            relay_home_change: Counter::default(),
-            num_direct_conns_added: Counter::default(),
-            num_direct_conns_removed: Counter::default(),
-            num_relay_conns_added: Counter::default(),
-            num_relay_conns_removed: Counter::default(),
-            actor_tick_main: Counter::default(),
-            actor_tick_msg: Counter::default(),
-            actor_tick_re_stun: Counter::default(),
-            actor_tick_portmap_changed: Counter::default(),
-            actor_tick_direct_addr_heartbeat: Counter::default(),
-            actor_link_change: Counter::default(),
-            actor_tick_other: Counter::default(),
-            nodes_contacted: Counter::default(),
-            nodes_contacted_directly: Counter::default(),
-            connection_handshake_success: Counter::default(),
-            connection_became_direct: Counter::default(),
-            path_marked_outdated: Counter::default(),
-            path_ping_failures: Counter::default(),
-            path_failure_resets: Counter::default(),
-            path_packet_loss_rate: packet_loss_buckets(),
-            path_rtt_variance_ms: rtt_variance_buckets(),
-            path_quality_score: quality_score_buckets(),
-        }
-    }
-}
-
-fn packet_loss_buckets() -> Histogram {
-    Histogram::new(vec![0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0])
-}
-
-fn rtt_variance_buckets() -> Histogram {
-    Histogram::new(vec![0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0])
-}
-
-fn quality_score_buckets() -> Histogram {
-    Histogram::new(vec![0.0, 0.3, 0.5, 0.7, 0.85, 0.95, 1.0])
 }
