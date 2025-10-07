@@ -1932,16 +1932,15 @@ impl Display for DirectAddrType {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
+    use std::{sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
-    use iroh_base::{NodeAddr, NodeId, PublicKey};
-    use n0_future::{MergeBounded, StreamExt, task::JoinHandle, time};
+    use iroh_base::{NodeAddr, NodeId};
+    use n0_future::{MergeBounded, StreamExt, time};
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
     use rand::{CryptoRng, Rng, RngCore, SeedableRng};
-    use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
     use tracing_test::traced_test;
@@ -1988,19 +1987,6 @@ mod tests {
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
         server_config
-    }
-
-    impl MagicSock {
-        pub async fn add_test_addr(&self, node_addr: NodeAddr) {
-            self.add_node_addr(
-                node_addr,
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
-            .await
-            .ok();
-        }
     }
 
     #[instrument(skip_all, fields(me = %ep.node_id().fmt_short()))]
