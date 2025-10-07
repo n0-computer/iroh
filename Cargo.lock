@@ -1857,12 +1857,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashbrown"
-version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
-
-[[package]]
 name = "hdrhistogram"
 version = "7.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2166,7 +2160,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2331,7 +2325,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]
@@ -2445,7 +2439,7 @@ dependencies = [
  "indicatif",
  "instant",
  "iroh-base",
- "iroh-metrics 0.36.0",
+ "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
  "iroh-quinn-udp",
@@ -2523,7 +2517,7 @@ dependencies = [
  "clap",
  "hdrhistogram",
  "iroh",
- "iroh-metrics 0.36.0",
+ "iroh-metrics",
  "iroh-quinn",
  "n0-future",
  "n0-snafu",
@@ -2556,7 +2550,7 @@ dependencies = [
  "humantime",
  "humantime-serde",
  "iroh",
- "iroh-metrics 0.36.0",
+ "iroh-metrics",
  "lru 0.16.1",
  "n0-future",
  "n0-snafu",
@@ -2590,23 +2584,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.35.0"
+version = "0.36.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8922c169f1b84d39d325c02ef1bbe1419d4de6e35f0403462b3c7e60cc19634"
-dependencies = [
- "iroh-metrics-derive",
- "itoa",
- "postcard",
- "serde",
- "snafu",
- "tracing",
-]
-
-[[package]]
-name = "iroh-metrics"
-version = "0.36.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23a18a7061baa0e8481bcb78a48b324fe15cdcbf5b6589b03364136a41dde969"
+checksum = "090161e84532a0cb78ab13e70abb882b769ec67cf5a2d2dcea39bd002e1f7172"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2624,9 +2604,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics-derive"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d12f5c45c4ed2436302a4e03cad9a0ad34b2962ad0c5791e1019c0ee30eeb09"
+checksum = "8a39de3779d200dadde3a27b9fbdb34389a2af1b85ea445afca47bf4d7672573"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2711,7 +2691,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "iroh-base",
- "iroh-metrics 0.36.0",
+ "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
  "lru 0.16.1",
@@ -3682,9 +3662,9 @@ checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 
 [[package]]
 name = "portmapper"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9f99e8cd25cd8ee09fc7da59357fd433c0a19272956ebb4ad7443b21842988d"
+checksum = "90f7313cafd74e95e6a358c1d0a495112f175502cc2e69870d0a5b12b6553059"
 dependencies = [
  "base64",
  "bytes",
@@ -3693,7 +3673,7 @@ dependencies = [
  "futures-util",
  "hyper-util",
  "igd-next",
- "iroh-metrics 0.35.0",
+ "iroh-metrics",
  "libc",
  "nested_enum_utils",
  "netwatch",
@@ -3886,7 +3866,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3923,7 +3903,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
