@@ -1,0 +1,76 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Node address discovery."><title>iroh::discovery - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-6c3ea77c.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.87.0-nightly (f280acf4c 2025-02-19)" data-channel="nightly" data-search-js="search-f7327375.js" data-settings-js="settings-6dad6058.js" ><script src="../../static.files/storage-3a5871a4.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5332ae0c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle" title="show sidebar"></button></nav><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../iroh/index.html">iroh</a><span class="version">0.92.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module discovery</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#examples" title="Examples">Examples</a></li></ul><h3><a href="#modules">Module Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate iroh</a></h2></div></div></nav><div class="sidebar-resizer"></div><main><div class="width-limiter"><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">iroh</a></div><h1>Module <span>discovery</span><button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/iroh/discovery.rs.html#1-1110">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Node address discovery.</p>
+<p>To connect to an iroh node a <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a> is needed, which may contain a
+<a href="../struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a> or one or more <em>direct addresses</em> in addition to the <a href="../type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a>.</p>
+<p>Since there is a conversion from <a href="../type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> to <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a>, you can also use
+connect directly with a <a href="../type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a>.</p>
+<p>For this to work however, the endpoint has to get the addressing  information by
+other means.</p>
+<p>Node discovery is an automated system for an <a href="../endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> to retrieve this addressing
+information.  Each iroh node will automatically publish their own addressing
+information.  Usually this means publishing which <a href="../struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a> to use for their
+<a href="../type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a>, but they could also publish their direct addresses.</p>
+<p>The <a href="trait.Discovery.html" title="trait iroh::discovery::Discovery"><code>Discovery</code></a> trait is used to define node discovery.  This allows multiple
+implementations to co-exist because there are many possible ways to implement this.
+Each <a href="../endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> can use the discovery mechanisms most suitable to the application.
+The <a href="../endpoint/struct.Builder.html#method.add_discovery" title="method iroh::endpoint::Builder::add_discovery"><code>Builder::add_discovery</code></a> method is used to add a discovery mechanism to an
+<a href="../endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>.</p>
+<p>Some generally useful discovery implementations are provided:</p>
+<ul>
+<li>
+<p><a href="static_provider/struct.StaticProvider.html" title="struct iroh::discovery::static_provider::StaticProvider"><code>StaticProvider</code></a> which allows application to add and remove out-of-band addressing
+information.</p>
+</li>
+<li>
+<p>The <a href="dns/struct.DnsDiscovery.html" title="struct iroh::discovery::dns::DnsDiscovery"><code>DnsDiscovery</code></a> which performs lookups via the standard DNS systems.  To publish
+to this DNS server a <a href="pkarr/struct.PkarrPublisher.html" title="struct iroh::discovery::pkarr::PkarrPublisher"><code>PkarrPublisher</code></a> is needed.  <a href="https://n0.computer">Number 0</a> runs a public instance
+of a <a href="pkarr/struct.PkarrPublisher.html" title="struct iroh::discovery::pkarr::PkarrPublisher"><code>PkarrPublisher</code></a> with attached DNS server which is globally available and a
+reliable default choice.</p>
+</li>
+<li>
+<p>The <a href="pkarr/struct.PkarrResolver.html" title="struct iroh::discovery::pkarr::PkarrResolver"><code>PkarrResolver</code></a> which can perform lookups from designated <a href="https://pkarr.org/#servers">pkarr relay servers</a>
+using HTTP.</p>
+</li>
+<li>
+<p><a href="mdns/struct.MdnsDiscovery.html" title="struct iroh::discovery::mdns::MdnsDiscovery"><code>MdnsDiscovery</code></a>: mdns::MdnsDiscovery which uses the crate <code>swarm-discovery</code>, an
+opinionated mDNS implementation, to discover nodes on the local network.</p>
+</li>
+<li>
+<p>The <a href="pkarr/dht/struct.DhtDiscovery.html" title="struct iroh::discovery::pkarr::dht::DhtDiscovery"><code>DhtDiscovery</code></a> also uses the <a href="pkarr/index.html" title="mod iroh::discovery::pkarr"><code>pkarr</code></a> system but can also publish and lookup
+records to/from the Mainline DHT.</p>
+</li>
+</ul>
+<p>To use multiple discovery systems simultaneously you can call <a href="../endpoint/struct.Builder.html#method.add_discovery" title="method iroh::endpoint::Builder::add_discovery"><code>Builder::add_discovery</code></a>.
+This will use <a href="struct.ConcurrentDiscovery.html" title="struct iroh::discovery::ConcurrentDiscovery"><code>ConcurrentDiscovery</code></a> under the hood, which performs lookups to all
+discovery systems at the same time.</p>
+<p><a href="../endpoint/struct.Builder.html#method.add_discovery" title="method iroh::endpoint::Builder::add_discovery"><code>Builder::add_discovery</code></a> takes any type that implements <a href="trait.IntoDiscovery.html" title="trait iroh::discovery::IntoDiscovery"><code>IntoDiscovery</code></a>. You can
+implement that trait on a builder struct if your discovery service needs information
+from the endpoint it is mounted on. During endpoint construction, your discovery service
+is built by calling <a href="trait.IntoDiscovery.html#tymethod.into_discovery" title="method iroh::discovery::IntoDiscovery::into_discovery"><code>IntoDiscovery::into_discovery</code></a>, passing a <a href="struct.DiscoveryContext.html" title="struct iroh::discovery::DiscoveryContext"><code>DiscoveryContext</code></a> to your
+builder. The <a href="struct.DiscoveryContext.html" title="struct iroh::discovery::DiscoveryContext"><code>DiscoveryContext</code></a> gives access to the endpoint’s secret key and DNS resolver.</p>
+<p>If your discovery service does not need any information from its endpoint, you can
+pass the discovery service directly to <a href="../endpoint/struct.Builder.html#method.add_discovery" title="method iroh::endpoint::Builder::add_discovery"><code>Builder::add_discovery</code></a>: All types that
+implement <a href="trait.Discovery.html" title="trait iroh::discovery::Discovery"><code>Discovery</code></a> also have a blanket implementation of <a href="trait.IntoDiscovery.html" title="trait iroh::discovery::IntoDiscovery"><code>IntoDiscovery</code></a>.</p>
+<h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
+<p>A very common setup is to enable DNS discovery, which needs to be done in two parts as a
+<a href="pkarr/struct.PkarrPublisher.html" title="struct iroh::discovery::pkarr::PkarrPublisher"><code>PkarrPublisher</code></a> and <a href="dns/struct.DnsDiscovery.html" title="struct iroh::discovery::dns::DnsDiscovery"><code>DnsDiscovery</code></a>:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{
+    Endpoint, SecretKey,
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
+};
+
+<span class="kw">let </span>ep = Endpoint::builder()
+    .add_discovery(PkarrPublisher::n0_dns())
+    .add_discovery(DnsDiscovery::n0_dns())
+    .bind()
+    .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
+<p>To also enable <a href="mdns/struct.MdnsDiscovery.html" title="struct iroh::discovery::mdns::MdnsDiscovery"><code>MdnsDiscovery</code></a> it can be added as another service.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
+</span><span class="kw">let </span>ep = Endpoint::builder()
+    .add_discovery(PkarrPublisher::n0_dns())
+    .add_discovery(DnsDiscovery::n0_dns())
+    .add_discovery(MdnsDiscovery::builder())
+    .bind()
+    .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="dns/index.html" title="mod iroh::discovery::dns">dns</a><wbr><span class="stab portability" title="Available on non-`wasm_browser` only">Non-<code>wasm_browser</code></span></dt><dd>DNS node discovery for iroh</dd><dt><a class="mod" href="mdns/index.html" title="mod iroh::discovery::mdns">mdns</a><wbr><span class="stab portability" title="Available on crate feature `discovery-local-network` only"><code>discovery-local-network</code></span></dt><dd>A discovery service that uses an mdns-like service to discover local nodes.</dd><dt><a class="mod" href="pkarr/index.html" title="mod iroh::discovery::pkarr">pkarr</a></dt><dd>A discovery service which publishes and resolves node information using a <a href="https://pkarr.org">pkarr</a> relay.</dd><dt><a class="mod" href="static_provider/index.html" title="mod iroh::discovery::static_provider">static_<wbr>provider</a></dt><dd>A static node discovery to manually add node addressing information.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ConcurrentDiscovery.html" title="struct iroh::discovery::ConcurrentDiscovery">Concurrent<wbr>Discovery</a></dt><dd>A discovery service that combines multiple discovery sources.</dd><dt><a class="struct" href="struct.DiscoveryContext.html" title="struct iroh::discovery::DiscoveryContext">Discovery<wbr>Context</a></dt><dd>Context about the <a href="../endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> for discovery services.</dd><dt><a class="struct" href="struct.DiscoveryItem.html" title="struct iroh::discovery::DiscoveryItem">Discovery<wbr>Item</a></dt><dd>Node discovery results from <a href="trait.Discovery.html" title="trait iroh::discovery::Discovery"><code>Discovery</code></a> services.</dd><dt><a class="struct" href="struct.NodeData.html" title="struct iroh::discovery::NodeData">Node<wbr>Data</a></dt><dd>Data about a node that may be published to and resolved from discovery services.</dd><dt><a class="struct" href="struct.NodeInfo.html" title="struct iroh::discovery::NodeInfo">Node<wbr>Info</a></dt><dd>Information about a node that may be published to and resolved from discovery services.</dd><dt><a class="struct" href="struct.UserData.html" title="struct iroh::discovery::UserData">User<wbr>Data</a></dt><dd>Under the hood this is a UTF-8 String is no longer than <a href="struct.UserData.html#associatedconstant.MAX_LENGTH" title="associated constant iroh::discovery::UserData::MAX_LENGTH"><code>UserData::MAX_LENGTH</code></a> bytes.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.DiscoveryError.html" title="enum iroh::discovery::DiscoveryError">Discovery<wbr>Error</a></dt><dd>Discovery errors</dd><dt><a class="enum" href="enum.IntoDiscoveryError.html" title="enum iroh::discovery::IntoDiscoveryError">Into<wbr>Discovery<wbr>Error</a></dt><dd>IntoDiscovery errors</dd><dt><a class="enum" href="enum.ParseError.html" title="enum iroh::discovery::ParseError">Parse<wbr>Error</a></dt></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.Discovery.html" title="trait iroh::discovery::Discovery">Discovery</a></dt><dd>Node discovery for <a href="../endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>super::Endpoint</code></a>.</dd><dt><a class="trait" href="trait.IntoDiscovery.html" title="trait iroh::discovery::IntoDiscovery">Into<wbr>Discovery</a></dt><dd>Trait for structs that can be converted into <a href="trait.Discovery.html" title="trait iroh::discovery::Discovery"><code>Discovery</code></a>.</dd></dl></section></div></main></body></html>
