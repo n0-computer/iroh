@@ -504,21 +504,21 @@ impl Client {
                                     }
                                 }
                                 Err(err) => {
-                                    debug!("probe v4 failed: {err:?}");
+                                    debug!("probe v4 QAD failed: {err:?}");
                                 }
                             }
                         }
                         Some(Err(err)) => {
                             if err.is_panic() {
-                                panic!("probe v4 panicked: {err:?}");
+                                panic!("probe v4 QAD panicked: {err:?}");
                             }
-                            warn!("probe v4 failed: {err:?}");
+                            warn!("probe v4 QAD failed: {err:?}");
                         }
                         Some(Ok(None)) => {
-                            debug!("probe v4 canceled");
+                            debug!("probe v4 QAD canceled");
                         }
                         Some(Ok(Some(Err(time::Elapsed { .. })))) => {
-                            debug!("probe v4 timed out");
+                            debug!("probe v4 QAD timed out");
                         }
                         None => {}
                     }
@@ -539,21 +539,21 @@ impl Client {
                                     }
                                 }
                                 Err(err) => {
-                                    debug!("probe v6 failed: {err:?}");
+                                    debug!("probe v6 QAD failed: {err:?}");
                                 }
                             }
                         }
                         Some(Err(err)) => {
                             if err.is_panic() {
-                                panic!("probe v6 panicked: {err:?}");
+                                panic!("probe v6 QAD panicked: {err:?}");
                             }
-                            warn!("probe v6 failed: {err:?}");
+                            warn!("probe v6 QAD failed: {err:?}");
                         }
                         Some(Ok(None)) => {
-                            debug!("probe v6 canceled");
+                            debug!("probe v6 QAD canceled");
                         }
                         Some(Ok(Some(Err(time::Elapsed { .. })))) => {
-                            debug!("probe v6 timed out");
+                            debug!("probe v6 QAD timed out");
                         }
                         None => {}
                     }
