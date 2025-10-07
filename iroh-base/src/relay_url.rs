@@ -40,12 +40,18 @@ impl From<Url> for RelayUrl {
 
 /// Can occur when parsing a string into a [`RelayUrl`].
 #[n0_error::add_location]
+#[allow(missing_docs)]
 #[derive(n0_error::Error)]
-#[display("Failed to parse")]
-pub struct RelayUrlParseError {
-    #[from]
-    #[std]
-    source: url::ParseError,
+pub enum RelayUrlParseError {
+    /// Failed to parse URL
+    #[display("Failed to parse")]
+    #[transparent]
+    Url {
+        /// Underlying URL parse error
+        #[from]
+        #[std]
+        source: url::ParseError,
+    },
 }
 
 /// Support for parsing strings directly.

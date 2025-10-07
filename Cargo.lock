@@ -2495,7 +2495,7 @@ dependencies = [
  "data-encoding",
  "derive_more 2.0.1",
  "ed25519-dalek",
- "n0-snafu",
+ "n0-error",
  "nested_enum_utils",
  "postcard",
  "proptest",
@@ -2505,7 +2505,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_test",
- "snafu",
  "url",
 ]
 
@@ -2695,6 +2694,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-quinn-proto",
  "lru 0.16.1",
+ "n0-error",
  "n0-future",
  "n0-snafu",
  "nested_enum_utils",
@@ -2993,6 +2993,25 @@ dependencies = [
  "smallvec",
  "tagptr",
  "uuid",
+]
+
+[[package]]
+name = "n0-error"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more 2.0.1",
+ "n0-error-macros",
+]
+
+[[package]]
+name = "n0-error-macros"
+version = "0.1.0"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.106",
 ]
 
 [[package]]

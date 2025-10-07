@@ -23,7 +23,7 @@ url = { version = "2.5.3", features = ["serde"], optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 rand_core = { version = "0.9.3", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
-n0-error = { path = "../n0-error", optional = true }
+n0-error = { path = "../../n0-error", optional = true }
 nested_enum_utils = "0.2.0"
 
 [dev-dependencies]

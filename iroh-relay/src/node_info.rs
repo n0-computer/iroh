@@ -411,30 +411,29 @@ impl NodeInfo {
     }
 }
 
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[n0_error::add_location]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[derive(n0_error::Error)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum ParseError {
-    #[snafu(display("Expected format `key=value`, received `{s}`"))]
+    #[display("Expected format `key=value`, received `{s}`")]
     UnexpectedFormat { s: String },
-    #[snafu(display("Could not convert key to Attr"))]
+    #[display("Could not convert key to Attr")]
     AttrFromString { key: String },
-    #[snafu(display("Expected 2 labels, received {num_labels}"))]
+    #[display("Expected 2 labels, received {num_labels}")]
     NumLabels { num_labels: usize },
-    #[snafu(display("Could not parse labels"))]
-    Utf8 { source: Utf8Error },
-    #[snafu(display("Record is not an `iroh` record, expected `_iroh`, got `{label}`"))]
+    #[display("Could not parse labels")]
+    Utf8 {
+        #[from]
+        #[std]
+        source: Utf8Error,
+    },
+    #[display("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
     NotAnIrohRecord { label: String },
-    #[snafu(transparent)]
-    DecodingError {
-        #[snafu(source(from(DecodingError, Box::new)))]
-        source: Box<DecodingError>,
+    #[transparent]
+    Decoding {
+        #[from]
+        source: DecodingError,
     },
 }
 
@@ -460,12 +459,12 @@ impl std::ops::DerefMut for NodeInfo {
 fn node_id_from_txt_name(name: &str) -> Result<NodeId, ParseError> {
     let num_labels = name.split(".").count();
     if num_labels < 2 {
-        return Err(NumLabelsSnafu { num_labels }.build());
+        return Err(ParseError::num_labels(num_labels));
     }
     let mut labels = name.split(".");
     let label = labels.next().expect("checked above");
     if label != IROH_TXT_NAME {
-        return Err(NotAnIrohRecordSnafu { label }.build());
+        return Err(ParseError::not_an_iroh_record(label.to_string()));
     }
     let label = labels.next().expect("checked above");
     let node_id = NodeId::from_z32(label)?;
@@ -534,9 +533,9 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         for s in strings {
             let mut parts = s.split('=');
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
-                return Err(UnexpectedFormatSnafu { s }.build());
+                return Err(ParseError::unexpected_format(s));
             };
-            let attr = T::from_str(key).map_err(|_| AttrFromStringSnafu { key }.build())?;
+            let attr = T::from_str(key).map_err(|_| ParseError::attr_from_string(key.to_string()))?;
             attrs.entry(attr).or_default().push(value.to_string());
         }
         Ok(Self { attrs, node_id })
