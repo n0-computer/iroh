@@ -139,12 +139,15 @@ impl NodeMap {
         local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
         disco: DiscoState,
     ) -> Self {
-        let mut inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
 
         #[cfg(any(test, feature = "test-utils"))]
-        {
+        let inner = {
+            let mut inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
             inner.path_selection = path_selection;
-        }
+            inner
+        };
 
         Self {
             local_node_id,
