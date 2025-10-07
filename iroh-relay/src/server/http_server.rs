@@ -673,8 +673,7 @@ impl Inner {
 
         let mut io = WsBytesFramed { io: websocket };
 
-        let authentication =
-            handshake::serverside(&mut io, client_auth_header, rand::rngs::OsRng).await?;
+        let authentication = handshake::serverside(&mut io, client_auth_header).await?;
 
         trace!(?authentication.mechanism, "accept: verified authentication");
 
@@ -869,6 +868,7 @@ mod tests {
     use iroh_base::{PublicKey, SecretKey};
     use n0_future::{SinkExt, StreamExt};
     use n0_snafu::{Result, ResultExt};
+    use rand::SeedableRng;
     use reqwest::Url;
     use snafu::whatever;
     use tracing::info;
@@ -909,8 +909,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_http_clients_and_server() -> Result {
-        let a_key = SecretKey::generate(rand::thread_rng());
-        let b_key = SecretKey::generate(rand::thread_rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
+        let a_key = SecretKey::generate(&mut rng);
+        let b_key = SecretKey::generate(&mut rng);
 
         // start server
         let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
@@ -1024,8 +1026,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_https_clients_and_server() -> Result {
-        let a_key = SecretKey::generate(rand::thread_rng());
-        let b_key = SecretKey::generate(rand::thread_rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
+        let a_key = SecretKey::generate(&mut rng);
+        let b_key = SecretKey::generate(&mut rng);
 
         // create tls_config
         let tls_config = make_tls_config();
@@ -1113,6 +1117,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_server_basic() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         info!("Create the server.");
         let metrics = Arc::new(Metrics::default());
         let service = RelayService::new(
@@ -1125,7 +1131,7 @@ mod tests {
         );
 
         info!("Create client A and connect it to the server.");
-        let key_a = SecretKey::generate(rand::thread_rng());
+        let key_a = SecretKey::generate(&mut rng);
         let public_key_a = key_a.public();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
@@ -1135,7 +1141,7 @@ mod tests {
         handler_task.await.context("join")??;
 
         info!("Create client B and connect it to the server.");
-        let key_b = SecretKey::generate(rand::thread_rng());
+        let key_b = SecretKey::generate(&mut rng);
         let public_key_b = key_b.public();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
@@ -1212,6 +1218,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_server_replace_client() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         info!("Create the server.");
         let service = RelayService::new(
             Default::default(),
@@ -1223,7 +1231,7 @@ mod tests {
         );
 
         info!("Create client A and connect it to the server.");
-        let key_a = SecretKey::generate(rand::thread_rng());
+        let key_a = SecretKey::generate(&mut rng);
         let public_key_a = key_a.public();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
@@ -1233,7 +1241,7 @@ mod tests {
         handler_task.await.context("join")??;
 
         info!("Create client B and connect it to the server.");
-        let key_b = SecretKey::generate(rand::thread_rng());
+        let key_b = SecretKey::generate(&mut rng);
         let public_key_b = key_b.public();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();

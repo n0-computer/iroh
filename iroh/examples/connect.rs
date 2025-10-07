@@ -10,7 +10,6 @@ use std::net::SocketAddr;
 use clap::Parser;
 use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
 use n0_snafu::{Result, ResultExt};
-use n0_watcher::Watcher as _;
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -34,7 +33,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect example!\n");
     let args = Cli::parse();
-    let secret_key = SecretKey::generate(rand::rngs::OsRng);
+    let secret_key = SecretKey::generate(&mut rand::rng());
     println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
@@ -52,19 +51,20 @@ async fn main() -> Result<()> {
         .bind()
         .await?;
 
+    // wait for the node to be online
+    endpoint.online().await;
+
+    let node_addr = endpoint.node_addr();
     let me = endpoint.node_id();
     println!("node id: {me}");
     println!("node listening addresses:");
-    for local_endpoint in endpoint.direct_addresses().initialized().await {
-        println!("\t{}", local_endpoint.addr)
+    for addr in node_addr.direct_addresses() {
+        println!("\t{addr}")
     }
 
-    let relay_url = endpoint
-        .home_relay()
-        .get()
-        .first()
-        .cloned()
-        .expect("should be connected to a relay server, try calling `endpoint.direct_addresses()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
+    let relay_url = node_addr
+        .relay_url
+        .expect("should be connected to a relay server");
     println!("node relay server url: {relay_url}\n");
     // Build a `NodeAddr` from the node_id, relay url, and UDP addresses.
     let addr = NodeAddr::from_parts(args.node_id, Some(args.relay_url), args.addrs);

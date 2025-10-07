@@ -719,6 +719,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use iroh_base::SecretKey;
+    use rand::SeedableRng;
     use tracing_test::traced_test;
 
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
@@ -743,7 +744,7 @@ mod tests {
     async fn restore_from_vec() {
         let node_map = NodeMap::default();
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let node_a = SecretKey::generate(&mut rng).public();
         let node_b = SecretKey::generate(&mut rng).public();
         let node_c = SecretKey::generate(&mut rng).public();
@@ -812,7 +813,8 @@ mod tests {
     #[traced_test]
     fn test_prune_direct_addresses() {
         let node_map = NodeMap::default();
-        let public_key = SecretKey::generate(rand::thread_rng()).public();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let public_key = SecretKey::generate(&mut rng).public();
         let id = node_map
             .inner
             .lock()
@@ -885,8 +887,10 @@ mod tests {
     #[test]
     fn test_prune_inactive() {
         let node_map = NodeMap::default();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         // add one active node and more than MAX_INACTIVE_NODES inactive nodes
-        let active_node = SecretKey::generate(rand::thread_rng()).public();
+        let active_node = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map
@@ -897,7 +901,7 @@ mod tests {
             .expect("registered");
 
         for _ in 0..MAX_INACTIVE_NODES + 1 {
-            let node = SecretKey::generate(rand::thread_rng()).public();
+            let node = SecretKey::generate(&mut rng).public();
             node_map.add_test_addr(NodeAddr::new(node));
         }
 

@@ -5,7 +5,6 @@
 //!     $ cargo run --example listen-unreliable
 use iroh::{Endpoint, RelayMode, SecretKey};
 use n0_snafu::{Error, Result, ResultExt};
-use n0_watcher::Watcher as _;
 use tracing::{info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -15,7 +14,7 @@ const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nlisten (unreliable) example!\n");
-    let secret_key = SecretKey::generate(rand::rngs::OsRng);
+    let secret_key = SecretKey::generate(&mut rand::rng());
     println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
@@ -37,7 +36,10 @@ async fn main() -> Result<()> {
     println!("node id: {me}");
     println!("node listening addresses:");
 
-    let node_addr = endpoint.node_addr().initialized().await;
+    // wait for the node to be online
+    endpoint.online().await;
+
+    let node_addr = endpoint.node_addr();
     let local_addrs = node_addr
         .direct_addresses
         .into_iter()
