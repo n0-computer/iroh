@@ -273,7 +273,7 @@ impl EndpointArgs {
         let node_id = endpoint.node_id();
         println!("Our node id:\n\t{node_id}");
 
-        let node_addr = endpoint.watch_node_addr().initialized().await;
+        let node_addr = endpoint.node_addr();
 
         println!("Our direct addresses:");
         for addr in &node_addr.direct_addresses {

@@ -894,29 +894,12 @@ impl Endpoint {
     /// - the endpoint changes its preferred relay server
     /// - more addresses are discovered for this endpoint
     pub fn node_addr(&self) -> NodeAddr {
-        let node_id = self.node_id();
-        let relay_url = self.msock.home_relay().get().first().cloned();
-        let direct_addresses = self
-            .msock
-            .direct_addresses()
-            .get()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|addr| addr.addr)
-            .collect();
-
-        NodeAddr {
-            node_id,
-            relay_url,
-            direct_addresses,
-        }
+        self.watch_node_addr().get()
     }
 
     /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
     ///
     /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses.
-    ///
-    /// Use [`Watcher::initialized`] to wait for a [`NodeAddr`] that is ready to be connected to:
     ///
     /// ```no_run
     /// # async fn wrapper() -> n0_snafu::Result {
@@ -926,7 +909,7 @@ impl Endpoint {
     ///     .alpns(vec![b"my-alpn".to_vec()])
     ///     .bind()
     ///     .await?;
-    /// let node_addr = endpoint.watch_node_addr().initialized().await;
+    /// let node_addr = endpoint.watch_node_addr().get();
     /// # let _ = node_addr;
     /// # Ok(())
     /// # }
@@ -942,22 +925,17 @@ impl Endpoint {
     ///
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
-    pub fn watch_node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
+    pub fn watch_node_addr(&self) -> impl n0_watcher::Watcher<Value = NodeAddr> + use<> {
         let watch_addrs = self.msock.direct_addresses();
         let watch_relay = self.msock.home_relay();
         let node_id = self.node_id();
 
         watch_addrs
             .or(watch_relay)
-            .map(move |(addrs, mut relays)| match addrs {
-                Some(addrs) => Some(NodeAddr::from_parts(
-                    node_id,
-                    relays.pop(),
-                    addrs.into_iter().map(|x| x.addr),
-                )),
-                None => relays.pop().map(|relay_url| {
-                    NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
-                }),
+            .map(move |(addrs, mut relays)| {
+                debug_assert!(!addrs.is_empty(), "direct addresses must never be empty");
+
+                NodeAddr::from_parts(node_id, relays.pop(), addrs.into_iter().map(|x| x.addr))
             })
             .expect("watchable is alive - cannot be disconnected yet")
     }
@@ -998,9 +976,7 @@ impl Endpoint {
     /// get information on the current relay and direct address information.
     #[cfg(not(wasm_browser))]
     pub async fn online(&self) {
-        let mut watch1 = self.msock.home_relay();
-        let mut watch2 = self.msock.direct_addresses();
-        tokio::join!(watch1.initialized(), watch2.initialized());
+        self.msock.home_relay().initialized().await;
     }
 
     /// A convenience method that waits for the endpoint to be considered "online".
@@ -2246,7 +2222,7 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        let my_addr = ep.watch_node_addr().initialized().await;
+        let my_addr = ep.node_addr();
         let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
@@ -2496,7 +2472,7 @@ mod tests {
             }
         });
 
-        let addr = server.watch_node_addr().initialized().await;
+        let addr = server.node_addr();
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
         send.write_all(b"Hello, world!").await.e()?;
@@ -2528,8 +2504,8 @@ mod tests {
 
         let ep2 = ep2.bind().await?;
 
-        let ep1_nodeaddr = ep1.watch_node_addr().initialized().await;
-        let ep2_nodeaddr = ep2.watch_node_addr().initialized().await;
+        let ep1_nodeaddr = ep1.node_addr();
+        let ep2_nodeaddr = ep2.node_addr();
         ep1.add_node_addr(ep2_nodeaddr.clone())?;
         ep2.add_node_addr(ep1_nodeaddr.clone())?;
         let ep1_nodeid = ep1.node_id();
@@ -2654,7 +2630,7 @@ mod tests {
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
-        let ep1_nodeaddr = ep1.watch_node_addr().initialized().await;
+        let ep1_nodeaddr = ep1.node_addr();
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
             ep1_nodeaddr.relay_url()
@@ -2704,15 +2680,8 @@ mod tests {
             .bind()
             .await?;
 
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            ep.watch_node_addr()
-                .map(|addr| addr.map(|addr| addr.direct_addresses))
-                .unwrap()
-                .initialized(),
-        )
-        .await
-        .e()?;
+        assert!(!ep.node_addr().direct_addresses.is_empty());
+
         Ok(())
     }
 
@@ -2864,11 +2833,9 @@ mod tests {
             .await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.watch_node_addr().initialized().await)
-            .await?;
+        connect_client_0rtt_expect_err(&client, server.node_addr()).await?;
         // The second 0rtt attempt should work
-        connect_client_0rtt_expect_ok(&client, server.watch_node_addr().initialized().await, true)
-            .await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr(), true).await?;
 
         client.close().await;
         server.close().await;
@@ -2889,19 +2856,16 @@ mod tests {
             .await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.watch_node_addr().initialized().await)
-            .await?;
+        connect_client_0rtt_expect_err(&client, server.node_addr()).await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
         let another =
             spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("another")).await?;
-        connect_client_0rtt_expect_err(&client, another.watch_node_addr().initialized().await)
-            .await?;
+        connect_client_0rtt_expect_err(&client, another.node_addr()).await?;
         another.close().await;
 
-        connect_client_0rtt_expect_ok(&client, server.watch_node_addr().initialized().await, true)
-            .await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr(), true).await?;
 
         client.close().await;
         server.close().await;
@@ -2921,10 +2885,8 @@ mod tests {
         let server_key = SecretKey::generate(&mut rng);
         let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.watch_node_addr().initialized().await)
-            .await?;
-        connect_client_0rtt_expect_ok(&client, server.watch_node_addr().initialized().await, true)
-            .await?;
+        connect_client_0rtt_expect_err(&client, server.node_addr()).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr(), true).await?;
 
         server.close().await;
 
@@ -2933,8 +2895,7 @@ mod tests {
         // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
         // but the server will reject the early data because it discarded necessary state
         // to decrypt it when restarting.
-        connect_client_0rtt_expect_ok(&client, server.watch_node_addr().initialized().await, false)
-            .await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr(), false).await?;
 
         client.close().await;
 
@@ -2950,7 +2911,7 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
-        let server_addr = server.watch_node_addr().initialized().await;
+        let server_addr = server.node_addr();
         let server_task = tokio::spawn(async move {
             let incoming = server.accept().await.e()?;
             let conn = incoming.await.e()?;
@@ -3000,7 +2961,7 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
-        let server_addr = server.watch_node_addr().initialized().await;
+        let server_addr = server.node_addr();
         let server_task = tokio::task::spawn(async move {
             let conn = server.accept().await.e()?.accept().e()?.await.e()?;
             let mut uni = conn.accept_uni().await.e()?;
@@ -3061,7 +3022,7 @@ mod tests {
             .alpns(accept_alpns)
             .bind()
             .await?;
-        let server_addr = server.watch_node_addr().initialized().await;
+        let server_addr = server.node_addr();
         let server_task = tokio::spawn({
             let server = server.clone();
             async move {
@@ -3185,7 +3146,7 @@ mod tests {
                 .bind()
                 .await
                 .e()?;
-            let addr = endpoint.watch_node_addr().initialized().await;
+            let addr = endpoint.node_addr();
             let router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
             Ok((router, addr))
         }
@@ -3214,7 +3175,7 @@ mod tests {
         // wait for the endpoint to be initialized. This should not be needed,
         // but we don't want to measure endpoint init time but connection time
         // from a fully initialized endpoint.
-        endpoint.watch_node_addr().initialized().await;
+        endpoint.node_addr();
         let t0 = Instant::now();
         for id in &ids {
             let conn = endpoint.connect(*id, NOOP_ALPN).await?;
