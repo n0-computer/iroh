@@ -478,6 +478,7 @@ impl MagicSock {
         }
     }
 
+    #[cfg(not(wasm_browser))]
     fn collect_local_addresses(
         &self,
         netmon_watcher: &mut n0_watcher::Direct<netmon::State>,

@@ -946,18 +946,14 @@ impl Endpoint {
     /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
     #[cfg(wasm_browser)]
-    pub fn watch_node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
+    pub fn watch_node_addr(&self) -> impl n0_watcher::Watcher<Value = NodeAddr> + use<> {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
         let watch_relay = self.msock.home_relay();
         let node_id = self.node_id();
         watch_relay
-            .map(move |mut relays| {
-                relays.pop().map(|relay_url| {
-                    NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
-                })
-            })
+            .map(move |mut relays| NodeAddr::from_parts(node_id, relays.pop(), std::iter::empty()))
             .expect("watchable is alive - cannot be disconnected yet")
     }
 
