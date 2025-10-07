@@ -1429,296 +1429,300 @@
 <a href=#1429 id=1429 data-nosnippet>1429</a>    <span class="kw">use </span>std::{collections::BTreeMap, net::Ipv4Addr};
 <a href=#1430 id=1430 data-nosnippet>1430</a>
 <a href=#1431 id=1431 data-nosnippet>1431</a>    <span class="kw">use </span>iroh_base::SecretKey;
-<a href=#1432 id=1432 data-nosnippet>1432</a>
-<a href=#1433 id=1433 data-nosnippet>1433</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#1434 id=1434 data-nosnippet>1434</a>    <span class="kw">use </span><span class="kw">crate</span>::magicsock::node_map::{NodeMap, NodeMapInner};
-<a href=#1435 id=1435 data-nosnippet>1435</a>
-<a href=#1436 id=1436 data-nosnippet>1436</a>    <span class="attr">#[test]
-<a href=#1437 id=1437 data-nosnippet>1437</a>    </span><span class="kw">fn </span>test_remote_infos() {
-<a href=#1438 id=1438 data-nosnippet>1438</a>        <span class="kw">let </span>now = Instant::now();
-<a href=#1439 id=1439 data-nosnippet>1439</a>        <span class="kw">let </span>elapsed = Duration::from_secs(<span class="number">3</span>);
-<a href=#1440 id=1440 data-nosnippet>1440</a>        <span class="kw">let </span>later = now + elapsed;
-<a href=#1441 id=1441 data-nosnippet>1441</a>        <span class="kw">let </span>send_addr: RelayUrl = <span class="string">"https://my-relay.com"</span>.parse().unwrap();
-<a href=#1442 id=1442 data-nosnippet>1442</a>        <span class="kw">let </span>pong_src = SendAddr::Udp(<span class="string">"0.0.0.0:1"</span>.parse().unwrap());
-<a href=#1443 id=1443 data-nosnippet>1443</a>        <span class="kw">let </span>latency = Duration::from_millis(<span class="number">50</span>);
-<a href=#1444 id=1444 data-nosnippet>1444</a>
-<a href=#1445 id=1445 data-nosnippet>1445</a>        <span class="kw">let </span>relay_and_state = |node_id: NodeId, url: RelayUrl| {
-<a href=#1446 id=1446 data-nosnippet>1446</a>            <span class="kw">let </span>relay_state = PathState::with_pong_reply(
-<a href=#1447 id=1447 data-nosnippet>1447</a>                node_id,
-<a href=#1448 id=1448 data-nosnippet>1448</a>                PongReply {
-<a href=#1449 id=1449 data-nosnippet>1449</a>                    latency,
-<a href=#1450 id=1450 data-nosnippet>1450</a>                    pong_at: now,
-<a href=#1451 id=1451 data-nosnippet>1451</a>                    from: SendAddr::Relay(send_addr.clone()),
-<a href=#1452 id=1452 data-nosnippet>1452</a>                    pong_src: pong_src.clone(),
-<a href=#1453 id=1453 data-nosnippet>1453</a>                },
-<a href=#1454 id=1454 data-nosnippet>1454</a>            );
-<a href=#1455 id=1455 data-nosnippet>1455</a>            <span class="prelude-val">Some</span>((url, relay_state))
-<a href=#1456 id=1456 data-nosnippet>1456</a>        };
-<a href=#1457 id=1457 data-nosnippet>1457</a>
-<a href=#1458 id=1458 data-nosnippet>1458</a>        <span class="comment">// endpoint with a `best_addr` that has a latency but no relay
-<a href=#1459 id=1459 data-nosnippet>1459</a>        </span><span class="kw">let </span>(a_endpoint, a_socket_addr) = {
-<a href=#1460 id=1460 data-nosnippet>1460</a>            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
-<a href=#1461 id=1461 data-nosnippet>1461</a>            <span class="kw">let </span>node_id = key.public();
-<a href=#1462 id=1462 data-nosnippet>1462</a>            <span class="kw">let </span>ip_port = IpPort {
-<a href=#1463 id=1463 data-nosnippet>1463</a>                ip: Ipv4Addr::UNSPECIFIED.into(),
-<a href=#1464 id=1464 data-nosnippet>1464</a>                port: <span class="number">10</span>,
-<a href=#1465 id=1465 data-nosnippet>1465</a>            };
-<a href=#1466 id=1466 data-nosnippet>1466</a>            <span class="kw">let </span>endpoint_state = BTreeMap::from([(
-<a href=#1467 id=1467 data-nosnippet>1467</a>                ip_port,
-<a href=#1468 id=1468 data-nosnippet>1468</a>                PathState::with_pong_reply(
-<a href=#1469 id=1469 data-nosnippet>1469</a>                    node_id,
-<a href=#1470 id=1470 data-nosnippet>1470</a>                    PongReply {
-<a href=#1471 id=1471 data-nosnippet>1471</a>                        latency,
-<a href=#1472 id=1472 data-nosnippet>1472</a>                        pong_at: now,
-<a href=#1473 id=1473 data-nosnippet>1473</a>                        from: SendAddr::Udp(ip_port.into()),
-<a href=#1474 id=1474 data-nosnippet>1474</a>                        pong_src: pong_src.clone(),
-<a href=#1475 id=1475 data-nosnippet>1475</a>                    },
-<a href=#1476 id=1476 data-nosnippet>1476</a>                ),
-<a href=#1477 id=1477 data-nosnippet>1477</a>            )]);
-<a href=#1478 id=1478 data-nosnippet>1478</a>            (
-<a href=#1479 id=1479 data-nosnippet>1479</a>                NodeState {
-<a href=#1480 id=1480 data-nosnippet>1480</a>                    id: <span class="number">0</span>,
-<a href=#1481 id=1481 data-nosnippet>1481</a>                    quic_mapped_addr: NodeIdMappedAddr::generate(),
-<a href=#1482 id=1482 data-nosnippet>1482</a>                    node_id: key.public(),
-<a href=#1483 id=1483 data-nosnippet>1483</a>                    last_full_ping: <span class="prelude-val">None</span>,
-<a href=#1484 id=1484 data-nosnippet>1484</a>                    relay_url: <span class="prelude-val">None</span>,
-<a href=#1485 id=1485 data-nosnippet>1485</a>                    udp_paths: NodeUdpPaths::from_parts(
-<a href=#1486 id=1486 data-nosnippet>1486</a>                        endpoint_state,
-<a href=#1487 id=1487 data-nosnippet>1487</a>                        UdpSendAddr::Valid(ip_port.into()),
-<a href=#1488 id=1488 data-nosnippet>1488</a>                    ),
-<a href=#1489 id=1489 data-nosnippet>1489</a>                    sent_pings: HashMap::new(),
-<a href=#1490 id=1490 data-nosnippet>1490</a>                    last_used: <span class="prelude-val">Some</span>(now),
-<a href=#1491 id=1491 data-nosnippet>1491</a>                    last_call_me_maybe: <span class="prelude-val">None</span>,
-<a href=#1492 id=1492 data-nosnippet>1492</a>                    conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
-<a href=#1493 id=1493 data-nosnippet>1493</a>                    has_been_direct: AtomicBool::new(<span class="bool-val">true</span>),
-<a href=#1494 id=1494 data-nosnippet>1494</a>                    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#1495 id=1495 data-nosnippet>1495</a>                    </span>path_selection: PathSelection::default(),
-<a href=#1496 id=1496 data-nosnippet>1496</a>                },
-<a href=#1497 id=1497 data-nosnippet>1497</a>                ip_port.into(),
-<a href=#1498 id=1498 data-nosnippet>1498</a>            )
-<a href=#1499 id=1499 data-nosnippet>1499</a>        };
-<a href=#1500 id=1500 data-nosnippet>1500</a>        <span class="comment">// endpoint w/ no best addr but a relay w/ latency
-<a href=#1501 id=1501 data-nosnippet>1501</a>        </span><span class="kw">let </span>b_endpoint = {
-<a href=#1502 id=1502 data-nosnippet>1502</a>            <span class="comment">// let socket_addr = "0.0.0.0:9".parse().unwrap();
-<a href=#1503 id=1503 data-nosnippet>1503</a>            </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
-<a href=#1504 id=1504 data-nosnippet>1504</a>            NodeState {
-<a href=#1505 id=1505 data-nosnippet>1505</a>                id: <span class="number">1</span>,
-<a href=#1506 id=1506 data-nosnippet>1506</a>                quic_mapped_addr: NodeIdMappedAddr::generate(),
-<a href=#1507 id=1507 data-nosnippet>1507</a>                node_id: key.public(),
-<a href=#1508 id=1508 data-nosnippet>1508</a>                last_full_ping: <span class="prelude-val">None</span>,
-<a href=#1509 id=1509 data-nosnippet>1509</a>                relay_url: relay_and_state(key.public(), send_addr.clone()),
-<a href=#1510 id=1510 data-nosnippet>1510</a>                udp_paths: NodeUdpPaths::new(),
-<a href=#1511 id=1511 data-nosnippet>1511</a>                sent_pings: HashMap::new(),
-<a href=#1512 id=1512 data-nosnippet>1512</a>                last_used: <span class="prelude-val">Some</span>(now),
-<a href=#1513 id=1513 data-nosnippet>1513</a>                last_call_me_maybe: <span class="prelude-val">None</span>,
-<a href=#1514 id=1514 data-nosnippet>1514</a>                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-<a href=#1515 id=1515 data-nosnippet>1515</a>                has_been_direct: AtomicBool::new(<span class="bool-val">false</span>),
-<a href=#1516 id=1516 data-nosnippet>1516</a>                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#1517 id=1517 data-nosnippet>1517</a>                </span>path_selection: PathSelection::default(),
-<a href=#1518 id=1518 data-nosnippet>1518</a>            }
-<a href=#1519 id=1519 data-nosnippet>1519</a>        };
-<a href=#1520 id=1520 data-nosnippet>1520</a>
-<a href=#1521 id=1521 data-nosnippet>1521</a>        <span class="comment">// endpoint w/ no best addr but a relay w/ no latency
-<a href=#1522 id=1522 data-nosnippet>1522</a>        </span><span class="kw">let </span>c_endpoint = {
-<a href=#1523 id=1523 data-nosnippet>1523</a>            <span class="comment">// let socket_addr = "0.0.0.0:8".parse().unwrap();
-<a href=#1524 id=1524 data-nosnippet>1524</a>            </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
-<a href=#1525 id=1525 data-nosnippet>1525</a>            NodeState {
-<a href=#1526 id=1526 data-nosnippet>1526</a>                id: <span class="number">2</span>,
-<a href=#1527 id=1527 data-nosnippet>1527</a>                quic_mapped_addr: NodeIdMappedAddr::generate(),
-<a href=#1528 id=1528 data-nosnippet>1528</a>                node_id: key.public(),
-<a href=#1529 id=1529 data-nosnippet>1529</a>                last_full_ping: <span class="prelude-val">None</span>,
-<a href=#1530 id=1530 data-nosnippet>1530</a>                relay_url: <span class="prelude-val">Some</span>((
-<a href=#1531 id=1531 data-nosnippet>1531</a>                    send_addr.clone(),
-<a href=#1532 id=1532 data-nosnippet>1532</a>                    PathState::new(
-<a href=#1533 id=1533 data-nosnippet>1533</a>                        key.public(),
-<a href=#1534 id=1534 data-nosnippet>1534</a>                        SendAddr::from(send_addr.clone()),
-<a href=#1535 id=1535 data-nosnippet>1535</a>                        Source::App,
-<a href=#1536 id=1536 data-nosnippet>1536</a>                        now,
-<a href=#1537 id=1537 data-nosnippet>1537</a>                    ),
-<a href=#1538 id=1538 data-nosnippet>1538</a>                )),
-<a href=#1539 id=1539 data-nosnippet>1539</a>                udp_paths: NodeUdpPaths::new(),
-<a href=#1540 id=1540 data-nosnippet>1540</a>                sent_pings: HashMap::new(),
-<a href=#1541 id=1541 data-nosnippet>1541</a>                last_used: <span class="prelude-val">Some</span>(now),
-<a href=#1542 id=1542 data-nosnippet>1542</a>                last_call_me_maybe: <span class="prelude-val">None</span>,
-<a href=#1543 id=1543 data-nosnippet>1543</a>                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-<a href=#1544 id=1544 data-nosnippet>1544</a>                has_been_direct: AtomicBool::new(<span class="bool-val">false</span>),
-<a href=#1545 id=1545 data-nosnippet>1545</a>                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#1546 id=1546 data-nosnippet>1546</a>                </span>path_selection: PathSelection::default(),
-<a href=#1547 id=1547 data-nosnippet>1547</a>            }
-<a href=#1548 id=1548 data-nosnippet>1548</a>        };
-<a href=#1549 id=1549 data-nosnippet>1549</a>
-<a href=#1550 id=1550 data-nosnippet>1550</a>        <span class="comment">// endpoint w/ expired best addr and relay w/ latency
-<a href=#1551 id=1551 data-nosnippet>1551</a>        </span><span class="kw">let </span>(d_endpoint, d_socket_addr) = {
-<a href=#1552 id=1552 data-nosnippet>1552</a>            <span class="kw">let </span>socket_addr: SocketAddr = <span class="string">"0.0.0.0:7"</span>.parse().unwrap();
-<a href=#1553 id=1553 data-nosnippet>1553</a>            <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
-<a href=#1554 id=1554 data-nosnippet>1554</a>            <span class="kw">let </span>node_id = key.public();
-<a href=#1555 id=1555 data-nosnippet>1555</a>            <span class="kw">let </span>endpoint_state = BTreeMap::from([(
-<a href=#1556 id=1556 data-nosnippet>1556</a>                IpPort::from(socket_addr),
-<a href=#1557 id=1557 data-nosnippet>1557</a>                PathState::with_pong_reply(
-<a href=#1558 id=1558 data-nosnippet>1558</a>                    node_id,
-<a href=#1559 id=1559 data-nosnippet>1559</a>                    PongReply {
-<a href=#1560 id=1560 data-nosnippet>1560</a>                        latency,
-<a href=#1561 id=1561 data-nosnippet>1561</a>                        pong_at: now,
-<a href=#1562 id=1562 data-nosnippet>1562</a>                        from: SendAddr::Udp(socket_addr),
-<a href=#1563 id=1563 data-nosnippet>1563</a>                        pong_src: pong_src.clone(),
-<a href=#1564 id=1564 data-nosnippet>1564</a>                    },
-<a href=#1565 id=1565 data-nosnippet>1565</a>                ),
-<a href=#1566 id=1566 data-nosnippet>1566</a>            )]);
-<a href=#1567 id=1567 data-nosnippet>1567</a>            (
-<a href=#1568 id=1568 data-nosnippet>1568</a>                NodeState {
-<a href=#1569 id=1569 data-nosnippet>1569</a>                    id: <span class="number">3</span>,
-<a href=#1570 id=1570 data-nosnippet>1570</a>                    quic_mapped_addr: NodeIdMappedAddr::generate(),
-<a href=#1571 id=1571 data-nosnippet>1571</a>                    node_id: key.public(),
-<a href=#1572 id=1572 data-nosnippet>1572</a>                    last_full_ping: <span class="prelude-val">None</span>,
-<a href=#1573 id=1573 data-nosnippet>1573</a>                    relay_url: relay_and_state(key.public(), send_addr.clone()),
-<a href=#1574 id=1574 data-nosnippet>1574</a>                    udp_paths: NodeUdpPaths::from_parts(
-<a href=#1575 id=1575 data-nosnippet>1575</a>                        endpoint_state,
-<a href=#1576 id=1576 data-nosnippet>1576</a>                        UdpSendAddr::Outdated(socket_addr),
-<a href=#1577 id=1577 data-nosnippet>1577</a>                    ),
-<a href=#1578 id=1578 data-nosnippet>1578</a>                    sent_pings: HashMap::new(),
-<a href=#1579 id=1579 data-nosnippet>1579</a>                    last_used: <span class="prelude-val">Some</span>(now),
-<a href=#1580 id=1580 data-nosnippet>1580</a>                    last_call_me_maybe: <span class="prelude-val">None</span>,
-<a href=#1581 id=1581 data-nosnippet>1581</a>                    conn_type: Watchable::new(ConnectionType::Mixed(
-<a href=#1582 id=1582 data-nosnippet>1582</a>                        socket_addr,
-<a href=#1583 id=1583 data-nosnippet>1583</a>                        send_addr.clone(),
-<a href=#1584 id=1584 data-nosnippet>1584</a>                    )),
-<a href=#1585 id=1585 data-nosnippet>1585</a>                    has_been_direct: AtomicBool::new(<span class="bool-val">false</span>),
-<a href=#1586 id=1586 data-nosnippet>1586</a>                    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#1587 id=1587 data-nosnippet>1587</a>                    </span>path_selection: PathSelection::default(),
-<a href=#1588 id=1588 data-nosnippet>1588</a>                },
-<a href=#1589 id=1589 data-nosnippet>1589</a>                socket_addr,
-<a href=#1590 id=1590 data-nosnippet>1590</a>            )
-<a href=#1591 id=1591 data-nosnippet>1591</a>        };
-<a href=#1592 id=1592 data-nosnippet>1592</a>
-<a href=#1593 id=1593 data-nosnippet>1593</a>        <span class="kw">let </span><span class="kw-2">mut </span>expect = Vec::from([
-<a href=#1594 id=1594 data-nosnippet>1594</a>            RemoteInfo {
-<a href=#1595 id=1595 data-nosnippet>1595</a>                node_id: a_endpoint.node_id,
-<a href=#1596 id=1596 data-nosnippet>1596</a>                relay_url: <span class="prelude-val">None</span>,
-<a href=#1597 id=1597 data-nosnippet>1597</a>                addrs: Vec::from([DirectAddrInfo {
-<a href=#1598 id=1598 data-nosnippet>1598</a>                    addr: a_socket_addr,
-<a href=#1599 id=1599 data-nosnippet>1599</a>                    latency: <span class="prelude-val">Some</span>(latency),
-<a href=#1600 id=1600 data-nosnippet>1600</a>                    last_control: <span class="prelude-val">Some</span>((elapsed, ControlMsg::Pong)),
-<a href=#1601 id=1601 data-nosnippet>1601</a>                    last_payload: <span class="prelude-val">None</span>,
-<a href=#1602 id=1602 data-nosnippet>1602</a>                    last_alive: <span class="prelude-val">Some</span>(elapsed),
-<a href=#1603 id=1603 data-nosnippet>1603</a>                    sources: HashMap::new(),
-<a href=#1604 id=1604 data-nosnippet>1604</a>                }]),
-<a href=#1605 id=1605 data-nosnippet>1605</a>                conn_type: ConnectionType::Direct(a_socket_addr),
-<a href=#1606 id=1606 data-nosnippet>1606</a>                latency: <span class="prelude-val">Some</span>(latency),
-<a href=#1607 id=1607 data-nosnippet>1607</a>                last_used: <span class="prelude-val">Some</span>(elapsed),
-<a href=#1608 id=1608 data-nosnippet>1608</a>            },
-<a href=#1609 id=1609 data-nosnippet>1609</a>            RemoteInfo {
-<a href=#1610 id=1610 data-nosnippet>1610</a>                node_id: b_endpoint.node_id,
-<a href=#1611 id=1611 data-nosnippet>1611</a>                relay_url: <span class="prelude-val">Some</span>(RelayUrlInfo {
-<a href=#1612 id=1612 data-nosnippet>1612</a>                    relay_url: b_endpoint.relay_url.as_ref().unwrap().<span class="number">0</span>.clone(),
-<a href=#1613 id=1613 data-nosnippet>1613</a>                    last_alive: <span class="prelude-val">None</span>,
-<a href=#1614 id=1614 data-nosnippet>1614</a>                    latency: <span class="prelude-val">Some</span>(latency),
-<a href=#1615 id=1615 data-nosnippet>1615</a>                }),
-<a href=#1616 id=1616 data-nosnippet>1616</a>                addrs: Vec::new(),
-<a href=#1617 id=1617 data-nosnippet>1617</a>                conn_type: ConnectionType::Relay(send_addr.clone()),
-<a href=#1618 id=1618 data-nosnippet>1618</a>                latency: <span class="prelude-val">Some</span>(latency),
-<a href=#1619 id=1619 data-nosnippet>1619</a>                last_used: <span class="prelude-val">Some</span>(elapsed),
-<a href=#1620 id=1620 data-nosnippet>1620</a>            },
-<a href=#1621 id=1621 data-nosnippet>1621</a>            RemoteInfo {
-<a href=#1622 id=1622 data-nosnippet>1622</a>                node_id: c_endpoint.node_id,
-<a href=#1623 id=1623 data-nosnippet>1623</a>                relay_url: <span class="prelude-val">Some</span>(RelayUrlInfo {
-<a href=#1624 id=1624 data-nosnippet>1624</a>                    relay_url: c_endpoint.relay_url.as_ref().unwrap().<span class="number">0</span>.clone(),
-<a href=#1625 id=1625 data-nosnippet>1625</a>                    last_alive: <span class="prelude-val">None</span>,
-<a href=#1626 id=1626 data-nosnippet>1626</a>                    latency: <span class="prelude-val">None</span>,
-<a href=#1627 id=1627 data-nosnippet>1627</a>                }),
-<a href=#1628 id=1628 data-nosnippet>1628</a>                addrs: Vec::new(),
-<a href=#1629 id=1629 data-nosnippet>1629</a>                conn_type: ConnectionType::Relay(send_addr.clone()),
-<a href=#1630 id=1630 data-nosnippet>1630</a>                latency: <span class="prelude-val">None</span>,
-<a href=#1631 id=1631 data-nosnippet>1631</a>                last_used: <span class="prelude-val">Some</span>(elapsed),
-<a href=#1632 id=1632 data-nosnippet>1632</a>            },
-<a href=#1633 id=1633 data-nosnippet>1633</a>            RemoteInfo {
-<a href=#1634 id=1634 data-nosnippet>1634</a>                node_id: d_endpoint.node_id,
-<a href=#1635 id=1635 data-nosnippet>1635</a>                relay_url: <span class="prelude-val">Some</span>(RelayUrlInfo {
-<a href=#1636 id=1636 data-nosnippet>1636</a>                    relay_url: d_endpoint.relay_url.as_ref().unwrap().<span class="number">0</span>.clone(),
-<a href=#1637 id=1637 data-nosnippet>1637</a>                    last_alive: <span class="prelude-val">None</span>,
-<a href=#1638 id=1638 data-nosnippet>1638</a>                    latency: <span class="prelude-val">Some</span>(latency),
-<a href=#1639 id=1639 data-nosnippet>1639</a>                }),
-<a href=#1640 id=1640 data-nosnippet>1640</a>                addrs: Vec::from([DirectAddrInfo {
-<a href=#1641 id=1641 data-nosnippet>1641</a>                    addr: d_socket_addr,
-<a href=#1642 id=1642 data-nosnippet>1642</a>                    latency: <span class="prelude-val">Some</span>(latency),
-<a href=#1643 id=1643 data-nosnippet>1643</a>                    last_control: <span class="prelude-val">Some</span>((elapsed, ControlMsg::Pong)),
-<a href=#1644 id=1644 data-nosnippet>1644</a>                    last_payload: <span class="prelude-val">None</span>,
-<a href=#1645 id=1645 data-nosnippet>1645</a>                    last_alive: <span class="prelude-val">Some</span>(elapsed),
-<a href=#1646 id=1646 data-nosnippet>1646</a>                    sources: HashMap::new(),
-<a href=#1647 id=1647 data-nosnippet>1647</a>                }]),
-<a href=#1648 id=1648 data-nosnippet>1648</a>                conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
-<a href=#1649 id=1649 data-nosnippet>1649</a>                latency: <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">50</span>)),
-<a href=#1650 id=1650 data-nosnippet>1650</a>                last_used: <span class="prelude-val">Some</span>(elapsed),
-<a href=#1651 id=1651 data-nosnippet>1651</a>            },
-<a href=#1652 id=1652 data-nosnippet>1652</a>        ]);
-<a href=#1653 id=1653 data-nosnippet>1653</a>
-<a href=#1654 id=1654 data-nosnippet>1654</a>        <span class="kw">let </span>node_map = NodeMap::from_inner(NodeMapInner {
-<a href=#1655 id=1655 data-nosnippet>1655</a>            by_node_key: HashMap::from([
-<a href=#1656 id=1656 data-nosnippet>1656</a>                (a_endpoint.node_id, a_endpoint.id),
-<a href=#1657 id=1657 data-nosnippet>1657</a>                (b_endpoint.node_id, b_endpoint.id),
-<a href=#1658 id=1658 data-nosnippet>1658</a>                (c_endpoint.node_id, c_endpoint.id),
-<a href=#1659 id=1659 data-nosnippet>1659</a>                (d_endpoint.node_id, d_endpoint.id),
-<a href=#1660 id=1660 data-nosnippet>1660</a>            ]),
-<a href=#1661 id=1661 data-nosnippet>1661</a>            by_ip_port: HashMap::from([
-<a href=#1662 id=1662 data-nosnippet>1662</a>                (a_socket_addr.into(), a_endpoint.id),
-<a href=#1663 id=1663 data-nosnippet>1663</a>                (d_socket_addr.into(), d_endpoint.id),
-<a href=#1664 id=1664 data-nosnippet>1664</a>            ]),
-<a href=#1665 id=1665 data-nosnippet>1665</a>            by_quic_mapped_addr: HashMap::from([
-<a href=#1666 id=1666 data-nosnippet>1666</a>                (a_endpoint.quic_mapped_addr, a_endpoint.id),
-<a href=#1667 id=1667 data-nosnippet>1667</a>                (b_endpoint.quic_mapped_addr, b_endpoint.id),
-<a href=#1668 id=1668 data-nosnippet>1668</a>                (c_endpoint.quic_mapped_addr, c_endpoint.id),
-<a href=#1669 id=1669 data-nosnippet>1669</a>                (d_endpoint.quic_mapped_addr, d_endpoint.id),
-<a href=#1670 id=1670 data-nosnippet>1670</a>            ]),
-<a href=#1671 id=1671 data-nosnippet>1671</a>            by_id: HashMap::from([
-<a href=#1672 id=1672 data-nosnippet>1672</a>                (a_endpoint.id, a_endpoint),
-<a href=#1673 id=1673 data-nosnippet>1673</a>                (b_endpoint.id, b_endpoint),
-<a href=#1674 id=1674 data-nosnippet>1674</a>                (c_endpoint.id, c_endpoint),
-<a href=#1675 id=1675 data-nosnippet>1675</a>                (d_endpoint.id, d_endpoint),
-<a href=#1676 id=1676 data-nosnippet>1676</a>            ]),
-<a href=#1677 id=1677 data-nosnippet>1677</a>            next_id: <span class="number">5</span>,
-<a href=#1678 id=1678 data-nosnippet>1678</a>            path_selection: PathSelection::default(),
-<a href=#1679 id=1679 data-nosnippet>1679</a>        });
-<a href=#1680 id=1680 data-nosnippet>1680</a>        <span class="kw">let </span><span class="kw-2">mut </span>got = node_map.list_remote_infos(later);
-<a href=#1681 id=1681 data-nosnippet>1681</a>        got.sort_by_key(|p| p.node_id);
-<a href=#1682 id=1682 data-nosnippet>1682</a>        expect.sort_by_key(|p| p.node_id);
-<a href=#1683 id=1683 data-nosnippet>1683</a>        remove_non_deterministic_fields(<span class="kw-2">&amp;mut </span>got);
-<a href=#1684 id=1684 data-nosnippet>1684</a>        <span class="macro">assert_eq!</span>(expect, got);
-<a href=#1685 id=1685 data-nosnippet>1685</a>    }
-<a href=#1686 id=1686 data-nosnippet>1686</a>
-<a href=#1687 id=1687 data-nosnippet>1687</a>    <span class="kw">fn </span>remove_non_deterministic_fields(infos: <span class="kw-2">&amp;mut </span>[RemoteInfo]) {
-<a href=#1688 id=1688 data-nosnippet>1688</a>        <span class="kw">for </span>info <span class="kw">in </span>infos.iter_mut() {
-<a href=#1689 id=1689 data-nosnippet>1689</a>            <span class="kw">if </span>info.relay_url.is_some() {
-<a href=#1690 id=1690 data-nosnippet>1690</a>                info.relay_url.as_mut().unwrap().last_alive = <span class="prelude-val">None</span>;
-<a href=#1691 id=1691 data-nosnippet>1691</a>            }
-<a href=#1692 id=1692 data-nosnippet>1692</a>        }
-<a href=#1693 id=1693 data-nosnippet>1693</a>    }
-<a href=#1694 id=1694 data-nosnippet>1694</a>
-<a href=#1695 id=1695 data-nosnippet>1695</a>    <span class="attr">#[test]
-<a href=#1696 id=1696 data-nosnippet>1696</a>    </span><span class="kw">fn </span>test_prune_direct_addresses() {
-<a href=#1697 id=1697 data-nosnippet>1697</a>        <span class="comment">// When we handle a call-me-maybe with more than MAX_INACTIVE_DIRECT_ADDRESSES we do
-<a href=#1698 id=1698 data-nosnippet>1698</a>        // not want to prune them right away but send pings to all of them.
-<a href=#1699 id=1699 data-nosnippet>1699</a>
-<a href=#1700 id=1700 data-nosnippet>1700</a>        </span><span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
-<a href=#1701 id=1701 data-nosnippet>1701</a>        <span class="kw">let </span>opts = Options {
-<a href=#1702 id=1702 data-nosnippet>1702</a>            node_id: key.public(),
-<a href=#1703 id=1703 data-nosnippet>1703</a>            relay_url: <span class="prelude-val">None</span>,
-<a href=#1704 id=1704 data-nosnippet>1704</a>            active: <span class="bool-val">true</span>,
-<a href=#1705 id=1705 data-nosnippet>1705</a>            source: <span class="kw">crate</span>::magicsock::Source::NamedApp {
-<a href=#1706 id=1706 data-nosnippet>1706</a>                name: <span class="string">"test"</span>.into(),
-<a href=#1707 id=1707 data-nosnippet>1707</a>            },
-<a href=#1708 id=1708 data-nosnippet>1708</a>            path_selection: PathSelection::default(),
-<a href=#1709 id=1709 data-nosnippet>1709</a>        };
-<a href=#1710 id=1710 data-nosnippet>1710</a>        <span class="kw">let </span><span class="kw-2">mut </span>ep = NodeState::new(<span class="number">0</span>, opts);
-<a href=#1711 id=1711 data-nosnippet>1711</a>
-<a href=#1712 id=1712 data-nosnippet>1712</a>        <span class="kw">let </span>my_numbers_count: u16 = (MAX_INACTIVE_DIRECT_ADDRESSES + <span class="number">5</span>).try_into().unwrap();
-<a href=#1713 id=1713 data-nosnippet>1713</a>        <span class="kw">let </span>my_numbers = (<span class="number">0u16</span>..my_numbers_count)
-<a href=#1714 id=1714 data-nosnippet>1714</a>            .map(|i| SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">1000 </span>+ i))
-<a href=#1715 id=1715 data-nosnippet>1715</a>            .collect();
-<a href=#1716 id=1716 data-nosnippet>1716</a>        <span class="kw">let </span>call_me_maybe = disco::CallMeMaybe { my_numbers };
-<a href=#1717 id=1717 data-nosnippet>1717</a>
-<a href=#1718 id=1718 data-nosnippet>1718</a>        <span class="kw">let </span>ping_messages = ep.handle_call_me_maybe(call_me_maybe);
-<a href=#1719 id=1719 data-nosnippet>1719</a>
-<a href=#1720 id=1720 data-nosnippet>1720</a>        <span class="comment">// We have no relay server and no previous direct addresses, so we should get the same
-<a href=#1721 id=1721 data-nosnippet>1721</a>        // number of pings as direct addresses in the call-me-maybe.
-<a href=#1722 id=1722 data-nosnippet>1722</a>        </span><span class="macro">assert_eq!</span>(ping_messages.len(), my_numbers_count <span class="kw">as </span>usize);
-<a href=#1723 id=1723 data-nosnippet>1723</a>    }
-<a href=#1724 id=1724 data-nosnippet>1724</a>}</code></pre></div></section></main></body></html>
+<a href=#1432 id=1432 data-nosnippet>1432</a>    <span class="kw">use </span>rand::SeedableRng;
+<a href=#1433 id=1433 data-nosnippet>1433</a>
+<a href=#1434 id=1434 data-nosnippet>1434</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#1435 id=1435 data-nosnippet>1435</a>    <span class="kw">use </span><span class="kw">crate</span>::magicsock::node_map::{NodeMap, NodeMapInner};
+<a href=#1436 id=1436 data-nosnippet>1436</a>
+<a href=#1437 id=1437 data-nosnippet>1437</a>    <span class="attr">#[test]
+<a href=#1438 id=1438 data-nosnippet>1438</a>    </span><span class="kw">fn </span>test_remote_infos() {
+<a href=#1439 id=1439 data-nosnippet>1439</a>        <span class="kw">let </span>now = Instant::now();
+<a href=#1440 id=1440 data-nosnippet>1440</a>        <span class="kw">let </span>elapsed = Duration::from_secs(<span class="number">3</span>);
+<a href=#1441 id=1441 data-nosnippet>1441</a>        <span class="kw">let </span>later = now + elapsed;
+<a href=#1442 id=1442 data-nosnippet>1442</a>        <span class="kw">let </span>send_addr: RelayUrl = <span class="string">"https://my-relay.com"</span>.parse().unwrap();
+<a href=#1443 id=1443 data-nosnippet>1443</a>        <span class="kw">let </span>pong_src = SendAddr::Udp(<span class="string">"0.0.0.0:1"</span>.parse().unwrap());
+<a href=#1444 id=1444 data-nosnippet>1444</a>        <span class="kw">let </span>latency = Duration::from_millis(<span class="number">50</span>);
+<a href=#1445 id=1445 data-nosnippet>1445</a>
+<a href=#1446 id=1446 data-nosnippet>1446</a>        <span class="kw">let </span>relay_and_state = |node_id: NodeId, url: RelayUrl| {
+<a href=#1447 id=1447 data-nosnippet>1447</a>            <span class="kw">let </span>relay_state = PathState::with_pong_reply(
+<a href=#1448 id=1448 data-nosnippet>1448</a>                node_id,
+<a href=#1449 id=1449 data-nosnippet>1449</a>                PongReply {
+<a href=#1450 id=1450 data-nosnippet>1450</a>                    latency,
+<a href=#1451 id=1451 data-nosnippet>1451</a>                    pong_at: now,
+<a href=#1452 id=1452 data-nosnippet>1452</a>                    from: SendAddr::Relay(send_addr.clone()),
+<a href=#1453 id=1453 data-nosnippet>1453</a>                    pong_src: pong_src.clone(),
+<a href=#1454 id=1454 data-nosnippet>1454</a>                },
+<a href=#1455 id=1455 data-nosnippet>1455</a>            );
+<a href=#1456 id=1456 data-nosnippet>1456</a>            <span class="prelude-val">Some</span>((url, relay_state))
+<a href=#1457 id=1457 data-nosnippet>1457</a>        };
+<a href=#1458 id=1458 data-nosnippet>1458</a>
+<a href=#1459 id=1459 data-nosnippet>1459</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#1460 id=1460 data-nosnippet>1460</a>
+<a href=#1461 id=1461 data-nosnippet>1461</a>        <span class="comment">// endpoint with a `best_addr` that has a latency but no relay
+<a href=#1462 id=1462 data-nosnippet>1462</a>        </span><span class="kw">let </span>(a_endpoint, a_socket_addr) = {
+<a href=#1463 id=1463 data-nosnippet>1463</a>            <span class="kw">let </span>key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1464 id=1464 data-nosnippet>1464</a>            <span class="kw">let </span>node_id = key.public();
+<a href=#1465 id=1465 data-nosnippet>1465</a>            <span class="kw">let </span>ip_port = IpPort {
+<a href=#1466 id=1466 data-nosnippet>1466</a>                ip: Ipv4Addr::UNSPECIFIED.into(),
+<a href=#1467 id=1467 data-nosnippet>1467</a>                port: <span class="number">10</span>,
+<a href=#1468 id=1468 data-nosnippet>1468</a>            };
+<a href=#1469 id=1469 data-nosnippet>1469</a>            <span class="kw">let </span>endpoint_state = BTreeMap::from([(
+<a href=#1470 id=1470 data-nosnippet>1470</a>                ip_port,
+<a href=#1471 id=1471 data-nosnippet>1471</a>                PathState::with_pong_reply(
+<a href=#1472 id=1472 data-nosnippet>1472</a>                    node_id,
+<a href=#1473 id=1473 data-nosnippet>1473</a>                    PongReply {
+<a href=#1474 id=1474 data-nosnippet>1474</a>                        latency,
+<a href=#1475 id=1475 data-nosnippet>1475</a>                        pong_at: now,
+<a href=#1476 id=1476 data-nosnippet>1476</a>                        from: SendAddr::Udp(ip_port.into()),
+<a href=#1477 id=1477 data-nosnippet>1477</a>                        pong_src: pong_src.clone(),
+<a href=#1478 id=1478 data-nosnippet>1478</a>                    },
+<a href=#1479 id=1479 data-nosnippet>1479</a>                ),
+<a href=#1480 id=1480 data-nosnippet>1480</a>            )]);
+<a href=#1481 id=1481 data-nosnippet>1481</a>            (
+<a href=#1482 id=1482 data-nosnippet>1482</a>                NodeState {
+<a href=#1483 id=1483 data-nosnippet>1483</a>                    id: <span class="number">0</span>,
+<a href=#1484 id=1484 data-nosnippet>1484</a>                    quic_mapped_addr: NodeIdMappedAddr::generate(),
+<a href=#1485 id=1485 data-nosnippet>1485</a>                    node_id: key.public(),
+<a href=#1486 id=1486 data-nosnippet>1486</a>                    last_full_ping: <span class="prelude-val">None</span>,
+<a href=#1487 id=1487 data-nosnippet>1487</a>                    relay_url: <span class="prelude-val">None</span>,
+<a href=#1488 id=1488 data-nosnippet>1488</a>                    udp_paths: NodeUdpPaths::from_parts(
+<a href=#1489 id=1489 data-nosnippet>1489</a>                        endpoint_state,
+<a href=#1490 id=1490 data-nosnippet>1490</a>                        UdpSendAddr::Valid(ip_port.into()),
+<a href=#1491 id=1491 data-nosnippet>1491</a>                    ),
+<a href=#1492 id=1492 data-nosnippet>1492</a>                    sent_pings: HashMap::new(),
+<a href=#1493 id=1493 data-nosnippet>1493</a>                    last_used: <span class="prelude-val">Some</span>(now),
+<a href=#1494 id=1494 data-nosnippet>1494</a>                    last_call_me_maybe: <span class="prelude-val">None</span>,
+<a href=#1495 id=1495 data-nosnippet>1495</a>                    conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
+<a href=#1496 id=1496 data-nosnippet>1496</a>                    has_been_direct: AtomicBool::new(<span class="bool-val">true</span>),
+<a href=#1497 id=1497 data-nosnippet>1497</a>                    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#1498 id=1498 data-nosnippet>1498</a>                    </span>path_selection: PathSelection::default(),
+<a href=#1499 id=1499 data-nosnippet>1499</a>                },
+<a href=#1500 id=1500 data-nosnippet>1500</a>                ip_port.into(),
+<a href=#1501 id=1501 data-nosnippet>1501</a>            )
+<a href=#1502 id=1502 data-nosnippet>1502</a>        };
+<a href=#1503 id=1503 data-nosnippet>1503</a>        <span class="comment">// endpoint w/ no best addr but a relay w/ latency
+<a href=#1504 id=1504 data-nosnippet>1504</a>        </span><span class="kw">let </span>b_endpoint = {
+<a href=#1505 id=1505 data-nosnippet>1505</a>            <span class="comment">// let socket_addr = "0.0.0.0:9".parse().unwrap();
+<a href=#1506 id=1506 data-nosnippet>1506</a>            </span><span class="kw">let </span>key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1507 id=1507 data-nosnippet>1507</a>            NodeState {
+<a href=#1508 id=1508 data-nosnippet>1508</a>                id: <span class="number">1</span>,
+<a href=#1509 id=1509 data-nosnippet>1509</a>                quic_mapped_addr: NodeIdMappedAddr::generate(),
+<a href=#1510 id=1510 data-nosnippet>1510</a>                node_id: key.public(),
+<a href=#1511 id=1511 data-nosnippet>1511</a>                last_full_ping: <span class="prelude-val">None</span>,
+<a href=#1512 id=1512 data-nosnippet>1512</a>                relay_url: relay_and_state(key.public(), send_addr.clone()),
+<a href=#1513 id=1513 data-nosnippet>1513</a>                udp_paths: NodeUdpPaths::new(),
+<a href=#1514 id=1514 data-nosnippet>1514</a>                sent_pings: HashMap::new(),
+<a href=#1515 id=1515 data-nosnippet>1515</a>                last_used: <span class="prelude-val">Some</span>(now),
+<a href=#1516 id=1516 data-nosnippet>1516</a>                last_call_me_maybe: <span class="prelude-val">None</span>,
+<a href=#1517 id=1517 data-nosnippet>1517</a>                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+<a href=#1518 id=1518 data-nosnippet>1518</a>                has_been_direct: AtomicBool::new(<span class="bool-val">false</span>),
+<a href=#1519 id=1519 data-nosnippet>1519</a>                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#1520 id=1520 data-nosnippet>1520</a>                </span>path_selection: PathSelection::default(),
+<a href=#1521 id=1521 data-nosnippet>1521</a>            }
+<a href=#1522 id=1522 data-nosnippet>1522</a>        };
+<a href=#1523 id=1523 data-nosnippet>1523</a>
+<a href=#1524 id=1524 data-nosnippet>1524</a>        <span class="comment">// endpoint w/ no best addr but a relay w/ no latency
+<a href=#1525 id=1525 data-nosnippet>1525</a>        </span><span class="kw">let </span>c_endpoint = {
+<a href=#1526 id=1526 data-nosnippet>1526</a>            <span class="comment">// let socket_addr = "0.0.0.0:8".parse().unwrap();
+<a href=#1527 id=1527 data-nosnippet>1527</a>            </span><span class="kw">let </span>key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1528 id=1528 data-nosnippet>1528</a>            NodeState {
+<a href=#1529 id=1529 data-nosnippet>1529</a>                id: <span class="number">2</span>,
+<a href=#1530 id=1530 data-nosnippet>1530</a>                quic_mapped_addr: NodeIdMappedAddr::generate(),
+<a href=#1531 id=1531 data-nosnippet>1531</a>                node_id: key.public(),
+<a href=#1532 id=1532 data-nosnippet>1532</a>                last_full_ping: <span class="prelude-val">None</span>,
+<a href=#1533 id=1533 data-nosnippet>1533</a>                relay_url: <span class="prelude-val">Some</span>((
+<a href=#1534 id=1534 data-nosnippet>1534</a>                    send_addr.clone(),
+<a href=#1535 id=1535 data-nosnippet>1535</a>                    PathState::new(
+<a href=#1536 id=1536 data-nosnippet>1536</a>                        key.public(),
+<a href=#1537 id=1537 data-nosnippet>1537</a>                        SendAddr::from(send_addr.clone()),
+<a href=#1538 id=1538 data-nosnippet>1538</a>                        Source::App,
+<a href=#1539 id=1539 data-nosnippet>1539</a>                        now,
+<a href=#1540 id=1540 data-nosnippet>1540</a>                    ),
+<a href=#1541 id=1541 data-nosnippet>1541</a>                )),
+<a href=#1542 id=1542 data-nosnippet>1542</a>                udp_paths: NodeUdpPaths::new(),
+<a href=#1543 id=1543 data-nosnippet>1543</a>                sent_pings: HashMap::new(),
+<a href=#1544 id=1544 data-nosnippet>1544</a>                last_used: <span class="prelude-val">Some</span>(now),
+<a href=#1545 id=1545 data-nosnippet>1545</a>                last_call_me_maybe: <span class="prelude-val">None</span>,
+<a href=#1546 id=1546 data-nosnippet>1546</a>                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+<a href=#1547 id=1547 data-nosnippet>1547</a>                has_been_direct: AtomicBool::new(<span class="bool-val">false</span>),
+<a href=#1548 id=1548 data-nosnippet>1548</a>                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#1549 id=1549 data-nosnippet>1549</a>                </span>path_selection: PathSelection::default(),
+<a href=#1550 id=1550 data-nosnippet>1550</a>            }
+<a href=#1551 id=1551 data-nosnippet>1551</a>        };
+<a href=#1552 id=1552 data-nosnippet>1552</a>
+<a href=#1553 id=1553 data-nosnippet>1553</a>        <span class="comment">// endpoint w/ expired best addr and relay w/ latency
+<a href=#1554 id=1554 data-nosnippet>1554</a>        </span><span class="kw">let </span>(d_endpoint, d_socket_addr) = {
+<a href=#1555 id=1555 data-nosnippet>1555</a>            <span class="kw">let </span>socket_addr: SocketAddr = <span class="string">"0.0.0.0:7"</span>.parse().unwrap();
+<a href=#1556 id=1556 data-nosnippet>1556</a>            <span class="kw">let </span>key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1557 id=1557 data-nosnippet>1557</a>            <span class="kw">let </span>node_id = key.public();
+<a href=#1558 id=1558 data-nosnippet>1558</a>            <span class="kw">let </span>endpoint_state = BTreeMap::from([(
+<a href=#1559 id=1559 data-nosnippet>1559</a>                IpPort::from(socket_addr),
+<a href=#1560 id=1560 data-nosnippet>1560</a>                PathState::with_pong_reply(
+<a href=#1561 id=1561 data-nosnippet>1561</a>                    node_id,
+<a href=#1562 id=1562 data-nosnippet>1562</a>                    PongReply {
+<a href=#1563 id=1563 data-nosnippet>1563</a>                        latency,
+<a href=#1564 id=1564 data-nosnippet>1564</a>                        pong_at: now,
+<a href=#1565 id=1565 data-nosnippet>1565</a>                        from: SendAddr::Udp(socket_addr),
+<a href=#1566 id=1566 data-nosnippet>1566</a>                        pong_src: pong_src.clone(),
+<a href=#1567 id=1567 data-nosnippet>1567</a>                    },
+<a href=#1568 id=1568 data-nosnippet>1568</a>                ),
+<a href=#1569 id=1569 data-nosnippet>1569</a>            )]);
+<a href=#1570 id=1570 data-nosnippet>1570</a>            (
+<a href=#1571 id=1571 data-nosnippet>1571</a>                NodeState {
+<a href=#1572 id=1572 data-nosnippet>1572</a>                    id: <span class="number">3</span>,
+<a href=#1573 id=1573 data-nosnippet>1573</a>                    quic_mapped_addr: NodeIdMappedAddr::generate(),
+<a href=#1574 id=1574 data-nosnippet>1574</a>                    node_id: key.public(),
+<a href=#1575 id=1575 data-nosnippet>1575</a>                    last_full_ping: <span class="prelude-val">None</span>,
+<a href=#1576 id=1576 data-nosnippet>1576</a>                    relay_url: relay_and_state(key.public(), send_addr.clone()),
+<a href=#1577 id=1577 data-nosnippet>1577</a>                    udp_paths: NodeUdpPaths::from_parts(
+<a href=#1578 id=1578 data-nosnippet>1578</a>                        endpoint_state,
+<a href=#1579 id=1579 data-nosnippet>1579</a>                        UdpSendAddr::Outdated(socket_addr),
+<a href=#1580 id=1580 data-nosnippet>1580</a>                    ),
+<a href=#1581 id=1581 data-nosnippet>1581</a>                    sent_pings: HashMap::new(),
+<a href=#1582 id=1582 data-nosnippet>1582</a>                    last_used: <span class="prelude-val">Some</span>(now),
+<a href=#1583 id=1583 data-nosnippet>1583</a>                    last_call_me_maybe: <span class="prelude-val">None</span>,
+<a href=#1584 id=1584 data-nosnippet>1584</a>                    conn_type: Watchable::new(ConnectionType::Mixed(
+<a href=#1585 id=1585 data-nosnippet>1585</a>                        socket_addr,
+<a href=#1586 id=1586 data-nosnippet>1586</a>                        send_addr.clone(),
+<a href=#1587 id=1587 data-nosnippet>1587</a>                    )),
+<a href=#1588 id=1588 data-nosnippet>1588</a>                    has_been_direct: AtomicBool::new(<span class="bool-val">false</span>),
+<a href=#1589 id=1589 data-nosnippet>1589</a>                    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#1590 id=1590 data-nosnippet>1590</a>                    </span>path_selection: PathSelection::default(),
+<a href=#1591 id=1591 data-nosnippet>1591</a>                },
+<a href=#1592 id=1592 data-nosnippet>1592</a>                socket_addr,
+<a href=#1593 id=1593 data-nosnippet>1593</a>            )
+<a href=#1594 id=1594 data-nosnippet>1594</a>        };
+<a href=#1595 id=1595 data-nosnippet>1595</a>
+<a href=#1596 id=1596 data-nosnippet>1596</a>        <span class="kw">let </span><span class="kw-2">mut </span>expect = Vec::from([
+<a href=#1597 id=1597 data-nosnippet>1597</a>            RemoteInfo {
+<a href=#1598 id=1598 data-nosnippet>1598</a>                node_id: a_endpoint.node_id,
+<a href=#1599 id=1599 data-nosnippet>1599</a>                relay_url: <span class="prelude-val">None</span>,
+<a href=#1600 id=1600 data-nosnippet>1600</a>                addrs: Vec::from([DirectAddrInfo {
+<a href=#1601 id=1601 data-nosnippet>1601</a>                    addr: a_socket_addr,
+<a href=#1602 id=1602 data-nosnippet>1602</a>                    latency: <span class="prelude-val">Some</span>(latency),
+<a href=#1603 id=1603 data-nosnippet>1603</a>                    last_control: <span class="prelude-val">Some</span>((elapsed, ControlMsg::Pong)),
+<a href=#1604 id=1604 data-nosnippet>1604</a>                    last_payload: <span class="prelude-val">None</span>,
+<a href=#1605 id=1605 data-nosnippet>1605</a>                    last_alive: <span class="prelude-val">Some</span>(elapsed),
+<a href=#1606 id=1606 data-nosnippet>1606</a>                    sources: HashMap::new(),
+<a href=#1607 id=1607 data-nosnippet>1607</a>                }]),
+<a href=#1608 id=1608 data-nosnippet>1608</a>                conn_type: ConnectionType::Direct(a_socket_addr),
+<a href=#1609 id=1609 data-nosnippet>1609</a>                latency: <span class="prelude-val">Some</span>(latency),
+<a href=#1610 id=1610 data-nosnippet>1610</a>                last_used: <span class="prelude-val">Some</span>(elapsed),
+<a href=#1611 id=1611 data-nosnippet>1611</a>            },
+<a href=#1612 id=1612 data-nosnippet>1612</a>            RemoteInfo {
+<a href=#1613 id=1613 data-nosnippet>1613</a>                node_id: b_endpoint.node_id,
+<a href=#1614 id=1614 data-nosnippet>1614</a>                relay_url: <span class="prelude-val">Some</span>(RelayUrlInfo {
+<a href=#1615 id=1615 data-nosnippet>1615</a>                    relay_url: b_endpoint.relay_url.as_ref().unwrap().<span class="number">0</span>.clone(),
+<a href=#1616 id=1616 data-nosnippet>1616</a>                    last_alive: <span class="prelude-val">None</span>,
+<a href=#1617 id=1617 data-nosnippet>1617</a>                    latency: <span class="prelude-val">Some</span>(latency),
+<a href=#1618 id=1618 data-nosnippet>1618</a>                }),
+<a href=#1619 id=1619 data-nosnippet>1619</a>                addrs: Vec::new(),
+<a href=#1620 id=1620 data-nosnippet>1620</a>                conn_type: ConnectionType::Relay(send_addr.clone()),
+<a href=#1621 id=1621 data-nosnippet>1621</a>                latency: <span class="prelude-val">Some</span>(latency),
+<a href=#1622 id=1622 data-nosnippet>1622</a>                last_used: <span class="prelude-val">Some</span>(elapsed),
+<a href=#1623 id=1623 data-nosnippet>1623</a>            },
+<a href=#1624 id=1624 data-nosnippet>1624</a>            RemoteInfo {
+<a href=#1625 id=1625 data-nosnippet>1625</a>                node_id: c_endpoint.node_id,
+<a href=#1626 id=1626 data-nosnippet>1626</a>                relay_url: <span class="prelude-val">Some</span>(RelayUrlInfo {
+<a href=#1627 id=1627 data-nosnippet>1627</a>                    relay_url: c_endpoint.relay_url.as_ref().unwrap().<span class="number">0</span>.clone(),
+<a href=#1628 id=1628 data-nosnippet>1628</a>                    last_alive: <span class="prelude-val">None</span>,
+<a href=#1629 id=1629 data-nosnippet>1629</a>                    latency: <span class="prelude-val">None</span>,
+<a href=#1630 id=1630 data-nosnippet>1630</a>                }),
+<a href=#1631 id=1631 data-nosnippet>1631</a>                addrs: Vec::new(),
+<a href=#1632 id=1632 data-nosnippet>1632</a>                conn_type: ConnectionType::Relay(send_addr.clone()),
+<a href=#1633 id=1633 data-nosnippet>1633</a>                latency: <span class="prelude-val">None</span>,
+<a href=#1634 id=1634 data-nosnippet>1634</a>                last_used: <span class="prelude-val">Some</span>(elapsed),
+<a href=#1635 id=1635 data-nosnippet>1635</a>            },
+<a href=#1636 id=1636 data-nosnippet>1636</a>            RemoteInfo {
+<a href=#1637 id=1637 data-nosnippet>1637</a>                node_id: d_endpoint.node_id,
+<a href=#1638 id=1638 data-nosnippet>1638</a>                relay_url: <span class="prelude-val">Some</span>(RelayUrlInfo {
+<a href=#1639 id=1639 data-nosnippet>1639</a>                    relay_url: d_endpoint.relay_url.as_ref().unwrap().<span class="number">0</span>.clone(),
+<a href=#1640 id=1640 data-nosnippet>1640</a>                    last_alive: <span class="prelude-val">None</span>,
+<a href=#1641 id=1641 data-nosnippet>1641</a>                    latency: <span class="prelude-val">Some</span>(latency),
+<a href=#1642 id=1642 data-nosnippet>1642</a>                }),
+<a href=#1643 id=1643 data-nosnippet>1643</a>                addrs: Vec::from([DirectAddrInfo {
+<a href=#1644 id=1644 data-nosnippet>1644</a>                    addr: d_socket_addr,
+<a href=#1645 id=1645 data-nosnippet>1645</a>                    latency: <span class="prelude-val">Some</span>(latency),
+<a href=#1646 id=1646 data-nosnippet>1646</a>                    last_control: <span class="prelude-val">Some</span>((elapsed, ControlMsg::Pong)),
+<a href=#1647 id=1647 data-nosnippet>1647</a>                    last_payload: <span class="prelude-val">None</span>,
+<a href=#1648 id=1648 data-nosnippet>1648</a>                    last_alive: <span class="prelude-val">Some</span>(elapsed),
+<a href=#1649 id=1649 data-nosnippet>1649</a>                    sources: HashMap::new(),
+<a href=#1650 id=1650 data-nosnippet>1650</a>                }]),
+<a href=#1651 id=1651 data-nosnippet>1651</a>                conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
+<a href=#1652 id=1652 data-nosnippet>1652</a>                latency: <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">50</span>)),
+<a href=#1653 id=1653 data-nosnippet>1653</a>                last_used: <span class="prelude-val">Some</span>(elapsed),
+<a href=#1654 id=1654 data-nosnippet>1654</a>            },
+<a href=#1655 id=1655 data-nosnippet>1655</a>        ]);
+<a href=#1656 id=1656 data-nosnippet>1656</a>
+<a href=#1657 id=1657 data-nosnippet>1657</a>        <span class="kw">let </span>node_map = NodeMap::from_inner(NodeMapInner {
+<a href=#1658 id=1658 data-nosnippet>1658</a>            by_node_key: HashMap::from([
+<a href=#1659 id=1659 data-nosnippet>1659</a>                (a_endpoint.node_id, a_endpoint.id),
+<a href=#1660 id=1660 data-nosnippet>1660</a>                (b_endpoint.node_id, b_endpoint.id),
+<a href=#1661 id=1661 data-nosnippet>1661</a>                (c_endpoint.node_id, c_endpoint.id),
+<a href=#1662 id=1662 data-nosnippet>1662</a>                (d_endpoint.node_id, d_endpoint.id),
+<a href=#1663 id=1663 data-nosnippet>1663</a>            ]),
+<a href=#1664 id=1664 data-nosnippet>1664</a>            by_ip_port: HashMap::from([
+<a href=#1665 id=1665 data-nosnippet>1665</a>                (a_socket_addr.into(), a_endpoint.id),
+<a href=#1666 id=1666 data-nosnippet>1666</a>                (d_socket_addr.into(), d_endpoint.id),
+<a href=#1667 id=1667 data-nosnippet>1667</a>            ]),
+<a href=#1668 id=1668 data-nosnippet>1668</a>            by_quic_mapped_addr: HashMap::from([
+<a href=#1669 id=1669 data-nosnippet>1669</a>                (a_endpoint.quic_mapped_addr, a_endpoint.id),
+<a href=#1670 id=1670 data-nosnippet>1670</a>                (b_endpoint.quic_mapped_addr, b_endpoint.id),
+<a href=#1671 id=1671 data-nosnippet>1671</a>                (c_endpoint.quic_mapped_addr, c_endpoint.id),
+<a href=#1672 id=1672 data-nosnippet>1672</a>                (d_endpoint.quic_mapped_addr, d_endpoint.id),
+<a href=#1673 id=1673 data-nosnippet>1673</a>            ]),
+<a href=#1674 id=1674 data-nosnippet>1674</a>            by_id: HashMap::from([
+<a href=#1675 id=1675 data-nosnippet>1675</a>                (a_endpoint.id, a_endpoint),
+<a href=#1676 id=1676 data-nosnippet>1676</a>                (b_endpoint.id, b_endpoint),
+<a href=#1677 id=1677 data-nosnippet>1677</a>                (c_endpoint.id, c_endpoint),
+<a href=#1678 id=1678 data-nosnippet>1678</a>                (d_endpoint.id, d_endpoint),
+<a href=#1679 id=1679 data-nosnippet>1679</a>            ]),
+<a href=#1680 id=1680 data-nosnippet>1680</a>            next_id: <span class="number">5</span>,
+<a href=#1681 id=1681 data-nosnippet>1681</a>            path_selection: PathSelection::default(),
+<a href=#1682 id=1682 data-nosnippet>1682</a>        });
+<a href=#1683 id=1683 data-nosnippet>1683</a>        <span class="kw">let </span><span class="kw-2">mut </span>got = node_map.list_remote_infos(later);
+<a href=#1684 id=1684 data-nosnippet>1684</a>        got.sort_by_key(|p| p.node_id);
+<a href=#1685 id=1685 data-nosnippet>1685</a>        expect.sort_by_key(|p| p.node_id);
+<a href=#1686 id=1686 data-nosnippet>1686</a>        remove_non_deterministic_fields(<span class="kw-2">&amp;mut </span>got);
+<a href=#1687 id=1687 data-nosnippet>1687</a>        <span class="macro">assert_eq!</span>(expect, got);
+<a href=#1688 id=1688 data-nosnippet>1688</a>    }
+<a href=#1689 id=1689 data-nosnippet>1689</a>
+<a href=#1690 id=1690 data-nosnippet>1690</a>    <span class="kw">fn </span>remove_non_deterministic_fields(infos: <span class="kw-2">&amp;mut </span>[RemoteInfo]) {
+<a href=#1691 id=1691 data-nosnippet>1691</a>        <span class="kw">for </span>info <span class="kw">in </span>infos.iter_mut() {
+<a href=#1692 id=1692 data-nosnippet>1692</a>            <span class="kw">if </span>info.relay_url.is_some() {
+<a href=#1693 id=1693 data-nosnippet>1693</a>                info.relay_url.as_mut().unwrap().last_alive = <span class="prelude-val">None</span>;
+<a href=#1694 id=1694 data-nosnippet>1694</a>            }
+<a href=#1695 id=1695 data-nosnippet>1695</a>        }
+<a href=#1696 id=1696 data-nosnippet>1696</a>    }
+<a href=#1697 id=1697 data-nosnippet>1697</a>
+<a href=#1698 id=1698 data-nosnippet>1698</a>    <span class="attr">#[test]
+<a href=#1699 id=1699 data-nosnippet>1699</a>    </span><span class="kw">fn </span>test_prune_direct_addresses() {
+<a href=#1700 id=1700 data-nosnippet>1700</a>        <span class="comment">// When we handle a call-me-maybe with more than MAX_INACTIVE_DIRECT_ADDRESSES we do
+<a href=#1701 id=1701 data-nosnippet>1701</a>        // not want to prune them right away but send pings to all of them.
+<a href=#1702 id=1702 data-nosnippet>1702</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#1703 id=1703 data-nosnippet>1703</a>
+<a href=#1704 id=1704 data-nosnippet>1704</a>        <span class="kw">let </span>key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1705 id=1705 data-nosnippet>1705</a>        <span class="kw">let </span>opts = Options {
+<a href=#1706 id=1706 data-nosnippet>1706</a>            node_id: key.public(),
+<a href=#1707 id=1707 data-nosnippet>1707</a>            relay_url: <span class="prelude-val">None</span>,
+<a href=#1708 id=1708 data-nosnippet>1708</a>            active: <span class="bool-val">true</span>,
+<a href=#1709 id=1709 data-nosnippet>1709</a>            source: <span class="kw">crate</span>::magicsock::Source::NamedApp {
+<a href=#1710 id=1710 data-nosnippet>1710</a>                name: <span class="string">"test"</span>.into(),
+<a href=#1711 id=1711 data-nosnippet>1711</a>            },
+<a href=#1712 id=1712 data-nosnippet>1712</a>            path_selection: PathSelection::default(),
+<a href=#1713 id=1713 data-nosnippet>1713</a>        };
+<a href=#1714 id=1714 data-nosnippet>1714</a>        <span class="kw">let </span><span class="kw-2">mut </span>ep = NodeState::new(<span class="number">0</span>, opts);
+<a href=#1715 id=1715 data-nosnippet>1715</a>
+<a href=#1716 id=1716 data-nosnippet>1716</a>        <span class="kw">let </span>my_numbers_count: u16 = (MAX_INACTIVE_DIRECT_ADDRESSES + <span class="number">5</span>).try_into().unwrap();
+<a href=#1717 id=1717 data-nosnippet>1717</a>        <span class="kw">let </span>my_numbers = (<span class="number">0u16</span>..my_numbers_count)
+<a href=#1718 id=1718 data-nosnippet>1718</a>            .map(|i| SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">1000 </span>+ i))
+<a href=#1719 id=1719 data-nosnippet>1719</a>            .collect();
+<a href=#1720 id=1720 data-nosnippet>1720</a>        <span class="kw">let </span>call_me_maybe = disco::CallMeMaybe { my_numbers };
+<a href=#1721 id=1721 data-nosnippet>1721</a>
+<a href=#1722 id=1722 data-nosnippet>1722</a>        <span class="kw">let </span>ping_messages = ep.handle_call_me_maybe(call_me_maybe);
+<a href=#1723 id=1723 data-nosnippet>1723</a>
+<a href=#1724 id=1724 data-nosnippet>1724</a>        <span class="comment">// We have no relay server and no previous direct addresses, so we should get the same
+<a href=#1725 id=1725 data-nosnippet>1725</a>        // number of pings as direct addresses in the call-me-maybe.
+<a href=#1726 id=1726 data-nosnippet>1726</a>        </span><span class="macro">assert_eq!</span>(ping_messages.len(), my_numbers_count <span class="kw">as </span>usize);
+<a href=#1727 id=1727 data-nosnippet>1727</a>    }
+<a href=#1728 id=1728 data-nosnippet>1728</a>}</code></pre></div></section></main></body></html>
