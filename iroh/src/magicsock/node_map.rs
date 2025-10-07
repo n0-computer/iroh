@@ -7,8 +7,8 @@ use std::{
 };
 
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
-use n0_future::{task::AbortOnDropHandle, time::Instant};
-use node_state::{NodeState, NodeStateActor, NodeStateHandle};
+use n0_future::task::AbortOnDropHandle;
+use node_state::{NodeStateActor, NodeStateHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{Instrument, info_span, trace, warn};
@@ -32,9 +32,8 @@ use super::{
 mod node_state;
 mod path_state;
 mod path_validity;
-mod udp_paths;
 
-pub(super) use node_state::{NodeStateMessage, RemoteInfo};
+pub(super) use node_state::NodeStateMessage;
 
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo};
 
@@ -77,10 +76,6 @@ pub(super) struct NodeMapInner {
     transports_handle: TransportsSenderHandle,
     local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
     disco: DiscoState,
-    by_node_key: HashMap<NodeId, usize>,
-    by_ip_port: HashMap<IpPort, usize>,
-    by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
-    by_id: HashMap<usize, NodeState>,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
     /// The [`NodeStateActor`] for each remote node.
@@ -192,20 +187,6 @@ impl NodeMap {
         self.node_mapped_addrs.get(&node_id)
     }
 
-    /// Returns the [`RemoteInfo`]s for each node in the node map.
-    #[cfg(test)]
-    pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
-        // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
-        // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
-        // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
-        // internal iterator will be a hassle, if possible at all.
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .remote_infos_iter(now)
-            .collect()
-    }
-
     /// Returns a [`n0_watcher::Direct`] for given node's [`ConnectionType`].
     ///
     /// # Errors
@@ -305,10 +286,6 @@ impl NodeMapInner {
             transports_handle,
             local_addrs,
             disco,
-            by_node_key: Default::default(),
-            by_ip_port: Default::default(),
-            by_quic_mapped_addr: Default::default(),
-            by_id: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: Default::default(),
             node_states: Default::default(),
@@ -318,38 +295,6 @@ impl NodeMapInner {
     fn start_transports_sender(sender: TransportsSender) -> TransportsSenderHandle {
         let actor = TransportsSenderActor::new(sender);
         actor.start()
-    }
-
-    fn get_id(&self, id: NodeStateKey) -> Option<usize> {
-        match id {
-            NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
-            NodeStateKey::NodeIdMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
-            NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
-        }
-    }
-
-    fn get(&self, id: NodeStateKey) -> Option<&NodeState> {
-        self.get_id(id).and_then(|id| self.by_id.get(&id))
-    }
-
-    /// Number of nodes currently listed.
-    fn node_count(&self) -> usize {
-        self.by_id.len()
-    }
-
-    fn node_states(&self) -> impl Iterator<Item = (&usize, &NodeState)> {
-        self.by_id.iter()
-    }
-    /// Get the [`RemoteInfo`]s for all nodes.
-    #[cfg(test)]
-    fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
-        self.node_states().map(move |(_, ep)| ep.info(now))
-    }
-
-    /// Get the [`RemoteInfo`]s for each node.
-    fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.get(NodeStateKey::NodeId(node_id))
-            .map(|ep| ep.info(Instant::now()))
     }
 
     /// Returns a stream of [`ConnectionType`].

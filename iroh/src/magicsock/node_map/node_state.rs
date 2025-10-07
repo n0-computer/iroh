@@ -5,13 +5,13 @@ use std::{
     sync::Arc,
 };
 
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+use iroh_base::{NodeAddr, NodeId, RelayUrl};
 use n0_future::{
     MergeUnbounded, Stream, StreamExt,
     task::AbortOnDropHandle,
     time::{Duration, Instant},
 };
-use n0_watcher::{Watchable, Watcher};
+use n0_watcher::Watcher;
 use quinn::WeakConnectionHandle;
 use quinn_proto::{PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
@@ -28,18 +28,15 @@ use crate::{
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MAX_IDLE_TIMEOUT, MagicsockMetrics,
-        mapped_addrs::{
-            AddrMap, MappedAddr, MultipathMappedAddr, NodeIdMappedAddr, RelayMappedAddr,
-        },
+        mapped_addrs::{AddrMap, MappedAddr, MultipathMappedAddr, RelayMappedAddr},
         transports::{self, OwnedTransmit},
     },
     util::MaybeFuture,
 };
 
 use super::{
-    IpPort, Source, TransportsSenderMessage,
+    Source, TransportsSenderMessage,
     path_state::{NewPathState, PathState},
-    udp_paths::NodeUdpPaths,
 };
 
 /// Number of addresses that are not active that we keep around per node.
@@ -66,184 +63,6 @@ const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 /// The value which we close paths.
 // TODO: Quinn should just do this.  Also, I made this value up.
 const APPLICATION_ABANDON_PATH: u8 = 30;
-
-#[derive(Debug)]
-pub(in crate::magicsock) enum PingAction {
-    SendCallMeMaybe {
-        relay_url: RelayUrl,
-        dst_node: NodeId,
-    },
-}
-
-/// An iroh node, which we can have connections with.
-///
-/// The whole point of the magicsock is that we can have multiple **paths** to a particular
-/// node.  One of these paths is via the endpoint's home relay node but as we establish a
-/// connection we'll hopefully discover more direct paths.
-#[derive(Debug)]
-pub(super) struct NodeState {
-    /// The UDP address used on the QUIC-layer to address this node.
-    quic_mapped_addr: NodeIdMappedAddr,
-    /// The global identifier for this endpoint.
-    node_id: NodeId,
-    /// The url of relay node that we can relay over to communicate.
-    ///
-    /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
-    relay_url: Option<(RelayUrl, PathState)>,
-    udp_paths: NodeUdpPaths,
-    /// Last time this node was used.
-    ///
-    /// A node is marked as in use when sending datagrams to them, or when having received
-    /// datagrams from it. Regardless of whether the datagrams are payload or DISCO, and whether
-    /// they go via UDP or the relay.
-    ///
-    /// Note that sending datagrams to a node does not mean the node receives them.
-    last_used: Option<Instant>,
-    /// The type of connection we have to the node, either direct, relay, mixed, or none.
-    conn_type: Watchable<ConnectionType>,
-    /// Configuration for what path selection to use
-    #[cfg(any(test, feature = "test-utils"))]
-    path_selection: PathSelection,
-}
-
-impl NodeState {
-    pub(super) fn public_key(&self) -> &PublicKey {
-        &self.node_id
-    }
-
-    pub(super) fn all_paths_mapped_addr(&self) -> &NodeIdMappedAddr {
-        &self.quic_mapped_addr
-    }
-
-    pub(super) fn conn_type(&self) -> n0_watcher::Direct<ConnectionType> {
-        self.conn_type.watch()
-    }
-
-    pub(super) fn latency(&self) -> Option<Duration> {
-        match self.conn_type.get() {
-            ConnectionType::Direct(addr) => self
-                .udp_paths
-                .paths()
-                .get(&addr.into())
-                .and_then(|state| state.latency()),
-            ConnectionType::Relay(ref url) => self
-                .relay_url
-                .as_ref()
-                .filter(|(relay_url, _)| relay_url == url)
-                .and_then(|(_, state)| state.latency()),
-            ConnectionType::Mixed(addr, ref url) => {
-                let addr_latency = self
-                    .udp_paths
-                    .paths()
-                    .get(&addr.into())
-                    .and_then(|state| state.latency());
-                let relay_latency = self
-                    .relay_url
-                    .as_ref()
-                    .filter(|(relay_url, _)| relay_url == url)
-                    .and_then(|(_, state)| state.latency());
-                addr_latency.min(relay_latency)
-            }
-            ConnectionType::None => None,
-        }
-    }
-
-    /// Returns info about this node.
-    pub(super) fn info(&self, now: Instant) -> RemoteInfo {
-        let conn_type = self.conn_type.get();
-        let latency = self.latency();
-
-        let addrs = self
-            .udp_paths
-            .paths()
-            .iter()
-            .map(|(addr, path_state)| DirectAddrInfo {
-                addr: SocketAddr::from(*addr),
-                latency: path_state.validity.latency(),
-                last_control: path_state.last_control_msg(now),
-                last_payload: path_state
-                    .last_payload_msg
-                    .as_ref()
-                    .map(|instant| now.duration_since(*instant)),
-                last_alive: path_state
-                    .last_alive()
-                    .map(|instant| now.duration_since(instant)),
-                sources: path_state
-                    .sources
-                    .iter()
-                    .map(|(source, instant)| (source.clone(), now.duration_since(*instant)))
-                    .collect(),
-            })
-            .collect();
-
-        RemoteInfo {
-            node_id: self.node_id,
-            relay_url: self.relay_url.clone().map(|r| r.into()),
-            addrs,
-            conn_type,
-            latency,
-            last_used: self.last_used.map(|instant| now.duration_since(instant)),
-        }
-    }
-
-    /// Removes a direct address for this node.
-    ///
-    /// If this is also the best address, it will be cleared as well.
-    pub(super) fn remove_direct_addr(&mut self, ip_port: &IpPort, now: Instant, why: &'static str) {
-        let Some(state) = self.udp_paths.access_mut(now).paths().remove(ip_port) else {
-            return;
-        };
-
-        match state.last_alive().map(|instant| instant.elapsed()) {
-            Some(last_alive) => debug!(%ip_port, ?last_alive, why, "pruning address"),
-            None => debug!(%ip_port, last_seen=%"never", why, "pruning address"),
-        }
-    }
-
-    /// Called when connectivity changes enough that we should question our earlier
-    /// assumptions about which paths work.
-    #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
-    pub(super) fn note_connectivity_change(&mut self, now: Instant) {
-        let mut guard = self.udp_paths.access_mut(now);
-        for es in guard.paths().values_mut() {
-            es.clear();
-        }
-    }
-
-    /// Checks if this `Endpoint` is currently actively being used.
-    pub(super) fn is_active(&self, now: &Instant) -> bool {
-        match self.last_used {
-            Some(last_active) => now.duration_since(last_active) <= SESSION_ACTIVE_TIMEOUT,
-            None => false,
-        }
-    }
-
-    /// Returns a [`NodeAddr`] with all the currently known direct addresses and the relay URL.
-    pub(crate) fn get_current_addr(&self) -> NodeAddr {
-        // TODO: more selective?
-        let mut node_addr =
-            NodeAddr::new(self.node_id).with_direct_addresses(self.udp_paths.addrs());
-        if let Some((url, _)) = &self.relay_url {
-            node_addr = node_addr.with_relay_url(url.clone());
-        }
-
-        node_addr
-    }
-
-    /// Get the direct addresses for this endpoint.
-    pub(super) fn direct_addresses(&self) -> impl Iterator<Item = IpPort> + '_ {
-        self.udp_paths.paths().keys().copied()
-    }
-
-    #[cfg(test)]
-    pub(super) fn direct_address_states(&self) -> impl Iterator<Item = (&IpPort, &PathState)> + '_ {
-        self.udp_paths.paths().iter()
-    }
-
-    pub(super) fn last_used(&self) -> Option<Instant> {
-        self.last_used
-    }
-}
 
 /// The state we need to know about a single remote node.
 ///
@@ -1148,16 +967,6 @@ struct HolepunchAttempt {
     ///
     /// Like `local_addrs` we may not have used them.
     remote_addrs: BTreeSet<SocketAddr>,
-}
-
-/// Whether to send a call-me-maybe message after sending pings to all known paths.
-///
-/// `IfNoRecent` will only send a call-me-maybe if no previous one was sent in the last
-/// [`HEARTBEAT_INTERVAL`].
-#[derive(Debug)]
-enum SendCallMeMaybe {
-    Always,
-    IfNoRecent,
 }
 
 /// The type of control message we have received.
