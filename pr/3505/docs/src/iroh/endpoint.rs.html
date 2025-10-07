@@ -875,53 +875,53 @@
 <a href=#875 id=875 data-nosnippet>875</a>    }
 <a href=#876 id=876 data-nosnippet>876</a>
 <a href=#877 id=877 data-nosnippet>877</a>    <span class="doccomment">/// Returns the current [`NodeAddr`].
-<a href=#878 id=878 data-nosnippet>878</a>    ///
-<a href=#879 id=879 data-nosnippet>879</a>    /// If this is called right after the [`Endpoint`] has been created, there is
-<a href=#880 id=880 data-nosnippet>880</a>    /// a good chance these fields will be empty.
-<a href=#881 id=881 data-nosnippet>881</a>    ///
+<a href=#878 id=878 data-nosnippet>878</a>    /// As long as the endpoint was able to binde to a network interfaces, some
+<a href=#879 id=879 data-nosnippet>879</a>    /// local addresses will be available.
+<a href=#880 id=880 data-nosnippet>880</a>    ///
+<a href=#881 id=881 data-nosnippet>881</a>    /// The state of other fields depends on the state of networking and connectivity.
 <a href=#882 id=882 data-nosnippet>882</a>    /// Use the [`Endpoint::online`] method to ensure that the endpoint is considered
-<a href=#883 id=883 data-nosnippet>883</a>    /// "online" (has contacted a  relay server and has at least one local addresses)
-<a href=#884 id=884 data-nosnippet>884</a>    /// before calling this method, if you want to ensure that the `NodeAddr` will
-<a href=#885 id=885 data-nosnippet>885</a>    /// contain enough information to allow this endpoint to be dialable by
-<a href=#886 id=886 data-nosnippet>886</a>    /// a remote endpoint.
-<a href=#887 id=887 data-nosnippet>887</a>    ///
-<a href=#888 id=888 data-nosnippet>888</a>    /// Or, use the [`Endpoint::watch_node_addr`] method to get updates when the
-<a href=#889 id=889 data-nosnippet>889</a>    /// `NodeAddr` changes.
-<a href=#890 id=890 data-nosnippet>890</a>    ///
-<a href=#891 id=891 data-nosnippet>891</a>    /// The `NodeAddr` will change as:
-<a href=#892 id=892 data-nosnippet>892</a>    /// - network conditions change
-<a href=#893 id=893 data-nosnippet>893</a>    /// - the endpoint connects to a relay server
-<a href=#894 id=894 data-nosnippet>894</a>    /// - the endpoint changes its preferred relay server
-<a href=#895 id=895 data-nosnippet>895</a>    /// - more addresses are discovered for this endpoint
-<a href=#896 id=896 data-nosnippet>896</a>    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddr {
-<a href=#897 id=897 data-nosnippet>897</a>        <span class="self">self</span>.watch_node_addr().get()
-<a href=#898 id=898 data-nosnippet>898</a>    }
-<a href=#899 id=899 data-nosnippet>899</a>
-<a href=#900 id=900 data-nosnippet>900</a>    <span class="doccomment">/// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
-<a href=#901 id=901 data-nosnippet>901</a>    ///
-<a href=#902 id=902 data-nosnippet>902</a>    /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses.
-<a href=#903 id=903 data-nosnippet>903</a>    ///
-<a href=#904 id=904 data-nosnippet>904</a>    /// ```no_run
-<a href=#905 id=905 data-nosnippet>905</a>    /// # async fn wrapper() -&gt; n0_snafu::Result {
-<a href=#906 id=906 data-nosnippet>906</a>    /// use iroh::{Endpoint, Watcher};
-<a href=#907 id=907 data-nosnippet>907</a>    ///
-<a href=#908 id=908 data-nosnippet>908</a>    /// let endpoint = Endpoint::builder()
-<a href=#909 id=909 data-nosnippet>909</a>    ///     .alpns(vec![b"my-alpn".to_vec()])
-<a href=#910 id=910 data-nosnippet>910</a>    ///     .bind()
-<a href=#911 id=911 data-nosnippet>911</a>    ///     .await?;
-<a href=#912 id=912 data-nosnippet>912</a>    /// let node_addr = endpoint.watch_node_addr().get();
-<a href=#913 id=913 data-nosnippet>913</a>    /// # let _ = node_addr;
-<a href=#914 id=914 data-nosnippet>914</a>    /// # Ok(())
-<a href=#915 id=915 data-nosnippet>915</a>    /// # }
-<a href=#916 id=916 data-nosnippet>916</a>    /// ```
-<a href=#917 id=917 data-nosnippet>917</a>    ///
-<a href=#918 id=918 data-nosnippet>918</a>    /// The [`Endpoint::online`] method can be used as a convenience method to
-<a href=#919 id=919 data-nosnippet>919</a>    /// understand if the endpoint has ever been considered "online". But after
-<a href=#920 id=920 data-nosnippet>920</a>    /// that initial call to [`Endpoint::online`], to understand if your
-<a href=#921 id=921 data-nosnippet>921</a>    /// endpoint is no longer able to be connected to by endpoints outside
-<a href=#922 id=922 data-nosnippet>922</a>    /// of the private or local network, watch for changes in it's [`NodeAddr`].
-<a href=#923 id=923 data-nosnippet>923</a>    /// If the `relay_url` is `None` or if there are no `direct_addresses` in
-<a href=#924 id=924 data-nosnippet>924</a>    /// the [`NodeAddr`], you may not be dialable by other endpoints on the internet.
+<a href=#883 id=883 data-nosnippet>883</a>    /// "online" (has contacted a relay server) before calling this method, if you want
+<a href=#884 id=884 data-nosnippet>884</a>    /// to ensure that the `NodeAddr` will contain enough information to allow this endpoint
+<a href=#885 id=885 data-nosnippet>885</a>    /// to be dialable by a remote endpoint over the internet.
+<a href=#886 id=886 data-nosnippet>886</a>    ///
+<a href=#887 id=887 data-nosnippet>887</a>    /// You can use the [`Endpoint::watch_node_addr`] method to get updates when the `NodeAddr`
+<a href=#888 id=888 data-nosnippet>888</a>    /// changes.
+<a href=#889 id=889 data-nosnippet>889</a>    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddr {
+<a href=#890 id=890 data-nosnippet>890</a>        <span class="self">self</span>.watch_node_addr().get()
+<a href=#891 id=891 data-nosnippet>891</a>    }
+<a href=#892 id=892 data-nosnippet>892</a>
+<a href=#893 id=893 data-nosnippet>893</a>    <span class="doccomment">/// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
+<a href=#894 id=894 data-nosnippet>894</a>    ///
+<a href=#895 id=895 data-nosnippet>895</a>    /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses.
+<a href=#896 id=896 data-nosnippet>896</a>    ///
+<a href=#897 id=897 data-nosnippet>897</a>    /// ```no_run
+<a href=#898 id=898 data-nosnippet>898</a>    /// # async fn wrapper() -&gt; n0_snafu::Result {
+<a href=#899 id=899 data-nosnippet>899</a>    /// use iroh::{Endpoint, Watcher};
+<a href=#900 id=900 data-nosnippet>900</a>    ///
+<a href=#901 id=901 data-nosnippet>901</a>    /// let endpoint = Endpoint::builder()
+<a href=#902 id=902 data-nosnippet>902</a>    ///     .alpns(vec![b"my-alpn".to_vec()])
+<a href=#903 id=903 data-nosnippet>903</a>    ///     .bind()
+<a href=#904 id=904 data-nosnippet>904</a>    ///     .await?;
+<a href=#905 id=905 data-nosnippet>905</a>    /// let node_addr = endpoint.watch_node_addr().get();
+<a href=#906 id=906 data-nosnippet>906</a>    /// # let _ = node_addr;
+<a href=#907 id=907 data-nosnippet>907</a>    /// # Ok(())
+<a href=#908 id=908 data-nosnippet>908</a>    /// # }
+<a href=#909 id=909 data-nosnippet>909</a>    /// ```
+<a href=#910 id=910 data-nosnippet>910</a>    ///
+<a href=#911 id=911 data-nosnippet>911</a>    /// The [`Endpoint::online`] method can be used as a convenience method to
+<a href=#912 id=912 data-nosnippet>912</a>    /// understand if the endpoint has ever been considered "online". But after
+<a href=#913 id=913 data-nosnippet>913</a>    /// that initial call to [`Endpoint::online`], to understand if your
+<a href=#914 id=914 data-nosnippet>914</a>    /// endpoint is no longer able to be connected to by endpoints outside
+<a href=#915 id=915 data-nosnippet>915</a>    /// of the private or local network, watch for changes in it's [`NodeAddr`].
+<a href=#916 id=916 data-nosnippet>916</a>    /// If the `relay_url` is `None` or if there are no `direct_addresses` in
+<a href=#917 id=917 data-nosnippet>917</a>    /// the [`NodeAddr`], you may not be dialable by other endpoints on the internet.
+<a href=#918 id=918 data-nosnippet>918</a>    ///
+<a href=#919 id=919 data-nosnippet>919</a>    ///
+<a href=#920 id=920 data-nosnippet>920</a>    /// The `NodeAddr` will change as:
+<a href=#921 id=921 data-nosnippet>921</a>    /// - network conditions change
+<a href=#922 id=922 data-nosnippet>922</a>    /// - the endpoint connects to a relay server
+<a href=#923 id=923 data-nosnippet>923</a>    /// - the endpoint changes its preferred relay server
+<a href=#924 id=924 data-nosnippet>924</a>    /// - more addresses are discovered for this endpoint
 <a href=#925 id=925 data-nosnippet>925</a>    ///
 <a href=#926 id=926 data-nosnippet>926</a>    /// [`RelayUrl`]: crate::RelayUrl
 <a href=#927 id=927 data-nosnippet>927</a>    </span><span class="attr">#[cfg(not(wasm_browser))]

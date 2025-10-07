@@ -86,23 +86,16 @@ if the direct addresses are a subset of ours.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.node_id" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#873-875">Source</a><h4 class="code-header">pub fn <a href="#method.node_id" class="fn">node_id</a>(&amp;self) -&gt; <a class="type" href="../type.NodeId.html" title="type iroh::NodeId">NodeId</a></h4></section></summary><div class="docblock"><p>Returns the node id of this endpoint.</p>
 <p>This ID is the unique addressing information of this node and other peers must know
 it to be able to connect to this node.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.node_addr" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#896-898">Source</a><h4 class="code-header">pub fn <a href="#method.node_addr" class="fn">node_addr</a>(&amp;self) -&gt; <a class="struct" href="../struct.NodeAddr.html" title="struct iroh::NodeAddr">NodeAddr</a></h4></section></summary><div class="docblock"><p>Returns the current <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a>.</p>
-<p>If this is called right after the <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> has been created, there is
-a good chance these fields will be empty.</p>
-<p>Use the <a href="struct.Endpoint.html#method.online" title="method iroh::endpoint::Endpoint::online"><code>Endpoint::online</code></a> method to ensure that the endpoint is considered
-“online” (has contacted a  relay server and has at least one local addresses)
-before calling this method, if you want to ensure that the <code>NodeAddr</code> will
-contain enough information to allow this endpoint to be dialable by
-a remote endpoint.</p>
-<p>Or, use the <a href="struct.Endpoint.html#method.watch_node_addr" title="method iroh::endpoint::Endpoint::watch_node_addr"><code>Endpoint::watch_node_addr</code></a> method to get updates when the
-<code>NodeAddr</code> changes.</p>
-<p>The <code>NodeAddr</code> will change as:</p>
-<ul>
-<li>network conditions change</li>
-<li>the endpoint connects to a relay server</li>
-<li>the endpoint changes its preferred relay server</li>
-<li>more addresses are discovered for this endpoint</li>
-</ul>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.node_addr" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#889-891">Source</a><h4 class="code-header">pub fn <a href="#method.node_addr" class="fn">node_addr</a>(&amp;self) -&gt; <a class="struct" href="../struct.NodeAddr.html" title="struct iroh::NodeAddr">NodeAddr</a></h4></section></summary><div class="docblock"><p>Returns the current <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a>.
+As long as the endpoint was able to binde to a network interfaces, some
+local addresses will be available.</p>
+<p>The state of other fields depends on the state of networking and connectivity.
+Use the <a href="struct.Endpoint.html#method.online" title="method iroh::endpoint::Endpoint::online"><code>Endpoint::online</code></a> method to ensure that the endpoint is considered
+“online” (has contacted a relay server) before calling this method, if you want
+to ensure that the <code>NodeAddr</code> will contain enough information to allow this endpoint
+to be dialable by a remote endpoint over the internet.</p>
+<p>You can use the <a href="struct.Endpoint.html#method.watch_node_addr" title="method iroh::endpoint::Endpoint::watch_node_addr"><code>Endpoint::watch_node_addr</code></a> method to get updates when the <code>NodeAddr</code>
+changes.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.watch_node_addr" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#928-941">Source</a><h4 class="code-header">pub fn <a href="#method.watch_node_addr" class="fn">watch_node_addr</a>(&amp;self) -&gt; impl <a class="trait" href="../trait.Watcher.html" title="trait iroh::Watcher">Watcher</a>&lt;Value = <a class="struct" href="../struct.NodeAddr.html" title="struct iroh::NodeAddr">NodeAddr</a>&gt; + use&lt;&gt;</h4></section><span class="item-info"><div class="stab portability">Available on <strong>non-<code>wasm_browser</code></strong> only.</div></span></summary><div class="docblock"><p>Returns a <a href="../trait.Watcher.html" title="trait iroh::Watcher"><code>Watcher</code></a> for the current <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a> for this endpoint.</p>
 <p>The observed <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a> will have the current <a href="../struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a> and direct addresses.</p>
 
@@ -120,6 +113,13 @@ endpoint is no longer able to be connected to by endpoints outside
 of the private or local network, watch for changes in it’s <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a>.
 If the <code>relay_url</code> is <code>None</code> or if there are no <code>direct_addresses</code> in
 the <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a>, you may not be dialable by other endpoints on the internet.</p>
+<p>The <code>NodeAddr</code> will change as:</p>
+<ul>
+<li>network conditions change</li>
+<li>the endpoint connects to a relay server</li>
+<li>the endpoint changes its preferred relay server</li>
+<li>more addresses are discovered for this endpoint</li>
+</ul>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.online" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#974-976">Source</a><h4 class="code-header">pub async fn <a href="#method.online" class="fn">online</a>(&amp;self)</h4></section><span class="item-info"><div class="stab portability">Available on <strong>non-<code>wasm_browser</code></strong> only.</div></span></summary><div class="docblock"><p>A convenience method that waits for the endpoint to be considered “online”.</p>
 <p>This currently means at least one relay server was connected,
 and at least one local IP address is available.
