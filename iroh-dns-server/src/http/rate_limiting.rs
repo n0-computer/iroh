@@ -36,9 +36,9 @@ impl Default for &RateLimitConfig {
 /// Create the default rate-limiting layer.
 ///
 /// This spawns a background thread to clean up the rate limiting cache.
-pub fn create(
+pub fn create<RespBody>(
     rate_limit_config: &RateLimitConfig,
-) -> Option<GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>>> {
+) -> Option<GovernorLayer<PeerIpKeyExtractor, NoOpMiddleware<QuantaInstant>, RespBody>> {
     let use_smart_extractor = match rate_limit_config {
         RateLimitConfig::Disabled => {
             tracing::info!("Rate limiting disabled");
@@ -79,7 +79,5 @@ pub fn create(
         }
     });
 
-    Some(GovernorLayer {
-        config: governor_conf,
-    })
+    Some(GovernorLayer::new(governor_conf))
 }

@@ -3,6 +3,7 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
+    time::Duration,
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
@@ -22,8 +23,8 @@ mod path_state;
 mod path_validity;
 mod udp_paths;
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
+pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo};
+pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, RemoteInfo, SendPing};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -84,8 +85,7 @@ enum NodeStateKey {
 /// sources can be associated with a single address, if we have discovered this
 /// address through multiple means.
 ///
-/// Each time a [`NodeAddr`] is added to the node map, usually through
-/// [`crate::endpoint::Endpoint::add_node_addr_with_source`], a [`Source`] must be supplied to indicate
+/// Each time a [`NodeAddr`] is added to the node map a [`Source`] must be supplied to indicate
 /// how the address was obtained.
 ///
 /// A [`Source`] can describe a variety of places that an address or node was
@@ -285,6 +285,7 @@ impl NodeMap {
     }
 
     /// Returns the [`RemoteInfo`]s for each node in the node map.
+    #[cfg(test)]
     pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
         // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
         // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
@@ -305,6 +306,10 @@ impl NodeMap {
     /// the `node_id`
     pub(super) fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.inner.lock().expect("poisoned").conn_type(node_id)
+    }
+
+    pub(super) fn latency(&self, node_id: NodeId) -> Option<Duration> {
+        self.inner.lock().expect("poisoned").latency(node_id)
     }
 
     /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
@@ -473,6 +478,7 @@ impl NodeMapInner {
         *node_state.quic_mapped_addr()
     }
 
+    #[cfg(test)]
     fn node_states(&self) -> impl Iterator<Item = (&usize, &NodeState)> {
         self.by_id.iter()
     }
@@ -482,6 +488,7 @@ impl NodeMapInner {
     }
 
     /// Get the [`RemoteInfo`]s for all nodes.
+    #[cfg(test)]
     fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
         self.node_states().map(move |(_, ep)| ep.info(now))
     }
@@ -504,6 +511,11 @@ impl NodeMapInner {
     fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.conn_type())
+    }
+
+    fn latency(&self, node_id: NodeId) -> Option<Duration> {
+        self.get(NodeStateKey::NodeId(node_id))
+            .and_then(|ep| ep.latency())
     }
 
     fn handle_pong(&mut self, sender: NodeId, src: &transports::Addr, pong: Pong) {
@@ -707,6 +719,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use iroh_base::SecretKey;
+    use rand::SeedableRng;
     use tracing_test::traced_test;
 
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
@@ -731,7 +744,7 @@ mod tests {
     async fn restore_from_vec() {
         let node_map = NodeMap::default();
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let node_a = SecretKey::generate(&mut rng).public();
         let node_b = SecretKey::generate(&mut rng).public();
         let node_c = SecretKey::generate(&mut rng).public();
@@ -800,7 +813,8 @@ mod tests {
     #[traced_test]
     fn test_prune_direct_addresses() {
         let node_map = NodeMap::default();
-        let public_key = SecretKey::generate(rand::thread_rng()).public();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let public_key = SecretKey::generate(&mut rng).public();
         let id = node_map
             .inner
             .lock()
@@ -873,8 +887,10 @@ mod tests {
     #[test]
     fn test_prune_inactive() {
         let node_map = NodeMap::default();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         // add one active node and more than MAX_INACTIVE_NODES inactive nodes
-        let active_node = SecretKey::generate(rand::thread_rng()).public();
+        let active_node = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map
@@ -885,7 +901,7 @@ mod tests {
             .expect("registered");
 
         for _ in 0..MAX_INACTIVE_NODES + 1 {
-            let node = SecretKey::generate(rand::thread_rng()).public();
+            let node = SecretKey::generate(&mut rng).public();
             node_map.add_test_addr(NodeAddr::new(node));
         }
 

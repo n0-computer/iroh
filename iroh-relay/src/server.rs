@@ -764,6 +764,7 @@ mod tests {
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_snafu::Result;
+    use rand::SeedableRng;
     use tracing::{info, instrument};
     use tracing_test::traced_test;
 
@@ -866,7 +867,8 @@ mod tests {
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
-        let response = reqwest::get(&url).await.unwrap();
+        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let response = client.get(&url).send().await.unwrap();
         assert_eq!(response.status(), 200);
         let body = response.text().await.unwrap();
         assert!(body.contains("iroh.computer"));
@@ -879,7 +881,7 @@ mod tests {
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
         let response = client
             .get(&url)
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
@@ -896,13 +898,14 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_relay_clients() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let server = spawn_local_relay().await?;
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse()?;
 
         // set up client a
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let a_secret_key = SecretKey::generate(&mut rng);
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
         info!("client a build & connect");
@@ -911,7 +914,7 @@ mod tests {
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_secret_key = SecretKey::generate(&mut rng);
         let b_key = b_secret_key.public();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
@@ -956,10 +959,11 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_relay_access_control() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let current_span = tracing::info_span!("this is a test");
         let _guard = current_span.enter();
 
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let a_secret_key = SecretKey::generate(&mut rng);
         let a_key = a_secret_key.public();
 
         let server = Server::spawn(ServerConfig::<(), ()> {
@@ -1002,7 +1006,7 @@ mod tests {
         // test that another client has access
 
         // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_secret_key = SecretKey::generate(&mut rng);
         let b_key = b_secret_key.public();
 
         let resolver = dns_resolver();
@@ -1011,7 +1015,7 @@ mod tests {
             .await?;
 
         // set up client c
-        let c_secret_key = SecretKey::generate(rand::thread_rng());
+        let c_secret_key = SecretKey::generate(&mut rng);
         let c_key = c_secret_key.public();
 
         let resolver = dns_resolver();
@@ -1040,19 +1044,20 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_relay_clients_full() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let a_secret_key = SecretKey::generate(&mut rng);
         let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
             .connect()
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_secret_key = SecretKey::generate(&mut rng);
         let b_key = b_secret_key.public();
         let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
             .connect()
