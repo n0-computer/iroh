@@ -42,46 +42,49 @@ use std::{
 
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, ResultExt, Snafu};
+use n0_error::{ResultExt, ensure};
 use url::Url;
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
 
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[n0_error::add_location]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[derive(n0_error::Error)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum EncodingError {
-    #[snafu(transparent)]
+    #[transparent]
     FailedBuildingPacket {
+        #[from]
+        #[std]
         source: pkarr::errors::SignedPacketBuildError,
     },
-    #[snafu(display("invalid TXT entry"))]
-    InvalidTxtEntry { source: pkarr::dns::SimpleDnsError },
+    #[display("invalid TXT entry")]
+    InvalidTxtEntry {
+        #[std]
+        source: pkarr::dns::SimpleDnsError,
+    },
 }
 
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[n0_error::add_location]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[derive(n0_error::Error)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum DecodingError {
-    #[snafu(display("node id was not encoded in valid z32"))]
-    InvalidEncodingZ32 { source: z32::Z32Error },
-    #[snafu(display("length must be 32 bytes, but got {len} byte(s)"))]
+    #[display("node id was not encoded in valid z32")]
+    InvalidEncodingZ32 {
+        #[from]
+        #[std]
+        source: z32::Z32Error,
+    },
+    #[display("length must be 32 bytes, but got {len} byte(s)")]
     InvalidLength { len: usize },
-    #[snafu(display("node id is not a valid public key"))]
-    InvalidSignature { source: SignatureError },
+    #[display("node id is not a valid public key")]
+    InvalidSignature {
+        #[from]
+        #[std]
+        source: SignatureError,
+    },
 }
 
 /// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
@@ -104,11 +107,11 @@ impl NodeIdExt for NodeId {
     }
 
     fn from_z32(s: &str) -> Result<NodeId, DecodingError> {
-        let bytes = z32::decode(s.as_bytes()).context(InvalidEncodingZ32Snafu)?;
+        let bytes = z32::decode(s.as_bytes()).map_err(DecodingError::from)?;
         let bytes: &[u8; 32] = &bytes
             .try_into()
-            .map_err(|_| InvalidLengthSnafu { len: s.len() }.build())?;
-        let node_id = NodeId::from_bytes(bytes).context(InvalidSignatureSnafu)?;
+            .map_err(|_| DecodingError::invalid_length(s.len()))?;
+        let node_id = NodeId::from_bytes(bytes).map_err(DecodingError::from)?;
         Ok(node_id)
     }
 }
@@ -227,18 +230,16 @@ impl UserData {
 
 /// Error returned when an input value is too long for [`UserData`].
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-pub struct MaxLengthExceededError {
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-}
+#[n0_error::add_location]
+#[derive(n0_error::Error)]
+#[display("user data exceeds max length")]
+pub struct MaxLengthExceededError {}
 
 impl TryFrom<String> for UserData {
     type Error = MaxLengthExceededError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        snafu::ensure!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu);
+        ensure!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededError::new());
         Ok(Self(value))
     }
 }
@@ -247,7 +248,7 @@ impl FromStr for UserData {
     type Err = MaxLengthExceededError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        snafu::ensure!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu);
+        ensure!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededError::new());
         Ok(Self(s.to_string()))
     }
 }
@@ -610,7 +611,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let mut builder = pkarr::SignedPacket::builder();
         for s in self.to_txt_strings() {
             let mut txt = rdata::TXT::new();
-            txt.add_string(&s).context(InvalidTxtEntrySnafu)?;
+            txt.add_string(&s).map_err(EncodingError::invalid_txt_entry)?;
             builder = builder.txt(name.clone(), txt.into_owned(), ttl);
         }
         let signed_packet = builder.build(&keypair)?;

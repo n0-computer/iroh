@@ -15,7 +15,7 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use nested_enum_utils::common_fields;
 use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize};
-use snafu::{Backtrace, Snafu};
+use n0_error as _; // ensure macros are in scope
 
 /// A public key.
 ///
@@ -203,25 +203,27 @@ impl Display for PublicKey {
 }
 
 /// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Snafu, Debug)]
+#[n0_error::add_location]
+#[derive(n0_error::Error)]
 #[allow(missing_docs)]
-#[snafu(visibility(pub(crate)))]
+#[non_exhaustive]
 pub enum KeyParsingError {
     /// Error when decoding.
-    #[snafu(transparent)]
-    Decode { source: data_encoding::DecodeError },
+    #[transparent]
+    Decode {
+        #[from]
+        #[std]
+        source: data_encoding::DecodeError,
+    },
     /// Error when decoding the public key.
-    #[snafu(transparent)]
+    #[transparent]
     Key {
+        #[from]
+        #[std]
         source: ed25519_dalek::SignatureError,
     },
     /// The encoded information had the wrong length.
-    #[snafu(display("invalid length"))]
+    #[display("invalid length")]
     DecodeInvalidLength {},
 }
 
@@ -353,14 +355,14 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
         let input = s.to_ascii_uppercase();
         let input = input.as_bytes();
         if data_encoding::BASE32_NOPAD.decode_len(input.len())? != bytes.len() {
-            return Err(DecodeInvalidLengthSnafu.build());
+            return Err(KeyParsingError::decode_invalid_length());
         }
         data_encoding::BASE32_NOPAD.decode_mut(input, &mut bytes)
     };
     match res {
         Ok(len) => {
             if len != PublicKey::LENGTH {
-                return Err(DecodeInvalidLengthSnafu.build());
+                return Err(KeyParsingError::decode_invalid_length());
             }
         }
         Err(partial) => return Err(partial.error.into()),
