@@ -206,7 +206,7 @@ jobs:
 
     - name: Find Docs Comment
       if: ${{ inputs.pr_number != '' }}
-      uses: peter-evans/find-comment@v3
+      uses: peter-evans/find-comment@v4
       id: fc
       with:
         issue-number: ${{ inputs.pr_number }}
@@ -215,7 +215,7 @@ jobs:
 
     - name: Create or Update Docs Comment
       if: ${{ inputs.pr_number != '' && !github.event.pull_request.head.repo.fork }}
-      uses: peter-evans/create-or-update-comment@v4
+      uses: peter-evans/create-or-update-comment@v5
       with:
         issue-number: ${{ inputs.pr_number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
@@ -237,7 +237,7 @@ jobs:
         echo "EOFMARKER" >> ${GITHUB_OUTPUT}
 
     - name: Echo Report Table on PR
-      uses: peter-evans/create-or-update-comment@v4
+      uses: peter-evans/create-or-update-comment@v5
       if: ${{ inputs.pr_number != '' && inputs.report_table && !github.event.pull_request.head.repo.fork }}
       with:
         issue-number: ${{ inputs.pr_number }}

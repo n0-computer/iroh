@@ -50,7 +50,7 @@ jobs:
         publish_branch: generated-docs-preview
 
     - name: Find Docs Comment
-      uses: peter-evans/find-comment@v3
+      uses: peter-evans/find-comment@v4
       id: fc
       with:
         issue-number: ${{ github.event.pull_request.number || inputs.pr_number }}
@@ -62,7 +62,7 @@ jobs:
       run: echo "TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_ENV
 
     - name: Create or Update Docs Comment
-      uses: peter-evans/create-or-update-comment@v4
+      uses: peter-evans/create-or-update-comment@v5
       with:
         issue-number: ${{ github.event.pull_request.number || inputs.pr_number }}
         comment-id: ${{ steps.fc.outputs.comment-id }}
