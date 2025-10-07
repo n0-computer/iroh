@@ -192,14 +192,19 @@ impl NodeMap {
         }
     }
 
-    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun_rs::TransactionId) {
+    pub(super) fn notify_ping_timeout(
+        &self,
+        id: usize,
+        tx_id: stun_rs::TransactionId,
+        metrics: &Metrics,
+    ) {
         if let Some(ep) = self
             .inner
             .lock()
             .expect("poisoned")
             .get_mut(NodeStateKey::Idx(id))
         {
-            ep.ping_timeout(tx_id, Instant::now());
+            ep.ping_timeout(tx_id, Instant::now(), metrics);
         }
     }
 
@@ -228,11 +233,17 @@ impl NodeMap {
             .handle_ping(sender, src, tx_id)
     }
 
-    pub(super) fn handle_pong(&self, sender: PublicKey, src: &transports::Addr, pong: Pong) {
+    pub(super) fn handle_pong(
+        &self,
+        sender: PublicKey,
+        src: &transports::Addr,
+        pong: Pong,
+        metrics: &Metrics,
+    ) {
         self.inner
             .lock()
             .expect("poisoned")
-            .handle_pong(sender, src, pong)
+            .handle_pong(sender, src, pong, metrics)
     }
 
     #[must_use = "actions must be handled"]
@@ -268,11 +279,11 @@ impl NodeMap {
         Some((public_key, udp_addr, relay_url, ping_actions))
     }
 
-    pub(super) fn reset_node_states(&self) {
+    pub(super) fn reset_node_states(&self, metrics: &Metrics) {
         let now = Instant::now();
         let mut inner = self.inner.lock().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
-            ep.note_connectivity_change(now);
+            ep.note_connectivity_change(now, metrics);
         }
     }
 
@@ -518,9 +529,15 @@ impl NodeMapInner {
             .and_then(|ep| ep.latency())
     }
 
-    fn handle_pong(&mut self, sender: NodeId, src: &transports::Addr, pong: Pong) {
+    fn handle_pong(
+        &mut self,
+        sender: NodeId,
+        src: &transports::Addr,
+        pong: Pong,
+        metrics: &Metrics,
+    ) {
         if let Some(ns) = self.get_mut(NodeStateKey::NodeId(sender)).as_mut() {
-            let insert = ns.handle_pong(&pong, src.clone().into());
+            let insert = ns.handle_pong(&pong, src.clone().into(), metrics);
             if let Some((src, key)) = insert {
                 self.set_node_key_for_ip_port(src, &key);
             }
@@ -553,7 +570,7 @@ impl NodeMapInner {
             Some(ns) => {
                 debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
 
-                ns.handle_call_me_maybe(cm)
+                ns.handle_call_me_maybe(cm, metrics)
             }
         }
     }

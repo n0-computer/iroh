@@ -792,7 +792,8 @@ impl MagicSock {
             }
             disco::Message::Pong(pong) => {
                 self.metrics.magicsock.recv_disco_pong.inc();
-                self.node_map.handle_pong(sender, src, pong);
+                self.node_map
+                    .handle_pong(sender, src, pong, &self.metrics.magicsock);
             }
             disco::Message::CallMeMaybe(cm) => {
                 self.metrics.magicsock.recv_disco_call_me_maybe.inc();
@@ -2049,7 +2050,9 @@ impl Actor {
     async fn handle_actor_message(&mut self, msg: ActorMessage) {
         match msg {
             ActorMessage::EndpointPingExpired(id, txid) => {
-                self.msock.node_map.notify_ping_timeout(id, txid);
+                self.msock
+                    .node_map
+                    .notify_ping_timeout(id, txid, &self.msock.metrics.magicsock);
             }
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
@@ -2249,7 +2252,9 @@ impl Actor {
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     #[instrument(skip_all)]
     fn reset_endpoint_states(&mut self) {
-        self.msock.node_map.reset_node_states()
+        self.msock
+            .node_map
+            .reset_node_states(&self.msock.metrics.magicsock)
     }
 }
 
