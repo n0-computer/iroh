@@ -575,7 +575,6 @@ mod tests {
     use std::{sync::Mutex, time::Duration};
 
     use n0_snafu::{Result, ResultExt};
-    use n0_watcher::Watcher;
     use quinn::ApplicationClose;
 
     use super::*;
@@ -629,7 +628,7 @@ mod tests {
         let proto = AccessLimit::new(Echo, |_node_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
-        let addr1 = r1.endpoint().watch_node_addr().initialized().await;
+        let addr1 = r1.endpoint().node_addr();
         dbg!(&addr1);
         let e2 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
@@ -682,7 +681,7 @@ mod tests {
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
         eprintln!("waiting for node addr");
-        let addr = router.endpoint().watch_node_addr().initialized().await;
+        let addr = router.endpoint().node_addr();
 
         eprintln!("creating ep2");
         let endpoint2 = Endpoint::builder()
