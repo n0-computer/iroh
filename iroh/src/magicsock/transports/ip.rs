@@ -129,13 +129,28 @@ pub(super) struct IpSender {
 }
 
 impl IpSender {
-    pub(super) fn is_valid_send_addr(&self, addr: &SocketAddr) -> bool {
+    pub(super) fn is_valid_send_addr(&self, dst: &SocketAddr) -> bool {
+        // Our net-tools crate binds sockets to their specific family.  This means an IPv6
+        // socket can not sent to IPv4, on any platform.  So we need to convert and
+        // IPv4-mapped IPv6 address back to it's canonical IPv4 address.
+        let dst_ip = dst.ip().to_canonical();
+
         #[allow(clippy::match_like_matches_macro)]
-        match (self.bind_addr, addr) {
-            (SocketAddr::V4(_), SocketAddr::V4(..)) => true,
-            (SocketAddr::V6(_), SocketAddr::V6(..)) => true,
+        match (self.bind_addr.ip(), dst_ip) {
+            (IpAddr::V4(_), IpAddr::V4(_)) => true,
+            (IpAddr::V6(_), IpAddr::V6(_)) => true,
             _ => false,
         }
+    }
+
+    /// Creates a canonical socket address.
+    ///
+    /// We may be asked to send IPv4-mapped IPv6 addresses.  But our sockets are configured
+    /// to only send their actual family.  So we need to map those back to the canonical
+    /// addresses.
+    #[inline]
+    fn canonical_addr(addr: SocketAddr) -> SocketAddr {
+        SocketAddr::new(addr.ip().to_canonical(), addr.port())
     }
 
     pub(super) async fn send(
@@ -148,7 +163,7 @@ impl IpSender {
         let res = self
             .sender
             .send(&quinn_udp::Transmit {
-                destination: dst,
+                destination: Self::canonical_addr(dst),
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
@@ -182,7 +197,7 @@ impl IpSender {
         let total_bytes = transmit.contents.len() as u64;
         let res = Pin::new(&mut self.sender).poll_send(
             &quinn_udp::Transmit {
-                destination: dst,
+                destination: Self::canonical_addr(dst),
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
