@@ -699,18 +699,6 @@ impl NodeState {
         }
 
         let mut access = self.udp_paths.access_mut(now);
-
-        // Invalidate paths that are not in the new address set.
-        // If the remote node sends us new addresses, old ones are likely stale (e.g., after restart).
-        // This forces immediate re-evaluation and prevents preferring "known bad" outdated paths
-        // over "unknown potentially good" new paths.
-        for (ip_port, path_state) in access.paths().iter_mut() {
-            if !new_addrs.contains(&(*ip_port).into()) && !path_state.validity.is_empty() {
-                debug!(path=?ip_port, "invalidating path not in new address set");
-                path_state.validity = PathValidity::empty();
-            }
-        }
-
         for &addr in new_addrs.iter() {
             access
                 .paths()
