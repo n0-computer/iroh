@@ -82,10 +82,7 @@ pub(crate) mod transports;
 
 use mapped_addrs::{MappedAddr, NodeIdMappedAddr};
 
-pub use self::{
-    metrics::Metrics,
-    node_map::{ConnectionType, ControlMsg, DirectAddrInfo},
-};
+pub use self::{metrics::Metrics, node_map::ConnectionType};
 
 /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.

@@ -1,15 +1,12 @@
 //! The state kept for each network path to a remote node.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
-use iroh_base::NodeId;
-use n0_future::time::{Duration, Instant};
+use n0_future::time::Instant;
 
-use super::{
-    IpPort, Source,
-    node_state::{ControlMsg, SESSION_ACTIVE_TIMEOUT},
-};
-use crate::disco::{self, SendAddr};
+use crate::disco;
+
+use super::Source;
 
 /// The state of a single path to the remote endpoint.
 ///

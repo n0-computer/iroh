@@ -34,7 +34,7 @@ mod path_state;
 
 pub(super) use node_state::NodeStateMessage;
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo};
+pub use node_state::ConnectionType;
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].

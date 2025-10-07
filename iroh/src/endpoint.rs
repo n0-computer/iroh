@@ -66,9 +66,7 @@ pub use quinn_proto::{
     },
 };
 
-pub use super::magicsock::{
-    AddNodeAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-};
+pub use super::magicsock::{AddNodeAddrError, ConnectionType, DirectAddr, DirectAddrType};
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///

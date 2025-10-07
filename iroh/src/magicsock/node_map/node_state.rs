@@ -1,9 +1,4 @@
-use std::{
-    collections::{BTreeSet, HashMap},
-    net::SocketAddr,
-    pin::Pin,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
 use n0_future::{
@@ -931,22 +926,6 @@ pub(super) struct NodeStateHandle {
     _task: AbortOnDropHandle<()>,
 }
 
-impl From<RemoteInfo> for NodeAddr {
-    fn from(info: RemoteInfo) -> Self {
-        let direct_addresses = info
-            .addrs
-            .into_iter()
-            .map(|info| info.addr)
-            .collect::<BTreeSet<_>>();
-
-        NodeAddr {
-            node_id: info.node_id,
-            relay_url: info.relay_url.map(Into::into),
-            direct_addresses,
-        }
-    }
-}
-
 /// Information about a holepunch attempt.
 #[derive(Debug)]
 struct HolepunchAttempt {
@@ -966,69 +945,6 @@ struct HolepunchAttempt {
     remote_addrs: BTreeSet<SocketAddr>,
 }
 
-/// The type of control message we have received.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, derive_more::Display)]
-pub enum ControlMsg {
-    /// We received a Ping from the node.
-    #[display("ping←")]
-    Ping,
-    /// We received a Pong from the node.
-    #[display("pong←")]
-    Pong,
-    /// We received a CallMeMaybe.
-    #[display("call me")]
-    CallMeMaybe,
-}
-
-/// Information about a *direct address*.
-///
-/// The *direct addresses* of an iroh node are those that could be used by other nodes to
-/// establish direct connectivity, depending on the network situation. Due to NAT configurations,
-/// for example, not all direct addresses of a node are usable by all peers.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct DirectAddrInfo {
-    /// The UDP address reported by the remote node.
-    pub addr: SocketAddr,
-    /// The latency to the remote node over this network path.
-    ///
-    /// If there has never been any connectivity via this address no latency will be known.
-    pub latency: Option<Duration>,
-    /// Last control message received by this node about this address.
-    ///
-    /// This contains the elapsed duration since the control message was received and the
-    /// kind of control message received at that time.  Only the most recent control message
-    /// is returned.
-    ///
-    /// Note that [`ControlMsg::CallMeMaybe`] is received via a relay path, while
-    /// [`ControlMsg::Ping`] and [`ControlMsg::Pong`] are received on the path to
-    /// [`DirectAddrInfo::addr`] itself and thus convey very different information.
-    pub last_control: Option<(Duration, ControlMsg)>,
-    /// Elapsed time since the last payload message was received on this network path.
-    ///
-    /// This indicates how long ago a QUIC datagram was received from the remote node sent
-    /// from this [`DirectAddrInfo::addr`].  It indicates the network path was in use to
-    /// transport payload data.
-    pub last_payload: Option<Duration>,
-    /// Elapsed time since this network path was known to exist.
-    ///
-    /// A network path is considered to exist only because the remote node advertised it.
-    /// It may not mean the path is usable.  However, if there was any communication with
-    /// the remote node over this network path it also means the path exists.
-    ///
-    /// The elapsed time since *any* confirmation of the path's existence was received is
-    /// returned.  If the remote node moved networks and no longer has this path, this could
-    /// be a long duration.
-    pub last_alive: Option<Duration>,
-    /// A [`HashMap`] of [`Source`]s to [`Duration`]s.
-    ///
-    /// The [`Duration`] indicates the elapsed time since this source last
-    /// recorded this address.
-    ///
-    /// The [`Duration`] will always indicate the most recent time the source
-    /// recorded this address.
-    pub sources: HashMap<Source, Duration>,
-}
-
 /// Information about the network path to a remote node via a relay server.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RelayUrlInfo {
@@ -1043,48 +959,6 @@ pub struct RelayUrlInfo {
 impl From<RelayUrlInfo> for RelayUrl {
     fn from(value: RelayUrlInfo) -> Self {
         value.relay_url
-    }
-}
-
-/// Details about a remote iroh node which is known to this node.
-///
-/// Having details of a node does not mean it can be connected to, nor that it has ever been
-/// connected to in the past. There are various reasons a node might be known: it could have
-/// been manually added via [`Endpoint::add_node_addr`], it could have been added by some
-/// discovery mechanism, the node could have contacted this node, etc.
-///
-/// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct RemoteInfo {
-    /// The globally unique identifier for this node.
-    pub node_id: NodeId,
-    /// Relay server information, if available.
-    pub relay_url: Option<RelayUrlInfo>,
-    /// The addresses at which this node might be reachable.
-    ///
-    /// Some of these addresses might only be valid for networks we are not part of, but the remote
-    /// node might be a part of.
-    pub addrs: Vec<DirectAddrInfo>,
-    /// The type of connection we have to the node, either direct or over relay.
-    pub conn_type: ConnectionType,
-    /// The latency of the current network path to the remote node.
-    pub latency: Option<Duration>,
-    /// Time elapsed time since last we have sent to or received from the node.
-    ///
-    /// This is the duration since *any* data (payload or control messages) was sent or receive
-    /// from the remote node. Note that sending to the remote node does not imply
-    /// the remote node received anything.
-    pub last_used: Option<Duration>,
-}
-
-impl RemoteInfo {
-    /// Get the duration since the last activity we received from this endpoint
-    /// on any of its direct addresses.
-    pub(crate) fn last_received(&self) -> Option<Duration> {
-        self.addrs
-            .iter()
-            .filter_map(|addr| addr.last_control.map(|x| x.0).min(addr.last_payload))
-            .min()
     }
 }
 
