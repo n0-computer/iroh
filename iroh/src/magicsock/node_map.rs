@@ -188,11 +188,6 @@ impl NodeMap {
             .ok();
     }
 
-    /// Number of nodes currently listed.
-    pub(super) fn node_count(&self) -> usize {
-        self.inner.lock().expect("poisoned").node_count()
-    }
-
     pub(super) fn node_mapped_addr(&self, node_id: NodeId) -> NodeIdMappedAddr {
         self.node_mapped_addrs.get(&node_id)
     }

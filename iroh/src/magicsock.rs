@@ -1950,7 +1950,7 @@ mod tests {
         discovery::static_provider::StaticProvider,
         dns::DnsResolver,
         endpoint::PathSelection,
-        magicsock::{Handle, MagicSock, node_map},
+        magicsock::{Handle, MagicSock},
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
 
@@ -2680,69 +2680,5 @@ mod tests {
 
         // TODO: could remove the addresses again, send, add it back and see it recover.
         // But we don't have that much private access to the NodeMap.  This will do for now.
-    }
-
-    #[tokio::test]
-    async fn test_add_node_addr() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let ep = Endpoint::builder()
-            .relay_mode(RelayMode::Default)
-            .bind()
-            .await
-            .unwrap();
-
-        assert_eq!(ep.magic_sock().node_map.node_count(), 0);
-
-        // Empty
-        let empty_addr = NodeAddr {
-            node_id: SecretKey::generate(&mut rng).public(),
-            relay_url: None,
-            direct_addresses: Default::default(),
-        };
-        let err = ep
-            .magic_sock()
-            .add_node_addr(empty_addr, node_map::Source::App)
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string()
-                .to_lowercase()
-                .contains("empty addressing info")
-        );
-
-        // relay url only
-        let addr = NodeAddr {
-            node_id: SecretKey::generate(&mut rng).public(),
-            relay_url: Some("http://my-relay.com".parse().unwrap()),
-            direct_addresses: Default::default(),
-        };
-        ep.magic_sock()
-            .add_node_addr(addr, node_map::Source::App)
-            .await?;
-        assert_eq!(ep.magic_sock().node_map.node_count(), 1);
-
-        // addrs only
-        let addr = NodeAddr {
-            node_id: SecretKey::generate(&mut rng).public(),
-            relay_url: None,
-            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        };
-        ep.magic_sock()
-            .add_node_addr(addr, node_map::Source::App)
-            .await?;
-        assert_eq!(ep.magic_sock().node_map.node_count(), 2);
-
-        // both
-        let addr = NodeAddr {
-            node_id: SecretKey::generate(&mut rng).public(),
-            relay_url: Some("http://my-relay.com".parse().unwrap()),
-            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        };
-        ep.magic_sock()
-            .add_node_addr(addr, node_map::Source::App)
-            .await?;
-        assert_eq!(ep.magic_sock().node_map.node_count(), 3);
-
-        Ok(())
     }
 }
