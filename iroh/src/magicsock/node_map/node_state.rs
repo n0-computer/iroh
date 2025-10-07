@@ -34,10 +34,7 @@ use crate::{
     util::MaybeFuture,
 };
 
-use super::{
-    Source, TransportsSenderMessage,
-    path_state::{NewPathState, PathState},
-};
+use super::{Source, TransportsSenderMessage, path_state::NewPathState};
 
 /// Number of addresses that are not active that we keep around per node.
 ///
@@ -1041,16 +1038,6 @@ pub struct RelayUrlInfo {
     pub last_alive: Option<Duration>,
     /// Latency to the remote node over this relayed network path.
     pub latency: Option<Duration>,
-}
-
-impl From<(RelayUrl, PathState)> for RelayUrlInfo {
-    fn from(value: (RelayUrl, PathState)) -> Self {
-        RelayUrlInfo {
-            relay_url: value.0,
-            last_alive: value.1.last_alive().map(|i| i.elapsed()),
-            latency: None,
-        }
-    }
 }
 
 impl From<RelayUrlInfo> for RelayUrl {

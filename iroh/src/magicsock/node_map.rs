@@ -31,7 +31,6 @@ use super::{
 
 mod node_state;
 mod path_state;
-mod path_validity;
 
 pub(super) use node_state::NodeStateMessage;
 
