@@ -243,7 +243,6 @@ impl NodeStateActor {
                             .await
                             .whatever_context("TransportSenerActor stopped")?;
                     }
-                    trace!("connecting without selected path: triggering holepunching");
                     // This message is received *before* a connection is added.  So we do
                     // not yet have a connection to holepunch.  Instead we trigger
                     // holepunching when AddConnection is received.

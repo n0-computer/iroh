@@ -406,7 +406,7 @@ impl ActiveRelayActor {
     /// Returns `None` if the actor needs to shut down.  Returns `Some(Ok(client))` when the
     /// connection is established, and `Some(Err(err))` if dialing the relay failed.
     async fn run_dialing(&mut self) -> Option<Result<iroh_relay::client::Client, DialError>> {
-        debug!("Actor loop: connecting to relay.");
+        trace!("Actor loop: connecting to relay.");
 
         // We regularly flush the relay_datagrams_send queue so it is not full of stale
         // packets while reconnecting.  Those datagrams are dropped and the QUIC congestion

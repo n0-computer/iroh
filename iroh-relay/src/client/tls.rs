@@ -138,7 +138,6 @@ impl MaybeTlsStreamBuilder {
 
     async fn dial_url_direct(&self) -> Result<tokio::net::TcpStream, DialError> {
         use tokio::net::TcpStream;
-        debug!(%self.url, "dial url");
         let dst_ip = self
             .dns_resolver
             .resolve_host(&self.url, self.prefer_ipv6, DNS_TIMEOUT)
@@ -147,7 +146,7 @@ impl MaybeTlsStreamBuilder {
         let port = url_port(&self.url).context(InvalidTargetPortSnafu)?;
         let addr = SocketAddr::new(dst_ip, port);
 
-        debug!("connecting to {}", addr);
+        trace!(%self.url, %addr, "connecting to");
         let tcp_stream = time::timeout(
             DIAL_NODE_TIMEOUT,
             async move { TcpStream::connect(addr).await },

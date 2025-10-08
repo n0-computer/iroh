@@ -196,7 +196,7 @@ pub(super) enum ProbeFinished {
 impl Actor {
     async fn run(self) {
         match time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
-            Ok(()) => debug!("reportgen actor finished"),
+            Ok(()) => trace!("reportgen actor finished"),
             Err(time::Elapsed { .. }) => {
                 warn!("reportgen timed out");
             }
@@ -215,7 +215,7 @@ impl Actor {
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
     async fn run_inner(self) {
-        debug!("reportstate actor starting");
+        trace!("reportgen actor starting");
 
         let mut probes = JoinSet::default();
 
@@ -346,7 +346,7 @@ impl Actor {
         if_state: IfStateDetails,
         probes: &mut JoinSet<ProbeFinished>,
     ) -> CancellationToken {
-        debug!(?if_state, "local interface details");
+        trace!(?if_state, "local interface details");
         let plan = match self.last_report {
             Some(ref report) => {
                 ProbePlan::with_last_report(&self.relay_map, report, &self.protocols)
@@ -637,8 +637,11 @@ fn get_quic_port(relay_node: &RelayNode) -> Option<u16> {
 pub enum GetRelayAddrError {
     #[snafu(display("No valid hostname in the relay URL"))]
     InvalidHostname,
-    #[snafu(display("No suitable relay address found"))]
-    NoAddrFound,
+    #[snafu(display("No suitable relay address found for {url} ({addr_type})"))]
+    NoAddrFound {
+        url: RelayUrl,
+        addr_type: &'static str,
+    },
     #[snafu(display("DNS lookup failed"))]
     DnsLookup { source: StaggeredError<DnsError> },
     #[snafu(display("Relay node is not suitable for non-STUN probes"))]
@@ -691,12 +694,22 @@ async fn relay_lookup_ipv4_staggered(
                         IpAddr::V4(ip) => SocketAddrV4::new(ip, port),
                         IpAddr::V6(_) => unreachable!("bad DNS lookup: {:?}", addr),
                     })
-                    .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
+                    .ok_or(
+                        get_relay_addr_error::NoAddrFoundSnafu {
+                            url: relay.url.clone(),
+                            addr_type: "A",
+                        }
+                        .build(),
+                    ),
                 Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
         Some(url::Host::Ipv4(addr)) => Ok(SocketAddrV4::new(addr, port)),
-        Some(url::Host::Ipv6(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        Some(url::Host::Ipv6(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu {
+            url: relay.url.clone(),
+            addr_type: "A",
+        }
+        .build()),
         None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }
 }
@@ -723,11 +736,21 @@ async fn relay_lookup_ipv6_staggered(
                         IpAddr::V4(_) => unreachable!("bad DNS lookup: {:?}", addr),
                         IpAddr::V6(ip) => SocketAddrV6::new(ip, port, 0, 0),
                     })
-                    .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
+                    .ok_or(
+                        get_relay_addr_error::NoAddrFoundSnafu {
+                            url: relay.url.clone(),
+                            addr_type: "AAAA",
+                        }
+                        .build(),
+                    ),
                 Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
-        Some(url::Host::Ipv4(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        Some(url::Host::Ipv4(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu {
+            url: relay.url.clone(),
+            addr_type: "AAAA",
+        }
+        .build()),
         Some(url::Host::Ipv6(addr)) => Ok(SocketAddrV6::new(addr, port, 0, 0)),
         None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }

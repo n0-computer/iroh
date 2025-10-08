@@ -7,7 +7,7 @@ use std::{
 
 use iroh_base::RelayUrl;
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tracing::{trace, warn};
 
 use super::{ProbeReport, probes::Probe};
 
@@ -82,7 +82,6 @@ impl Report {
 
                 self.udp_v4 = true;
 
-                tracing::debug!(?self.global_v4, ?self.mapping_varies_by_dest_ipv4, %ipp,"got");
                 if let Some(global) = self.global_v4 {
                     if global == ipp {
                         if self.mapping_varies_by_dest_ipv4.is_none() {
@@ -95,6 +94,7 @@ impl Report {
                 } else {
                     self.global_v4 = Some(ipp);
                 }
+                trace!(?self.global_v4, ?self.mapping_varies_by_dest_ipv4, %ipp, "stored report");
             }
             #[cfg(not(wasm_browser))]
             ProbeReport::QadIpv6(report) => {
@@ -109,7 +109,6 @@ impl Report {
                 };
 
                 self.udp_v6 = true;
-                tracing::debug!(?self.global_v6, ?self.mapping_varies_by_dest_ipv6, %ipp,"got");
                 if let Some(global) = self.global_v6 {
                     if global == ipp {
                         if self.mapping_varies_by_dest_ipv6.is_none() {
@@ -122,6 +121,7 @@ impl Report {
                 } else {
                     self.global_v6 = Some(ipp);
                 }
+                trace!(?self.global_v6, ?self.mapping_varies_by_dest_ipv6, %ipp, "stored report");
             }
         }
     }
