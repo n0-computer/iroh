@@ -1,9 +1,8 @@
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
-use n0_error::StackErrorExt;
+use n0_error::{ResultExt, StackErrorExt};
 use serde::{Deserialize, Serialize};
 use url::Url;
-use n0_error::ResultExt;
 
 /// A URL identifying a relay server.
 ///

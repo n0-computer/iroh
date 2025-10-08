@@ -48,6 +48,7 @@ use std::sync::Arc;
 
 use iroh_base::{NodeId, RelayUrl, SecretKey};
 use iroh_relay::node_info::{EncodingError, NodeInfo};
+use n0_error::ResultExt;
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
@@ -58,7 +59,6 @@ use pkarr::{
     SignedPacket,
     errors::{PublicKeyError, SignedPacketVerifyError},
 };
-use n0_error::ResultExt;
 use tracing::{Instrument, debug, error_span, warn};
 use url::Url;
 
@@ -93,7 +93,10 @@ pub enum PkarrError {
     #[display("Http payload error")]
     HttpPayload { source: reqwest::Error },
     #[display("EncodingError")]
-    Encoding { #[error(stack_err)] source: EncodingError },
+    Encoding {
+        #[error(stack_err)]
+        source: EncodingError,
+    },
 }
 
 impl From<PkarrError> for DiscoveryError {
@@ -553,7 +556,8 @@ impl PkarrRelayClient {
     /// Resolves a [`SignedPacket`] for the given [`NodeId`].
     pub async fn resolve(&self, node_id: NodeId) -> Result<SignedPacket, DiscoveryError> {
         // We map the error to string, as in browsers the error is !Send
-        let public_key = pkarr::PublicKey::try_from(node_id.as_bytes()).context(PkarrError::public_key)?;
+        let public_key =
+            pkarr::PublicKey::try_from(node_id.as_bytes()).context(PkarrError::public_key)?;
 
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()

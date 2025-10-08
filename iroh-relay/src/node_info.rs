@@ -42,7 +42,6 @@ use std::{
 
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
 use n0_error::{ResultExt, StackErrorExt, ensure};
-use nested_enum_utils::common_fields;
 use url::Url;
 
 /// The DNS name for the iroh TXT record.
@@ -529,7 +528,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
                 return Err(ParseError::unexpected_format(s));
             };
-            let attr = T::from_str(key).map_err(|_| ParseError::attr_from_string(key.to_string()))?;
+            let attr =
+                T::from_str(key).map_err(|_| ParseError::attr_from_string(key.to_string()))?;
             attrs.entry(attr).or_default().push(value.to_string());
         }
         Ok(Self { attrs, node_id })
@@ -604,7 +604,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let mut builder = pkarr::SignedPacket::builder();
         for s in self.to_txt_strings() {
             let mut txt = rdata::TXT::new();
-            txt.add_string(&s).context(EncodingError::invalid_txt_entry)?;
+            txt.add_string(&s)
+                .context(EncodingError::invalid_txt_entry)?;
             builder = builder.txt(name.clone(), txt.into_owned(), ttl);
         }
         let signed_packet = builder.build(&keypair)?;
@@ -643,7 +644,7 @@ mod tests {
         },
     };
     use iroh_base::{NodeId, SecretKey};
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, ResultExt};
 
     use super::{NodeData, NodeIdExt, NodeInfo};
     use crate::dns::TxtRecordData;

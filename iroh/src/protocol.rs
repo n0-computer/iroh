@@ -40,11 +40,11 @@ use std::{
 };
 
 use iroh_base::NodeId;
+use n0_error as _;
 use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
 };
-use n0_error as _;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 

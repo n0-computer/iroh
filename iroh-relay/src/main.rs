@@ -19,10 +19,9 @@ use iroh_relay::{
     },
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
+use n0_error::{Result, ResultExt, StackErrorExt, whatever};
 use n0_future::FutureExt;
-use n0_snafu::{Error, Result, ResultExt};
 use serde::{Deserialize, Serialize};
-use snafu::whatever;
 use tokio_rustls_acme::{AcmeConfig, caches::DirCache};
 use tracing::{debug, warn};
 use tracing_subscriber::{EnvFilter, prelude::*};
@@ -574,7 +573,7 @@ async fn maybe_load_tls(
             let (private_key, certs) = tokio::task::spawn_blocking(move || {
                 let key = load_secret_key(key_path)?;
                 let certs = load_certs(cert_path)?;
-                Ok::<_, Error>((key, certs))
+                Ok::<_, n0_error::AnyError>((key, certs))
             })
             .await
             .context("join")??;
@@ -587,11 +586,11 @@ async fn maybe_load_tls(
             let hostname = tls
                 .hostname
                 .clone()
-                .context("LetsEncrypt needs a hostname")?;
+                .ok_or_else(|| n0_error::format_err!("LetsEncrypt needs a hostname"))?;
             let contact = tls
                 .contact
                 .clone()
-                .context("LetsEncrypt needs a contact email")?;
+                .ok_or_else(|| n0_error::format_err!("LetsEncrypt needs a contact email"))?;
             let config = AcmeConfig::new(vec![hostname.clone()])
                 .contact([format!("mailto:{contact}")])
                 .cache_option(Some(DirCache::new(tls.cert_dir())))
@@ -727,7 +726,7 @@ mod tests {
     use std::num::NonZeroU32;
 
     use iroh_base::SecretKey;
-    use n0_snafu::Result;
+    use n0_error::Result;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 

@@ -12,7 +12,6 @@ use std::{
 use curve25519_dalek::edwards::CompressedEdwardsY;
 pub use ed25519_dalek::{Signature, SignatureError};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use nested_enum_utils::common_fields;
 use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize};
 

@@ -26,9 +26,8 @@ use hyper::body::Incoming;
 use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use n0_error::{ResultExt, StackErrorExt};
+use n0_error::ResultExt;
 use n0_future::{StreamExt, future::Boxed};
-use nested_enum_utils::common_fields;
 use tokio::{
     net::TcpListener,
     task::{JoinError, JoinSet},
@@ -764,8 +763,8 @@ mod tests {
 
     use http::StatusCode;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
+    use n0_error::Result;
     use n0_future::{FutureExt, SinkExt, StreamExt};
-    use n0_snafu::Result;
     use rand::SeedableRng;
     use tracing::{info, instrument};
     use tracing_test::traced_test;

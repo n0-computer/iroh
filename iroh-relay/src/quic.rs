@@ -3,9 +3,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use n0_future::time::Duration;
-use nested_enum_utils::common_fields;
 use quinn::{VarInt, crypto::rustls::QuicClientConfig};
-use snafu::{Backtrace, Snafu};
 use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
@@ -17,11 +15,11 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
+    use n0_error::ResultExt;
     use quinn::{
         ApplicationClose, ConnectionError,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     };
-    use snafu::ResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, debug, info, info_span};
@@ -37,30 +35,20 @@ pub(crate) mod server {
 
     /// Server spawn errors
     #[allow(missing_docs)]
-    #[derive(Debug, Snafu)]
+    #[n0_error::add_location]
+    #[derive(n0_error::Error)]
+    #[error(std_sources)]
     #[non_exhaustive]
     pub enum QuicSpawnError {
-        #[snafu(transparent)]
+        #[error(transparent)]
         NoInitialCipherSuite {
+            #[error(from)]
             source: NoInitialCipherSuite,
-            backtrace: Option<Backtrace>,
-            #[snafu(implicit)]
-            span_trace: n0_snafu::SpanTrace,
         },
-        #[snafu(display("Unable to spawn a QUIC endpoint server"))]
-        EndpointServer {
-            source: std::io::Error,
-            backtrace: Option<Backtrace>,
-            #[snafu(implicit)]
-            span_trace: n0_snafu::SpanTrace,
-        },
-        #[snafu(display("Unable to get the local address from the endpoint"))]
-        LocalAddr {
-            source: std::io::Error,
-            backtrace: Option<Backtrace>,
-            #[snafu(implicit)]
-            span_trace: n0_snafu::SpanTrace,
-        },
+        #[display("Unable to spawn a QUIC endpoint server")]
+        EndpointServer { source: std::io::Error },
+        #[display("Unable to get the local address from the endpoint")]
+        LocalAddr { source: std::io::Error },
     }
 
     impl QuicServer {
@@ -114,8 +102,8 @@ pub(crate) mod server {
                 .send_observed_address_reports(true);
 
             let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)
-                .context(EndpointServerSnafu)?;
-            let bind_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
+                .context(QuicSpawnError::endpoint_server)?;
+            let bind_addr = endpoint.local_addr().context(QuicSpawnError::local_addr)?;
 
             info!(?bind_addr, "QUIC server listening on");
 
@@ -228,20 +216,17 @@ pub(crate) mod server {
 }
 
 /// Quic client related errors.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[n0_error::add_location]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[derive(n0_error::Error)]
+#[error(std_sources, from_sources)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Connect { source: quinn::ConnectError },
-    #[snafu(transparent)]
+    #[error(transparent)]
     Connection { source: quinn::ConnectionError },
-    #[snafu(transparent)]
+    #[error(transparent)]
     WatchRecv { source: watch::error::RecvError },
 }
 
@@ -358,11 +343,11 @@ impl QuicClient {
 mod tests {
     use std::net::Ipv4Addr;
 
+    use n0_error::{AnyError as Error, Result, ResultExt};
     use n0_future::{
         task::AbortOnDropHandle,
         time::{self, Instant},
     };
-    use n0_snafu::{Error, Result, ResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
     use tracing::{Instrument, debug, info, info_span};
     use tracing_test::traced_test;

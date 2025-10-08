@@ -3,8 +3,8 @@
 use std::fmt::Debug;
 
 use aead::{AeadCore, AeadInOut, Buffer};
-use nested_enum_utils::common_fields;
 use n0_error::ensure;
+use nested_enum_utils::common_fields;
 
 pub(crate) const NONCE_LEN: usize = 24;
 
@@ -31,7 +31,10 @@ pub enum DecryptionError {
     InvalidNonce {},
     /// AEAD decryption failed.
     #[display("Aead error")]
-    Aead { #[error(std_err)] source: aead::Error },
+    Aead {
+        #[error(std_err)]
+        source: aead::Error,
+    },
 }
 
 impl Debug for SharedSecret {
