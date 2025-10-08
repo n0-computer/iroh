@@ -55,8 +55,7 @@ pub const IROH_TXT_NAME: &str = "_iroh";
 pub enum EncodingError {
     #[error(transparent)]
     FailedBuildingPacket {
-        #[error(from)]
-        #[error(std_err)]
+        #[error(from, std_err)]
         source: pkarr::errors::SignedPacketBuildError,
     },
     #[display("invalid TXT entry")]
@@ -69,22 +68,15 @@ pub enum EncodingError {
 #[n0_error::add_location]
 #[allow(missing_docs)]
 #[derive(n0_error::Error)]
+#[error(from_sources, std_sources)]
 #[non_exhaustive]
 pub enum DecodingError {
     #[display("node id was not encoded in valid z32")]
-    InvalidEncodingZ32 {
-        #[error(from)]
-        #[error(std_err)]
-        source: z32::Z32Error,
-    },
+    InvalidEncodingZ32 { source: z32::Z32Error },
     #[display("length must be 32 bytes, but got {len} byte(s)")]
     InvalidLength { len: usize },
     #[display("node id is not a valid public key")]
-    InvalidSignature {
-        #[error(from)]
-        #[error(std_err)]
-        source: SignatureError,
-    },
+    InvalidSignature { source: SignatureError },
 }
 
 /// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
@@ -423,11 +415,7 @@ pub enum ParseError {
     #[display("Expected 2 labels, received {num_labels}")]
     NumLabels { num_labels: usize },
     #[display("Could not parse labels")]
-    Utf8 {
-        #[error(from)]
-        #[error(std_err)]
-        source: Utf8Error,
-    },
+    Utf8 { #[error(from, std_err)] source: Utf8Error },
     #[display("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
     NotAnIrohRecord { label: String },
     #[error(transparent)]

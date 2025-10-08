@@ -60,6 +60,7 @@ pub trait Ticket: Sized {
 /// An error deserializing an iroh ticket.
 #[n0_error::add_location]
 #[derive(n0_error::Error)]
+#[error(from_sources, std_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum ParseError {
@@ -68,18 +69,10 @@ pub enum ParseError {
     Kind { expected: &'static str },
     /// This looks like a ticket, but postcard deserialization failed.
     #[error(transparent)]
-    Postcard {
-        #[error(from)]
-        #[error(std_err)]
-        source: postcard::Error,
-    },
+    Postcard { source: postcard::Error },
     /// This looks like a ticket, but base32 decoding failed.
     #[error(transparent)]
-    Encoding {
-        #[error(from)]
-        #[error(std_err)]
-        source: data_encoding::DecodeError,
-    },
+    Encoding { source: data_encoding::DecodeError },
     /// Verification of the deserialized bytes failed.
     #[display("verification failed: {message}")]
     Verify { message: &'static str },

@@ -271,37 +271,19 @@ pub struct Server {
 #[n0_error::add_location]
 #[allow(missing_docs)]
 #[derive(n0_error::Error)]
+#[error(from_sources, std_sources)]
 #[non_exhaustive]
 pub enum SpawnError {
     #[display("Unable to get local address")]
-    LocalAddr {
-        #[error(from)]
-        #[error(std_err)]
-        source: std::io::Error,
-    },
+    LocalAddr { source: std::io::Error },
     #[display("Failed to bind QAD listener")]
-    QuicSpawn {
-        #[error(from)]
-        source: QuicSpawnError,
-    },
+    QuicSpawn { #[error(stack_err)] source: QuicSpawnError },
     #[display("Failed to parse TLS header")]
-    TlsHeaderParse {
-        #[error(from)]
-        #[error(std_err)]
-        source: InvalidHeaderValue,
-    },
+    TlsHeaderParse { source: InvalidHeaderValue },
     #[display("Failed to bind TcpListener")]
-    BindTlsListener {
-        #[error(from)]
-        #[error(std_err)]
-        source: std::io::Error,
-    },
+    BindTlsListener { source: std::io::Error },
     #[display("No local address")]
-    NoLocalAddr {
-        #[error(from)]
-        #[error(std_err)]
-        source: std::io::Error,
-    },
+    NoLocalAddr { source: std::io::Error },
     #[display("Failed to bind server socket to {addr}")]
     BindTcpListener { addr: SocketAddr },
 }
@@ -313,11 +295,7 @@ pub enum SpawnError {
 #[non_exhaustive]
 pub enum SupervisorError {
     #[display("Error starting metrics server")]
-    Metrics {
-        #[error(from)]
-        #[error(std_err)]
-        source: std::io::Error,
-    },
+    Metrics { #[error(from, std_err)] source: std::io::Error },
     #[display("Acme event stream finished")]
     AcmeEventStreamFinished {},
     #[error(transparent)]

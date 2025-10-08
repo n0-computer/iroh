@@ -204,23 +204,16 @@ impl Display for PublicKey {
 /// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
 #[n0_error::add_location]
 #[derive(n0_error::Error)]
+#[error(from_sources, std_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum KeyParsingError {
     /// Error when decoding.
     #[error(transparent)]
-    Decode {
-        #[error(from)]
-        #[error(std_err)]
-        source: data_encoding::DecodeError,
-    },
+    Decode { source: data_encoding::DecodeError },
     /// Error when decoding the public key.
     #[error(transparent)]
-    Key {
-        #[error(from)]
-        #[error(std_err)]
-        source: ed25519_dalek::SignatureError,
-    },
+    Key { source: ed25519_dalek::SignatureError },
     /// The encoded information had the wrong length.
     #[display("invalid length")]
     DecodeInvalidLength {},
