@@ -429,7 +429,7 @@ impl Client {
         let v4_report = self.qad_conns.current_v4();
         let v6_report = self.qad_conns.current_v6();
         let needs_v4_probe = v4_report.is_none();
-        let needs_v6_probe = !(v6_report.is_some() == if_state.have_v6);
+        let needs_v6_probe = v6_report.is_some() != if_state.have_v6;
 
         let mut reports = Vec::new();
 
