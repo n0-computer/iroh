@@ -333,7 +333,7 @@ impl Server {
                 async move {
                     iroh_metrics::service::start_metrics_server(addr, Arc::new(registry))
                         .await
-                        .map_err(SupervisorError::metrics)
+                        .context(SupervisorError::metrics)
                 }
                 .instrument(info_span!("metrics-server")),
             );
