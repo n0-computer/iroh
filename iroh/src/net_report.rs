@@ -39,8 +39,6 @@ use n0_future::{
 use n0_watcher::{Watchable, Watcher};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-#[cfg(not(wasm_browser))]
-use tracing::instrument;
 use tracing::{debug, trace, warn};
 
 #[cfg(not(wasm_browser))]
