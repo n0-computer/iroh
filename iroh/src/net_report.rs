@@ -18,6 +18,8 @@ use std::{
 };
 
 use defaults::timeouts::PROBES_TIMEOUT;
+// exported primarily for use in documentation
+pub use defaults::timeouts::TIMEOUT;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
 use iroh_relay::RelayNode;
