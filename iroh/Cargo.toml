@@ -91,14 +91,6 @@ futures-util = "0.3"
 # test_utils
 axum = { version = "0.8", optional = true }
 
-# Examples
-clap = { version = "4", features = ["derive"], optional = true }
-tracing-subscriber = { version = "0.3", features = [
-    "env-filter",
-], optional = true }
-indicatif = { version = "0.18", features = ["tokio"], optional = true }
-parse-size = { version = "=1.0.0", optional = true, features = ['std'] } # pinned version to avoid bumping msrv to 1.81
-
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = "0.25.1"
@@ -137,7 +129,6 @@ rand_chacha = "0.9"
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 axum = { version = "0.8" }
-clap = { version = "4", features = ["derive"] }
 pretty_assertions = "1.4"
 rand_chacha = "0.9"
 tokio = { version = "1", features = [
@@ -153,6 +144,13 @@ tokio = { version = "1", features = [
 serde_json = "1"
 iroh-relay = { path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 tracing-test = "0.2.5"
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+] }
+indicatif = { version = "0.18", features = ["tokio"] }
+parse-size = { version = "=1.0.0", features = ['std'] } # pinned version to avoid bumping msrv to 1.81
+iroh-base = { version = "0.92.0", default-features = false, features = ["key", "relay", "ticket"], path = "../iroh-base" }
 
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
@@ -168,13 +166,6 @@ metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht"]
-examples = [
-  "dep:clap",
-  "dep:tracing-subscriber",
-  "dep:indicatif",
-  "dep:parse-size",
-  "iroh-base/ticket"
-]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -186,19 +177,19 @@ path = "tests/integration.rs"
 
 [[example]]
 name = "listen"
-required-features = ["examples"]
+required-features = []
 
 [[example]]
 name = "connect"
-required-features = ["examples"]
+required-features = []
 
 [[example]]
 name = "listen-unreliable"
-required-features = ["examples"]
+required-features = []
 
 [[example]]
 name = "connect-unreliable"
-required-features = ["examples"]
+required-features = []
 
 [[example]]
 name = "dht_discovery"
@@ -210,20 +201,20 @@ required-features = ["discovery-local-network"]
 
 [[example]]
 name = "search"
-required-features = ["examples"]
+required-features = []
 
 [[example]]
 name = "echo"
-required-features = ["examples"]
+required-features = []
 
 [[example]]
 name = "echo-no-router"
-required-features = ["examples"]
+required-features = []
 
 [[example]]
 name = "transfer"
-required-features = ["examples"]
+required-features = []
 
 [[example]]
 name = "0rtt"
-required-features = ["examples"]
+required-features = []
