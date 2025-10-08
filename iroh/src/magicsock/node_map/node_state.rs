@@ -77,7 +77,7 @@ pub(super) struct NodeStateActor {
     /// Our local addresses.
     ///
     /// These are our local addresses and any reflexive transport addresses.
-    local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+    local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// Shared state to allow to encrypt DISCO messages to peers.
     disco: DiscoState,
     /// The mapping between nodes via a relay and their [`RelayMappedAddr`]s.
@@ -140,7 +140,7 @@ impl NodeStateActor {
         node_id: NodeId,
         local_node_id: NodeId,
         transports_sender: mpsc::Sender<TransportsSenderMessage>,
-        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
         relay_mapped_addrs: AddrMap<(RelayUrl, NodeId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
@@ -440,7 +440,6 @@ impl NodeStateActor {
         let local_addrs: BTreeSet<SocketAddr> = self
             .local_addrs
             .get()
-            .unwrap_or_default()
             .iter()
             .map(|daddr| daddr.addr)
             .collect();
@@ -540,7 +539,6 @@ impl NodeStateActor {
         let my_numbers: Vec<SocketAddr> = self
             .local_addrs
             .get()
-            .unwrap_or_default()
             .iter()
             .map(|daddr| daddr.addr)
             .collect();

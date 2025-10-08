@@ -73,7 +73,7 @@ pub(super) struct NodeMapInner {
     metrics: Arc<MagicsockMetrics>,
     /// Handle to an actor that can send over the transports.
     transports_handle: TransportsSenderHandle,
-    local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+    local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     disco: DiscoState,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
@@ -136,7 +136,7 @@ impl NodeMap {
         #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
-        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
     ) -> Self {
         #[cfg(not(any(test, feature = "test-utils")))]
@@ -268,7 +268,7 @@ impl NodeMapInner {
     fn new(
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
-        local_addrs: n0_watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
     ) -> Self {
         let transports_handle = Self::start_transports_sender(sender);

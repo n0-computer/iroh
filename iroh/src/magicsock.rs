@@ -341,7 +341,7 @@ impl MagicSock {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-    pub(crate) fn direct_addresses(&self) -> n0_watcher::Direct<Option<BTreeSet<DirectAddr>>> {
+    pub(crate) fn direct_addresses(&self) -> n0_watcher::Direct<BTreeSet<DirectAddr>> {
         self.direct_addrs.addrs.watch()
     }
 
@@ -1122,7 +1122,9 @@ impl Handle {
         );
 
         let netmon_watcher = network_monitor.interface_state();
-        let actor = Actor {
+
+        #[cfg_attr(not(wasm_browser), allow(unused_mut))]
+        let mut actor = Actor {
             msg_receiver: actor_receiver,
             msock: msock.clone(),
             periodic_re_stun_timer: new_re_stun_timer(false),
@@ -1134,9 +1136,13 @@ impl Handle {
             pending_call_me_maybes: Default::default(),
             disco_receiver,
         };
+        // Initialize addresses
+        #[cfg(not(wasm_browser))]
+        actor.update_direct_addresses(None);
 
         let actor_token = CancellationToken::new();
         let token = actor_token.clone();
+
         let actor_task = task::spawn(
             actor
                 .run(token, local_addrs_watch, sender)
@@ -1402,10 +1408,6 @@ impl Actor {
         mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
         sender: TransportsSender,
     ) {
-        // Initialize addresses
-        #[cfg(not(wasm_browser))]
-        self.update_direct_addresses(None);
-
         // Setup network monitoring
         let mut current_netmon_state = self.netmon_watcher.get();
 
@@ -1644,6 +1646,25 @@ impl Actor {
             }
         }
 
+        self.collect_local_addresses(&mut addrs);
+
+        // Finally create and store store all these direct addresses and send any
+        // queued call-me-maybe messages.
+        self.msock.store_direct_addresses(
+            addrs
+                .iter()
+                .map(|(addr, typ)| DirectAddr {
+                    addr: *addr,
+                    typ: *typ,
+                })
+                .collect(),
+        );
+        self.send_queued_call_me_maybes();
+    }
+
+    #[cfg(not(wasm_browser))]
+    fn collect_local_addresses(&mut self, addrs: &mut BTreeMap<SocketAddr, DirectAddrType>) {
+        // Matches the addresses that have been bound vs the requested ones.
         let local_addrs: Vec<(SocketAddr, SocketAddr)> = self
             .msock
             .ip_bind_addrs()
@@ -1652,6 +1673,7 @@ impl Actor {
             .zip(self.msock.ip_local_addrs())
             .collect();
 
+        // Do we listen on any IPv4 unspecified address?
         let has_ipv4_unspecified = local_addrs.iter().find_map(|(_, a)| {
             if a.is_ipv4() && a.ip().is_unspecified() {
                 Some(a.port())
@@ -1659,6 +1681,7 @@ impl Actor {
                 None
             }
         });
+        // Do we listen on any IPv6 unspecified address?
         let has_ipv6_unspecified = local_addrs.iter().find_map(|(_, a)| {
             if a.is_ipv6() && a.ip().is_unspecified() {
                 Some(a.port())
@@ -1701,19 +1724,6 @@ impl Actor {
                 addrs.entry(local).or_insert(DirectAddrType::Local);
             }
         }
-
-        // Finally create and store store all these direct addresses and send any
-        // queued call-me-maybe messages.
-        self.msock.store_direct_addresses(
-            addrs
-                .iter()
-                .map(|(addr, typ)| DirectAddr {
-                    addr: *addr,
-                    typ: *typ,
-                })
-                .collect(),
-        );
-        self.send_queued_call_me_maybes();
     }
 
     fn send_queued_call_me_maybes(&mut self) {
@@ -1797,10 +1807,10 @@ fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<UdpSocket> {
 /// These are all the [`DirectAddr`]s that this [`MagicSock`] is aware of for itself.
 /// They include all locally bound ones as well as those discovered by other mechanisms like
 /// QAD.
-#[derive(derive_more::Debug, Default, Clone)]
+#[derive(derive_more::Debug, Clone, Default)]
 struct DiscoveredDirectAddrs {
     /// The last set of discovered direct addresses.
-    addrs: Watchable<Option<BTreeSet<DirectAddr>>>,
+    addrs: Watchable<BTreeSet<DirectAddr>>,
 
     /// The last time the direct addresses were updated, even if there was no change.
     ///
@@ -1812,7 +1822,7 @@ impl DiscoveredDirectAddrs {
     /// Updates the direct addresses, returns `true` if they changed, `false` if not.
     fn update(&self, addrs: BTreeSet<DirectAddr>) -> bool {
         *self.updated_at.write().expect("poisoned") = Some(Instant::now());
-        let updated = self.addrs.set(Some(addrs)).is_ok();
+        let updated = self.addrs.set(addrs).is_ok();
         if updated {
             event!(
                 target: "iroh::_events::direct_addrs",
@@ -1824,22 +1834,11 @@ impl DiscoveredDirectAddrs {
     }
 
     fn sockaddrs(&self) -> BTreeSet<SocketAddr> {
-        self.addrs
-            .get()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|da| da.addr)
-            .collect()
+        self.addrs.get().into_iter().map(|da| da.addr).collect()
     }
 
     fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
-        let my_numbers = self
-            .addrs
-            .get()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|da| da.addr)
-            .collect();
+        let my_numbers = self.addrs.get().into_iter().map(|da| da.addr).collect();
         disco::CallMeMaybe { my_numbers }
     }
 }
@@ -2133,18 +2132,16 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        discovery.add_node_info(ep1.local_ready().await);
-        discovery.add_node_info(ep2.local_ready().await);
+        discovery.add_node_info(ep1.node_addr());
+        discovery.add_node_info(ep2.node_addr());
 
         let ep1_addr_stream = ep1.watch_node_addr().stream();
         let ep2_addr_stream = ep2.watch_node_addr().stream();
         let mut addr_stream = MergeBounded::from_iter([ep1_addr_stream, ep2_addr_stream]);
         let task = tokio::spawn(async move {
             loop {
-                while let Some(item) = addr_stream.next().await {
-                    if let Some(addr) = item {
-                        discovery.add_node_info(addr);
-                    }
+                while let Some(addr) = addr_stream.next().await {
+                    discovery.add_node_info(addr);
                 }
             }
         });
@@ -2208,9 +2205,7 @@ mod tests {
         }));
 
         println!("first conn!");
-        let conn = m1
-            .connect(m2.watch_node_addr().initialized().await, ALPN)
-            .await?;
+        let conn = m1.connect(m2.node_addr(), ALPN).await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
         conn.closed().await;
@@ -2356,12 +2351,12 @@ mod tests {
         let ms = Handle::new(default_options(&mut rng)).await.unwrap();
 
         // See if we can get endpoints.
-        let eps0 = ms.direct_addresses().initialized().await;
+        let eps0 = ms.direct_addresses().get();
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let eps1 = ms.direct_addresses().initialized().await;
+        let eps1 = ms.direct_addresses().get();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
@@ -2518,8 +2513,7 @@ mod tests {
             relay_url: None,
             direct_addresses: msock_2
                 .direct_addresses()
-                .initialized()
-                .await
+                .get()
                 .into_iter()
                 .map(|x| x.addr)
                 .collect(),
@@ -2633,8 +2627,7 @@ mod tests {
                     relay_url: None,
                     direct_addresses: msock_2
                         .direct_addresses()
-                        .initialized()
-                        .await
+                        .get()
                         .into_iter()
                         .map(|x| x.addr)
                         .collect(),

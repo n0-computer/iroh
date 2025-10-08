@@ -631,7 +631,6 @@ mod tests {
 
     use iroh_base::{NodeAddr, SecretKey};
     use n0_snafu::{Error, Result, ResultExt};
-    use n0_watcher::Watcher as _;
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
@@ -760,8 +759,6 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
-        // wait for our address to be updated and thus published at least once
-        ep1.watch_node_addr().initialized().await;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -786,8 +783,6 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
-        // wait for our address to be updated and thus published at least once
-        ep1.watch_node_addr().initialized().await;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -813,8 +808,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
-        // wait for out address to be updated and thus published at least once
-        ep1.watch_node_addr().initialized().await;
+
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -846,8 +840,7 @@ mod tests {
             disco.add(disco3);
             new_endpoint(secret, disco).await
         };
-        // wait for out address to be updated and thus published at least once
-        ep1.watch_node_addr().initialized().await;
+
         let _conn = ep2.connect(ep1.node_id(), TEST_ALPN).await?;
         Ok(())
     }
@@ -870,8 +863,6 @@ mod tests {
             let disco = ConcurrentDiscovery::from_services(vec![Box::new(disco1)]);
             new_endpoint(secret, disco).await
         };
-        // wait for out address to be updated and thus published at least once
-        ep1.watch_node_addr().initialized().await;
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
         let mut config = TransportConfig::default();
@@ -905,8 +896,7 @@ mod tests {
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
-        // wait for out address to be updated and thus published at least once
-        ep1.watch_node_addr().initialized().await;
+
         let ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
             relay_url: None,

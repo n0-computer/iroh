@@ -593,7 +593,7 @@ async fn check_captive_portal(
     let portal_url = format!("http://{host_name}/generate_204");
     let res = client
         .request(reqwest::Method::GET, portal_url)
-        .header("X-Tailscale-Challenge", &challenge)
+        .header("X-Iroh-Challenge", &challenge)
         .send()
         .await
         .context(captive_portal_error::HttpRequestSnafu)?;
@@ -601,7 +601,7 @@ async fn check_captive_portal(
     let expected_response = format!("response {challenge}");
     let is_valid_response = res
         .headers()
-        .get("X-Tailscale-Response")
+        .get("X-Iroh-Response")
         .map(|s| s.to_str().unwrap_or_default())
         == Some(&expected_response);
 
