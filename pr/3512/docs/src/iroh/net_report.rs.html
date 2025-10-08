@@ -429,7 +429,7 @@
 <a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">let </span>v4_report = <span class="self">self</span>.qad_conns.current_v4();
 <a href=#430 id=430 data-nosnippet>430</a>        <span class="kw">let </span>v6_report = <span class="self">self</span>.qad_conns.current_v6();
 <a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">let </span>needs_v4_probe = v4_report.is_none();
-<a href=#432 id=432 data-nosnippet>432</a>        <span class="kw">let </span>needs_v6_probe = !(v6_report.is_some() == if_state.have_v6);
+<a href=#432 id=432 data-nosnippet>432</a>        <span class="kw">let </span>needs_v6_probe = v6_report.is_some() != if_state.have_v6;
 <a href=#433 id=433 data-nosnippet>433</a>
 <a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">let </span><span class="kw-2">mut </span>reports = Vec::new();
 <a href=#435 id=435 data-nosnippet>435</a>
