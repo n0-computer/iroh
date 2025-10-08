@@ -290,38 +290,24 @@ impl RelaySender {
     ) -> Poll<io::Result<()>> {
         match ready!(self.sender.poll_reserve(cx)) {
             Ok(()) => {
-                trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                    "send relay: message queued");
-
                 let contents = datagrams_from_transmit(transmit);
                 let item = RelaySendItem {
                     remote_node: dest_node,
                     url: dest_url.clone(),
                     datagrams: contents,
                 };
-                let dest_node = item.remote_node;
-                let dest_url = item.url.clone();
-
                 match self.sender.send_item(item) {
                     Ok(()) => Poll::Ready(Ok(())),
-                    Err(_err) => {
-                        error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                      "send relay: message dropped, channel to actor is closed");
-                        Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::ConnectionReset,
-                            "channel to actor is closed",
-                        )))
-                    }
+                    Err(_err) => Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "channel to actor is closed",
+                    ))),
                 }
             }
-            Err(_err) => {
-                error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                      "send relay: message dropped, channel to actor is closed");
-                Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    "channel to actor is closed",
-                )))
-            }
+            Err(_err) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "channel to actor is closed",
+            ))),
         }
     }
 }
