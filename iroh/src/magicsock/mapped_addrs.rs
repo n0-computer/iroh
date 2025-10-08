@@ -241,8 +241,10 @@ impl<K, V> Default for AddrMap<K, V> {
     }
 }
 
-impl<K: Eq + Hash + Clone + fmt::Debug, V: MappedAddr + Eq + Hash + Copy + fmt::Debug>
-    AddrMap<K, V>
+impl<K, V> AddrMap<K, V>
+where
+    K: Eq + Hash + Clone + fmt::Debug,
+    V: MappedAddr + Eq + Hash + Copy + fmt::Debug,
 {
     /// Returns the [`MappedAddr`], generating one if needed.
     pub(super) fn get(&self, key: &K) -> V {
