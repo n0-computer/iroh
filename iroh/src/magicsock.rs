@@ -441,10 +441,6 @@ impl MagicSock {
             // Add addr to the internal NodeMap
             self.node_map.add_node_addr(addr.clone(), source).await;
 
-            if let Some(url) = addr.relay_url().cloned() {
-                self.node_map.relay_mapped_addrs.get(&(url, addr.node_id));
-            }
-
             // // Add paths to the existing connections
             // self.add_paths(addr);
 
