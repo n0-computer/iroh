@@ -6,8 +6,15 @@ pub(crate) mod timeouts {
 
     // Timeouts for net_report
 
+    /// The maximum amount of time, in seconds, the net_report will spend gathering a single report.
+    // This is separated from `OVERALL_REPORT_TIMEOUT` to use as a reference
+    // in documentation outside of this crate. `OVERALL_REPORT_TIMEOUT` is a
+    // duration and rustdoc cannot calculate it at runtime, and so cannot be
+    // used directly for documentation purposes.
+    pub const TIMEOUT: u64 = 5;
+
     /// The maximum amount of time net_report will spend gathering a single report.
-    pub(crate) const OVERALL_REPORT_TIMEOUT: Duration = Duration::from_secs(5);
+    pub(crate) const OVERALL_REPORT_TIMEOUT: Duration = Duration::from_secs(TIMEOUT);
 
     /// The total time we wait for all the probes.
     ///

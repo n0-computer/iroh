@@ -273,6 +273,14 @@ impl EndpointArgs {
         let node_id = endpoint.node_id();
         println!("Our node id:\n\t{node_id}");
 
+        if self.relay_only {
+            endpoint.online().await;
+        } else if !self.no_relay {
+            tokio::time::timeout(Duration::from_secs(4), endpoint.online())
+                .await
+                .ok();
+        }
+
         let node_addr = endpoint.node_addr();
 
         println!("Our direct addresses:");
@@ -280,13 +288,6 @@ impl EndpointArgs {
             println!("\t{addr}");
         }
 
-        if self.relay_only {
-            endpoint.online().await;
-        } else if !self.no_relay {
-            tokio::time::timeout(Duration::from_secs(2), endpoint.online())
-                .await
-                .ok();
-        }
         if let Some(url) = node_addr.relay_url {
             println!("Our home relay server:\t{url}");
         } else {
