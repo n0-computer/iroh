@@ -351,7 +351,7 @@ impl Server {
         let quic_server = match config.quic {
             Some(quic_config) => {
                 debug!("Starting QUIC server {}", quic_config.bind_addr);
-                Some(QuicServer::spawn(quic_config).map_err(SpawnError::quic_spawn)?)
+                Some(QuicServer::spawn(quic_config).context(SpawnError::quic_spawn)?)
             }
             None => None,
         };
@@ -363,7 +363,7 @@ impl Server {
                 debug!("Starting Relay server");
                 let mut headers = HeaderMap::new();
                 for (name, value) in TLS_HEADERS.iter() {
-                    headers.insert(*name, value.parse().map_err(SpawnError::tls_header_parse)?);
+                    headers.insert(*name, value.parse().context(SpawnError::tls_header_parse)?);
                 }
                 let relay_bind_addr = match relay_config.tls {
                     Some(ref tls) => tls.https_bind_addr,
@@ -424,10 +424,10 @@ impl Server {
                         // these standalone.
                         let http_listener = TcpListener::bind(&relay_config.http_bind_addr)
                             .await
-                            .map_err(SpawnError::bind_tls_listener)?;
+                            .context(SpawnError::bind_tls_listener)?;
                         let http_addr = http_listener
                             .local_addr()
-                            .map_err(SpawnError::no_local_addr)?;
+                            .context(SpawnError::no_local_addr)?;
                         tasks.spawn(
                             async move {
                                 run_captive_portal_service(http_listener).await;

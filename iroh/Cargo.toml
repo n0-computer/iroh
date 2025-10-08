@@ -40,6 +40,7 @@ http = "1"
 iroh-base = { version = "0.92.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.92", path = "../iroh-relay", default-features = false }
 n0-future = "0.1.2"
+n0-error = { path = "../../n0-error" }
 n0-snafu = "0.2.2"
 n0-watcher = "0.3"
 nested_enum_utils = "0.2.1"
@@ -117,6 +118,7 @@ tokio = { version = "1", features = [
     "signal",
     "process",
 ] }
+n0-error = { path = "../../n0-error" }
 surge-ping = "0.8.0"
 
 # wasm-in-browser dependencies
@@ -227,4 +229,3 @@ required-features = ["examples"]
 [[example]]
 name = "0rtt"
 required-features = ["examples"]
-n0-error = { path = "../../n0-error" }

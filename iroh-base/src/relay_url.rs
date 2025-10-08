@@ -3,6 +3,7 @@ use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 use n0_error::StackErrorExt;
 use serde::{Deserialize, Serialize};
 use url::Url;
+use n0_error::ResultExt;
 
 /// A URL identifying a relay server.
 ///
@@ -55,7 +56,7 @@ impl FromStr for RelayUrl {
     type Err = RelayUrlParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let inner = Url::from_str(s).map_err(RelayUrlParseError::from)?;
+        let inner = Url::from_str(s).context(RelayUrlParseError::from)?;
         Ok(RelayUrl::from(inner))
     }
 }

@@ -2444,6 +2444,7 @@ dependencies = [
  "iroh-quinn-proto",
  "iroh-quinn-udp",
  "iroh-relay",
+ "n0-error",
  "n0-future",
  "n0-snafu",
  "n0-watcher",

@@ -24,6 +24,7 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, error, info, info_span, trace, warn, warn_span};
 
 use super::{AccessConfig, SpawnError, clients::Clients, streams::InvalidBucketConfig};
+use n0_error::ResultExt;
 use crate::{
     KeyCache,
     defaults::{DEFAULT_KEY_CACHE_CAPACITY, timeouts::SERVER_WRITE_TIMEOUT},
@@ -359,9 +360,9 @@ impl ServerBuilder {
 
         let listener = TcpListener::bind(&addr)
             .await
-            .map_err(|_| SpawnError::bind_tcp_listener(addr))?;
+            .context(|_| SpawnError::bind_tcp_listener(addr))?;
 
-        let addr = listener.local_addr().map_err(SpawnError::no_local_addr)?;
+        let addr = listener.local_addr().context(SpawnError::no_local_addr)?;
         let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
 

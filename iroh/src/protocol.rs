@@ -44,7 +44,7 @@ use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
 };
-use snafu::{Backtrace, Snafu};
+use n0_error as _;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
@@ -98,34 +98,43 @@ pub struct RouterBuilder {
     protocols: ProtocolMap,
 }
 
+/// Errors returned by protocol handlers during accept or setup.
+#[n0_error::add_location]
+#[derive(n0_error::Error)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[error(from_sources)]
 #[non_exhaustive]
 pub enum AcceptError {
-    #[snafu(transparent)]
+    /// Underlying connection error while accepting/establishing.
+    #[error(transparent)]
     Connection {
+        /// Source connection error.
+        #[error(std_err)]
         source: crate::endpoint::ConnectionError,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
     },
-    #[snafu(transparent)]
-    MissingRemoteNodeId { source: RemoteNodeIdError },
-    #[snafu(display("Not allowed."))]
+    /// Missing remote node id on an incoming connection.
+    #[error(transparent)]
+    MissingRemoteNodeId {
+        /// Source error indicating the missing id.
+        #[error(std_err)]
+        source: RemoteNodeIdError,
+    },
+    /// Operation not allowed by policy.
+    #[display("Not allowed.")]
     NotAllowed {},
-
-    #[snafu(transparent)]
+    /// User-defined error bubbled up from handler code.
+    #[error(transparent)]
     User {
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+        /// Arbitrary error promoted to `AnyError`.
+        #[error(from)]
+        source: n0_error::AnyError,
     },
 }
 
 impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
-        Self::User {
-            source: Box::new(value),
-        }
+        Self::user(n0_error::AnyError::from_std(value))
     }
 }
 
@@ -559,7 +568,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
         let is_allowed = (self.limiter)(remote);
         if !is_allowed {
             conn.close(0u32.into(), b"not allowed");
-            return Err(NotAllowedSnafu.build());
+            return Err(AcceptError::not_allowed());
         }
         self.proto.accept(conn).await?;
         Ok(())

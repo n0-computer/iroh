@@ -99,11 +99,11 @@ impl NodeIdExt for NodeId {
     }
 
     fn from_z32(s: &str) -> Result<NodeId, DecodingError> {
-        let bytes = z32::decode(s.as_bytes()).map_err(DecodingError::from)?;
+        let bytes = z32::decode(s.as_bytes()).context(DecodingError::invalid_encoding_z32)?;
         let bytes: &[u8; 32] = &bytes
             .try_into()
             .map_err(|_| DecodingError::invalid_length(s.len()))?;
-        let node_id = NodeId::from_bytes(bytes).map_err(DecodingError::from)?;
+        let node_id = NodeId::from_bytes(bytes).context(DecodingError::invalid_signature)?;
         Ok(node_id)
     }
 }
@@ -529,8 +529,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
                 return Err(ParseError::unexpected_format(s));
             };
-            let attr =
-                T::from_str(key).map_err(|_| ParseError::attr_from_string(key.to_string()))?;
+            let attr = T::from_str(key).map_err(|_| ParseError::attr_from_string(key.to_string()))?;
             attrs.entry(attr).or_default().push(value.to_string());
         }
         Ok(Self { attrs, node_id })
@@ -605,8 +604,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let mut builder = pkarr::SignedPacket::builder();
         for s in self.to_txt_strings() {
             let mut txt = rdata::TXT::new();
-            txt.add_string(&s)
-                .map_err(EncodingError::invalid_txt_entry)?;
+            txt.add_string(&s).context(EncodingError::invalid_txt_entry)?;
             builder = builder.txt(name.clone(), txt.into_owned(), ttl);
         }
         let signed_packet = builder.build(&keypair)?;
