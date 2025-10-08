@@ -1,7 +1,7 @@
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
 use serde::{Deserialize, Serialize};
-use n0_error::ResultExt;
+use n0_error::StackErrorExt;
 use url::Url;
 
 /// A URL identifying a relay server.
@@ -40,18 +40,11 @@ impl From<Url> for RelayUrl {
 
 /// Can occur when parsing a string into a [`RelayUrl`].
 #[n0_error::add_location]
-#[allow(missing_docs)]
 #[derive(n0_error::Error)]
-pub enum RelayUrlParseError {
-    /// Failed to parse URL
-    #[display("Failed to parse")]
-    #[transparent]
-    Url {
-        /// Underlying URL parse error
-        #[from]
-        #[std]
-        source: url::ParseError,
-    },
+#[display("Failed to parse")]
+pub struct RelayUrlParseError {
+    #[from]
+    parse_error: url::ParseError,
 }
 
 /// Support for parsing strings directly.

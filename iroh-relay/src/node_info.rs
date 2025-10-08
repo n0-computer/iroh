@@ -42,7 +42,7 @@ use std::{
 
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
 use nested_enum_utils::common_fields;
-use n0_error::{ResultExt, ensure};
+use n0_error::{ResultExt, ensure, StackErrorExt};
 use url::Url;
 
 /// The DNS name for the iroh TXT record.

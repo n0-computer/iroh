@@ -15,7 +15,6 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use nested_enum_utils::common_fields;
 use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize};
-use n0_error as _; // ensure macros are in scope
 
 /// A public key.
 ///

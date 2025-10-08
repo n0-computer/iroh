@@ -28,7 +28,7 @@ use iroh_base::NodeId;
 use iroh_base::RelayUrl;
 use n0_future::{StreamExt, future::Boxed};
 use nested_enum_utils::common_fields;
-use n0_error::ResultExt;
+use n0_error::{ResultExt, StackErrorExt};
 use tokio::{
     net::TcpListener,
     task::{JoinError, JoinSet},

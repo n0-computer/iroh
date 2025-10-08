@@ -7,7 +7,6 @@ use std::{collections::BTreeSet, net::SocketAddr};
 
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
-use n0_error as _;
 
 use crate::{key::NodeId, relay_url::RelayUrl};
 
