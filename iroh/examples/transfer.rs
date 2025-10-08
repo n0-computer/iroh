@@ -273,13 +273,6 @@ impl EndpointArgs {
         let node_id = endpoint.node_id();
         println!("Our node id:\n\t{node_id}");
 
-        let node_addr = endpoint.node_addr();
-
-        println!("Our direct addresses:");
-        for addr in &node_addr.direct_addresses {
-            println!("\t{addr}");
-        }
-
         if self.relay_only {
             endpoint.online().await;
         } else if !self.no_relay {
@@ -287,6 +280,14 @@ impl EndpointArgs {
                 .await
                 .ok();
         }
+
+        let node_addr = endpoint.node_addr();
+
+        println!("Our direct addresses:");
+        for addr in &node_addr.direct_addresses {
+            println!("\t{addr}");
+        }
+
         if let Some(url) = node_addr.relay_url {
             println!("Our home relay server:\t{url}");
         } else {
