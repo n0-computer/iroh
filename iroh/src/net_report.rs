@@ -141,25 +141,26 @@ impl QadConns {
         }
     }
 
-    fn current(&self) -> Vec<ProbeReport> {
-        let mut reports = Vec::new();
+    fn current_v4(&self) -> Option<ProbeReport> {
         if let Some((_, ref conn)) = self.v4 {
             if let Some(mut r) = conn.observer.get() {
                 // grab latest rtt
                 r.latency = conn.conn.rtt();
-                reports.push(ProbeReport::QadIpv4(r));
+                return Some(ProbeReport::QadIpv4(r));
             }
         }
+        None
+    }
 
+    fn current_v6(&self) -> Option<ProbeReport> {
         if let Some((_, ref conn)) = self.v6 {
             if let Some(mut r) = conn.observer.get() {
                 // grab latest rtt
                 r.latency = conn.conn.rtt();
-                reports.push(ProbeReport::QadIpv6(r));
+                return Some(ProbeReport::QadIpv6(r));
             }
         }
-
-        reports
+        None
     }
 
     fn watch_v4(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
@@ -424,9 +425,23 @@ impl Client {
                 self.qad_conns.v6.take();
             }
         }
-        if self.qad_conns.v4.is_some() && self.qad_conns.v6.is_some() == if_state.have_v6 {
-            trace!("not spawning QAD, already have probes");
-            return self.qad_conns.current();
+
+        let v4_report = self.qad_conns.current_v4();
+        let v6_report = self.qad_conns.current_v6();
+        let needs_v4_probe = v4_report.is_none();
+        let needs_v6_probe = !(v6_report.is_some() == if_state.have_v6);
+
+        let mut reports = Vec::new();
+
+        if let Some(report) = v4_report {
+            reports.push(report);
+        }
+        if let Some(report) = v6_report {
+            reports.push(report);
+        }
+
+        if !needs_v4_probe && !needs_v6_probe {
+            return reports;
         }
 
         // TODO: randomize choice?
@@ -438,7 +453,7 @@ impl Client {
         let cancel_v6 = CancellationToken::new();
 
         for relay_node in self.relay_map.nodes().take(MAX_RELAYS) {
-            if if_state.have_v4 {
+            if if_state.have_v4 && needs_v4_probe {
                 debug!(?relay_node.url, "v4 QAD probe");
                 let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
                 let relay_node = relay_node.clone();
@@ -456,7 +471,7 @@ impl Client {
                 );
             }
 
-            if if_state.have_v6 {
+            if if_state.have_v6 && needs_v6_probe {
                 debug!(?relay_node.url, "v6 QAD probe");
                 let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
                 let relay_node = relay_node.clone();
@@ -474,8 +489,6 @@ impl Client {
                 );
             }
         }
-
-        let mut reports = Vec::new();
 
         // We set _pending to true if at least one report was started for each category.
         // If we did not start any report for either category, _pending is set to false right away
