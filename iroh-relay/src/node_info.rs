@@ -41,8 +41,8 @@ use std::{
 };
 
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
+use n0_error::{ResultExt, StackErrorExt, ensure};
 use nested_enum_utils::common_fields;
-use n0_error::{ResultExt, ensure, StackErrorExt};
 use url::Url;
 
 /// The DNS name for the iroh TXT record.
@@ -231,7 +231,10 @@ impl TryFrom<String> for UserData {
     type Error = MaxLengthExceededError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        ensure!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededError::new());
+        ensure!(
+            value.len() <= Self::MAX_LENGTH,
+            MaxLengthExceededError::new()
+        );
         Ok(Self(value))
     }
 }
@@ -415,7 +418,10 @@ pub enum ParseError {
     #[display("Expected 2 labels, received {num_labels}")]
     NumLabels { num_labels: usize },
     #[display("Could not parse labels")]
-    Utf8 { #[error(from, std_err)] source: Utf8Error },
+    Utf8 {
+        #[error(from, std_err)]
+        source: Utf8Error,
+    },
     #[display("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
     NotAnIrohRecord { label: String },
     #[error(transparent)]
@@ -523,7 +529,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
                 return Err(ParseError::unexpected_format(s));
             };
-            let attr = T::from_str(key).map_err(|_| ParseError::attr_from_string(key.to_string()))?;
+            let attr =
+                T::from_str(key).map_err(|_| ParseError::attr_from_string(key.to_string()))?;
             attrs.entry(attr).or_default().push(value.to_string());
         }
         Ok(Self { attrs, node_id })
@@ -598,7 +605,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let mut builder = pkarr::SignedPacket::builder();
         for s in self.to_txt_strings() {
             let mut txt = rdata::TXT::new();
-            txt.add_string(&s).map_err(EncodingError::invalid_txt_entry)?;
+            txt.add_string(&s)
+                .map_err(EncodingError::invalid_txt_entry)?;
             builder = builder.txt(name.clone(), txt.into_owned(), ttl);
         }
         let signed_packet = builder.build(&keypair)?;

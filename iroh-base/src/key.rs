@@ -213,7 +213,9 @@ pub enum KeyParsingError {
     Decode { source: data_encoding::DecodeError },
     /// Error when decoding the public key.
     #[error(transparent)]
-    Key { source: ed25519_dalek::SignatureError },
+    Key {
+        source: ed25519_dalek::SignatureError,
+    },
     /// The encoded information had the wrong length.
     #[display("invalid length")]
     DecodeInvalidLength {},

@@ -26,9 +26,9 @@ use hyper::body::Incoming;
 use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
+use n0_error::{ResultExt, StackErrorExt};
 use n0_future::{StreamExt, future::Boxed};
 use nested_enum_utils::common_fields;
-use n0_error::{ResultExt, StackErrorExt};
 use tokio::{
     net::TcpListener,
     task::{JoinError, JoinSet},
@@ -296,7 +296,10 @@ pub enum SpawnError {
 #[non_exhaustive]
 pub enum SupervisorError {
     #[display("Error starting metrics server")]
-    Metrics { #[error(from, std_err)] source: std::io::Error },
+    Metrics {
+        #[error(from, std_err)]
+        source: std::io::Error,
+    },
     #[display("Acme event stream finished")]
     AcmeEventStreamFinished {},
     #[error(transparent)]
@@ -422,7 +425,9 @@ impl Server {
                         let http_listener = TcpListener::bind(&relay_config.http_bind_addr)
                             .await
                             .map_err(SpawnError::bind_tls_listener)?;
-                        let http_addr = http_listener.local_addr().map_err(SpawnError::no_local_addr)?;
+                        let http_addr = http_listener
+                            .local_addr()
+                            .map_err(SpawnError::no_local_addr)?;
                         tasks.spawn(
                             async move {
                                 run_captive_portal_service(http_listener).await;
@@ -559,7 +564,7 @@ async fn relay_supervisor(
         Some(ref mut server) => n0_future::Either::Left(server.task_handle()),
         None => n0_future::Either::Right(n0_future::future::pending()),
     };
-                let res = tokio::select! {
+    let res = tokio::select! {
         biased;
         Some(ret) = tasks.join_next() => ret,
         ret = &mut quic_fut, if quic_enabled => ret.map(Ok),

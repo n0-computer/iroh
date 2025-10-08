@@ -1,7 +1,7 @@
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
-use serde::{Deserialize, Serialize};
 use n0_error::StackErrorExt;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 /// A URL identifying a relay server.
