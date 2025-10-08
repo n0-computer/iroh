@@ -276,7 +276,7 @@ impl EndpointArgs {
         if self.relay_only {
             endpoint.online().await;
         } else if !self.no_relay {
-            tokio::time::timeout(Duration::from_secs(2), endpoint.online())
+            tokio::time::timeout(Duration::from_secs(4), endpoint.online())
                 .await
                 .ok();
         }
