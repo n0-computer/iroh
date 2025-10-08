@@ -227,3 +227,4 @@ required-features = ["examples"]
 [[example]]
 name = "0rtt"
 required-features = ["examples"]
+n0-error = { path = "../../n0-error" }

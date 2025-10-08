@@ -37,7 +37,7 @@ use crate::{
         streams::WsBytesFramed,
     },
     server::{
-        BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
+        ClientRateLimit,
         client::Config,
         metrics::Metrics,
         streams::{MaybeTlsStream, RateLimited, RelayedStream},
@@ -359,9 +359,9 @@ impl ServerBuilder {
 
         let listener = TcpListener::bind(&addr)
             .await
-            .map_err(|_| BindTcpListenerSnafu { addr }.build())?;
+            .map_err(|_| SpawnError::bind_tcp_listener(addr))?;
 
-        let addr = listener.local_addr().context(NoLocalAddrSnafu)?;
+        let addr = listener.local_addr().map_err(SpawnError::no_local_addr)?;
         let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
 

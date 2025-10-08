@@ -540,7 +540,9 @@ async fn main() -> Result<()> {
     let relay_config = build_relay_config(cfg).await?;
     debug!("{relay_config:#?}");
 
-    let mut relay = relay::Server::spawn(relay_config).await?;
+    let mut relay = relay::Server::spawn(relay_config)
+        .await
+        .context("relay spawn")?;
 
     tokio::select! {
         biased;
@@ -548,7 +550,7 @@ async fn main() -> Result<()> {
         _ = relay.task_handle() => (),
     }
 
-    relay.shutdown().await?;
+    relay.shutdown().await.context("shutdown")?;
     Ok(())
 }
 

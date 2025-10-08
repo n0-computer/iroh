@@ -271,13 +271,13 @@ pub struct Server {
 #[n0_error::add_location]
 #[allow(missing_docs)]
 #[derive(n0_error::Error)]
-#[error(from_sources, std_sources)]
+#[error(std_sources)]
 #[non_exhaustive]
 pub enum SpawnError {
     #[display("Unable to get local address")]
     LocalAddr { source: std::io::Error },
     #[display("Failed to bind QAD listener")]
-    QuicSpawn { #[error(stack_err)] source: QuicSpawnError },
+    QuicSpawn { source: QuicSpawnError },
     #[display("Failed to parse TLS header")]
     TlsHeaderParse { source: InvalidHeaderValue },
     #[display("Failed to bind TcpListener")]
@@ -292,6 +292,7 @@ pub enum SpawnError {
 #[n0_error::add_location]
 #[allow(missing_docs)]
 #[derive(n0_error::Error)]
+#[error(std_sources)]
 #[non_exhaustive]
 pub enum SupervisorError {
     #[display("Error starting metrics server")]
@@ -316,7 +317,7 @@ impl Server {
         EC: fmt::Debug + 'static,
         EA: fmt::Debug + 'static,
     {
-        let mut tasks = JoinSet::new();
+        let mut tasks: JoinSet<Result<(), SupervisorError>> = JoinSet::new();
 
         let metrics = RelayMetrics::default();
 
@@ -329,7 +330,7 @@ impl Server {
                 async move {
                     iroh_metrics::service::start_metrics_server(addr, Arc::new(registry))
                         .await
-                        .context(MetricsSnafu)
+                        .map_err(SupervisorError::metrics)
                 }
                 .instrument(info_span!("metrics-server")),
             );
