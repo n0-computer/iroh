@@ -1,6 +1,6 @@
 use std::{
     io,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr, SocketAddrV6},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -51,7 +51,15 @@ impl IpTransport {
         match self.socket.poll_recv_quinn(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
-                for (addr, el) in source_addrs.iter_mut().zip(metas.iter()).take(n) {
+                for (addr, el) in source_addrs.iter_mut().zip(metas.iter_mut()).take(n) {
+                    if el.addr.is_ipv4() {
+                        // We always used IPv6 addresses in our AsyncUdpSocket.
+                        let v6_ip = match el.addr.ip() {
+                            IpAddr::V4(ipv4_addr) => ipv4_addr.to_ipv6_mapped(),
+                            IpAddr::V6(ipv6_addr) => ipv6_addr,
+                        };
+                        el.addr = SocketAddr::new(v6_ip.into(), el.addr.port());
+                    }
                     *addr = el.addr.into();
                 }
                 Poll::Ready(Ok(n))
