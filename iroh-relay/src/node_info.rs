@@ -53,15 +53,15 @@ pub const IROH_TXT_NAME: &str = "_iroh";
 #[derive(n0_error::Error)]
 #[non_exhaustive]
 pub enum EncodingError {
-    #[transparent]
+    #[error(transparent)]
     FailedBuildingPacket {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: pkarr::errors::SignedPacketBuildError,
     },
     #[display("invalid TXT entry")]
     InvalidTxtEntry {
-        #[std]
+        #[error(std_err)]
         source: pkarr::dns::SimpleDnsError,
     },
 }
@@ -73,16 +73,16 @@ pub enum EncodingError {
 pub enum DecodingError {
     #[display("node id was not encoded in valid z32")]
     InvalidEncodingZ32 {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: z32::Z32Error,
     },
     #[display("length must be 32 bytes, but got {len} byte(s)")]
     InvalidLength { len: usize },
     #[display("node id is not a valid public key")]
     InvalidSignature {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: SignatureError,
     },
 }
@@ -424,15 +424,15 @@ pub enum ParseError {
     NumLabels { num_labels: usize },
     #[display("Could not parse labels")]
     Utf8 {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: Utf8Error,
     },
     #[display("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
     NotAnIrohRecord { label: String },
-    #[transparent]
+    #[error(transparent)]
     Decoding {
-        #[from]
+        #[error(from)]
         source: DecodingError,
     },
 }

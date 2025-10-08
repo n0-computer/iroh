@@ -43,7 +43,8 @@ impl From<Url> for RelayUrl {
 #[derive(n0_error::Error)]
 #[display("Failed to parse")]
 pub struct RelayUrlParseError {
-    #[from]
+    #[error(from)]
+    #[error(std_err)]
     parse_error: url::ParseError,
 }
 

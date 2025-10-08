@@ -275,31 +275,31 @@ pub struct Server {
 pub enum SpawnError {
     #[display("Unable to get local address")]
     LocalAddr {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: std::io::Error,
     },
     #[display("Failed to bind QAD listener")]
     QuicSpawn {
-        #[from]
+        #[error(from)]
         source: QuicSpawnError,
     },
     #[display("Failed to parse TLS header")]
     TlsHeaderParse {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: InvalidHeaderValue,
     },
     #[display("Failed to bind TcpListener")]
     BindTlsListener {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: std::io::Error,
     },
     #[display("No local address")]
     NoLocalAddr {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: std::io::Error,
     },
     #[display("Failed to bind server socket to {addr}")]
@@ -314,15 +314,15 @@ pub enum SpawnError {
 pub enum SupervisorError {
     #[display("Error starting metrics server")]
     Metrics {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: std::io::Error,
     },
     #[display("Acme event stream finished")]
     AcmeEventStreamFinished {},
-    #[transparent]
+    #[error(transparent)]
     JoinError {
-        #[from]
+        #[error(from)]
         source: JoinError,
     },
     #[display("No relay services are enabled")]

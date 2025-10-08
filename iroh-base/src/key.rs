@@ -208,17 +208,17 @@ impl Display for PublicKey {
 #[non_exhaustive]
 pub enum KeyParsingError {
     /// Error when decoding.
-    #[transparent]
+    #[error(transparent)]
     Decode {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: data_encoding::DecodeError,
     },
     /// Error when decoding the public key.
-    #[transparent]
+    #[error(transparent)]
     Key {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: ed25519_dalek::SignatureError,
     },
     /// The encoded information had the wrong length.

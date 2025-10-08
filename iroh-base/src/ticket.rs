@@ -67,17 +67,17 @@ pub enum ParseError {
     #[display("wrong prefix, expected {expected}")]
     Kind { expected: &'static str },
     /// This looks like a ticket, but postcard deserialization failed.
-    #[transparent]
+    #[error(transparent)]
     Postcard {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: postcard::Error,
     },
     /// This looks like a ticket, but base32 decoding failed.
-    #[transparent]
+    #[error(transparent)]
     Encoding {
-        #[from]
-        #[std]
+        #[error(from)]
+        #[error(std_err)]
         source: data_encoding::DecodeError,
     },
     /// Verification of the deserialized bytes failed.
