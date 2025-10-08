@@ -253,6 +253,7 @@ where
             Some(addr) => *addr,
             None => {
                 let addr = V::generate();
+                inner.addrs.insert(key.clone(), addr);
                 inner.lookup.insert(addr, key.clone());
                 trace!(?addr, ?key, "generated new addr");
                 addr
