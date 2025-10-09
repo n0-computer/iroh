@@ -26,7 +26,7 @@
 //!   QAD support and expose metrics.
 // Based on tailscale/derp/derp.go
 
-#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 

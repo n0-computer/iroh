@@ -32,7 +32,7 @@ pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 /// The DNS resolver defaults to using the nameservers configured on the host system, but can be changed
 /// with [`crate::endpoint::Builder::dns_resolver`].
 ///
-/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+/// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 /// [`Endpoint`]: crate::Endpoint
 #[derive(Debug)]
 pub struct DnsDiscovery {
