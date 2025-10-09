@@ -89,12 +89,12 @@ pub enum DecodingError {
 pub trait NodeIdExt {
     /// Encodes a [`NodeId`] in [`z-base-32`] encoding.
     ///
-    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
     fn to_z32(&self) -> String;
 
     /// Parses a [`NodeId`] from [`z-base-32`] encoding.
     ///
-    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
     fn from_z32(s: &str) -> Result<NodeId, DecodingError>;
 }
 
