@@ -258,13 +258,15 @@ impl NodeStateActor {
                     // This is a good time to clean up connections.
                     self.cleanup_connections();
 
-                    let stable_id = conn.stable_id();
+                    let conn_id = conn.stable_id();
                     let events = BroadcastStream::new(conn.path_events());
-                    let stream = events.map(move |evt| (stable_id, evt));
+                    let stream = events.map(move |evt| (conn_id, evt));
                     self.path_events.push(Box::pin(stream));
-                    self.connections.insert(stable_id, handle.clone());
+                    self.connections.insert(conn_id, handle.clone());
                     if let Some(conn) = handle.upgrade() {
                         if let Some(addr) = self.path_transports_addr(&conn, PathId::ZERO) {
+                            self.path_id_map
+                                .insert((conn_id, PathId::ZERO), addr.clone());
                             self.paths
                                 .entry(addr)
                                 .or_default()
