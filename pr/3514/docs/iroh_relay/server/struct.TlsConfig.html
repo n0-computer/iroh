@@ -3,7 +3,7 @@
     pub quic_bind_addr: <a class="enum" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/enum.SocketAddr.html" title="enum core::net::socket_addr::SocketAddr">SocketAddr</a>,
     pub cert: <a class="enum" href="enum.CertConfig.html" title="enum iroh_relay::server::CertConfig">CertConfig</a>&lt;EC, EA&gt;,
     pub server_config: ServerConfig,
-}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>TLS configuration for Relay server.</p>
+}</code></pre><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>server</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>TLS configuration for Relay server.</p>
 <p>Normally the Relay server accepts connections on both HTTPS and HTTP.</p>
 </div></details><h2 id="fields" class="fields section-header">Fields<a href="#fields" class="anchor">§</a></h2><span id="structfield.https_bind_addr" class="structfield section-header"><a href="#structfield.https_bind_addr" class="anchor field">§</a><code>https_bind_addr: <a class="enum" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/enum.SocketAddr.html" title="enum core::net::socket_addr::SocketAddr">SocketAddr</a></code></span><div class="docblock"><p>The socket address on which to serve the HTTPS server.</p>
 <p>Since the captive portal probe has to run over plain text HTTP and TLS is used for
