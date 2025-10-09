@@ -579,14 +579,18 @@ impl Client {
         num_relays: usize,
         report: &Report,
     ) -> bool {
+        #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut num_ipv4 = 0;
+        #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut num_ipv6 = 0;
         let mut num_https = 0;
         for (typ, _, _) in report.relay_latency.iter() {
             match typ {
+                #[cfg(not(wasm_browser))]
                 Probe::QadIpv4 => {
                     num_ipv4 += 1;
                 }
+                #[cfg(not(wasm_browser))]
                 Probe::QadIpv6 => {
                     num_ipv6 += 1;
                 }
