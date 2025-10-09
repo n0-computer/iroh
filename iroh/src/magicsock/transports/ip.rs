@@ -51,16 +51,21 @@ impl IpTransport {
         match self.socket.poll_recv_quinn(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
-                for (addr, el) in source_addrs.iter_mut().zip(metas.iter_mut()).take(n) {
-                    if el.addr.is_ipv4() {
-                        // We always used IPv6 addresses in our AsyncUdpSocket.
-                        let v6_ip = match el.addr.ip() {
+                for (source_addr, meta) in source_addrs.iter_mut().zip(metas.iter_mut()).take(n) {
+                    if meta.addr.is_ipv4() {
+                        // The AsyncUdpSocket is an AF_INET6 socket and needs to show this
+                        // as coming from an IPv4-mapped IPv6 addresses, since Quinn will
+                        // use those when sending on an INET6 socket.
+                        let v6_ip = match meta.addr.ip() {
                             IpAddr::V4(ipv4_addr) => ipv4_addr.to_ipv6_mapped(),
                             IpAddr::V6(ipv6_addr) => ipv6_addr,
                         };
-                        el.addr = SocketAddr::new(v6_ip.into(), el.addr.port());
+                        meta.addr = SocketAddr::new(v6_ip.into(), meta.addr.port());
                     }
-                    *addr = el.addr.into();
+                    // The transport addresses are internal to iroh and we always want those
+                    // to remain the canonical address.
+                    *source_addr =
+                        SocketAddr::new(meta.addr.ip().to_canonical(), meta.addr.port()).into();
                 }
                 Poll::Ready(Ok(n))
             }
