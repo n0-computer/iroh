@@ -437,7 +437,12 @@ impl Client {
         let mut v6_buf = JoinSet::new();
         let cancel_v6 = CancellationToken::new();
 
-        for relay_node in self.relay_map.nodes().take(MAX_RELAYS) {
+        for relay_node in self
+            .relay_map
+            .nodes::<Vec<_>>()
+            .into_iter()
+            .take(MAX_RELAYS)
+        {
             if if_state.have_v4 {
                 debug!(?relay_node.url, "v4 QAD probe");
                 let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();

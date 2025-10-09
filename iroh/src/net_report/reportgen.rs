@@ -566,7 +566,7 @@ async fn check_captive_portal(
     let url = match preferred_relay {
         Some(url) => url,
         None => {
-            let urls: Vec<_> = dm.nodes().map(|n| n.url.clone()).collect();
+            let urls: Vec<_> = dm.urls();
             if urls.is_empty() {
                 debug!("No suitable relay node for captive portal check");
                 return Ok(false);
