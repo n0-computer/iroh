@@ -32,13 +32,14 @@ use super::{
 mod node_state;
 mod path_state;
 
+pub use node_state::{ConnectionType, PathInfo, TransportType};
+
 pub(super) use node_state::NodeStateMessage;
 
-pub use node_state::ConnectionType;
-
-/// Number of nodes that are inactive for which we keep info about. This limit is enforced
-/// periodically via [`NodeMap::prune_inactive`].
-const MAX_INACTIVE_NODES: usize = 30;
+// TODO: use this
+// /// Number of nodes that are inactive for which we keep info about. This limit is enforced
+// /// periodically via [`NodeMap::prune_inactive`].
+// const MAX_INACTIVE_NODES: usize = 30;
 
 /// Map of the [`NodeState`] information for all the known nodes.
 ///

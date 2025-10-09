@@ -14,7 +14,7 @@ use n0_future::{
 use n0_watcher::{Watchable, Watcher as _};
 use tokio::sync::mpsc;
 use tokio_util::sync::PollSender;
-use tracing::{Instrument, error, info_span, trace, warn};
+use tracing::{Instrument, error, info_span, warn};
 
 use super::{Addr, Transmit};
 
@@ -259,8 +259,6 @@ impl RelaySender {
             datagrams: contents,
         };
 
-        let dest_node = item.remote_node;
-        let dest_url = item.url.clone();
         let Some(sender) = self.sender.get_ref() else {
             return Err(io::Error::other("channel closed"));
         };

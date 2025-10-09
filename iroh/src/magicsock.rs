@@ -82,11 +82,15 @@ pub(crate) mod transports;
 
 use mapped_addrs::{MappedAddr, NodeIdMappedAddr};
 
-pub use self::{metrics::Metrics, node_map::ConnectionType};
+pub use self::{
+    metrics::Metrics,
+    node_map::{ConnectionType, PathInfo},
+};
 
-/// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
-/// expire at 30 seconds, so this is a few seconds shy of that.
-const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
+// TODO: Use this
+// /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
+// /// expire at 30 seconds, so this is a few seconds shy of that.
+// const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
 /// The duration in which we send keep-alives.
 ///
@@ -276,7 +280,12 @@ impl MagicSock {
     /// connection.
     ///
     /// [`NodeStateActor`]: crate::magicsock::node_map::node_state::NodeStateActor
-    pub(crate) fn register_connection(&self, remote: NodeId, conn: &quinn::Connection) {
+    pub(crate) fn register_connection(
+        &self,
+        remote: NodeId,
+        conn: &quinn::Connection,
+        paths_info: n0_watcher::Watchable<Vec<PathInfo>>,
+    ) {
         // TODO: Spawning tasks like this is obviously bad.  But it is solvable:
         //   - This is only called from inside Connection::new.
         //   - Connection::new is called from:
@@ -294,7 +303,7 @@ impl MagicSock {
         // do with this connection inside of the NodeStateActor anyway.
         let weak_handle = conn.weak_handle();
         let node_state = self.node_map.node_state_actor(remote);
-        let msg = NodeStateMessage::AddConnection(weak_handle);
+        let msg = NodeStateMessage::AddConnection(weak_handle, paths_info);
 
         tokio::task::spawn(async move {
             node_state.send(msg).await.ok();

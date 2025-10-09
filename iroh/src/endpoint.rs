@@ -27,6 +27,7 @@ use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
+use quinn_proto::PathId;
 use snafu::{ResultExt, Snafu, ensure};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
@@ -41,8 +42,9 @@ use crate::{
         UserData, pkarr::PkarrPublisher,
     },
     magicsock::{
-        self, Handle, OwnAddressSnafu,
-        mapped_addrs::{MappedAddr, NodeIdMappedAddr},
+        self, Handle, OwnAddressSnafu, PathInfo,
+        mapped_addrs::{MappedAddr, MultipathMappedAddr, NodeIdMappedAddr},
+        node_map::TransportType,
     },
     metrics::EndpointMetrics,
     net_report::Report,
@@ -1692,6 +1694,7 @@ impl Future for ZeroRttAccepted {
 #[derive(Debug, Clone)]
 pub struct Connection {
     inner: quinn::Connection,
+    paths_info: n0_watcher::Direct<Vec<PathInfo>>,
 }
 
 #[allow(missing_docs)]
@@ -1703,13 +1706,28 @@ pub struct RemoteNodeIdError {
 
 impl Connection {
     fn new(inner: quinn::Connection, remote_id: Option<NodeId>, ep: &Endpoint) -> Self {
-        let conn = Connection { inner };
+        let mut paths_info = Vec::with_capacity(1);
+        if let Some(path0) = inner.path(PathId::ZERO) {
+            // This all is supposed to be infallible, but anyway.
+            if let Ok(remote) = path0.remote_address() {
+                let mapped = MultipathMappedAddr::from(remote);
+                let transport = TransportType::from(mapped);
+                paths_info.push(PathInfo { transport });
+            }
+        }
+        let paths_info_watcher = n0_watcher::Watchable::new(paths_info);
+        let conn = Connection {
+            inner,
+            paths_info: paths_info_watcher.watch(),
+        };
 
         // Grab the remote identity and register this connection
         if let Some(remote) = remote_id {
-            ep.msock.register_connection(remote, &conn.inner);
+            ep.msock
+                .register_connection(remote, &conn.inner, paths_info_watcher);
         } else if let Ok(remote) = conn.remote_node_id() {
-            ep.msock.register_connection(remote, &conn.inner);
+            ep.msock
+                .register_connection(remote, &conn.inner, paths_info_watcher);
         } else {
             warn!("unable to determine node id for the remote");
         }
@@ -1970,6 +1988,15 @@ impl Connection {
         self.inner.stable_id()
     }
 
+    /// Returns information about the network paths in use by this connection.
+    ///
+    /// A connection can have several network paths to the remote endpoint, commonly there
+    /// will be a path via the relay server and a holepunched path.  This returns all the
+    /// paths in use by this connection.
+    pub fn paths_info(&self) -> impl Watcher<Value = Vec<PathInfo>> {
+        self.paths_info.clone()
+    }
+
     /// Derives keying material from this connection's TLS session secrets.
     ///
     /// When both peers call this method with the same `label` and `context`
@@ -2127,6 +2154,7 @@ mod tests {
         RelayMode,
         discovery::static_provider::StaticProvider,
         endpoint::{ConnectOptions, Connection, ConnectionType},
+        magicsock::node_map::TransportType,
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{run_relay_server, run_relay_server_with},
     };
@@ -2508,6 +2536,16 @@ mod tests {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.e()?;
             send.write_all(b"hello").await.e()?;
+            let mut paths = conn.paths_info().stream();
+            info!("Waiting for direct connection");
+            while let Some(infos) = paths.next().await {
+                info!(?infos, "new PathInfos");
+                if infos.iter().any(|info| info.transport == TransportType::Ip) {
+                    break;
+                }
+            }
+            info!("Have direct connection");
+            send.write_all(b"close please").await.e()?;
             send.finish().e()?;
             Ok(conn.closed().await)
         }
@@ -2519,8 +2557,13 @@ mod tests {
             let node_id = conn.remote_node_id()?;
             assert_eq!(node_id, src);
             let mut recv = conn.accept_uni().await.e()?;
+            let mut msg = [0u8; 5];
+            recv.read_exact(&mut msg).await.e()?;
+            assert_eq!(&msg, b"hello");
+            info!("received hello");
             let msg = recv.read_to_end(100).await.e()?;
-            assert_eq!(msg, b"hello");
+            assert_eq!(msg, b"close please");
+            info!("received 'close please'");
             // Dropping the connection closes it just fine.
             Ok(())
         }

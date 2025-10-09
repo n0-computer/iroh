@@ -497,10 +497,6 @@ impl Discovery for ConcurrentDiscovery {
     }
 }
 
-/// Maximum duration since the last control or data message received from an endpoint to make us
-/// start a discovery task.
-const MAX_AGE: Duration = Duration::from_secs(10);
-
 /// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<(), DiscoveryError>>,

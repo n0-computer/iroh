@@ -6,7 +6,7 @@ use n0_future::{
     task::AbortOnDropHandle,
     time::{Duration, Instant},
 };
-use n0_watcher::Watcher;
+use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
 use quinn_proto::{PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
@@ -16,8 +16,9 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
-#[cfg(any(test, feature = "test-utils"))]
-use crate::endpoint::PathSelection;
+// TODO: Use this
+// #[cfg(any(test, feature = "test-utils"))]
+// use crate::endpoint::PathSelection;
 use crate::{
     disco::{self},
     endpoint::DirectAddr,
@@ -31,26 +32,31 @@ use crate::{
 
 use super::{Source, TransportsSenderMessage, path_state::PathState};
 
-/// Number of addresses that are not active that we keep around per node.
-///
-/// See [`NodeState::prune_direct_addresses`].
-pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
+// TODO: use this
+// /// Number of addresses that are not active that we keep around per node.
+// ///
+// /// See [`NodeState::prune_direct_addresses`].
+// pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
 
-/// How long since an endpoint path was last alive before it might be pruned.
-const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
+// TODO: use this
+// /// How long since an endpoint path was last alive before it might be pruned.
+// const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 
-/// The latency at or under which we don't try to upgrade to a better path.
-const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
+// TODO: use this
+// /// The latency at or under which we don't try to upgrade to a better path.
+// const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
-/// How long since the last activity we try to keep an established endpoint peering alive.
-///
-/// It's also the idle time at which we stop doing QAD queries to keep NAT mappings alive.
-pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
+// TODO: use this
+// /// How long since the last activity we try to keep an established endpoint peering alive.
+// ///
+// /// It's also the idle time at which we stop doing QAD queries to keep NAT mappings alive.
+// pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// How often we try to upgrade to a better path.
-///
-/// Even if we have some non-relay route that works.
-const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
+// TODO: use this
+// /// How often we try to upgrade to a better path.
+// ///
+// /// Even if we have some non-relay route that works.
+// const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The value which we close paths.
 // TODO: Quinn should just do this.  Also, I made this value up.
@@ -88,9 +94,8 @@ pub(super) struct NodeStateActor {
     /// All connections we have to this remote node.
     ///
     /// The key is the [`quinn::Connection::stable_id`].
-    connections: FxHashMap<usize, WeakConnectionHandle>,
+    connections: FxHashMap<usize, ConnectionState>,
     /// Events emitted by Quinn about path changes.
-    // path_events: MergeUnbounded<BroadcastStream<PathEvent>>,
     path_events: MergeUnbounded<
         Pin<
             Box<
@@ -209,7 +214,7 @@ impl NodeStateActor {
                     }
                 }
                 Some((id, evt)) = self.path_events.next() => {
-                    self.handle_path_event(id, evt).await;
+                    self.handle_path_event(id, evt);
                 }
                 _ = self.local_addrs.updated() => {
                     trace!("local addrs updated, triggering holepunching");
@@ -248,7 +253,7 @@ impl NodeStateActor {
                     // holepunching when AddConnection is received.
                 }
             }
-            NodeStateMessage::AddConnection(handle) => {
+            NodeStateMessage::AddConnection(handle, paths_info) => {
                 if let Some(conn) = handle.upgrade() {
                     // Remove any conflicting stable_ids from the local state.
                     let stable_id = conn.stable_id();
@@ -262,7 +267,13 @@ impl NodeStateActor {
                     let events = BroadcastStream::new(conn.path_events());
                     let stream = events.map(move |evt| (conn_id, evt));
                     self.path_events.push(Box::pin(stream));
-                    self.connections.insert(conn_id, handle.clone());
+                    self.connections.insert(
+                        conn_id,
+                        ConnectionState {
+                            handle: handle.clone(),
+                            paths_info,
+                        },
+                    );
                     if let Some(conn) = handle.upgrade() {
                         if let Some(addr) = self.path_transports_addr(&conn, PathId::ZERO) {
                             self.path_id_map
@@ -384,7 +395,7 @@ impl NodeStateActor {
                         if let Some(conn) = self
                             .connections
                             .get(conn_id)
-                            .and_then(|handle| handle.upgrade())
+                            .and_then(|c| c.handle.upgrade())
                         {
                             if let Some(path_stats) = conn.stats().paths.get(path_id) {
                                 return Some(path_stats.rtt);
@@ -459,7 +470,7 @@ impl NodeStateActor {
                 let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
                 let now = Instant::now();
                 if next_hp > now {
-                    trace!(scheduled_in = ?(now - next_hp), "not holepunching: no new addresses");
+                    trace!(scheduled_in = ?(next_hp - now), "not holepunching: no new addresses");
                     self.scheduled_holepunch = Some(next_hp);
                     return;
                 }
@@ -617,23 +628,26 @@ impl NodeStateActor {
             .connections
             .iter()
             .filter_map(|(conn_id, handle)| (!conns_with_path.contains(conn_id)).then_some(handle))
-            .filter_map(|handle| handle.upgrade())
+            .filter_map(|c| c.handle.upgrade())
             .filter(|conn| conn.side().is_client())
         {
-            match conn.open_path_ensure(quic_addr, path_status).path_id() {
+            let fut = conn.open_path_ensure(quic_addr, path_status);
+            match fut.path_id() {
                 Some(path_id) => {
+                    trace!(conn_id = conn.stable_id(), ?path_id, "opening new path");
                     self.path_id_map
                         .insert((conn.stable_id(), path_id), open_addr.clone());
                 }
                 None => {
-                    warn!("Opening path failed");
+                    let ret = poll_once(fut);
+                    warn!(?ret, "Opening path failed");
                 }
             }
         }
     }
 
     #[instrument(skip(self))]
-    async fn handle_path_event(
+    fn handle_path_event(
         &mut self,
         conn_id: usize,
         event: Result<PathEvent, BroadcastStreamRecvError>,
@@ -644,11 +658,11 @@ impl NodeStateActor {
             //    state of the connection and it's paths are?
             return;
         };
-        let Some(handle) = self.connections.get(&conn_id) else {
+        let Some(conn_state) = self.connections.get(&conn_id) else {
             trace!("event for removed connection");
             return;
         };
-        let Some(conn) = handle.upgrade() else {
+        let Some(conn) = conn_state.handle.upgrade() else {
             trace!("event for closed connection");
             return;
         };
@@ -662,6 +676,28 @@ impl NodeStateActor {
                 path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
                 path.set_max_idle_timeout(Some(MAX_IDLE_TIMEOUT)).ok();
 
+                if let Some(addr) = self.path_transports_addr(&conn, path_id) {
+                    event!(
+                        target: "iroh::_events::path::open",
+                        Level::DEBUG,
+                        remote_node = %self.node_id.fmt_short(),
+                        ?addr,
+                        conn_id,
+                        ?path_id,
+                    );
+                    self.path_id_map.insert((conn_id, path_id), addr.clone());
+                    self.paths
+                        .entry(addr.clone())
+                        .or_default()
+                        .sources
+                        .insert(Source::Connection, Instant::now());
+                    let mut paths = conn_state.paths_info.get();
+                    paths.push(PathInfo {
+                        transport: addr.into(),
+                    });
+                    conn_state.paths_info.set(paths).ok();
+                }
+
                 self.select_path();
             }
             PathEvent::Abandoned { id, path_stats } => {
@@ -670,11 +706,35 @@ impl NodeStateActor {
                 self.path_id_map.remove(&(conn_id, id));
             }
             PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
-                // If one connection closes this path, close it on all connections.
                 let Some(addr) = self.path_id_map.get(&(conn_id, id)) else {
                     debug!("path not in path_id_map");
                     return;
                 };
+                event!(
+                    target: "iroh::_events::path::closed",
+                    Level::DEBUG,
+                    remote_node = %self.node_id.fmt_short(),
+                    ?addr,
+                    conn_id,
+                    path_id = ?id,
+                );
+                // Remove this from the public PathInfo.
+                if let Some(state) = self.connections.get(&conn_id) {
+                    let mut path_info = state.paths_info.get();
+                    let transport = TransportType::from(addr);
+                    let mut done = false;
+                    path_info.retain(|info| {
+                        if !done && info.transport == transport {
+                            done = true;
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    state.paths_info.set(path_info).ok();
+                }
+
+                // If one connection closes this path, close it on all connections.
                 for (conn_id, path_id) in self
                     .path_id_map
                     .iter()
@@ -684,8 +744,7 @@ impl NodeStateActor {
                     if let Some(conn) = self
                         .connections
                         .get(&conn_id)
-                        .map(|handle| handle.upgrade())
-                        .flatten()
+                        .and_then(|c| c.handle.upgrade())
                     {
                         if let Some(path) = conn.path(*path_id) {
                             trace!(?addr, ?conn_id, ?path_id, "closing path");
@@ -705,12 +764,12 @@ impl NodeStateActor {
     /// Clean up connections which no longer exist.
     // TODO: Call this on a schedule.
     fn cleanup_connections(&mut self) {
-        self.connections
-            .retain(|_, handle| handle.upgrade().is_some());
+        self.connections.retain(|_, c| c.handle.upgrade().is_some());
 
         let mut stable_ids = BTreeSet::new();
-        for handle in self.connections.values() {
-            handle
+        for state in self.connections.values() {
+            state
+                .handle
                 .upgrade()
                 .map(|conn| stable_ids.insert(conn.stable_id()));
         }
@@ -734,7 +793,7 @@ impl NodeStateActor {
         for (conn_id, conn) in self
             .connections
             .iter()
-            .filter_map(|(id, handle)| handle.upgrade().map(|conn| (*id, conn)))
+            .filter_map(|(id, c)| c.handle.upgrade().map(|conn| (*id, conn)))
         {
             let stats = conn.stats();
             for (path_id, stats) in stats.paths {
@@ -828,7 +887,7 @@ impl NodeStateActor {
             if let Some(conn) = self
                 .connections
                 .get(conn_id)
-                .map(|handle| handle.upgrade())
+                .map(|c| c.handle.upgrade())
                 .flatten()
             {
                 trace!(?addr, ?conn_id, ?path_id, "closing direct path");
@@ -890,15 +949,15 @@ pub(crate) enum NodeStateMessage {
     /// This is not acceptable to use on the normal send path, as it is an async send
     /// operation with a bunch more copying.  So it should only be used for sending QUIC
     /// Initial packets.
-    #[debug("SendDatagram(OwnedTransmit)")]
+    #[debug("SendDatagram(..)")]
     SendDatagram(OwnedTransmit),
     /// Adds an active connection to this remote node.
     ///
     /// The connection will now be managed by this actor.  Holepunching will happen when
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
-    #[debug("AddConnection(WeakConnectionHandle)")]
-    AddConnection(WeakConnectionHandle),
+    #[debug("AddConnection(..)")]
+    AddConnection(WeakConnectionHandle, Watchable<Vec<PathInfo>>),
     /// Adds a [`NodeAddr`] with locations where the node might be reachable.
     AddNodeAddr(NodeAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
@@ -910,11 +969,12 @@ pub(crate) enum NodeStateMessage {
     /// Asks if there is any possible path that could be used.
     ///
     /// This does not mean there is any guarantee that the remote endpoint is reachable.
-    #[debug("CanSend(onseshot::Sender<bool>)")]
+    #[debug("CanSend(..)")]
     CanSend(oneshot::Sender<bool>),
     /// Returns the current latency to the remote endpoint.
     ///
     /// TODO: This is more of a placeholder message currently.  Check MagicSock::latency.
+    #[debug("Latency(..)")]
     Latency(oneshot::Sender<Option<Duration>>),
 }
 
@@ -965,4 +1025,66 @@ pub enum ConnectionType {
     #[default]
     #[display("none")]
     None,
+}
+
+#[derive(Debug)]
+struct ConnectionState {
+    handle: WeakConnectionHandle,
+    paths_info: Watchable<Vec<PathInfo>>,
+}
+
+/// Information about a network path used by a [`Connection`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathInfo {
+    /// The kind of transport this network path is using.
+    pub transport: TransportType,
+}
+
+/// Different kinds of transports a [`Connection`] can use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransportType {
+    /// A transport via a relay server.
+    Relay,
+    /// A transport via an IP connection.
+    Ip,
+}
+
+impl From<MultipathMappedAddr> for TransportType {
+    fn from(source: MultipathMappedAddr) -> Self {
+        match source {
+            MultipathMappedAddr::Mixed(_) => {
+                error!("paths should not use mixed addrs");
+                TransportType::Relay
+            }
+            MultipathMappedAddr::Relay(_) => TransportType::Relay,
+            MultipathMappedAddr::Ip(_) => TransportType::Ip,
+        }
+    }
+}
+
+impl From<transports::Addr> for TransportType {
+    fn from(source: transports::Addr) -> Self {
+        match source {
+            transports::Addr::Ip(_) => Self::Ip,
+            transports::Addr::Relay(_, _) => Self::Relay,
+        }
+    }
+}
+
+impl From<&transports::Addr> for TransportType {
+    fn from(source: &transports::Addr) -> Self {
+        match source {
+            transports::Addr::Ip(_) => Self::Ip,
+            transports::Addr::Relay(_, _) => Self::Relay,
+        }
+    }
+}
+
+/// Poll a future once, like n0_future::future::poll_once but sync.
+fn poll_once<T, F: Future<Output = T>>(fut: F) -> Option<T> {
+    let fut = std::pin::pin!(fut);
+    match fut.poll(&mut std::task::Context::from_waker(std::task::Waker::noop())) {
+        std::task::Poll::Ready(res) => Some(res),
+        std::task::Poll::Pending => None,
+    }
 }
