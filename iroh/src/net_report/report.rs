@@ -182,8 +182,8 @@ impl RelayLatencies {
 
     /// Returns an iterator over all the relays and their latencies.
     #[cfg(wasm_browser)]
-    pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
-        self.https.iter().map(|(k, v)| (k, *v))
+    pub fn iter(&self) -> impl Iterator<Item = (Probe, &'_ RelayUrl, Duration)> + '_ {
+        self.https.iter().map(|(k, v)| (Probe::Https, k, *v))
     }
 
     #[cfg(not(wasm_browser))]
