@@ -600,7 +600,6 @@ impl Client {
             }
         }
 
-        let num_total = num_ipv4 + num_ipv6 + num_https;
         if do_full {
             // Full report, require more probes
             match (state.have_v4, state.have_v6) {
@@ -622,14 +621,10 @@ impl Client {
                         return true;
                     }
                 }
-                (false, false) => {
-                    // Nothing works
-                    return false;
-                }
+                (false, false) => {}
             }
-
-            // If we have at least one probe per relay, we are happy
-            if num_total >= num_relays {
+            if num_https >= num_relays {
+                // If we have at least one https probe per relay, we are happy
                 return true;
             }
             false
@@ -654,13 +649,10 @@ impl Client {
                         return true;
                     }
                 }
-                (false, false) => {
-                    // Nothing works
-                    return false;
-                }
+                (false, false) => {}
             }
-            // If we have at least one probe per relay, we are happy
-            if num_total >= num_relays {
+            if num_https >= num_relays {
+                // If we have at least one https probe per relay, we are happy
                 return true;
             }
             false
