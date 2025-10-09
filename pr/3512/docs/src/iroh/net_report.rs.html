@@ -606,19 +606,19 @@
 <a href=#606 id=606 data-nosnippet>606</a>            </span><span class="kw">match </span>(state.have_v4, state.have_v6) {
 <a href=#607 id=607 data-nosnippet>607</a>                (<span class="bool-val">true</span>, <span class="bool-val">true</span>) =&gt; {
 <a href=#608 id=608 data-nosnippet>608</a>                    <span class="comment">// Both IPv4 and IPv6 are expected to be available
-<a href=#609 id=609 data-nosnippet>609</a>                    </span><span class="kw">if </span>num_ipv4 &gt; <span class="number">2 </span>&amp;&amp; num_ipv6 &gt; <span class="number">1 </span>|| num_ipv6 &gt; <span class="number">2 </span>&amp;&amp; num_ipv4 &gt; <span class="number">1 </span>{
+<a href=#609 id=609 data-nosnippet>609</a>                    </span><span class="kw">if </span>num_ipv4 &gt;= <span class="number">2 </span>&amp;&amp; num_ipv6 &gt;= <span class="number">1 </span>|| num_ipv6 &gt;= <span class="number">2 </span>&amp;&amp; num_ipv4 &gt;= <span class="number">1 </span>{
 <a href=#610 id=610 data-nosnippet>610</a>                        <span class="kw">return </span><span class="bool-val">true</span>;
 <a href=#611 id=611 data-nosnippet>611</a>                    }
 <a href=#612 id=612 data-nosnippet>612</a>                }
 <a href=#613 id=613 data-nosnippet>613</a>                (<span class="bool-val">true</span>, <span class="bool-val">false</span>) =&gt; {
 <a href=#614 id=614 data-nosnippet>614</a>                    <span class="comment">// Just Ipv4 is expected
-<a href=#615 id=615 data-nosnippet>615</a>                    </span><span class="kw">if </span>num_ipv4 &gt; <span class="number">2 </span>{
+<a href=#615 id=615 data-nosnippet>615</a>                    </span><span class="kw">if </span>num_ipv4 &gt;= <span class="number">2 </span>{
 <a href=#616 id=616 data-nosnippet>616</a>                        <span class="kw">return </span><span class="bool-val">true</span>;
 <a href=#617 id=617 data-nosnippet>617</a>                    }
 <a href=#618 id=618 data-nosnippet>618</a>                }
 <a href=#619 id=619 data-nosnippet>619</a>                (<span class="bool-val">false</span>, <span class="bool-val">true</span>) =&gt; {
 <a href=#620 id=620 data-nosnippet>620</a>                    <span class="comment">// Just Ipv6 is expected
-<a href=#621 id=621 data-nosnippet>621</a>                    </span><span class="kw">if </span>num_ipv6 &gt; <span class="number">2 </span>{
+<a href=#621 id=621 data-nosnippet>621</a>                    </span><span class="kw">if </span>num_ipv6 &gt;= <span class="number">2 </span>{
 <a href=#622 id=622 data-nosnippet>622</a>                        <span class="kw">return </span><span class="bool-val">true</span>;
 <a href=#623 id=623 data-nosnippet>623</a>                    }
 <a href=#624 id=624 data-nosnippet>624</a>                }
@@ -638,19 +638,19 @@
 <a href=#638 id=638 data-nosnippet>638</a>            </span><span class="kw">match </span>(state.have_v4, state.have_v6) {
 <a href=#639 id=639 data-nosnippet>639</a>                (<span class="bool-val">true</span>, <span class="bool-val">true</span>) =&gt; {
 <a href=#640 id=640 data-nosnippet>640</a>                    <span class="comment">// Both IPv4 and IPv6 are expected to be available
-<a href=#641 id=641 data-nosnippet>641</a>                    </span><span class="kw">if </span>num_ipv4 &gt; <span class="number">1 </span>&amp;&amp; num_ipv6 &gt; <span class="number">1 </span>{
+<a href=#641 id=641 data-nosnippet>641</a>                    </span><span class="kw">if </span>num_ipv4 &gt;= <span class="number">1 </span>&amp;&amp; num_ipv6 &gt;= <span class="number">1 </span>{
 <a href=#642 id=642 data-nosnippet>642</a>                        <span class="kw">return </span><span class="bool-val">true</span>;
 <a href=#643 id=643 data-nosnippet>643</a>                    }
 <a href=#644 id=644 data-nosnippet>644</a>                }
 <a href=#645 id=645 data-nosnippet>645</a>                (<span class="bool-val">true</span>, <span class="bool-val">false</span>) =&gt; {
 <a href=#646 id=646 data-nosnippet>646</a>                    <span class="comment">// Just Ipv4 is expected
-<a href=#647 id=647 data-nosnippet>647</a>                    </span><span class="kw">if </span>num_ipv4 &gt; <span class="number">1 </span>{
+<a href=#647 id=647 data-nosnippet>647</a>                    </span><span class="kw">if </span>num_ipv4 &gt;= <span class="number">1 </span>{
 <a href=#648 id=648 data-nosnippet>648</a>                        <span class="kw">return </span><span class="bool-val">true</span>;
 <a href=#649 id=649 data-nosnippet>649</a>                    }
 <a href=#650 id=650 data-nosnippet>650</a>                }
 <a href=#651 id=651 data-nosnippet>651</a>                (<span class="bool-val">false</span>, <span class="bool-val">true</span>) =&gt; {
 <a href=#652 id=652 data-nosnippet>652</a>                    <span class="comment">// Just Ipv6 is expected
-<a href=#653 id=653 data-nosnippet>653</a>                    </span><span class="kw">if </span>num_ipv6 &gt; <span class="number">1 </span>{
+<a href=#653 id=653 data-nosnippet>653</a>                    </span><span class="kw">if </span>num_ipv6 &gt;= <span class="number">1 </span>{
 <a href=#654 id=654 data-nosnippet>654</a>                        <span class="kw">return </span><span class="bool-val">true</span>;
 <a href=#655 id=655 data-nosnippet>655</a>                    }
 <a href=#656 id=656 data-nosnippet>656</a>                }
