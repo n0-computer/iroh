@@ -2,7 +2,13 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.93.0](https://github.com/n0-computer/iroh/compare/v0.92.0..0.93.0) - 2025-10-09
+## [0.93.1](https://github.com/n0-computer/iroh/compare/v0.93.0..0.93.1) - 2025-10-09
+
+### 📚 Documentation
+
+- Fix docs.rs docs generation ([#3514](https://github.com/n0-computer/iroh/issues/3514)) - ([5f54493](https://github.com/n0-computer/iroh/commit/5f54493cc90fc12209c2ea942bb2594929827f82))
+
+## [0.93.0](https://github.com/n0-computer/iroh/compare/v0.92.0..v0.93.0) - 2025-10-09
 
 ### ⛰️  Features
 
@@ -40,6 +46,7 @@ All notable changes to iroh will be documented in this file.
 
 - Bump some spans up to warn, to ensure they are logged ([#3466](https://github.com/n0-computer/iroh/issues/3466)) - ([2e42085](https://github.com/n0-computer/iroh/commit/2e4208579a33f4ed9c61573728e3a486582b0c41))
 - Enable dependabot for crates and docker ([#3497](https://github.com/n0-computer/iroh/issues/3497)) - ([968a70b](https://github.com/n0-computer/iroh/commit/968a70bc2f7e3bf608647793acbfa80e6b960658))
+- Release - ([7a8b97c](https://github.com/n0-computer/iroh/commit/7a8b97cbe5748ae7deed798d3b4dc7aae9dd4bac))
 
 ## [0.92.0](https://github.com/n0-computer/iroh/compare/v0.91.2..v0.92.0) - 2025-09-18
 
