@@ -6,7 +6,7 @@
         certs: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;CertificateDer&lt;'static&gt;&gt;,
     },
     Reloading,
-}</code></pre><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>server</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>TLS certificate configuration.</p>
+}</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>TLS certificate configuration.</p>
 </div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.LetsEncrypt" class="variant"><a href="#variant.LetsEncrypt" class="anchor">§</a><h3 class="code-header">LetsEncrypt</h3></section><div class="docblock"><p>Use Let’s Encrypt.</p>
 </div><div class="sub-variant" id="variant.LetsEncrypt.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.LetsEncrypt.field.state" class="section-header"><a href="#variant.LetsEncrypt.field.state" class="anchor field">§</a><code>state: AcmeState&lt;EC, EA&gt;</code></span><div class="docblock"><p>State for Let’s Encrypt certificates.</p>
 </div></div></div><section id="variant.Manual" class="variant"><a href="#variant.Manual" class="anchor">§</a><h3 class="code-header">Manual</h3></section><div class="docblock"><p>Use a static TLS key and certificate chain.</p>

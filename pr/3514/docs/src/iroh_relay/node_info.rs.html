@@ -89,12 +89,12 @@
 <a href=#89 id=89 data-nosnippet>89</a></span><span class="kw">pub trait </span>NodeIdExt {
 <a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Encodes a [`NodeId`] in [`z-base-32`] encoding.
 <a href=#91 id=91 data-nosnippet>91</a>    ///
-<a href=#92 id=92 data-nosnippet>92</a>    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+<a href=#92 id=92 data-nosnippet>92</a>    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 <a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">fn </span>to_z32(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String;
 <a href=#94 id=94 data-nosnippet>94</a>
 <a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Parses a [`NodeId`] from [`z-base-32`] encoding.
 <a href=#96 id=96 data-nosnippet>96</a>    ///
-<a href=#97 id=97 data-nosnippet>97</a>    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+<a href=#97 id=97 data-nosnippet>97</a>    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 <a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">fn </span>from_z32(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeId, DecodingError&gt;;
 <a href=#99 id=99 data-nosnippet>99</a>}
 <a href=#100 id=100 data-nosnippet>100</a>
