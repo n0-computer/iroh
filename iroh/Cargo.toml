@@ -39,7 +39,7 @@ ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "ze
 http = "1"
 iroh-base = { version = "0.93.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.93", path = "../iroh-relay", default-features = false }
-n0-future = "0.1.2"
+n0-future = "0.2.0"
 n0-snafu = "0.2.2"
 n0-watcher = "0.3"
 nested_enum_utils = "0.2.1"
