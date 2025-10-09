@@ -75,9 +75,9 @@
 <a href=#75 id=75 data-nosnippet>75</a>
 <a href=#76 id=76 data-nosnippet>76</a><span class="kw">impl </span>TlsAcceptor {
 <a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">async fn </span>self_signed(domains: Vec&lt;String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">let </span>rcgen::CertifiedKey { cert, key_pair } =
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="kw">let </span>rcgen::CertifiedKey { cert, signing_key } =
 <a href=#79 id=79 data-nosnippet>79</a>            rcgen::generate_simple_self_signed(domains).e()<span class="question-mark">?</span>;
-<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">let </span>config = RustlsConfig::from_der(<span class="macro">vec!</span>[cert.der().to_vec()], key_pair.serialize_der())
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">let </span>config = RustlsConfig::from_der(<span class="macro">vec!</span>[cert.der().to_vec()], signing_key.serialize_der())
 <a href=#81 id=81 data-nosnippet>81</a>            .<span class="kw">await
 <a href=#82 id=82 data-nosnippet>82</a>            </span>.e()<span class="question-mark">?</span>;
 <a href=#83 id=83 data-nosnippet>83</a>        <span class="kw">let </span>acceptor = RustlsAcceptor::new(config);
