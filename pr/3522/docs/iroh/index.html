@@ -1,0 +1,182 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Peer-to-peer QUIC connections."><title>iroh - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate iroh</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../iroh/index.html">iroh</a><span class="version">0.93.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#connection-establishment" title="Connection Establishment">Connection Establishment</a></li><li><a href="#encryption" title="Encryption">Encryption</a></li><li><a href="#relay-servers" title="Relay Servers">Relay Servers</a></li><li><a href="#connections-and-streams" title="Connections and Streams">Connections and Streams</a><ul><li><a href="#node-discovery" title="Node Discovery">Node Discovery</a></li></ul></li><li><a href="#examples" title="Examples">Examples</a></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>iroh</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/iroh/lib.rs.html#1-281">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Peer-to-peer QUIC connections.</p>
+<p>iroh is a library to establish direct connectivity between peers.  It exposes an
+interface to <a href="https://quicwg.org">QUIC</a> connections and streams to the user, while implementing direct
+connectivity using <a href="https://en.wikipedia.org/wiki/Hole_punching_(networking)">hole punching</a> complemented by relay servers under the hood.</p>
+<p>An iroh node is created and controlled by the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>, e.g. connecting to
+another node:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>addr: NodeAddr = <span class="macro">todo!</span>();
+<span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"my-alpn"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span>.context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
+send_stream
+    .write_all(<span class="string">b"msg"</span>)
+    .<span class="kw">await
+    </span>.context(<span class="string">"unable to write all"</span>)<span class="question-mark">?</span>;</code></pre></div>
+<p>The other node can accept incoming connections using the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> as well:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>ep = Endpoint::builder()
+    .alpns(<span class="macro">vec!</span>[<span class="string">b"my-alpn"</span>.to_vec()])
+    .bind()
+    .<span class="kw">await</span><span class="question-mark">?</span>;
+<span class="kw">let </span>conn = ep
+    .accept()
+    .<span class="kw">await
+    </span>.context(<span class="string">"accept error"</span>)<span class="question-mark">?
+    </span>.<span class="kw">await
+    </span>.context(<span class="string">"connecting error"</span>)<span class="question-mark">?</span>;
+<span class="kw">let </span><span class="kw-2">mut </span>recv_stream = conn.accept_uni().<span class="kw">await</span>.context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
+<span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">3</span>];
+recv_stream
+    .read_exact(<span class="kw-2">&amp;mut </span>buf)
+    .<span class="kw">await
+    </span>.context(<span class="string">"unable to read"</span>)<span class="question-mark">?</span>;</code></pre></div>
+<p>Of course you can also use <a href="endpoint/struct.Connection.html#method.open_bi" title="method iroh::endpoint::Connection::open_bi">bi-directional streams</a> or any other features from QUIC.</p>
+<p>For more elaborate examples, see <a href="#examples">below</a> or the examples directory in
+the source repository.</p>
+<h2 id="connection-establishment"><a class="doc-anchor" href="#connection-establishment">§</a>Connection Establishment</h2>
+<p>An iroh connection between two iroh nodes is usually established with the help
+of a Relay server.  When creating the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> it connects to the closest Relay
+server and designates this as the <em>home relay</em>.  When other nodes want to connect they
+first establish connection via this home relay.  As soon as connection between the two
+nodes is established they will attempt to create a direct connection, using <a href="https://en.wikipedia.org/wiki/Hole_punching_(networking)">hole
+punching</a> if needed.  Once the direct connection is established the relay server is no
+longer involved in the connection.</p>
+<p>If one of the iroh nodes can be reached directly, connectivity can also be
+established without involving a Relay server.  This is done by using the node’s
+listening addresses in the connection establishement instead of the <a href="struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a> which
+is used to identify a Relay server.  Of course it is also possible to use both a
+<a href="struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a> and direct addresses at the same time to connect.</p>
+<h2 id="encryption"><a class="doc-anchor" href="#encryption">§</a>Encryption</h2>
+<p>The connection is encrypted using TLS, like standard QUIC connections.  Unlike standard
+QUIC there is no client, server or server TLS key and certificate chain.  Instead each iroh node has a
+unique <a href="struct.SecretKey.html" title="struct iroh::SecretKey"><code>SecretKey</code></a> used to authenticate and encrypt the connection.  When an iroh
+node connects, it uses the corresponding <a href="struct.PublicKey.html" title="struct iroh::PublicKey"><code>PublicKey</code></a> to ensure the connection is only
+established with the intended peer.</p>
+<p>Since the <a href="struct.PublicKey.html" title="struct iroh::PublicKey"><code>PublicKey</code></a> is also used to identify the iroh node it is also known as
+the <a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a>.  As encryption is an integral part of TLS as used in QUIC this
+<a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> is always a required parameter to establish a connection.</p>
+<p>When accepting connections the peer’s <a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> is authenticated.  However it is up to
+the application to decide if a particular peer is allowed to connect or not.</p>
+<h2 id="relay-servers"><a class="doc-anchor" href="#relay-servers">§</a>Relay Servers</h2>
+<p>Relay servers exist to ensure all iroh nodes are always reachable.  They accept
+<strong>encrypted</strong> traffic for iroh nodes which are connected to them, forwarding it to
+the correct destination based on the <a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> only.  Since nodes only send encrypted
+traffic, the Relay servers can not decode any traffic for other iroh nodes and only
+forward it.</p>
+<p>The connections to the Relay server are initiated as normal HTTP 1.1 connections using
+TLS.  Once connected the transport is upgraded to a plain TCP connection using a custom
+protocol.  All further data is then sent using this custom relaying protocol.  Usually
+soon after the connection is established via the Relay it will migrate to a direct
+connection.  However if this is not possible the connection will keep flowing over the
+relay server as a fallback.</p>
+<p>Additionally to providing reliable connectivity between iroh nodes, Relay servers
+provide some functions to assist in <a href="https://en.wikipedia.org/wiki/Hole_punching_(networking)">hole punching</a>.  They have various services to help
+nodes understand their own network situation.  This includes offering a <a href="https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html">QAD</a> server,
+but also a few HTTP extra endpoints as well as responding to ICMP echo requests.</p>
+<p>By default the <a href="https://n0.computer">number 0</a> relay servers are used, see <a href="endpoint/enum.RelayMode.html#variant.Default" title="variant iroh::endpoint::RelayMode::Default"><code>RelayMode::Default</code></a>.</p>
+<h2 id="connections-and-streams"><a class="doc-anchor" href="#connections-and-streams">§</a>Connections and Streams</h2>
+<p>An iroh node is managed using the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> and this is used to create or accept
+connections to other nodes.  To establish a connection to an iroh node you need to
+know three pieces of information:</p>
+<ul>
+<li>The <a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> of the peer to connect to.</li>
+<li>Some addressing information:
+<ul>
+<li>Usually the <a href="struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a> identifying the Relay server.</li>
+<li>Sometimes, or usually additionally, any direct addresses which might be known.</li>
+</ul>
+</li>
+<li>The QUIC/TLS Application-Layer Protocol Negotiation, or <a href="https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation">ALPN</a>, name to use.</li>
+</ul>
+<p>The ALPN is used by both sides to agree on which application-specific protocol will be
+used over the resulting QUIC connection.  These can be protocols like <code>h3</code> used for
+<a href="https://en.wikipedia.org/wiki/HTTP/3">HTTP/3</a>, but more commonly will be a custom identifier for the application.</p>
+<p>Once connected the API exposes QUIC streams.  These are very cheap to create so can be
+created at any time and can be used to create very many short-lived stream as well as
+long-lived streams.  There are two stream types to choose from:</p>
+<ul>
+<li>
+<p><strong>Uni-directional</strong> which only allows the peer which initiated the stream to send
+data.</p>
+</li>
+<li>
+<p><strong>Bi-directional</strong> which allows both peers to send and receive data.  However, the
+initiator of this stream has to send data before the peer will be aware of this
+stream.</p>
+</li>
+</ul>
+<p>Additionally to being extremely light-weight, streams can be interleaved and will not
+block each other.  Allowing many streams to co-exist, regardless of how long they last.</p>
+<div class="warning">
+<p>To keep streams cheap, they are lazily created on the network: only once a sender starts
+sending data on the stream will the receiver become aware of a stream.  This means only
+calling <a href="endpoint/struct.Connection.html#method.open_bi" title="method iroh::endpoint::Connection::open_bi"><code>Connection::open_bi</code></a> is not sufficient for the corresponding call to
+<a href="endpoint/struct.Connection.html#method.accept_bi" title="method iroh::endpoint::Connection::accept_bi"><code>Connection::accept_bi</code></a> to return.  The sender <strong>must</strong> send data on the stream before
+the receiver’s <a href="endpoint/struct.Connection.html#method.accept_bi" title="method iroh::endpoint::Connection::accept_bi"><code>Connection::accept_bi</code></a> call will return.</p>
+</div>
+<h3 id="node-discovery"><a class="doc-anchor" href="#node-discovery">§</a>Node Discovery</h3>
+<p>The need to know the <a href="struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a> <em>or</em> some direct addresses in addition to the
+<a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> to connect to an iroh node can be an obstacle.  To address this, the
+<a href="endpoint/struct.Builder.html" title="struct iroh::endpoint::Builder"><code>endpoint::Builder</code></a> allows you to configure a <a href="endpoint/struct.Builder.html#method.discovery" title="method iroh::endpoint::Builder::discovery"><code>discovery</code></a> service.</p>
+<p>The <a href="discovery/dns/struct.DnsDiscovery.html" title="struct iroh::discovery::dns::DnsDiscovery"><code>DnsDiscovery</code></a> service is a discovery service which will publish the <a href="struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a>
+and direct addresses to a service publishing those as DNS records.  To connect it looks
+up the <a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> in the DNS system to find the addressing details.  This enables
+connecting using only the <a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> which is often more convenient and resilient.</p>
+<p>See <a href="discovery/index.html" title="mod iroh::discovery">the discovery module</a> for more details.</p>
+<h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
+<p>The central struct is the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>, which allows you to connect to other nodes:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, NodeAddr};
+<span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+
+<span class="kw">async fn </span>connect(addr: NodeAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="comment">// The Endpoint is the central object that manages an iroh node.
+    </span><span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="comment">// Establish a QUIC connection, open a bi-directional stream, exchange messages.
+    </span><span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"hello-world"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) = conn.open_bi().<span class="kw">await</span>.context(<span class="string">"open bi"</span>)<span class="question-mark">?</span>;
+    send_stream.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.context(<span class="string">"write"</span>)<span class="question-mark">?</span>;
+    send_stream.finish().context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.context(<span class="string">"read"</span>)<span class="question-mark">?</span>;
+
+    <span class="comment">// Gracefully close the connection and endpoint.
+    </span>conn.close(<span class="number">1u8</span>.into(), <span class="string">b"done"</span>);
+    ep.close().<span class="kw">await</span>;
+    <span class="macro">println!</span>(<span class="string">"Client closed"</span>);
+    <span class="prelude-val">Ok</span>(())
+}</code></pre></div>
+<p>Every <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> can also accept connections:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, NodeAddr};
+<span class="kw">use </span>n0_future::StreamExt;
+<span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+
+<span class="kw">async fn </span>accept() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="comment">// To accept connections at least one ALPN must be configured.
+    </span><span class="kw">let </span>ep = Endpoint::builder()
+        .alpns(<span class="macro">vec!</span>[<span class="string">b"hello-world"</span>.to_vec()])
+        .bind()
+        .<span class="kw">await</span><span class="question-mark">?</span>;
+
+    <span class="comment">// Accept a QUIC connection, accept a bi-directional stream, exchange messages.
+    </span><span class="kw">let </span>conn = ep
+        .accept()
+        .<span class="kw">await
+        </span>.context(<span class="string">"no incoming connection"</span>)<span class="question-mark">?
+        </span>.<span class="kw">await
+        </span>.context(<span class="string">"accept conn"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) = conn.accept_bi().<span class="kw">await</span>.context(<span class="string">"accept stream"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.context(<span class="string">"read"</span>)<span class="question-mark">?</span>;
+    send_stream.write_all(<span class="string">b"world"</span>).<span class="kw">await</span>.context(<span class="string">"write"</span>)<span class="question-mark">?</span>;
+    send_stream.finish().context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
+
+    <span class="comment">// Wait for the client to close the connection and gracefully close the endpoint.
+    </span>conn.closed().<span class="kw">await</span>;
+    ep.close().<span class="kw">await</span>;
+    <span class="prelude-val">Ok</span>(())
+}</code></pre></div>
+<p>Please see the examples directory for more nuanced examples.</p>
+</div></details><h2 id="reexports" class="section-header">Re-exports<a href="#reexports" class="anchor">§</a></h2><dl class="item-table reexports"><dt id="reexport.Endpoint"><code>pub use endpoint::<a class="struct" href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint">Endpoint</a>;</code></dt><dt id="reexport.RelayMode"><code>pub use endpoint::<a class="enum" href="endpoint/enum.RelayMode.html" title="enum iroh::endpoint::RelayMode">RelayMode</a>;</code></dt></dl><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="defaults/index.html" title="mod iroh::defaults">defaults</a></dt><dd>Default values used in <a href="index.html" title="mod iroh"><code>iroh</code></a></dd><dt><a class="mod" href="discovery/index.html" title="mod iroh::discovery">discovery</a></dt><dd>Node address discovery.</dd><dt><a class="mod" href="dns/index.html" title="mod iroh::dns">dns</a><wbr><span class="stab portability" title="Available on non-`wasm_browser` only">Non-<code>wasm_browser</code></span></dt><dd>This module exports a DNS resolver, which is also the default resolver used in the
+<a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>crate::Endpoint</code></a> if no custom resolver is configured.</dd><dt><a class="mod" href="endpoint/index.html" title="mod iroh::endpoint">endpoint</a></dt><dd>The <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> allows establishing connections to other iroh nodes.</dd><dt><a class="mod" href="metrics/index.html" title="mod iroh::metrics">metrics</a></dt><dd>Co-locating all of the iroh metrics structs</dd><dt><a class="mod" href="net_report/index.html" title="mod iroh::net_report">net_<wbr>report</a></dt><dd>Checks the network conditions from the current host.</dd><dt><a class="mod" href="node_info/index.html" title="mod iroh::node_info">node_<wbr>info</a></dt><dd>Support for handling DNS resource records for dialing by <a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a>.</dd><dt><a class="mod" href="protocol/index.html" title="mod iroh::protocol">protocol</a></dt><dd>Tools for spawning an accept loop that routes incoming requests to the right protocol.</dd><dt><a class="mod" href="test_utils/index.html" title="mod iroh::test_utils">test_<wbr>utils</a><wbr><span class="stab portability" title="Available on crate features `test-utils` only"><code>test-utils</code></span></dt><dd>Internal utilities to support testing.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.NodeAddr.html" title="struct iroh::NodeAddr">Node<wbr>Addr</a></dt><dd>Network-level addressing information for an iroh node.</dd><dt><a class="struct" href="struct.PublicKey.html" title="struct iroh::PublicKey">Public<wbr>Key</a></dt><dd>A public key.</dd><dt><a class="struct" href="struct.RelayMap.html" title="struct iroh::RelayMap">Relay<wbr>Map</a></dt><dd>Configuration of all the relay servers that can be used.</dd><dt><a class="struct" href="struct.RelayNode.html" title="struct iroh::RelayNode">Relay<wbr>Node</a></dt><dd>Information on a specific relay server.</dd><dt><a class="struct" href="struct.RelayUrl.html" title="struct iroh::RelayUrl">Relay<wbr>Url</a></dt><dd>A URL identifying a relay server.</dd><dt><a class="struct" href="struct.RelayUrlParseError.html" title="struct iroh::RelayUrlParseError">Relay<wbr>UrlParse<wbr>Error</a></dt><dd>Can occur when parsing a string into a <a href="struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a>.</dd><dt><a class="struct" href="struct.SecretKey.html" title="struct iroh::SecretKey">Secret<wbr>Key</a></dt><dd>A secret key.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.KeyParsingError.html" title="enum iroh::KeyParsingError">KeyParsing<wbr>Error</a></dt><dd>Error when deserialising a <a href="struct.PublicKey.html" title="struct iroh::PublicKey"><code>PublicKey</code></a> or a <a href="struct.SecretKey.html" title="struct iroh::SecretKey"><code>SecretKey</code></a>.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.Watcher.html" title="trait iroh::Watcher">Watcher</a></dt><dd>A handle to a value that’s represented by one or more underlying [<code>Watchable</code>]s.</dd></dl><h2 id="types" class="section-header">Type Aliases<a href="#types" class="anchor">§</a></h2><dl class="item-table"><dt><a class="type" href="type.NodeId.html" title="type iroh::NodeId">NodeId</a></dt><dd>The identifier for a node in the (iroh) network.</dd></dl><script type="text/json" id="notable-traits-data">{"&[u8]":"<h3>Notable traits for <code>&amp;[<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.u8.html\">u8</a>]</code></h3><pre><code><div class=\"where\">impl <a class=\"trait\" href=\"https://doc.rust-lang.org/nightly/std/io/trait.Read.html\" title=\"trait std::io::Read\">Read</a> for &amp;[<a class=\"primitive\" href=\"https://doc.rust-lang.org/nightly/std/primitive.u8.html\">u8</a>]</div>"}</script></section></div></main></body></html>
