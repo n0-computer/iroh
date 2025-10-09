@@ -265,19 +265,11 @@ impl RelaySender {
             return Err(io::Error::other("channel closed"));
         };
         match sender.send(item).await {
-            Ok(_) => {
-                trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                        "send relay: message queued");
-                Ok(())
-            }
-            Err(mpsc::error::SendError(_)) => {
-                error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                        "send relay: message dropped, channel to actor is closed");
-                Err(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    "channel to actor is closed",
-                ))
-            }
+            Ok(_) => Ok(()),
+            Err(mpsc::error::SendError(_)) => Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "channel to actor is closed",
+            )),
         }
     }
 

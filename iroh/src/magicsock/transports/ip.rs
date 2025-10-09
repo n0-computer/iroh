@@ -1,6 +1,6 @@
 use std::{
     io,
-    net::{IpAddr, SocketAddr, SocketAddrV6},
+    net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
