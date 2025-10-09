@@ -601,7 +601,7 @@ async fn check_captive_portal(
     // length is limited; see is_challenge_char in bin/iroh-relay for more
     // details.
 
-    let host_name = url.host_str().unwrap_or_default();
+    let host_name = url.host_str_without_final_dot().unwrap_or_default();
     let challenge = format!("ts_{host_name}");
     let portal_url = format!("http://{host_name}/generate_204");
     let res = client
@@ -774,7 +774,6 @@ async fn run_https_probe(
     #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
-    let url = relay_node.join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
@@ -787,7 +786,7 @@ async fn run_https_probe(
     }
 
     #[cfg(not(wasm_browser))]
-    if let Some(Host::Domain(domain)) = url.host() {
+    if let Some(Host::Domain(domain)) = relay_node.host() {
         // Use our own resolver rather than getaddrinfo
         //
         // Be careful, a non-zero port will override the port in the URI.
@@ -812,6 +811,7 @@ async fn run_https_probe(
         .context(measure_https_latency_error::CreateReqwestClientSnafu)?;
 
     let start = Instant::now();
+    let url = relay_node.without_final_dot().join(RELAY_PROBE_PATH)?;
     let response = client
         .request(reqwest::Method::GET, url)
         .send()

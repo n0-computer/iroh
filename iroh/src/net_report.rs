@@ -696,7 +696,10 @@ async fn run_probe_v4(
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
-    let host = relay_node.url.host_str().context("missing host url")?;
+    let host = relay_node
+        .url
+        .host_str_without_final_dot()
+        .context("missing host url")?;
     let conn = quic_client.create_conn(relay_addr, host).await?;
     let mut receiver = conn.observed_external_addr();
 
@@ -763,7 +766,10 @@ async fn run_probe_v6(
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
-    let host = relay_node.url.host_str().context("missing host url")?;
+    let host = relay_node
+        .url
+        .host_str_without_final_dot()
+        .context("missing host url")?;
     let conn = quic_client.create_conn(relay_addr, host).await?;
     let mut receiver = conn.observed_external_addr();
 
