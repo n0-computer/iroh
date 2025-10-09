@@ -450,6 +450,7 @@ impl NodeStateActor {
             .map(|last_hp| {
                 // Addrs are allowed to disappear, but if there are new ones we need to
                 // holepunch again.
+                trace!(?last_hp, ?local_addrs, ?remote_addrs, "addrs to holepunch?");
                 !remote_addrs.is_subset(&last_hp.remote_addrs)
                     || !local_addrs.is_subset(&last_hp.local_addrs)
             })
@@ -482,12 +483,12 @@ impl NodeStateActor {
                 if state
                     .sources
                     .get(&Source::CallMeMaybe)
-                    .map(|when| when.elapsed() >= CALL_ME_MAYBE_VALIDITY)
+                    .map(|when| when.elapsed() <= CALL_ME_MAYBE_VALIDITY)
                     .unwrap_or_default()
                     || state
                         .sources
                         .get(&Source::Ping)
-                        .map(|when| when.elapsed() >= CALL_ME_MAYBE_VALIDITY)
+                        .map(|when| when.elapsed() <= CALL_ME_MAYBE_VALIDITY)
                         .unwrap_or_default()
                 {
                     Some(*addr)
