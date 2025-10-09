@@ -661,7 +661,6 @@ impl MagicSock {
     /// Handles a discovery message.
     #[instrument("disco_in", skip_all, fields(node = %sender.fmt_short(), ?src))]
     fn handle_disco_message(&self, sender: PublicKey, sealed_box: &[u8], src: &transports::Addr) {
-        trace!("handle_disco_message start");
         if self.is_closed() {
             return;
         }

@@ -294,7 +294,7 @@ impl NodeStateActor {
             }
             NodeStateMessage::CallMeMaybeReceived(msg) => {
                 event!(
-                    target: "iroh::_events::call-me-maybe::recv",
+                    target: "iroh::_events::call_me_maybe::recv",
                     Level::DEBUG,
                     remote_node = %self.node_id.fmt_short(),
                     addrs = ?msg.my_numbers,
@@ -306,7 +306,7 @@ impl NodeStateActor {
 
                     let path = self.paths.entry(dst.clone()).or_default();
                     path.sources.insert(Source::CallMeMaybe, now);
-                    path.ping_sent = Some(ping.clone());
+                    path.ping_sent = Some(ping.tx_id);
 
                     event!(
                         target: "iroh::_events::ping::sent",
@@ -352,12 +352,11 @@ impl NodeStateActor {
             }
             NodeStateMessage::PongReceived(pong, src) => {
                 let Some(state) = self.paths.get(&src) else {
-                    warn!(path = ?src, "ignoring DISCO Pong for unknown path");
+                    warn!(path = ?src, ?self.paths, "ignoring DISCO Pong for unknown path");
                     return Ok(());
                 };
-                let ping_tx = state.ping_sent.as_ref().map(|ping| ping.tx_id);
-                if ping_tx != Some(pong.tx_id) {
-                    debug!(path = ?src, ?ping_tx, pong_tx = ?pong.tx_id,
+                if state.ping_sent != Some(pong.tx_id) {
+                    debug!(path = ?src, ?state.ping_sent, pong_tx = ?pong.tx_id,
                         "ignoring unknown DISCO Pong for path");
                     return Ok(());
                 }
@@ -458,8 +457,9 @@ impl NodeStateActor {
         if !new_addrs {
             if let Some(ref last_hp) = self.last_holepunch {
                 let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
-                if next_hp > Instant::now() {
-                    trace!(scheduled_in = ?next_hp, "not holepunching: no new addresses");
+                let now = Instant::now();
+                if next_hp > now {
+                    trace!(scheduled_in = ?(now - next_hp), "not holepunching: no new addresses");
                     self.scheduled_holepunch = Some(next_hp);
                     return;
                 }
@@ -504,8 +504,8 @@ impl NodeStateActor {
     /// - DISCO pings will be sent to addresses recently advertised in a call-me-maybe
     ///   message.
     /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
+    #[instrument(skip_all)]
     async fn do_holepunching(&mut self) {
-        trace!("holepunching");
         let Some(relay_addr) = self
             .paths
             .iter()
@@ -532,7 +532,7 @@ impl NodeStateActor {
                 txn = ?msg.tx_id,
             );
             let addr = transports::Addr::Ip(*dst);
-            self.paths.entry(addr.clone()).or_default().ping_sent = Some(msg.clone());
+            self.paths.entry(addr.clone()).or_default().ping_sent = Some(msg.tx_id);
             self.send_disco_message(addr, disco::Message::Ping(msg))
                 .await;
         }
@@ -547,7 +547,7 @@ impl NodeStateActor {
         let local_addrs: BTreeSet<SocketAddr> = my_numbers.iter().copied().collect();
         let msg = disco::CallMeMaybe { my_numbers };
         event!(
-            target: "iroh::_events::call-me-maybe::sent",
+            target: "iroh::_events::call_me_maybe::sent",
             Level::DEBUG,
             remote_node = %self.node_id.fmt_short(),
             dst = ?relay_addr,
@@ -726,6 +726,7 @@ impl NodeStateActor {
     ///
     /// The selected path is added to any connections which do not yet have it.  Any unused
     /// direct paths are close from all connections.
+    #[instrument(skip_all)]
     fn select_path(&mut self) {
         // Find the lowest RTT across all connections for each open path.  The long way, so
         // we get to trace-log *all* RTTs.
