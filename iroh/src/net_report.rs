@@ -48,7 +48,6 @@ use self::reportgen::QadProbeReport;
 use self::reportgen::{ProbeFinished, ProbeReport};
 
 mod defaults;
-mod ip_mapped_addrs;
 mod metrics;
 mod probes;
 mod report;
@@ -74,8 +73,6 @@ pub(crate) mod portmapper {
         pub nat_pmp: bool,
     }
 }
-
-pub(crate) use ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
 
 pub(crate) use self::reportgen::IfStateDetails;
 #[cfg(not(wasm_browser))]
@@ -217,7 +214,6 @@ impl Client {
     /// Creates a new net_report client.
     pub(crate) fn new(
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
-        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
         relay_map: RelayMap,
         opts: Options,
         metrics: Arc<Metrics>,
@@ -235,7 +231,6 @@ impl Client {
         let socket_state = SocketState {
             quic_client,
             dns_resolver,
-            ip_mapped_addrs,
         };
 
         Client {
@@ -399,8 +394,6 @@ impl Client {
     ) -> Vec<ProbeReport> {
         use tracing::{Instrument, warn_span};
 
-        debug!("spawning QAD probes");
-
         let Some(ref quic_client) = self.socket_state.quic_client else {
             return Vec::new();
         };
@@ -429,6 +422,8 @@ impl Client {
             return self.qad_conns.current();
         }
 
+        trace!("spawning QAD probes");
+
         // TODO: randomize choice?
         const MAX_RELAYS: usize = 5;
 
@@ -439,8 +434,6 @@ impl Client {
 
         for relay_node in self.relay_map.nodes().take(MAX_RELAYS) {
             if if_state.have_v4 {
-                debug!(?relay_node.url, "v4 QAD probe");
-                let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
                 let relay_node = relay_node.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
@@ -450,15 +443,13 @@ impl Client {
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v4(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v4(relay_node, quic_client, dns_resolver),
                         ))
-                        .instrument(warn_span!("QAD-IPv4", %relay_url)),
+                        .instrument(warn_span!("QADv4", %relay_url)),
                 );
             }
 
             if if_state.have_v6 {
-                debug!(?relay_node.url, "v6 QAD probe");
-                let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
                 let relay_node = relay_node.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
@@ -468,9 +459,9 @@ impl Client {
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v6(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v6(relay_node, quic_client, dns_resolver),
                         ))
-                        .instrument(warn_span!("QAD-IPv6", %relay_url)),
+                        .instrument(warn_span!("QADv6", %relay_url)),
                 );
             }
         }
@@ -487,6 +478,7 @@ impl Client {
         loop {
             // We early-abort the tasks once we have at least `enough_relays` reports,
             // and at least one ipv4 and one ipv6 report completed (if they were started, see comment above).
+
             if reports.len() >= enough_relays && !ipv4_pending && !ipv6_pending {
                 debug!("enough probes: {}", reports.len());
                 cancel_v4.cancel();
@@ -498,12 +490,14 @@ impl Client {
                 biased;
 
                 val = v4_buf.join_next(), if !v4_buf.is_empty() => {
+                    let span = warn_span!("QADv4");
+                    let _guard = span.enter();
                     ipv4_pending = false;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
                                 Ok((r, conn)) => {
-                                    debug!(?r, "got v4 QAD conn");
+                                    debug!(?r, "probe report");
                                     let url = r.node.clone();
                                     reports.push(ProbeReport::QadIpv4(r));
                                     if self.qad_conns.v4.is_none() {
@@ -513,32 +507,34 @@ impl Client {
                                     }
                                 }
                                 Err(err) => {
-                                    debug!("probe v4 failed: {err:?}");
+                                    debug!("probe failed: {err:#}");
                                 }
                             }
                         }
                         Some(Err(err)) => {
                             if err.is_panic() {
-                                panic!("probe v4 panicked: {err:?}");
+                                panic!("probe panicked: {err:#}");
                             }
-                            warn!("probe v4 failed: {err:?}");
+                            warn!("probe failed: {err:#}");
                         }
                         Some(Ok(None)) => {
-                            debug!("probe v4 canceled");
+                            debug!("probe canceled");
                         }
                         Some(Ok(Some(Err(time::Elapsed { .. })))) => {
-                            debug!("probe v4 timed out");
+                            debug!("probe timed out");
                         }
                         None => {}
                     }
                 }
                 val = v6_buf.join_next(), if !v6_buf.is_empty() => {
+                    let span = warn_span!("QADv6");
+                    let _guard = span.enter();
                     ipv6_pending = false;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
                                 Ok((r, conn)) => {
-                                    debug!(?r, "got v6 QAD conn");
+                                    debug!(?r, "probe report");
                                     let url = r.node.clone();
                                     reports.push(ProbeReport::QadIpv6(r));
                                     if self.qad_conns.v6.is_none() {
@@ -548,21 +544,21 @@ impl Client {
                                     }
                                 }
                                 Err(err) => {
-                                    debug!("probe v6 failed: {err:?}");
+                                    debug!("probe failed: {err:#}");
                                 }
                             }
                         }
                         Some(Err(err)) => {
                             if err.is_panic() {
-                                panic!("probe v6 panicked: {err:?}");
+                                panic!("probe panicked: {err:#}");
                             }
-                            warn!("probe v6 failed: {err:?}");
+                            warn!("probe failed: {err:#}");
                         }
                         Some(Ok(None)) => {
-                            debug!("probe v6 canceled");
+                            debug!("probe canceled");
                         }
                         Some(Ok(Some(Err(time::Elapsed { .. })))) => {
-                            debug!("probe v6 timed out");
+                            debug!("probe timed out");
                         }
                         None => {}
                     }
@@ -684,20 +680,17 @@ impl Client {
 
 #[cfg(not(wasm_browser))]
 async fn run_probe_v4(
-    ip_mapped_addrs: Option<IpMappedAddresses>,
     relay_node: Arc<RelayNode>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
 
-    let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await?;
-    let relay_addr =
-        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
+    let relay_addr = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await?;
 
-    debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
+    trace!(?relay_addr, "resolved relay server address");
     let host = relay_node.url.host_str().context("missing host url")?;
-    let conn = quic_client.create_conn(relay_addr, host).await?;
+    let conn = quic_client.create_conn(relay_addr.into(), host).await?;
     let mut receiver = conn.observed_external_addr();
 
     // wait for an addr
@@ -724,7 +717,6 @@ async fn run_probe_v4(
                 // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
                 let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
                 let latency = conn.rtt();
-                trace!(?val, ?relay_addr, ?latency, "got addr V4");
                 observer
                     .set(val.map(|addr| QadProbeReport {
                         node: node.clone(),
@@ -752,19 +744,16 @@ async fn run_probe_v4(
 
 #[cfg(not(wasm_browser))]
 async fn run_probe_v6(
-    ip_mapped_addrs: Option<IpMappedAddresses>,
     relay_node: Arc<RelayNode>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
-    let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await?;
-    let relay_addr =
-        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
+    let relay_addr = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await?;
 
-    debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
+    trace!(?relay_addr, "resolved relay server address");
     let host = relay_node.url.host_str().context("missing host url")?;
-    let conn = quic_client.create_conn(relay_addr, host).await?;
+    let conn = quic_client.create_conn(relay_addr.into(), host).await?;
     let mut receiver = conn.observed_external_addr();
 
     // wait for an addr
@@ -791,7 +780,6 @@ async fn run_probe_v6(
                 // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
                 let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
                 let latency = conn.rtt();
-                trace!(?val, ?relay_addr, ?latency, "got addr V6");
                 observer
                     .set(val.map(|addr| QadProbeReport {
                         node: node.clone(),
@@ -887,7 +875,6 @@ mod tests {
             .insecure_skip_relay_cert_verify(true);
         let mut client = Client::new(
             resolver.clone(),
-            None,
             relay_map.clone(),
             opts.clone(),
             Default::default(),
@@ -1088,8 +1075,7 @@ mod tests {
             println!("test: {}", tt.name);
             let relay_map = RelayMap::empty();
             let opts = Options::default();
-            let mut client =
-                Client::new(resolver.clone(), None, relay_map, opts, Default::default());
+            let mut client = Client::new(resolver.clone(), relay_map, opts, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
