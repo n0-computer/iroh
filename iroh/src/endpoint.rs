@@ -21,8 +21,8 @@ use std::{
 };
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
-use iroh_base::{NodeAddr, NodeId, SecretKey};
-use iroh_relay::RelayMap;
+use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+use iroh_relay::{RelayMap, RelayNode};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
@@ -630,6 +630,24 @@ impl Endpoint {
     pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) {
         let server_config = self.static_config.create_server_config(alpns);
         self.msock.endpoint().set_server_config(Some(server_config));
+    }
+
+    /// Adds the provided configuration to the [`RelayMap`].
+    ///
+    /// Replacing and returning any existing configuration for [`RelayUrl`].
+    pub async fn insert_relay(
+        &self,
+        relay: RelayUrl,
+        node: Arc<RelayNode>,
+    ) -> Option<Arc<RelayNode>> {
+        self.msock.insert_relay(relay, node).await
+    }
+
+    /// Removes the configuration from the [`RelayMap`] for the provided [`RelayUrl`].
+    ///
+    /// Returns any existing configuration.
+    pub async fn remove_relay(&self, relay: &RelayUrl) -> Option<Arc<RelayNode>> {
+        self.msock.remove_relay(relay).await
     }
 
     // # Methods for establishing connectivity.
@@ -2413,6 +2431,115 @@ mod tests {
         });
 
         let addr = server.node_addr();
+        let conn = client.connect(addr, TEST_ALPN).await?;
+        let (mut send, mut recv) = conn.open_bi().await.e()?;
+        send.write_all(b"Hello, world!").await.e()?;
+        send.finish().e()?;
+        let data = recv.read_to_end(1000).await.e()?;
+        conn.close(0u32.into(), b"bye!");
+
+        task.await.e()??;
+
+        client.close().await;
+        server.close().await;
+
+        assert_eq!(&data, b"Hello, world!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_relay_map_change() -> Result {
+        let (relay_map, relay_url, _guard1) = run_relay_server().await?;
+        let client = Endpoint::builder()
+            .insecure_skip_relay_cert_verify(true)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .bind()
+            .await?;
+        let server = Endpoint::builder()
+            .insecure_skip_relay_cert_verify(true)
+            .relay_mode(RelayMode::Custom(relay_map))
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        let task = tokio::spawn({
+            let server = server.clone();
+            async move {
+                for i in 0..2 {
+                    println!("accept: round {i}");
+                    let Some(conn) = server.accept().await else {
+                        snafu::whatever!("Expected an incoming connection");
+                    };
+                    let conn = conn.await.e()?;
+                    let (mut send, mut recv) = conn.accept_bi().await.e()?;
+                    let data = recv.read_to_end(1000).await.e()?;
+                    send.write_all(&data).await.e()?;
+                    send.finish().e()?;
+                    conn.closed().await;
+                }
+                Ok::<_, Error>(())
+            }
+        });
+
+        server.online().await;
+
+        let mut addr = server.node_addr();
+        println!("round1: {:?}", addr);
+
+        // remove direct addrs to force relay usage
+        addr.direct_addresses.clear();
+
+        let conn = client.connect(addr, TEST_ALPN).await?;
+        let (mut send, mut recv) = conn.open_bi().await.e()?;
+        send.write_all(b"Hello, world!").await.e()?;
+        send.finish().e()?;
+        let data = recv.read_to_end(1000).await.e()?;
+        conn.close(0u32.into(), b"bye!");
+
+        assert_eq!(&data, b"Hello, world!");
+
+        // setup a second relay server
+        let (new_relay_map, new_relay_url, _guard2) = run_relay_server().await?;
+        let new_node = new_relay_map
+            .get_node(&new_relay_url)
+            .expect("missing node")
+            .clone();
+        dbg!(&new_relay_map);
+
+        let addr_watcher = server.watch_node_addr();
+
+        // add new new relay
+        assert!(
+            server
+                .insert_relay(new_relay_url.clone(), new_node.clone())
+                .await
+                .is_none()
+        );
+        // remove the old relay
+        assert!(server.remove_relay(&relay_url).await.is_some());
+
+        println!("------- changed ----- ");
+
+        let mut addr = tokio::time::timeout(Duration::from_secs(10), async move {
+            let mut stream = addr_watcher.stream();
+            while let Some(addr) = stream.next().await {
+                if addr.relay_url.as_ref() != Some(&relay_url) {
+                    return addr;
+                }
+            }
+            panic!("failed to change relay");
+        })
+        .await
+        .e()?;
+
+        println!("round2: {:?}", addr);
+        assert_eq!(addr.relay_url, Some(new_relay_url));
+
+        // remove direct addrs to force relay usage
+        addr.direct_addresses.clear();
+
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
         send.write_all(b"Hello, world!").await.e()?;
