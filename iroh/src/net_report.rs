@@ -606,19 +606,19 @@ impl Client {
             match (state.have_v4, state.have_v6) {
                 (true, true) => {
                     // Both IPv4 and IPv6 are expected to be available
-                    if num_ipv4 > 2 && num_ipv6 > 1 || num_ipv6 > 2 && num_ipv4 > 1 {
+                    if num_ipv4 >= 2 && num_ipv6 >= 1 || num_ipv6 >= 2 && num_ipv4 >= 1 {
                         return true;
                     }
                 }
                 (true, false) => {
                     // Just Ipv4 is expected
-                    if num_ipv4 > 2 {
+                    if num_ipv4 >= 2 {
                         return true;
                     }
                 }
                 (false, true) => {
                     // Just Ipv6 is expected
-                    if num_ipv6 > 2 {
+                    if num_ipv6 >= 2 {
                         return true;
                     }
                 }
@@ -638,19 +638,19 @@ impl Client {
             match (state.have_v4, state.have_v6) {
                 (true, true) => {
                     // Both IPv4 and IPv6 are expected to be available
-                    if num_ipv4 > 1 && num_ipv6 > 1 {
+                    if num_ipv4 >= 1 && num_ipv6 >= 1 {
                         return true;
                     }
                 }
                 (true, false) => {
                     // Just Ipv4 is expected
-                    if num_ipv4 > 1 {
+                    if num_ipv4 >= 1 {
                         return true;
                     }
                 }
                 (false, true) => {
                     // Just Ipv6 is expected
-                    if num_ipv6 > 1 {
+                    if num_ipv6 >= 1 {
                         return true;
                     }
                 }
