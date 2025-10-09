@@ -1509,7 +1509,7 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection::new(inner, None, &this.ep);
+                let conn = Connection::new(inner, None, this.ep);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1646,7 +1646,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection::new(inner, *this.remote_node_id, &this.ep);
+                let conn = Connection::new(inner, *this.remote_node_id, this.ep);
                 Poll::Ready(Ok(conn))
             }
         }

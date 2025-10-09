@@ -249,7 +249,7 @@ where
     /// Returns the [`MappedAddr`], generating one if needed.
     pub(super) fn get(&self, key: &K) -> V {
         let mut inner = self.inner.lock().expect("poisoned");
-        match inner.addrs.get(&key) {
+        match inner.addrs.get(key) {
             Some(addr) => *addr,
             None => {
                 let addr = V::generate();

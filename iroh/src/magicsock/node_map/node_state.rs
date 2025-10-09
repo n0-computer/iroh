@@ -96,6 +96,7 @@ pub(super) struct NodeStateActor {
     /// The key is the [`quinn::Connection::stable_id`].
     connections: FxHashMap<usize, ConnectionState>,
     /// Events emitted by Quinn about path changes.
+    #[allow(clippy::type_complexity)]
     path_events: MergeUnbounded<
         Pin<
             Box<
@@ -743,7 +744,7 @@ impl NodeStateActor {
                 {
                     if let Some(conn) = self
                         .connections
-                        .get(&conn_id)
+                        .get(conn_id)
                         .and_then(|c| c.handle.upgrade())
                     {
                         if let Some(path) = conn.path(*path_id) {
@@ -851,7 +852,6 @@ impl NodeStateActor {
             }
             self.open_path(&addr);
             self.close_redundant_paths(&addr);
-            return;
         }
     }
 
@@ -887,8 +887,7 @@ impl NodeStateActor {
             if let Some(conn) = self
                 .connections
                 .get(conn_id)
-                .map(|c| c.handle.upgrade())
-                .flatten()
+                .and_then(|c| c.handle.upgrade())
             {
                 trace!(?addr, ?conn_id, ?path_id, "closing direct path");
                 if let Some(path) = conn.path(*path_id) {
@@ -913,28 +912,25 @@ impl NodeStateActor {
         conn: &quinn::Connection,
         path_id: PathId,
     ) -> Option<transports::Addr> {
-        conn.path(path_id)
-            .map(|path| {
-                path.remote_address().map_or(None, |remote| {
-                    match MultipathMappedAddr::from(remote) {
-                        MultipathMappedAddr::Mixed(_) => {
-                            error!("Mixed addr in use for path");
-                            None
-                        }
-                        MultipathMappedAddr::Relay(mapped) => {
-                            match self.relay_mapped_addrs.lookup(&mapped) {
-                                Some(parts) => Some(transports::Addr::from(parts)),
-                                None => {
-                                    error!("Unknown RelayMappedAddr in path");
-                                    None
-                                }
+        conn.path(path_id).and_then(|path| {
+            path.remote_address()
+                .map_or(None, |remote| match MultipathMappedAddr::from(remote) {
+                    MultipathMappedAddr::Mixed(_) => {
+                        error!("Mixed addr in use for path");
+                        None
+                    }
+                    MultipathMappedAddr::Relay(mapped) => {
+                        match self.relay_mapped_addrs.lookup(&mapped) {
+                            Some(parts) => Some(transports::Addr::from(parts)),
+                            None => {
+                                error!("Unknown RelayMappedAddr in path");
+                                None
                             }
                         }
-                        MultipathMappedAddr::Ip(addr) => Some(addr.into()),
                     }
+                    MultipathMappedAddr::Ip(addr) => Some(addr.into()),
                 })
-            })
-            .flatten()
+        })
     }
 }
 

@@ -378,23 +378,19 @@ impl TransportsSenderActor {
     async fn run(self, mut inbox: mpsc::Receiver<TransportsSenderMessage>) {
         use TransportsSenderMessage::SendDatagram;
 
-        loop {
-            if let Some(SendDatagram(dst, owned_transmit)) = inbox.recv().await {
-                let transmit = transports::Transmit {
-                    ecn: owned_transmit.ecn,
-                    contents: owned_transmit.contents.as_ref(),
-                    segment_size: owned_transmit.segment_size,
-                };
-                let len = transmit.contents.len();
-                match self.sender.send(&dst, None, &transmit).await {
-                    Ok(()) => {}
-                    Err(err) => {
-                        trace!(?dst, %len, "transmit failed to send: {err:#}");
-                    }
-                };
-            } else {
-                break;
-            }
+        while let Some(SendDatagram(dst, owned_transmit)) = inbox.recv().await {
+            let transmit = transports::Transmit {
+                ecn: owned_transmit.ecn,
+                contents: owned_transmit.contents.as_ref(),
+                segment_size: owned_transmit.segment_size,
+            };
+            let len = transmit.contents.len();
+            match self.sender.send(&dst, None, &transmit).await {
+                Ok(()) => {}
+                Err(err) => {
+                    trace!(?dst, %len, "transmit failed to send: {err:#}");
+                }
+            };
         }
         trace!("actor terminating");
     }
