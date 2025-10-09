@@ -820,7 +820,6 @@ enum UpdateReason {
     /// Initial state
     #[default]
     None,
-    RefreshForPeering,
     Periodic,
     PortmapUpdated,
     LinkChangeMajor,
@@ -1335,7 +1334,6 @@ enum DiscoBoxError {
 #[derive(Debug)]
 enum ActorMessage {
     NetworkChange,
-    ScheduleDirectAddrUpdate(UpdateReason, Option<(NodeId, RelayUrl)>),
     #[cfg(test)]
     ForceNetworkChange(bool),
 }
@@ -1575,14 +1573,6 @@ impl Actor {
         match msg {
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
-            }
-            ActorMessage::ScheduleDirectAddrUpdate(why, data) => {
-                if let Some((node, url)) = data {
-                    self.pending_call_me_maybes.insert(node, url);
-                }
-                let state = self.netmon_watcher.get();
-                self.direct_addr_update_state
-                    .schedule_run(why, state.into());
             }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
