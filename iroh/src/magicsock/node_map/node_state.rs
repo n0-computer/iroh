@@ -23,7 +23,7 @@ use crate::{
     disco::{self},
     endpoint::DirectAddr,
     magicsock::{
-        DiscoState, HEARTBEAT_INTERVAL, MAX_IDLE_TIMEOUT, MagicsockMetrics,
+        DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, MappedAddr, MultipathMappedAddr, RelayMappedAddr},
         transports::{self, OwnedTransmit},
     },
@@ -675,7 +675,7 @@ impl NodeStateActor {
                     return;
                 };
                 path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
-                path.set_max_idle_timeout(Some(MAX_IDLE_TIMEOUT)).ok();
+                path.set_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT)).ok();
 
                 if let Some(addr) = self.path_transports_addr(&conn, path_id) {
                     event!(

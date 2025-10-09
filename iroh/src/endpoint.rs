@@ -42,7 +42,8 @@ use crate::{
         UserData, pkarr::PkarrPublisher,
     },
     magicsock::{
-        self, Handle, OwnAddressSnafu, PathInfo,
+        self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, OwnAddressSnafu,
+        PATH_MAX_IDLE_TIMEOUT, PathInfo,
         mapped_addrs::{MappedAddr, MultipathMappedAddr, NodeIdMappedAddr},
         node_map::TransportType,
     },
@@ -118,13 +119,11 @@ pub struct Builder {
 
 impl Default for Builder {
     fn default() -> Self {
-        let mut transport_config = quinn::TransportConfig::default();
-        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
         Self {
             secret_key: Default::default(),
             relay_mode: default_relay_mode(),
             alpn_protocols: Default::default(),
-            transport_config,
+            transport_config: quinn::TransportConfig::default(),
             keylog: Default::default(),
             discovery: Default::default(),
             discovery_user_data: Default::default(),
@@ -149,12 +148,23 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint.
-    pub async fn bind(self) -> Result<Endpoint, BindError> {
+    pub async fn bind(mut self) -> Result<Endpoint, BindError> {
         let mut rng = rand::rng();
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self
             .secret_key
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
+
+        // Override some transport config settings.
+        self.transport_config
+            .keep_alive_interval(Some(HEARTBEAT_INTERVAL));
+        self.transport_config
+            .default_path_keep_alive_interval(Some(HEARTBEAT_INTERVAL));
+        self.transport_config
+            .default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
+        self.transport_config
+            .max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS);
+
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),

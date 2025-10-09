@@ -96,13 +96,18 @@ pub use self::{
 ///
 /// If a path is idle for this long, a PING frame will be sent to keep the connection
 /// alive.
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The maximum time a path can stay idle before being closed.
 ///
 /// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
 /// some retries.
-const MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
+pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
+
+/// Maximum number of concurrent QUIC multipath paths per connection.
+///
+/// Pretty arbitrary and high right now.
+pub(crate) const MAX_MULTIPATH_PATHS: u32 = 32;
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
