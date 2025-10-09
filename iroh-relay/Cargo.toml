@@ -112,7 +112,7 @@ tokio = { version = "1", features = [
     "signal",
     "process",
 ] }
-tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "client"] }
+tokio-websockets = { version = "0.13", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "client"] }
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
