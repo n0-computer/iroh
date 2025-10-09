@@ -89,7 +89,7 @@ rustls-cert-file-reader = { version = "0.4.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 time = { version = "0.3.37", optional = true }
 tokio-rustls-acme = { version = "0.7.1", optional = true }
-tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
+tokio-websockets = { version = "0.13", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
 toml = { version = "0.9", optional = true }
 tracing-subscriber = { version = "0.3", features = [
