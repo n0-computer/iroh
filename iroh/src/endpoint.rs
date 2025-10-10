@@ -690,7 +690,6 @@ impl Endpoint {
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
             .context(NoAddressSnafu)?;
-        dbg!(&mapped_addr, &direct_addresses, &relay_url);
 
         let transport_config = options
             .transport_config
@@ -1313,7 +1312,6 @@ impl Endpoint {
                     .first_arrived()
                     .await
                     .context(get_mapping_address_error::DiscoverSnafu)?;
-                dbg!("got first");
                 if let Some(addr) = self.msock.get_mapping_addr(node_id) {
                     Ok((addr, Some(discovery)))
                 } else {
