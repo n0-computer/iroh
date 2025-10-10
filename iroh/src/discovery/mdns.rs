@@ -57,8 +57,11 @@ use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{Instrument, debug, error, info_span, trace, warn};
 
-use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
-use crate::discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo};
+use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use crate::{
+    Endpoint,
+    discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
+};
 
 /// The n0 local service name
 const N0_SERVICE_NAME: &str = "irohv1";
@@ -192,11 +195,8 @@ impl Default for MdnsDiscoveryBuilder {
 }
 
 impl IntoDiscovery for MdnsDiscoveryBuilder {
-    fn into_discovery(
-        self,
-        context: &DiscoveryContext,
-    ) -> Result<impl Discovery, IntoDiscoveryError> {
-        self.build(context.node_id())
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+        self.build(endpoint.node_id())
     }
 }
 

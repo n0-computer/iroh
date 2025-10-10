@@ -45,9 +45,9 @@
 //!
 //! [`Builder::discovery`] takes any type that implements [`IntoDiscovery`]. You can
 //! implement that trait on a builder struct if your discovery service needs information
-//! from the endpoint it is mounted on. During endpoint construction, your discovery service
-//! is built by calling [`IntoDiscovery::into_discovery`], passing a [`DiscoveryContext`] to your
-//! builder. The [`DiscoveryContext`] gives access to the endpoint's secret key and DNS resolver.
+//! from the endpoint it is mounted on. After endpoint construction, your discovery service
+//! is built by calling [`IntoDiscovery::into_discovery`], passing the finished [`Endpoint`] to your
+//! builder.
 //!
 //! If your discovery service does not need any information from its endpoint, you can
 //! pass the discovery service directly to [`Builder::discovery`]: All types that
@@ -142,15 +142,11 @@ pub mod static_provider;
 ///
 /// Iroh uses this trait to allow configuring the set of discovery services on the endpoint
 /// builder, while providing the discovery services access to information about the endpoint
-/// creation via the [`DiscoveryContext`] parameter to [`IntoDiscovery::into_discovery`].
+/// to [`IntoDiscovery::into_discovery`].
 ///
 /// [`Builder::discovery`]: crate::endpoint::Builder::discovery
 pub trait IntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
     /// Turns this discovery builder into a ready-to-use discovery service.
-    ///
-    /// The [`DiscoveryContext`] contains information about the [`Endpoint`] onto which this
-    /// discovery service is being added. It can be used by discovery services that need
-    /// a DNS resolver, or the endpoint's secret key to sign messages.
     ///
     /// If an error is returned, building the endpoint will fail with this error.
     fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError>;
@@ -760,7 +756,7 @@ mod tests {
 
     /// This test adds an empty discovery which provides no addresses.
     #[tokio::test]
-    // #[traced_test]
+    #[traced_test]
     async fn endpoint_discovery_combined_with_empty_and_right() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let disco_shared = TestDiscoveryShared::default();
@@ -788,9 +784,8 @@ mod tests {
     /// This is to make sure that as long as one of the discoveries returns a working address, we
     /// will connect successfully.
     #[tokio::test]
-    // #[traced_test]
+    #[traced_test]
     async fn endpoint_discovery_combined_with_empty_and_wrong() -> Result {
-        // tracing_subscriber::fmt::try_init().ok();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) =
@@ -824,8 +819,7 @@ mod tests {
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
             let disco1 = disco_shared.create_lying_discovery(ep.node_id());
-            let disco = ConcurrentDiscovery::from_services(vec![Box::new(disco1)]);
-            disco
+            ConcurrentDiscovery::from_services(vec![Box::new(disco1)])
         })
         .await;
 

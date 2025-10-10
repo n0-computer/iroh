@@ -18,9 +18,9 @@ use pkarr::{Client as PkarrClient, SignedPacket};
 use url::Url;
 
 use crate::{
+    Endpoint,
     discovery::{
-        Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem, IntoDiscovery,
-        IntoDiscoveryError, NodeData,
+        Discovery, DiscoveryError, DiscoveryItem, IntoDiscovery, IntoDiscoveryError, NodeData,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
     node_info::NodeInfo,
@@ -241,11 +241,8 @@ impl Builder {
 }
 
 impl IntoDiscovery for Builder {
-    fn into_discovery(
-        self,
-        context: &DiscoveryContext,
-    ) -> Result<impl Discovery, IntoDiscoveryError> {
-        self.secret_key(context.secret_key().clone()).build()
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+        self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 
