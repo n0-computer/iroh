@@ -1082,7 +1082,7 @@
 <a href=#1082 id=1082 data-nosnippet>1082</a>        dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
 <a href=#1083 id=1083 data-nosnippet>1083</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
 <a href=#1084 id=1084 data-nosnippet>1084</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
-<a href=#1085 id=1085 data-nosnippet>1085</a>        <span class="kw">let </span>ep = Endpoint::builder()
+<a href=#1085 id=1085 data-nosnippet>1085</a>        <span class="kw">let </span>ep = Endpoint::empty_builder()
 <a href=#1086 id=1086 data-nosnippet>1086</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#1087 id=1087 data-nosnippet>1087</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
 <a href=#1088 id=1088 data-nosnippet>1088</a>            .secret_key(secret_key.clone())

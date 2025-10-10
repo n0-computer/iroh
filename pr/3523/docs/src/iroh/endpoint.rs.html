@@ -2163,7 +2163,7 @@
 <a href=#2163 id=2163 data-nosnippet>2163</a>    <span class="attr">#[tokio::test]
 <a href=#2164 id=2164 data-nosnippet>2164</a>    #[traced_test]
 <a href=#2165 id=2165 data-nosnippet>2165</a>    </span><span class="kw">async fn </span>test_connect_self() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2166 id=2166 data-nosnippet>2166</a>        <span class="kw">let </span>ep = Endpoint::builder()
+<a href=#2166 id=2166 data-nosnippet>2166</a>        <span class="kw">let </span>ep = Endpoint::empty_builder()
 <a href=#2167 id=2167 data-nosnippet>2167</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2168 id=2168 data-nosnippet>2168</a>            .bind()
 <a href=#2169 id=2169 data-nosnippet>2169</a>            .<span class="kw">await
@@ -2190,7 +2190,7 @@
 <a href=#2190 id=2190 data-nosnippet>2190</a>        <span class="kw">let </span>server_peer_id = server_secret_key.public();
 <a href=#2191 id=2191 data-nosnippet>2191</a>
 <a href=#2192 id=2192 data-nosnippet>2192</a>        <span class="comment">// Wait for the endpoint to be started to make sure it's up before clients try to connect
-<a href=#2193 id=2193 data-nosnippet>2193</a>        </span><span class="kw">let </span>ep = Endpoint::builder()
+<a href=#2193 id=2193 data-nosnippet>2193</a>        </span><span class="kw">let </span>ep = Endpoint::empty_builder()
 <a href=#2194 id=2194 data-nosnippet>2194</a>            .secret_key(server_secret_key)
 <a href=#2195 id=2195 data-nosnippet>2195</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2196 id=2196 data-nosnippet>2196</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -2230,7 +2230,7 @@
 <a href=#2230 id=2230 data-nosnippet>2230</a>
 <a href=#2231 id=2231 data-nosnippet>2231</a>        <span class="kw">let </span>client = tokio::spawn(
 <a href=#2232 id=2232 data-nosnippet>2232</a>            <span class="kw">async move </span>{
-<a href=#2233 id=2233 data-nosnippet>2233</a>                <span class="kw">let </span>ep = Endpoint::builder()
+<a href=#2233 id=2233 data-nosnippet>2233</a>                <span class="kw">let </span>ep = Endpoint::empty_builder()
 <a href=#2234 id=2234 data-nosnippet>2234</a>                    .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2235 id=2235 data-nosnippet>2235</a>                    .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2236 id=2236 data-nosnippet>2236</a>                    .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
@@ -2290,7 +2290,7 @@
 <a href=#2290 id=2290 data-nosnippet>2290</a>        <span class="kw">let </span>server_node_id = server_secret_key.public();
 <a href=#2291 id=2291 data-nosnippet>2291</a>
 <a href=#2292 id=2292 data-nosnippet>2292</a>        <span class="comment">// Make sure the server is bound before having clients connect to it:
-<a href=#2293 id=2293 data-nosnippet>2293</a>        </span><span class="kw">let </span>ep = Endpoint::builder()
+<a href=#2293 id=2293 data-nosnippet>2293</a>        </span><span class="kw">let </span>ep = Endpoint::empty_builder()
 <a href=#2294 id=2294 data-nosnippet>2294</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
 <a href=#2295 id=2295 data-nosnippet>2295</a>            .secret_key(server_secret_key)
 <a href=#2296 id=2296 data-nosnippet>2296</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
@@ -2339,7 +2339,7 @@
 <a href=#2339 id=2339 data-nosnippet>2339</a>            <span class="kw">let </span>client_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#2340 id=2340 data-nosnippet>2340</a>            <span class="kw">async </span>{
 <a href=#2341 id=2341 data-nosnippet>2341</a>                <span class="macro">info!</span>(<span class="string">"client binding"</span>);
-<a href=#2342 id=2342 data-nosnippet>2342</a>                <span class="kw">let </span>ep = Endpoint::builder()
+<a href=#2342 id=2342 data-nosnippet>2342</a>                <span class="kw">let </span>ep = Endpoint::empty_builder()
 <a href=#2343 id=2343 data-nosnippet>2343</a>                    .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2344 id=2344 data-nosnippet>2344</a>                    .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
 <a href=#2345 id=2345 data-nosnippet>2345</a>                    .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -2389,7 +2389,7 @@
 <a href=#2389 id=2389 data-nosnippet>2389</a>    #[traced_test]
 <a href=#2390 id=2390 data-nosnippet>2390</a>    </span><span class="kw">async fn </span>endpoint_send_relay() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2391 id=2391 data-nosnippet>2391</a>        <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2392 id=2392 data-nosnippet>2392</a>        <span class="kw">let </span>client = Endpoint::builder()
+<a href=#2392 id=2392 data-nosnippet>2392</a>        <span class="kw">let </span>client = Endpoint::empty_builder()
 <a href=#2393 id=2393 data-nosnippet>2393</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
 <a href=#2394 id=2394 data-nosnippet>2394</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#2395 id=2395 data-nosnippet>2395</a>            .bind()
@@ -2439,12 +2439,12 @@
 <a href=#2439 id=2439 data-nosnippet>2439</a>    <span class="attr">#[tokio::test]
 <a href=#2440 id=2440 data-nosnippet>2440</a>    #[traced_test]
 <a href=#2441 id=2441 data-nosnippet>2441</a>    </span><span class="kw">async fn </span>endpoint_bidi_send_recv() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2442 id=2442 data-nosnippet>2442</a>        <span class="kw">let </span>ep1 = Endpoint::builder()
+<a href=#2442 id=2442 data-nosnippet>2442</a>        <span class="kw">let </span>ep1 = Endpoint::empty_builder()
 <a href=#2443 id=2443 data-nosnippet>2443</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2444 id=2444 data-nosnippet>2444</a>            .relay_mode(RelayMode::Disabled);
 <a href=#2445 id=2445 data-nosnippet>2445</a>
 <a href=#2446 id=2446 data-nosnippet>2446</a>        <span class="kw">let </span>ep1 = ep1.bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2447 id=2447 data-nosnippet>2447</a>        <span class="kw">let </span>ep2 = Endpoint::builder()
+<a href=#2447 id=2447 data-nosnippet>2447</a>        <span class="kw">let </span>ep2 = Endpoint::empty_builder()
 <a href=#2448 id=2448 data-nosnippet>2448</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2449 id=2449 data-nosnippet>2449</a>            .relay_mode(RelayMode::Disabled);
 <a href=#2450 id=2450 data-nosnippet>2450</a>
@@ -2537,14 +2537,14 @@
 <a href=#2537 id=2537 data-nosnippet>2537</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
 <a href=#2538 id=2538 data-nosnippet>2538</a>        <span class="kw">let </span>ep1_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#2539 id=2539 data-nosnippet>2539</a>        <span class="kw">let </span>ep2_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#2540 id=2540 data-nosnippet>2540</a>        <span class="kw">let </span>ep1 = Endpoint::builder()
+<a href=#2540 id=2540 data-nosnippet>2540</a>        <span class="kw">let </span>ep1 = Endpoint::empty_builder()
 <a href=#2541 id=2541 data-nosnippet>2541</a>            .secret_key(ep1_secret_key)
 <a href=#2542 id=2542 data-nosnippet>2542</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
 <a href=#2543 id=2543 data-nosnippet>2543</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2544 id=2544 data-nosnippet>2544</a>            .relay_mode(RelayMode::Custom(relay_map.clone()))
 <a href=#2545 id=2545 data-nosnippet>2545</a>            .bind()
 <a href=#2546 id=2546 data-nosnippet>2546</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2547 id=2547 data-nosnippet>2547</a>        <span class="kw">let </span>ep2 = Endpoint::builder()
+<a href=#2547 id=2547 data-nosnippet>2547</a>        <span class="kw">let </span>ep2 = Endpoint::empty_builder()
 <a href=#2548 id=2548 data-nosnippet>2548</a>            .secret_key(ep2_secret_key)
 <a href=#2549 id=2549 data-nosnippet>2549</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
 <a href=#2550 id=2550 data-nosnippet>2550</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
@@ -2619,7 +2619,7 @@
 <a href=#2619 id=2619 data-nosnippet>2619</a>    </span><span class="kw">async fn </span>test_direct_addresses_no_qad_relay() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2620 id=2620 data-nosnippet>2620</a>        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="bool-val">false</span>).<span class="kw">await</span>.unwrap();
 <a href=#2621 id=2621 data-nosnippet>2621</a>
-<a href=#2622 id=2622 data-nosnippet>2622</a>        <span class="kw">let </span>ep = Endpoint::builder()
+<a href=#2622 id=2622 data-nosnippet>2622</a>        <span class="kw">let </span>ep = Endpoint::empty_builder()
 <a href=#2623 id=2623 data-nosnippet>2623</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2624 id=2624 data-nosnippet>2624</a>            .relay_mode(RelayMode::Custom(relay_map))
 <a href=#2625 id=2625 data-nosnippet>2625</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
@@ -2632,7 +2632,7 @@
 <a href=#2632 id=2632 data-nosnippet>2632</a>    }
 <a href=#2633 id=2633 data-nosnippet>2633</a>
 <a href=#2634 id=2634 data-nosnippet>2634</a>    <span class="kw">async fn </span>spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
-<a href=#2635 id=2635 data-nosnippet>2635</a>        <span class="kw">let </span>server = Endpoint::builder()
+<a href=#2635 id=2635 data-nosnippet>2635</a>        <span class="kw">let </span>server = Endpoint::empty_builder()
 <a href=#2636 id=2636 data-nosnippet>2636</a>            .secret_key(secret_key)
 <a href=#2637 id=2637 data-nosnippet>2637</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2638 id=2638 data-nosnippet>2638</a>            .relay_mode(RelayMode::Disabled)
@@ -2773,7 +2773,7 @@
 <a href=#2773 id=2773 data-nosnippet>2773</a>    #[traced_test]
 <a href=#2774 id=2774 data-nosnippet>2774</a>    </span><span class="kw">async fn </span>test_0rtt() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2775 id=2775 data-nosnippet>2775</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-<a href=#2776 id=2776 data-nosnippet>2776</a>        <span class="kw">let </span>client = Endpoint::builder()
+<a href=#2776 id=2776 data-nosnippet>2776</a>        <span class="kw">let </span>client = Endpoint::empty_builder()
 <a href=#2777 id=2777 data-nosnippet>2777</a>            .relay_mode(RelayMode::Disabled)
 <a href=#2778 id=2778 data-nosnippet>2778</a>            .bind()
 <a href=#2779 id=2779 data-nosnippet>2779</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2796,7 +2796,7 @@
 <a href=#2796 id=2796 data-nosnippet>2796</a>    #[traced_test]
 <a href=#2797 id=2797 data-nosnippet>2797</a>    </span><span class="kw">async fn </span>test_0rtt_non_consecutive() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2798 id=2798 data-nosnippet>2798</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-<a href=#2799 id=2799 data-nosnippet>2799</a>        <span class="kw">let </span>client = Endpoint::builder()
+<a href=#2799 id=2799 data-nosnippet>2799</a>        <span class="kw">let </span>client = Endpoint::empty_builder()
 <a href=#2800 id=2800 data-nosnippet>2800</a>            .relay_mode(RelayMode::Disabled)
 <a href=#2801 id=2801 data-nosnippet>2801</a>            .bind()
 <a href=#2802 id=2802 data-nosnippet>2802</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2824,7 +2824,7 @@
 <a href=#2824 id=2824 data-nosnippet>2824</a>    #[traced_test]
 <a href=#2825 id=2825 data-nosnippet>2825</a>    </span><span class="kw">async fn </span>test_0rtt_after_server_restart() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2826 id=2826 data-nosnippet>2826</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-<a href=#2827 id=2827 data-nosnippet>2827</a>        <span class="kw">let </span>client = Endpoint::builder()
+<a href=#2827 id=2827 data-nosnippet>2827</a>        <span class="kw">let </span>client = Endpoint::empty_builder()
 <a href=#2828 id=2828 data-nosnippet>2828</a>            .relay_mode(RelayMode::Disabled)
 <a href=#2829 id=2829 data-nosnippet>2829</a>            .bind()
 <a href=#2830 id=2830 data-nosnippet>2830</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2853,7 +2853,7 @@
 <a href=#2853 id=2853 data-nosnippet>2853</a>    #[traced_test]
 <a href=#2854 id=2854 data-nosnippet>2854</a>    </span><span class="kw">async fn </span>graceful_close() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2855 id=2855 data-nosnippet>2855</a>        <span class="kw">let </span>client = Endpoint::bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2856 id=2856 data-nosnippet>2856</a>        <span class="kw">let </span>server = Endpoint::builder()
+<a href=#2856 id=2856 data-nosnippet>2856</a>        <span class="kw">let </span>server = Endpoint::empty_builder()
 <a href=#2857 id=2857 data-nosnippet>2857</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#2858 id=2858 data-nosnippet>2858</a>            .bind()
 <a href=#2859 id=2859 data-nosnippet>2859</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2895,13 +2895,13 @@
 <a href=#2895 id=2895 data-nosnippet>2895</a>        <span class="kw">use </span>iroh_metrics::{MetricsSource, Registry};
 <a href=#2896 id=2896 data-nosnippet>2896</a>
 <a href=#2897 id=2897 data-nosnippet>2897</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
-<a href=#2898 id=2898 data-nosnippet>2898</a>        <span class="kw">let </span>client = Endpoint::builder()
+<a href=#2898 id=2898 data-nosnippet>2898</a>        <span class="kw">let </span>client = Endpoint::empty_builder()
 <a href=#2899 id=2899 data-nosnippet>2899</a>            .secret_key(secret_key)
 <a href=#2900 id=2900 data-nosnippet>2900</a>            .relay_mode(RelayMode::Disabled)
 <a href=#2901 id=2901 data-nosnippet>2901</a>            .bind()
 <a href=#2902 id=2902 data-nosnippet>2902</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2903 id=2903 data-nosnippet>2903</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
-<a href=#2904 id=2904 data-nosnippet>2904</a>        <span class="kw">let </span>server = Endpoint::builder()
+<a href=#2904 id=2904 data-nosnippet>2904</a>        <span class="kw">let </span>server = Endpoint::empty_builder()
 <a href=#2905 id=2905 data-nosnippet>2905</a>            .secret_key(secret_key)
 <a href=#2906 id=2906 data-nosnippet>2906</a>            .relay_mode(RelayMode::Disabled)
 <a href=#2907 id=2907 data-nosnippet>2907</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
@@ -2959,11 +2959,11 @@
 <a href=#2959 id=2959 data-nosnippet>2959</a>        primary_connect_alpn: <span class="kw-2">&amp;</span>[u8],
 <a href=#2960 id=2960 data-nosnippet>2960</a>        secondary_connect_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
 <a href=#2961 id=2961 data-nosnippet>2961</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
-<a href=#2962 id=2962 data-nosnippet>2962</a>        <span class="kw">let </span>client = Endpoint::builder()
+<a href=#2962 id=2962 data-nosnippet>2962</a>        <span class="kw">let </span>client = Endpoint::empty_builder()
 <a href=#2963 id=2963 data-nosnippet>2963</a>            .relay_mode(RelayMode::Disabled)
 <a href=#2964 id=2964 data-nosnippet>2964</a>            .bind()
 <a href=#2965 id=2965 data-nosnippet>2965</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2966 id=2966 data-nosnippet>2966</a>        <span class="kw">let </span>server = Endpoint::builder()
+<a href=#2966 id=2966 data-nosnippet>2966</a>        <span class="kw">let </span>server = Endpoint::empty_builder()
 <a href=#2967 id=2967 data-nosnippet>2967</a>            .relay_mode(RelayMode::Disabled)
 <a href=#2968 id=2968 data-nosnippet>2968</a>            .alpns(accept_alpns)
 <a href=#2969 id=2969 data-nosnippet>2969</a>            .bind()
@@ -3053,7 +3053,7 @@
 <a href=#3053 id=3053 data-nosnippet>3053</a>    <span class="attr">#[tokio::test]
 <a href=#3054 id=3054 data-nosnippet>3054</a>    #[traced_test]
 <a href=#3055 id=3055 data-nosnippet>3055</a>    </span><span class="kw">async fn </span>watch_net_report() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#3056 id=3056 data-nosnippet>3056</a>        <span class="kw">let </span>endpoint = Endpoint::builder()
+<a href=#3056 id=3056 data-nosnippet>3056</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder()
 <a href=#3057 id=3057 data-nosnippet>3057</a>            .relay_mode(RelayMode::Staging)
 <a href=#3058 id=3058 data-nosnippet>3058</a>            .bind()
 <a href=#3059 id=3059 data-nosnippet>3059</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -3087,7 +3087,7 @@
 <a href=#3087 id=3087 data-nosnippet>3087</a>        }
 <a href=#3088 id=3088 data-nosnippet>3088</a>
 <a href=#3089 id=3089 data-nosnippet>3089</a>        <span class="kw">async fn </span>noop_server() -&gt; <span class="prelude-ty">Result</span>&lt;(Router, NodeAddr)&gt; {
-<a href=#3090 id=3090 data-nosnippet>3090</a>            <span class="kw">let </span>endpoint = Endpoint::builder()
+<a href=#3090 id=3090 data-nosnippet>3090</a>            <span class="kw">let </span>endpoint = Endpoint::empty_builder()
 <a href=#3091 id=3091 data-nosnippet>3091</a>                .relay_mode(RelayMode::Disabled)
 <a href=#3092 id=3092 data-nosnippet>3092</a>                .bind()
 <a href=#3093 id=3093 data-nosnippet>3093</a>                .<span class="kw">await
@@ -3112,7 +3112,7 @@
 <a href=#3112 id=3112 data-nosnippet>3112</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 <a href=#3113 id=3113 data-nosnippet>3113</a>        <span class="kw">let </span>ids = addrs.iter().map(|addr| addr.node_id).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
 <a href=#3114 id=3114 data-nosnippet>3114</a>        <span class="kw">let </span>discovery = StaticProvider::from_node_info(addrs);
-<a href=#3115 id=3115 data-nosnippet>3115</a>        <span class="kw">let </span>endpoint = Endpoint::builder()
+<a href=#3115 id=3115 data-nosnippet>3115</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder()
 <a href=#3116 id=3116 data-nosnippet>3116</a>            .relay_mode(RelayMode::Disabled)
 <a href=#3117 id=3117 data-nosnippet>3117</a>            .discovery(discovery)
 <a href=#3118 id=3118 data-nosnippet>3118</a>            .bind()
