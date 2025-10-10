@@ -1878,6 +1878,9 @@ impl Actor {
 
         let mut net_report_watcher = self.msock.net_report.watch();
 
+        // ensure we are doing an initial publish of our addresses
+        self.msock.publish_my_addr();
+
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
