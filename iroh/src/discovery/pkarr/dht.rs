@@ -18,9 +18,9 @@ use pkarr::{Client as PkarrClient, SignedPacket};
 use url::Url;
 
 use crate::{
+    Endpoint,
     discovery::{
-        Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem, IntoDiscovery,
-        IntoDiscoveryError, NodeData,
+        Discovery, DiscoveryError, DiscoveryItem, IntoDiscovery, IntoDiscoveryError, NodeData,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
     node_info::NodeInfo,
@@ -241,11 +241,8 @@ impl Builder {
 }
 
 impl IntoDiscovery for Builder {
-    fn into_discovery(
-        self,
-        context: &DiscoveryContext,
-    ) -> Result<impl Discovery, IntoDiscoveryError> {
-        self.secret_key(context.secret_key().clone()).build()
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+        self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 
@@ -343,7 +340,7 @@ mod tests {
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_discovery_smoke() -> Result {
-        let ep = Endpoint::builder().bind().await?;
+        let ep = Endpoint::bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;
         let client = pkarr::Client::builder()

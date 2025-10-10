@@ -216,7 +216,10 @@ impl NodeMap {
             .lock()
             .expect("poisoned")
             .get(NodeStateKey::NodeId(node_key))
-            .map(|ep| *ep.quic_mapped_addr())
+            .map(|ep| {
+                dbg!(ep);
+                *ep.quic_mapped_addr()
+            })
     }
 
     /// Insert a received ping into the node map, and return whether a ping with this tx_id was already

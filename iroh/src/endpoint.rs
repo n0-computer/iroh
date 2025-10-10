@@ -34,18 +34,20 @@ use url::Url;
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
 #[cfg(not(wasm_browser))]
-use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
+use crate::dns::DnsResolver;
 use crate::{
     discovery::{
         ConcurrentDiscovery, DiscoveryError, DiscoveryTask, DynIntoDiscovery, IntoDiscovery,
-        UserData, pkarr::PkarrPublisher,
+        UserData,
     },
+    endpoint::presets::Preset,
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
+pub mod presets;
 mod rtt_actor;
 
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
@@ -117,13 +119,30 @@ pub struct Builder {
     max_tls_tickets: usize,
 }
 
-impl Default for Builder {
-    fn default() -> Self {
+impl Builder {
+    // The ordering of public methods is reflected directly in the documentation.  This is
+    // roughly ordered by what is most commonly needed by users.
+
+    /// Creates a new [`Builder`] using the given [`Preset`].
+    ///
+    /// See [`presets`] for more.
+    pub fn new<P: Preset>(preset: P) -> Self {
+        Self::empty().preset(preset)
+    }
+
+    /// Applies the given [`Preset`].
+    pub fn preset<P: Preset>(mut self, preset: P) -> Self {
+        self = preset.apply(self);
+        self
+    }
+
+    /// Creates an empty builder, including
+    pub fn empty() -> Self {
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
         Self {
             secret_key: Default::default(),
-            relay_mode: default_relay_mode(),
+            relay_mode: RelayMode::Disabled,
             alpn_protocols: Default::default(),
             transport_config,
             keylog: Default::default(),
@@ -141,11 +160,6 @@ impl Default for Builder {
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
         }
     }
-}
-
-impl Builder {
-    // The ordering of public methods is reflected directly in the documentation.  This is
-    // roughly ordered by what is most commonly needed by users.
 
     // # The final constructor that everyone needs.
 
@@ -173,7 +187,6 @@ impl Builder {
             addr_v6: self.addr_v6,
             secret_key,
             relay_map,
-            discovery: self.discovery,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
@@ -186,7 +199,24 @@ impl Builder {
             metrics,
         };
 
-        Endpoint::bind(static_config, msock_opts).await
+        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
+        trace!("created magicsock");
+        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+
+        let metrics = msock.metrics.magicsock.clone();
+        let ep = Endpoint {
+            msock,
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
+            static_config: Arc::new(static_config),
+        };
+
+        // Add discovery mechanisms
+        for create_service in self.discovery {
+            let service = create_service.into_discovery(&ep)?;
+            ep.discovery().add_boxed(service);
+        }
+
+        Ok(ep)
     }
 
     // # The very common methods everyone basically needs.
@@ -260,24 +290,13 @@ impl Builder {
     }
 
     /// Removes all discovery services from the builder.
-    pub fn clear_discovery(mut self) -> Self {
-        self.discovery.clear();
-        self
-    }
-
-    /// Optionally sets a discovery mechanism for this endpoint.
-    ///
-    /// If you want to combine multiple discovery services, you can use
-    /// [`Builder::add_discovery`] instead. This will internally create a
-    /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
+    pub fn clear_discovery(mut self) -> Self {
         self.discovery.clear();
-        self.discovery.push(Box::new(discovery));
         self
     }
 
@@ -297,62 +316,8 @@ impl Builder {
     /// To clear all discovery services, use [`Builder::clear_discovery`].
     ///
     /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn add_discovery(mut self, discovery: impl IntoDiscovery) -> Self {
+    pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
         self.discovery.push(Box::new(discovery));
-        self
-    }
-
-    /// Configures the endpoint to use the default n0 DNS discovery service.
-    ///
-    /// The default discovery service publishes to and resolves from the
-    /// n0.computer dns server `iroh.link`.
-    ///
-    /// This is equivalent to adding both a [`crate::discovery::pkarr::PkarrPublisher`]
-    /// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
-    /// n0.computer dns server.
-    ///
-    /// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
-    /// When in tests, or when the `test-utils` feature is enabled, this will use the
-    /// [`N0_DNS_PKARR_RELAY_STAGING`].
-    ///
-    /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
-    /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
-    pub fn discovery_n0(mut self) -> Self {
-        self = self.add_discovery(PkarrPublisher::n0_dns());
-        // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
-        #[cfg(wasm_browser)]
-        {
-            self = self.add_discovery(PkarrResolver::n0_dns());
-        }
-        // Resolve using DNS queries outside browsers.
-        #[cfg(not(wasm_browser))]
-        {
-            self = self.add_discovery(DnsDiscovery::n0_dns());
-        }
-        self
-    }
-
-    #[cfg(feature = "discovery-pkarr-dht")]
-    /// Configures the endpoint to also use the mainline DHT with default settings.
-    ///
-    /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
-    /// with default settings. Note that DhtDiscovery has various more advanced
-    /// configuration options. If you need any of those, you should manually
-    /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
-    pub fn discovery_dht(mut self) -> Self {
-        self = self.add_discovery(crate::discovery::pkarr::dht::DhtDiscovery::builder());
-        self
-    }
-
-    #[cfg(feature = "discovery-local-network")]
-    /// Configures the endpoint to also use local network discovery.
-    ///
-    /// This is equivalent to adding a [`crate::discovery::mdns::MdnsDiscovery`]
-    /// with default settings. Note that MdnsDiscovery has various more advanced
-    /// configuration options. If you need any of those, you should manually
-    /// create a MdnsDiscovery and add it with [`Builder::add_discovery`].
-    pub fn discovery_local_network(mut self) -> Self {
-        self = self.add_discovery(crate::discovery::mdns::MdnsDiscovery::builder());
         self
     }
 
@@ -569,6 +534,10 @@ pub enum BindError {
     MagicSpawn {
         source: magicsock::CreateHandleError,
     },
+    #[snafu(transparent)]
+    Discovery {
+        source: crate::discovery::IntoDiscoveryError,
+    },
 }
 
 #[allow(missing_docs)]
@@ -597,30 +566,24 @@ impl Endpoint {
     // # Methods relating to construction.
 
     /// Returns the builder for an [`Endpoint`], with a production configuration.
+    ///
+    /// This uses the [`presets::N0`] as the configuration.
     pub fn builder() -> Builder {
-        Builder::default()
+        Builder::new(presets::N0)
     }
 
-    /// Creates a quinn endpoint backed by a magicsock.
+    /// Returns the builder for an [`Endpoint`], with an empty configuration.
     ///
-    /// This is for internal use, the public interface is the [`Builder`] obtained from
-    /// [Self::builder]. See the methods on the builder for documentation of the parameters.
-    #[instrument("ep", skip_all, fields(me = %static_config.tls_config.secret_key.public().fmt_short()))]
-    async fn bind(
-        static_config: StaticConfig,
-        msock_opts: magicsock::Options,
-    ) -> Result<Self, BindError> {
-        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
-        trace!("created magicsock");
-        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+    /// See [`Builder::empty`] for details.
+    pub fn empty_builder() -> Builder {
+        Builder::empty()
+    }
 
-        let metrics = msock.metrics.magicsock.clone();
-        let ep = Self {
-            msock,
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
-            static_config: Arc::new(static_config),
-        };
-        Ok(ep)
+    /// Constructs a default [`Endpoint`] and binds it immediately.
+    ///
+    /// Uses the [`presets::N0`] as configuration.
+    pub async fn bind() -> Result<Self, BindError> {
+        Self::builder().bind().await
     }
 
     /// Sets the list of accepted ALPN protocols.
@@ -1001,7 +964,7 @@ impl Endpoint {
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let ep = Endpoint::builder().bind().await.unwrap();
+    /// let ep = Endpoint::bind().await.unwrap();
     /// let _report = ep.net_report().initialized().await;
     /// # });
     /// ```
@@ -1085,7 +1048,7 @@ impl Endpoint {
     /// # use std::collections::BTreeMap;
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let endpoint = Endpoint::bind().await?;
     /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
     /// # }
@@ -1103,7 +1066,7 @@ impl Endpoint {
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let endpoint = Endpoint::bind().await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
     ///     .iter()
@@ -1126,7 +1089,7 @@ impl Endpoint {
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let endpoint = Endpoint::bind().await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
     /// let s = registry.encode_openmetrics_to_string()?;
@@ -1163,7 +1126,7 @@ impl Endpoint {
     /// });
     ///
     /// // Spawn an endpoint and add the metrics to the registry.
-    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let endpoint = Endpoint::bind().await?;
     /// registry.write().unwrap().register_all(endpoint.metrics());
     ///
     /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
@@ -2198,7 +2161,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_connect_self() -> Result {
-        let ep = Endpoint::builder()
+        let ep = Endpoint::empty_builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await
@@ -2225,7 +2188,7 @@ mod tests {
         let server_peer_id = server_secret_key.public();
 
         // Wait for the endpoint to be started to make sure it's up before clients try to connect
-        let ep = Endpoint::builder()
+        let ep = Endpoint::empty_builder()
             .secret_key(server_secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -2265,7 +2228,7 @@ mod tests {
 
         let client = tokio::spawn(
             async move {
-                let ep = Endpoint::builder()
+                let ep = Endpoint::empty_builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .relay_mode(RelayMode::Custom(relay_map))
                     .insecure_skip_relay_cert_verify(true)
@@ -2325,7 +2288,7 @@ mod tests {
         let server_node_id = server_secret_key.public();
 
         // Make sure the server is bound before having clients connect to it:
-        let ep = Endpoint::builder()
+        let ep = Endpoint::empty_builder()
             .insecure_skip_relay_cert_verify(true)
             .secret_key(server_secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2374,7 +2337,7 @@ mod tests {
             let client_secret_key = SecretKey::generate(&mut rng);
             async {
                 info!("client binding");
-                let ep = Endpoint::builder()
+                let ep = Endpoint::empty_builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .insecure_skip_relay_cert_verify(true)
                     .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -2424,7 +2387,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_send_relay() -> Result {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
-        let client = Endpoint::builder()
+        let client = Endpoint::empty_builder()
             .insecure_skip_relay_cert_verify(true)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
@@ -2474,12 +2437,12 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_bidi_send_recv() -> Result {
-        let ep1 = Endpoint::builder()
+        let ep1 = Endpoint::empty_builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
 
         let ep1 = ep1.bind().await?;
-        let ep2 = Endpoint::builder()
+        let ep2 = Endpoint::empty_builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
 
@@ -2572,14 +2535,14 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let ep1_secret_key = SecretKey::generate(&mut rng);
         let ep2_secret_key = SecretKey::generate(&mut rng);
-        let ep1 = Endpoint::builder()
+        let ep1 = Endpoint::empty_builder()
             .secret_key(ep1_secret_key)
             .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
             .await?;
-        let ep2 = Endpoint::builder()
+        let ep2 = Endpoint::empty_builder()
             .secret_key(ep2_secret_key)
             .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2654,7 +2617,7 @@ mod tests {
     async fn test_direct_addresses_no_qad_relay() -> Result {
         let (relay_map, _, _guard) = run_relay_server_with(false).await.unwrap();
 
-        let ep = Endpoint::builder()
+        let ep = Endpoint::empty_builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(true)
@@ -2667,7 +2630,7 @@ mod tests {
     }
 
     async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
-        let server = Endpoint::builder()
+        let server = Endpoint::empty_builder()
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
@@ -2808,7 +2771,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::builder()
+        let client = Endpoint::empty_builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
@@ -2831,7 +2794,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt_non_consecutive() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::builder()
+        let client = Endpoint::empty_builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
@@ -2859,7 +2822,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::builder()
+        let client = Endpoint::empty_builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
@@ -2887,8 +2850,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn graceful_close() -> Result {
-        let client = Endpoint::builder().bind().await?;
-        let server = Endpoint::builder()
+        let client = Endpoint::bind().await?;
+        let server = Endpoint::empty_builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2930,13 +2893,13 @@ mod tests {
         use iroh_metrics::{MetricsSource, Registry};
 
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
-        let client = Endpoint::builder()
+        let client = Endpoint::empty_builder()
             .secret_key(secret_key)
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let server = Endpoint::builder()
+        let server = Endpoint::empty_builder()
             .secret_key(secret_key)
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2994,11 +2957,11 @@ mod tests {
         primary_connect_alpn: &[u8],
         secondary_connect_alpns: Vec<Vec<u8>>,
     ) -> Result<Option<Vec<u8>>> {
-        let client = Endpoint::builder()
+        let client = Endpoint::empty_builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        let server = Endpoint::builder()
+        let server = Endpoint::empty_builder()
             .relay_mode(RelayMode::Disabled)
             .alpns(accept_alpns)
             .bind()
@@ -3088,7 +3051,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn watch_net_report() -> Result {
-        let endpoint = Endpoint::builder()
+        let endpoint = Endpoint::empty_builder()
             .relay_mode(RelayMode::Staging)
             .bind()
             .await?;
@@ -3122,7 +3085,7 @@ mod tests {
         }
 
         async fn noop_server() -> Result<(Router, NodeAddr)> {
-            let endpoint = Endpoint::builder()
+            let endpoint = Endpoint::empty_builder()
                 .relay_mode(RelayMode::Disabled)
                 .bind()
                 .await
@@ -3147,7 +3110,7 @@ mod tests {
             .collect::<Vec<_>>();
         let ids = addrs.iter().map(|addr| addr.node_id).collect::<Vec<_>>();
         let discovery = StaticProvider::from_node_info(addrs);
-        let endpoint = Endpoint::builder()
+        let endpoint = Endpoint::empty_builder()
             .relay_mode(RelayMode::Disabled)
             .discovery(discovery)
             .bind()
