@@ -245,10 +245,10 @@ impl PkarrPublisher {
     /// time-to-live value for the published packets, and it will republish discovery information
     /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
     ///
-    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`add_discovery`].
+    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`discovery`].
     /// It will then use the endpoint's secret key to sign published packets.
     ///
-    /// [`add_discovery`]:  crate::endpoint::Builder::add_discovery
+    /// [`discovery`]:  crate::endpoint::Builder::discovery
     /// [pkarr]: https://pkarr.org
     pub fn builder(pkarr_relay: Url) -> PkarrPublisherBuilder {
         PkarrPublisherBuilder::new(pkarr_relay)

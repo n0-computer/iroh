@@ -17,7 +17,7 @@
 //! The [`Discovery`] trait is used to define node discovery.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
 //! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
-//! The [`Builder::add_discovery`] method is used to add a discovery mechanism to an
+//! The [`Builder::discovery`] method is used to add a discovery mechanism to an
 //! [`Endpoint`].
 //!
 //! Some generally useful discovery implementations are provided:
@@ -39,18 +39,18 @@
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
 //!
-//! To use multiple discovery systems simultaneously you can call [`Builder::add_discovery`].
+//! To use multiple discovery systems simultaneously you can call [`Builder::discovery`].
 //! This will use [`ConcurrentDiscovery`] under the hood, which performs lookups to all
 //! discovery systems at the same time.
 //!
-//! [`Builder::add_discovery`] takes any type that implements [`IntoDiscovery`]. You can
+//! [`Builder::discovery`] takes any type that implements [`IntoDiscovery`]. You can
 //! implement that trait on a builder struct if your discovery service needs information
 //! from the endpoint it is mounted on. During endpoint construction, your discovery service
 //! is built by calling [`IntoDiscovery::into_discovery`], passing a [`DiscoveryContext`] to your
 //! builder. The [`DiscoveryContext`] gives access to the endpoint's secret key and DNS resolver.
 //!
 //! If your discovery service does not need any information from its endpoint, you can
-//! pass the discovery service directly to [`Builder::add_discovery`]: All types that
+//! pass the discovery service directly to [`Builder::discovery`]: All types that
 //! implement [`Discovery`] also have a blanket implementation of [`IntoDiscovery`].
 //!
 //! # Examples
@@ -66,8 +66,8 @@
 //!
 //! # async fn wrapper() -> n0_snafu::Result<()> {
 //! let ep = Endpoint::builder()
-//!     .add_discovery(PkarrPublisher::n0_dns())
-//!     .add_discovery(DnsDiscovery::n0_dns())
+//!     .discovery(PkarrPublisher::n0_dns())
+//!     .discovery(DnsDiscovery::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -86,9 +86,9 @@
 //! #
 //! # async fn wrapper() -> n0_snafu::Result<()> {
 //! let ep = Endpoint::builder()
-//!     .add_discovery(PkarrPublisher::n0_dns())
-//!     .add_discovery(DnsDiscovery::n0_dns())
-//!     .add_discovery(MdnsDiscovery::builder())
+//!     .discovery(PkarrPublisher::n0_dns())
+//!     .discovery(DnsDiscovery::n0_dns())
+//!     .discovery(MdnsDiscovery::builder())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -98,7 +98,7 @@
 //!
 //! [`NodeAddr`]: iroh_base::NodeAddr
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
+//! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
@@ -138,7 +138,7 @@ pub mod static_provider;
 /// Trait for structs that can be converted into [`Discovery`].
 ///
 /// This trait is implemented on builders for discovery services. Any type that implements this
-/// trait can be added as a discovery service in [`Builder::add_discovery`].
+/// trait can be added as a discovery service in [`Builder::discovery`].
 ///
 /// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
 ///
@@ -146,7 +146,7 @@ pub mod static_provider;
 /// builder, while providing the discovery services access to information about the endpoint
 /// creation via the [`DiscoveryContext`] parameter to [`IntoDiscovery::into_discovery`].
 ///
-/// [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
+/// [`Builder::discovery`]: crate::endpoint::Builder::discovery
 pub trait IntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
     /// Turns this discovery builder into a ready-to-use discovery service.
     ///

@@ -48,7 +48,7 @@ impl Preset for N0 {
         {
             use crate::discovery::pkarr::PkarrResolver;
 
-            builder = builder.add_discovery(PkarrResolver::n0_dns());
+            builder = builder.discovery(PkarrResolver::n0_dns());
         }
         // Resolve using DNS queries outside browsers.
         #[cfg(not(wasm_browser))]
