@@ -3,7 +3,7 @@
 //! # Example
 //!
 //! ```no_run
-//! # async fn main() -> n0_snafu::Result {
+//! # async fn wrapper() -> n0_snafu::Result {
 //! use iroh::{Endpoint, Watcher, endpoint::presets};
 //!
 //! let endpoint = Endpoint::bind_preset(presets::N0).await?;

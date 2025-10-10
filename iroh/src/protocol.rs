@@ -3,14 +3,17 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use iroh::{endpoint::{Connection, BindError}, protocol::{AcceptError, ProtocolHandler, Router}, Endpoint, NodeAddr};
+//! # use iroh::{
+//! #     endpoint::{Connection, BindError, presets},
+//! #     protocol::{AcceptError, ProtocolHandler, Router},
+//! #     Endpoint,
+//! #     NodeAddr
+//! # };
 //! #
 //! # async fn test_compile() -> Result<(), BindError> {
-//! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+//! let endpoint = Endpoint::bind_preset(presets::N0).await?;
 //!
-//! let router = Router::builder(endpoint)
-//!     .accept(b"/my/alpn", Echo)
-//!     .spawn();
+//! let router = Router::builder(endpoint).accept(b"/my/alpn", Echo).spawn();
 //! # Ok(())
 //! # }
 //!
@@ -68,10 +71,10 @@ use crate::{
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use n0_snafu::ResultExt;
-/// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
+/// # use iroh::{endpoint::{Connecting, presets}, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
 /// # async fn test_compile() -> n0_snafu::Result<()> {
-/// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+/// let endpoint = Endpoint::bind_preset(presets::N0).await?;
 ///
 /// let router = Router::builder(endpoint)
 ///     // .accept(&ALPN, <something>)
