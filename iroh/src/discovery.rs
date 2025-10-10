@@ -1082,7 +1082,7 @@ mod test_dns_pkarr {
         dns_pkarr_server: &DnsPkarrServer,
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate(rng);
-        let ep = Endpoint::builder()
+        let ep = Endpoint::empty_builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .secret_key(secret_key.clone())
