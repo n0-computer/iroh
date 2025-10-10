@@ -46,7 +46,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// let discovery = StaticProvider::new();
 ///
 /// let _ep = Endpoint::builder()
-///     .add_discovery(discovery.clone())
+///     .discovery(discovery.clone())
 ///     .bind()
 ///     .await?;
 ///
@@ -133,7 +133,7 @@ impl StaticProvider {
     /// // create a StaticProvider from the list of addrs.
     /// let discovery = StaticProvider::from_endpoint_info(addrs);
     /// // create an endpoint with the discovery
-    /// let endpoint = Endpoint::builder().add_discovery(discovery).bind().await?;
+    /// let endpoint = Endpoint::builder().discovery(discovery).bind().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -245,7 +245,7 @@ mod tests {
         let discovery = StaticProvider::new();
 
         let _ep = Endpoint::builder()
-            .add_discovery(discovery.clone())
+            .discovery(discovery.clone())
             .bind()
             .await?;
 

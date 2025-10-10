@@ -17,7 +17,7 @@
 //! The [`Discovery`] trait is used to define endpoint discovery.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
 //! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
-//! The [`Builder::add_discovery`] method is used to add a discovery mechanism to an
+//! The [`Builder::discovery`] method is used to add a discovery mechanism to an
 //! [`Endpoint`].
 //!
 //! Some generally useful discovery implementations are provided:
@@ -39,18 +39,18 @@
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
 //!
-//! To use multiple discovery systems simultaneously you can call [`Builder::add_discovery`].
+//! To use multiple discovery systems simultaneously you can call [`Builder::discovery`].
 //! This will use [`ConcurrentDiscovery`] under the hood, which performs lookups to all
 //! discovery systems at the same time.
 //!
-//! [`Builder::add_discovery`] takes any type that implements [`IntoDiscovery`]. You can
+//! [`Builder::discovery`] takes any type that implements [`IntoDiscovery`]. You can
 //! implement that trait on a builder struct if your discovery service needs information
-//! from the endpoint it is mounted on. During endpoint construction, your discovery service
-//! is built by calling [`IntoDiscovery::into_discovery`], passing a [`DiscoveryContext`] to your
-//! builder. The [`DiscoveryContext`] gives access to the endpoint's secret key and DNS resolver.
+//! from the endpoint it is mounted on. After endpoint construction, your discovery service
+//! is built by calling [`IntoDiscovery::into_discovery`], passing the finished [`Endpoint`] to your
+//! builder.
 //!
 //! If your discovery service does not need any information from its endpoint, you can
-//! pass the discovery service directly to [`Builder::add_discovery`]: All types that
+//! pass the discovery service directly to [`Builder::discovery`]: All types that
 //! implement [`Discovery`] also have a blanket implementation of [`IntoDiscovery`].
 //!
 //! # Examples
@@ -65,9 +65,9 @@
 //! };
 //!
 //! # async fn wrapper() -> n0_snafu::Result<()> {
-//! let ep = Endpoint::builder()
-//!     .add_discovery(PkarrPublisher::n0_dns())
-//!     .add_discovery(DnsDiscovery::n0_dns())
+//! let ep = Endpoint::empty_builder()
+//!     .discovery(PkarrPublisher::n0_dns())
+//!     .discovery(DnsDiscovery::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -85,10 +85,10 @@
 //! # };
 //! #
 //! # async fn wrapper() -> n0_snafu::Result<()> {
-//! let ep = Endpoint::builder()
-//!     .add_discovery(PkarrPublisher::n0_dns())
-//!     .add_discovery(DnsDiscovery::n0_dns())
-//!     .add_discovery(MdnsDiscovery::builder())
+//! let ep = Endpoint::empty_builder()
+//!     .discovery(PkarrPublisher::n0_dns())
+//!     .discovery(DnsDiscovery::n0_dns())
+//!     .discovery(MdnsDiscovery::builder())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -98,7 +98,7 @@
 //!
 //! [`EndpointAddr`]: iroh_base::EndpointAddr
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
+//! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
@@ -122,10 +122,8 @@ use snafu::{IntoError, Snafu, ensure};
 use tokio::sync::oneshot;
 use tracing::{Instrument, debug, error_span, warn};
 
-#[cfg(not(wasm_browser))]
-use crate::dns::DnsResolver;
+use crate::Endpoint;
 pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData};
-use crate::{Endpoint, SecretKey};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
@@ -138,35 +136,25 @@ pub mod static_provider;
 /// Trait for structs that can be converted into [`Discovery`].
 ///
 /// This trait is implemented on builders for discovery services. Any type that implements this
-/// trait can be added as a discovery service in [`Builder::add_discovery`].
+/// trait can be added as a discovery service in [`Builder::discovery`].
 ///
 /// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
 ///
 /// Iroh uses this trait to allow configuring the set of discovery services on the endpoint
 /// builder, while providing the discovery services access to information about the endpoint
-/// creation via the [`DiscoveryContext`] parameter to [`IntoDiscovery::into_discovery`].
+/// to [`IntoDiscovery::into_discovery`].
 ///
-/// [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
+/// [`Builder::discovery`]: crate::endpoint::Builder::discovery
 pub trait IntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
     /// Turns this discovery builder into a ready-to-use discovery service.
     ///
-    /// The [`DiscoveryContext`] contains information about the [`Endpoint`] onto which this
-    /// discovery service is being added. It can be used by discovery services that need
-    /// a DNS resolver, or the endpoint's secret key to sign messages.
-    ///
     /// If an error is returned, building the endpoint will fail with this error.
-    fn into_discovery(
-        self,
-        context: &DiscoveryContext,
-    ) -> Result<impl Discovery, IntoDiscoveryError>;
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError>;
 }
 
 /// Blanket no-op impl of `IntoDiscovery` for `T: Discovery`.
 impl<T: Discovery> IntoDiscovery for T {
-    fn into_discovery(
-        self,
-        _context: &DiscoveryContext,
-    ) -> Result<impl Discovery, IntoDiscoveryError> {
+    fn into_discovery(self, _endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
         Ok(self)
     }
 }
@@ -176,43 +164,17 @@ pub(crate) trait DynIntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
     /// See [`IntoDiscovery::into_discovery`]
     fn into_discovery(
         self: Box<Self>,
-        context: &DiscoveryContext,
+        endpoint: &Endpoint,
     ) -> Result<Box<dyn Discovery>, IntoDiscoveryError>;
 }
 
 impl<T: IntoDiscovery> DynIntoDiscovery for T {
     fn into_discovery(
         self: Box<Self>,
-        context: &DiscoveryContext,
+        endpoint: &Endpoint,
     ) -> Result<Box<dyn Discovery>, IntoDiscoveryError> {
-        let disco: Box<dyn Discovery> = Box::new(IntoDiscovery::into_discovery(*self, context)?);
+        let disco: Box<dyn Discovery> = Box::new(IntoDiscovery::into_discovery(*self, endpoint)?);
         Ok(disco)
-    }
-}
-
-/// Context about the [`Endpoint`] for discovery services.
-#[derive(Debug)]
-pub struct DiscoveryContext<'a> {
-    #[cfg(not(wasm_browser))]
-    pub(crate) dns_resolver: &'a DnsResolver,
-    pub(crate) secret_key: &'a SecretKey,
-}
-
-impl DiscoveryContext<'_> {
-    /// Returns the [`EndpointId`] of the endpoint.
-    pub fn endpoint_id(&self) -> EndpointId {
-        self.secret_key.public()
-    }
-
-    /// Returns the [`SecretKey`] of the endpoint.
-    pub fn secret_key(&self) -> &SecretKey {
-        self.secret_key
-    }
-
-    /// Returns the [`DnsResolver`] used by the endpoint.
-    #[cfg(not(wasm_browser))]
-    pub fn dns_resolver(&self) -> &DnsResolver {
-        self.dns_resolver
     }
 }
 
@@ -482,7 +444,7 @@ impl ConcurrentDiscovery {
         self.services.read().expect("poisoned").is_empty()
     }
 
-    /// How many services are configured
+    /// How many services are configured?
     pub fn len(&self) -> usize {
         self.services.read().expect("poisoned").len()
     }
@@ -676,7 +638,7 @@ mod tests {
     use iroh_base::{EndpointAddr, SecretKey};
     use n0_snafu::{Error, Result, ResultExt};
     use quinn::{IdleTimeout, TransportConfig};
-    use rand::{Rng, SeedableRng};
+    use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -797,16 +759,11 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
-        let (ep2, _guard2) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
+        let (ep1, _guard1) =
+            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+
+        let (ep2, _guard2) =
+            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
         let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
@@ -819,18 +776,15 @@ mod tests {
     async fn endpoint_discovery_simple_shared_with_arc() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco = disco_shared.create_discovery(secret.public());
-            let disco = Arc::new(disco);
-            new_endpoint(secret, disco).await
-        };
-        let (ep2, _guard2) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco = disco_shared.create_discovery(secret.public());
-            let disco = Arc::new(disco);
-            new_endpoint(secret, disco).await
-        };
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            Arc::new(disco_shared.create_discovery(ep.id()))
+        })
+        .await;
+
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
+            Arc::new(disco_shared.create_discovery(ep.id()))
+        })
+        .await;
         let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
@@ -839,25 +793,22 @@ mod tests {
     /// This test adds an empty discovery which provides no addresses.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty() -> Result {
+    async fn endpoint_discovery_combined_with_empty_and_right() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
-        let (ep2, _guard2) = {
-            let secret = SecretKey::generate(&mut rng);
+        let (ep1, _guard1) =
+            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
             let disco1 = EmptyDiscovery;
-            let disco2 = disco_shared.create_discovery(secret.public());
-            let disco = ConcurrentDiscovery::empty();
-            disco.add(disco1);
-            disco.add(disco2);
-            new_endpoint(secret, disco).await
-        };
+            let disco2 = disco_shared.create_discovery(ep.id());
+            ep.discovery().add(disco1);
+            ep.discovery().add(disco2);
+        })
+        .await;
+
         let ep1_addr = EndpointAddr::new(ep1.id());
 
+        assert_eq!(ep2.discovery().len(), 2);
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -873,22 +824,20 @@ mod tests {
     async fn endpoint_discovery_combined_with_empty_and_wrong() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
-        let (ep2, _guard2) = {
-            let secret = SecretKey::generate(&mut rng);
+        let (ep1, _guard1) =
+            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
             let disco1 = EmptyDiscovery;
-            let disco2 = disco_shared.create_lying_discovery(secret.public());
-            let disco3 = disco_shared.create_discovery(secret.public());
+            let disco2 = disco_shared.create_lying_discovery(ep.id());
+            let disco3 = disco_shared.create_discovery(ep.id());
             let disco = ConcurrentDiscovery::empty();
             disco.add(disco1);
             disco.add(disco2);
             disco.add(disco3);
-            new_endpoint(secret, disco).await
-        };
+            disco
+        })
+        .await;
 
         let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;
         Ok(())
@@ -901,17 +850,14 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
-        let (ep2, _guard2) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco1 = disco_shared.create_lying_discovery(secret.public());
-            let disco = ConcurrentDiscovery::from_services(vec![Box::new(disco1)]);
-            new_endpoint(secret, disco).await
-        };
+        let (ep1, _guard1) =
+            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
+            let disco1 = disco_shared.create_lying_discovery(ep.id());
+            ConcurrentDiscovery::from_services(vec![Box::new(disco1)])
+        })
+        .await;
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
         let mut config = TransportConfig::default();
@@ -935,16 +881,10 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
-        let (ep2, _guard2) = {
-            let secret = SecretKey::generate(&mut rng);
-            let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, disco).await
-        };
+        let (ep1, _guard1) =
+            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let (ep2, _guard2) =
+            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
 
         let ep1_wrong_addr = EndpointAddr {
             endpoint_id: ep1.id(),
@@ -955,18 +895,31 @@ mod tests {
         Ok(())
     }
 
-    async fn new_endpoint(
-        secret: SecretKey,
-        disco: impl IntoDiscovery + 'static,
+    async fn new_endpoint<R: CryptoRng, D: Discovery + 'static, F: FnOnce(&Endpoint) -> D>(
+        rng: &mut R,
+        create_disco: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
-        let ep = Endpoint::builder()
+        new_endpoint_add(rng, |ep| {
+            let disco = create_disco(ep);
+            ep.discovery().add(disco);
+        })
+        .await
+    }
+
+    async fn new_endpoint_add<R: CryptoRng, F: FnOnce(&Endpoint)>(
+        rng: &mut R,
+        add_disco: F,
+    ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
+        let secret = SecretKey::generate(rng);
+
+        let ep = Endpoint::empty_builder()
             .secret_key(secret)
-            .add_discovery(disco)
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await
             .unwrap();
+        add_disco(&ep);
 
         let handle = tokio::spawn({
             let ep = ep.clone();
@@ -1123,7 +1076,7 @@ mod test_dns_pkarr {
         dns_pkarr_server: &DnsPkarrServer,
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate(rng);
-        let ep = Endpoint::builder()
+        let ep = Endpoint::empty_builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .secret_key(secret_key.clone())

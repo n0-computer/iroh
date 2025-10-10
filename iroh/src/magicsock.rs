@@ -69,10 +69,7 @@ use crate::net_report::{IpMappedAddr, QuicConfig};
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr, TransactionId},
-    discovery::{
-        ConcurrentDiscovery, Discovery, DiscoveryContext, DynIntoDiscovery, EndpointData,
-        IntoDiscoveryError, UserData,
-    },
+    discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     magicsock::endpoint_map::RemoteInfo,
     metrics::EndpointMetrics,
@@ -114,9 +111,6 @@ pub(crate) struct Options {
 
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
     pub(crate) relay_map: RelayMap,
-
-    /// Optional endpoint discovery mechanisms.
-    pub(crate) discovery: Vec<Box<dyn DynIntoDiscovery>>,
 
     /// Optional user-defined discovery data.
     pub(crate) discovery_user_data: Option<UserData>,
@@ -1359,10 +1353,6 @@ pub enum CreateHandleError {
     CreateNetmonMonitor { source: netmon::Error },
     #[snafu(display("Failed to subscribe netmon monitor"))]
     SubscribeNetmonMonitor { source: netmon::Error },
-    #[snafu(transparent)]
-    Discovery {
-        source: crate::discovery::IntoDiscoveryError,
-    },
 }
 
 impl Handle {
@@ -1373,7 +1363,6 @@ impl Handle {
             addr_v6,
             secret_key,
             relay_map,
-            discovery,
             discovery_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -1386,21 +1375,7 @@ impl Handle {
             metrics,
         } = opts;
 
-        let discovery = {
-            let context = DiscoveryContext {
-                secret_key: &secret_key,
-                #[cfg(not(wasm_browser))]
-                dns_resolver: &dns_resolver,
-            };
-            let discovery = discovery
-                .into_iter()
-                .map(|builder| builder.into_discovery(&context))
-                .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
-            match discovery.len() {
-                0 => ConcurrentDiscovery::default(),
-                _ => ConcurrentDiscovery::from_services(discovery),
-            }
-        };
+        let discovery = ConcurrentDiscovery::default();
 
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
@@ -2594,7 +2569,6 @@ mod tests {
             addr_v6: None,
             secret_key,
             relay_map: RelayMap::empty(),
-            discovery: Default::default(),
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
@@ -2644,7 +2618,7 @@ mod tests {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-            let endpoint = Endpoint::builder()
+            let endpoint = Endpoint::empty_builder()
                 .secret_key(secret_key.clone())
                 .transport_config(transport_config)
                 .relay_mode(relay_mode)
@@ -3130,7 +3104,6 @@ mod tests {
             addr_v6: None,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
-            discovery: Default::default(),
             discovery_user_data: None,
             dns_resolver,
             proxy_url: None,

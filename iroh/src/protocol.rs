@@ -3,14 +3,17 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use iroh::{endpoint::{Connection, BindError}, protocol::{AcceptError, ProtocolHandler, Router}, Endpoint, EndpointAddr};
+//! # use iroh::{
+//! #     endpoint::{Connection, BindError},
+//! #     protocol::{AcceptError, ProtocolHandler, Router},
+//! #     Endpoint,
+//! #     EndpointAddr
+//! # };
 //! #
 //! # async fn test_compile() -> Result<(), BindError> {
-//! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+//! let endpoint = Endpoint::bind().await?;
 //!
-//! let router = Router::builder(endpoint)
-//!     .accept(b"/my/alpn", Echo)
-//!     .spawn();
+//! let router = Router::builder(endpoint).accept(b"/my/alpn", Echo).spawn();
 //! # Ok(())
 //! # }
 //!
@@ -71,7 +74,7 @@ use crate::{
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, EndpointAddr};
 /// #
 /// # async fn test_compile() -> n0_snafu::Result<()> {
-/// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+/// let endpoint = Endpoint::bind().await?;
 ///
 /// let router = Router::builder(endpoint)
 ///     // .accept(&ALPN, <something>)
@@ -582,7 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
-        let endpoint = Endpoint::builder().bind().await?;
+        let endpoint = Endpoint::bind().await?;
         let router = Router::builder(endpoint.clone()).spawn();
 
         assert!(!router.is_shutdown());
