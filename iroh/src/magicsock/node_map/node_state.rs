@@ -198,6 +198,11 @@ impl NodeStateActor {
         }
     }
 
+    /// Runs the main loop of the actor.
+    ///
+    /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
+    /// not processing items from the inbox while waiting on any async calls.  So some
+    /// dicipline is needed to not turn pending for a long time.
     async fn run(&mut self, mut inbox: mpsc::Receiver<NodeStateMessage>) -> Result<(), Whatever> {
         trace!("actor started");
         loop {
@@ -232,183 +237,245 @@ impl NodeStateActor {
         Ok(())
     }
 
+    /// Handles an actor message.
+    ///
+    /// Error returns are fatal and kill the actor.
     #[instrument(skip(self))]
     async fn handle_message(&mut self, msg: NodeStateMessage) -> Result<(), Whatever> {
-        trace!("handling message");
+        // trace!("handling message");
         match msg {
             NodeStateMessage::SendDatagram(transmit) => {
-                if let Some(ref addr) = self.selected_path {
-                    self.transports_sender
-                        .send((addr.clone(), transmit).into())
-                        .await
-                        .whatever_context("TransportSenderActor stopped")?;
-                } else {
-                    for addr in self.paths.keys() {
-                        self.transports_sender
-                            .send((addr.clone(), transmit.clone()).into())
-                            .await
-                            .whatever_context("TransportSenerActor stopped")?;
-                    }
-                    // This message is received *before* a connection is added.  So we do
-                    // not yet have a connection to holepunch.  Instead we trigger
-                    // holepunching when AddConnection is received.
-                }
+                self.handle_msg_send_datagram(transmit).await?;
             }
             NodeStateMessage::AddConnection(handle, paths_info) => {
-                if let Some(conn) = handle.upgrade() {
-                    // Remove any conflicting stable_ids from the local state.
-                    let stable_id = conn.stable_id();
-                    self.connections.remove(&stable_id);
-                    self.path_id_map.retain(|(id, _), _| *id != stable_id);
-
-                    // This is a good time to clean up connections.
-                    self.cleanup_connections();
-
-                    let conn_id = conn.stable_id();
-                    let events = BroadcastStream::new(conn.path_events());
-                    let stream = events.map(move |evt| (conn_id, evt));
-                    self.path_events.push(Box::pin(stream));
-                    self.connections.insert(
-                        conn_id,
-                        ConnectionState {
-                            handle: handle.clone(),
-                            paths_info,
-                        },
-                    );
-                    if let Some(conn) = handle.upgrade() {
-                        if let Some(addr) = self.path_transports_addr(&conn, PathId::ZERO) {
-                            self.path_id_map
-                                .insert((conn_id, PathId::ZERO), addr.clone());
-                            self.paths
-                                .entry(addr)
-                                .or_default()
-                                .sources
-                                .insert(Source::Connection, Instant::now());
-                            self.select_path();
-                        }
-                        // TODO: Make sure we are adding the relay path if we're on a direct
-                        // path.
-                        self.trigger_holepunching().await;
-                    }
-                }
+                self.handle_msg_add_connection(handle, paths_info).await;
             }
             NodeStateMessage::AddNodeAddr(node_addr, source) => {
-                for sockaddr in node_addr.direct_addresses {
-                    let addr = transports::Addr::from(sockaddr);
-                    let path = self.paths.entry(addr).or_default();
-                    path.sources.insert(source.clone(), Instant::now());
-                }
-                if let Some(relay_url) = node_addr.relay_url {
-                    let addr = transports::Addr::from((relay_url, self.node_id));
-                    let path = self.paths.entry(addr).or_default();
-                    path.sources.insert(source, Instant::now());
-                }
+                self.handle_msg_add_node_addr(node_addr, source);
             }
             NodeStateMessage::CallMeMaybeReceived(msg) => {
-                event!(
-                    target: "iroh::_events::call_me_maybe::recv",
-                    Level::DEBUG,
-                    remote_node = %self.node_id.fmt_short(),
-                    addrs = ?msg.my_numbers,
-                );
-                let now = Instant::now();
-                for addr in msg.my_numbers {
-                    let dst = transports::Addr::Ip(addr);
-                    let ping = disco::Ping::new(self.local_node_id);
-
-                    let path = self.paths.entry(dst.clone()).or_default();
-                    path.sources.insert(Source::CallMeMaybe, now);
-                    path.ping_sent = Some(ping.tx_id);
-
-                    event!(
-                        target: "iroh::_events::ping::sent",
-                        Level::DEBUG,
-                        remote_node = %self.node_id.fmt_short(),
-                        ?dst,
-                    );
-                    self.send_disco_message(dst, disco::Message::Ping(ping))
-                        .await;
-                }
+                self.handle_msg_call_me_maybe_received(msg).await;
             }
             NodeStateMessage::PingReceived(ping, src) => {
-                let transports::Addr::Ip(addr) = src else {
-                    warn!("received ping via relay transport, ignored");
-                    return Ok(());
-                };
-                event!(
-                    target: "iroh::_events::ping::recv",
-                    Level::DEBUG,
-                    remote_node = %self.node_id.fmt_short(),
-                    ?src,
-                    txn = ?ping.tx_id,
-                );
-                let pong = disco::Pong {
-                    tx_id: ping.tx_id,
-                    ping_observed_addr: addr.into(),
-                };
-                event!(
-                    target: "iroh::_events::pong::sent",
-                    Level::DEBUG,
-                    remote_node = %self.node_id.fmt_short(),
-                    dst = ?src,
-                    txn = ?pong.tx_id,
-                );
-                self.send_disco_message(src.clone(), disco::Message::Pong(pong))
-                    .await;
-
-                let path = self.paths.entry(src).or_default();
-                path.sources.insert(Source::Ping, Instant::now());
-
-                trace!("ping received, triggering holepunching");
-                self.trigger_holepunching().await;
+                self.handle_msg_ping_received(ping, src).await;
             }
             NodeStateMessage::PongReceived(pong, src) => {
-                let Some(state) = self.paths.get(&src) else {
-                    warn!(path = ?src, ?self.paths, "ignoring DISCO Pong for unknown path");
-                    return Ok(());
-                };
-                if state.ping_sent != Some(pong.tx_id) {
-                    debug!(path = ?src, ?state.ping_sent, pong_tx = ?pong.tx_id,
-                        "ignoring unknown DISCO Pong for path");
-                    return Ok(());
-                }
-                event!(
-                    target: "iroh::_events::pong::recv",
-                    Level::DEBUG,
-                    remote_node = %self.node_id.fmt_short(),
-                    ?src,
-                    txn = ?pong.tx_id,
-                );
-
-                self.open_path(&src);
+                self.handle_msg_pong_received(pong, src);
             }
             NodeStateMessage::CanSend(tx) => {
-                let can_send = !self.paths.is_empty();
-                tx.send(can_send).ok();
+                self.handle_msg_can_send(tx);
             }
             NodeStateMessage::Latency(tx) => {
-                let rtt = self.selected_path.as_ref().and_then(|addr| {
-                    for (conn_id, path_id) in self
-                        .path_id_map
-                        .iter()
-                        .filter_map(|(key, path)| (path == addr).then_some(key))
-                    {
-                        if let Some(conn) = self
-                            .connections
-                            .get(conn_id)
-                            .and_then(|c| c.handle.upgrade())
-                        {
-                            if let Some(path_stats) = conn.stats().paths.get(path_id) {
-                                return Some(path_stats.rtt);
-                            }
-                        }
-                    }
-                    None
-                });
-                tx.send(rtt).ok();
+                self.handle_msg_latency(tx);
             }
         }
         Ok(())
+    }
+
+    /// Handles [`NodeStateMessage::SendDatagram`].
+    ///
+    /// Error returns are fatal and kill the actor.
+    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> Result<(), Whatever> {
+        if let Some(ref addr) = self.selected_path {
+            trace!(?addr, "sending datagram to selected path");
+            self.transports_sender
+                .send((addr.clone(), transmit).into())
+                .await
+                .whatever_context("TransportSenderActor stopped")?;
+        } else {
+            trace!(
+                paths = ?self.paths.keys().collect::<Vec<_>>(),
+                "sending datagram to all known paths",
+            );
+            for addr in self.paths.keys() {
+                self.transports_sender
+                    .send((addr.clone(), transmit.clone()).into())
+                    .await
+                    .whatever_context("TransportSenerActor stopped")?;
+            }
+            // This message is received *before* a connection is added.  So we do
+            // not yet have a connection to holepunch.  Instead we trigger
+            // holepunching when AddConnection is received.
+        }
+        Ok(())
+    }
+
+    /// Handles [`NodeStateMessage::AddConnection`].
+    ///
+    /// Error returns are fatal and kill the actor.
+    async fn handle_msg_add_connection(
+        &mut self,
+        handle: WeakConnectionHandle,
+        paths_info: Watchable<Vec<PathInfo>>,
+    ) {
+        if let Some(conn) = handle.upgrade() {
+            // Remove any conflicting stable_ids from the local state.
+            let stable_id = conn.stable_id();
+            self.connections.remove(&stable_id);
+            self.path_id_map.retain(|(id, _), _| *id != stable_id);
+
+            // This is a good time to clean up connections.
+            self.cleanup_connections();
+
+            // Store the connection and hook up paths events stream.
+            let conn_id = conn.stable_id();
+            let events = BroadcastStream::new(conn.path_events());
+            let stream = events.map(move |evt| (conn_id, evt));
+            self.path_events.push(Box::pin(stream));
+            self.connections.insert(
+                conn_id,
+                ConnectionState {
+                    handle: handle.clone(),
+                    paths_info,
+                },
+            );
+
+            // Store PathId(0) and select best path, check if holepunching is needed.
+            if let Some(conn) = handle.upgrade() {
+                if let Some(path_remote) = self.path_transports_addr(&conn, PathId::ZERO) {
+                    trace!(?path_remote, "added new connection");
+                    self.path_id_map
+                        .insert((conn_id, PathId::ZERO), path_remote.clone());
+                    self.paths
+                        .entry(path_remote)
+                        .or_default()
+                        .sources
+                        .insert(Source::Connection, Instant::now());
+                    self.select_path();
+                }
+                // TODO: Make sure we are adding the relay path if we're on a direct
+                // path.
+                self.trigger_holepunching().await;
+            }
+        }
+    }
+
+    /// Handles [`NodeStateMessage::AddNodeAddr`].
+    fn handle_msg_add_node_addr(&mut self, node_addr: NodeAddr, source: Source) {
+        for sockaddr in node_addr.direct_addresses {
+            let addr = transports::Addr::from(sockaddr);
+            let path = self.paths.entry(addr).or_default();
+            path.sources.insert(source.clone(), Instant::now());
+        }
+        if let Some(relay_url) = node_addr.relay_url {
+            let addr = transports::Addr::from((relay_url, self.node_id));
+            let path = self.paths.entry(addr).or_default();
+            path.sources.insert(source, Instant::now());
+        }
+        trace!("added addressing information");
+    }
+
+    /// Handles [`NodeStateMessage::CallMeMaybeReceived`].
+    async fn handle_msg_call_me_maybe_received(&mut self, msg: disco::CallMeMaybe) {
+        event!(
+            target: "iroh::_events::call_me_maybe::recv",
+            Level::DEBUG,
+            remote_node = %self.node_id.fmt_short(),
+            addrs = ?msg.my_numbers,
+        );
+        let now = Instant::now();
+        for addr in msg.my_numbers {
+            let dst = transports::Addr::Ip(addr);
+            let ping = disco::Ping::new(self.local_node_id);
+
+            let path = self.paths.entry(dst.clone()).or_default();
+            path.sources.insert(Source::CallMeMaybe, now);
+            path.ping_sent = Some(ping.tx_id);
+
+            event!(
+                target: "iroh::_events::ping::sent",
+                Level::DEBUG,
+                remote_node = %self.node_id.fmt_short(),
+                ?dst,
+            );
+            self.send_disco_message(dst, disco::Message::Ping(ping))
+                .await;
+        }
+    }
+
+    /// Handles [`NodeStateMessage::PingReceived`].
+    async fn handle_msg_ping_received(&mut self, ping: disco::Ping, src: transports::Addr) {
+        let transports::Addr::Ip(addr) = src else {
+            warn!("received ping via relay transport, ignored");
+            return;
+        };
+        event!(
+            target: "iroh::_events::ping::recv",
+            Level::DEBUG,
+            remote_node = %self.node_id.fmt_short(),
+            ?src,
+            txn = ?ping.tx_id,
+        );
+        let pong = disco::Pong {
+            tx_id: ping.tx_id,
+            ping_observed_addr: addr.into(),
+        };
+        event!(
+            target: "iroh::_events::pong::sent",
+            Level::DEBUG,
+            remote_node = %self.node_id.fmt_short(),
+            dst = ?src,
+            txn = ?pong.tx_id,
+        );
+        self.send_disco_message(src.clone(), disco::Message::Pong(pong))
+            .await;
+
+        let path = self.paths.entry(src).or_default();
+        path.sources.insert(Source::Ping, Instant::now());
+
+        trace!("ping received, triggering holepunching");
+        self.trigger_holepunching().await;
+    }
+
+    /// Handles [`NodeStateMessage::PongReceived`].
+    fn handle_msg_pong_received(&mut self, pong: disco::Pong, src: transports::Addr) {
+        let Some(state) = self.paths.get(&src) else {
+            warn!(path = ?src, ?self.paths, "ignoring DISCO Pong for unknown path");
+            return;
+        };
+        if state.ping_sent != Some(pong.tx_id) {
+            debug!(path = ?src, ?state.ping_sent, pong_tx = ?pong.tx_id,
+                        "ignoring unknown DISCO Pong for path");
+            return;
+        }
+        event!(
+            target: "iroh::_events::pong::recv",
+            Level::DEBUG,
+            remote_node = %self.node_id.fmt_short(),
+            ?src,
+            txn = ?pong.tx_id,
+        );
+
+        self.open_path(&src);
+    }
+
+    /// Handles [`NodeStateMessage::CanSend`].
+    fn handle_msg_can_send(&self, tx: oneshot::Sender<bool>) {
+        let can_send = !self.paths.is_empty();
+        tx.send(can_send).ok();
+    }
+
+    /// Handles [`NodeStateMessage::Latency`].
+    fn handle_msg_latency(&self, tx: oneshot::Sender<Option<Duration>>) {
+        let rtt = self.selected_path.as_ref().and_then(|addr| {
+            for (conn_id, path_id) in self
+                .path_id_map
+                .iter()
+                .filter_map(|(key, path)| (path == addr).then_some(key))
+            {
+                if let Some(conn) = self
+                    .connections
+                    .get(conn_id)
+                    .and_then(|c| c.handle.upgrade())
+                {
+                    if let Some(path_stats) = conn.stats().paths.get(path_id) {
+                        return Some(path_stats.rtt);
+                    }
+                }
+            }
+            None
+        });
+        tx.send(rtt).ok();
     }
 
     /// Triggers holepunching to the remote node.
