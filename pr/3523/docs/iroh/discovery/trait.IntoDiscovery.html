@@ -10,7 +10,7 @@
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;impl <a class="trait" href="trait.Discovery.html" title="trait iroh::discovery::Discovery">Discovery</a>, <a class="enum" href="enum.IntoDiscoveryError.html" title="enum iroh::discovery::IntoDiscoveryError">IntoDiscoveryError</a>&gt;;
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Trait for structs that can be converted into <a href="trait.Discovery.html" title="trait iroh::discovery::Discovery"><code>Discovery</code></a>.</p>
 <p>This trait is implemented on builders for discovery services. Any type that implements this
-trait can be added as a discovery service in <a href="../endpoint/struct.Builder.html#method.add_discovery" title="method iroh::endpoint::Builder::add_discovery"><code>Builder::add_discovery</code></a>.</p>
+trait can be added as a discovery service in <a href="../endpoint/struct.Builder.html#method.discovery" title="method iroh::endpoint::Builder::discovery"><code>Builder::discovery</code></a>.</p>
 <p>Any type that implements <a href="trait.Discovery.html" title="trait iroh::discovery::Discovery"><code>Discovery</code></a> also implements <a href="trait.IntoDiscovery.html" title="trait iroh::discovery::IntoDiscovery"><code>IntoDiscovery</code></a>.</p>
 <p>Iroh uses this trait to allow configuring the set of discovery services on the endpoint
 builder, while providing the discovery services access to information about the endpoint

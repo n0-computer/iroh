@@ -297,7 +297,7 @@
 <a href=#297 id=297 data-nosnippet>297</a>    /// To clear all discovery services, use [`Builder::clear_discovery`].
 <a href=#298 id=298 data-nosnippet>298</a>    ///
 <a href=#299 id=299 data-nosnippet>299</a>    /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="kw">pub fn </span>add_discovery(<span class="kw-2">mut </span><span class="self">self</span>, discovery: <span class="kw">impl </span>IntoDiscovery) -&gt; <span class="self">Self </span>{
+<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="kw">pub fn </span>discovery(<span class="kw-2">mut </span><span class="self">self</span>, discovery: <span class="kw">impl </span>IntoDiscovery) -&gt; <span class="self">Self </span>{
 <a href=#301 id=301 data-nosnippet>301</a>        <span class="self">self</span>.discovery.push(Box::new(discovery));
 <a href=#302 id=302 data-nosnippet>302</a>        <span class="self">self
 <a href=#303 id=303 data-nosnippet>303</a>    </span>}
@@ -3116,7 +3116,7 @@
 <a href=#3116 id=3116 data-nosnippet>3116</a>        <span class="kw">let </span>discovery = StaticProvider::from_node_info(addrs);
 <a href=#3117 id=3117 data-nosnippet>3117</a>        <span class="kw">let </span>endpoint = Endpoint::builder()
 <a href=#3118 id=3118 data-nosnippet>3118</a>            .relay_mode(RelayMode::Disabled)
-<a href=#3119 id=3119 data-nosnippet>3119</a>            .add_discovery(discovery)
+<a href=#3119 id=3119 data-nosnippet>3119</a>            .discovery(discovery)
 <a href=#3120 id=3120 data-nosnippet>3120</a>            .bind()
 <a href=#3121 id=3121 data-nosnippet>3121</a>            .<span class="kw">await
 <a href=#3122 id=3122 data-nosnippet>3122</a>            </span>.e()<span class="question-mark">?</span>;

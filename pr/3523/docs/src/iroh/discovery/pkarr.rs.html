@@ -245,10 +245,10 @@
 <a href=#245 id=245 data-nosnippet>245</a>    /// time-to-live value for the published packets, and it will republish discovery information
 <a href=#246 id=246 data-nosnippet>246</a>    /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
 <a href=#247 id=247 data-nosnippet>247</a>    ///
-<a href=#248 id=248 data-nosnippet>248</a>    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`add_discovery`].
+<a href=#248 id=248 data-nosnippet>248</a>    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`discovery`].
 <a href=#249 id=249 data-nosnippet>249</a>    /// It will then use the endpoint's secret key to sign published packets.
 <a href=#250 id=250 data-nosnippet>250</a>    ///
-<a href=#251 id=251 data-nosnippet>251</a>    /// [`add_discovery`]:  crate::endpoint::Builder::add_discovery
+<a href=#251 id=251 data-nosnippet>251</a>    /// [`discovery`]:  crate::endpoint::Builder::discovery
 <a href=#252 id=252 data-nosnippet>252</a>    /// [pkarr]: https://pkarr.org
 <a href=#253 id=253 data-nosnippet>253</a>    </span><span class="kw">pub fn </span>builder(pkarr_relay: Url) -&gt; PkarrPublisherBuilder {
 <a href=#254 id=254 data-nosnippet>254</a>        PkarrPublisherBuilder::new(pkarr_relay)

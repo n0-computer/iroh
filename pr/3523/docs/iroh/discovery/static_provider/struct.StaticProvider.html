@@ -13,7 +13,7 @@ retract node addressing information that is otherwise out-of-band to iroh.</p>
 </span><span class="kw">let </span>discovery = StaticProvider::new();
 
 <span class="kw">let </span>_ep = Endpoint::builder()
-    .add_discovery(discovery.clone())
+    .discovery(discovery.clone())
     .bind()
     .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -43,7 +43,7 @@ addressing information used by an iroh <a href="../../endpoint/struct.Endpoint.h
 <span class="comment">// create a StaticProvider from the list of addrs.
 </span><span class="kw">let </span>discovery = StaticProvider::from_node_info(addrs);
 <span class="comment">// create an endpoint with the discovery
-</span><span class="kw">let </span>endpoint = Endpoint::builder().add_discovery(discovery).bind().<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.set_node_info" class="method"><a class="src rightside" href="../../../src/iroh/discovery/static_provider.rs.html#131-137">Source</a><h4 class="code-header">pub fn <a href="#method.set_node_info" class="fn">set_node_info</a>(&amp;self, node_info: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../struct.NodeInfo.html" title="struct iroh::discovery::NodeInfo">NodeInfo</a>&gt;) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../struct.NodeData.html" title="struct iroh::discovery::NodeData">NodeData</a>&gt;</h4></section></summary><div class="docblock"><p>Sets node addressing information for the given node ID.</p>
+</span><span class="kw">let </span>endpoint = Endpoint::builder().discovery(discovery).bind().<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.set_node_info" class="method"><a class="src rightside" href="../../../src/iroh/discovery/static_provider.rs.html#131-137">Source</a><h4 class="code-header">pub fn <a href="#method.set_node_info" class="fn">set_node_info</a>(&amp;self, node_info: impl <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="struct" href="../struct.NodeInfo.html" title="struct iroh::discovery::NodeInfo">NodeInfo</a>&gt;) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="../struct.NodeData.html" title="struct iroh::discovery::NodeData">NodeData</a>&gt;</h4></section></summary><div class="docblock"><p>Sets node addressing information for the given node ID.</p>
 <p>This will completely overwrite any existing info for the node.</p>
 <p>Returns the <a href="../struct.NodeData.html" title="struct iroh::discovery::NodeData"><code>NodeData</code></a> of the previous entry, or <code>None</code> if there was no previous
 entry for this node ID.</p>
