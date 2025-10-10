@@ -118,7 +118,7 @@ the receiver’s <a href="endpoint/struct.Connection.html#method.accept_bi" titl
 <h3 id="node-discovery"><a class="doc-anchor" href="#node-discovery">§</a>Node Discovery</h3>
 <p>The need to know the <a href="struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a> <em>or</em> some direct addresses in addition to the
 <a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> to connect to an iroh node can be an obstacle.  To address this, the
-<a href="endpoint/struct.Builder.html" title="struct iroh::endpoint::Builder"><code>endpoint::Builder</code></a> allows you to configure a <a href="endpoint/struct.Builder.html#method.discovery" title="method iroh::endpoint::Builder::discovery"><code>discovery</code></a> service.</p>
+<a href="endpoint/struct.Builder.html" title="struct iroh::endpoint::Builder"><code>endpoint::Builder</code></a> allows you to configure a <a href="endpoint/struct.Builder.html#structfield.discovery" title="field iroh::endpoint::Builder::discovery"><code>discovery</code></a> service.</p>
 <p>The <a href="discovery/dns/struct.DnsDiscovery.html" title="struct iroh::discovery::dns::DnsDiscovery"><code>DnsDiscovery</code></a> service is a discovery service which will publish the <a href="struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a>
 and direct addresses to a service publishing those as DNS records.  To connect it looks
 up the <a href="type.NodeId.html" title="type iroh::NodeId"><code>NodeId</code></a> in the DNS system to find the addressing details.  This enables

@@ -1088,7 +1088,7 @@
 <a href=#1088 id=1088 data-nosnippet>1088</a>            .secret_key(secret_key.clone())
 <a href=#1089 id=1089 data-nosnippet>1089</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
 <a href=#1090 id=1090 data-nosnippet>1090</a>            .dns_resolver(dns_pkarr_server.dns_resolver())
-<a href=#1091 id=1091 data-nosnippet>1091</a>            .discovery(dns_pkarr_server.discovery(secret_key))
+<a href=#1091 id=1091 data-nosnippet>1091</a>            .add_discovery(dns_pkarr_server.discovery(secret_key))
 <a href=#1092 id=1092 data-nosnippet>1092</a>            .bind()
 <a href=#1093 id=1093 data-nosnippet>1093</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1094 id=1094 data-nosnippet>1094</a>
