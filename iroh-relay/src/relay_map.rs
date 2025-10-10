@@ -1,6 +1,10 @@
 //! based on tailscale/tailcfg/derpmap.go
 
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    sync::{Arc, RwLock},
+};
 
 use iroh_base::RelayUrl;
 use serde::{Deserialize, Serialize};
@@ -8,16 +12,34 @@ use serde::{Deserialize, Serialize};
 use crate::defaults::DEFAULT_RELAY_QUIC_PORT;
 
 /// Configuration of all the relay servers that can be used.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RelayMap {
     /// A map of the different relay IDs to the [`RelayNode`] information
-    nodes: Arc<BTreeMap<RelayUrl, Arc<RelayNode>>>,
+    nodes: Arc<RwLock<BTreeMap<RelayUrl, Arc<RelayNode>>>>,
 }
+
+impl PartialEq for RelayMap {
+    fn eq(&self, other: &Self) -> bool {
+        let this = self.nodes.read().expect("poisoned");
+        let that = other.nodes.read().expect("poisoned");
+        this.eq(&*that)
+    }
+}
+
+impl Eq for RelayMap {}
 
 impl RelayMap {
     /// Returns the sorted relay URLs.
-    pub fn urls(&self) -> impl Iterator<Item = &RelayUrl> {
-        self.nodes.keys()
+    pub fn urls<T>(&self) -> T
+    where
+        T: FromIterator<RelayUrl>,
+    {
+        self.nodes
+            .read()
+            .expect("poisoned")
+            .keys()
+            .cloned()
+            .collect::<T>()
     }
 
     /// Create an empty relay map.
@@ -28,39 +50,57 @@ impl RelayMap {
     }
 
     /// Returns an `Iterator` over all known nodes.
-    pub fn nodes(&self) -> impl Iterator<Item = &Arc<RelayNode>> {
-        self.nodes.values()
+    pub fn nodes<T>(&self) -> T
+    where
+        T: FromIterator<Arc<RelayNode>>,
+    {
+        self.nodes
+            .read()
+            .expect("poisoned")
+            .values()
+            .cloned()
+            .collect::<T>()
     }
 
     /// Is this a known node?
     pub fn contains_node(&self, url: &RelayUrl) -> bool {
-        self.nodes.contains_key(url)
+        self.nodes.read().expect("poisoned").contains_key(url)
     }
 
     /// Get the given node.
-    pub fn get_node(&self, url: &RelayUrl) -> Option<&Arc<RelayNode>> {
-        self.nodes.get(url)
+    pub fn get_node(&self, url: &RelayUrl) -> Option<Arc<RelayNode>> {
+        self.nodes.read().expect("poisoned").get(url).cloned()
     }
 
     /// How many nodes are known?
     pub fn len(&self) -> usize {
-        self.nodes.len()
+        self.nodes.read().expect("poisoned").len()
     }
 
     /// Are there any nodes in this map?
     pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+        self.nodes.read().expect("poisoned").is_empty()
+    }
+
+    /// Insert a new relay.
+    pub fn insert(&self, url: RelayUrl, node: Arc<RelayNode>) -> Option<Arc<RelayNode>> {
+        self.nodes.write().expect("poisoned").insert(url, node)
+    }
+
+    /// Removes an existing relay by `RelayUrl`.
+    pub fn remove(&self, url: &RelayUrl) -> Option<Arc<RelayNode>> {
+        self.nodes.write().expect("poisoned").remove(url)
     }
 }
 
 impl FromIterator<RelayNode> for RelayMap {
     fn from_iter<T: IntoIterator<Item = RelayNode>>(iter: T) -> Self {
         Self {
-            nodes: Arc::new(
+            nodes: Arc::new(RwLock::new(
                 iter.into_iter()
                     .map(|node| (node.url.clone(), Arc::new(node)))
                     .collect(),
-            ),
+            )),
         }
     }
 }
@@ -72,7 +112,9 @@ impl From<RelayUrl> for RelayMap {
     /// discovery ports.
     fn from(value: RelayUrl) -> Self {
         Self {
-            nodes: Arc::new([(value.clone(), Arc::new(value.into()))].into()),
+            nodes: Arc::new(RwLock::new(
+                [(value.clone(), Arc::new(value.into()))].into(),
+            )),
         }
     }
 }
@@ -80,7 +122,7 @@ impl From<RelayUrl> for RelayMap {
 impl From<RelayNode> for RelayMap {
     fn from(value: RelayNode) -> Self {
         Self {
-            nodes: Arc::new([(value.url.clone(), Arc::new(value))].into()),
+            nodes: Arc::new(RwLock::new([(value.url.clone(), Arc::new(value))].into())),
         }
     }
 }
@@ -92,11 +134,11 @@ impl FromIterator<RelayUrl> for RelayMap {
     /// discovery ports.
     fn from_iter<T: IntoIterator<Item = RelayUrl>>(iter: T) -> Self {
         Self {
-            nodes: Arc::new(
+            nodes: Arc::new(RwLock::new(
                 iter.into_iter()
                     .map(|url| (url.clone(), Arc::new(url.into())))
                     .collect(),
-            ),
+            )),
         }
     }
 }

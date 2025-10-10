@@ -31,7 +31,7 @@ use std::{
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
-use iroh_relay::RelayMap;
+use iroh_relay::{RelayMap, RelayNode};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -204,6 +204,7 @@ pub(crate) struct MagicSock {
     /// The DNS resolver to be used in this magicsock.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
+    relay_map: RelayMap,
 
     /// Disco
     disco: DiscoState,
@@ -295,6 +296,28 @@ impl MagicSock {
     /// Return the [`RemoteInfo`] for a single node in the node map.
     pub(crate) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.node_map.remote_info(node_id)
+    }
+
+    pub(crate) async fn insert_relay(
+        &self,
+        relay: RelayUrl,
+        node: Arc<RelayNode>,
+    ) -> Option<Arc<RelayNode>> {
+        let res = self.relay_map.insert(relay, node);
+        self.actor_sender
+            .send(ActorMessage::RelayMapChange)
+            .await
+            .ok();
+        res
+    }
+
+    pub(crate) async fn remove_relay(&self, relay: &RelayUrl) -> Option<Arc<RelayNode>> {
+        let res = self.relay_map.remove(relay);
+        self.actor_sender
+            .send(ActorMessage::RelayMapChange)
+            .await
+            .ok();
+        res
     }
 
     /// Returns a [`Watcher`] for this socket's direct addresses.
@@ -1205,11 +1228,12 @@ enum UpdateReason {
     PortmapUpdated,
     LinkChangeMajor,
     LinkChangeMinor,
+    RelayMapChange,
 }
 
 impl UpdateReason {
     fn is_major(self) -> bool {
-        matches!(self, Self::LinkChangeMajor)
+        matches!(self, Self::LinkChangeMajor | Self::RelayMapChange)
     }
 }
 
@@ -1429,6 +1453,7 @@ impl Handle {
             node_map,
             ip_mapped_addrs: ip_mapped_addrs.clone(),
             discovery,
+            relay_map: relay_map.clone(),
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: DiscoveredDirectAddrs::default(),
             net_report: Watchable::new((None, UpdateReason::None)),
@@ -1780,6 +1805,7 @@ enum ActorMessage {
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetworkChange,
     ScheduleDirectAddrUpdate(UpdateReason, Option<(NodeId, RelayUrl)>),
+    RelayMapChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
 }
@@ -2034,6 +2060,10 @@ impl Actor {
         }
     }
 
+    fn handle_relay_map_change(&mut self) {
+        self.re_stun(UpdateReason::RelayMapChange);
+    }
+
     fn re_stun(&mut self, why: UpdateReason) {
         let state = self.netmon_watcher.get();
         self.direct_addr_update_state
@@ -2067,6 +2097,9 @@ impl Actor {
                 let state = self.netmon_watcher.get();
                 self.direct_addr_update_state
                     .schedule_run(why, state.into());
+            }
+            ActorMessage::RelayMapChange => {
+                self.handle_relay_map_change();
             }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
