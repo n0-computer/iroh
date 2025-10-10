@@ -62,6 +62,10 @@ pub(super) struct PathState {
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size of
     /// the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
+    /// Network interface name this path uses, if known.
+    ///
+    /// Used for interface-based path prioritization (e.g., preferring Ethernet over Wi-Fi).
+    pub(super) interface_name: Option<String>,
 }
 
 impl PathState {
@@ -77,6 +81,7 @@ impl PathState {
             validity: PathValidity::empty(),
             last_payload_msg: None,
             sources,
+            interface_name: None,
         }
     }
 
@@ -97,6 +102,7 @@ impl PathState {
             validity: PathValidity::empty(),
             last_payload_msg: Some(now),
             sources,
+            interface_name: None,
         }
     }
 
@@ -125,7 +131,14 @@ impl PathState {
             }
         }
 
+        let had_failures = self.validity.consecutive_failures() > 0;
+
         self.validity.update_pong(r.pong_at, r.latency);
+        self.validity.reset_failures();
+
+        if had_failures {
+            metrics.path_failure_resets.inc();
+        }
 
         self.validity.record_metrics(metrics);
     }
@@ -134,20 +147,32 @@ impl PathState {
         self.last_payload_msg = Some(now);
         self.validity
             .receive_payload(now, path_validity::Source::QuicPayload);
+        self.validity.reset_failures();
     }
 
     #[cfg(test)]
     pub(super) fn with_pong_reply(node_id: NodeId, r: PongReply) -> Self {
+        let mut validity = PathValidity::new(r.pong_at, r.latency);
+        validity.reset_failures();
         PathState {
             node_id,
             path: r.from.clone(),
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            validity: PathValidity::new(r.pong_at, r.latency),
+            validity,
             last_payload_msg: None,
             sources: HashMap::new(),
+            interface_name: None,
         }
+    }
+
+    pub(super) fn set_interface_name(&mut self, interface_name: Option<String>) {
+        self.interface_name = interface_name;
+    }
+
+    pub(super) fn interface_name(&self) -> Option<&str> {
+        self.interface_name.as_deref()
     }
 
     /// Check whether this path is considered active.

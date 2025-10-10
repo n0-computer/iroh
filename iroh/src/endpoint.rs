@@ -183,6 +183,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: self.path_selection,
+            interface_priority: Default::default(),
             metrics,
         };
 

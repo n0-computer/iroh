@@ -155,6 +155,7 @@ pub(super) struct Options {
     pub(super) source: super::Source,
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) path_selection: PathSelection,
+    pub(super) interface_priority: crate::magicsock::InterfacePriority,
 }
 
 impl NodeState {
@@ -170,6 +171,9 @@ impl NodeState {
 
         let now = Instant::now();
 
+        let mut udp_paths = NodeUdpPaths::new();
+        udp_paths.interface_priority = options.interface_priority;
+
         NodeState {
             id,
             quic_mapped_addr,
@@ -181,7 +185,7 @@ impl NodeState {
                     PathState::new(options.node_id, SendAddr::Relay(url), options.source, now),
                 )
             }),
-            udp_paths: NodeUdpPaths::new(),
+            udp_paths,
             sent_pings: HashMap::new(),
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
@@ -464,11 +468,21 @@ impl NodeState {
                             // which we should have received the pong, clear best addr and
                             // pong.  Both are used to select this path again, but we know
                             // it's not a usable path now.
-                            path_state.validity = PathValidity::empty();
+                            // Record ping failure and only clear validity after threshold
+                            path_state.validity.record_ping_failure();
                             metrics.path_ping_failures.inc();
 
                             path_state.validity.record_metrics(metrics);
-                            metrics.path_marked_outdated.inc();
+
+                            if path_state.validity.should_mark_outdated() {
+                                debug!(
+                                    "path {} marked outdated after {} consecutive failures",
+                                    addr,
+                                    path_state.validity.consecutive_failures()
+                                );
+                                metrics.path_marked_outdated.inc();
+                                path_state.validity = PathValidity::empty();
+                            }
                         }
                     }
                 }
@@ -1066,13 +1080,17 @@ impl NodeState {
 
     /// Marks this node as having received a UDP payload message.
     #[cfg(not(wasm_browser))]
-    pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
+    pub(super) fn receive_udp(&mut self, addr: IpPort, interface_name: Option<&str>, now: Instant) {
         let mut guard = self.udp_paths.access_mut(now);
         let Some(state) = guard.paths().get_mut(&addr) else {
             debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
             return;
         };
         state.receive_payload(now);
+        // Update interface name if we detected one
+        if let Some(name) = interface_name {
+            state.set_interface_name(Some(name.to_string()));
+        }
         self.last_used = Some(now);
     }
 
@@ -1690,6 +1708,8 @@ mod tests {
             ]),
             next_id: 5,
             path_selection: PathSelection::default(),
+            interface_priority: Default::default(),
+            ip_to_interface: Default::default(),
         });
         let mut got = node_map.list_remote_infos(later);
         got.sort_by_key(|p| p.node_id);
@@ -1721,6 +1741,7 @@ mod tests {
                 name: "test".into(),
             },
             path_selection: PathSelection::default(),
+            interface_priority: Default::default(),
         };
         let mut ep = NodeState::new(0, opts);
 
