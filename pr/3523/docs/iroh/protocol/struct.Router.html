@@ -6,7 +6,7 @@
 <p>As an example for graceful shutdown, e.g. for tests or CLI tools,
 wait for [<code>tokio::signal::ctrl_c()</code>]:</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>endpoint = Endpoint::bind_preset(presets::N0).<span class="kw">await</span><span class="question-mark">?</span>;
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>endpoint = Endpoint::bind().<span class="kw">await</span><span class="question-mark">?</span>;
 
 <span class="kw">let </span>router = Router::builder(endpoint)
     <span class="comment">// .accept(&amp;ALPN, &lt;something&gt;)

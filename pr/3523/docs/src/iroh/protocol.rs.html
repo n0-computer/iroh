@@ -4,14 +4,14 @@
 <a href=#4 id=4 data-nosnippet>4</a>//!
 <a href=#5 id=5 data-nosnippet>5</a>//! ```no_run
 <a href=#6 id=6 data-nosnippet>6</a>//! # use iroh::{
-<a href=#7 id=7 data-nosnippet>7</a>//! #     endpoint::{Connection, BindError, presets},
+<a href=#7 id=7 data-nosnippet>7</a>//! #     endpoint::{Connection, BindError},
 <a href=#8 id=8 data-nosnippet>8</a>//! #     protocol::{AcceptError, ProtocolHandler, Router},
 <a href=#9 id=9 data-nosnippet>9</a>//! #     Endpoint,
 <a href=#10 id=10 data-nosnippet>10</a>//! #     NodeAddr
 <a href=#11 id=11 data-nosnippet>11</a>//! # };
 <a href=#12 id=12 data-nosnippet>12</a>//! #
 <a href=#13 id=13 data-nosnippet>13</a>//! # async fn test_compile() -&gt; Result&lt;(), BindError&gt; {
-<a href=#14 id=14 data-nosnippet>14</a>//! let endpoint = Endpoint::bind_preset(presets::N0).await?;
+<a href=#14 id=14 data-nosnippet>14</a>//! let endpoint = Endpoint::bind().await?;
 <a href=#15 id=15 data-nosnippet>15</a>//!
 <a href=#16 id=16 data-nosnippet>16</a>//! let router = Router::builder(endpoint).accept(b"/my/alpn", Echo).spawn();
 <a href=#17 id=17 data-nosnippet>17</a>//! # Ok(())
@@ -71,10 +71,10 @@
 <a href=#71 id=71 data-nosnippet>71</a>/// ```no_run
 <a href=#72 id=72 data-nosnippet>72</a>/// # use std::sync::Arc;
 <a href=#73 id=73 data-nosnippet>73</a>/// # use n0_snafu::ResultExt;
-<a href=#74 id=74 data-nosnippet>74</a>/// # use iroh::{endpoint::{Connecting, presets}, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
+<a href=#74 id=74 data-nosnippet>74</a>/// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 <a href=#75 id=75 data-nosnippet>75</a>/// #
 <a href=#76 id=76 data-nosnippet>76</a>/// # async fn test_compile() -&gt; n0_snafu::Result&lt;()&gt; {
-<a href=#77 id=77 data-nosnippet>77</a>/// let endpoint = Endpoint::bind_preset(presets::N0).await?;
+<a href=#77 id=77 data-nosnippet>77</a>/// let endpoint = Endpoint::bind().await?;
 <a href=#78 id=78 data-nosnippet>78</a>///
 <a href=#79 id=79 data-nosnippet>79</a>/// let router = Router::builder(endpoint)
 <a href=#80 id=80 data-nosnippet>80</a>///     // .accept(&amp;ALPN, &lt;something&gt;)
