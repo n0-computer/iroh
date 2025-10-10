@@ -343,7 +343,7 @@ mod tests {
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_discovery_smoke() -> Result {
-        let ep = Endpoint::builder().bind().await?;
+        let ep = Endpoint::bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;
         let client = pkarr::Client::builder()

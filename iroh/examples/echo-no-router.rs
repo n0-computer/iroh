@@ -7,7 +7,7 @@
 //!
 //!     cargo run --example echo-no-router --features=examples
 
-use iroh::{Endpoint, NodeAddr};
+use iroh::{Endpoint, NodeAddr, endpoint::N0Preset};
 use n0_snafu::{Error, Result, ResultExt};
 
 /// Each protocol is identified by its ALPN string.
@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_side(addr: NodeAddr) -> Result<()> {
-    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+    let endpoint = Endpoint::bind_preset(N0Preset).await?;
 
     // Open a connection to the accepting node
     let conn = endpoint.connect(addr, ALPN).await?;
@@ -67,8 +67,7 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
 }
 
 async fn start_accept_side() -> Result<Endpoint> {
-    let endpoint = Endpoint::builder()
-        .discovery_n0()
+    let endpoint = Endpoint::builder_preset(N0Preset)
         // The accept side needs to opt-in to the protocols it accepts,
         // as any connection attempts that can't be found with a matching ALPN
         // will be rejected.

@@ -582,7 +582,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
-        let endpoint = Endpoint::builder().bind().await?;
+        let endpoint = Endpoint::bind().await?;
         let router = Router::builder(endpoint.clone()).spawn();
 
         assert!(!router.is_shutdown());

@@ -8,7 +8,7 @@
 
 use iroh::{
     Endpoint, NodeAddr,
-    endpoint::Connection,
+    endpoint::{Connection, N0Preset},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_snafu::{Result, ResultExt};
@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_side(addr: NodeAddr) -> Result<()> {
-    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+    let endpoint = Endpoint::bind_preset(N0Preset).await?;
 
     // Open a connection to the accepting node
     let conn = endpoint.connect(addr, ALPN).await?;
@@ -68,7 +68,7 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
 }
 
 async fn start_accept_side() -> Result<Router> {
-    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+    let endpoint = Endpoint::bind_preset(N0Preset).await?;
 
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
     let router = Router::builder(endpoint).accept(ALPN, Echo).spawn();

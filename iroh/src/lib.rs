@@ -12,7 +12,7 @@
 //! # use n0_snafu::ResultExt;
 //! # async fn wrapper() -> n0_snafu::Result {
 //! let addr: NodeAddr = todo!();
-//! let ep = Endpoint::builder().bind().await?;
+//! let ep = Endpoint::bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
 //! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
 //! send_stream
@@ -175,7 +175,7 @@
 //!
 //! async fn connect(addr: NodeAddr) -> Result<()> {
 //!     // The Endpoint is the central object that manages an iroh node.
-//!     let ep = Endpoint::builder().bind().await?;
+//!     let ep = Endpoint::bind().await?;
 //!
 //!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 //!     let conn = ep.connect(addr, b"hello-world").await?;

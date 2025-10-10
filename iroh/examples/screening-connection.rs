@@ -14,7 +14,7 @@ use std::sync::{
 
 use iroh::{
     Endpoint, NodeAddr,
-    endpoint::{Connecting, Connection},
+    endpoint::{Connecting, Connection, N0Preset},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_snafu::{Result, ResultExt};
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_side(addr: &NodeAddr) -> Result<()> {
-    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+    let endpoint = Endpoint::bind_preset(N0Preset).await?;
 
     // Open a connection to the accepting node
     let conn = endpoint.connect(addr.clone(), ALPN).await?;
@@ -79,7 +79,7 @@ async fn connect_side(addr: &NodeAddr) -> Result<()> {
 }
 
 async fn start_accept_side() -> Result<Router> {
-    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+    let endpoint = Endpoint::bind_preset(N0Preset).await?;
 
     let echo = ScreenedEcho {
         conn_attempt_count: Arc::new(AtomicU64::new(0)),

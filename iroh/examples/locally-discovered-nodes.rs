@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("Discovering Local Nodes Example!");
 
-    let ep = Endpoint::builder().bind().await?;
+    let ep = Endpoint::bind().await?;
     let node_id = ep.node_id();
 
     let mdns = MdnsDiscovery::builder().build(node_id)?;

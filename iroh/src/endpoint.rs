@@ -147,6 +147,13 @@ impl Builder {
     // The ordering of public methods is reflected directly in the documentation.  This is
     // roughly ordered by what is most commonly needed by users.
 
+    /// Creates a new [`Builder`] using the given [`Preset`].
+    pub fn new<P: Preset>(preset: P) -> Self {
+        let mut builder = Self::default();
+        builder = preset.apply(builder);
+        builder
+    }
+
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint.
@@ -186,7 +193,7 @@ impl Builder {
             metrics,
         };
 
-        Endpoint::bind(static_config, msock_opts).await
+        Endpoint::internal_bind(static_config, msock_opts).await
     }
 
     // # The very common methods everyone basically needs.
@@ -299,36 +306,6 @@ impl Builder {
     /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
     pub fn add_discovery(mut self, discovery: impl IntoDiscovery) -> Self {
         self.discovery.push(Box::new(discovery));
-        self
-    }
-
-    /// Configures the endpoint to use the default n0 DNS discovery service.
-    ///
-    /// The default discovery service publishes to and resolves from the
-    /// n0.computer dns server `iroh.link`.
-    ///
-    /// This is equivalent to adding both a [`crate::discovery::pkarr::PkarrPublisher`]
-    /// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
-    /// n0.computer dns server.
-    ///
-    /// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
-    /// When in tests, or when the `test-utils` feature is enabled, this will use the
-    /// [`N0_DNS_PKARR_RELAY_STAGING`].
-    ///
-    /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
-    /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
-    pub fn discovery_n0(mut self) -> Self {
-        self = self.add_discovery(PkarrPublisher::n0_dns());
-        // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
-        #[cfg(wasm_browser)]
-        {
-            self = self.add_discovery(PkarrResolver::n0_dns());
-        }
-        // Resolve using DNS queries outside browsers.
-        #[cfg(not(wasm_browser))]
-        {
-            self = self.add_discovery(DnsDiscovery::n0_dns());
-        }
         self
     }
 
@@ -589,6 +566,49 @@ pub enum GetMappingAddressError {
     NoAddress {},
 }
 
+/// Defines a preset
+pub trait Preset {
+    /// Applies the configuration to the passed in [`Builder`].
+    fn apply(self, builder: Builder) -> Builder;
+}
+
+/// Configures the endpoint to use the n0 defaults
+///
+/// Currently this consists of the DNS discovery service.
+///
+/// The default discovery service publishes to and resolves from the
+/// n0.computer dns server `iroh.link`.
+///
+/// This is equivalent to adding both a [`crate::discovery::pkarr::PkarrPublisher`]
+/// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
+/// n0.computer dns server.
+///
+/// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
+/// When in tests, or when the `test-utils` feature is enabled, this will use the
+/// [`N0_DNS_PKARR_RELAY_STAGING`].
+///
+/// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
+/// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
+#[derive(Debug, Copy, Clone, Default)]
+pub struct N0Preset;
+
+impl Preset for N0Preset {
+    fn apply(self, mut builder: Builder) -> Builder {
+        builder = builder.add_discovery(PkarrPublisher::n0_dns());
+        // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
+        #[cfg(wasm_browser)]
+        {
+            builder = self.add_discovery(PkarrResolver::n0_dns());
+        }
+        // Resolve using DNS queries outside browsers.
+        #[cfg(not(wasm_browser))]
+        {
+            builder = builder.add_discovery(DnsDiscovery::n0_dns());
+        }
+        builder
+    }
+}
+
 impl Endpoint {
     // The ordering of public methods is reflected directly in the documentation.  This is
     // roughly ordered by what is most commonly needed by users, but grouped in similar
@@ -601,12 +621,29 @@ impl Endpoint {
         Builder::default()
     }
 
+    /// Returns the builder for an [`Endpoint`], with the default configuration and
+    /// the [`Preset`] applied
+    pub fn builder_preset<P: Preset>(preset: P) -> Builder {
+        Builder::new(preset)
+    }
+
+    /// Constructs a default [`Endpoint`] and binds it immediately.
+    pub async fn bind() -> Result<Self, BindError> {
+        Builder::default().bind().await
+    }
+
+    /// Constructs a default [`Endpoint`] using the given [`Preset`]
+    /// and binds it immediately.
+    pub async fn bind_preset<P: Preset>(preset: P) -> Result<Self, BindError> {
+        Builder::new(preset).bind().await
+    }
+
     /// Creates a quinn endpoint backed by a magicsock.
     ///
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     #[instrument("ep", skip_all, fields(me = %static_config.tls_config.secret_key.public().fmt_short()))]
-    async fn bind(
+    async fn internal_bind(
         static_config: StaticConfig,
         msock_opts: magicsock::Options,
     ) -> Result<Self, BindError> {
@@ -1001,7 +1038,7 @@ impl Endpoint {
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let ep = Endpoint::builder().bind().await.unwrap();
+    /// let ep = Endpoint::bind().await.unwrap();
     /// let _report = ep.net_report().initialized().await;
     /// # });
     /// ```
@@ -1085,7 +1122,7 @@ impl Endpoint {
     /// # use std::collections::BTreeMap;
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let endpoint = Endpoint::bind().await?;
     /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
     /// # }
@@ -1103,7 +1140,7 @@ impl Endpoint {
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let endpoint = Endpoint::bind().await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
     ///     .iter()
@@ -1126,7 +1163,7 @@ impl Endpoint {
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let endpoint = Endpoint::bind().await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
     /// let s = registry.encode_openmetrics_to_string()?;
@@ -1163,7 +1200,7 @@ impl Endpoint {
     /// });
     ///
     /// // Spawn an endpoint and add the metrics to the registry.
-    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let endpoint = Endpoint::bind().await?;
     /// registry.write().unwrap().register_all(endpoint.metrics());
     ///
     /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
@@ -2887,7 +2924,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn graceful_close() -> Result {
-        let client = Endpoint::builder().bind().await?;
+        let client = Endpoint::bind().await?;
         let server = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
