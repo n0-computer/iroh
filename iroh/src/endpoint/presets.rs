@@ -42,7 +42,7 @@ pub struct N0;
 
 impl Preset for N0 {
     fn apply(self, mut builder: Builder) -> Builder {
-        builder = builder.add_discovery(PkarrPublisher::n0_dns());
+        builder = builder.discovery(PkarrPublisher::n0_dns());
         // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
         #[cfg(wasm_browser)]
         {
@@ -55,7 +55,7 @@ impl Preset for N0 {
         {
             use crate::discovery::dns::DnsDiscovery;
 
-            builder = builder.add_discovery(DnsDiscovery::n0_dns());
+            builder = builder.discovery(DnsDiscovery::n0_dns());
         }
         builder
     }

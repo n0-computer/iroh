@@ -220,14 +220,14 @@ impl EndpointArgs {
             let url = self
                 .pkarr_relay_url
                 .unwrap_or_else(|| self.env.pkarr_relay_url());
-            builder = builder.add_discovery(PkarrPublisher::builder(url));
+            builder = builder.discovery(PkarrPublisher::builder(url));
         }
 
         if !self.no_dns_resolve {
             let domain = self
                 .dns_origin_domain
                 .unwrap_or_else(|| self.env.dns_origin_domain());
-            builder = builder.add_discovery(DnsDiscovery::builder(domain));
+            builder = builder.discovery(DnsDiscovery::builder(domain));
         }
 
         if self.relay_only {

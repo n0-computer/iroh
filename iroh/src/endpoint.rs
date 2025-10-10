@@ -297,7 +297,7 @@ impl Builder {
     /// To clear all discovery services, use [`Builder::clear_discovery`].
     ///
     /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn add_discovery(mut self, discovery: impl IntoDiscovery) -> Self {
+    pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
         self.discovery.push(Box::new(discovery));
         self
     }
@@ -3116,7 +3116,7 @@ mod tests {
         let discovery = StaticProvider::from_node_info(addrs);
         let endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
-            .add_discovery(discovery)
+            .discovery(discovery)
             .bind()
             .await
             .e()?;

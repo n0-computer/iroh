@@ -219,7 +219,7 @@ mod tests {
         let discovery = StaticProvider::new();
 
         let _ep = Endpoint::builder()
-            .add_discovery(discovery.clone())
+            .discovery(discovery.clone())
             .bind()
             .await?;
 
