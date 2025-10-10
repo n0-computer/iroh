@@ -11,9 +11,8 @@ use std::num::NonZeroU16;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use iroh_base::{NodeId, SignatureError};
+use n0_error::{ResultExt, ensure};
 use n0_future::time::Duration;
-use nested_enum_utils::common_fields;
-use snafu::{Backtrace, ResultExt, Snafu};
 
 use super::common::{FrameType, FrameTypeError};
 use crate::KeyCache;
@@ -41,32 +40,40 @@ pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(15);
 pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
 
 /// Protocol send errors.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[n0_error::add_location]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[derive(n0_error::Error)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(display("unexpected frame: got {got:?}, expected {expected:?}"))]
+    #[display("unexpected frame: got {got:?}, expected {expected:?}")]
     UnexpectedFrame { got: FrameType, expected: FrameType },
-    #[snafu(display("Frame is too large, has {frame_len} bytes"))]
+    #[display("Frame is too large, has {frame_len} bytes")]
     FrameTooLarge { frame_len: usize },
-    #[snafu(transparent)]
-    SerDe { source: postcard::Error },
-    #[snafu(transparent)]
-    FrameTypeError { source: FrameTypeError },
-    #[snafu(display("Invalid public key"))]
-    InvalidPublicKey { source: SignatureError },
-    #[snafu(display("Invalid frame encoding"))]
+    #[error(transparent)]
+    SerDe {
+        #[error(from, std_err)]
+        source: postcard::Error,
+    },
+    #[error(transparent)]
+    FrameTypeError {
+        #[error(from)]
+        source: FrameTypeError,
+    },
+    #[display("Invalid public key")]
+    InvalidPublicKey {
+        #[error(from, std_err)]
+        source: SignatureError,
+    },
+    #[display("Invalid frame encoding")]
     InvalidFrame {},
-    #[snafu(display("Invalid frame type: {frame_type:?}"))]
+    #[display("Invalid frame type: {frame_type:?}")]
     InvalidFrameType { frame_type: FrameType },
-    #[snafu(display("Invalid protocol message encoding"))]
-    InvalidProtocolMessageEncoding { source: std::str::Utf8Error },
-    #[snafu(display("Too few bytes"))]
+    #[display("Invalid protocol message encoding")]
+    InvalidProtocolMessageEncoding {
+        #[error(from, std_err)]
+        source: std::str::Utf8Error,
+    },
+    #[display("Too few bytes")]
     TooSmall {},
 }
 
@@ -220,9 +227,9 @@ impl Datagrams {
     fn from_bytes(mut bytes: Bytes, is_batch: bool) -> Result<Self, Error> {
         if is_batch {
             // 1 bytes ECN, 2 bytes segment size
-            snafu::ensure!(bytes.len() >= 3, InvalidFrameSnafu);
+            ensure!(bytes.len() >= 3, Error::invalid_frame());
         } else {
-            snafu::ensure!(bytes.len() >= 1, InvalidFrameSnafu);
+            ensure!(bytes.len() >= 1, Error::invalid_frame());
         }
 
         let ecn_byte = bytes.get_u8();
@@ -329,18 +336,18 @@ impl RelayToClientMsg {
     pub(crate) fn from_bytes(mut content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         let frame_type = FrameType::from_bytes(&mut content)?;
         let frame_len = content.len();
-        snafu::ensure!(
+        ensure!(
             frame_len <= MAX_PACKET_SIZE,
-            FrameTooLargeSnafu { frame_len }
+            Error::frame_too_large(frame_len)
         );
 
         let res = match frame_type {
             FrameType::RelayToClientDatagram | FrameType::RelayToClientDatagramBatch => {
-                snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
+                ensure!(content.len() >= NodeId::LENGTH, Error::invalid_frame());
 
                 let remote_node_id = cache
                     .key_from_slice(&content[..NodeId::LENGTH])
-                    .context(InvalidPublicKeySnafu)?;
+                    .context(Error::invalid_public_key)?;
                 let datagrams = Datagrams::from_bytes(
                     content.slice(NodeId::LENGTH..),
                     frame_type == FrameType::RelayToClientDatagramBatch,
@@ -351,41 +358,41 @@ impl RelayToClientMsg {
                 }
             }
             FrameType::NodeGone => {
-                snafu::ensure!(content.len() == NodeId::LENGTH, InvalidFrameSnafu);
+                ensure!(content.len() == NodeId::LENGTH, Error::invalid_frame());
                 let node_id = cache
                     .key_from_slice(content.as_ref())
-                    .context(InvalidPublicKeySnafu)?;
+                    .context(Error::invalid_public_key)?;
                 Self::NodeGone(node_id)
             }
             FrameType::Ping => {
-                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
+                ensure!(content.len() == 8, Error::invalid_frame());
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Ping(data)
             }
             FrameType::Pong => {
-                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
+                ensure!(content.len() == 8, Error::invalid_frame());
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)
             }
             FrameType::Health => {
                 let problem = std::str::from_utf8(&content)
-                    .context(InvalidProtocolMessageEncodingSnafu)?
+                    .context(Error::invalid_protocol_message_encoding)?
                     .to_owned();
                 Self::Health { problem }
             }
             FrameType::Restarting => {
-                snafu::ensure!(content.len() == 4 + 4, InvalidFrameSnafu);
+                ensure!(content.len() == 4 + 4, Error::invalid_frame());
                 let reconnect_in = u32::from_be_bytes(
                     content[..4]
                         .try_into()
-                        .map_err(|_| InvalidFrameSnafu.build())?,
+                        .map_err(|_| Error::invalid_frame())?,
                 );
                 let try_for = u32::from_be_bytes(
                     content[4..]
                         .try_into()
-                        .map_err(|_| InvalidFrameSnafu.build())?,
+                        .map_err(|_| Error::invalid_frame())?,
                 );
                 let reconnect_in = Duration::from_millis(reconnect_in as u64);
                 let try_for = Duration::from_millis(try_for as u64);
@@ -395,7 +402,7 @@ impl RelayToClientMsg {
                 }
             }
             _ => {
-                return Err(InvalidFrameTypeSnafu { frame_type }.build());
+                return Err(Error::invalid_frame_type(frame_type));
             }
         };
         Ok(res)
@@ -463,16 +470,16 @@ impl ClientToRelayMsg {
     pub(crate) fn from_bytes(mut content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         let frame_type = FrameType::from_bytes(&mut content)?;
         let frame_len = content.len();
-        snafu::ensure!(
+        ensure!(
             frame_len <= MAX_PACKET_SIZE,
-            FrameTooLargeSnafu { frame_len }
+            Error::frame_too_large(frame_len)
         );
 
         let res = match frame_type {
             FrameType::ClientToRelayDatagram | FrameType::ClientToRelayDatagramBatch => {
                 let dst_node_id = cache
                     .key_from_slice(&content[..NodeId::LENGTH])
-                    .context(InvalidPublicKeySnafu)?;
+                    .context(Error::invalid_public_key)?;
                 let datagrams = Datagrams::from_bytes(
                     content.slice(NodeId::LENGTH..),
                     frame_type == FrameType::ClientToRelayDatagramBatch,
@@ -483,19 +490,19 @@ impl ClientToRelayMsg {
                 }
             }
             FrameType::Ping => {
-                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
+                ensure!(content.len() == 8, Error::invalid_frame());
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Ping(data)
             }
             FrameType::Pong => {
-                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
+                ensure!(content.len() == 8, Error::invalid_frame());
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)
             }
             _ => {
-                return Err(InvalidFrameTypeSnafu { frame_type }.build());
+                return Err(Error::invalid_frame_type(frame_type));
             }
         };
         Ok(res)
@@ -507,7 +514,7 @@ impl ClientToRelayMsg {
 mod tests {
     use data_encoding::HEXLOWER;
     use iroh_base::SecretKey;
-    use n0_snafu::Result;
+    use n0_error::Result;
 
     use super::*;
 

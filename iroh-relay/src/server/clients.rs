@@ -194,8 +194,8 @@ mod tests {
     use std::time::Duration;
 
     use iroh_base::SecretKey;
+    use n0_error::{Result, ResultExt, whatever};
     use n0_future::{Stream, StreamExt};
-    use n0_snafu::{Result, ResultExt};
     use rand::SeedableRng;
 
     use super::*;
@@ -206,7 +206,7 @@ mod tests {
     };
 
     async fn recv_frame<
-        E: snafu::Error + Sync + Send + 'static,
+        E: std::error::Error + Sync + Send + 'static,
         S: Stream<Item = Result<RelayToClientMsg, E>> + Unpin,
     >(
         frame_type: FrameType,
@@ -215,7 +215,7 @@ mod tests {
         match stream.next().await {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
-                    snafu::whatever!(
+                    whatever!(
                         "Unexpected frame, got {:?}, but expected {:?}",
                         frame.typ(),
                         frame_type
@@ -224,7 +224,7 @@ mod tests {
                 Ok(frame)
             }
             Some(Err(err)) => Err(err).e(),
-            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type:?}"),
+            None => whatever!("Unexpected EOF, expected frame {frame_type:?}"),
         }
     }
 
