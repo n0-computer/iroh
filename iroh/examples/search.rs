@@ -34,7 +34,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use clap::Parser;
 use iroh::{
     Endpoint, NodeId,
-    endpoint::{Connection, presets},
+    endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_snafu::{Result, ResultExt};
@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
 
     // Build an endpoint
-    let endpoint = Endpoint::bind_preset(presets::N0).await?;
+    let endpoint = Endpoint::bind().await?;
 
     // Build our protocol handler. The `builder` exposes access to various subsystems in the
     // iroh node. In our case, we need a blobs client and the endpoint.

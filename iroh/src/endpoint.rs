@@ -119,13 +119,30 @@ pub struct Builder {
     max_tls_tickets: usize,
 }
 
-impl Default for Builder {
-    fn default() -> Self {
+impl Builder {
+    // The ordering of public methods is reflected directly in the documentation.  This is
+    // roughly ordered by what is most commonly needed by users.
+
+    /// Creates a new [`Builder`] using the given [`Preset`].
+    ///
+    /// See [`presets`] for more.
+    pub fn new<P: Preset>(preset: P) -> Self {
+        Self::empty().preset(preset)
+    }
+
+    /// Applies the given [`Preset`].
+    pub fn preset<P: Preset>(mut self, preset: P) -> Self {
+        self = preset.apply(self);
+        self
+    }
+
+    /// Creates an empty builder, including
+    pub fn empty() -> Self {
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
         Self {
             secret_key: Default::default(),
-            relay_mode: default_relay_mode(),
+            relay_mode: RelayMode::Disabled,
             alpn_protocols: Default::default(),
             transport_config,
             keylog: Default::default(),
@@ -142,20 +159,6 @@ impl Default for Builder {
             path_selection: PathSelection::default(),
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
         }
-    }
-}
-
-impl Builder {
-    // The ordering of public methods is reflected directly in the documentation.  This is
-    // roughly ordered by what is most commonly needed by users.
-
-    /// Creates a new [`Builder`] using the given [`Preset`].
-    ///
-    /// See [`presets`] for more.
-    pub fn new<P: Preset>(preset: P) -> Self {
-        let mut builder = Self::default();
-        builder = preset.apply(builder);
-        builder
     }
 
     // # The final constructor that everyone needs.
@@ -543,29 +546,24 @@ impl Endpoint {
     // # Methods relating to construction.
 
     /// Returns the builder for an [`Endpoint`], with a production configuration.
+    ///
+    /// This uses the [`presets::N0`] as the configuration.
     pub fn builder() -> Builder {
-        Builder::default()
+        Builder::new(presets::N0)
     }
 
-    /// Returns the builder for an [`Endpoint`], with the default configuration and
-    /// the [`Preset`] applied
+    /// Returns the builder for an [`Endpoint`], with an empty configuration.
     ///
-    /// See [`presets`] for more.
-    pub fn builder_preset<P: Preset>(preset: P) -> Builder {
-        Builder::new(preset)
+    /// See [`Builder::empty`] for details.
+    pub fn empty_builder() -> Builder {
+        Builder::empty()
     }
 
     /// Constructs a default [`Endpoint`] and binds it immediately.
-    pub async fn bind() -> Result<Self, BindError> {
-        Builder::default().bind().await
-    }
-
-    /// Constructs a default [`Endpoint`] using the given [`Preset`]
-    /// and binds it immediately.
     ///
-    /// See [`presets`] for more.
-    pub async fn bind_preset<P: Preset>(preset: P) -> Result<Self, BindError> {
-        Builder::new(preset).bind().await
+    /// Uses the [`presets::N0`] as configuration.
+    pub async fn bind() -> Result<Self, BindError> {
+        Self::builder().bind().await
     }
 
     /// Creates a quinn endpoint backed by a magicsock.

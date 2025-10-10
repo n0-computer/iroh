@@ -12,7 +12,6 @@
 use iroh::{
     Endpoint, RelayMode,
     discovery::{Discovery, pkarr::PkarrResolver},
-    endpoint::presets,
 };
 use n0_future::{
     StreamExt, task,
@@ -37,11 +36,11 @@ async fn simple_node_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
 
-    let client = Endpoint::builder_preset(presets::N0)
+    let client = Endpoint::builder()
         .relay_mode(RelayMode::Staging)
         .bind()
         .await?;
-    let server = Endpoint::builder_preset(presets::N0)
+    let server = Endpoint::builder()
         .relay_mode(RelayMode::Staging)
         .alpns(vec![ECHO_ALPN.to_vec()])
         .bind()

@@ -6,13 +6,16 @@
 //! # async fn wrapper() -> n0_snafu::Result {
 //! use iroh::{Endpoint, Watcher, endpoint::presets};
 //!
-//! let endpoint = Endpoint::bind_preset(presets::N0).await?;
+//! let endpoint = Endpoint::builder().preset(presets::N0).bind().await?;
 //! # let _ = endpoint;
 //! # Ok(())
 //! # }
 //! ```
-use super::Builder;
-use crate::discovery::pkarr::PkarrPublisher;
+
+use crate::{
+    discovery::pkarr::PkarrPublisher,
+    endpoint::{Builder, default_relay_mode},
+};
 
 /// Defines a preset
 pub trait Preset {
@@ -22,7 +25,9 @@ pub trait Preset {
 
 /// Configures the endpoint to use the n0 defaults
 ///
-/// Currently this consists of the DNS discovery service.
+/// Currently this consists of
+/// - the DNS discovery service.
+/// - the default relay servers provided by Number 0.
 ///
 /// The default discovery service publishes to and resolves from the
 /// n0.computer dns server `iroh.link`.
@@ -57,6 +62,9 @@ impl Preset for N0 {
 
             builder = builder.discovery(DnsDiscovery::n0_dns());
         }
+
+        builder = builder.relay_mode(default_relay_mode());
+
         builder
     }
 }
