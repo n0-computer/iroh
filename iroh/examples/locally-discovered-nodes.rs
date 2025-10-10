@@ -66,7 +66,9 @@ async fn main() -> Result<()> {
     for _ in 0..node_count {
         let ud = user_data.clone();
         set.spawn(async move {
-            let ep = Endpoint::builder().discovery_local_network().bind().await?;
+            let ep = Endpoint::bind().await?;
+            ep.discovery()
+                .add(MdnsDiscovery::builder().build(ep.node_id())?);
             ep.set_user_data_for_discovery(Some(ud));
             tokio::time::sleep(Duration::from_secs(3)).await;
             ep.close().await;

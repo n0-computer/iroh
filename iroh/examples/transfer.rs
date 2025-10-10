@@ -230,19 +230,6 @@ impl EndpointArgs {
             builder = builder.add_discovery(DnsDiscovery::builder(domain));
         }
 
-        if self.mdns {
-            #[cfg(feature = "discovery-local-network")]
-            {
-                builder = builder.discovery_local_network();
-            }
-            #[cfg(not(feature = "discovery-local-network"))]
-            {
-                snafu::whatever!(
-                    "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
-                );
-            }
-        }
-
         if self.relay_only {
             #[cfg(feature = "test-utils")]
             {
@@ -269,6 +256,23 @@ impl EndpointArgs {
         }
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
+
+        if self.mdns {
+            #[cfg(feature = "discovery-local-network")]
+            {
+                use iroh::discovery::mdns::MdnsDiscovery;
+
+                endpoint
+                    .discovery()
+                    .add(MdnsDiscovery::builder().build(endpoint.node_id())?);
+            }
+            #[cfg(not(feature = "discovery-local-network"))]
+            {
+                snafu::whatever!(
+                    "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
+                );
+            }
+        }
 
         let node_id = endpoint.node_id();
         println!("Our node id:\n\t{node_id}");

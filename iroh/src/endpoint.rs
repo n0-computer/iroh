@@ -34,18 +34,20 @@ use url::Url;
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
 #[cfg(not(wasm_browser))]
-use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
+use crate::dns::DnsResolver;
 use crate::{
     discovery::{
         ConcurrentDiscovery, DiscoveryError, DiscoveryTask, DynIntoDiscovery, IntoDiscovery,
-        UserData, pkarr::PkarrPublisher,
+        UserData,
     },
+    endpoint::presets::Preset,
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
+pub mod presets;
 mod rtt_actor;
 
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
@@ -148,6 +150,8 @@ impl Builder {
     // roughly ordered by what is most commonly needed by users.
 
     /// Creates a new [`Builder`] using the given [`Preset`].
+    ///
+    /// See [`presets`] for more.
     pub fn new<P: Preset>(preset: P) -> Self {
         let mut builder = Self::default();
         builder = preset.apply(builder);
@@ -306,30 +310,6 @@ impl Builder {
     /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
     pub fn add_discovery(mut self, discovery: impl IntoDiscovery) -> Self {
         self.discovery.push(Box::new(discovery));
-        self
-    }
-
-    #[cfg(feature = "discovery-pkarr-dht")]
-    /// Configures the endpoint to also use the mainline DHT with default settings.
-    ///
-    /// This is equivalent to adding a [`crate::discovery::pkarr::dht::DhtDiscovery`]
-    /// with default settings. Note that DhtDiscovery has various more advanced
-    /// configuration options. If you need any of those, you should manually
-    /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
-    pub fn discovery_dht(mut self) -> Self {
-        self = self.add_discovery(crate::discovery::pkarr::dht::DhtDiscovery::builder());
-        self
-    }
-
-    #[cfg(feature = "discovery-local-network")]
-    /// Configures the endpoint to also use local network discovery.
-    ///
-    /// This is equivalent to adding a [`crate::discovery::mdns::MdnsDiscovery`]
-    /// with default settings. Note that MdnsDiscovery has various more advanced
-    /// configuration options. If you need any of those, you should manually
-    /// create a MdnsDiscovery and add it with [`Builder::add_discovery`].
-    pub fn discovery_local_network(mut self) -> Self {
-        self = self.add_discovery(crate::discovery::mdns::MdnsDiscovery::builder());
         self
     }
 
@@ -566,49 +546,6 @@ pub enum GetMappingAddressError {
     NoAddress {},
 }
 
-/// Defines a preset
-pub trait Preset {
-    /// Applies the configuration to the passed in [`Builder`].
-    fn apply(self, builder: Builder) -> Builder;
-}
-
-/// Configures the endpoint to use the n0 defaults
-///
-/// Currently this consists of the DNS discovery service.
-///
-/// The default discovery service publishes to and resolves from the
-/// n0.computer dns server `iroh.link`.
-///
-/// This is equivalent to adding both a [`crate::discovery::pkarr::PkarrPublisher`]
-/// and a [`crate::discovery::dns::DnsDiscovery`], both configured to use the
-/// n0.computer dns server.
-///
-/// This will by default use [`N0_DNS_PKARR_RELAY_PROD`].
-/// When in tests, or when the `test-utils` feature is enabled, this will use the
-/// [`N0_DNS_PKARR_RELAY_STAGING`].
-///
-/// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
-/// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
-#[derive(Debug, Copy, Clone, Default)]
-pub struct N0Preset;
-
-impl Preset for N0Preset {
-    fn apply(self, mut builder: Builder) -> Builder {
-        builder = builder.add_discovery(PkarrPublisher::n0_dns());
-        // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
-        #[cfg(wasm_browser)]
-        {
-            builder = self.add_discovery(PkarrResolver::n0_dns());
-        }
-        // Resolve using DNS queries outside browsers.
-        #[cfg(not(wasm_browser))]
-        {
-            builder = builder.add_discovery(DnsDiscovery::n0_dns());
-        }
-        builder
-    }
-}
-
 impl Endpoint {
     // The ordering of public methods is reflected directly in the documentation.  This is
     // roughly ordered by what is most commonly needed by users, but grouped in similar
@@ -623,6 +560,8 @@ impl Endpoint {
 
     /// Returns the builder for an [`Endpoint`], with the default configuration and
     /// the [`Preset`] applied
+    ///
+    /// See [`presets`] for more.
     pub fn builder_preset<P: Preset>(preset: P) -> Builder {
         Builder::new(preset)
     }
@@ -634,6 +573,8 @@ impl Endpoint {
 
     /// Constructs a default [`Endpoint`] using the given [`Preset`]
     /// and binds it immediately.
+    ///
+    /// See [`presets`] for more.
     pub async fn bind_preset<P: Preset>(preset: P) -> Result<Self, BindError> {
         Builder::new(preset).bind().await
     }
