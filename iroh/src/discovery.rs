@@ -394,6 +394,8 @@ impl From<DiscoveryItem> for NodeInfo {
 #[derive(Debug, Default, Clone)]
 pub struct ConcurrentDiscovery {
     services: Arc<RwLock<Vec<Box<dyn Discovery>>>>,
+    /// The data last published, used to publish when adding a new service.
+    last_data: Arc<RwLock<Option<NodeData>>>,
 }
 
 impl ConcurrentDiscovery {
@@ -406,16 +408,27 @@ impl ConcurrentDiscovery {
     pub fn from_services(services: Vec<Box<dyn Discovery>>) -> Self {
         Self {
             services: Arc::new(RwLock::new(services)),
+            last_data: Default::default(),
         }
     }
 
     /// Adds a [`Discovery`] service.
+    ///
+    /// If there is historical discovery data, it will be published immediately on this service.
     pub fn add(&self, service: impl Discovery + 'static) {
         self.add_boxed(Box::new(service))
     }
 
     /// Adds an already `Box`ed [`Discovery`] service.
+    ///
+    /// If there is historical discovery data, it will be published immediately on this service.
     pub fn add_boxed(&self, service: Box<dyn Discovery>) {
+        {
+            let data = self.last_data.read().expect("poisoned");
+            if let Some(data) = &*data {
+                service.publish(data)
+            }
+        }
         self.services.write().expect("poisoned").push(service);
     }
 
@@ -438,6 +451,7 @@ where
         let services = iter.into_iter().collect::<Vec<_>>();
         Self {
             services: Arc::new(RwLock::new(services)),
+            last_data: Default::default(),
         }
     }
 }
@@ -448,11 +462,15 @@ impl Discovery for ConcurrentDiscovery {
         for service in &*services {
             service.publish(data);
         }
+
+        self.last_data
+            .write()
+            .expect("poisoned")
+            .replace(data.clone());
     }
 
     fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let services = self.services.read().expect("poisoned");
-        dbg!(services.len());
         let streams = services
             .iter()
             .filter_map(|service| service.resolve(node_id));
