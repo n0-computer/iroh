@@ -1088,7 +1088,7 @@ mod test_dns_pkarr {
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
-            .discovery(dns_pkarr_server.discovery(secret_key))
+            .add_discovery(dns_pkarr_server.discovery(secret_key))
             .bind()
             .await?;
 

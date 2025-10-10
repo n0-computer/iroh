@@ -271,24 +271,13 @@ impl Builder {
     }
 
     /// Removes all discovery services from the builder.
-    pub fn clear_discovery(mut self) -> Self {
-        self.discovery.clear();
-        self
-    }
-
-    /// Optionally sets a discovery mechanism for this endpoint.
-    ///
-    /// If you want to combine multiple discovery services, you can use
-    /// [`Builder::add_discovery`] instead. This will internally create a
-    /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
+    pub fn clear_discovery(mut self) -> Self {
         self.discovery.clear();
-        self.discovery.push(Box::new(discovery));
         self
     }
 
@@ -3127,7 +3116,7 @@ mod tests {
         let discovery = StaticProvider::from_node_info(addrs);
         let endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
-            .discovery(discovery)
+            .add_discovery(discovery)
             .bind()
             .await
             .e()?;
