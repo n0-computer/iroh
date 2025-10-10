@@ -187,7 +187,6 @@ impl Builder {
             addr_v6: self.addr_v6,
             secret_key,
             relay_map,
-            discovery: self.discovery,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
@@ -200,7 +199,24 @@ impl Builder {
             metrics,
         };
 
-        Endpoint::internal_bind(static_config, msock_opts).await
+        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
+        trace!("created magicsock");
+        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
+
+        let metrics = msock.metrics.magicsock.clone();
+        let ep = Endpoint {
+            msock,
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
+            static_config: Arc::new(static_config),
+        };
+
+        // Add discovery mechanisms
+        for create_service in self.discovery {
+            let service = create_service.into_discovery(&ep)?;
+            ep.discovery().add_boxed(service);
+        }
+
+        Ok(ep)
     }
 
     // # The very common methods everyone basically needs.
@@ -518,6 +534,10 @@ pub enum BindError {
     MagicSpawn {
         source: magicsock::CreateHandleError,
     },
+    #[snafu(transparent)]
+    Discovery {
+        source: crate::discovery::IntoDiscoveryError,
+    },
 }
 
 #[allow(missing_docs)]
@@ -564,28 +584,6 @@ impl Endpoint {
     /// Uses the [`presets::N0`] as configuration.
     pub async fn bind() -> Result<Self, BindError> {
         Self::builder().bind().await
-    }
-
-    /// Creates a quinn endpoint backed by a magicsock.
-    ///
-    /// This is for internal use, the public interface is the [`Builder`] obtained from
-    /// [Self::builder]. See the methods on the builder for documentation of the parameters.
-    #[instrument("ep", skip_all, fields(me = %static_config.tls_config.secret_key.public().fmt_short()))]
-    async fn internal_bind(
-        static_config: StaticConfig,
-        msock_opts: magicsock::Options,
-    ) -> Result<Self, BindError> {
-        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
-        trace!("created magicsock");
-        debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
-
-        let metrics = msock.metrics.magicsock.clone();
-        let ep = Self {
-            msock,
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
-            static_config: Arc::new(static_config),
-        };
-        Ok(ep)
     }
 
     /// Sets the list of accepted ALPN protocols.
@@ -692,6 +690,7 @@ impl Endpoint {
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
             .context(NoAddressSnafu)?;
+        dbg!(&mapped_addr, &direct_addresses, &relay_url);
 
         let transport_config = options
             .transport_config
@@ -1314,6 +1313,7 @@ impl Endpoint {
                     .first_arrived()
                     .await
                     .context(get_mapping_address_error::DiscoverSnafu)?;
+                dbg!("got first");
                 if let Some(addr) = self.msock.get_mapping_addr(node_id) {
                     Ok((addr, Some(discovery)))
                 } else {
