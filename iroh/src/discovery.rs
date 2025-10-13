@@ -632,7 +632,10 @@ impl DiscoveryTask {
                         continue;
                     }
                     debug!(%provenance, addr = ?node_addr, "new address found");
-                    ep.add_node_addr_with_source(node_addr, provenance).ok();
+                    let source = crate::magicsock::Source::Discovery {
+                        name: provenance.to_string(),
+                    };
+                    ep.add_node_addr(node_addr, source).ok();
 
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
