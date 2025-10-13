@@ -175,7 +175,6 @@ impl AsRef<[u8]> for PublicKey {
     }
 }
 
-// TODO: remove once this is not needed anymore in iroh
 #[doc(hidden)]
 impl From<VerifyingKey> for PublicKey {
     fn from(verifying_key: VerifyingKey) -> Self {
@@ -184,7 +183,6 @@ impl From<VerifyingKey> for PublicKey {
     }
 }
 
-// TODO: remove once this is not needed anymore in iroh
 #[doc(hidden)]
 impl From<&PublicKey> for VerifyingKey {
     fn from(value: &PublicKey) -> Self {
@@ -192,7 +190,6 @@ impl From<&PublicKey> for VerifyingKey {
     }
 }
 
-// TODO: remove once this is not needed anymore in iroh
 #[doc(hidden)]
 impl From<PublicKey> for VerifyingKey {
     fn from(value: PublicKey) -> Self {
