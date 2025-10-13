@@ -521,8 +521,8 @@
 <a href=#521 id=521 data-nosnippet>521</a>            node_key: sender_key.public(),
 <a href=#522 id=522 data-nosnippet>522</a>        });
 <a href=#523 id=523 data-nosnippet>523</a>
-<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">let </span>sender_secret = secret_ed_box(sender_key.as_ref());
-<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">let </span>shared = SharedSecret::new(<span class="kw-2">&amp;</span>sender_secret, <span class="kw-2">&amp;</span>public_ed_box(<span class="kw-2">&amp;</span>recv_key.public().into()));
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">let </span>sender_secret = secret_ed_box(<span class="kw-2">&amp;</span>sender_key);
+<a href=#525 id=525 data-nosnippet>525</a>        <span class="kw">let </span>shared = SharedSecret::new(<span class="kw-2">&amp;</span>sender_secret, <span class="kw-2">&amp;</span>public_ed_box(<span class="kw-2">&amp;</span>recv_key.public()));
 <a href=#526 id=526 data-nosnippet>526</a>        <span class="kw">let </span><span class="kw-2">mut </span>seal = msg.as_bytes();
 <a href=#527 id=527 data-nosnippet>527</a>        shared.seal(<span class="kw-2">&amp;mut </span>seal);
 <a href=#528 id=528 data-nosnippet>528</a>
@@ -535,14 +535,13 @@
 <a href=#535 id=535 data-nosnippet>535</a>        <span class="macro">assert_eq!</span>(raw_key, sender_key.public());
 <a href=#536 id=536 data-nosnippet>536</a>        <span class="macro">assert_eq!</span>(seal_back, seal);
 <a href=#537 id=537 data-nosnippet>537</a>
-<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">let </span>recv_secret = secret_ed_box(recv_key.as_ref());
-<a href=#539 id=539 data-nosnippet>539</a>        <span class="kw">let </span>shared_recv =
-<a href=#540 id=540 data-nosnippet>540</a>            SharedSecret::new(<span class="kw-2">&amp;</span>recv_secret, <span class="kw-2">&amp;</span>public_ed_box(<span class="kw-2">&amp;</span>sender_key.public().into()));
-<a href=#541 id=541 data-nosnippet>541</a>        <span class="kw">let </span><span class="kw-2">mut </span>open_seal = seal_back.to_vec();
-<a href=#542 id=542 data-nosnippet>542</a>        shared_recv
-<a href=#543 id=543 data-nosnippet>543</a>            .open(<span class="kw-2">&amp;mut </span>open_seal)
-<a href=#544 id=544 data-nosnippet>544</a>            .expect(<span class="string">"failed to open seal_back"</span>);
-<a href=#545 id=545 data-nosnippet>545</a>        <span class="kw">let </span>msg_back = Message::from_bytes(<span class="kw-2">&amp;</span>open_seal).unwrap();
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="macro">assert_eq!</span>(msg_back, msg);
-<a href=#547 id=547 data-nosnippet>547</a>    }
-<a href=#548 id=548 data-nosnippet>548</a>}</code></pre></div></section></main></body></html>
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">let </span>recv_secret = secret_ed_box(<span class="kw-2">&amp;</span>recv_key);
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="kw">let </span>shared_recv = SharedSecret::new(<span class="kw-2">&amp;</span>recv_secret, <span class="kw-2">&amp;</span>public_ed_box(<span class="kw-2">&amp;</span>sender_key.public()));
+<a href=#540 id=540 data-nosnippet>540</a>        <span class="kw">let </span><span class="kw-2">mut </span>open_seal = seal_back.to_vec();
+<a href=#541 id=541 data-nosnippet>541</a>        shared_recv
+<a href=#542 id=542 data-nosnippet>542</a>            .open(<span class="kw-2">&amp;mut </span>open_seal)
+<a href=#543 id=543 data-nosnippet>543</a>            .expect(<span class="string">"failed to open seal_back"</span>);
+<a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">let </span>msg_back = Message::from_bytes(<span class="kw-2">&amp;</span>open_seal).unwrap();
+<a href=#545 id=545 data-nosnippet>545</a>        <span class="macro">assert_eq!</span>(msg_back, msg);
+<a href=#546 id=546 data-nosnippet>546</a>    }
+<a href=#547 id=547 data-nosnippet>547</a>}</code></pre></div></section></main></body></html>

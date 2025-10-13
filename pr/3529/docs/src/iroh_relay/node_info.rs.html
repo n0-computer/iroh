@@ -564,7 +564,7 @@
 <a href=#564 id=564 data-nosnippet>564</a>        };
 <a href=#565 id=565 data-nosnippet>565</a>        <span class="kw">let </span>pubkey = packet.public_key();
 <a href=#566 id=566 data-nosnippet>566</a>        <span class="kw">let </span>pubkey_z32 = pubkey.to_z32();
-<a href=#567 id=567 data-nosnippet>567</a>        <span class="kw">let </span>node_id = NodeId::from(<span class="kw-2">*</span>pubkey.verifying_key());
+<a href=#567 id=567 data-nosnippet>567</a>        <span class="kw">let </span>node_id = NodeId::from_bytes(<span class="kw-2">&amp;</span>pubkey.verifying_key().to_bytes()).expect(<span class="string">"valid key"</span>);
 <a href=#568 id=568 data-nosnippet>568</a>        <span class="kw">let </span>zone = dns::Name::new(<span class="kw-2">&amp;</span>pubkey_z32).expect(<span class="string">"z32 encoding is valid"</span>);
 <a href=#569 id=569 data-nosnippet>569</a>        <span class="kw">let </span>txt_data = packet
 <a href=#570 id=570 data-nosnippet>570</a>            .all_resource_records()
