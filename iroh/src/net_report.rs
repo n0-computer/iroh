@@ -5,48 +5,56 @@
 //! etc and reachability to the configured relays.
 // Based on <https://github.com/tailscale/tailscale/blob/main/net/netcheck/netcheck.go>
 
-#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(wasm_browser, allow(unused))]
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    fmt::{self, Debug},
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    collections::{BTreeMap, BTreeSet},
+    fmt::Debug,
+    net::SocketAddr,
     sync::Arc,
 };
 
-use bytes::Bytes;
+use defaults::timeouts::PROBES_TIMEOUT;
+// exported primarily for use in documentation
+pub use defaults::timeouts::TIMEOUT;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
-use iroh_relay::dns::DnsResolver;
-use iroh_relay::{protos::stun, RelayMap};
-use n0_future::{
-    task::{self, AbortOnDropHandle},
-    time::{Duration, Instant},
-};
-use nested_enum_utils::common_fields;
+use iroh_relay::RelayNode;
 #[cfg(not(wasm_browser))]
-use netwatch::UdpSocket;
-use reportgen::ActorRunError;
-use snafu::Snafu;
-use tokio::sync::{self, mpsc, oneshot};
-use tracing::{debug, error, info_span, trace, warn, Instrument};
+use iroh_relay::dns::DnsResolver;
+#[cfg(not(wasm_browser))]
+use iroh_relay::quic::QuicClient;
+use iroh_relay::{
+    RelayMap,
+    quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
+};
+#[cfg(not(wasm_browser))]
+use n0_future::task;
+use n0_future::{
+    StreamExt,
+    task::AbortOnDropHandle,
+    time::{self, Duration, Instant},
+};
+use n0_watcher::{Watchable, Watcher};
+use tokio::task::JoinSet;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, trace, warn};
+
+#[cfg(not(wasm_browser))]
+use self::reportgen::QadProbeReport;
+use self::reportgen::{ProbeFinished, ProbeReport};
 
 mod defaults;
-#[cfg(not(wasm_browser))]
-mod dns;
 mod ip_mapped_addrs;
 mod metrics;
-#[cfg(not(wasm_browser))]
-mod ping;
+mod probes;
+mod report;
 mod reportgen;
 
 mod options;
-
-#[cfg(not(wasm_browser))]
-pub use stun_utils::bind_local_stun_socket;
 
 /// We "vendor" what we need of the library in browsers for simplicity.
 ///
@@ -68,153 +76,118 @@ pub(crate) mod portmapper {
 }
 
 pub(crate) use ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
-pub use metrics::Metrics;
-pub use options::Options;
-pub use reportgen::QuicConfig;
+
+pub(crate) use self::reportgen::IfStateDetails;
 #[cfg(not(wasm_browser))]
-use reportgen::SocketState;
+use self::reportgen::SocketState;
+pub use self::{
+    metrics::Metrics,
+    options::Options,
+    probes::Probe,
+    report::{RelayLatencies, Report},
+    reportgen::QuicConfig,
+};
+use crate::util::MaybeFuture;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// The maximum latency of all nodes, if none are found yet.
 ///
 /// Normally the max latency of all nodes is computed, but if we don't yet know any nodes
-/// latencies we return this as default.  This is the value of the initial STUN probe
+/// latencies we return this as default.  This is the value of the initial QAD probe
 /// delays.  It is only used as time to wait for further latencies to arrive, which *should*
 /// never happen unless there already is at least one latency.  Yet here we are, defining a
 /// default which will never be used.
 const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
 
-/// A net_report report.
-///
-/// Can be obtained by calling [`Client::get_report`].
-#[derive(Default, Debug, PartialEq, Eq, Clone)]
-pub struct Report {
-    /// A UDP STUN round trip completed.
-    pub udp: bool,
-    /// An IPv6 STUN round trip completed.
-    pub ipv6: bool,
-    /// An IPv4 STUN round trip completed.
-    pub ipv4: bool,
-    /// An IPv6 packet was able to be sent
-    pub ipv6_can_send: bool,
-    /// an IPv4 packet was able to be sent
-    pub ipv4_can_send: bool,
-    /// could bind a socket to ::1
-    pub os_has_ipv6: bool,
-    /// An ICMPv4 round trip completed, `None` if not checked.
-    pub icmpv4: Option<bool>,
-    /// An ICMPv6 round trip completed, `None` if not checked.
-    pub icmpv6: Option<bool>,
-    /// Whether STUN results depend on which STUN server you're talking to (on IPv4).
-    pub mapping_varies_by_dest_ip: Option<bool>,
-    /// Whether STUN results depend on which STUN server you're talking to (on IPv6).
-    ///
-    /// Note that we don't really expect this to happen and are merely logging this if
-    /// detecting rather than using it.  For now.
-    pub mapping_varies_by_dest_ipv6: Option<bool>,
-    /// Whether the router supports communicating between two local devices through the NATted
-    /// public IP address (on IPv4).
-    pub hair_pinning: Option<bool>,
-    /// Probe indicating the presence of port mapping protocols on the LAN.
-    pub portmap_probe: Option<portmapper::ProbeOutput>,
-    /// `None` for unknown
-    pub preferred_relay: Option<RelayUrl>,
-    /// keyed by relay Url
-    pub relay_latency: RelayLatencies,
-    /// keyed by relay Url
-    pub relay_v4_latency: RelayLatencies,
-    /// keyed by relay Url
-    pub relay_v6_latency: RelayLatencies,
-    /// ip:port of global IPv4
-    pub global_v4: Option<SocketAddrV4>,
-    /// `[ip]:port` of global IPv6
-    pub global_v6: Option<SocketAddrV6>,
-    /// CaptivePortal is set when we think there's a captive portal that is
-    /// intercepting HTTP traffic.
-    pub captive_portal: Option<bool>,
-}
-
-impl fmt::Display for Report {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self, f)
-    }
-}
-
-/// Latencies per relay node.
-#[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct RelayLatencies(BTreeMap<RelayUrl, Duration>);
-
-impl RelayLatencies {
-    fn new() -> Self {
-        Default::default()
-    }
-
-    /// Updates a relay's latency, if it is faster than before.
-    fn update_relay(&mut self, url: RelayUrl, latency: Duration) {
-        let val = self.0.entry(url).or_insert(latency);
-        if latency < *val {
-            *val = latency;
-        }
-    }
-
-    /// Merges another [`RelayLatencies`] into this one.
-    ///
-    /// For each relay the latency is updated using [`RelayLatencies::update_relay`].
-    fn merge(&mut self, other: &RelayLatencies) {
-        for (url, latency) in other.iter() {
-            self.update_relay(url.clone(), latency);
-        }
-    }
-
-    /// Returns the maximum latency for all relays.
-    ///
-    /// If there are not yet any latencies this will return [`DEFAULT_MAX_LATENCY`].
-    fn max_latency(&self) -> Duration {
-        self.0
-            .values()
-            .max()
-            .copied()
-            .unwrap_or(DEFAULT_MAX_LATENCY)
-    }
-
-    /// Returns an iterator over all the relays and their latencies.
-    pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
-        self.0.iter().map(|(k, v)| (k, *v))
-    }
-
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    fn get(&self, url: &RelayUrl) -> Option<Duration> {
-        self.0.get(url).copied()
-    }
-}
+const ENOUGH_NODES: usize = 3;
 
 /// Client to run net_reports.
-///
-/// Creating this creates a net_report actor which runs in the background.  Most of the time
-/// it is idle unless [`Client::get_report`] is called, which is the main interface.
-///
-/// The [`Client`] struct can be cloned and results multiple handles to the running actor.
-/// If all [`Client`]s are dropped the actor stops running.
-///
-/// While running the net_report actor expects to be passed all received stun packets using
-/// `Addr::receive_stun_packet`.
 #[derive(Debug)]
-pub struct Client {
-    /// Channel to send message to the [`Actor`].
+pub(crate) struct Client {
+    #[cfg(not(wasm_browser))]
+    socket_state: SocketState,
+    metrics: Arc<Metrics>,
+    probes: BTreeSet<Probe>,
+    relay_map: RelayMap,
+    #[cfg(not(wasm_browser))]
+    qad_conns: QadConns,
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
+
+    /// A collection of previously generated reports.
     ///
-    /// If all senders are dropped, in other words all clones of this struct are dropped,
-    /// the actor will terminate.
-    addr: Addr,
-    /// Ensures the actor is terminated when the client is dropped.
-    _drop_guard: Arc<AbortOnDropHandle<()>>,
+    /// Sometimes it is useful to look at past reports to decide what to do.
+    reports: Reports,
+}
+
+#[cfg(not(wasm_browser))]
+#[derive(Debug, Default)]
+struct QadConns {
+    v4: Option<(RelayUrl, QadConn)>,
+    v6: Option<(RelayUrl, QadConn)>,
+}
+
+#[cfg(not(wasm_browser))]
+impl QadConns {
+    fn clear(&mut self) {
+        if let Some((_, conn)) = self.v4.take() {
+            conn.conn
+                .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        }
+        if let Some((_, conn)) = self.v6.take() {
+            conn.conn
+                .close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        }
+    }
+
+    fn current(&self) -> Vec<ProbeReport> {
+        let mut reports = Vec::new();
+        if let Some((_, ref conn)) = self.v4 {
+            if let Some(mut r) = conn.observer.get() {
+                // grab latest rtt
+                r.latency = conn.conn.rtt();
+                reports.push(ProbeReport::QadIpv4(r));
+            }
+        }
+
+        if let Some((_, ref conn)) = self.v6 {
+            if let Some(mut r) = conn.observer.get() {
+                // grab latest rtt
+                r.latency = conn.conn.rtt();
+                reports.push(ProbeReport::QadIpv6(r));
+            }
+        }
+
+        reports
+    }
+
+    fn watch_v4(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
+        let watcher = self.v4.as_ref().map(|(_url, conn)| conn.observer.watch());
+
+        if let Some(watcher) = watcher {
+            watcher.stream_updates_only().boxed()
+        } else {
+            n0_future::stream::empty().boxed()
+        }
+    }
+
+    fn watch_v6(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
+        let watcher = self.v6.as_ref().map(|(_url, conn)| conn.observer.watch());
+        if let Some(watcher) = watcher {
+            watcher.stream_updates_only().boxed()
+        } else {
+            n0_future::stream::empty().boxed()
+        }
+    }
+}
+
+#[cfg(not(wasm_browser))]
+#[derive(Debug)]
+struct QadConn {
+    conn: quinn::Connection,
+    observer: Watchable<Option<QadProbeReport>>,
+    _handle: AbortOnDropHandle<()>,
 }
 
 #[derive(Debug)]
@@ -222,9 +195,9 @@ struct Reports {
     /// Do a full relay scan, even if last is `Some`.
     next_full: bool,
     /// Some previous reports.
-    prev: HashMap<Instant, Arc<Report>>,
+    prev: BTreeMap<Instant, Report>,
     /// Most recent report.
-    last: Option<Arc<Report>>,
+    last: Option<Report>,
     /// Time of last full (non-incremental) report.
     last_full: Instant,
 }
@@ -232,7 +205,7 @@ struct Reports {
 impl Default for Reports {
     fn default() -> Self {
         Self {
-            next_full: Default::default(),
+            next_full: true,
             prev: Default::default(),
             last: Default::default(),
             last_full: Instant::now(),
@@ -242,363 +215,63 @@ impl Default for Reports {
 
 impl Client {
     /// Creates a new net_report client.
-    ///
-    /// This starts a connected actor in the background.  Once the client is dropped it will
-    /// stop running.
-    pub fn new(
-        #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
+    pub(crate) fn new(
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
+        relay_map: RelayMap,
+        opts: Options,
         metrics: Arc<Metrics>,
     ) -> Self {
-        let mut actor = Actor::new(
-            #[cfg(not(wasm_browser))]
-            port_mapper,
-            #[cfg(not(wasm_browser))]
-            dns_resolver,
-            #[cfg(not(wasm_browser))]
-            ip_mapped_addrs,
-            metrics,
-        );
-        let addr = actor.addr();
-        let task = task::spawn(
-            async move { actor.run().await }.instrument(info_span!("net_report.actor")),
-        );
-        let drop_guard = AbortOnDropHandle::new(task);
-        Client {
-            addr,
-            _drop_guard: Arc::new(drop_guard),
-        }
-    }
+        let probes = opts.as_protocols();
+        #[cfg(any(test, feature = "test-utils"))]
+        let insecure_skip_relay_cert_verify = opts.insecure_skip_relay_cert_verify;
 
-    /// Returns a new address to send messages to this actor.
-    ///
-    /// Unlike the client itself the returned [`Addr`] does not own the actor task, it only
-    /// allows sending messages to the actor.
-    pub fn addr(&self) -> Addr {
-        self.addr.clone()
-    }
-
-    /// Runs a net_report, returning the report.
-    ///
-    /// It may not be called concurrently with itself, `&mut self` takes care of that.
-    ///
-    /// The *stun_conn4* and *stun_conn6* endpoints are bound UDP sockets to use to send out
-    /// STUN packets.  This function **will not read from the sockets**, as they may be
-    /// receiving other traffic as well, normally they are the sockets carrying the real
-    /// traffic. Thus all stun packets received on those sockets should be passed to
-    /// `Addr::receive_stun_packet` in order for this function to receive the stun
-    /// responses and function correctly.
-    ///
-    /// If these are not passed in this will bind sockets for STUN itself, though results
-    /// may not be as reliable.
-    ///
-    /// The *quic_config* takes a [`QuicConfig`], a combination of a QUIC endpoint and
-    /// a client configuration that can be use for verifying the relay server connection.
-    /// When available, the report will attempt to get an observed public address
-    /// using QUIC address discovery.
-    ///
-    /// When `None`, it will disable the QUIC address discovery probes.
-    ///
-    /// This will attempt to use *all* probe protocols.
-    #[cfg(test)]
-    pub async fn get_report_all(
-        &mut self,
-        relay_map: RelayMap,
-        #[cfg(not(wasm_browser))] stun_sock_v4: Option<Arc<UdpSocket>>,
-        #[cfg(not(wasm_browser))] stun_sock_v6: Option<Arc<UdpSocket>>,
-        #[cfg(not(wasm_browser))] quic_config: Option<QuicConfig>,
-    ) -> Result<Arc<Report>, ReportError> {
         #[cfg(not(wasm_browser))]
-        let opts = Options::default()
-            .stun_v4(stun_sock_v4)
-            .stun_v6(stun_sock_v6)
-            .quic_config(quic_config);
-        #[cfg(wasm_browser)]
-        let opts = Options::default();
+        let quic_client = opts
+            .quic_config
+            .map(|c| iroh_relay::quic::QuicClient::new(c.ep, c.client_config));
 
-        let rx = self.get_report_channel(relay_map, opts).await?;
-        match rx.await {
-            Ok(res) => res,
-            Err(_) => Err(ActorGoneSnafu.build()),
-        }
-    }
-
-    /// Runs a net_report, returning the report.
-    ///
-    /// It may not be called concurrently with itself, `&mut self` takes care of that.
-    ///
-    /// Look at [`Options`] for the different configuration options.
-    pub async fn get_report(
-        &mut self,
-        relay_map: RelayMap,
-        opts: Options,
-    ) -> Result<Arc<Report>, ReportError> {
-        let rx = self.get_report_channel(relay_map, opts).await?;
-        match rx.await {
-            Ok(res) => res,
-            Err(_) => Err(ActorGoneSnafu.build()),
-        }
-    }
-
-    /// Get report with channel
-    ///
-    /// Look at [`Options`] for the different configuration options.
-    pub(crate) async fn get_report_channel(
-        &mut self,
-        relay_map: RelayMap,
-        opts: Options,
-    ) -> Result<oneshot::Receiver<Result<Arc<Report>, ReportError>>, ReportError> {
-        let (tx, rx) = oneshot::channel();
-        self.addr
-            .send(Message::RunCheck {
-                relay_map,
-                opts,
-                response_tx: tx,
-            })
-            .await
-            .map_err(|_| ActorGoneSnafu.build())?;
-        Ok(rx)
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct Inflight {
-    /// The STUN transaction ID.
-    txn: stun::TransactionId,
-    /// The time the STUN probe was sent.
-    start: Instant,
-    /// Response to send STUN results: latency of STUN response and the discovered address.
-    s: sync::oneshot::Sender<(Duration, SocketAddr)>,
-}
-
-/// Messages to send to the [`Actor`].
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum Message {
-    /// Run a net_report.
-    ///
-    /// Only one net_report can be run at a time, trying to run multiple concurrently will
-    /// fail.
-    RunCheck {
-        /// The map of relays we want to probe
-        relay_map: RelayMap,
-        /// Options for the report
-        opts: Options,
-        /// Channel to receive the response.
-        response_tx: oneshot::Sender<Result<Arc<Report>, ReportError>>,
-    },
-    /// A report produced by the [`reportgen`] actor.
-    ReportReady { report: Box<Report> },
-    /// The [`reportgen`] actor failed to produce a report.
-    ReportAborted { reason: ActorRunError },
-    /// An incoming STUN packet to parse.
-    StunPacket {
-        /// The raw UDP payload.
-        payload: Bytes,
-        /// The address this was claimed to be received from.
-        from_addr: SocketAddr,
-    },
-    /// A probe wants to register an in-flight STUN request.
-    ///
-    /// The sender is signalled once the STUN packet is registered with the actor and will
-    /// correctly accept the STUN response.
-    InFlightStun(Inflight, oneshot::Sender<()>),
-}
-
-/// Sender to the main service.
-///
-/// Unlike [`Client`] this is the raw channel to send messages over.  Keeping this alive
-/// will not keep the actor alive, which makes this handy to pass to internal tasks.
-#[derive(Debug, Clone)]
-pub struct Addr {
-    sender: mpsc::Sender<Message>,
-    metrics: Arc<Metrics>,
-}
-
-impl Addr {
-    /// Pass a received STUN packet to the net_reporter.
-    ///
-    /// Normally the UDP sockets to send STUN messages from are passed in so that STUN
-    /// packets are sent from the sockets that carry the real traffic.  However because
-    /// these sockets carry real traffic they will also receive non-STUN traffic, thus the
-    /// net_report actor does not read from the sockets directly.  If you receive a STUN
-    /// packet on the socket you should pass it to this method.
-    ///
-    /// It is safe to call this even when the net_report actor does not currently have any
-    /// in-flight STUN probes.  The actor will simply ignore any stray STUN packets.
-    ///
-    /// There is an implicit queue here which may drop packets if the actor does not keep up
-    /// consuming them.
-    pub fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = self.sender.try_send(Message::StunPacket {
-            payload,
-            from_addr: src,
-        }) {
-            self.metrics.stun_packets_dropped.inc();
-            warn!("dropping stun packet from {}", src);
-        }
-    }
-
-    async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
-        self.sender.send(msg).await.inspect_err(|_| {
-            error!("net_report actor lost");
-        })
-    }
-}
-
-/// The net_report actor.
-///
-/// This actor runs for the entire duration there's a [`Client`] connected.
-#[derive(Debug)]
-struct Actor {
-    // Actor plumbing.
-    /// Actor messages channel.
-    ///
-    /// If there are no more senders the actor stops.
-    receiver: mpsc::Receiver<Message>,
-    /// The sender side of the messages channel.
-    ///
-    /// This allows creating new [`Addr`]s from the actor.
-    sender: mpsc::Sender<Message>,
-    /// A collection of previously generated reports.
-    ///
-    /// Sometimes it is useful to look at past reports to decide what to do.
-    reports: Reports,
-
-    // Actor configuration.
-    /// The port mapper client, if those are requested.
-    ///
-    /// The port mapper is responsible for talking to routers via UPnP and the like to try
-    /// and open ports.
-    #[cfg(not(wasm_browser))]
-    port_mapper: Option<portmapper::Client>,
-
-    // Actor state.
-    /// Information about the currently in-flight STUN requests.
-    ///
-    /// This is used to complete the STUN probe when receiving STUN packets.
-    in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
-    /// The [`reportgen`] actor currently generating a report.
-    current_report_run: Option<ReportRun>,
-
-    /// The DNS resolver to use for probes that need to perform DNS lookups
-    #[cfg(not(wasm_browser))]
-    dns_resolver: DnsResolver,
-
-    /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
-    #[cfg(not(wasm_browser))]
-    ip_mapped_addrs: Option<IpMappedAddresses>,
-    metrics: Arc<Metrics>,
-}
-
-impl Actor {
-    /// Creates a new actor.
-    ///
-    /// This does not start the actor, see [`Actor::run`] for this.  You should not
-    /// normally create this directly but rather create a [`Client`].
-    fn new(
-        #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
-        #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
-        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
-        metrics: Arc<Metrics>,
-    ) -> Self {
-        // TODO: consider an instrumented flume channel so we have metrics.
-        let (sender, receiver) = mpsc::channel(32);
-        Self {
-            receiver,
-            sender,
-            reports: Default::default(),
-            #[cfg(not(wasm_browser))]
-            port_mapper,
-            in_flight_stun_requests: Default::default(),
-            current_report_run: None,
-            #[cfg(not(wasm_browser))]
-            dns_resolver,
-            #[cfg(not(wasm_browser))]
-            ip_mapped_addrs,
-            metrics,
-        }
-    }
-
-    /// Returns the channel to send messages to the actor.
-    fn addr(&self) -> Addr {
-        Addr {
-            sender: self.sender.clone(),
-            metrics: self.metrics.clone(),
-        }
-    }
-
-    /// Run the actor.
-    ///
-    /// It will now run and handle messages.  Once the connected [`Client`] (including all
-    /// its clones) is dropped this will terminate.
-    async fn run(&mut self) {
-        debug!("net_report actor starting");
-        while let Some(msg) = self.receiver.recv().await {
-            trace!(?msg, "handling message");
-            match msg {
-                Message::RunCheck {
-                    relay_map,
-                    opts,
-                    response_tx,
-                } => {
-                    self.handle_run_check(relay_map, opts, response_tx);
-                }
-                Message::ReportReady { report } => {
-                    self.handle_report_ready(*report);
-                }
-                Message::ReportAborted { reason: err } => {
-                    self.handle_report_aborted(err);
-                }
-                Message::StunPacket { payload, from_addr } => {
-                    self.handle_stun_packet(&payload, from_addr);
-                }
-                Message::InFlightStun(inflight, response_tx) => {
-                    self.handle_in_flight_stun(inflight, response_tx);
-                }
-            }
-        }
-    }
-
-    /// Starts a check run as requested by the [`Message::RunCheck`] message.
-    ///
-    /// If *stun_sock_v4* or *stun_sock_v6* are not provided this will bind the sockets
-    /// itself.  This is not ideal since really you want to send STUN probes from the
-    /// sockets you will be using.
-    fn handle_run_check(
-        &mut self,
-        relay_map: RelayMap,
-        opts: Options,
-        response_tx: oneshot::Sender<Result<Arc<Report>, ReportError>>,
-    ) {
-        let protocols = opts.to_protocols();
         #[cfg(not(wasm_browser))]
         let socket_state = SocketState {
-            port_mapper: self.port_mapper.clone(),
-            stun_sock4: opts.stun_sock_v4,
-            stun_sock6: opts.stun_sock_v6,
-            quic_config: opts.quic_config,
-            dns_resolver: self.dns_resolver.clone(),
-            ip_mapped_addrs: self.ip_mapped_addrs.clone(),
+            quic_client,
+            dns_resolver,
+            ip_mapped_addrs,
         };
-        trace!("Attempting probes for protocols {protocols:#?}");
-        if self.current_report_run.is_some() {
-            response_tx.send(Err(AlreadyRunningSnafu.build())).ok();
-            return;
-        }
 
+        Client {
+            #[cfg(not(wasm_browser))]
+            socket_state,
+            metrics,
+            reports: Reports::default(),
+            probes,
+            relay_map,
+            #[cfg(not(wasm_browser))]
+            qad_conns: QadConns::default(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
+        }
+    }
+
+    /// Generates a [`Report`].
+    ///
+    /// Look at [`Options`] for the different configuration options.
+    pub(crate) async fn get_report(&mut self, if_state: IfStateDetails, is_major: bool) -> Report {
         let now = Instant::now();
 
-        let mut do_full = self.reports.next_full
+        let mut do_full = is_major
+            || self.reports.next_full
             || now.duration_since(self.reports.last_full) > FULL_REPORT_INTERVAL;
+
+        debug!(%do_full, "net_report starting");
 
         // If the last report had a captive portal and reported no UDP access,
         // it's possible that we didn't get a useful net_report due to the
         // captive portal blocking us. If so, make this report a full (non-incremental) one.
         if !do_full {
             if let Some(ref last) = self.reports.last {
-                do_full = !last.udp && last.captive_portal.unwrap_or_default();
+                if !last.has_udp() && last.captive_portal == Some(true) {
+                    do_full = true;
+                }
             }
         }
         if do_full {
@@ -609,130 +282,356 @@ impl Actor {
         }
         self.metrics.reports.inc();
 
-        let actor = reportgen::Client::new(
-            self.addr(),
+        let enough_relays = std::cmp::min(self.relay_map.len(), ENOUGH_NODES);
+        #[cfg(wasm_browser)]
+        let if_state = IfStateDetails::default();
+        #[cfg(not(wasm_browser))]
+        let if_state = IfStateDetails {
+            have_v4: if_state.have_v4,
+            have_v6: if_state.have_v6,
+        };
+
+        let mut report = Report::default();
+
+        // Start the reportgen client to start any needed probes
+        let (actor, mut probe_rx) = reportgen::Client::new(
             self.reports.last.clone(),
-            relay_map,
-            protocols,
-            self.metrics.clone(),
+            self.relay_map.clone(),
+            self.probes.clone(),
+            if_state.clone(),
             #[cfg(not(wasm_browser))]
-            socket_state,
+            self.socket_state.clone(),
             #[cfg(any(test, feature = "test-utils"))]
-            opts.insecure_skip_relay_cert_verify,
+            self.insecure_skip_relay_cert_verify,
         );
 
-        self.current_report_run = Some(ReportRun {
-            _reportgen: actor,
-            report_tx: response_tx,
-        });
-    }
+        #[cfg(not(wasm_browser))]
+        let reports = self
+            .spawn_qad_probes(&if_state, enough_relays, do_full)
+            .await;
 
-    fn handle_report_ready(&mut self, report: Report) {
-        let report = self.finish_and_store_report(report);
-        self.in_flight_stun_requests.clear();
-        if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
-            report_tx.send(Ok(report)).ok();
-        }
-    }
-
-    fn handle_report_aborted(&mut self, reason: ActorRunError) {
-        self.in_flight_stun_requests.clear();
-        if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
-            report_tx.send(Err(AbortSnafu { reason }.build())).ok();
-        }
-    }
-
-    /// Handles [`Message::StunPacket`].
-    ///
-    /// If there are currently no in-flight stun requests registered this is dropped,
-    /// otherwise forwarded to the probe.
-    fn handle_stun_packet(&mut self, pkt: &[u8], src: SocketAddr) {
-        trace!(%src, "received STUN packet");
-        if self.in_flight_stun_requests.is_empty() {
-            return;
+        #[cfg(not(wasm_browser))]
+        for r in reports {
+            report.update(&r);
         }
 
-        #[cfg(feature = "metrics")]
-        match &src {
-            SocketAddr::V4(_) => {
-                self.metrics.stun_packets_recv_ipv4.inc();
-            }
-            SocketAddr::V6(_) => {
-                self.metrics.stun_packets_recv_ipv6.inc();
-            }
-        }
+        let mut timeout_fut = std::pin::pin!(MaybeFuture::default());
 
-        match stun::parse_response(pkt) {
-            Ok((txn, addr_port)) => match self.in_flight_stun_requests.remove(&txn) {
-                Some(inf) => {
-                    debug!(%src, %txn, "received known STUN packet");
-                    let elapsed = inf.start.elapsed();
-                    inf.s.send((elapsed, addr_port)).ok();
+        #[cfg(not(wasm_browser))]
+        let mut qad_v4_stream = self.qad_conns.watch_v4();
+        #[cfg(wasm_browser)]
+        let mut qad_v4_stream = n0_future::stream::empty::<Option<()>>();
+        #[cfg(not(wasm_browser))]
+        let mut qad_v6_stream = self.qad_conns.watch_v6();
+        #[cfg(wasm_browser)]
+        let mut qad_v6_stream = n0_future::stream::empty::<Option<()>>();
+
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = &mut timeout_fut, if timeout_fut.is_some() => {
+                    trace!("timeout done, shutting down");
+                    drop(actor); // shuts down the probes
+                    break;
                 }
-                None => {
-                    debug!(%src, %txn, "received unexpected STUN message response");
+
+                Some(Some(r)) = qad_v4_stream.next() => {
+                    #[cfg(not(wasm_browser))]
+                    {
+                        trace!(?r, "new report from QAD V4");
+                        report.update(&ProbeReport::QadIpv4(r));
+                    }
                 }
-            },
-            Err(err) => {
-                match stun::parse_binding_request(pkt) {
-                    Ok(txn) => {
-                        // Is this our hairpin request?
-                        match self.in_flight_stun_requests.remove(&txn) {
-                            Some(inf) => {
-                                debug!(%src, %txn, "received our hairpin STUN request");
-                                let elapsed = inf.start.elapsed();
-                                inf.s.send((elapsed, src)).ok();
+
+                Some(Some(r)) = qad_v6_stream.next() => {
+                    #[cfg(not(wasm_browser))]
+                    {
+                        trace!(?r, "new report from QAD V6");
+                        report.update(&ProbeReport::QadIpv6(r));
+                    }
+                }
+
+                maybe_probe = probe_rx.recv() => {
+                    let Some(probe_res) = maybe_probe else {
+                        break;
+                    };
+                    trace!(?probe_res, "handling probe");
+                    match probe_res {
+                        ProbeFinished::Regular(probe) => match probe {
+                            Ok(probe) => {
+                                report.update(&probe);
+                                if timeout_fut.is_none() {
+                                    if let Some(timeout) = self.have_enough_reports(enough_relays, &report) {
+                                        timeout_fut.as_mut().set_future(time::sleep(timeout));
+                                    }
+                                }
                             }
-                            None => {
-                                debug!(%src, %txn, "unknown STUN request");
+                            Err(err) => {
+                                trace!("probe errored: {:?}", err);
                             }
+                        },
+                        #[cfg(not(wasm_browser))]
+                        ProbeFinished::CaptivePortal(portal) => {
+                            report.captive_portal = portal;
                         }
                     }
-                    Err(_) => {
-                        debug!(%src, "received invalid STUN response: {err:#}");
-                    }
                 }
             }
         }
-    }
 
-    /// Handles [`Message::InFlightStun`].
-    ///
-    /// The in-flight request is added to [`Actor::in_flight_stun_requests`] so that
-    /// [`Actor::handle_stun_packet`] can forward packets correctly.
-    ///
-    /// *response_tx* is to signal the actor message has been handled.
-    fn handle_in_flight_stun(&mut self, inflight: Inflight, response_tx: oneshot::Sender<()>) {
-        self.in_flight_stun_requests.insert(inflight.txn, inflight);
-        response_tx.send(()).ok();
-    }
+        self.add_report_history_and_set_preferred_relay(&mut report);
+        debug!(
+            ?report,
+            "generated report in {:02}ms",
+            now.elapsed().as_millis()
+        );
 
-    fn finish_and_store_report(&mut self, report: Report) -> Arc<Report> {
-        let report = self.add_report_history_and_set_preferred_relay(report);
-        debug!("{report:?}");
         report
     }
 
+    #[cfg(not(wasm_browser))]
+    async fn spawn_qad_probes(
+        &mut self,
+        if_state: &IfStateDetails,
+        enough_relays: usize,
+        do_full: bool,
+    ) -> Vec<ProbeReport> {
+        use tracing::{Instrument, warn_span};
+
+        debug!("spawning QAD probes");
+
+        let Some(ref quic_client) = self.socket_state.quic_client else {
+            return Vec::new();
+        };
+
+        if do_full {
+            // clear out existing connections if we are doing a full reset
+            self.qad_conns.clear();
+        }
+
+        if let Some((url, conn)) = &self.qad_conns.v4 {
+            // verify conn is still around
+            if let Some(reason) = conn.conn.close_reason() {
+                trace!(?url, "QAD v4 conn closed: {}", reason);
+                self.qad_conns.v4.take();
+            }
+        }
+        if let Some((url, conn)) = &self.qad_conns.v6 {
+            // verify conn is still around
+            if let Some(reason) = conn.conn.close_reason() {
+                trace!(?url, "QAD v6 conn closed: {}", reason);
+                self.qad_conns.v6.take();
+            }
+        }
+        if self.qad_conns.v4.is_some() && self.qad_conns.v6.is_some() == if_state.have_v6 {
+            trace!("not spawning QAD, already have probes");
+            return self.qad_conns.current();
+        }
+
+        // TODO: randomize choice?
+        const MAX_RELAYS: usize = 5;
+
+        let mut v4_buf = JoinSet::new();
+        let cancel_v4 = CancellationToken::new();
+        let mut v6_buf = JoinSet::new();
+        let cancel_v6 = CancellationToken::new();
+
+        for relay_node in self.relay_map.nodes().take(MAX_RELAYS) {
+            if if_state.have_v4 {
+                debug!(?relay_node.url, "v4 QAD probe");
+                let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
+                let relay_node = relay_node.clone();
+                let dns_resolver = self.socket_state.dns_resolver.clone();
+                let quic_client = quic_client.clone();
+                let relay_url = relay_node.url.clone();
+                v4_buf.spawn(
+                    cancel_v4
+                        .child_token()
+                        .run_until_cancelled_owned(time::timeout(
+                            PROBES_TIMEOUT,
+                            run_probe_v4(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                        ))
+                        .instrument(warn_span!("QAD-IPv4", %relay_url)),
+                );
+            }
+
+            if if_state.have_v6 {
+                debug!(?relay_node.url, "v6 QAD probe");
+                let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
+                let relay_node = relay_node.clone();
+                let dns_resolver = self.socket_state.dns_resolver.clone();
+                let quic_client = quic_client.clone();
+                let relay_url = relay_node.url.clone();
+                v6_buf.spawn(
+                    cancel_v6
+                        .child_token()
+                        .run_until_cancelled_owned(time::timeout(
+                            PROBES_TIMEOUT,
+                            run_probe_v6(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                        ))
+                        .instrument(warn_span!("QAD-IPv6", %relay_url)),
+                );
+            }
+        }
+
+        let mut reports = Vec::new();
+
+        // We set _pending to true if at least one report was started for each category.
+        // If we did not start any report for either category, _pending is set to false right away
+        // (it "completed" in the sense that nothing will ever run). If we did start at least one report,
+        // _pending is set to true, and will be set to false further down once the first task
+        // completed.
+        let mut ipv4_pending = !v4_buf.is_empty();
+        let mut ipv6_pending = !v6_buf.is_empty();
+        loop {
+            // We early-abort the tasks once we have at least `enough_relays` reports,
+            // and at least one ipv4 and one ipv6 report completed (if they were started, see comment above).
+            if reports.len() >= enough_relays && !ipv4_pending && !ipv6_pending {
+                debug!("enough probes: {}", reports.len());
+                cancel_v4.cancel();
+                cancel_v6.cancel();
+                break;
+            }
+
+            tokio::select! {
+                biased;
+
+                val = v4_buf.join_next(), if !v4_buf.is_empty() => {
+                    ipv4_pending = false;
+                    match val {
+                        Some(Ok(Some(Ok(res)))) => {
+                            match res {
+                                Ok((r, conn)) => {
+                                    debug!(?r, "got v4 QAD conn");
+                                    let url = r.node.clone();
+                                    reports.push(ProbeReport::QadIpv4(r));
+                                    if self.qad_conns.v4.is_none() {
+                                        self.qad_conns.v4.replace((url, conn));
+                                    } else {
+                                        conn.conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                                    }
+                                }
+                                Err(err) => {
+                                    debug!("probe v4 failed: {err:?}");
+                                }
+                            }
+                        }
+                        Some(Err(err)) => {
+                            if err.is_panic() {
+                                panic!("probe v4 panicked: {err:?}");
+                            }
+                            warn!("probe v4 failed: {err:?}");
+                        }
+                        Some(Ok(None)) => {
+                            debug!("probe v4 canceled");
+                        }
+                        Some(Ok(Some(Err(time::Elapsed { .. })))) => {
+                            debug!("probe v4 timed out");
+                        }
+                        None => {}
+                    }
+                }
+                val = v6_buf.join_next(), if !v6_buf.is_empty() => {
+                    ipv6_pending = false;
+                    match val {
+                        Some(Ok(Some(Ok(res)))) => {
+                            match res {
+                                Ok((r, conn)) => {
+                                    debug!(?r, "got v6 QAD conn");
+                                    let url = r.node.clone();
+                                    reports.push(ProbeReport::QadIpv6(r));
+                                    if self.qad_conns.v6.is_none() {
+                                        self.qad_conns.v6.replace((url, conn));
+                                    } else {
+                                        conn.conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                                    }
+                                }
+                                Err(err) => {
+                                    debug!("probe v6 failed: {err:?}");
+                                }
+                            }
+                        }
+                        Some(Err(err)) => {
+                            if err.is_panic() {
+                                panic!("probe v6 panicked: {err:?}");
+                            }
+                            warn!("probe v6 failed: {err:?}");
+                        }
+                        Some(Ok(None)) => {
+                            debug!("probe v6 canceled");
+                        }
+                        Some(Ok(Some(Err(time::Elapsed { .. })))) => {
+                            debug!("probe v6 timed out");
+                        }
+                        None => {}
+                    }
+                }
+                else => {
+                    break;
+                }
+            }
+        }
+
+        reports
+    }
+
+    fn have_enough_reports(&self, enough_relays: usize, report: &Report) -> Option<Duration> {
+        // Once we've heard from enough relay servers (3), start a timer to give up on the other
+        // probes. The timer's duration is a function of whether this is our initial full
+        // probe or an incremental one. For incremental ones, wait for the duration of the
+        // slowest relay. For initial ones, double that.
+        let latencies: Vec<Duration> = report.relay_latency.iter().map(|(_, l)| l).collect();
+        let have_enough_latencies = latencies.len() >= enough_relays;
+
+        if have_enough_latencies {
+            let timeout = match self.reports.last.is_some() {
+                true => Duration::from_secs(0),
+                false => latencies
+                    .iter()
+                    .max()
+                    .copied()
+                    .unwrap_or(DEFAULT_MAX_LATENCY),
+            };
+            debug!(
+                reports=latencies.len(),
+                delay=?timeout,
+                "Have enough probe reports, aborting further probes soon",
+            );
+
+            Some(timeout)
+        } else {
+            None
+        }
+    }
+
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_relay` to contain the best recent one.
-    /// `r` is stored ref counted and a reference is returned.
-    fn add_report_history_and_set_preferred_relay(&mut self, mut r: Report) -> Arc<Report> {
+    fn add_report_history_and_set_preferred_relay(&mut self, r: &mut Report) {
         let mut prev_relay = None;
         if let Some(ref last) = self.reports.last {
             prev_relay.clone_from(&last.preferred_relay);
+
+            // If we don't have new information, copy this from the last report
+            if r.mapping_varies_by_dest_ipv4.is_none() {
+                r.mapping_varies_by_dest_ipv4 = last.mapping_varies_by_dest_ipv4;
+            }
+            if r.mapping_varies_by_dest_ipv6.is_none() {
+                r.mapping_varies_by_dest_ipv6 = last.mapping_varies_by_dest_ipv6;
+            }
         }
+
         let now = Instant::now();
         const MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
         // relay ID => its best recent latency in last MAX_AGE
-        let mut best_recent = RelayLatencies::new();
+        let mut best_recent = RelayLatencies::default();
 
         // chain the current report as we are still mutating it
         let prevs_iter = self
             .reports
             .prev
             .iter()
-            .map(|(a, b)| -> (&Instant, &Report) { (a, b) })
-            .chain(std::iter::once((&now, &r)));
+            .map(|(a, b)| -> (&Instant, &Report) { (a, b) });
 
         let mut to_remove = Vec::new();
         for (t, pr) in prevs_iter {
@@ -742,6 +641,8 @@ impl Actor {
             }
             best_recent.merge(&pr.relay_latency);
         }
+        // merge in current run
+        best_recent.merge(&r.relay_latency);
 
         for t in to_remove {
             self.reports.prev.remove(&t);
@@ -776,144 +677,151 @@ impl Actor {
             }
         }
 
-        let r = Arc::new(r);
         self.reports.prev.insert(now, r.clone());
         self.reports.last = Some(r.clone());
-
-        r
     }
 }
 
-/// State the net_report actor needs for an in-progress report generation.
-#[derive(Debug)]
-struct ReportRun {
-    /// The handle of the [`reportgen`] actor, cancels the actor on drop.
-    _reportgen: reportgen::Client,
-    /// Where to send the completed report.
-    report_tx: oneshot::Sender<Result<Arc<Report>, ReportError>>,
-}
-
-#[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-pub enum ReportError {
-    #[snafu(display("Report aborted early"))]
-    Abort { reason: ActorRunError },
-    #[snafu(display("Report generation is already running"))]
-    AlreadyRunning {},
-    #[snafu(display("Internal actor is gone"))]
-    ActorGone {},
-}
-
-/// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
 #[cfg(not(wasm_browser))]
-fn os_has_ipv6() -> bool {
-    UdpSocket::bind_local_v6(0).is_ok()
-}
+async fn run_probe_v4(
+    ip_mapped_addrs: Option<IpMappedAddresses>,
+    relay_node: Arc<RelayNode>,
+    quic_client: QuicClient,
+    dns_resolver: DnsResolver,
+) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
+    use n0_snafu::ResultExt;
 
-/// Always returns false in browsers
-#[cfg(wasm_browser)]
-fn os_has_ipv6() -> bool {
-    false
-}
+    let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await?;
+    let relay_addr =
+        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
-#[cfg(not(wasm_browser))]
-pub(crate) mod stun_utils {
-    use netwatch::IpFamily;
-    use tokio_util::sync::CancellationToken;
+    debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
+    let host = relay_node.url.host_str().context("missing host url")?;
+    let conn = quic_client.create_conn(relay_addr, host).await?;
+    let mut receiver = conn.observed_external_addr();
 
-    use super::*;
+    // wait for an addr
+    let addr = receiver
+        .wait_for(|addr| addr.is_some())
+        .await
+        .context("receiver dropped")?
+        .expect("known");
+    let report = QadProbeReport {
+        node: relay_node.url.clone(),
+        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
+        latency: conn.rtt(),
+    };
 
-    /// Attempts to bind a local socket to send STUN packets from.
-    ///
-    /// If successful this returns the bound socket and will forward STUN responses to the
-    /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
-    /// socket is no longer needed.
-    pub fn bind_local_stun_socket(
-        network: IpFamily,
-        actor_addr: Addr,
-        cancel_token: CancellationToken,
-    ) -> Option<Arc<UdpSocket>> {
-        let sock = match UdpSocket::bind(network, 0) {
-            Ok(sock) => Arc::new(sock),
-            Err(err) => {
-                debug!("failed to bind STUN socket: {}", err);
-                return None;
-            }
-        };
-        let span = info_span!(
-            "stun_udp_listener",
-            local_addr = sock
-                .local_addr()
-                .map(|a| a.to_string())
-                .unwrap_or(String::from("-")),
-        );
-        {
-            let sock = sock.clone();
-            task::spawn(
-                async move {
-                    debug!("udp stun socket listener started");
-                    // TODO: Can we do better for buffers here?  Probably doesn't matter much.
-                    let mut buf = vec![0u8; 64 << 10];
-                    loop {
-                        tokio::select! {
-                            biased;
-                            _ = cancel_token.cancelled() => break,
-                            res = recv_stun_once(&sock, &mut buf, &actor_addr) => {
-                                if let Err(err) = res {
-                                    warn!(%err, "stun recv failed");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    debug!("udp stun socket listener stopped");
+    let observer = Watchable::new(None);
+    let node = relay_node.url.clone();
+    let handle = task::spawn({
+        let conn = conn.clone();
+        let observer = observer.clone();
+        async move {
+            loop {
+                let val = *receiver.borrow();
+                // if we've sent to an ipv4 address, but received an observed address
+                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+                let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
+                let latency = conn.rtt();
+                trace!(?val, ?relay_addr, ?latency, "got addr V4");
+                observer
+                    .set(val.map(|addr| QadProbeReport {
+                        node: node.clone(),
+                        addr,
+                        latency,
+                    }))
+                    .ok();
+                if receiver.changed().await.is_err() {
+                    break;
                 }
-                .instrument(span),
-            );
+            }
         }
-        Some(sock)
-    }
+    });
+    let handle = AbortOnDropHandle::new(handle);
 
-    #[derive(Debug, Snafu)]
-    enum RecvStunError {
-        #[snafu(transparent)]
-        Recv { source: std::io::Error },
-        #[snafu(display("Internal actor is gone"))]
-        ActorGone,
-    }
+    Ok((
+        report,
+        QadConn {
+            conn,
+            observer,
+            _handle: handle,
+        },
+    ))
+}
 
-    /// Receive STUN response from a UDP socket, pass it to the actor.
-    async fn recv_stun_once(
-        sock: &UdpSocket,
-        buf: &mut [u8],
-        actor_addr: &Addr,
-    ) -> Result<(), RecvStunError> {
-        let (count, mut from_addr) = sock.recv_from(buf).await?;
+#[cfg(not(wasm_browser))]
+async fn run_probe_v6(
+    ip_mapped_addrs: Option<IpMappedAddresses>,
+    relay_node: Arc<RelayNode>,
+    quic_client: QuicClient,
+    dns_resolver: DnsResolver,
+) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
+    use n0_snafu::ResultExt;
+    let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await?;
+    let relay_addr =
+        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
-        let payload = &buf[..count];
-        from_addr.set_ip(from_addr.ip().to_canonical());
-        let msg = Message::StunPacket {
-            payload: Bytes::from(payload.to_vec()),
-            from_addr,
-        };
-        actor_addr
-            .send(msg)
-            .await
-            .map_err(|_| ActorGoneSnafu.build())
-    }
+    debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
+    let host = relay_node.url.host_str().context("missing host url")?;
+    let conn = quic_client.create_conn(relay_addr, host).await?;
+    let mut receiver = conn.observed_external_addr();
+
+    // wait for an addr
+    let addr = receiver
+        .wait_for(|addr| addr.is_some())
+        .await
+        .context("receiver dropped")?
+        .expect("known");
+    let report = QadProbeReport {
+        node: relay_node.url.clone(),
+        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
+        latency: conn.rtt(),
+    };
+
+    let observer = Watchable::new(None);
+    let node = relay_node.url.clone();
+    let handle = task::spawn({
+        let observer = observer.clone();
+        let conn = conn.clone();
+        async move {
+            loop {
+                let val = *receiver.borrow();
+                // if we've sent to an ipv4 address, but received an observed address
+                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+                let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
+                let latency = conn.rtt();
+                trace!(?val, ?relay_addr, ?latency, "got addr V6");
+                observer
+                    .set(val.map(|addr| QadProbeReport {
+                        node: node.clone(),
+                        addr,
+                        latency,
+                    }))
+                    .ok();
+                if receiver.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    let handle = AbortOnDropHandle::new(handle);
+
+    Ok((
+        report,
+        QadConn {
+            conn,
+            observer,
+            _handle: handle,
+        },
+    ))
 }
 
 #[cfg(test)]
 mod test_utils {
     //! Creates a relay server against which to perform tests
 
-    use iroh_relay::{server, RelayNode, RelayQuicConfig};
+    use iroh_relay::{RelayNode, RelayQuicConfig, server};
 
     pub(crate) async fn relay() -> (server::Server, RelayNode) {
         let server = server::Server::spawn(server::testing::server_config())
@@ -924,8 +832,6 @@ mod test_utils {
         });
         let node_desc = RelayNode {
             url: server.https_url().expect("should work as relay"),
-            stun_only: false, // the checks above and below guarantee both stun and relay
-            stun_port: server.stun_addr().expect("server should serve stun").port(),
             quic,
         };
 
@@ -950,173 +856,55 @@ mod test_utils {
 
 #[cfg(test)]
 mod tests {
-    use bytes::BytesMut;
+    use std::net::{Ipv4Addr, SocketAddr};
+
+    use iroh_base::RelayUrl;
+    use iroh_relay::dns::DnsResolver;
     use n0_snafu::{Result, ResultExt};
-    use netwatch::IpFamily;
     use tokio_util::sync::CancellationToken;
-    use tracing::info;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::{dns, stun_utils::bind_local_stun_socket};
+    use crate::net_report::probes::Probe;
 
-    mod stun_utils {
-        //! Utils for testing that expose a simple stun server.
-
-        use std::{net::IpAddr, sync::Arc};
-
-        use iroh_base::RelayUrl;
-        use iroh_relay::RelayNode;
-        use tokio::{
-            net,
-            sync::{oneshot, Mutex},
-        };
-        use tracing::{debug, trace};
-
-        use super::*;
-
-        /// A drop guard to clean up test infrastructure.
-        ///
-        /// After dropping the test infrastructure will asynchronously shutdown and release its
-        /// resources.
-        // Nightly sees the sender as dead code currently, but we only rely on Drop of the
-        // sender.
-        #[derive(Debug)]
-        pub struct CleanupDropGuard {
-            _guard: oneshot::Sender<()>,
-        }
-
-        // (read_ipv4, read_ipv6)
-        #[derive(Debug, Default, Clone)]
-        pub struct StunStats(Arc<Mutex<(usize, usize)>>);
-
-        impl StunStats {
-            pub async fn total(&self) -> usize {
-                let s = self.0.lock().await;
-                s.0 + s.1
-            }
-        }
-
-        pub fn relay_map_of(stun: impl Iterator<Item = SocketAddr>) -> RelayMap {
-            relay_map_of_opts(stun.map(|addr| (addr, true)))
-        }
-
-        pub fn relay_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> RelayMap {
-            let nodes = stun.map(|(addr, stun_only)| {
-                let host = addr.ip();
-                let port = addr.port();
-
-                let url: RelayUrl = format!("http://{host}:{port}").parse().unwrap();
-                RelayNode {
-                    url,
-                    stun_port: port,
-                    stun_only,
-                    quic: None,
-                }
-            });
-            RelayMap::from_iter(nodes)
-        }
-
-        /// Sets up a simple STUN server binding to `0.0.0.0:0`.
-        ///
-        /// See [`serve`] for more details.
-        pub(crate) async fn serve_v4() -> std::io::Result<(SocketAddr, StunStats, CleanupDropGuard)>
-        {
-            serve(std::net::Ipv4Addr::UNSPECIFIED.into()).await
-        }
-
-        /// Sets up a simple STUN server.
-        pub(crate) async fn serve(
-            ip: IpAddr,
-        ) -> std::io::Result<(SocketAddr, StunStats, CleanupDropGuard)> {
-            let stats = StunStats::default();
-
-            let pc = net::UdpSocket::bind((ip, 0)).await?;
-            let mut addr = pc.local_addr()?;
-            match addr.ip() {
-                IpAddr::V4(ip) => {
-                    if ip.octets() == [0, 0, 0, 0] {
-                        addr.set_ip("127.0.0.1".parse().unwrap());
-                    }
-                }
-                _ => unreachable!("using ipv4"),
-            }
-
-            println!("STUN listening on {}", addr);
-            let (_guard, r) = oneshot::channel();
-            let stats_c = stats.clone();
-            tokio::task::spawn(async move {
-                run_stun(pc, stats_c, r).await;
-            });
-
-            Ok((addr, stats, CleanupDropGuard { _guard }))
-        }
-
-        async fn run_stun(pc: net::UdpSocket, stats: StunStats, mut done: oneshot::Receiver<()>) {
-            let mut buf = vec![0u8; 64 << 10];
-            loop {
-                trace!("read loop");
-                tokio::select! {
-                    _ = &mut done => {
-                        debug!("shutting down");
-                        break;
-                    }
-                    res = pc.recv_from(&mut buf) => match res {
-                        Ok((n, addr)) => {
-                            trace!("read packet {}bytes from {}", n, addr);
-                            let pkt = &buf[..n];
-                            if !stun::is(pkt) {
-                                debug!("received non STUN pkt");
-                                continue;
-                            }
-                            if let Ok(txid) = stun::parse_binding_request(pkt) {
-                                debug!("received binding request");
-                                let mut s = stats.0.lock().await;
-                                if addr.is_ipv4() {
-                                    s.0 += 1;
-                                } else {
-                                    s.1 += 1;
-                                }
-                                drop(s);
-
-                                let res = stun::response(txid, addr);
-                                if let Err(err) = pc.send_to(&res, addr).await {
-                                    eprintln!("STUN server write failed: {:?}", err);
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            eprintln!("failed to read: {:?}", err);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_basic() -> Result {
-        let (stun_addr, stun_stats, _cleanup_guard) =
-            stun_utils::serve("127.0.0.1".parse().unwrap()).await.e()?;
+    async fn test_basic() -> Result<()> {
+        let (server, relay) = test_utils::relay().await;
+        let client_config = iroh_relay::client::make_dangerous_client_config();
+        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).e()?;
+        let quic_addr_disc = QuicConfig {
+            ep: ep.clone(),
+            client_config,
+            ipv4: true,
+            ipv6: true,
+        };
+        let relay_map = RelayMap::from(relay);
 
-        let resolver = dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None, Default::default());
-        let dm = stun_utils::relay_map_of([stun_addr].into_iter());
+        let resolver = DnsResolver::new();
+        let opts = Options::default()
+            .quic_config(Some(quic_addr_disc.clone()))
+            .insecure_skip_relay_cert_verify(true);
+        let mut client = Client::new(
+            resolver.clone(),
+            None,
+            relay_map.clone(),
+            opts.clone(),
+            Default::default(),
+        );
+        let if_state = IfStateDetails::fake();
 
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
             let cancel = CancellationToken::new();
-            let sock = bind_local_stun_socket(IpFamily::V4, client.addr(), cancel.clone());
-            println!("--round {}", i);
-            let r = client.get_report_all(dm.clone(), sock, None, None).await?;
+            println!("--round {i}");
+            let r = client.get_report(if_state.clone(), false).await;
 
-            assert!(r.udp, "want UDP");
-            assert_eq!(
-                r.relay_latency.len(),
-                1,
-                "expected 1 key in RelayLatency; got {}",
-                r.relay_latency.len()
+            assert!(r.has_udp(), "want UDP");
+            dbg!(&r);
+            assert!(
+                !r.relay_latency.is_empty(),
+                "expected at least 1 key in RelayLatency; got none",
             );
             assert!(
                 r.relay_latency.iter().next().is_some(),
@@ -1128,11 +916,9 @@ mod tests {
             cancel.cancel();
         }
 
-        assert!(
-            stun_stats.total().await >= 5,
-            "expected at least 5 stun, got {}",
-            stun_stats.total().await,
-        );
+        drop(client);
+        ep.wait_idle().await;
+        server.shutdown().await?;
 
         Ok(())
     }
@@ -1144,23 +930,24 @@ mod tests {
         }
 
         // report returns a *Report from (relay host, Duration)+ pairs.
-        fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Arc<Report>> {
+        fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Report> {
             let mut report = Report::default();
             for (s, d) in a {
                 assert!(s.starts_with('d'), "invalid relay server key");
                 let id: u16 = s[1..].parse().unwrap();
-                report
-                    .relay_latency
-                    .0
-                    .insert(relay_url(id), Duration::from_secs(d));
+                report.relay_latency.update_relay(
+                    relay_url(id),
+                    Duration::from_secs(d),
+                    Probe::QadIpv4,
+                );
             }
 
-            Some(Arc::new(report))
+            Some(report)
         }
         struct Step {
             /// Delay in seconds
             after: u64,
-            r: Option<Arc<Report>>,
+            r: Option<Report>,
         }
         struct Test {
             name: &'static str,
@@ -1296,18 +1083,20 @@ mod tests {
                 want_relay: Some(relay_url(2)), // 2 got fast enough
             },
         ];
-        let resolver = dns::tests::resolver();
+        let resolver = DnsResolver::new();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None, resolver.clone(), None, Default::default());
+            let relay_map = RelayMap::empty();
+            let opts = Options::default();
+            let mut client =
+                Client::new(resolver.clone(), None, relay_map, opts, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
-                let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
-                s.r = Some(actor.add_report_history_and_set_preferred_relay(r));
+                client.add_report_history_and_set_preferred_relay(s.r.as_mut().unwrap());
             }
             let last_report = tt.steps.last().unwrap().r.clone().unwrap();
-            let got = actor.reports.prev.len();
+            let got = client.reports.prev.len();
             let want = tt.want_prev_len;
             assert_eq!(got, want, "prev length");
             let got = &last_report.preferred_relay;
@@ -1315,63 +1104,6 @@ mod tests {
             assert_eq!(got, want, "preferred_relay");
         }
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_hairpin() -> Result {
-        // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
-        // port) via STUN, so the test needs to have a STUN server and perform STUN over
-        // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own
-        // public socket address** (IP + port).  If the router supports hairpinning the STUN
-        // request is returned back to us and received on our public address.  This doesn't
-        // need to be a STUN request, but STUN already has a unique transaction ID which we
-        // can easily use to identify the packet.
-
-        // Setup STUN server and create relay_map.
-        let (stun_addr, _stun_stats, _done) = stun_utils::serve_v4().await.e()?;
-        let dm = stun_utils::relay_map_of([stun_addr].into_iter());
-        dbg!(&dm);
-
-        let resolver = dns::tests::resolver().clone();
-        let mut client = Client::new(None, resolver, None, Default::default());
-
-        // Set up an external socket to send STUN requests from, this will be discovered as
-        // our public socket address by STUN.  We send back any packets received on this
-        // socket to the net_report client using Client::receive_stun_packet.  Once we sent
-        // the hairpin STUN request (from a different randomly bound socket) we are sending
-        // it to this socket, which is forwarnding it back to our net_report client, because
-        // this dumb implementation just forwards anything even if it would be garbage.
-        // Thus hairpinning detection will declare hairpinning to work.
-        let sock = UdpSocket::bind_local(netwatch::IpFamily::V4, 0).e()?;
-        let sock = Arc::new(sock);
-        info!(addr=?sock.local_addr().unwrap(), "Using local addr");
-        let task = {
-            let sock = sock.clone();
-            let addr = client.addr.clone();
-            tokio::spawn(
-                async move {
-                    let mut buf = BytesMut::zeroed(64 << 10);
-                    loop {
-                        let (count, src) = sock.recv_from(&mut buf).await.unwrap();
-                        info!(
-                            addr=?sock.local_addr().unwrap(),
-                            %count,
-                            "Forwarding payload to net_report client",
-                        );
-                        let payload = buf.split_to(count).freeze();
-                        addr.receive_stun_packet(payload, src);
-                    }
-                }
-                .instrument(info_span!("pkt-fwd")),
-            )
-        };
-
-        let r = client.get_report_all(dm, Some(sock), None, None).await?;
-        dbg!(&r);
-        assert_eq!(r.hair_pinning, Some(true));
-
-        task.abort();
         Ok(())
     }
 }

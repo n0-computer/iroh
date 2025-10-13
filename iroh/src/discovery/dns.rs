@@ -1,17 +1,17 @@
 //! DNS node discovery for iroh
 
 use iroh_base::NodeId;
+use iroh_relay::dns::DnsResolver;
 pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
 
-use super::DiscoveryError;
+use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     endpoint::force_staging_infra,
-    Endpoint,
 };
 
-const DNS_STAGGERING_MS: &[u64] = &[200, 300];
+pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// DNS node discovery
 ///
@@ -22,7 +22,7 @@ const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 ///
 /// * `_iroh`: is the record name
 /// * `<z32-node-id>` is the [`NodeId`] encoded in [`z-base-32`] format
-/// * `<origin-domain>` is the node origin domain as set in [`DnsDiscovery::new`].
+/// * `<origin-domain>` is the node origin domain as set in [`DnsDiscovery::builder`].
 ///
 /// Each TXT record returned from the query is expected to contain a string in the format `<name>=<value>`.
 /// If a TXT record contains multiple character strings, they are concatenated first.
@@ -32,16 +32,46 @@ const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 /// The DNS resolver defaults to using the nameservers configured on the host system, but can be changed
 /// with [`crate::endpoint::Builder::dns_resolver`].
 ///
-/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+/// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+/// [`Endpoint`]: crate::Endpoint
 #[derive(Debug)]
 pub struct DnsDiscovery {
     origin_domain: String,
+    dns_resolver: DnsResolver,
+}
+
+/// Builder for [`DnsDiscovery`].
+///
+/// See [`DnsDiscovery::builder`].
+#[derive(Debug)]
+pub struct DnsDiscoveryBuilder {
+    origin_domain: String,
+    dns_resolver: Option<DnsResolver>,
+}
+
+impl DnsDiscoveryBuilder {
+    /// Sets the DNS resolver to use.
+    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
+        self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
+    /// Builds a [`DnsDiscovery`] with the passed [`DnsResolver`].
+    pub fn build(self) -> DnsDiscovery {
+        DnsDiscovery {
+            dns_resolver: self.dns_resolver.unwrap_or_default(),
+            origin_domain: self.origin_domain,
+        }
+    }
 }
 
 impl DnsDiscovery {
-    /// Creates a new DNS discovery.
-    pub fn new(origin_domain: String) -> Self {
-        Self { origin_domain }
+    /// Creates a [`DnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
+    pub fn builder(origin_domain: String) -> DnsDiscoveryBuilder {
+        DnsDiscoveryBuilder {
+            origin_domain,
+            dns_resolver: None,
+        }
     }
 
     /// Creates a new DNS discovery using the `iroh.link` domain.
@@ -51,24 +81,32 @@ impl DnsDiscovery {
     /// # Usage during tests
     ///
     /// For testing it is possible to use the [`N0_DNS_NODE_ORIGIN_STAGING`] domain
-    /// with [`DnsDiscovery::new`].  This would then use a hosted staging discovery
+    /// with [`DnsDiscovery::builder`].  This would then use a hosted staging discovery
     /// service for testing purposes.
-    pub fn n0_dns() -> Self {
+    pub fn n0_dns() -> DnsDiscoveryBuilder {
         if force_staging_infra() {
-            Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+            Self::builder(N0_DNS_NODE_ORIGIN_STAGING.to_string())
         } else {
-            Self::new(N0_DNS_NODE_ORIGIN_PROD.to_string())
+            Self::builder(N0_DNS_NODE_ORIGIN_PROD.to_string())
         }
     }
 }
 
+impl IntoDiscovery for DnsDiscoveryBuilder {
+    fn into_discovery(
+        mut self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        if self.dns_resolver.is_none() {
+            self.dns_resolver = Some(context.dns_resolver().clone());
+        }
+        Ok(self.build())
+    }
+}
+
 impl Discovery for DnsDiscovery {
-    fn resolve(
-        &self,
-        ep: Endpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
-        let resolver = ep.dns_resolver().clone();
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let node_info = resolver

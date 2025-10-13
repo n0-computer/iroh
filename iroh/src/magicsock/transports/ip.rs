@@ -87,10 +87,6 @@ impl IpTransport {
         }
     }
 
-    pub(crate) fn socket(&self) -> Arc<UdpSocket> {
-        self.socket.clone()
-    }
-
     pub(super) fn create_sender(&self) -> IpSender {
         let sender = self.socket.clone().create_sender();
         IpSender {
@@ -109,14 +105,16 @@ pub(super) struct IpNetworkChangeSender {
 
 impl IpNetworkChangeSender {
     pub(super) fn rebind(&self) -> io::Result<()> {
+        let old_addr = self.local_addr.get();
         self.socket.rebind()?;
         let addr = self.socket.local_addr()?;
         self.local_addr.set(addr).ok();
+        trace!("rebound from {} to {}", old_addr, addr);
 
         Ok(())
     }
 
-    pub(super) fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
+    pub(super) fn on_network_change(&self, _info: &crate::magicsock::Report) {
         // Nothing to do for now
     }
 }
@@ -131,11 +129,16 @@ pub(super) struct IpSender {
 }
 
 impl IpSender {
-    pub(super) fn is_valid_send_addr(&self, addr: &SocketAddr) -> bool {
+    pub(super) fn is_valid_send_addr(&self, dst: &SocketAddr) -> bool {
+        // Our net-tools crate binds sockets to their specific family.  This means an IPv6
+        // socket can not sent to IPv4, on any platform.  So we need to convert and
+        // IPv4-mapped IPv6 address back to it's canonical IPv4 address.
+        let dst_ip = dst.ip().to_canonical();
+
         #[allow(clippy::match_like_matches_macro)]
-        match (self.bind_addr, addr) {
-            (SocketAddr::V4(_), SocketAddr::V4(..)) => true,
-            (SocketAddr::V6(_), SocketAddr::V6(..)) => true,
+        match (self.bind_addr.ip(), dst_ip) {
+            (IpAddr::V4(_), IpAddr::V4(_)) => true,
+            (IpAddr::V6(_), IpAddr::V6(_)) => true,
             _ => false,
         }
     }
@@ -151,7 +154,7 @@ impl IpSender {
         let res = self
             .sender
             .send(&quinn_udp::Transmit {
-                destination,
+                destination: Self::canonical_addr(destination),
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
@@ -176,6 +179,16 @@ impl IpSender {
         }
     }
 
+    /// Creates a canonical socket address.
+    ///
+    /// We may be asked to send IPv4-mapped IPv6 addresses.  But our sockets are configured
+    /// to only send their actual family.  So we need to map those back to the canonical
+    /// addresses.
+    #[inline]
+    fn canonical_addr(addr: SocketAddr) -> SocketAddr {
+        SocketAddr::new(addr.ip().to_canonical(), addr.port())
+    }
+
     pub(super) fn poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
@@ -187,7 +200,7 @@ impl IpSender {
         let total_bytes = transmit.contents.len() as u64;
         let res = Pin::new(&mut self.sender).poll_send(
             &quinn_udp::Transmit {
-                destination,
+                destination: Self::canonical_addr(destination),
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,

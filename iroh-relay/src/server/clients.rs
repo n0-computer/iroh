@@ -4,21 +4,23 @@
 use std::{
     collections::HashSet,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 
-use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
-use crate::server::{
-    client::{PacketScope, SendError},
-    metrics::Metrics,
+use crate::{
+    protos::relay::Datagrams,
+    server::{
+        client::{PacketScope, SendError},
+        metrics::Metrics,
+    },
 };
 
 /// Manages the connections to all currently connected clients.
@@ -49,12 +51,12 @@ impl Clients {
     pub async fn register(&self, client_config: Config, metrics: Arc<Metrics>) {
         let node_id = client_config.node_id;
         let connection_id = self.get_connection_id();
-        trace!(remote_node = node_id.fmt_short(), "registering client");
+        trace!(remote_node = %node_id.fmt_short(), "registering client");
 
         let client = Client::new(client_config, connection_id, self, metrics);
         if let Some(old_client) = self.0.clients.insert(node_id, client) {
             debug!(
-                remote_node = node_id.fmt_short(),
+                remote_node = %node_id.fmt_short(),
                 "multiple connections found, pruning old connection",
             );
             old_client.shutdown().await;
@@ -72,9 +74,8 @@ impl Clients {
     /// Must be passed a matching connection_id.
     pub(super) fn unregister(&self, connection_id: u64, node_id: NodeId) {
         trace!(
-            node_id = node_id.fmt_short(),
-            connection_id,
-            "unregistering client"
+            node_id = %node_id.fmt_short(),
+            connection_id, "unregistering client"
         );
 
         if let Some((_, client)) = self
@@ -88,13 +89,13 @@ impl Clients {
                         Ok(_) => {}
                         Err(TrySendError::Full(_)) => {
                             debug!(
-                                dst = key.fmt_short(),
+                                dst = %key.fmt_short(),
                                 "client too busy to receive packet, dropping packet"
                             );
                         }
                         Err(TrySendError::Closed(_)) => {
                             debug!(
-                                dst = key.fmt_short(),
+                                dst = %key.fmt_short(),
                                 "can no longer write to client, dropping packet"
                             );
                         }
@@ -108,12 +109,12 @@ impl Clients {
     pub(super) fn send_packet(
         &self,
         dst: NodeId,
-        data: Bytes,
+        data: Datagrams,
         src: NodeId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
-            debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
+            debug!(dst = %dst.fmt_short(), "no connected client, dropped packet");
             metrics.send_packets_dropped.inc();
             return Ok(());
         };
@@ -125,14 +126,14 @@ impl Clients {
             }
             Err(TrySendError::Full(_)) => {
                 debug!(
-                    dst = dst.fmt_short(),
+                    dst = %dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
                 Err(ForwardPacketError::new(PacketScope::Data, SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
-                    dst = dst.fmt_short(),
+                    dst = %dst.fmt_short(),
                     "can no longer write to client, dropping message and pruning connection"
                 );
                 client.start_shutdown();
@@ -148,13 +149,13 @@ impl Clients {
     pub(super) fn send_disco_packet(
         &self,
         dst: NodeId,
-        data: Bytes,
+        data: Datagrams,
         src: NodeId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(
-                dst = dst.fmt_short(),
+                dst = %dst.fmt_short(),
                 "no connected client, dropped disco packet"
             );
             metrics.disco_packets_dropped.inc();
@@ -168,14 +169,14 @@ impl Clients {
             }
             Err(TrySendError::Full(_)) => {
                 debug!(
-                    dst = dst.fmt_short(),
+                    dst = %dst.fmt_short(),
                     "client too busy to receive disco packet, dropping packet"
                 );
                 Err(ForwardPacketError::new(PacketScope::Disco, SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
-                    dst = dst.fmt_short(),
+                    dst = %dst.fmt_short(),
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
                 client.start_shutdown();
@@ -192,39 +193,59 @@ impl Clients {
 mod tests {
     use std::time::Duration;
 
-    use bytes::Bytes;
     use iroh_base::SecretKey;
+    use n0_future::{Stream, StreamExt};
     use n0_snafu::{Result, ResultExt};
-    use tokio::io::DuplexStream;
-    use tokio_util::codec::{Framed, FramedRead};
+    use rand::SeedableRng;
 
     use super::*;
     use crate::{
-        protos::relay::{recv_frame, Frame, FrameType, RelayCodec},
-        server::streams::{MaybeTlsStream, RelayedStream},
+        client::conn::Conn,
+        protos::{common::FrameType, relay::RelayToClientMsg},
+        server::streams::RelayedStream,
     };
 
-    fn test_client_builder(key: NodeId) -> (Config, FramedRead<DuplexStream, RelayCodec>) {
-        let (test_io, io) = tokio::io::duplex(1024);
+    async fn recv_frame<
+        E: snafu::Error + Sync + Send + 'static,
+        S: Stream<Item = Result<RelayToClientMsg, E>> + Unpin,
+    >(
+        frame_type: FrameType,
+        mut stream: S,
+    ) -> Result<RelayToClientMsg> {
+        match stream.next().await {
+            Some(Ok(frame)) => {
+                if frame_type != frame.typ() {
+                    snafu::whatever!(
+                        "Unexpected frame, got {:?}, but expected {:?}",
+                        frame.typ(),
+                        frame_type
+                    );
+                }
+                Ok(frame)
+            }
+            Some(Err(err)) => Err(err).e(),
+            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type:?}"),
+        }
+    }
+
+    fn test_client_builder(key: NodeId) -> (Config, Conn) {
+        let (server, client) = tokio::io::duplex(1024);
         (
             Config {
                 node_id: key,
-                stream: RelayedStream::Relay(Framed::new(
-                    MaybeTlsStream::Test(io),
-                    RelayCodec::test(),
-                )),
+                stream: RelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
-                rate_limit: None,
             },
-            FramedRead::new(test_io, RelayCodec::test()),
+            Conn::test(client),
         )
     }
 
     #[tokio::test]
     async fn test_clients() -> Result {
-        let a_key = SecretKey::generate(rand::thread_rng()).public();
-        let b_key = SecretKey::generate(rand::thread_rng()).public();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let a_key = SecretKey::generate(&mut rng).public();
+        let b_key = SecretKey::generate(&mut rng).public();
 
         let (builder_a, mut a_rw) = test_client_builder(a_key);
 
@@ -234,24 +255,24 @@ mod tests {
 
         // send packet
         let data = b"hello world!";
-        clients.send_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
+        clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: b_key,
-                content: data.to_vec().into(),
+            RelayToClientMsg::Datagrams {
+                remote_node_id: b_key,
+                datagrams: data.to_vec().into(),
             }
         );
 
         // send disco packet
-        clients.send_disco_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
+        clients.send_disco_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: b_key,
-                content: data.to_vec().into(),
+            RelayToClientMsg::Datagrams {
+                remote_node_id: b_key,
+                datagrams: data.to_vec().into(),
             }
         );
 

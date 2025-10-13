@@ -5,6 +5,7 @@ use std::{
     cmp::{Ord, PartialOrd},
     fmt::{Debug, Display},
     hash::Hash,
+    ops::Deref,
     str::FromStr,
 };
 
@@ -12,7 +13,7 @@ use curve25519_dalek::edwards::CompressedEdwardsY;
 pub use ed25519_dalek::{Signature, SignatureError};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use nested_enum_utils::common_fields;
-use rand_core::CryptoRngCore;
+use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
@@ -26,6 +27,14 @@ pub struct PublicKey(CompressedEdwardsY);
 
 impl Borrow<[u8; 32]> for PublicKey {
     fn borrow(&self) -> &[u8; 32] {
+        self.as_bytes()
+    }
+}
+
+impl Deref for PublicKey {
+    type Target = [u8; 32];
+
+    fn deref(&self) -> &Self::Target {
         self.as_bytes()
     }
 }
@@ -125,12 +134,24 @@ impl PublicKey {
 
     /// Convert to a hex string limited to the first 5 bytes for a friendly string
     /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        data_encoding::HEXLOWER.encode(&self.as_bytes()[..5])
+    pub fn fmt_short(&self) -> impl Display + 'static {
+        PublicKeyShort(
+            self.0.as_bytes()[0..5]
+                .try_into()
+                .expect("slice with incorrect length"),
+        )
     }
 
     /// The length of an ed25519 `PublicKey`, in bytes.
     pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
+}
+
+struct PublicKeyShort([u8; 5]);
+
+impl Display for PublicKeyShort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        data_encoding::HEXLOWER.encode_write(&self.0, f)
+    }
 }
 
 impl TryFrom<&[u8]> for PublicKey {
@@ -229,17 +250,6 @@ impl Debug for SecretKey {
     }
 }
 
-impl Display for SecretKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO: revivew for security
-        write!(
-            f,
-            "{}",
-            data_encoding::HEXLOWER.encode(self.secret.as_bytes())
-        )
-    }
-}
-
 impl FromStr for SecretKey {
     type Err = KeyParsingError;
 
@@ -278,11 +288,10 @@ impl SecretKey {
     ///
     /// ```rust
     /// // use the OsRng option for OS depedndent most secure RNG.
-    /// let mut rng = rand::rngs::OsRng;
-    /// let _key = iroh_base::SecretKey::generate(&mut rng);
+    /// let _key = iroh_base::SecretKey::generate(&mut rand::rng());
     /// ```
-    pub fn generate<R: CryptoRngCore>(mut csprng: R) -> Self {
-        let secret = SigningKey::generate(&mut csprng);
+    pub fn generate<R: CryptoRng + ?Sized>(csprng: &mut R) -> Self {
+        let secret = SigningKey::generate(csprng);
 
         Self { secret }
     }
@@ -362,6 +371,7 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
+    use rand::SeedableRng;
 
     use super::*;
 
@@ -394,10 +404,13 @@ mod tests {
     }
 
     #[test]
-    fn test_display_from_str() {
-        let key = SecretKey::generate(&mut rand::thread_rng());
+    fn test_from_str() {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let key = SecretKey::generate(&mut rng);
         assert_eq!(
-            SecretKey::from_str(&key.to_string()).unwrap().to_bytes(),
+            SecretKey::from_str(&HEXLOWER.encode(&key.to_bytes()))
+                .unwrap()
+                .to_bytes(),
             key.to_bytes()
         );
 

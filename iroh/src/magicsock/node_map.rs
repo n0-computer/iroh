@@ -1,8 +1,9 @@
 use std::{
-    collections::{hash_map::Entry, BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, hash_map::Entry},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
+    time::Duration,
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
@@ -11,22 +12,19 @@ use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::{
-    best_addr::ClearReason,
-    node_state::{NodeState, Options, PingHandled},
-};
-use super::{metrics::Metrics, transports, ActorMessage, NodeIdMappedAddr};
+use self::node_state::{NodeState, Options, PingHandled};
+use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
 use crate::disco::{CallMeMaybe, Pong, SendAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
-mod best_addr;
 mod node_state;
 mod path_state;
+mod path_validity;
 mod udp_paths;
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
+pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo};
+pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, RemoteInfo, SendPing};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -87,8 +85,7 @@ enum NodeStateKey {
 /// sources can be associated with a single address, if we have discovered this
 /// address through multiple means.
 ///
-/// Each time a [`NodeAddr`] is added to the node map, usually through
-/// [`crate::endpoint::Endpoint::add_node_addr_with_source`], a [`Source`] must be supplied to indicate
+/// Each time a [`NodeAddr`] is added to the node map a [`Source`] must be supplied to indicate
 /// how the address was obtained.
 ///
 /// A [`Source`] can describe a variety of places that an address or node was
@@ -121,20 +118,20 @@ pub enum Source {
 }
 
 impl NodeMap {
-    #[cfg(not(any(test, feature = "test-utils")))]
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes, metrics))
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     pub(super) fn load_from_vec(
         nodes: Vec<NodeAddr>,
-        path_selection: PathSelection,
+        #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
+        have_ipv6: bool,
         metrics: &Metrics,
     ) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes, path_selection, metrics))
+        Self::from_inner(NodeMapInner::load_from_vec(
+            nodes,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
+            have_ipv6,
+            metrics,
+        ))
     }
 
     fn from_inner(inner: NodeMapInner) -> Self {
@@ -144,11 +141,17 @@ impl NodeMap {
     }
 
     /// Add the contact information for a node.
-    pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source, metrics: &Metrics) {
+    pub(super) fn add_node_addr(
+        &self,
+        node_addr: NodeAddr,
+        source: Source,
+        have_v6: bool,
+        metrics: &Metrics,
+    ) {
         self.inner
             .lock()
             .expect("poisoned")
-            .add_node_addr(node_addr, source, metrics)
+            .add_node_addr(node_addr, source, have_v6, metrics)
     }
 
     /// Number of nodes currently listed.
@@ -189,14 +192,19 @@ impl NodeMap {
         }
     }
 
-    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun_rs::TransactionId) {
+    pub(super) fn notify_ping_timeout(
+        &self,
+        id: usize,
+        tx_id: stun_rs::TransactionId,
+        metrics: &Metrics,
+    ) {
         if let Some(ep) = self
             .inner
             .lock()
             .expect("poisoned")
             .get_mut(NodeStateKey::Idx(id))
         {
-            ep.ping_timeout(tx_id);
+            ep.ping_timeout(tx_id, Instant::now(), metrics);
         }
     }
 
@@ -225,11 +233,17 @@ impl NodeMap {
             .handle_ping(sender, src, tx_id)
     }
 
-    pub(super) fn handle_pong(&self, sender: PublicKey, src: &transports::Addr, pong: Pong) {
+    pub(super) fn handle_pong(
+        &self,
+        sender: PublicKey,
+        src: &transports::Addr,
+        pong: Pong,
+        metrics: &Metrics,
+    ) {
         self.inner
             .lock()
             .expect("poisoned")
-            .handle_pong(sender, src, pong)
+            .handle_pong(sender, src, pong, metrics)
     }
 
     #[must_use = "actions must be handled"]
@@ -265,29 +279,24 @@ impl NodeMap {
         Some((public_key, udp_addr, relay_url, ping_actions))
     }
 
-    pub(super) fn notify_shutdown(&self) {
+    pub(super) fn reset_node_states(&self, metrics: &Metrics) {
+        let now = Instant::now();
         let mut inner = self.inner.lock().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
-            ep.reset();
+            ep.note_connectivity_change(now, metrics);
         }
     }
 
-    pub(super) fn reset_node_states(&self) {
-        let mut inner = self.inner.lock().expect("poisoned");
-        for (_, ep) in inner.node_states_mut() {
-            ep.note_connectivity_change();
-        }
-    }
-
-    pub(super) fn nodes_stayin_alive(&self) -> Vec<PingAction> {
+    pub(super) fn nodes_stayin_alive(&self, have_ipv6: bool) -> Vec<PingAction> {
         let mut inner = self.inner.lock().expect("poisoned");
         inner
             .node_states_mut()
-            .flat_map(|(_idx, node_state)| node_state.stayin_alive())
+            .flat_map(|(_idx, node_state)| node_state.stayin_alive(have_ipv6))
             .collect()
     }
 
     /// Returns the [`RemoteInfo`]s for each node in the node map.
+    #[cfg(test)]
     pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
         // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
         // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
@@ -310,6 +319,10 @@ impl NodeMap {
         self.inner.lock().expect("poisoned").conn_type(node_id)
     }
 
+    pub(super) fn latency(&self, node_id: NodeId) -> Option<Duration> {
+        self.inner.lock().expect("poisoned").latency(node_id)
+    }
+
     /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
         self.inner.lock().expect("poisoned").remote_info(node_id)
@@ -324,41 +337,38 @@ impl NodeMap {
         self.inner
             .lock()
             .expect("poisoned")
-            .on_direct_addr_discovered(discovered);
+            .on_direct_addr_discovered(discovered, Instant::now());
     }
 }
 
 impl NodeMapInner {
-    #[cfg(not(any(test, feature = "test-utils")))]
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
-        let mut me = Self::default();
-        for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved, metrics);
-        }
-        me
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     fn load_from_vec(
         nodes: Vec<NodeAddr>,
-        path_selection: PathSelection,
+        #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
+        have_ipv6: bool,
         metrics: &Metrics,
     ) -> Self {
         let mut me = Self {
+            #[cfg(any(test, feature = "test-utils"))]
             path_selection,
             ..Default::default()
         };
         for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved, metrics);
+            me.add_node_addr(node_addr, Source::Saved, have_ipv6, metrics);
         }
         me
     }
 
     /// Add the contact information for a node.
     #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
-    fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source, metrics: &Metrics) {
+    fn add_node_addr(
+        &mut self,
+        node_addr: NodeAddr,
+        source: Source,
+        have_ipv6: bool,
+        metrics: &Metrics,
+    ) {
         let source0 = source.clone();
         let node_id = node_addr.node_id;
         let relay_url = node_addr.relay_url.clone();
@@ -376,6 +386,7 @@ impl NodeMapInner {
             node_addr.relay_url.as_ref(),
             &node_addr.direct_addresses,
             source0,
+            have_ipv6,
             metrics,
         );
         let id = node_state.id();
@@ -385,24 +396,28 @@ impl NodeMapInner {
     }
 
     /// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    pub(super) fn on_direct_addr_discovered(&mut self, discovered: BTreeSet<SocketAddr>) {
+    pub(super) fn on_direct_addr_discovered(
+        &mut self,
+        discovered: BTreeSet<SocketAddr>,
+        now: Instant,
+    ) {
         for addr in discovered {
-            self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
+            self.remove_by_ipp(addr.into(), now, "matches our local addr")
         }
     }
 
     /// Removes a direct address from a node.
-    fn remove_by_ipp(&mut self, ipp: IpPort, reason: ClearReason) {
+    fn remove_by_ipp(&mut self, ipp: IpPort, now: Instant, why: &'static str) {
         if let Some(id) = self.by_ip_port.remove(&ipp) {
             if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
                 let node = entry.get_mut();
-                node.remove_direct_addr(&ipp, reason);
+                node.remove_direct_addr(&ipp, now, why);
                 if node.direct_addresses().count() == 0 {
                     let node_id = node.public_key();
                     let mapped_addr = node.quic_mapped_addr();
                     self.by_node_key.remove(node_id);
                     self.by_quic_mapped_addr.remove(mapped_addr);
-                    debug!(node_id=%node_id.fmt_short(), ?reason, "removing node");
+                    debug!(node_id=%node_id.fmt_short(), why, "removing node");
                     entry.remove();
                 }
             }
@@ -474,6 +489,7 @@ impl NodeMapInner {
         *node_state.quic_mapped_addr()
     }
 
+    #[cfg(test)]
     fn node_states(&self) -> impl Iterator<Item = (&usize, &NodeState)> {
         self.by_id.iter()
     }
@@ -483,6 +499,7 @@ impl NodeMapInner {
     }
 
     /// Get the [`RemoteInfo`]s for all nodes.
+    #[cfg(test)]
     fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
         self.node_states().map(move |(_, ep)| ep.info(now))
     }
@@ -507,9 +524,20 @@ impl NodeMapInner {
             .map(|ep| ep.conn_type())
     }
 
-    fn handle_pong(&mut self, sender: NodeId, src: &transports::Addr, pong: Pong) {
+    fn latency(&self, node_id: NodeId) -> Option<Duration> {
+        self.get(NodeStateKey::NodeId(node_id))
+            .and_then(|ep| ep.latency())
+    }
+
+    fn handle_pong(
+        &mut self,
+        sender: NodeId,
+        src: &transports::Addr,
+        pong: Pong,
+        metrics: &Metrics,
+    ) {
         if let Some(ns) = self.get_mut(NodeStateKey::NodeId(sender)).as_mut() {
-            let insert = ns.handle_pong(&pong, src.clone().into());
+            let insert = ns.handle_pong(&pong, src.clone().into(), metrics);
             if let Some((src, key)) = insert {
                 self.set_node_key_for_ip_port(src, &key);
             }
@@ -542,7 +570,7 @@ impl NodeMapInner {
             Some(ns) => {
                 debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
 
-                ns.handle_call_me_maybe(cm)
+                ns.handle_call_me_maybe(cm, metrics)
             }
         }
     }
@@ -708,6 +736,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use iroh_base::SecretKey;
+    use rand::SeedableRng;
     use tracing_test::traced_test;
 
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
@@ -720,6 +749,7 @@ mod tests {
                 Source::NamedApp {
                     name: "test".into(),
                 },
+                true,
                 &Default::default(),
             )
         }
@@ -731,7 +761,7 @@ mod tests {
     async fn restore_from_vec() {
         let node_map = NodeMap::default();
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let node_a = SecretKey::generate(&mut rng).public();
         let node_b = SecretKey::generate(&mut rng).public();
         let node_c = SecretKey::generate(&mut rng).public();
@@ -766,8 +796,12 @@ mod tests {
                 Some(addr)
             })
             .collect();
-        let loaded_node_map =
-            NodeMap::load_from_vec(addrs.clone(), PathSelection::default(), &Default::default());
+        let loaded_node_map = NodeMap::load_from_vec(
+            addrs.clone(),
+            PathSelection::default(),
+            true,
+            &Default::default(),
+        );
 
         let mut loaded: Vec<NodeAddr> = loaded_node_map
             .list_remote_infos(Instant::now())
@@ -796,7 +830,8 @@ mod tests {
     #[traced_test]
     fn test_prune_direct_addresses() {
         let node_map = NodeMap::default();
-        let public_key = SecretKey::generate(rand::thread_rng()).public();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let public_key = SecretKey::generate(&mut rng).public();
         let id = node_map
             .inner
             .lock()
@@ -847,7 +882,7 @@ mod tests {
         }
 
         info!("Pruning addresses");
-        endpoint.prune_direct_addresses();
+        endpoint.prune_direct_addresses(Instant::now());
 
         // Half the offline addresses should have been pruned.  All the active and alive
         // addresses should have been kept.
@@ -869,8 +904,10 @@ mod tests {
     #[test]
     fn test_prune_inactive() {
         let node_map = NodeMap::default();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         // add one active node and more than MAX_INACTIVE_NODES inactive nodes
-        let active_node = SecretKey::generate(rand::thread_rng()).public();
+        let active_node = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map
@@ -881,7 +918,7 @@ mod tests {
             .expect("registered");
 
         for _ in 0..MAX_INACTIVE_NODES + 1 {
-            let node = SecretKey::generate(rand::thread_rng()).public();
+            let node = SecretKey::generate(&mut rng).public();
             node_map.add_test_addr(NodeAddr::new(node));
         }
 

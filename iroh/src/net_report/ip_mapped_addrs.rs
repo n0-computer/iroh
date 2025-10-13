@@ -2,8 +2,8 @@ use std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 
@@ -18,7 +18,7 @@ pub struct IpMappedAddrError;
 ///
 /// It is essentially a lookup key for an IP that iroh's magicsocket knows about.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-pub struct IpMappedAddr(Ipv6Addr);
+pub(crate) struct IpMappedAddr(Ipv6Addr);
 
 /// Counter to always generate unique addresses for [`IpMappedAddr`].
 static IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -38,7 +38,7 @@ impl IpMappedAddr {
     ///
     /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
     /// which is recognised by iroh as an IP mapped address.
-    pub fn generate() -> Self {
+    pub(super) fn generate() -> Self {
         let mut addr = [0u8; 16];
         addr[0] = Self::ADDR_PREFIXL;
         addr[1..6].copy_from_slice(&Self::ADDR_GLOBAL_ID);
@@ -57,7 +57,7 @@ impl IpMappedAddr {
     /// This uses a made-up, but fixed port number.  The [IpMappedAddresses`] map this is
     /// made for creates a unique [`IpMappedAddr`] for each IP+port and thus does not use
     /// the port to map back to the original [`SocketAddr`].
-    pub fn private_socket_addr(&self) -> SocketAddr {
+    pub(crate) fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), Self::MAPPED_ADDR_PORT)
     }
 }
@@ -88,10 +88,10 @@ impl std::fmt::Display for IpMappedAddr {
 // mechanisms for keeping track of "aliveness" and pruning address, as we do
 // with the `NodeMap`
 #[derive(Debug, Clone, Default)]
-pub struct IpMappedAddresses(Arc<std::sync::Mutex<Inner>>);
+pub(crate) struct IpMappedAddresses(Arc<std::sync::Mutex<Inner>>);
 
 #[derive(Debug, Default)]
-pub struct Inner {
+pub(super) struct Inner {
     by_mapped_addr: BTreeMap<IpMappedAddr, SocketAddr>,
     /// Because [`std::net::SocketAddrV6`] contains extra fields besides the IP
     /// address and port (ie, flow_info and scope_id), the a [`std::net::SocketAddrV6`]
@@ -101,18 +101,13 @@ pub struct Inner {
 }
 
 impl IpMappedAddresses {
-    /// Creates an empty [`IpMappedAddresses`].
-    pub fn new() -> Self {
-        Self(Arc::new(std::sync::Mutex::new(Inner::default())))
-    }
-
     /// Adds a [`SocketAddr`] to the map and returns the generated [`IpMappedAddr`].
     ///
     /// If this [`SocketAddr`] already exists in the map, it returns its
     /// associated [`IpMappedAddr`].
     ///
     /// Otherwise a new [`IpMappedAddr`] is generated for it and returned.
-    pub fn get_or_register(&self, socket_addr: SocketAddr) -> IpMappedAddr {
+    pub(super) fn get_or_register(&self, socket_addr: SocketAddr) -> IpMappedAddr {
         let ip_port = (socket_addr.ip(), socket_addr.port());
         let mut inner = self.0.lock().expect("poisoned");
         if let Some(mapped_addr) = inner.by_ip_port.get(&ip_port) {
@@ -125,14 +120,14 @@ impl IpMappedAddresses {
     }
 
     /// Returns the [`IpMappedAddr`] for the given [`SocketAddr`].
-    pub fn get_mapped_addr(&self, socket_addr: &SocketAddr) -> Option<IpMappedAddr> {
+    pub(crate) fn get_mapped_addr(&self, socket_addr: &SocketAddr) -> Option<IpMappedAddr> {
         let ip_port = (socket_addr.ip(), socket_addr.port());
         let inner = self.0.lock().expect("poisoned");
         inner.by_ip_port.get(&ip_port).copied()
     }
 
     /// Returns the [`SocketAddr`] for the given [`IpMappedAddr`].
-    pub fn get_ip_addr(&self, mapped_addr: &IpMappedAddr) -> Option<SocketAddr> {
+    pub(crate) fn get_ip_addr(&self, mapped_addr: &IpMappedAddr) -> Option<SocketAddr> {
         let inner = self.0.lock().expect("poisoned");
         inner.by_mapped_addr.get(mapped_addr).copied()
     }

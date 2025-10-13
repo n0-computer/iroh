@@ -46,7 +46,7 @@ jobs:
           # - x86_64-unknown-netbsd
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -83,7 +83,7 @@ jobs:
           - armv7-linux-androideabi
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
@@ -93,7 +93,7 @@ jobs:
         run: rustup target add ${{ matrix.target }}
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: "17"
@@ -127,7 +127,7 @@ jobs:
           - i686-unknown-linux-gnu
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -154,10 +154,10 @@ jobs:
       RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup node.js version 22.5 # needed for browser-like websocket API support in node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22.5
 
@@ -204,7 +204,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: Install sccache
@@ -236,7 +236,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -253,10 +253,10 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
       RUSTDOCFLAGS: --cfg docsrs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-02-20
+          toolchain: nightly-2025-10-09
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 
@@ -270,7 +270,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -297,7 +297,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.MSRV }}
@@ -313,7 +313,7 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           arguments: --workspace --all-features
@@ -336,6 +336,6 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: pip install --user codespell[toml]
       - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md

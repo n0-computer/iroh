@@ -5,15 +5,16 @@ use std::{
 
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
+use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
     discovery::{
         dns::DnsDiscovery,
-        pkarr::{PkarrPublisher, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
+        pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     endpoint::ConnectionError,
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use n0_future::task::AbortOnDropHandle;
@@ -38,6 +39,8 @@ const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 /// Note that some options are only available with optional features:
 ///
 /// --relay-only needs the `test-utils` feature
+///
+/// --dev needs the `test-utils` feature
 ///
 /// --mdns needs the `discovery-local-network` feature
 ///
@@ -127,7 +130,6 @@ struct EndpointArgs {
     /// Do not resolve node info via DNS.
     #[clap(long)]
     no_dns_resolve: bool,
-    #[cfg(feature = "discovery-local-network")]
     #[clap(long)]
     /// Enable mDNS discovery.
     mdns: bool,
@@ -152,7 +154,9 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
     let cli = Cli::parse();
     match cli.command {
         Commands::Provide {
@@ -182,13 +186,26 @@ impl EndpointArgs {
             Ok(s) => SecretKey::from_str(&s)
                 .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
             Err(_) => {
-                let s = SecretKey::generate(rand::rngs::OsRng);
+                let s = SecretKey::generate(&mut rand::rng());
                 println!("Generated a new node secret. To reuse, set");
-                println!("\tIROH_SECRET={s}");
+                println!("\tIROH_SECRET={}", HEXLOWER.encode(&s.to_bytes()));
                 s
             }
         };
         builder = builder.secret_key(secret_key);
+
+        if Env::Dev == self.env {
+            #[cfg(feature = "test-utils")]
+            {
+                builder = builder.insecure_skip_relay_cert_verify(true);
+            }
+            #[cfg(not(feature = "test-utils"))]
+            {
+                snafu::whatever!(
+                    "Must have the `test-utils` feature enabled when using the `--env=dev` flag"
+                )
+            }
+        }
 
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
@@ -203,30 +220,40 @@ impl EndpointArgs {
             let url = self
                 .pkarr_relay_url
                 .unwrap_or_else(|| self.env.pkarr_relay_url());
-            builder = builder
-                .add_discovery(|secret_key| Some(PkarrPublisher::new(secret_key.clone(), url)));
+            builder = builder.add_discovery(PkarrPublisher::builder(url));
         }
 
         if !self.no_dns_resolve {
             let domain = self
                 .dns_origin_domain
                 .unwrap_or_else(|| self.env.dns_origin_domain());
-            builder = builder.add_discovery(|_| Some(DnsDiscovery::new(domain)));
+            builder = builder.add_discovery(DnsDiscovery::builder(domain));
         }
 
-        #[cfg(feature = "discovery-local-network")]
         if self.mdns {
-            builder = builder.add_discovery(|secret_key| {
-                Some(
-                    iroh::discovery::mdns::MdnsDiscovery::new(secret_key.public())
-                        .expect("Failed to create mDNS discovery"),
-                )
-            });
+            #[cfg(feature = "discovery-local-network")]
+            {
+                builder = builder.discovery_local_network();
+            }
+            #[cfg(not(feature = "discovery-local-network"))]
+            {
+                snafu::whatever!(
+                    "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
+                );
+            }
         }
 
-        #[cfg(feature = "test-utils")]
         if self.relay_only {
-            builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
+            #[cfg(feature = "test-utils")]
+            {
+                builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
+            }
+            #[cfg(not(feature = "test-utils"))]
+            {
+                snafu::whatever!(
+                    "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
+                );
+            }
         }
 
         if let Some(host) = self.dns_server {
@@ -245,17 +272,26 @@ impl EndpointArgs {
 
         let node_id = endpoint.node_id();
         println!("Our node id:\n\t{node_id}");
-        println!("Our direct addresses:");
-        for local_endpoint in endpoint.direct_addresses().initialized().await? {
-            println!("\t{} (type: {:?})", local_endpoint.addr, local_endpoint.typ)
+
+        if self.relay_only {
+            endpoint.online().await;
+        } else if !self.no_relay {
+            tokio::time::timeout(Duration::from_secs(4), endpoint.online())
+                .await
+                .ok();
         }
-        if !self.no_relay {
-            let relay_url = endpoint
-                .home_relay()
-                .get()?
-                .pop()
-                .context("Failed to resolve our home relay")?;
-            println!("Our home relay server:\n\t{relay_url}");
+
+        let node_addr = endpoint.node_addr();
+
+        println!("Our direct addresses:");
+        for addr in &node_addr.direct_addresses {
+            println!("\t{addr}");
+        }
+
+        if let Some(url) = node_addr.relay_url {
+            println!("Our home relay server:\t{url}");
+        } else {
+            println!("No home relay server found");
         }
 
         println!();
@@ -266,11 +302,11 @@ impl EndpointArgs {
 async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     let node_id = endpoint.node_id();
 
-    let node_addr = endpoint.node_addr().initialized().await?;
+    let node_addr = endpoint.node_addr();
     let ticket = NodeTicket::new(node_addr);
     println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
-    let mut node_addr = endpoint.node_addr().initialized().await?;
+    let mut node_addr = endpoint.node_addr();
     node_addr.direct_addresses = Default::default();
     let ticket = NodeTicket::new(node_addr);
     println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);

@@ -1,20 +1,22 @@
 //! The state kept for each network path to a remote node.
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    net::SocketAddr,
-};
+use std::collections::{BTreeMap, HashMap};
 
 use iroh_base::NodeId;
-use iroh_relay::protos::stun;
 use n0_future::time::{Duration, Instant};
-use tracing::{debug, event, Level};
+use tracing::{Level, debug, event};
 
 use super::{
-    node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
     IpPort, PingRole, Source,
+    node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
 };
-use crate::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL};
+use crate::{
+    disco::SendAddr,
+    magicsock::{
+        HEARTBEAT_INTERVAL, Metrics as MagicsockMetrics,
+        node_map::path_validity::{self, PathValidity},
+    },
+};
 
 /// The minimum time between pings to an endpoint.
 ///
@@ -27,7 +29,7 @@ const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
 /// This state is used for both the relay path and any direct UDP paths.
 ///
 /// [`NodeState`]: super::node_state::NodeState
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(super) struct PathState {
     /// The node for which this path exists.
     node_id: NodeId,
@@ -39,16 +41,17 @@ pub(super) struct PathState {
     /// If non-zero, means that this was an endpoint that we learned about at runtime (from an
     /// incoming ping). If so, we keep the time updated and use it to discard old candidates.
     // NOTE: tx_id Originally added in tailscale due to <https://github.com/tailscale/tailscale/issues/7078>.
-    last_got_ping: Option<(Instant, stun::TransactionId)>,
+    last_got_ping: Option<(Instant, stun_rs::TransactionId)>,
 
     /// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     pub(super) call_me_maybe_time: Option<Instant>,
 
-    /// The most recent [`PongReply`].
+    /// Tracks whether this path is valid.
     ///
-    /// Previous replies are cleared when they are no longer relevant to determine whether
-    /// this path can still be used to reach the remote node.
-    pub(super) recent_pong: Option<PongReply>,
+    /// Also stores the latest [`PongReply`], if there is one.
+    ///
+    /// See [`PathValidity`] docs.
+    pub(super) validity: PathValidity,
     /// When the last payload data was **received** via this path.
     ///
     /// This excludes DISCO messages.
@@ -71,16 +74,9 @@ impl PathState {
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            recent_pong: None,
+            validity: PathValidity::empty(),
             last_payload_msg: None,
             sources,
-        }
-    }
-
-    pub(super) fn udp_addr(&self) -> Option<SocketAddr> {
-        match self.path {
-            SendAddr::Udp(addr) => Some(addr),
-            SendAddr::Relay(_) => None,
         }
     }
 
@@ -98,7 +94,7 @@ impl PathState {
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            recent_pong: None,
+            validity: PathValidity::empty(),
             last_payload_msg: Some(now),
             sources,
         }
@@ -107,7 +103,7 @@ impl PathState {
     pub(super) fn with_ping(
         node_id: NodeId,
         path: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
         source: Source,
         now: Instant,
     ) -> Self {
@@ -116,9 +112,9 @@ impl PathState {
         new
     }
 
-    pub(super) fn add_pong_reply(&mut self, r: PongReply) {
+    pub(super) fn add_pong_reply(&mut self, r: PongReply, metrics: &MagicsockMetrics) {
         if let SendAddr::Udp(ref path) = self.path {
-            if self.recent_pong.is_none() {
+            if self.validity.is_empty() {
                 event!(
                     target: "iroh::_events::holepunched",
                     Level::DEBUG,
@@ -128,7 +124,16 @@ impl PathState {
                 );
             }
         }
-        self.recent_pong = Some(r);
+
+        self.validity.update_pong(r.pong_at, r.latency);
+
+        self.validity.record_metrics(metrics);
+    }
+
+    pub(super) fn receive_payload(&mut self, now: Instant) {
+        self.last_payload_msg = Some(now);
+        self.validity
+            .receive_payload(now, path_validity::Source::QuicPayload);
     }
 
     #[cfg(test)]
@@ -139,7 +144,7 @@ impl PathState {
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            recent_pong: Some(r),
+            validity: PathValidity::new(r.pong_at, r.latency),
             last_payload_msg: None,
             sources: HashMap::new(),
         }
@@ -176,15 +181,13 @@ impl PathState {
     /// - When the last payload transmission occurred.
     /// - when the last ping from them was received.
     pub(super) fn last_alive(&self) -> Option<Instant> {
-        self.recent_pong
-            .as_ref()
-            .map(|pong| &pong.pong_at)
+        self.validity
+            .latest_pong()
             .into_iter()
-            .chain(self.last_payload_msg.as_ref())
-            .chain(self.call_me_maybe_time.as_ref())
-            .chain(self.last_incoming_ping())
+            .chain(self.last_payload_msg)
+            .chain(self.call_me_maybe_time)
+            .chain(self.last_incoming_ping().cloned())
             .max()
-            .copied()
     }
 
     /// The last control or DISCO message **about** this path.
@@ -198,9 +201,9 @@ impl PathState {
     pub(super) fn last_control_msg(&self, now: Instant) -> Option<(Duration, ControlMsg)> {
         // get every control message and assign it its kind
         let last_pong = self
-            .recent_pong
-            .as_ref()
-            .map(|pong| (pong.pong_at, ControlMsg::Pong));
+            .validity
+            .latest_pong()
+            .map(|pong_at| (pong_at, ControlMsg::Pong));
         let last_call_me_maybe = self
             .call_me_maybe_time
             .as_ref()
@@ -219,7 +222,7 @@ impl PathState {
 
     /// Returns the latency from the most recent pong, if available.
     pub(super) fn latency(&self) -> Option<Duration> {
-        self.recent_pong.as_ref().map(|p| p.latency)
+        self.validity.latency()
     }
 
     pub(super) fn needs_ping(&self, now: &Instant) -> bool {
@@ -239,7 +242,7 @@ impl PathState {
         }
     }
 
-    pub(super) fn handle_ping(&mut self, tx_id: stun::TransactionId, now: Instant) -> PingRole {
+    pub(super) fn handle_ping(&mut self, tx_id: stun_rs::TransactionId, now: Instant) -> PingRole {
         if Some(&tx_id) == self.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
             PingRole::Duplicate
         } else {
@@ -280,7 +283,7 @@ impl PathState {
         self.last_ping = None;
         self.last_got_ping = None;
         self.call_me_maybe_time = None;
-        self.recent_pong = None;
+        self.validity = PathValidity::empty();
     }
 
     fn summary(&self, mut w: impl std::fmt::Write) -> std::fmt::Result {
@@ -288,8 +291,8 @@ impl PathState {
         if self.is_active() {
             write!(w, "active ")?;
         }
-        if let Some(ref pong) = self.recent_pong {
-            write!(w, "pong-received({:?} ago) ", pong.pong_at.elapsed())?;
+        if let Some(pong_at) = self.validity.latest_pong() {
+            write!(w, "pong-received({:?} ago) ", pong_at.elapsed())?;
         }
         if let Some(when) = self.last_incoming_ping() {
             write!(w, "ping-received({:?} ago) ", when.elapsed())?;

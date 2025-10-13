@@ -25,7 +25,7 @@ use hickory_server::{
     },
     server::Request as DNSRequest,
 };
-use http::{header, request::Parts, HeaderValue, StatusCode};
+use http::{HeaderValue, StatusCode, header, request::Parts};
 use serde::Deserialize;
 use tracing::info;
 
@@ -257,7 +257,7 @@ fn decode_request(bytes: &[u8], src_addr: SocketAddr) -> Result<DNSRequest, AppE
         }
         Err(err) => Err(AppError::new(
             StatusCode::BAD_REQUEST,
-            Some(format!("Invalid DNS message: {}", err)),
+            Some(format!("Invalid DNS message: {err}")),
         )),
     }
 }

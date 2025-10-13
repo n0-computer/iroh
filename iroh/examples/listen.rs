@@ -5,9 +5,8 @@
 //!     $ cargo run --example listen
 use std::time::Duration;
 
-use iroh::{endpoint::ConnectionError, Endpoint, RelayMode, SecretKey};
+use iroh::{Endpoint, RelayMode, SecretKey, endpoint::ConnectionError};
 use n0_snafu::ResultExt;
-use n0_watcher::Watcher as _;
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -17,8 +16,8 @@ const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 async fn main() -> n0_snafu::Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nlisten example!\n");
-    let secret_key = SecretKey::generate(rand::rngs::OsRng);
-    println!("secret key: {secret_key}");
+    let secret_key = SecretKey::generate(&mut rand::rng());
+    println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = Endpoint::builder()
@@ -39,19 +38,21 @@ async fn main() -> n0_snafu::Result<()> {
     println!("node id: {me}");
     println!("node listening addresses:");
 
-    let local_addrs = endpoint
-        .direct_addresses()
-        .initialized()
-        .await?
-        .into_iter()
+    // wait for the node to be online
+    endpoint.online().await;
+    let node_addr = endpoint.node_addr();
+
+    let local_addrs = node_addr
+        .direct_addresses
+        .iter()
         .map(|addr| {
-            let addr = addr.addr.to_string();
+            let addr = addr.to_string();
             println!("\t{addr}");
             addr
         })
         .collect::<Vec<_>>()
         .join(" ");
-    let relay_url = endpoint.home_relay().initialized().await?;
+    let relay_url = node_addr.relay_url.expect("missing relay");
     println!("node relay server url: {relay_url}");
     println!("\nin a separate terminal run:");
 

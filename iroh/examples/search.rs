@@ -33,13 +33,13 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use clap::Parser;
 use iroh::{
+    Endpoint, NodeId,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
-    Endpoint, NodeId,
 };
 use n0_snafu::{Result, ResultExt};
 use tokio::sync::Mutex;
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 #[derive(Debug, Parser)]
 pub struct Cli {
@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
             let num_matches = proto.query_remote(node_id, &query).await?;
 
             // Print out our query results.
-            println!("Found {} matches", num_matches);
+            println!("Found {num_matches} matches");
         }
     }
 

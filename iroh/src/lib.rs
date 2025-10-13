@@ -105,7 +105,7 @@
 //!
 //! Additionally to providing reliable connectivity between iroh nodes, Relay servers
 //! provide some functions to assist in [hole punching].  They have various services to help
-//! nodes understand their own network situation.  This includes offering a [STUN] server,
+//! nodes understand their own network situation.  This includes offering a [QAD] server,
 //! but also a few HTTP extra endpoints as well as responding to ICMP echo requests.
 //!
 //! By default the [number 0] relay servers are used, see [`RelayMode::Default`].
@@ -154,8 +154,8 @@
 //! ## Node Discovery
 //!
 //! The need to know the [`RelayUrl`] *or* some direct addresses in addition to the
-//! [`NodeId`] to connect to an iroh node can be an obstacle.  To address this the
-//! [`endpoint::Builder`] allows to configure a [`discovery`] service.
+//! [`NodeId`] to connect to an iroh node can be an obstacle.  To address this, the
+//! [`endpoint::Builder`] allows you to configure a [`discovery`] service.
 //!
 //! The [`DnsDiscovery`] service is a discovery service which will publish the [`RelayUrl`]
 //! and direct addresses to a service publishing those as DNS records.  To connect it looks
@@ -232,7 +232,7 @@
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
-//! [STUN]: https://en.wikipedia.org/wiki/STUN
+//! [QAD]: https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html
 //! [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
 //! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
 //! [`SecretKey`]: crate::SecretKey
@@ -250,7 +250,7 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(wasm_browser, allow(unused))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
-#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
 mod disco;
 mod key;
@@ -274,7 +274,8 @@ pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
-pub use iroh_relay::{http::Protocol as RelayProtocol, node_info, RelayMap, RelayNode};
+pub use iroh_relay::{RelayMap, RelayNode, node_info};
+pub use n0_watcher::Watcher;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

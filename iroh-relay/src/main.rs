@@ -15,8 +15,7 @@ use http::StatusCode;
 use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
-        DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
-        DEFAULT_STUN_PORT,
+        DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
     },
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
@@ -24,9 +23,9 @@ use n0_future::FutureExt;
 use n0_snafu::{Error, Result, ResultExt};
 use serde::{Deserialize, Serialize};
 use snafu::whatever;
-use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
+use tokio_rustls_acme::{AcmeConfig, caches::DirCache};
 use tracing::{debug, warn};
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, prelude::*};
 use url::Url;
 
 /// The default `http_bind_port` when using `--dev`.
@@ -48,9 +47,6 @@ struct Cli {
     #[clap(long, default_value_t = false)]
     dev: bool,
     /// Path to the configuration file.
-    ///
-    /// If provided and no configuration file exists the default configuration will be
-    /// written to the file.
     #[clap(long, short)]
     config_path: Option<PathBuf>,
 }
@@ -114,8 +110,13 @@ struct Config {
     ///
     /// Defaults to `true`.
     ///
-    /// Disabling will leave only the STUN server.  The `http_bind_addr` and `tls`
-    /// configuration options will be ignored.
+    /// When disabled, the relay will not proxy traffic between nodes. This leaves only
+    /// the QUIC server running (if `enable_quic_addr_discovery` is `true`), which helps
+    /// with NAT traversal by reporting observed addresses but does not relay any data.
+    /// This is useful for holepunching-only relay servers.
+    ///
+    /// When disabled, the `http_bind_addr` and `tls` configuration options are only used
+    /// if `enable_quic_addr_discovery` is enabled (TLS is required for QUIC).
     #[serde(default = "cfg_defaults::enable_relay")]
     enable_relay: bool,
     /// The socket address to bind the Relay HTTP server on.
@@ -140,15 +141,6 @@ struct Config {
     ///
     /// Must exist if `enable_quic_addr_discovery` is `true`.
     tls: Option<TlsConfig>,
-    /// Whether to run a STUN server. It will bind to the same IP as the `addr` field.
-    ///
-    /// Defaults to `true`.
-    #[serde(default = "cfg_defaults::enable_stun")]
-    enable_stun: bool,
-    /// The socket address to bind the STUN server on.
-    ///
-    /// Defaults to using the `http_bind_addr` with the port set to [`DEFAULT_STUN_PORT`].
-    stun_bind_addr: Option<SocketAddr>,
     /// Whether to allow QUIC connections for QUIC address discovery
     ///
     /// If no `tls` is set, this will error.
@@ -174,7 +166,7 @@ struct Config {
     key_cache_capacity: Option<usize>,
     /// Access control for relaying connections.
     ///
-    /// This controls which nodes are allowed to relay connections, other endpoints, like STUN are not controlled by this.
+    /// This controls which nodes are allowed to relay connections, other endpoints are not controlled by this.
     #[serde(default)]
     access: AccessConfig,
 }
@@ -245,7 +237,10 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                 }))
             }
             AccessConfig::Http(mut config) => {
-                let client = reqwest::Client::default();
+                let client = reqwest::Client::builder()
+                    .use_rustls_tls()
+                    .build()
+                    .expect("request client builder");
                 // Allow to set bearer token via environment variable as well.
                 if let Ok(token) = std::env::var(ENV_HTTP_BEARER_TOKEN) {
                     config.bearer_token = Some(token);
@@ -314,11 +309,6 @@ impl Config {
             .unwrap_or((Ipv6Addr::UNSPECIFIED, DEFAULT_HTTP_PORT).into())
     }
 
-    fn stun_bind_addr(&self) -> SocketAddr {
-        self.stun_bind_addr
-            .unwrap_or_else(|| SocketAddr::new(self.http_bind_addr().ip(), DEFAULT_STUN_PORT))
-    }
-
     fn metrics_bind_addr(&self) -> SocketAddr {
         self.metrics_bind_addr
             .unwrap_or_else(|| SocketAddr::new(self.http_bind_addr().ip(), DEFAULT_METRICS_PORT))
@@ -331,8 +321,6 @@ impl Default for Config {
             enable_relay: cfg_defaults::enable_relay(),
             http_bind_addr: None,
             tls: None,
-            enable_stun: cfg_defaults::enable_stun(),
-            stun_bind_addr: None,
             enable_quic_addr_discovery: cfg_defaults::enable_quic_addr_discovery(),
             limits: None,
             enable_metrics: cfg_defaults::enable_metrics(),
@@ -349,10 +337,6 @@ impl Default for Config {
 /// and can not immediately be substituted by serde.
 mod cfg_defaults {
     pub(crate) fn enable_relay() -> bool {
-        true
-    }
-
-    pub(crate) fn enable_stun() -> bool {
         true
     }
 
@@ -607,7 +591,7 @@ async fn maybe_load_tls(
                 .clone()
                 .context("LetsEncrypt needs a contact email")?;
             let config = AcmeConfig::new(vec![hostname.clone()])
-                .contact([format!("mailto:{}", contact)])
+                .contact([format!("mailto:{contact}")])
                 .cache_option(Some(DirCache::new(tls.cert_dir())))
                 .directory_lets_encrypt(tls.prod_tls);
             let state = config.state();
@@ -618,7 +602,7 @@ async fn maybe_load_tls(
         #[cfg(feature = "server")]
         CertMode::Reloading => {
             use rustls_cert_file_reader::FileReader;
-            use rustls_cert_reloadable_resolver::{key_provider::Dyn, CertifiedKeyLoader};
+            use rustls_cert_reloadable_resolver::{CertifiedKeyLoader, key_provider::Dyn};
             use webpki_types::{CertificateDer, PrivateKeyDer};
 
             let cert_path = tls.cert_path();
@@ -677,7 +661,9 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
                 bind_addr: tls.quic_bind_addr,
             });
         } else {
-            whatever!("Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery")
+            whatever!(
+                "Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery"
+            )
         }
     };
     let limits = match cfg.limits {
@@ -713,21 +699,21 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         None => Default::default(),
     };
 
-    let relay_config = relay::RelayConfig {
-        http_bind_addr: cfg.http_bind_addr(),
-        // if `dangerous_http_only` is set, do not pass in any tls configuration
-        tls: relay_tls.and_then(|tls| if dangerous_http_only { None } else { Some(tls) }),
-        limits,
-        key_cache_capacity: cfg.key_cache_capacity,
-        access: cfg.access.clone().into(),
+    let relay_config = if cfg.enable_relay {
+        Some(relay::RelayConfig {
+            http_bind_addr: cfg.http_bind_addr(),
+            // if `dangerous_http_only` is set, do not pass in any tls configuration
+            tls: relay_tls.and_then(|tls| if dangerous_http_only { None } else { Some(tls) }),
+            limits,
+            key_cache_capacity: cfg.key_cache_capacity,
+            access: cfg.access.clone().into(),
+        })
+    } else {
+        None
     };
 
-    let stun_config = relay::StunConfig {
-        bind_addr: cfg.stun_bind_addr(),
-    };
     Ok(relay::ServerConfig {
-        relay: Some(relay_config),
-        stun: Some(stun_config).filter(|_| cfg.enable_stun),
+        relay: relay_config,
         quic: quic_config,
         #[cfg(feature = "metrics")]
         metrics_addr: Some(cfg.metrics_bind_addr()).filter(|_| cfg.enable_metrics),
@@ -851,6 +837,30 @@ mod tests {
                 bearer_token: Some("foo".to_string())
             })
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_enable_relay_config() -> Result {
+        let config = "
+            enable_relay = false
+        ";
+        let config = Config::from_str(config)?;
+        let relay_config = build_relay_config(config).await?;
+        assert!(relay_config.relay.is_none());
+
+        let config = "
+            enable_relay = true
+        ";
+        let config = Config::from_str(config)?;
+        let relay_config = build_relay_config(config).await?;
+        assert!(relay_config.relay.is_some());
+
+        let config = "";
+        let config = Config::from_str(config)?;
+        let relay_config = build_relay_config(config).await?;
+        assert!(relay_config.relay.is_some());
+
         Ok(())
     }
 }

@@ -27,7 +27,7 @@ use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
-use snafu::{ensure, Snafu};
+use snafu::{Snafu, ensure};
 use url::Url;
 
 use crate::magicsock::transports;
@@ -193,8 +193,8 @@ impl PartialEq<SocketAddr> for SendAddr {
 impl Display for SendAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SendAddr::Relay(id) => write!(f, "Relay({})", id),
-            SendAddr::Udp(addr) => write!(f, "UDP({})", addr),
+            SendAddr::Relay(id) => write!(f, "Relay({id})"),
+            SendAddr::Udp(addr) => write!(f, "UDP({addr})"),
         }
     }
 }
@@ -431,9 +431,10 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 #[cfg(test)]
 mod tests {
     use iroh_base::SecretKey;
+    use rand::SeedableRng;
 
     use super::*;
-    use crate::key::{public_ed_box, secret_ed_box, SharedSecret};
+    use crate::key::{SharedSecret, public_ed_box, secret_ed_box};
 
     #[test]
     fn test_to_from_bytes() {
@@ -447,16 +448,22 @@ mod tests {
                 name: "ping_with_nodekey_src",
                 m: Message::Ping(Ping {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    node_key: PublicKey::try_from(&[
-                        190, 243, 65, 104, 37, 102, 175, 75, 243, 22, 69, 200, 167, 107, 24, 63, 216, 140, 120, 43, 4, 112, 16, 62, 117, 155, 45, 215, 72, 175, 40, 189][..]).unwrap(),
+                    node_key: PublicKey::try_from(
+                        &[
+                            190, 243, 65, 104, 37, 102, 175, 75, 243, 22, 69, 200, 167, 107, 24,
+                            63, 216, 140, 120, 43, 4, 112, 16, 62, 117, 155, 45, 215, 72, 175, 40,
+                            189,
+                        ][..],
+                    )
+                    .unwrap(),
                 }),
                 want: "01 00 01 02 03 04 05 06 07 08 09 0a 0b 0c be f3 41 68 25 66 af 4b f3 16 45 c8 a7 6b 18 3f d8 8c 78 2b 04 70 10 3e 75 9b 2d d7 48 af 28 bd",
             },
             Test {
                 name: "pong",
-                m: Message::Pong(Pong{
+                m: Message::Pong(Pong {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    ping_observed_addr:  SendAddr::Udp("2.3.4.5:1234".parse().unwrap()),
+                    ping_observed_addr: SendAddr::Udp("2.3.4.5:1234".parse().unwrap()),
                 }),
                 want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
             },
@@ -470,7 +477,9 @@ mod tests {
             },
             Test {
                 name: "call_me_maybe",
-                m: Message::CallMeMaybe(CallMeMaybe { my_numbers: Vec::new() }),
+                m: Message::CallMeMaybe(CallMeMaybe {
+                    my_numbers: Vec::new(),
+                }),
                 want: "03 00",
             },
             Test {
@@ -503,8 +512,9 @@ mod tests {
 
     #[test]
     fn test_extraction() {
-        let sender_key = SecretKey::generate(rand::thread_rng());
-        let recv_key = SecretKey::generate(rand::thread_rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let sender_key = SecretKey::generate(&mut rng);
+        let recv_key = SecretKey::generate(&mut rng);
 
         let msg = Message::Ping(Ping {
             tx_id: stun_rs::TransactionId::default(),

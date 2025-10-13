@@ -26,7 +26,7 @@ pub enum KeyCache {
 
 impl KeyCache {
     /// Key cache to be used in tests.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server"))]
     pub fn test() -> Self {
         Self::Disabled
     }

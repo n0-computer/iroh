@@ -2,13 +2,13 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::{Parser, ValueEnum};
 use iroh::{
-    discovery::{
-        dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
-        pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
-        UserData,
-    },
-    node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
     NodeId, SecretKey,
+    discovery::{
+        UserData,
+        dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
+        pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrRelayClient},
+    },
+    node_info::{IROH_TXT_NAME, NodeIdExt, NodeInfo},
 };
 use n0_snafu::{Result, ResultExt};
 use url::Url;
@@ -63,9 +63,12 @@ async fn main() -> Result<()> {
         Ok(s) => SecretKey::from_str(&s)
             .context("failed to parse IROH_SECRET environment variable as iroh secret key")?,
         Err(_) => {
-            let s = SecretKey::generate(rand::rngs::OsRng);
+            let s = SecretKey::generate(&mut rand::rng());
             println!("Generated a new node secret. To reuse, set");
-            println!("\tIROH_SECRET={s}\n");
+            println!(
+                "\tIROH_SECRET={}",
+                data_encoding::HEXLOWER.encode(&s.to_bytes())
+            );
             s
         }
     };
@@ -113,30 +116,21 @@ async fn main() -> Result<()> {
 
     match args.env {
         Env::Staging => {
-            println!(
-                "   cargo run --example resolve -- --env staging node {}",
-                node_id
-            );
+            println!("   cargo run --example resolve -- --env staging node {node_id}");
             println!(
                 "   dig {} TXT",
                 fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_STAGING)
             )
         }
         Env::Prod => {
-            println!(
-                "   cargo run --example resolve -- --env prod node {}",
-                node_id
-            );
+            println!("   cargo run --example resolve -- --env prod node {node_id}");
             println!(
                 "   dig {} TXT",
                 fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_PROD)
             )
         }
         Env::Dev => {
-            println!(
-                "    cargo run --example resolve -- --env dev node {}",
-                node_id
-            );
+            println!("    cargo run --example resolve -- --env dev node {node_id}");
             println!(
                 "    dig @localhost -p 5300 {} TXT",
                 fmt_domain(&node_id, DEV_DNS_ORIGIN_DOMAIN)
@@ -147,5 +141,5 @@ async fn main() -> Result<()> {
 }
 
 fn fmt_domain(node_id: &NodeId, origin: &str) -> String {
-    format!("{}.{}.{}", IROH_TXT_NAME, node_id.to_z32(), origin)
+    format!("{IROH_TXT_NAME}.{}.{origin}", node_id.to_z32())
 }

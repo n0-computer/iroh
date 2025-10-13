@@ -5,7 +5,7 @@
 use std::{
     fmt, io,
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use pin_project::pin_project;

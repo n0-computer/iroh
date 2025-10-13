@@ -2,7 +2,7 @@ use std::{
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
     task::{Context, Poll},
 };
 
@@ -21,7 +21,8 @@ pub(crate) use self::ip::IpTransport;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
-use super::{MagicSock, NetInfo};
+use super::MagicSock;
+use crate::net_report::Report;
 
 /// Manages the different underlying data transports that the magicsock
 /// can support.
@@ -144,7 +145,7 @@ impl Transports {
     /// For IP based transports this is the [`SocketAddr`] of the socket,
     /// for relay transports, this is the home relay.
     pub(crate) fn local_addrs(&self) -> Vec<Addr> {
-        self.local_addrs_watch().get().expect("not disconnected")
+        self.local_addrs_watch().get()
     }
 
     /// Watch for all currently known local addresses.
@@ -262,14 +263,14 @@ pub(crate) struct NetworkChangeSender {
 }
 
 impl NetworkChangeSender {
-    pub(crate) fn on_network_change(&self, info: &NetInfo) {
+    pub(crate) fn on_network_change(&self, report: &Report) {
         #[cfg(not(wasm_browser))]
         for ip in &self.ip {
-            ip.on_network_change(info);
+            ip.on_network_change(report);
         }
 
         for relay in &self.relay {
-            relay.on_network_change(info);
+            relay.on_network_change(report);
         }
     }
 
@@ -335,10 +336,6 @@ impl From<(RelayUrl, NodeId)> for Addr {
 impl Addr {
     pub(crate) fn is_relay(&self) -> bool {
         matches!(self, Self::Relay(..))
-    }
-
-    pub(crate) fn is_ip(&self) -> bool {
-        matches!(self, Self::Ip(..))
     }
 
     /// Returns `None` if not an `Ip`.
@@ -423,7 +420,7 @@ impl UdpSender {
         match destination {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
-                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")))
+                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
             }
             #[cfg(not(wasm_browser))]
             Addr::Ip(addr) => {
@@ -451,7 +448,7 @@ impl UdpSender {
     }
 
     /// Best effort sending
-    fn inner_try_send(
+    pub(crate) fn inner_try_send(
         &self,
         destination: &Addr,
         src: Option<IpAddr>,
@@ -501,7 +498,7 @@ impl quinn::UdpSender for UdpSender {
         transmit: &quinn_udp::Transmit,
         cx: &mut Context,
     ) -> Poll<io::Result<()>> {
-        let active_paths = self.msock.prepare_send(transmit)?;
+        let active_paths = self.msock.prepare_send(&self, transmit)?;
 
         if active_paths.is_empty() {
             // Returning Ok here means we let QUIC timeout.
@@ -553,7 +550,7 @@ impl quinn::UdpSender for UdpSender {
     }
 
     fn try_send(self: Pin<&mut Self>, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        let active_paths = self.msock.prepare_send(transmit)?;
+        let active_paths = self.msock.prepare_send(&self, transmit)?;
         if active_paths.is_empty() {
             // Returning Ok here means we let QUIC timeout.
             // Returning an error would immediately fail a connection.

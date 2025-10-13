@@ -56,8 +56,8 @@ pub struct Metrics {
     #[metrics(help = "Number of unknown frames sent to this server.")]
     pub unknown_frames: Counter,
 
-    /// Number of frames received from client connection which have been rate-limited.
-    pub frames_rx_ratelimited_total: Counter,
+    /// Number of bytes received from client connection which have been rate-limited.
+    pub bytes_rx_ratelimited_total: Counter,
     /// Number of client connections which have had any frames rate-limited.
     pub conns_rx_ratelimited_total: Counter,
 
@@ -72,11 +72,6 @@ pub struct Metrics {
 
     /// Number of unique client keys per day
     pub unique_client_keys: Counter,
-
-    /// Number of accepted websocket connections
-    pub websocket_accepts: Counter,
-    /// Number of accepted 'iroh derp http' connection upgrades
-    pub relay_accepts: Counter,
     // TODO: enable when we can have multiple connections for one node id
     // pub duplicate_client_keys: Counter,
     // pub duplicate_client_conns: Counter,
@@ -84,28 +79,10 @@ pub struct Metrics {
     // pub average_queue_duration:
 }
 
-/// Metrics tracked for the STUN server.
-#[derive(Debug, Default, MetricsGroup)]
-#[metrics(name = "stun")]
-pub struct StunMetrics {
-    /// Number of STUN requests made to the server.
-    pub requests: Counter,
-    /// Number of successful ipv4 STUN requests served.
-    pub ipv4_success: Counter,
-    /// Number of successful ipv6 STUN requests served.
-    pub ipv6_success: Counter,
-    /// Number of bad requests made to the STUN endpoint.
-    pub bad_requests: Counter,
-    /// Number of STUN requests that end in failure.
-    pub failures: Counter,
-}
-
 /// All metrics tracked in the relay server.
 #[derive(Debug, Default, Clone, MetricsGroupSet)]
 #[metrics(name = "relay")]
 pub struct RelayMetrics {
-    /// Metrics tracked for the STUN server.
-    pub stun: Arc<StunMetrics>,
     /// Metrics tracked for the relay server.
     pub server: Arc<Metrics>,
 }

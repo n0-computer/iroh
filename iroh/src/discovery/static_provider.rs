@@ -11,7 +11,7 @@
 //! [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
 
 use std::{
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{BTreeMap, btree_map::Entry},
     sync::{Arc, RwLock},
 };
 
@@ -22,7 +22,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
+use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -37,7 +37,7 @@ use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 /// # Examples
 ///
 /// ```rust
-/// use iroh::{discovery::static_provider::StaticProvider, Endpoint, NodeAddr};
+/// use iroh::{Endpoint, NodeAddr, discovery::static_provider::StaticProvider};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
@@ -46,23 +46,18 @@ use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 /// let discovery = StaticProvider::new();
 ///
 /// let _ep = Endpoint::builder()
-///     .add_discovery({
-///         let discovery = discovery.clone();
-///         move |_| Some(discovery)
-///     })
+///     .add_discovery(discovery.clone())
 ///     .bind()
 ///     .await?;
 ///
 /// // Sometime later add a RelayUrl for a fake NodeId.
 /// let node_id = SecretKey::from_bytes(&[0u8; 32]).public(); // Do not use fake secret keys!
 /// // You can pass either `NodeInfo` or `NodeAddr` to `add_node_info`.
-/// discovery.add_node_info(
-///     NodeAddr {
-///         node_id,
-///         relay_url: Some("https://example.com".parse()?),
-///         direct_addresses: Default::default(),
-///     },
-/// );
+/// discovery.add_node_info(NodeAddr {
+///     node_id,
+///     relay_url: Some("https://example.com".parse()?),
+///     direct_addresses: Default::default(),
+/// });
 ///
 /// # Ok(())
 /// # }
@@ -102,7 +97,7 @@ impl StaticProvider {
     /// ```rust
     /// use std::{net::SocketAddr, str::FromStr};
     ///
-    /// use iroh::{discovery::static_provider::StaticProvider, Endpoint, NodeAddr};
+    /// use iroh::{Endpoint, NodeAddr, discovery::static_provider::StaticProvider};
     ///
     /// # fn get_addrs() -> Vec<NodeAddr> {
     /// #     Vec::new()
@@ -115,10 +110,7 @@ impl StaticProvider {
     /// // create a StaticProvider from the list of addrs.
     /// let discovery = StaticProvider::from_node_info(addrs);
     /// // create an endpoint with the discovery
-    /// let endpoint = Endpoint::builder()
-    ///     .add_discovery(|_| Some(discovery))
-    ///     .bind()
-    ///     .await?;
+    /// let endpoint = Endpoint::builder().add_discovery(discovery).bind().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -191,9 +183,8 @@ impl Discovery for StaticProvider {
 
     fn resolve(
         &self,
-        _endpoint: crate::Endpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<Result<super::DiscoveryItem, super::DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
@@ -228,10 +219,7 @@ mod tests {
         let discovery = StaticProvider::new();
 
         let _ep = Endpoint::builder()
-            .add_discovery({
-                let discovery = discovery.clone();
-                move |_| Some(discovery)
-            })
+            .add_discovery(discovery.clone())
             .bind()
             .await?;
 

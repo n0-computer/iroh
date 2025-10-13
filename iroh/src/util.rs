@@ -69,11 +69,22 @@ impl<T: Future> Future for MaybeFuture<T> {
     }
 }
 
+/// Creates a reqwest client builder that always uses the rustls backend, unless we
+/// are in a browser context, where that is not supported.
+pub(crate) fn reqwest_client_builder() -> reqwest::ClientBuilder {
+    let mut builder = reqwest::Client::builder();
+    #[cfg(not(wasm_browser))]
+    {
+        builder = builder.use_rustls_tls();
+    }
+    builder
+}
+
 #[cfg(test)]
 mod tests {
     use std::pin::pin;
 
-    use tokio::time::Duration;
+    use n0_future::time::Duration;
 
     use super::*;
 

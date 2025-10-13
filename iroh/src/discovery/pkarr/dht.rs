@@ -19,11 +19,11 @@ use url::Url;
 
 use crate::{
     discovery::{
-        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryError, DiscoveryItem, NodeData,
+        Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem, IntoDiscovery,
+        IntoDiscoveryError, NodeData,
+        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
     node_info::NodeInfo,
-    Endpoint,
 };
 
 /// Republish delay for the DHT.
@@ -31,10 +31,6 @@ use crate::{
 /// This is only for when the info does not change.  If the info changes, it will be
 /// published immediately.
 const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
-/// Initial publish delay.
-///
-/// This is to avoid spamming the DHT when there are frequent network changes at startup.
-const INITIAL_PUBLISH_DELAY: Duration = Duration::from_millis(500);
 
 /// Pkarr Mainline DHT and relay server node discovery.
 ///
@@ -73,8 +69,6 @@ struct Inner {
     ttl: u32,
     /// True to include the direct addresses in the DNS packet.
     include_direct_addresses: bool,
-    /// Initial delay before the first publish.
-    initial_publish_delay: Duration,
     /// Republish delay for the DHT.
     republish_delay: Duration,
 }
@@ -121,8 +115,8 @@ pub struct Builder {
     pkarr_relay: Option<Url>,
     dht: bool,
     include_direct_addresses: bool,
-    initial_publish_delay: Duration,
     republish_delay: Duration,
+    enable_publish: bool,
 }
 
 impl Default for Builder {
@@ -134,8 +128,8 @@ impl Default for Builder {
             pkarr_relay: None,
             dht: true,
             include_direct_addresses: false,
-            initial_publish_delay: INITIAL_PUBLISH_DELAY,
             republish_delay: REPUBLISH_DELAY,
+            enable_publish: true,
         }
     }
 }
@@ -171,7 +165,12 @@ impl Builder {
     ///
     /// [number 0]: https://n0.computer
     pub fn n0_dns_pkarr_relay(mut self) -> Self {
-        self.pkarr_relay = Some(N0_DNS_PKARR_RELAY_PROD.parse().expect("valid URL"));
+        let url = if crate::endpoint::force_staging_infra() {
+            N0_DNS_PKARR_RELAY_STAGING
+        } else {
+            N0_DNS_PKARR_RELAY_PROD
+        };
+        self.pkarr_relay = Some(url.parse().expect("valid URL"));
         self
     }
 
@@ -187,22 +186,22 @@ impl Builder {
         self
     }
 
-    /// Sets the initial delay before the first publish.
-    pub fn initial_publish_delay(mut self, initial_publish_delay: Duration) -> Self {
-        self.initial_publish_delay = initial_publish_delay;
-        self
-    }
-
     /// Sets the republish delay for the DHT.
     pub fn republish_delay(mut self, republish_delay: Duration) -> Self {
         self.republish_delay = republish_delay;
         self
     }
 
+    /// Disables publishing even if a secret key is set.
+    pub fn no_publish(mut self) -> Self {
+        self.enable_publish = false;
+        self
+    }
+
     /// Builds the discovery mechanism.
-    pub fn build(self) -> Result<DhtDiscovery, DiscoveryError> {
+    pub fn build(self) -> Result<DhtDiscovery, IntoDiscoveryError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
-            return Err(DiscoveryError::from_err(
+            return Err(IntoDiscoveryError::from_err(
                 "pkarr",
                 std::io::Error::other("at least one of DHT or relay must be enabled"),
             ));
@@ -217,27 +216,36 @@ impl Builder {
                 }
                 if let Some(url) = &self.pkarr_relay {
                     builder
-                        .relays(&[url.clone()])
-                        .map_err(|e| DiscoveryError::from_err("pkarr", e))?;
+                        .relays(std::slice::from_ref(url))
+                        .map_err(|e| IntoDiscoveryError::from_err("pkarr", e))?;
                 }
                 builder
                     .build()
-                    .map_err(|e| DiscoveryError::from_err("pkarr", e))?
+                    .map_err(|e| IntoDiscoveryError::from_err("pkarr", e))?
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         let include_direct_addresses = self.include_direct_addresses;
+        let secret_key = self.secret_key.filter(|_| self.enable_publish);
 
         Ok(DhtDiscovery(Arc::new(Inner {
             pkarr,
             ttl,
             relay_url: self.pkarr_relay,
             include_direct_addresses,
-            secret_key: self.secret_key,
-            initial_publish_delay: self.initial_publish_delay,
+            secret_key,
             republish_delay: self.republish_delay,
             task: Default::default(),
         })))
+    }
+}
+
+impl IntoDiscovery for Builder {
+    fn into_discovery(
+        self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        self.secret_key(context.secret_key().clone()).build()
     }
 }
 
@@ -250,15 +258,18 @@ impl DhtDiscovery {
     /// Periodically publishes the node address to the DHT and/or relay.
     async fn publish_loop(self, keypair: SecretKey, signed_packet: SignedPacket) {
         let this = self;
-        let z32 = pkarr::PublicKey::try_from(keypair.public().as_bytes())
-            .expect("valid public key")
-            .to_z32();
-        // initial delay. If the task gets aborted before this delay is over,
-        // we have not published anything to the DHT yet.
-        time::sleep(this.0.initial_publish_delay).await;
+        let public_key =
+            pkarr::PublicKey::try_from(keypair.public().as_bytes()).expect("valid public key");
+        let z32 = public_key.to_z32();
         loop {
-            // TODO: publish takes a compare-and-swap timestamp, make use of that.
-            let res = this.0.pkarr.publish(&signed_packet, None).await;
+            // If the task gets aborted while doing this lookup, we have not published yet.
+            let prev_timestamp = this
+                .0
+                .pkarr
+                .resolve_most_recent(&public_key)
+                .await
+                .map(|p| p.timestamp());
+            let res = this.0.pkarr.publish(&signed_packet, prev_timestamp).await;
             match res {
                 Ok(()) => {
                     tracing::debug!("pkarr publish success. published under {z32}",);
@@ -284,6 +295,10 @@ impl Discovery for DhtDiscovery {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
+        if data.relay_url().is_none() && data.direct_addresses().is_empty() {
+            tracing::debug!("no relay url or direct addresses in node data, not publishing");
+            return;
+        }
         tracing::debug!("publishing {data:?}");
         let mut info = NodeInfo::from_parts(keypair.public(), data.clone());
         if !self.0.include_direct_addresses {
@@ -299,11 +314,7 @@ impl Discovery for DhtDiscovery {
         *task = Some(AbortOnDropHandle::new(curr));
     }
 
-    fn resolve(
-        &self,
-        _endpoint: Endpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
@@ -326,12 +337,13 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
+    use crate::Endpoint;
 
     #[tokio::test]
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_discovery_smoke() -> Result {
-        let ep = crate::Endpoint::builder().bind().await?;
+        let ep = Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;
         let client = pkarr::Client::builder()
@@ -340,7 +352,6 @@ mod tests {
             .e()?;
         let discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
-            .initial_publish_delay(Duration::ZERO)
             .client(client)
             .build()?;
 
@@ -355,7 +366,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 let mut found_relay_urls = BTreeSet::new();
                 let items = discovery
-                    .resolve(ep.clone(), secret.public())
+                    .resolve(secret.public())
                     .unwrap()
                     .collect::<Vec<_>>()
                     .await;
