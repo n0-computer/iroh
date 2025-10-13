@@ -104,6 +104,8 @@ impl StaticProvider {
     /// The provenance is part of [`DiscoveryItem`]s returned from [`Self::resolve`].
     /// It is mostly used for debugging information and allows understanding the origin of
     /// addressing information used by an iroh [`Endpoint`].
+    ///
+    /// [`Endpoint`]: crate::Endpoint
     pub fn with_provenance(provenance: &'static str) -> Self {
         Self {
             nodes: Default::default(),
