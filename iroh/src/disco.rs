@@ -521,8 +521,8 @@ mod tests {
             node_key: sender_key.public(),
         });
 
-        let sender_secret = secret_ed_box(sender_key.secret());
-        let shared = SharedSecret::new(&sender_secret, &public_ed_box(&recv_key.public().public()));
+        let sender_secret = secret_ed_box(sender_key.as_ref());
+        let shared = SharedSecret::new(&sender_secret, &public_ed_box(&recv_key.public().into()));
         let mut seal = msg.as_bytes();
         shared.seal(&mut seal);
 
@@ -535,9 +535,9 @@ mod tests {
         assert_eq!(raw_key, sender_key.public());
         assert_eq!(seal_back, seal);
 
-        let recv_secret = secret_ed_box(recv_key.secret());
+        let recv_secret = secret_ed_box(recv_key.as_ref());
         let shared_recv =
-            SharedSecret::new(&recv_secret, &public_ed_box(&sender_key.public().public()));
+            SharedSecret::new(&recv_secret, &public_ed_box(&sender_key.public().into()));
         let mut open_seal = seal_back.to_vec();
         shared_recv
             .open(&mut open_seal)

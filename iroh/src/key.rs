@@ -86,8 +86,8 @@ mod tests {
     use super::*;
 
     fn shared(this: &iroh_base::SecretKey, other: &iroh_base::PublicKey) -> SharedSecret {
-        let secret_key = secret_ed_box(this.secret());
-        let public_key = public_ed_box(&other.public());
+        let secret_key = secret_ed_box(this.as_ref());
+        let public_key = public_ed_box(&other.into());
 
         SharedSecret::new(&secret_key, &public_key)
     }
@@ -134,8 +134,8 @@ mod tests {
     fn test_same_public_key_api() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let key = iroh_base::SecretKey::generate(&mut rng);
-        let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().public());
-        let public_key2: crypto_box::PublicKey = secret_ed_box(key.secret()).public_key();
+        let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().into());
+        let public_key2: crypto_box::PublicKey = secret_ed_box(key.as_ref()).public_key();
 
         assert_eq!(public_key1, public_key2);
     }

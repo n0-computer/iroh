@@ -54,8 +54,7 @@ static SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms
 pub(super) struct ServerCertificateVerifier;
 
 fn public_key_to_spki(remote_peer_id: &PublicKey) -> SubjectPublicKeyInfoDer<'static> {
-    let der_key = remote_peer_id
-        .public()
+    let der_key = ed25519_dalek::VerifyingKey::from(remote_peer_id)
         .to_public_key_der()
         .expect("valid key");
     SubjectPublicKeyInfoDer::from(der_key.into_vec())
