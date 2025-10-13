@@ -4,7 +4,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
-use quinn::{crypto::rustls::QuicClientConfig, VarInt};
+use quinn::{VarInt, crypto::rustls::QuicClientConfig};
 use snafu::{Backtrace, Snafu};
 use tokio::sync::watch;
 
@@ -18,13 +18,13 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 #[cfg(feature = "server")]
 pub(crate) mod server {
     use quinn::{
-        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
         ApplicationClose, ConnectionError,
+        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     };
     use snafu::ResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-    use tracing::{debug, info, info_span, Instrument};
+    use tracing::{Instrument, debug, info, info_span};
 
     use super::*;
     pub use crate::server::QuicConfig;
@@ -297,7 +297,7 @@ impl QuicClient {
     /// and estimated latency of the connection.
     ///
     /// Consumes and gracefully closes the connection.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server"))]
     async fn get_addr_and_latency(
         &self,
         server_addr: SocketAddr,
@@ -364,18 +364,18 @@ mod tests {
     };
     use n0_snafu::{Error, Result, ResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
-    use tracing::{debug, info, info_span, Instrument};
+    use tracing::{Instrument, debug, info, info_span};
     use tracing_test::traced_test;
     use webpki_types::PrivatePkcs8KeyDer;
 
-    use super::{
-        server::{QuicConfig, QuicServer},
-        *,
-    };
+    use super::*;
 
     #[tokio::test]
     #[traced_test]
+    #[cfg(feature = "test-utils")]
     async fn quic_endpoint_basic() -> Result {
+        use super::server::{QuicConfig, QuicServer};
+
         let host: Ipv4Addr = "127.0.0.1".parse().unwrap();
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();
@@ -472,7 +472,7 @@ mod tests {
         // Create a QAD server with a self-signed cert, all manually.
         let cert =
             rcgen::generate_simple_self_signed(vec!["localhost".into()]).context("self signed")?;
-        let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(vec![cert.cert.into()], key.into())

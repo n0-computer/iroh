@@ -22,19 +22,20 @@ mod tests {
     };
 
     use iroh::{
-        discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
-        SecretKey,
+        RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
+        node_info::NodeInfo,
     };
     use n0_snafu::{Result, ResultExt};
     use pkarr::{SignedPacket, Timestamp};
+    use rand::{CryptoRng, SeedableRng};
     use tracing_test::traced_test;
 
     use crate::{
+        ZoneStore,
         config::BootstrapOption,
         server::Server,
         store::{PacketSource, ZoneStoreOptions},
         util::PublicKeyBytes,
-        ZoneStore,
     };
 
     const DNS_TIMEOUT: Duration = Duration::from_secs(1);
@@ -167,7 +168,9 @@ mod tests {
 
         let origin = "irohdns.example.";
 
-        let secret_key = SecretKey::generate(rand::thread_rng());
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
+        let secret_key = SecretKey::generate(&mut rng);
         let node_id = secret_key.public();
         let pkarr = PkarrRelayClient::new(pkarr_relay);
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
@@ -189,6 +192,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn store_eviction() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         let options = ZoneStoreOptions {
             eviction: Duration::from_millis(100),
             eviction_interval: Duration::from_millis(100),
@@ -198,7 +203,7 @@ mod tests {
         let store = ZoneStore::in_memory(options, Default::default())?;
 
         // create a signed packet
-        let signed_packet = random_signed_packet()?;
+        let signed_packet = random_signed_packet(&mut rng)?;
         let key = PublicKeyBytes::from_signed_packet(&signed_packet);
 
         store
@@ -219,6 +224,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn integration_mainline() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
         // run a mainline testnet
         let testnet = pkarr::mainline::Testnet::new_async(5).await.e()?;
         let bootstrap = testnet.bootstrap.clone();
@@ -231,7 +238,7 @@ mod tests {
         let origin = "irohdns.example.";
 
         // create a signed packet
-        let secret_key = SecretKey::generate(rand::thread_rng());
+        let secret_key = SecretKey::generate(&mut rng);
         let node_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
@@ -260,8 +267,8 @@ mod tests {
         DnsResolver::with_nameserver(nameserver)
     }
 
-    fn random_signed_packet() -> Result<SignedPacket> {
-        let secret_key = SecretKey::generate(rand::thread_rng());
+    fn random_signed_packet<R: CryptoRng + ?Sized>(rng: &mut R) -> Result<SignedPacket> {
+        let secret_key = SecretKey::generate(rng);
         let node_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));

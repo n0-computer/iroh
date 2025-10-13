@@ -34,7 +34,7 @@ missing_debug_implementations = "warn"
 # feature in any dependencies, because some indirect dependencies
 # require a feature enabled when using `--cfg docsrs` which we can not
 # do.  To enable for a crate set `#![cfg_attr(iroh_docsrs,
-# feature(doc_auto_cfg))]` in the crate.
+# feature(doc_cfg))]` in the crate.
 # We also have our own `iroh_loom` cfg to enable tokio-rs/loom testing.
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_loom)"] }
 

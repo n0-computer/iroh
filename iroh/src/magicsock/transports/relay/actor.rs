@@ -30,25 +30,24 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
     net::IpAddr,
-    pin::{pin, Pin},
+    pin::{Pin, pin},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
-use bytes::{Bytes, BytesMut};
-use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
+use iroh_base::{NodeId, RelayUrl, SecretKey};
 use iroh_relay::{
-    self as relay,
-    client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
-    PingTracker, MAX_PACKET_SIZE,
+    self as relay, PingTracker,
+    client::{Client, ConnectError, RecvError, SendError},
+    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 };
 use n0_future::{
+    FuturesUnorderedBounded, SinkExt, StreamExt,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
-    FuturesUnorderedBounded, SinkExt, StreamExt,
 };
 use n0_watcher::Watchable;
 use nested_enum_utils::common_fields;
@@ -56,22 +55,15 @@ use netwatch::interfaces;
 use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, event, info, info_span, instrument, trace, warn, Instrument, Level};
+use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{
-    magicsock::{Metrics as MagicsockMetrics, RelayContents},
-    net_report::Report,
-    util::MaybeFuture,
-};
+use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Report, util::MaybeFuture};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
-
-/// Maximum size a datagram payload is allowed to be.
-const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 
 /// Interval in which we ping the relay server to ensure the connection is alive.
 ///
@@ -215,7 +207,6 @@ struct RelayConnectionOptions {
     prefer_ipv6: Arc<AtomicBool>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_cert_verify: bool,
-    protocol: iroh_relay::http::Protocol,
 }
 
 /// Possible reasons for a failed relay connection.
@@ -267,8 +258,8 @@ enum RunError {
 })]
 #[derive(Debug, Snafu)]
 enum DialError {
-    #[snafu(display("timeout trying to establish a connection"))]
-    Timeout {},
+    #[snafu(display("timeout (>{timeout:?}) trying to establish a connection"))]
+    Timeout { timeout: Duration },
     #[snafu(display("unable to connect"))]
     Connect {
         #[snafu(source(from(ConnectError, Box::new)))]
@@ -315,7 +306,6 @@ impl ActiveRelayActor {
             prefer_ipv6,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify,
-            protocol,
         } = opts;
 
         let mut builder = relay::client::ClientBuilder::new(
@@ -324,7 +314,6 @@ impl ActiveRelayActor {
             #[cfg(not(wasm_browser))]
             dns_resolver,
         )
-        .protocol(protocol)
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
@@ -503,13 +492,16 @@ impl ActiveRelayActor {
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     // This is using `impl Future` to return a future without a reference to self.
-    fn dial_relay(&self) -> impl Future<Output = Result<Client, DialError>> {
+    fn dial_relay(&self) -> impl Future<Output = Result<Client, DialError>> + use<> {
         let client_builder = self.relay_client_builder.clone();
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
                 Ok(Err(err)) => Err(ConnectSnafu.into_error(err)),
-                Err(_) => Err(TimeoutSnafu.build()),
+                Err(_) => Err(TimeoutSnafu {
+                    timeout: CONNECT_TIMEOUT,
+                }
+                .build()),
             }
         }
     }
@@ -553,7 +545,7 @@ impl ActiveRelayActor {
 
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
-                let fut = client_sink.send(SendMessage::Pong(data));
+                let fut = client_sink.send(ClientToRelayMsg::Pong(data));
                 self.run_sending(fut, &mut state, &mut client_stream)
                     .await?;
             }
@@ -580,7 +572,7 @@ impl ActiveRelayActor {
                 }
                 _ = ping_interval.tick() => {
                     let data = state.ping_tracker.new_ping();
-                    let fut = client_sink.send(SendMessage::Ping(data));
+                    let fut = client_sink.send(ClientToRelayMsg::Ping(data));
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
                 msg = self.inbox.recv() => {
@@ -596,7 +588,7 @@ impl ActiveRelayActor {
                             match client_stream.local_addr() {
                                 Some(addr) if local_ips.contains(&addr.ip()) => {
                                     let data = state.ping_tracker.new_ping();
-                                    let fut = client_sink.send(SendMessage::Ping(data));
+                                    let fut = client_sink.send(ClientToRelayMsg::Ping(data));
                                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
                                 Some(_) => break Err(LocalIpInvalidSnafu.build()),
@@ -612,7 +604,7 @@ impl ActiveRelayActor {
                         ActiveRelayMessage::PingServer(sender) => {
                             let data = rand::random();
                             state.test_pong = Some((data, sender));
-                            let fut = client_sink.send(SendMessage::Ping(data));
+                            let fut = client_sink.send(ClientToRelayMsg::Ping(data));
                             self.run_sending(fut, &mut state, &mut client_stream).await?;
                         }
                     }
@@ -626,28 +618,16 @@ impl ActiveRelayActor {
                         break Ok(());
                     };
                     self.reset_inactive_timeout();
-                    // TODO: This allocation is *very* unfortunate.  But so is the
-                    // allocation *inside* of PacketizeIter...
-                    let dgrams = std::mem::replace(
-                        &mut send_datagrams_buf,
-                        Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
-                    );
                     // TODO(frando): can we avoid the clone here?
                     let metrics = self.metrics.clone();
-                    let packet_iter = dgrams.into_iter().flat_map(|datagrams| {
-                        PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(
-                            datagrams.remote_node,
-                            datagrams.datagrams.clone(),
-                        )
-                        .map(|p| {
-                            Ok(SendMessage::SendPacket(p.node_id, p.payload))
+                    let packet_iter = send_datagrams_buf.drain(..).map(|item| {
+                        metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
+                        Ok(ClientToRelayMsg::Datagrams {
+                            dst_node_id: item.remote_node,
+                            datagrams: item.datagrams,
                         })
                     });
-                    let mut packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
-                        if let Ok(SendMessage::SendPacket(_node_id, payload)) = m {
-                            metrics.send_relay.inc_by(payload.len() as _);
-                        }
-                    });
+                    let mut packet_stream = n0_future::stream::iter(packet_iter);
                     let fut = client_sink.send_all(&mut packet_stream);
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
@@ -680,13 +660,13 @@ impl ActiveRelayActor {
         res.map_err(|err| state.map_err(err))
     }
 
-    fn handle_relay_msg(&mut self, msg: ReceivedMessage, state: &mut ConnectedRelayState) {
+    fn handle_relay_msg(&mut self, msg: RelayToClientMsg, state: &mut ConnectedRelayState) {
         match msg {
-            ReceivedMessage::ReceivedPacket {
+            RelayToClientMsg::Datagrams {
                 remote_node_id,
-                data,
+                datagrams,
             } => {
-                trace!(len = %data.len(), "received msg");
+                trace!(len = datagrams.contents.len(), "received msg");
                 // If this is a new sender, register a route for this peer.
                 if state
                     .last_packet_src
@@ -698,21 +678,20 @@ impl ActiveRelayActor {
                     state.last_packet_src = Some(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data) {
-                    let Ok(datagram) = datagram else {
-                        warn!("Invalid packet split");
-                        break;
-                    };
-                    if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
-                        warn!("Dropping received relay packet: {err:#}");
-                    }
+
+                if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
+                    url: self.url.clone(),
+                    src: remote_node_id,
+                    datagrams,
+                }) {
+                    warn!("Dropping received relay packet: {err:#}");
                 }
             }
-            ReceivedMessage::NodeGone(node_id) => {
+            RelayToClientMsg::NodeGone(node_id) => {
                 state.nodes_present.remove(&node_id);
             }
-            ReceivedMessage::Ping(data) => state.pong_pending = Some(data),
-            ReceivedMessage::Pong(data) => {
+            RelayToClientMsg::Ping(data) => state.pong_pending = Some(data),
+            RelayToClientMsg::Pong(data) => {
                 #[cfg(test)]
                 {
                     if let Some((expected_data, sender)) = state.test_pong.take() {
@@ -726,11 +705,10 @@ impl ActiveRelayActor {
                 state.ping_tracker.pong_received(data);
                 state.established = true;
             }
-            ReceivedMessage::Health { problem } => {
-                let problem = problem.as_deref().unwrap_or("unknown");
+            RelayToClientMsg::Health { problem } => {
                 warn!("Relay server reports problem: {problem}");
             }
-            ReceivedMessage::KeepAlive | ReceivedMessage::ServerRestarting { .. } => {
+            RelayToClientMsg::Restarting { .. } => {
                 trace!("Ignoring {msg:?}")
             }
         }
@@ -855,7 +833,7 @@ pub(crate) struct RelaySendItem {
     /// The home relay of the remote node.
     pub(crate) url: RelayUrl,
     /// One or more datagrams to send.
-    pub(crate) datagrams: RelayContents,
+    pub(crate) datagrams: Datagrams,
 }
 
 pub(super) struct RelayActor {
@@ -885,7 +863,6 @@ pub struct Config {
     #[cfg(any(test, feature = "test-utils"))]
     pub insecure_skip_relay_cert_verify: bool,
     pub metrics: Arc<MagicsockMetrics>,
-    pub protocol: iroh_relay::http::Protocol,
 }
 
 impl RelayActor {
@@ -985,7 +962,10 @@ impl RelayActor {
     /// If the datagram can not be sent immediately, because the destination channel is
     /// full, a future is returned that will complete once the datagrams have been sent to
     /// the [`ActiveRelayActor`].
-    async fn try_send_datagram(&mut self, item: RelaySendItem) -> Option<impl Future<Output = ()>> {
+    async fn try_send_datagram(
+        &mut self,
+        item: RelaySendItem,
+    ) -> Option<impl Future<Output = ()> + use<>> {
         let url = item.url.clone();
         let handle = self
             .active_relay_handle_for_node(&item.url, &item.remote_node)
@@ -1121,7 +1101,6 @@ impl RelayActor {
             prefer_ipv6: self.config.ipv6_reported.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: self.config.insecure_skip_relay_cert_verify,
-            protocol: self.config.protocol,
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1214,14 +1193,14 @@ impl RelayActor {
             if !self.active_relays.is_empty() {
                 s += ":";
                 for node in self.active_relay_sorted() {
-                    s += &format!(" relay-{}", node,);
+                    s += &format!(" relay-{node}");
                 }
             }
             s
         });
     }
 
-    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> {
+    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> + use<> {
         let mut ids: Vec<_> = self.active_relays.keys().cloned().collect();
         ids.sort();
 
@@ -1237,18 +1216,6 @@ struct ActiveRelayHandle {
     datagrams_send_queue: mpsc::Sender<RelaySendItem>,
 }
 
-/// A packet to send over the relay.
-///
-/// This is nothing but a newtype, it should be constructed using [`PacketizeIter`].  This
-/// is a packet of one or more datagrams, each prefixed with a u16-be length.  This is what
-/// the `Frame::SendPacket` of the `DerpCodec` transports and is produced by
-/// [`PacketizeIter`] and transformed back into datagrams using [`PacketSplitIter`].
-#[derive(Debug, PartialEq, Eq)]
-struct RelaySendPacket {
-    node_id: NodeId,
-    payload: Bytes,
-}
-
 /// A single datagram received from a relay server.
 ///
 /// This could be either a QUIC or DISCO packet.
@@ -1256,171 +1223,30 @@ struct RelaySendPacket {
 pub(crate) struct RelayRecvDatagram {
     pub(crate) url: RelayUrl,
     pub(crate) src: NodeId,
-    pub(crate) buf: Bytes,
-}
-
-/// Combines datagrams into a single DISCO frame of at most MAX_PACKET_SIZE.
-///
-/// The disco `iroh_relay::protos::Frame::SendPacket` frame can contain more then a single
-/// datagram.  Each datagram in this frame is prefixed with a little-endian 2-byte length
-/// prefix.  This occurs when Quinn sends a GSO transmit containing more than one datagram,
-/// which are split using `split_packets`.
-///
-/// The [`PacketSplitIter`] does the inverse and splits such packets back into individual
-/// datagrams.
-struct PacketizeIter<I: Iterator, const N: usize> {
-    node_id: NodeId,
-    iter: std::iter::Peekable<I>,
-    buffer: BytesMut,
-}
-
-impl<I: Iterator, const N: usize> PacketizeIter<I, N> {
-    /// Create a new new PacketizeIter from something that can be turned into an
-    /// iterator of slices, like a `Vec<Bytes>`.
-    fn new(node_id: NodeId, iter: impl IntoIterator<IntoIter = I>) -> Self {
-        Self {
-            node_id,
-            iter: iter.into_iter().peekable(),
-            buffer: BytesMut::with_capacity(N),
-        }
-    }
-}
-
-impl<I: Iterator, const N: usize> Iterator for PacketizeIter<I, N>
-where
-    I::Item: AsRef<[u8]>,
-{
-    type Item = RelaySendPacket;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use bytes::BufMut;
-        while let Some(next_bytes) = self.iter.peek() {
-            let next_bytes = next_bytes.as_ref();
-            assert!(next_bytes.len() + 2 <= N);
-            let next_length: u16 = next_bytes.len().try_into().expect("items < 64k size");
-            if self.buffer.len() + next_bytes.len() + 2 > N {
-                break;
-            }
-            self.buffer.put_u16_le(next_length);
-            self.buffer.put_slice(next_bytes);
-            self.iter.next();
-        }
-        if !self.buffer.is_empty() {
-            Some(RelaySendPacket {
-                node_id: self.node_id,
-                payload: self.buffer.split().freeze(),
-            })
-        } else {
-            None
-        }
-    }
-}
-
-/// Splits a single [`ReceivedMessage::ReceivedPacket`] frame into datagrams.
-///
-/// This splits packets joined by [`PacketizeIter`] back into individual datagrams.  See
-/// that struct for more details.
-#[derive(Debug)]
-struct PacketSplitIter {
-    url: RelayUrl,
-    src: NodeId,
-    bytes: Bytes,
-}
-
-impl PacketSplitIter {
-    /// Create a new PacketSplitIter from a packet.
-    fn new(url: RelayUrl, src: NodeId, bytes: Bytes) -> Self {
-        Self { url, src, bytes }
-    }
-
-    fn fail(&mut self) -> Option<std::io::Result<RelayRecvDatagram>> {
-        self.bytes.clear();
-        Some(Err(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "",
-        )))
-    }
-}
-
-impl Iterator for PacketSplitIter {
-    type Item = std::io::Result<RelayRecvDatagram>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use bytes::Buf;
-        if self.bytes.has_remaining() {
-            if self.bytes.remaining() < 2 {
-                return self.fail();
-            }
-            let len = self.bytes.get_u16_le() as usize;
-            if self.bytes.remaining() < len {
-                return self.fail();
-            }
-            let buf = self.bytes.split_to(len);
-            Some(Ok(RelayRecvDatagram {
-                url: self.url.clone(),
-                src: self.src,
-                buf,
-            }))
-        } else {
-            None
-        }
-    }
+    pub(crate) datagrams: Datagrams,
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{atomic::AtomicBool, Arc},
+        sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
 
-    use bytes::Bytes;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
-    use iroh_relay::PingTracker;
+    use iroh_relay::{PingTracker, protos::relay::Datagrams};
     use n0_snafu::{Error, Result, ResultExt};
-    use smallvec::smallvec;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-    use tracing::{info, info_span, Instrument};
+    use tracing::{Instrument, info, info_span};
     use tracing_test::traced_test;
 
     use super::{
         ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        PacketizeIter, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem, MAX_PACKET_SIZE,
-        RELAY_INACTIVE_CLEANUP_TIME, UNDELIVERABLE_DATAGRAM_TIMEOUT,
+        RELAY_INACTIVE_CLEANUP_TIME, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem,
+        UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
     use crate::{dns::DnsResolver, test_utils};
-
-    #[test]
-    fn test_packetize_iter() {
-        let node_id = SecretKey::generate(rand::thread_rng()).public();
-        let empty_vec: Vec<Bytes> = Vec::new();
-        let mut iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, empty_vec);
-        assert_eq!(None, iter.next());
-
-        let single_vec = vec!["Hello"];
-        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, single_vec);
-        let result = iter.collect::<Vec<_>>();
-        assert_eq!(1, result.len());
-        assert_eq!(
-            &[5, 0, b'H', b'e', b'l', b'l', b'o'],
-            &result[0].payload[..]
-        );
-
-        let spacer = vec![0u8; MAX_PACKET_SIZE - 10];
-        let multiple_vec = vec![&b"Hello"[..], &spacer, &b"World"[..]];
-        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, multiple_vec);
-        let result = iter.collect::<Vec<_>>();
-        assert_eq!(2, result.len());
-        assert_eq!(
-            &[5, 0, b'H', b'e', b'l', b'l', b'o'],
-            &result[0].payload[..7]
-        );
-        assert_eq!(
-            &[5, 0, b'W', b'o', b'r', b'l', b'd'],
-            &result[1].payload[..]
-        );
-    }
 
     /// Starts a new [`ActiveRelayActor`].
     #[allow(clippy::too_many_arguments)]
@@ -1446,7 +1272,6 @@ mod tests {
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 insecure_skip_cert_verify: true,
-                protocol: iroh_relay::http::Protocol::default(),
             },
             stop_token,
             metrics: Default::default(),
@@ -1483,12 +1308,16 @@ mod tests {
                 loop {
                     let datagram = recv_datagram_rx.recv().await;
                     if let Some(recv) = datagram {
-                        let RelayRecvDatagram { url: _, src, buf } = recv;
-                        info!(from = src.fmt_short(), "Received datagram");
+                        let RelayRecvDatagram {
+                            url: _,
+                            src,
+                            datagrams,
+                        } = recv;
+                        info!(from = %src.fmt_short(), "Received datagram");
                         let send = RelaySendItem {
                             remote_node: src,
                             url: relay_url.clone(),
-                            datagrams: smallvec![buf],
+                            datagrams,
                         };
                         send_datagram_tx.send(send).await.ok();
                     }
@@ -1522,7 +1351,6 @@ mod tests {
         tx: &mpsc::Sender<RelaySendItem>,
         rx: &mut mpsc::Receiver<RelayRecvDatagram>,
     ) -> Result<()> {
-        assert!(item.datagrams.len() == 1);
         tokio::time::timeout(Duration::from_secs(10), async move {
             loop {
                 let res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, async {
@@ -1530,10 +1358,10 @@ mod tests {
                     let RelayRecvDatagram {
                         url: _,
                         src: _,
-                        buf,
+                        datagrams,
                     } = rx.recv().await.unwrap();
 
-                    assert_eq!(buf.as_ref(), item.datagrams[0]);
+                    assert_eq!(datagrams, item.datagrams);
 
                     Ok::<_, Error>(())
                 })
@@ -1576,7 +1404,7 @@ mod tests {
         let hello_send_item = RelaySendItem {
             remote_node: peer_node,
             url: relay_url.clone(),
-            datagrams: smallvec![Bytes::from_static(b"hello")],
+            datagrams: Datagrams::from(b"hello"),
         };
         send_recv_echo(
             hello_send_item.clone(),
@@ -1670,11 +1498,11 @@ mod tests {
         );
 
         // Wait until the actor is connected to the relay server.
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_millis(200), async {
             loop {
                 let (tx, rx) = oneshot::channel();
                 inbox_tx.send(ActiveRelayMessage::PingServer(tx)).await.ok();
-                if tokio::time::timeout(Duration::from_millis(200), rx)
+                if tokio::time::timeout(Duration::from_millis(100), rx)
                     .await
                     .map(|resp| resp.is_ok())
                     .unwrap_or_default()
@@ -1686,12 +1514,12 @@ mod tests {
         .await
         .context("timeout")?;
 
+        // From now on, we pause time
+        tokio::time::pause();
         // We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
         info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2");
-        tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / 2).await;
-        tokio::time::resume();
 
         assert!(
             tokio::time::timeout(Duration::from_millis(100), &mut task)
@@ -1702,11 +1530,9 @@ mod tests {
 
         // If we advance time a lot it should finish.
         info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME");
-        tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
-        tokio::time::resume();
         assert!(
-            tokio::time::timeout(Duration::from_secs(1), task)
+            tokio::time::timeout(Duration::from_millis(100), task)
                 .await
                 .is_ok(),
             "actor task still running"

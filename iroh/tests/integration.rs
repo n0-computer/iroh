@@ -10,18 +10,17 @@
 //! In the past we've hit relay rate-limits from all the tests in our CI, but I expect
 //! we won't hit these with only this integration test.
 use iroh::{
-    discovery::{pkarr::PkarrResolver, Discovery},
-    Endpoint,
+    Endpoint, RelayMode,
+    discovery::{Discovery, pkarr::PkarrResolver},
 };
 use n0_future::{
-    task,
+    StreamExt, task,
     time::{self, Duration},
-    StreamExt,
 };
 use n0_snafu::{Result, ResultExt};
 #[cfg(not(wasm_browser))]
 use tokio::test;
-use tracing::{info_span, Instrument};
+use tracing::{Instrument, info_span};
 #[cfg(wasm_browser)]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
@@ -37,8 +36,13 @@ async fn simple_node_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
 
-    let client = Endpoint::builder().discovery_n0().bind().await?;
+    let client = Endpoint::builder()
+        .relay_mode(RelayMode::Staging)
+        .discovery_n0()
+        .bind()
+        .await?;
     let server = Endpoint::builder()
+        .relay_mode(RelayMode::Staging)
         .discovery_n0()
         .alpns(vec![ECHO_ALPN.to_vec()])
         .bind()
@@ -119,7 +123,10 @@ async fn simple_node_id_based_connection_transfer() -> Result {
 
 #[cfg(wasm_browser)]
 fn setup_logging() {
+    use std::str::FromStr;
+
     tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_str("trace").expect("hardcoded"))
         .with_max_level(tracing::level_filters::LevelFilter::DEBUG)
         .with_writer(
             // To avoide trace events in the browser from showing their JS backtrace
@@ -134,5 +141,7 @@ fn setup_logging() {
 
 #[cfg(not(wasm_browser))]
 fn setup_logging() {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 }

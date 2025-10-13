@@ -40,20 +40,10 @@ use std::{
     str::{FromStr, Utf8Error},
 };
 
-#[cfg(not(wasm_browser))]
-use hickory_resolver::{proto::ProtoError, Name};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
-#[cfg(not(wasm_browser))]
-use tracing::warn;
 use url::Url;
-
-#[cfg(not(wasm_browser))]
-use crate::{
-    defaults::timeouts::DNS_TIMEOUT,
-    dns::{DnsError, DnsResolver},
-};
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -99,12 +89,12 @@ pub enum DecodingError {
 pub trait NodeIdExt {
     /// Encodes a [`NodeId`] in [`z-base-32`] encoding.
     ///
-    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
     fn to_z32(&self) -> String;
 
     /// Parses a [`NodeId`] from [`z-base-32`] encoding.
     ///
-    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
     fn from_z32(s: &str) -> Result<NodeId, DecodingError>;
 }
 
@@ -388,10 +378,13 @@ impl NodeInfo {
     }
 
     #[cfg(not(wasm_browser))]
-    /// Parses a [`NodeInfo`] from a TXT records lookup.
-    pub fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self, ParseError> {
-        let attrs = TxtAttrs::from_txt_lookup(lookup)?;
-        Ok(attrs.into())
+    /// Parses a [`NodeInfo`] from DNS TXT lookup.
+    pub fn from_txt_lookup(
+        domain_name: String,
+        lookup: impl Iterator<Item = crate::dns::TxtRecordData>,
+    ) -> Result<Self, ParseError> {
+        let attrs = TxtAttrs::from_txt_lookup(domain_name, lookup)?;
+        Ok(Self::from(attrs))
     }
 
     /// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].
@@ -415,32 +408,6 @@ impl NodeInfo {
     pub fn to_txt_strings(&self) -> Vec<String> {
         self.to_attrs().to_txt_strings().collect()
     }
-}
-
-#[cfg(not(wasm_browser))]
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
-pub enum LookupError {
-    #[snafu(display("Malformed txt from lookup"))]
-    ParseError {
-        #[snafu(source(from(ParseError, Box::new)))]
-        source: Box<ParseError>,
-    },
-    #[snafu(display("Failed to resolve TXT record"))]
-    LookupFailed {
-        #[snafu(source(from(DnsError, Box::new)))]
-        source: Box<DnsError>,
-    },
-    #[cfg(not(wasm_browser))]
-    #[snafu(display("Name is not a valid TXT label"))]
-    InvalidLabel { source: ProtoError },
 }
 
 #[common_fields({
@@ -489,23 +456,17 @@ impl std::ops::DerefMut for NodeInfo {
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
 #[cfg(not(wasm_browser))]
-fn node_id_from_hickory_name(
-    name: &hickory_resolver::proto::rr::Name,
-) -> Result<NodeId, ParseError> {
-    if name.num_labels() < 2 {
-        return Err(NumLabelsSnafu {
-            num_labels: name.num_labels(),
-        }
-        .build());
+fn node_id_from_txt_name(name: &str) -> Result<NodeId, ParseError> {
+    let num_labels = name.split(".").count();
+    if num_labels < 2 {
+        return Err(NumLabelsSnafu { num_labels }.build());
     }
-    let mut labels = name.iter();
-    let label =
-        std::str::from_utf8(labels.next().expect("num_labels checked")).context(Utf8Snafu)?;
+    let mut labels = name.split(".");
+    let label = labels.next().expect("checked above");
     if label != IROH_TXT_NAME {
         return Err(NotAnIrohRecordSnafu { label }.build());
     }
-    let label =
-        std::str::from_utf8(labels.next().expect("num_labels checked")).context(Utf8Snafu)?;
+    let label = labels.next().expect("checked above");
     let node_id = NodeId::from_z32(label)?;
     Ok(node_id)
 }
@@ -580,38 +541,6 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(Self { attrs, node_id })
     }
 
-    #[cfg(not(wasm_browser))]
-    async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self, LookupError> {
-        let name = ensure_iroh_txt_label(name)?;
-        let lookup = resolver
-            .lookup_txt(name, DNS_TIMEOUT)
-            .await
-            .context(LookupFailedSnafu)?;
-        let attrs = Self::from_txt_lookup(lookup).context(ParseSnafu)?;
-        Ok(attrs)
-    }
-
-    /// Looks up attributes by [`NodeId`] and origin domain.
-    #[cfg(not(wasm_browser))]
-    pub(crate) async fn lookup_by_id(
-        resolver: &DnsResolver,
-        node_id: &NodeId,
-        origin: &str,
-    ) -> Result<Self, LookupError> {
-        let name = node_domain(node_id, origin)?;
-        TxtAttrs::lookup(resolver, name).await
-    }
-
-    /// Looks up attributes by DNS name.
-    #[cfg(not(wasm_browser))]
-    pub(crate) async fn lookup_by_name(
-        resolver: &DnsResolver,
-        name: &str,
-    ) -> Result<Self, LookupError> {
-        let name = Name::from_str(name).context(InvalidLabelSnafu)?;
-        TxtAttrs::lookup(resolver, name).await
-    }
-
     /// Returns the parsed attributes.
     pub(crate) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
         &self.attrs
@@ -650,43 +579,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Parses a TXT records lookup.
     #[cfg(not(wasm_browser))]
-    pub(crate) fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self, ParseError> {
-        let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())?;
+    pub(crate) fn from_txt_lookup(
+        name: String,
+        lookup: impl Iterator<Item = crate::dns::TxtRecordData>,
+    ) -> Result<Self, ParseError> {
+        let queried_node_id = node_id_from_txt_name(&name)?;
 
-        let strings = lookup.0.as_lookup().record_iter().filter_map(|record| {
-            match node_id_from_hickory_name(record.name()) {
-                // Filter out only TXT record answers that match the node_id we searched for.
-                Ok(n) if n == queried_node_id => match record.data().as_txt() {
-                    Some(txt) => Some(txt.to_string()),
-                    None => {
-                        warn!(
-                            ?queried_node_id,
-                            data = ?record.data(),
-                            "unexpected record type for DNS discovery query"
-                        );
-                        None
-                    }
-                },
-                Ok(answered_node_id) => {
-                    warn!(
-                        ?queried_node_id,
-                        ?answered_node_id,
-                        "unexpected node ID answered for DNS query"
-                    );
-                    None
-                }
-                Err(e) => {
-                    warn!(
-                        ?queried_node_id,
-                        name = ?record.name(),
-                        err = ?e,
-                        "unexpected answer record name for DNS query"
-                    );
-                    None
-                }
-            }
-        });
-
+        let strings = lookup.map(|record| record.to_string());
         Self::from_strings(queried_node_id, strings)
     }
 
@@ -720,19 +619,18 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 }
 
 #[cfg(not(wasm_browser))]
-fn ensure_iroh_txt_label(name: Name) -> Result<Name, LookupError> {
-    if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
-        Ok(name)
+pub(crate) fn ensure_iroh_txt_label(name: String) -> String {
+    let mut parts = name.split(".");
+    if parts.next() == Some(IROH_TXT_NAME) {
+        name
     } else {
-        Name::parse(IROH_TXT_NAME, Some(&name)).context(InvalidLabelSnafu)
+        format!("{IROH_TXT_NAME}.{name}")
     }
 }
 
 #[cfg(not(wasm_browser))]
-fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name, LookupError> {
-    let domain = format!("{}.{}", NodeId::to_z32(node_id), origin);
-    let domain = Name::from_str(&domain).context(InvalidLabelSnafu)?;
-    Ok(domain)
+pub(crate) fn node_domain(node_id: &NodeId, origin: &str) -> String {
+    format!("{}.{}", NodeId::to_z32(node_id), origin)
 }
 
 #[cfg(test)]
@@ -740,20 +638,21 @@ mod tests {
     use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
     use hickory_resolver::{
+        Name,
         lookup::Lookup,
         proto::{
             op::Query,
             rr::{
-                rdata::{A, TXT},
                 RData, Record, RecordType,
+                rdata::{A, TXT},
             },
         },
-        Name,
     };
     use iroh_base::{NodeId, SecretKey};
     use n0_snafu::{Result, ResultExt};
 
     use super::{NodeData, NodeIdExt, NodeInfo};
+    use crate::dns::TxtRecordData;
 
     #[test]
     fn txt_attr_roundtrip() {
@@ -825,7 +724,7 @@ mod tests {
                 .context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
-                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                    "relay=https://euw1-1.relay.iroh.network./".to_string(),
                 ])),
             ),
             // Test a record with a completely different name
@@ -833,21 +732,24 @@ mod tests {
                 Name::from_utf8("dns.iroh.link.").context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
-                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                    "relay=https://euw1-1.relay.iroh.network./".to_string(),
                 ])),
             ),
             Record::from_rdata(
                 name.clone(),
                 30,
                 RData::TXT(TXT::new(vec![
-                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                    "relay=https://euw1-1.relay.iroh.network./".to_string(),
                 ])),
             ),
         ];
         let lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
         let lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
+        let lookup = lookup
+            .into_iter()
+            .map(|txt| TxtRecordData::from_iter(txt.iter().cloned()));
 
-        let node_info = NodeInfo::from_txt_lookup(lookup.into())?;
+        let node_info = NodeInfo::from_txt_lookup(name.to_string(), lookup)?;
 
         let expected_node_info = NodeInfo::new(NodeId::from_str(
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",

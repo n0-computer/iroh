@@ -9,7 +9,6 @@
 
 use iroh::{Endpoint, NodeAddr};
 use n0_snafu::{Error, Result, ResultExt};
-use n0_watcher::Watcher as _;
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -20,9 +19,11 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 #[tokio::main]
 async fn main() -> Result<()> {
     let endpoint = start_accept_side().await?;
-    let node_addr = endpoint.node_addr().initialized().await?;
 
-    connect_side(node_addr).await?;
+    // wait for the node to be online
+    endpoint.online().await;
+
+    connect_side(endpoint.node_addr()).await?;
 
     // This makes sure the endpoint is closed properly and connections close gracefully
     // and will indirectly close the tasks spawned by `start_accept_side`.

@@ -1,22 +1,22 @@
 use std::{
     io,
+    num::NonZeroU16,
     task::{Context, Poll},
 };
 
 use bytes::Bytes;
 use iroh_base::{NodeId, RelayUrl};
+use iroh_relay::protos::relay::Datagrams;
 use n0_future::{
     ready,
     task::{self, AbortOnDropHandle},
 };
 use n0_watcher::{Watchable, Watcher as _};
-use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tokio_util::sync::PollSender;
-use tracing::{error, info_span, trace, warn, Instrument};
+use tracing::{Instrument, error, info_span, trace, warn};
 
 use super::{Addr, Transmit};
-use crate::magicsock::RelayContents;
 
 mod actor;
 
@@ -29,6 +29,8 @@ pub(crate) struct RelayTransport {
     relay_datagram_recv_queue: mpsc::Receiver<RelayRecvDatagram>,
     /// Channel on which to send datagrams via a relay server.
     relay_datagram_send_channel: mpsc::Sender<RelaySendItem>,
+    /// A datagram from the last poll_recv that didn't quite fit our buffers.
+    pending_item: Option<RelayRecvDatagram>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: Watchable<Option<RelayUrl>>,
@@ -60,6 +62,7 @@ impl RelayTransport {
         Self {
             relay_datagram_recv_queue: relay_datagram_recv_rx,
             relay_datagram_send_channel: relay_datagram_send_tx,
+            pending_item: None,
             actor_sender,
             _actor_handle: actor_handle,
             my_relay,
@@ -86,7 +89,7 @@ impl RelayTransport {
             .zip(metas.iter_mut())
             .zip(source_addrs.iter_mut())
         {
-            let dm = match self.relay_datagram_recv_queue.poll_recv(cx) {
+            let dm = match self.poll_recv_queue(cx) {
                 Poll::Ready(Some(recv)) => recv,
                 Poll::Ready(None) => {
                     error!("relay_recv_channel closed");
@@ -100,9 +103,49 @@ impl RelayTransport {
                 }
             };
 
-            buf_out[..dm.buf.len()].copy_from_slice(&dm.buf);
-            meta_out.len = dm.buf.len();
-            meta_out.stride = dm.buf.len();
+            // This *tries* to make the datagrams fit into our buffer by re-batching them.
+            let num_segments = dm
+                .datagrams
+                .segment_size
+                .map_or(1, |ss| buf_out.len() / u16::from(ss) as usize);
+            let datagrams = dm.datagrams.take_segments(num_segments);
+            let empty_after = dm.datagrams.contents.is_empty();
+            let dm = RelayRecvDatagram {
+                datagrams,
+                src: dm.src,
+                url: dm.url.clone(),
+            };
+            // take_segments can leave `self.pending_item` empty, in that case we clear it
+            if empty_after {
+                self.pending_item = None;
+            }
+
+            if buf_out.len() < dm.datagrams.contents.len() {
+                // Our receive buffer isn't big enough to process this datagram.
+                // Continuing would cause a panic.
+                warn!(
+                    quinn_buf_len = buf_out.len(),
+                    datagram_len = dm.datagrams.contents.len(),
+                    segment_size = ?dm.datagrams.segment_size,
+                    "dropping received datagram: quinn buffer too small"
+                );
+                break;
+                // In theory we could put some logic in here to fragment the datagram in case
+                // we still have enough room in our `buf_out` left to fit a couple of
+                // `dm.datagrams.segment_size`es, but we *should* have cut those datagrams
+                // to appropriate sizes earlier in the pipeline (just before we put them
+                // into the `relay_datagram_recv_queue` in the `ActiveRelayActor`).
+                // So the only case in which this happens is we receive a datagram via the relay
+                // that's essentially bigger than our configured `max_udp_payload_size`.
+                // In that case we drop it and let MTU discovery take over.
+            }
+
+            buf_out[..dm.datagrams.contents.len()].copy_from_slice(&dm.datagrams.contents);
+            meta_out.len = dm.datagrams.contents.len();
+            meta_out.stride = dm
+                .datagrams
+                .segment_size
+                .map_or(dm.datagrams.contents.len(), |s| u16::from(s) as usize);
             meta_out.ecn = None;
             meta_out.dst_ip = None; // TODO: insert the relay url for this relay
 
@@ -133,6 +176,28 @@ impl RelayTransport {
         RelayNetworkChangeSender {
             sender: self.actor_sender.clone(),
         }
+    }
+
+    /// Makes sure we have a pending item stored, if not, it'll poll a new one from the queue.
+    ///
+    /// Returns a mutable reference to the stored pending item.
+    #[inline]
+    fn poll_recv_queue<'a>(
+        &'a mut self,
+        cx: &mut Context,
+    ) -> Poll<Option<&'a mut RelayRecvDatagram>> {
+        // Borrow checker doesn't quite understand an if let Some(_)... here
+        if self.pending_item.is_some() {
+            return Poll::Ready(self.pending_item.as_mut());
+        }
+
+        let item = match self.relay_datagram_recv_queue.poll_recv(cx) {
+            Poll::Ready(Some(item)) => item,
+            Poll::Ready(None) => return Poll::Ready(None),
+            Poll::Pending => return Poll::Pending,
+        };
+
+        Poll::Ready(Some(self.pending_item.insert(item)))
     }
 }
 
@@ -186,7 +251,7 @@ impl RelaySender {
         dest_node: NodeId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
-        let contents = split_packets(transmit);
+        let contents = datagrams_from_transmit(transmit);
 
         let item = RelaySendItem {
             remote_node: dest_node,
@@ -228,7 +293,7 @@ impl RelaySender {
                 trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
                     "send relay: message queued");
 
-                let contents = split_packets(transmit);
+                let contents = datagrams_from_transmit(transmit);
                 let item = RelaySendItem {
                     remote_node: dest_node,
                     url: dest_url.clone(),
@@ -266,7 +331,7 @@ impl RelaySender {
         dest_node: NodeId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
-        let contents = split_packets(transmit);
+        let contents = datagrams_from_transmit(transmit);
 
         let item = RelaySendItem {
             remote_node: dest_node,
@@ -304,26 +369,20 @@ impl RelaySender {
     }
 }
 
-/// Split a transmit containing a GSO payload into individual packets.
-///
-/// This allocates the data.
-///
-/// If the transmit has a segment size it contains multiple GSO packets.  It will be split
-/// into multiple packets according to that segment size.  If it does not have a segment
-/// size, the contents will be sent as a single packet.
-// TODO: If quinn stayed on bytes this would probably be much cheaper, probably.  Need to
-// figure out where they allocate the Vec.
-fn split_packets(transmit: &Transmit<'_>) -> RelayContents {
-    let mut res = SmallVec::with_capacity(1);
-    let contents = transmit.contents;
-    if let Some(segment_size) = transmit.segment_size {
-        for chunk in contents.chunks(segment_size) {
-            res.push(Bytes::from(chunk.to_vec()));
-        }
-    } else {
-        res.push(Bytes::from(contents.to_vec()));
+/// Translate a UDP transmit to the `Datagrams` type for sending over the relay.
+fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
+    Datagrams {
+        ecn: transmit.ecn.map(|ecn| match ecn {
+            quinn_udp::EcnCodepoint::Ect0 => quinn_proto::EcnCodepoint::Ect0,
+            quinn_udp::EcnCodepoint::Ect1 => quinn_proto::EcnCodepoint::Ect1,
+            quinn_udp::EcnCodepoint::Ce => quinn_proto::EcnCodepoint::Ce,
+        }),
+        segment_size: transmit
+            .segment_size
+            .map(|ss| ss as u16)
+            .and_then(NonZeroU16::new),
+        contents: Bytes::copy_from_slice(transmit.contents),
     }
-    res
 }
 
 #[cfg(test)]
@@ -336,43 +395,6 @@ mod tests {
 
     use super::*;
     use crate::defaults::staging;
-
-    #[test]
-    fn test_split_packets() {
-        fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> Transmit<'_> {
-            Transmit {
-                ecn: None,
-                contents,
-                segment_size,
-            }
-        }
-        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> RelayContents {
-            parts
-                .into_iter()
-                .map(|p| p.as_bytes().to_vec().into())
-                .collect()
-        }
-        // no split
-        assert_eq!(
-            split_packets(&mk_transmit(b"hello", None)),
-            mk_expected(["hello"])
-        );
-        // split without rest
-        assert_eq!(
-            split_packets(&mk_transmit(b"helloworld", Some(5))),
-            mk_expected(["hello", "world"])
-        );
-        // split with rest and second transmit
-        assert_eq!(
-            split_packets(&mk_transmit(b"hello world", Some(5))),
-            mk_expected(["hello", " worl", "d"]) // spellchecker:disable-line
-        );
-        // split that results in 1 packet
-        assert_eq!(
-            split_packets(&mk_transmit(b"hello world", Some(1000))),
-            mk_expected(["hello world"])
-        );
-    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_relay_datagram_queue() {
@@ -387,7 +409,7 @@ mod tests {
                 let mut expected_msgs: BTreeSet<usize> = (0..capacity).collect();
                 while !expected_msgs.is_empty() {
                     let datagram: RelayRecvDatagram = receiver.recv().await.unwrap();
-                    let msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
+                    let msg_num = usize::from_le_bytes(datagram.datagrams.contents.as_ref().try_into().unwrap());
                     debug!("Received {msg_num}");
 
                     if !expected_msgs.remove(&msg_num) {
@@ -407,7 +429,7 @@ mod tests {
                         .try_send(RelayRecvDatagram {
                             url,
                             src: NodeId::from_bytes(&[0u8; 32]).unwrap(),
-                            buf: Bytes::copy_from_slice(&i.to_le_bytes()),
+                            datagrams: Datagrams::from(&i.to_le_bytes()),
                         })
                         .unwrap();
                 }

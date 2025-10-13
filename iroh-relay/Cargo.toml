@@ -1,7 +1,7 @@
 [package]
 name = "iroh-relay"
-version = "0.35.0"
-edition = "2021"
+version = "0.93.1"
+edition = "2024"
 readme = "README.md"
 description = "Iroh's relay server and client"
 license = "MIT OR Apache-2.0"
@@ -20,7 +20,7 @@ workspace = true
 
 [dependencies]
 bytes = "1.7"
-derive_more = { version = "1.0.0", features = [
+derive_more = { version = "2.0.1", features = [
     "debug",
     "display",
     "from",
@@ -31,12 +31,12 @@ http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
-iroh-base = { version = "0.35.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
-iroh-metrics = { version = "0.34", default-features = false }
-n0-future = "0.1.2"
+iroh-base = { version = "0.93.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
+iroh-metrics = { version = "0.36", default-features = false }
+n0-future = "0.2.0"
 num_enum = "0.7"
 pin-project = "1"
-pkarr = { version = "3.7", default-features = false, features = ["signed_packet"] }
+pkarr = { version = "5", default-features = false, features = ["signed_packet"] }
 postcard = { version = "1", default-features = false, features = [
     "alloc",
     "use-std",
@@ -44,13 +44,13 @@ postcard = { version = "1", default-features = false, features = [
 ] }
 quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
-rand = "0.8"
+rand = "0.9.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
 ] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive", "rc"] }
-strum = { version = "0.26", features = ["derive"] }
+strum = { version = "0.27", features = ["derive"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -66,22 +66,22 @@ tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 url = { version = "2.5.3", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.103" }
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 data-encoding = "2.6.0"
-lru = "0.13"
+lru = "0.16"
 z32 = "1.0.3"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
-n0-snafu = "0.2.0"
+n0-snafu = "0.2.2"
 nested_enum_utils = "0.2.0"
 
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }
 dashmap = { version = "6.1.0", optional = true }
 ahash = { version = "0.8.11", optional = true } # minimal version fix
-governor = { version = "0.8.0", optional = true }
+governor = { version = "0.10.1", optional = true }
 hickory-proto = { version = "0.25.1", default-features = false, optional = true }
-rcgen = { version = "0.13", optional = true }
+rcgen = { version = "0.14", optional = true }
 regex = { version = "1.7.1", optional = true }
 reloadable-state = { version = "0.1", optional = true }
 rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
@@ -89,16 +89,18 @@ rustls-cert-file-reader = { version = "0.4.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 time = { version = "0.3.37", optional = true }
 tokio-rustls-acme = { version = "0.7.1", optional = true }
-tokio-websockets = { version = "0.11.3", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
+tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
-toml = { version = "0.8", optional = true }
+toml = { version = "0.9", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
+blake3 = "1.8.2"
+serde_bytes = "0.11.17"
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "0.25.1", features = ["tokio"] }
+hickory-resolver = { version = "0.25.1", features = ["tokio", "https-ring"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -110,7 +112,7 @@ tokio = { version = "1", features = [
     "signal",
     "process",
 ] }
-tokio-websockets = { version = "0.11.3", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "client"] }
+tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "client"] }
 
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
@@ -121,7 +123,7 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 clap = { version = "4", features = ["derive"] }
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 proptest = "1.2.0"
-rand_chacha = "0.3.1"
+rand_chacha = "0.9"
 tokio = { version = "1", features = [
     "io-util",
     "sync",

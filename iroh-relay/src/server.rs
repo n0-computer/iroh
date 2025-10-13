@@ -19,14 +19,14 @@ use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync:
 
 use derive_more::Debug;
 use http::{
-    header::InvalidHeaderValue, response::Builder as ResponseBuilder, HeaderMap, Method, Request,
-    Response, StatusCode,
+    HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header::InvalidHeaderValue,
+    response::Builder as ResponseBuilder,
 };
 use hyper::body::Incoming;
 use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use n0_future::{future::Boxed, StreamExt};
+use n0_future::{StreamExt, future::Boxed};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::{
@@ -34,7 +34,7 @@ use tokio::{
     task::{JoinError, JoinSet},
 };
 use tokio_util::task::AbortOnDropHandle;
-use tracing::{debug, error, info, info_span, instrument, Instrument};
+use tracing::{Instrument, debug, error, info, info_span, instrument};
 
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
@@ -53,11 +53,14 @@ pub mod testing;
 
 pub use self::{
     metrics::{Metrics, RelayMetrics},
-    resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
+    resolver::{DEFAULT_CERT_RELOAD_INTERVAL, ReloadingResolver},
 };
 
-const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
-const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
+// TODO: remove before 1.0
+const NO_CONTENT_CHALLENGE_HEADER_LEGACY: &str = "X-Tailscale-Challenge";
+const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Iroh-Challenge";
+const NO_CONTENT_RESPONSE_HEADER_LEGACY: &str = "X-Tailscale-Response";
+const NO_CONTENT_RESPONSE_HEADER: &str = "X-Iroh-Response";
 const NOTFOUND: &[u8] = b"Not Found";
 const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
 const INDEX: &[u8] = br#"<html><body>
@@ -640,16 +643,23 @@ fn serve_no_content_handler<B: hyper::body::Body>(
     r: Request<B>,
     mut response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
+    let check = |c: &HeaderValue| {
+        !c.is_empty() && c.len() < 64 && c.as_bytes().iter().all(|c| is_challenge_char(*c as char))
+    };
+
     if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
-        if !challenge.is_empty()
-            && challenge.len() < 64
-            && challenge
-                .as_bytes()
-                .iter()
-                .all(|c| is_challenge_char(*c as char))
-        {
+        if check(challenge) {
             response = response.header(
                 NO_CONTENT_RESPONSE_HEADER,
+                format!("response {}", challenge.to_str()?),
+            );
+        }
+    }
+
+    if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER_LEGACY) {
+        if check(challenge) {
+            response = response.header(
+                NO_CONTENT_RESPONSE_HEADER_LEGACY,
                 format!("response {}", challenge.to_str()?),
             );
         }
@@ -685,7 +695,7 @@ async fn run_captive_portal_service(http_listener: TcpListener) {
             Some(res) = tasks.join_next() => {
                 if let Err(err) = res {
                     if err.is_panic() {
-                        panic!("task panicked: {:#?}", err);
+                        panic!("task panicked: {err:#?}");
                     }
                 }
             }
@@ -750,22 +760,25 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
 mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
-    use bytes::Bytes;
-    use http::{header::UPGRADE, StatusCode};
+    use http::StatusCode;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt, StreamExt};
-    use n0_snafu::{Result, ResultExt};
+    use n0_snafu::Result;
+    use rand::SeedableRng;
     use tracing::{info, instrument};
     use tracing_test::traced_test;
 
     use super::{
-        Access, AccessConfig, RelayConfig, Server, ServerConfig, SpawnError,
-        NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
+        Access, AccessConfig, NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER, RelayConfig,
+        Server, ServerConfig, SpawnError,
     };
     use crate::{
-        client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
+        client::{ClientBuilder, ConnectError},
         dns::DnsResolver,
-        http::{Protocol, HTTP_UPGRADE_PROTOCOL},
+        protos::{
+            handshake,
+            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+        },
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
@@ -788,12 +801,15 @@ mod tests {
         client_a: &mut crate::client::Client,
         client_b: &mut crate::client::Client,
         b_key: NodeId,
-        msg: Bytes,
-    ) -> Result<ReceivedMessage> {
+        msg: Datagrams,
+    ) -> Result<RelayToClientMsg> {
         // try resend 10 times
         for _ in 0..10 {
             client_a
-                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .send(ClientToRelayMsg::Datagrams {
+                    dst_node_id: b_key,
+                    datagrams: msg.clone(),
+                })
                 .await?;
             let Ok(res) = tokio::time::timeout(Duration::from_millis(500), client_b.next()).await
             else {
@@ -851,7 +867,8 @@ mod tests {
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
-        let response = reqwest::get(&url).await.unwrap();
+        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
+        let response = client.get(&url).send().await.unwrap();
         assert_eq!(response.status(), 200);
         let body = response.text().await.unwrap();
         assert!(body.contains("iroh.computer"));
@@ -864,7 +881,7 @@ mod tests {
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder().use_rustls_tls().build().unwrap();
         let response = client
             .get(&url)
             .header(NO_CONTENT_CHALLENGE_HEADER, challenge)
@@ -880,199 +897,73 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_client_legacy_route() {
-        let server = spawn_local_relay().await.unwrap();
-        // We're testing the legacy endpoint at `/derp`
-        let endpoint_url = format!("http://{}/derp", server.http_addr().unwrap());
-
-        let client = reqwest::Client::new();
-        let result = client
-            .get(endpoint_url)
-            .header(UPGRADE, HTTP_UPGRADE_PROTOCOL)
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(result.status(), StatusCode::SWITCHING_PROTOCOLS);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_relay_clients_both_relay() -> Result<()> {
-        let server = spawn_local_relay().await.unwrap();
-        let relay_url = format!("http://{}", server.http_addr().unwrap());
-        let relay_url: RelayUrl = relay_url.parse().unwrap();
-
-        // set up client a
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
-        let a_key = a_secret_key.public();
-        let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-            .connect()
-            .await?;
-
-        // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
-        let b_key = b_secret_key.public();
-        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-            .connect()
-            .await?;
-
-        // send message from a to b
-        let msg = Bytes::from("hello, b");
-        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
-        if let ReceivedMessage::ReceivedPacket {
-            remote_node_id,
-            data,
-        } = res
-        {
-            assert_eq!(a_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
-            panic!("client_b received unexpected message {res:?}");
-        }
-
-        // send message from b to a
-        let msg = Bytes::from("howdy, a");
-        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
-        if let ReceivedMessage::ReceivedPacket {
-            remote_node_id,
-            data,
-        } = res
-        {
-            assert_eq!(b_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
-            panic!("client_a received unexpected message {res:?}");
-        }
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_relay_clients_both_websockets() -> Result<()> {
+    async fn test_relay_clients() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let server = spawn_local_relay().await?;
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse()?;
 
         // set up client a
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let a_secret_key = SecretKey::generate(&mut rng);
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
         info!("client a build & connect");
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-            .protocol(Protocol::Websocket)
             .connect()
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_secret_key = SecretKey::generate(&mut rng);
         let b_key = b_secret_key.public();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-            .protocol(Protocol::Websocket) // another websocket client
             .connect()
             .await?;
 
         info!("sending a -> b");
 
         // send message from a to b
-        let msg = Bytes::from("hello, b");
+        let msg = Datagrams::from("hello, b");
         let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
-        let ReceivedMessage::ReceivedPacket {
+        let RelayToClientMsg::Datagrams {
             remote_node_id,
-            data,
+            datagrams,
         } = res
         else {
             panic!("client_b received unexpected message {res:?}");
         };
 
         assert_eq!(a_key, remote_node_id);
-        assert_eq!(msg, data);
+        assert_eq!(msg, datagrams);
 
         info!("sending b -> a");
         // send message from b to a
-        let msg = Bytes::from("howdy, a");
+        let msg = Datagrams::from("howdy, a");
         let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
 
-        let ReceivedMessage::ReceivedPacket {
+        let RelayToClientMsg::Datagrams {
             remote_node_id,
-            data,
+            datagrams,
         } = res
         else {
             panic!("client_a received unexpected message {res:?}");
         };
 
         assert_eq!(b_key, remote_node_id);
-        assert_eq!(msg, data);
+        assert_eq!(msg, datagrams);
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_relay_clients_websocket_and_relay() -> Result<()> {
-        let server = spawn_local_relay().await.unwrap();
-
-        let relay_url = format!("http://{}", server.http_addr().unwrap());
-        let relay_url: RelayUrl = relay_url.parse().unwrap();
-
-        // set up client a
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
-        let a_key = a_secret_key.public();
-        let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
-            .connect()
-            .await?;
-
-        // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
-        let b_key = b_secret_key.public();
-        let resolver = dns_resolver();
-        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
-            .protocol(Protocol::Websocket) // Use websockets
-            .connect()
-            .await?;
-
-        // send message from a to b
-        let msg = Bytes::from("hello, b");
-        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
-
-        if let ReceivedMessage::ReceivedPacket {
-            remote_node_id,
-            data,
-        } = res
-        {
-            assert_eq!(a_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
-            panic!("client_b received unexpected message {res:?}");
-        }
-
-        // send message from b to a
-        let msg = Bytes::from("howdy, a");
-        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
-        if let ReceivedMessage::ReceivedPacket {
-            remote_node_id,
-            data,
-        } = res
-        {
-            assert_eq!(b_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
-            panic!("client_a received unexpected message {res:?}");
-        }
         Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
     async fn test_relay_access_control() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let current_span = tracing::info_span!("this is a test");
         let _guard = current_span.enter();
 
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let a_secret_key = SecretKey::generate(&mut rng);
         let a_key = a_secret_key.public();
 
         let server = Server::spawn(ServerConfig::<(), ()> {
@@ -1104,28 +995,18 @@ mod tests {
 
         // set up client a
         let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+        let result = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
             .connect()
-            .await?;
+            .await;
 
-        // the next message should be the rejection of the connection
-        tokio::time::timeout(Duration::from_millis(500), async move {
-            match client_a.next().await.unwrap().unwrap() {
-                ReceivedMessage::Health { problem } => {
-                    assert_eq!(problem, Some("not authenticated".to_string()));
-                }
-                msg => {
-                    panic!("other msg: {:?}", msg);
-                }
-            }
-        })
-        .await
-        .context("timeout")?;
+        assert!(
+            matches!(result, Err(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. }) if reason == "not authorized")
+        );
 
         // test that another client has access
 
         // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_secret_key = SecretKey::generate(&mut rng);
         let b_key = b_secret_key.public();
 
         let resolver = dns_resolver();
@@ -1134,7 +1015,7 @@ mod tests {
             .await?;
 
         // set up client c
-        let c_secret_key = SecretKey::generate(rand::thread_rng());
+        let c_secret_key = SecretKey::generate(&mut rng);
         let c_key = c_secret_key.public();
 
         let resolver = dns_resolver();
@@ -1143,16 +1024,16 @@ mod tests {
             .await?;
 
         // send message from b to c
-        let msg = Bytes::from("hello, c");
+        let msg = Datagrams::from("hello, c");
         let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone()).await?;
 
-        if let ReceivedMessage::ReceivedPacket {
+        if let RelayToClientMsg::Datagrams {
             remote_node_id,
-            data,
+            datagrams,
         } = res
         {
             assert_eq!(b_key, remote_node_id);
-            assert_eq!(msg, data);
+            assert_eq!(msg, datagrams);
         } else {
             panic!("client_c received unexpected message {res:?}");
         }
@@ -1163,19 +1044,20 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_relay_clients_full() -> Result<()> {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
 
         // set up client a
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let a_secret_key = SecretKey::generate(&mut rng);
         let resolver = dns_resolver();
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
             .connect()
             .await?;
 
         // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_secret_key = SecretKey::generate(&mut rng);
         let b_key = b_secret_key.public();
         let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
             .connect()
@@ -1184,10 +1066,13 @@ mod tests {
         // send messages from a to b, without b receiving anything.
         // we should still keep succeeding to send, even if the packet won't be forwarded
         // by the relay server because the server's send queue for b fills up.
-        let msg = Bytes::from("hello, b");
+        let msg = Datagrams::from("hello, b");
         for _i in 0..1000 {
             client_a
-                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .send(ClientToRelayMsg::Datagrams {
+                    dst_node_id: b_key,
+                    datagrams: msg.clone(),
+                })
                 .await?;
         }
         Ok(())

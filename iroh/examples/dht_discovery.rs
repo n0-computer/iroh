@@ -62,7 +62,7 @@ fn build_discovery(args: Args) -> iroh::discovery::pkarr::dht::Builder {
 }
 
 async fn chat_server(args: Args) -> n0_snafu::Result<()> {
-    let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
+    let secret_key = iroh::SecretKey::generate(&mut rand::rng());
     let node_id = secret_key.public();
     let discovery = build_discovery(args);
     let endpoint = Endpoint::builder()
@@ -72,9 +72,9 @@ async fn chat_server(args: Args) -> n0_snafu::Result<()> {
         .bind()
         .await?;
     let zid = pkarr::PublicKey::try_from(node_id.as_bytes()).e()?.to_z32();
-    println!("Listening on {}", node_id);
-    println!("pkarr z32: {}", zid);
-    println!("see https://app.pkarr.org/?pk={}", zid);
+    println!("Listening on {node_id}");
+    println!("pkarr z32: {zid}");
+    println!("see https://app.pkarr.org/?pk={zid}");
     while let Some(incoming) = endpoint.accept().await {
         let connecting = match incoming.accept() {
             Ok(connecting) => connecting,
@@ -88,7 +88,7 @@ async fn chat_server(args: Args) -> n0_snafu::Result<()> {
         tokio::spawn(async move {
             let connection = connecting.await.e()?;
             let remote_node_id = connection.remote_node_id()?;
-            println!("got connection from {}", remote_node_id);
+            println!("got connection from {remote_node_id}");
             // just leave the tasks hanging. this is just an example.
             let (mut writer, mut reader) = connection.accept_bi().await.e()?;
             let _copy_to_stdout = tokio::spawn(async move {
@@ -106,7 +106,7 @@ async fn chat_server(args: Args) -> n0_snafu::Result<()> {
 
 async fn chat_client(args: Args) -> n0_snafu::Result<()> {
     let remote_node_id = args.node_id.unwrap();
-    let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
+    let secret_key = iroh::SecretKey::generate(&mut rand::rng());
     let node_id = secret_key.public();
     // note: we don't pass a secret key here, because we don't need to publish our address, don't spam the DHT
     let discovery = build_discovery(args).no_publish();
@@ -116,9 +116,9 @@ async fn chat_client(args: Args) -> n0_snafu::Result<()> {
         .discovery(discovery)
         .bind()
         .await?;
-    println!("We are {} and connecting to {}", node_id, remote_node_id);
+    println!("We are {node_id} and connecting to {remote_node_id}");
     let connection = endpoint.connect(remote_node_id, CHAT_ALPN).await?;
-    println!("connected to {}", remote_node_id);
+    println!("connected to {remote_node_id}");
     let (mut writer, mut reader) = connection.open_bi().await.e()?;
     let _copy_to_stdout =
         tokio::spawn(async move { tokio::io::copy(&mut reader, &mut tokio::io::stdout()).await });

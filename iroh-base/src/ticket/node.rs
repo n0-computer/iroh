@@ -27,6 +27,7 @@ use crate::{
 /// [`NodeId`]: crate::key::NodeId
 /// [`Display`]: std::fmt::Display
 /// [`FromStr`]: std::str::FromStr
+/// ['RelayUrl`]: crate::relay_url::RelayUrl
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[display("{}", Ticket::serialize(self))]
 pub struct NodeTicket {
@@ -136,12 +137,14 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use data_encoding::HEXLOWER;
+    use rand::SeedableRng;
 
     use super::*;
     use crate::key::{PublicKey, SecretKey};
 
     fn make_ticket() -> NodeTicket {
-        let peer = SecretKey::generate(&mut rand::thread_rng()).public();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let peer = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 1234));
         let relay_url = None;
         NodeTicket {

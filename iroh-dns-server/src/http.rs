@@ -6,13 +6,13 @@ use std::{
 };
 
 use axum::{
+    Router,
     extract::{ConnectInfo, Request, State},
     handler::Handler,
     http::Method,
     middleware::{self, Next},
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use n0_snafu::{Result, ResultExt};
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ use tower_http::{
     cors::{self, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::{info, span, warn, Level};
+use tracing::{Level, info, span, warn};
 
 mod doh;
 mod error;

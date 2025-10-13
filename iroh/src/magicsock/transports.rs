@@ -2,7 +2,7 @@ use std::{
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
     task::{Context, Poll},
 };
 
@@ -145,7 +145,7 @@ impl Transports {
     /// For IP based transports this is the [`SocketAddr`] of the socket,
     /// for relay transports, this is the home relay.
     pub(crate) fn local_addrs(&self) -> Vec<Addr> {
-        self.local_addrs_watch().get().expect("not disconnected")
+        self.local_addrs_watch().get()
     }
 
     /// Watch for all currently known local addresses.
@@ -420,7 +420,7 @@ impl UdpSender {
         match destination {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
-                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")))
+                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
             }
             #[cfg(not(wasm_browser))]
             Addr::Ip(addr) => {
@@ -448,7 +448,7 @@ impl UdpSender {
     }
 
     /// Best effort sending
-    fn inner_try_send(
+    pub(crate) fn inner_try_send(
         &self,
         destination: &Addr,
         src: Option<IpAddr>,
@@ -498,7 +498,7 @@ impl quinn::UdpSender for UdpSender {
         transmit: &quinn_udp::Transmit,
         cx: &mut Context,
     ) -> Poll<io::Result<()>> {
-        let active_paths = self.msock.prepare_send(transmit)?;
+        let active_paths = self.msock.prepare_send(&self, transmit)?;
 
         if active_paths.is_empty() {
             // Returning Ok here means we let QUIC timeout.
@@ -550,7 +550,7 @@ impl quinn::UdpSender for UdpSender {
     }
 
     fn try_send(self: Pin<&mut Self>, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        let active_paths = self.msock.prepare_send(transmit)?;
+        let active_paths = self.msock.prepare_send(&self, transmit)?;
         if active_paths.is_empty() {
             // Returning Ok here means we let QUIC timeout.
             // Returning an error would immediately fail a connection.

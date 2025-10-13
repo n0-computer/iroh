@@ -32,7 +32,12 @@
 //!     }
 //! }
 //! ```
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use iroh_base::NodeId;
 use n0_future::{
@@ -40,13 +45,12 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
 };
 use snafu::{Backtrace, Snafu};
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info_span, trace, warn, Instrument};
+use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
-    endpoint::{Connecting, Connection, RemoteNodeIdError},
     Endpoint,
+    endpoint::{Connecting, Connection, RemoteNodeIdError},
 };
 
 /// The built router.
@@ -338,7 +342,10 @@ impl Router {
         self.cancel_token.cancel();
 
         // Wait for the main task to terminate.
-        if let Some(task) = self.task.lock().await.take() {
+
+        // MutexGuard is not held across await point
+        let task = self.task.lock().expect("poisoned").take();
+        if let Some(task) = task {
             task.await?;
         }
 
@@ -440,9 +447,10 @@ impl RouterBuilder {
 
                         let protocols = protocols.clone();
                         let token = handler_cancel_token.child_token();
+                        let span = info_span!("router.accept", me=%endpoint.node_id().fmt_short(), remote=Empty, alpn=Empty);
                         join_set.spawn(async move {
                             token.run_until_cancelled(handle_connection(incoming, protocols)).await
-                        }.instrument(info_span!("router.accept")));
+                        }.instrument(span));
                     },
                 }
             }
@@ -464,7 +472,7 @@ impl RouterBuilder {
                 }
             }
         };
-        let task = task::spawn(run_loop_fut);
+        let task = task::spawn(run_loop_fut.instrument(tracing::Span::current()));
         let task = AbortOnDropHandle::new(task);
 
         Router {
@@ -490,12 +498,17 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
             return;
         }
     };
+    tracing::Span::current().record("alpn", String::from_utf8_lossy(&alpn).to_string());
     let Some(handler) = protocols.get(&alpn) else {
         warn!("Ignoring connection: unsupported ALPN protocol");
         return;
     };
     match handler.on_connecting(connecting).await {
         Ok(connection) => {
+            if let Ok(remote) = connection.remote_node_id() {
+                tracing::Span::current()
+                    .record("remote", tracing::field::display(remote.fmt_short()));
+            };
             if let Err(err) = handler.accept(connection).await {
                 warn!("Handling incoming connection ended with error: {err}");
             }
@@ -562,11 +575,10 @@ mod tests {
     use std::{sync::Mutex, time::Duration};
 
     use n0_snafu::{Result, ResultExt};
-    use n0_watcher::Watcher;
     use quinn::ApplicationClose;
 
     use super::*;
-    use crate::{endpoint::ConnectionError, RelayMode};
+    use crate::{RelayMode, endpoint::ConnectionError};
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
@@ -616,7 +628,7 @@ mod tests {
         let proto = AccessLimit::new(Echo, |_node_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
-        let addr1 = r1.endpoint().node_addr().initialized().await?;
+        let addr1 = r1.endpoint().node_addr();
         dbg!(&addr1);
         let e2 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
@@ -628,7 +640,7 @@ mod tests {
 
         let (_send, mut recv) = conn.open_bi().await.e()?;
         let response = recv.read_to_end(1000).await.unwrap_err();
-        assert!(format!("{:#?}", response).contains("not allowed"));
+        assert!(format!("{response:#?}").contains("not allowed"));
 
         r1.shutdown().await.e()?;
         e2.close().await;
@@ -669,14 +681,14 @@ mod tests {
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
         eprintln!("waiting for node addr");
-        let addr = router.endpoint().node_addr().initialized().await?;
+        let addr = router.endpoint().node_addr();
 
         eprintln!("creating ep2");
         let endpoint2 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        eprintln!("connecting to {:?}", addr);
+        eprintln!("connecting to {addr:?}");
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 
         eprintln!("starting shutdown");

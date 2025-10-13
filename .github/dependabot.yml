@@ -11,3 +11,20 @@ updates:
           - "*"  # Group all Actions updates into a single larger pull request
     schedule:
       interval: weekly
+      day: "thursday"
+      time: "08:00"
+      timezone: "America/New_York"
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: "thursday"
+      time: "08:00"
+      timezone: "America/New_York"
+  - package-ecosystem: docker
+    directory: docker
+    schedule:
+      interval: weekly
+      day: "thursday"
+      time: "08:00"
+      timezone: "America/New_York"

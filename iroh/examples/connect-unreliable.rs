@@ -10,7 +10,6 @@ use std::net::SocketAddr;
 use clap::Parser;
 use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
 use n0_snafu::ResultExt;
-use n0_watcher::Watcher as _;
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -34,7 +33,7 @@ async fn main() -> n0_snafu::Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect (unreliable) example!\n");
     let args = Cli::parse();
-    let secret_key = SecretKey::generate(rand::rngs::OsRng);
+    let secret_key = SecretKey::generate(&mut rand::rng());
     println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
@@ -52,7 +51,10 @@ async fn main() -> n0_snafu::Result<()> {
         .bind()
         .await?;
 
-    let node_addr = endpoint.node_addr().initialized().await?;
+    // wait for the node to be online
+    endpoint.online().await;
+
+    let node_addr = endpoint.node_addr();
     let me = node_addr.node_id;
     println!("node id: {me}");
     println!("node listening addresses:");

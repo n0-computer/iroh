@@ -3,14 +3,13 @@ use std::{env, future::Future, str::FromStr, time::Instant};
 use clap::Parser;
 use data_encoding::HEXLOWER;
 use iroh::{
-    endpoint::{Connecting, Connection},
     SecretKey,
+    endpoint::{Connecting, Connection},
 };
 use iroh_base::ticket::NodeTicket;
-use n0_future::{future, StreamExt};
+use n0_future::{StreamExt, future};
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
-use rand::thread_rng;
 use tracing::{info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
@@ -35,7 +34,7 @@ pub fn get_or_generate_secret_key() -> n0_snafu::Result<SecretKey> {
         SecretKey::from_str(&secret).context("Invalid secret key format")
     } else {
         // Generate a new random key
-        let secret_key = SecretKey::generate(&mut thread_rng());
+        let secret_key = SecretKey::generate(&mut rand::rng());
         println!(
             "Generated new secret key: {}",
             HEXLOWER.encode(&secret_key.to_bytes())
@@ -121,7 +120,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
             connection.close(0u8.into(), b"");
         });
         let elapsed = t0.elapsed();
-        println!("round {}: {} us", i, elapsed.as_micros());
+        println!("round {i}: {} us", elapsed.as_micros());
     }
     let elapsed = t0.elapsed();
     println!("total time: {} us", elapsed.as_micros());
@@ -140,18 +139,16 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
         .relay_mode(iroh::RelayMode::Disabled)
         .bind()
         .await?;
-    let mut addrs = endpoint.node_addr().stream();
+    let mut addrs = endpoint.watch_node_addr().stream();
     let addr = loop {
         let Some(addr) = addrs.next().await else {
             snafu::whatever!("Address stream closed");
         };
-        if let Some(addr) = addr {
-            if !addr.direct_addresses.is_empty() {
-                break addr;
-            }
+        if !addr.direct_addresses.is_empty() {
+            break addr;
         }
     };
-    println!("Listening on: {:?}", addr);
+    println!("Listening on: {addr:?}");
     println!("Node ID: {:?}", addr.node_id);
     println!("Ticket: {}", NodeTicket::from(addr));
 

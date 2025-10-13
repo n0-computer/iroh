@@ -6,12 +6,13 @@ use std::{
 };
 
 use iroh_base::RelayUrl;
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
-use super::{probes::Probe, ProbeReport};
+use super::{ProbeReport, probes::Probe};
 
 /// A net_report report.
-#[derive(Default, Debug, PartialEq, Eq, Clone)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct Report {
     /// A QAD IPv4 round trip completed.
     pub udp_v4: bool,
@@ -127,7 +128,7 @@ impl Report {
 }
 
 /// Latencies per relay node.
-#[derive(Debug, Default, PartialEq, Eq, Clone)]
+#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct RelayLatencies {
     #[cfg(not(wasm_browser))]
     ipv4: BTreeMap<RelayUrl, Duration>,

@@ -25,7 +25,7 @@ use std::{
 
 use http::StatusCode;
 use iroh_base::RelayUrl;
-use iroh_relay::{defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH, RelayMap, RelayNode};
+use iroh_relay::{RelayMap, RelayNode, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH};
 #[cfg(not(wasm_browser))]
 use iroh_relay::{
     dns::{DnsError, DnsResolver, StaggeredError},
@@ -34,29 +34,32 @@ use iroh_relay::{
 #[cfg(wasm_browser)]
 use n0_future::future::Pending;
 use n0_future::{
+    StreamExt as _,
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration, Instant},
-    StreamExt as _,
 };
 use rand::seq::IteratorRandom;
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument};
+use tracing::{Instrument, debug, error, trace, warn, warn_span};
 use url::Host;
 
 #[cfg(wasm_browser)]
 use super::portmapper; // We stub the library
-#[cfg(not(wasm_browser))]
-use super::{defaults::timeouts::DNS_TIMEOUT, ip_mapped_addrs::IpMappedAddresses};
 use super::{
-    probes::{Probe, ProbePlan},
     Report,
+    probes::{Probe, ProbePlan},
 };
 #[cfg(not(wasm_browser))]
+use super::{defaults::timeouts::DNS_TIMEOUT, ip_mapped_addrs::IpMappedAddresses};
+#[cfg(not(wasm_browser))]
 use crate::discovery::dns::DNS_STAGGERING_MS;
-use crate::net_report::defaults::timeouts::{
-    CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
+use crate::{
+    net_report::defaults::timeouts::{
+        CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
+    },
+    util::reqwest_client_builder,
 };
 
 /// Holds the state for a single report generation.
@@ -134,7 +137,7 @@ impl Client {
             insecure_skip_relay_cert_verify,
             if_state,
         };
-        let task = task::spawn(actor.run().instrument(info_span!("reportgen.actor")));
+        let task = task::spawn(actor.run().instrument(warn_span!("reportgen-actor")));
         (
             Self {
                 _drop_guard: AbortOnDropHandle::new(task),
@@ -316,7 +319,7 @@ impl Actor {
                     };
                     ProbeFinished::CaptivePortal(res)
                 }
-                .instrument(debug_span!("captive-portal")),
+                .instrument(warn_span!("captive-portal")),
             );
         }
         token
@@ -389,11 +392,11 @@ impl Actor {
                         };
                         ProbeFinished::Regular(res)
                     }
-                    .instrument(debug_span!(
+                    .instrument(warn_span!(
                         "run-probe",
                         ?proto,
                         ?delay,
-                        ?relay_node
+                        ?relay_node,
                     )),
                 );
             }
@@ -556,6 +559,8 @@ async fn check_captive_portal(
     // If we have a preferred relay node and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
 
+    use crate::util::reqwest_client_builder;
+
     let preferred_relay = preferred_relay.and_then(|url| dm.get_node(&url).map(|_| url));
 
     let url = match preferred_relay {
@@ -567,14 +572,12 @@ async fn check_captive_portal(
                 return Ok(false);
             }
 
-            let i = (0..urls.len())
-                .choose(&mut rand::thread_rng())
-                .unwrap_or_default();
+            let i = (0..urls.len()).choose(&mut rand::rng()).unwrap_or_default();
             urls[i].clone()
         }
     };
 
-    let mut builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+    let mut builder = reqwest_client_builder().redirect(reqwest::redirect::Policy::none());
 
     if let Some(Host::Domain(domain)) = url.host() {
         // Use our own resolver rather than getaddrinfo
@@ -599,11 +602,11 @@ async fn check_captive_portal(
     // details.
 
     let host_name = url.host_str().unwrap_or_default();
-    let challenge = format!("ts_{}", host_name);
-    let portal_url = format!("http://{}/generate_204", host_name);
+    let challenge = format!("ts_{host_name}");
+    let portal_url = format!("http://{host_name}/generate_204");
     let res = client
         .request(reqwest::Method::GET, portal_url)
-        .header("X-Tailscale-Challenge", &challenge)
+        .header("X-Iroh-Challenge", &challenge)
         .send()
         .await
         .context(captive_portal_error::HttpRequestSnafu)?;
@@ -611,7 +614,7 @@ async fn check_captive_portal(
     let expected_response = format!("response {challenge}");
     let is_valid_response = res
         .headers()
-        .get("X-Tailscale-Response")
+        .get("X-Iroh-Response")
         .map(|s| s.to_str().unwrap_or_default())
         == Some(&expected_response);
 
@@ -776,7 +779,7 @@ async fn run_https_probe(
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
-    let mut builder = reqwest::ClientBuilder::new();
+    let mut builder = reqwest_client_builder();
 
     #[cfg(not(wasm_browser))]
     {

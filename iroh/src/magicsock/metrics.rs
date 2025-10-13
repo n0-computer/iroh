@@ -1,12 +1,12 @@
-use iroh_metrics::{Counter, MetricsGroup};
+use iroh_metrics::{Counter, Histogram, MetricsGroup};
 use serde::{Deserialize, Serialize};
 
 /// Enum of metrics for the module
 // TODO(frando): Add description doc strings for each metric.
 #[allow(missing_docs)]
-#[derive(Debug, Default, Serialize, Deserialize, MetricsGroup)]
+#[derive(Debug, Serialize, Deserialize, MetricsGroup)]
 #[non_exhaustive]
-#[metrics(name = "magicsock")]
+#[metrics(name = "magicsock", default)]
 pub struct Metrics {
     pub update_direct_addrs: Counter,
 
@@ -77,4 +77,23 @@ pub struct Metrics {
     pub connection_handshake_success: Counter,
     /// Number of connections with a successful handshake that became direct.
     pub connection_became_direct: Counter,
+
+    /*
+     * Path Congestion Metrics
+     */
+    /// Number of times a path was marked as outdated due to consecutive ping failures.
+    pub path_marked_outdated: Counter,
+    /// Number of ping failures recorded across all paths.
+    pub path_ping_failures: Counter,
+    /// Number of consecutive failure resets (path recovered).
+    pub path_failure_resets: Counter,
+    /// Histogram of packet loss rates (0.0-1.0) observed on UDP paths.
+    #[default(Histogram::new(vec![0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0]))]
+    pub path_packet_loss_rate: Histogram,
+    /// Histogram of RTT variance (in milliseconds) as a congestion indicator.
+    #[default(Histogram::new(vec![0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0]))]
+    pub path_rtt_variance_ms: Histogram,
+    /// Histogram of path quality scores (0.0-1.0).
+    #[default(Histogram::new(vec![0.0, 0.3, 0.5, 0.7, 0.85, 0.95, 1.0]))]
+    pub path_quality_score: Histogram,
 }

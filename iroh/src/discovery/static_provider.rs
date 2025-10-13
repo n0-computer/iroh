@@ -11,11 +11,10 @@
 //! [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
 
 use std::{
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{BTreeMap, btree_map::Entry},
     sync::{Arc, RwLock},
 };
 
-use anyhow::Result;
 use iroh_base::NodeId;
 use n0_future::{
     boxed::BoxStream,
@@ -38,7 +37,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 /// # Examples
 ///
 /// ```rust
-/// use iroh::{discovery::static_provider::StaticProvider, Endpoint, NodeAddr};
+/// use iroh::{Endpoint, NodeAddr, discovery::static_provider::StaticProvider};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
@@ -54,13 +53,11 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 /// // Sometime later add a RelayUrl for a fake NodeId.
 /// let node_id = SecretKey::from_bytes(&[0u8; 32]).public(); // Do not use fake secret keys!
 /// // You can pass either `NodeInfo` or `NodeAddr` to `add_node_info`.
-/// discovery.add_node_info(
-///     NodeAddr {
-///         node_id,
-///         relay_url: Some("https://example.com".parse()?),
-///         direct_addresses: Default::default(),
-///     },
-/// );
+/// discovery.add_node_info(NodeAddr {
+///     node_id,
+///     relay_url: Some("https://example.com".parse()?),
+///     direct_addresses: Default::default(),
+/// });
 ///
 /// # Ok(())
 /// # }
@@ -100,7 +97,7 @@ impl StaticProvider {
     /// ```rust
     /// use std::{net::SocketAddr, str::FromStr};
     ///
-    /// use iroh::{discovery::static_provider::StaticProvider, Endpoint, NodeAddr};
+    /// use iroh::{Endpoint, NodeAddr, discovery::static_provider::StaticProvider};
     ///
     /// # fn get_addrs() -> Vec<NodeAddr> {
     /// #     Vec::new()
