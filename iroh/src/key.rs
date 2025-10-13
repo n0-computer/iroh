@@ -3,6 +3,7 @@
 use std::fmt::Debug;
 
 use aead::{AeadCore, AeadInOut, Buffer};
+use iroh_base::{PublicKey, SecretKey};
 use nested_enum_utils::common_fields;
 use snafu::{ResultExt, Snafu, ensure};
 
@@ -10,11 +11,13 @@ pub(crate) const NONCE_LEN: usize = 24;
 
 const AEAD_DATA: &[u8] = &[];
 
-pub(super) fn public_ed_box(key: &ed25519_dalek::VerifyingKey) -> crypto_box::PublicKey {
+pub(super) fn public_ed_box(key: &PublicKey) -> crypto_box::PublicKey {
+    let key = ed25519_dalek::VerifyingKey::from_bytes(key.as_bytes()).expect("valid key");
     crypto_box::PublicKey::from(key.to_montgomery())
 }
 
-pub(super) fn secret_ed_box(key: &ed25519_dalek::SigningKey) -> crypto_box::SecretKey {
+pub(super) fn secret_ed_box(key: &SecretKey) -> crypto_box::SecretKey {
+    let key = ed25519_dalek::SigningKey::from_bytes(&key.to_bytes());
     crypto_box::SecretKey::from(key.to_scalar())
 }
 
@@ -86,8 +89,8 @@ mod tests {
     use super::*;
 
     fn shared(this: &iroh_base::SecretKey, other: &iroh_base::PublicKey) -> SharedSecret {
-        let secret_key = secret_ed_box(this.as_ref());
-        let public_key = public_ed_box(&other.into());
+        let secret_key = secret_ed_box(this);
+        let public_key = public_ed_box(other);
 
         SharedSecret::new(&secret_key, &public_key)
     }
@@ -134,8 +137,8 @@ mod tests {
     fn test_same_public_key_api() {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let key = iroh_base::SecretKey::generate(&mut rng);
-        let public_key1: crypto_box::PublicKey = public_ed_box(&key.public().into());
-        let public_key2: crypto_box::PublicKey = secret_ed_box(key.as_ref()).public_key();
+        let public_key1: crypto_box::PublicKey = public_ed_box(&key.public());
+        let public_key2: crypto_box::PublicKey = secret_ed_box(&key).public_key();
 
         assert_eq!(public_key1, public_key2);
     }

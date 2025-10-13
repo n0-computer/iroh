@@ -1986,9 +1986,12 @@ impl Connection {
                         return Err(RemoteNodeIdSnafu.build());
                     }
 
-                    let peer_id = VerifyingKey::from_public_key_der(&certs[0])
-                        .map_err(|_| RemoteNodeIdSnafu.build())?
-                        .into();
+                    let peer_id = NodeId::from_bytes(
+                        VerifyingKey::from_public_key_der(&certs[0])
+                            .map_err(|_| RemoteNodeIdSnafu.build())?
+                            .as_bytes(),
+                    )
+                    .expect("valid key");
                     Ok(peer_id)
                 }
                 Err(err) => {

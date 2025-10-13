@@ -2508,6 +2508,7 @@ dependencies = [
  "snafu",
  "url",
  "zeroize",
+ "zeroize_derive",
 ]
 
 [[package]]

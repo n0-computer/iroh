@@ -99,6 +99,9 @@ impl<'de> Deserialize<'de> for PublicKey {
 }
 
 impl PublicKey {
+    /// The length of an ed25519 `PublicKey`, in bytes.
+    pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
+
     /// Get this public key as a byte array.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
@@ -123,8 +126,8 @@ impl PublicKey {
     ///
     /// Returns `Ok(())` if the signature is valid, and `Err` otherwise.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        let key: VerifyingKey = self.into();
-        key.verify_strict(message, &signature.0)
+        self.as_verifying_key()
+            .verify_strict(message, &signature.0)
             .map_err(|_| SignatureSnafu.build())
     }
 
@@ -138,8 +141,11 @@ impl PublicKey {
         )
     }
 
-    /// The length of an ed25519 `PublicKey`, in bytes.
-    pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
+    /// Needed for internal conversions, not part of the stable API.
+    #[doc(hidden)]
+    pub fn as_verifying_key(&self) -> VerifyingKey {
+        VerifyingKey::from_bytes(self.0.as_bytes()).expect("already verified")
+    }
 }
 
 struct PublicKeyShort([u8; 5]);
@@ -172,28 +178,6 @@ impl TryFrom<&[u8; 32]> for PublicKey {
 impl AsRef<[u8]> for PublicKey {
     fn as_ref(&self) -> &[u8] {
         self.as_bytes()
-    }
-}
-
-#[doc(hidden)]
-impl From<VerifyingKey> for PublicKey {
-    fn from(verifying_key: VerifyingKey) -> Self {
-        let key = verifying_key.to_bytes();
-        PublicKey(CompressedEdwardsY(key))
-    }
-}
-
-#[doc(hidden)]
-impl From<&PublicKey> for VerifyingKey {
-    fn from(value: &PublicKey) -> Self {
-        VerifyingKey::from_bytes(value.0.as_bytes()).expect("already verified")
-    }
-}
-
-#[doc(hidden)]
-impl From<PublicKey> for VerifyingKey {
-    fn from(value: PublicKey) -> Self {
-        VerifyingKey::from_bytes(value.0.as_bytes()).expect("already verified")
     }
 }
 
@@ -292,7 +276,8 @@ impl<'de> Deserialize<'de> for SecretKey {
 impl SecretKey {
     /// The public key of this [`SecretKey`].
     pub fn public(&self) -> PublicKey {
-        self.secret.verifying_key().into()
+        let key = self.secret.verifying_key().to_bytes();
+        PublicKey(CompressedEdwardsY(key))
     }
 
     /// Generate a new [`SecretKey`] with a randomness generator.
@@ -375,13 +360,16 @@ impl Display for Signature {
 }
 
 impl Signature {
+    /// The length of an ed25519 `Signature`, in bytes.
+    pub const LENGTH: usize = ed25519_dalek::Signature::BYTE_SIZE;
+
     /// Return the inner byte array.
-    pub fn to_bytes(&self) -> [u8; 64] {
+    pub fn to_bytes(&self) -> [u8; Self::LENGTH] {
         self.0.to_bytes()
     }
 
     /// Parse an Ed25519 signature from a byte slice.
-    pub fn from_bytes(bytes: &[u8; 64]) -> Self {
+    pub fn from_bytes(bytes: &[u8; Self::LENGTH]) -> Self {
         Self(ed25519_dalek::Signature::from_bytes(bytes))
     }
 }

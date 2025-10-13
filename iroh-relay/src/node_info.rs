@@ -564,7 +564,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         };
         let pubkey = packet.public_key();
         let pubkey_z32 = pubkey.to_z32();
-        let node_id = NodeId::from(*pubkey.verifying_key());
+        let node_id = NodeId::from_bytes(&pubkey.verifying_key().to_bytes()).expect("valid key");
         let zone = dns::Name::new(&pubkey_z32).expect("z32 encoding is valid");
         let txt_data = packet
             .all_resource_records()

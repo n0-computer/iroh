@@ -1408,7 +1408,7 @@ impl Handle {
         });
         let relay_transports = vec![relay_transport];
 
-        let secret_encryption_key = secret_ed_box(secret_key.as_ref());
+        let secret_encryption_key = secret_ed_box(&secret_key);
         #[cfg(not(wasm_browser))]
         let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
@@ -1687,7 +1687,7 @@ impl DiscoState {
     {
         let mut inner = self.secrets.lock().expect("poisoned");
         let x = inner.entry(node_id).or_insert_with(|| {
-            let public_key = public_ed_box(&node_id.into());
+            let public_key = public_ed_box(&node_id);
             SharedSecret::new(&self.secret_encryption_key, &public_key)
         });
         cb(x)
