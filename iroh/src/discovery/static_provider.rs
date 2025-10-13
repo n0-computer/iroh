@@ -64,10 +64,19 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 /// ```
 ///
 /// [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
-#[derive(Debug, Default, Clone)]
-#[repr(transparent)]
+#[derive(Debug, Clone)]
 pub struct StaticProvider {
     nodes: Arc<RwLock<BTreeMap<NodeId, StoredNodeInfo>>>,
+    provenance: &'static str,
+}
+
+impl Default for StaticProvider {
+    fn default() -> Self {
+        Self {
+            nodes: Default::default(),
+            provenance: Self::PROVENANCE,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -88,6 +97,18 @@ impl StaticProvider {
     /// Creates a new static discovery instance.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates a new static discovery instance with the provided `provenance`.
+    ///
+    /// The provenance is part of [`DiscoveryItem`]s returned from [`Self::resolve`].
+    /// It is mostly used for debugging information and allows understanding the origin of
+    /// addressing information used by an iroh [`Endpoint`].
+    pub fn with_provenance(provenance: &'static str) -> Self {
+        Self {
+            nodes: Default::default(),
+            provenance,
+        }
     }
 
     /// Creates a static discovery instance from node addresses.
@@ -196,7 +217,7 @@ impl Discovery for StaticProvider {
                     .as_micros() as u64;
                 let item = DiscoveryItem::new(
                     NodeInfo::from_parts(node_id, node_info.data.clone()),
-                    Self::PROVENANCE,
+                    self.provenance,
                     Some(last_updated),
                 );
                 Some(stream::iter(Some(Ok(item))).boxed())
@@ -245,6 +266,24 @@ mod tests {
         assert_eq!(removed, node_info);
         let res = discovery.get_node_info(key.public());
         assert!(res.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_provenance() -> Result {
+        let discovery = StaticProvider::with_provenance("foo");
+        let key = SecretKey::from_bytes(&[0u8; 32]);
+        let addr = NodeAddr {
+            node_id: key.public(),
+            relay_url: Some("https://example.com".parse()?),
+            direct_addresses: Default::default(),
+        };
+        discovery.add_node_info(addr);
+        let mut stream = discovery.resolve(key.public()).unwrap();
+        let item = stream.next().await.unwrap()?;
+        assert_eq!(item.provenance(), "foo");
+        assert_eq!(item.relay_url(), Some(&("https://example.com".parse()?)));
 
         Ok(())
     }
