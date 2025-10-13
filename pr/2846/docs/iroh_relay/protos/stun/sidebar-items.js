@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["MessageClass","StunAttribute","StunError"],"fn":["is","parse_binding_request","parse_response","request","response"],"mod":["methods"],"struct":["MessageDecoder","StunDecodeError","TransactionId"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ReportError"],"fn":["bind_local_stun_socket"],"struct":["Addr","Client","Metrics","Options","QuicConfig","RelayLatencies","Report"]};
+window.SIDEBAR_ITEMS = {"constant":["TIMEOUT"],"enum":["Probe"],"struct":["Metrics","Options","QuicConfig","RelayLatencies","Report"]};
