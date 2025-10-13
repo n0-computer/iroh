@@ -235,9 +235,7 @@ impl FromStr for PublicKey {
 
 /// A secret key.
 #[derive(Clone, zeroize::ZeroizeOnDrop)]
-pub struct SecretKey {
-    secret: SigningKey,
-}
+pub struct SecretKey(SigningKey);
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -259,7 +257,7 @@ impl Serialize for SecretKey {
     where
         S: serde::Serializer,
     {
-        self.secret.serialize(serializer)
+        self.0.serialize(serializer)
     }
 }
 
@@ -269,14 +267,14 @@ impl<'de> Deserialize<'de> for SecretKey {
         D: serde::Deserializer<'de>,
     {
         let secret = SigningKey::deserialize(deserializer)?;
-        Ok(secret.into())
+        Ok(Self(secret))
     }
 }
 
 impl SecretKey {
     /// The public key of this [`SecretKey`].
     pub fn public(&self) -> PublicKey {
-        let key = self.secret.verifying_key().to_bytes();
+        let key = self.0.verifying_key().to_bytes();
         PublicKey(CompressedEdwardsY(key))
     }
 
@@ -288,42 +286,33 @@ impl SecretKey {
     /// ```
     pub fn generate<R: CryptoRng + ?Sized>(csprng: &mut R) -> Self {
         let secret = SigningKey::generate(csprng);
-
-        Self { secret }
+        Self(secret)
     }
 
     /// Sign the given message and return a digital signature
     pub fn sign(&self, msg: &[u8]) -> Signature {
         use ed25519_dalek::Signer;
 
-        let sig = self.secret.sign(msg);
+        let sig = self.0.sign(msg);
         Signature(sig)
     }
 
     /// Convert this to the bytes representing the secret part.
     /// The public part can always be recovered.
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.secret.to_bytes()
+        self.0.to_bytes()
     }
 
     /// Create a secret key from its byte representation.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         let secret = SigningKey::from_bytes(bytes);
-        secret.into()
+        Self(secret)
     }
-}
 
-// TODO: remove once this is not needed in iroh anymore
-#[doc(hidden)]
-impl AsRef<ed25519_dalek::SigningKey> for SecretKey {
-    fn as_ref(&self) -> &ed25519_dalek::SigningKey {
-        &self.secret
-    }
-}
-
-impl From<SigningKey> for SecretKey {
-    fn from(secret: SigningKey) -> Self {
-        SecretKey { secret }
+    /// Needed for internal conversions, not part of the stable API.
+    #[doc(hidden)]
+    pub fn as_signing_key(&self) -> &SigningKey {
+        &self.0
     }
 }
 
@@ -339,7 +328,7 @@ impl TryFrom<&[u8]> for SecretKey {
     #[inline]
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         let secret = SigningKey::try_from(bytes)?;
-        Ok(secret.into())
+        Ok(Self(secret))
     }
 }
 
