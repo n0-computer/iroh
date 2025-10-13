@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(secret_key: <span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CreateConfigError&gt; {
 <a href=#30 id=30 data-nosnippet>30</a>        <span class="comment">// Directly use the key
 <a href=#31 id=31 data-nosnippet>31</a>        </span><span class="kw">let </span>client_private_key = secret_key
-<a href=#32 id=32 data-nosnippet>32</a>            .as_ref()
+<a href=#32 id=32 data-nosnippet>32</a>            .as_signing_key()
 <a href=#33 id=33 data-nosnippet>33</a>            .to_pkcs8_pem(LineEnding::default())
 <a href=#34 id=34 data-nosnippet>34</a>            .expect(<span class="string">"key is valid"</span>);
 <a href=#35 id=35 data-nosnippet>35</a>
