@@ -27,6 +27,7 @@ snafu = { version = "0.8.5", features = ["rust_1_81"], optional = true }
 n0-snafu = "0.2.2"
 nested_enum_utils = "0.2.0"
 zeroize = { version = "1.8.2", optional = true, features = ["derive"] }
+zeroize_derive = { version = "1.4.2", optional = true } # needed for minimal versions
 
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }
@@ -49,6 +50,7 @@ key = [
   "dep:data-encoding",
   "dep:rand_core",
   "dep:zeroize",
+  "dep:zeroize_derive",
   "relay",
 ]
 relay = [
