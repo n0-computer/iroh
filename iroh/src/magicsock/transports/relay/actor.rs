@@ -1478,73 +1478,68 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_active_relay_inactive() -> Result {
-        // tracing_subscriber::fmt::init();
+        let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 
-        for i in 0..100 {
-            println!("---- round: {i}");
-            let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
+        let secret_key = SecretKey::from_bytes(&[1u8; 32]);
+        let (datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(16);
+        let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
+        let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
+        let (inbox_tx, inbox_rx) = mpsc::channel(16);
+        let cancel_token = CancellationToken::new();
+        let mut task = start_active_relay_actor(
+            secret_key,
+            cancel_token.clone(),
+            relay_url,
+            prio_inbox_rx,
+            inbox_rx,
+            send_datagram_rx,
+            datagram_recv_tx,
+            info_span!("actor-under-test"),
+        );
 
-            let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-            let (datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(16);
-            let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
-            let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
-            let (inbox_tx, inbox_rx) = mpsc::channel(16);
-            let cancel_token = CancellationToken::new();
-            let mut task = start_active_relay_actor(
-                secret_key,
-                cancel_token.clone(),
-                relay_url,
-                prio_inbox_rx,
-                inbox_rx,
-                send_datagram_rx,
-                datagram_recv_tx,
-                info_span!("actor-under-test"),
-            );
-
-            // Wait until the actor is connected to the relay server.
-            tokio::time::timeout(Duration::from_millis(200), async {
-                loop {
-                    let (tx, rx) = oneshot::channel();
-                    inbox_tx.send(ActiveRelayMessage::PingServer(tx)).await.ok();
-                    if tokio::time::timeout(Duration::from_millis(100), rx)
-                        .await
-                        .map(|resp| resp.is_ok())
-                        .unwrap_or_default()
-                    {
-                        break;
-                    }
+        // Wait until the actor is connected to the relay server.
+        tokio::time::timeout(Duration::from_millis(200), async {
+            loop {
+                let (tx, rx) = oneshot::channel();
+                inbox_tx.send(ActiveRelayMessage::PingServer(tx)).await.ok();
+                if tokio::time::timeout(Duration::from_millis(100), rx)
+                    .await
+                    .map(|resp| resp.is_ok())
+                    .unwrap_or_default()
+                {
+                    break;
                 }
-            })
-            .await
-            .context("timeout")?;
+            }
+        })
+        .await
+        .context("timeout")?;
 
-            // From now on, we pause time
-            tokio::time::pause();
-            // We now have an idling ActiveRelayActor.  If we advance time just a little it
-            // should stay alive.
-            info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2");
-            tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / 2).await;
+        // From now on, we pause time
+        tokio::time::pause();
+        // We now have an idling ActiveRelayActor.  If we advance time just a little it
+        // should stay alive.
+        info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2");
+        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / 2).await;
 
-            assert!(
-                tokio::time::timeout(Duration::from_millis(100), &mut task)
-                    .await
-                    .is_err(),
-                "actor task terminated"
-            );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut task)
+                .await
+                .is_err(),
+            "actor task terminated"
+        );
 
-            // If we advance time a lot it should finish.
-            info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME");
-            tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
-            assert!(
-                tokio::time::timeout(Duration::from_millis(1000), task)
-                    .await
-                    .is_ok(),
-                "actor task still running"
-            );
+        // If we advance time a lot it should finish.
+        info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME");
+        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1000), task)
+                .await
+                .is_ok(),
+            "actor task still running"
+        );
 
-            tokio::time::resume();
-            cancel_token.cancel();
-        }
+        tokio::time::resume();
+        cancel_token.cancel();
         Ok(())
     }
 
