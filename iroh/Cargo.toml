@@ -95,7 +95,7 @@ axum = { version = "0.8", optional = true }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
-netdev = { version = "0.36.0" }
+netdev = { version = "0.37.0" }
 portmapper = { version = "0.10", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
