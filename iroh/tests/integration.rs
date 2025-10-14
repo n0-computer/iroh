@@ -49,9 +49,10 @@ async fn simple_node_id_based_connection_transfer() -> Result {
 
     // ensure the server has connected to a relay
     // and therefore has enough information to publish
+    tracing::info!("waiting for server to go online");
     time::timeout(Duration::from_secs(6), server.online())
         .await
-        .e()?;
+        .context("server endpoint took too long to get online")?;
 
     // Make the server respond to requests with an echo
     task::spawn({
