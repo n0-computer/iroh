@@ -276,6 +276,7 @@ pub use iroh_base::{
     Signature, SignatureError,
 };
 pub use iroh_relay::{RelayMap, RelayNode, node_info};
+pub use magicsock::InterfacePriority;
 pub use n0_watcher::Watcher;
 
 #[cfg(any(test, feature = "test-utils"))]
