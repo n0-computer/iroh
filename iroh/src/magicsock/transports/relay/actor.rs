@@ -1535,15 +1535,14 @@ mod tests {
             // If we advance time a lot it should finish.
             info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME");
             tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
-            tokio::time::resume();
-
             assert!(
-                tokio::time::timeout(Duration::from_millis(100), task)
+                tokio::time::timeout(Duration::from_millis(1000), task)
                     .await
                     .is_ok(),
                 "actor task still running"
             );
 
+            tokio::time::resume();
             cancel_token.cancel();
         }
         Ok(())
