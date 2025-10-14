@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -324,10 +325,19 @@ impl From<&quinn_udp::Transmit<'_>> for OwnedTransmit {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Addr {
     Ip(SocketAddr),
     Relay(RelayUrl, NodeId),
+}
+
+impl fmt::Debug for Addr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Addr::Ip(addr) => write!(f, "Ip({addr})"),
+            Addr::Relay(url, node_id) => write!(f, "Relay({url}, {})", node_id.fmt_short()),
+        }
+    }
 }
 
 impl Default for Addr {
