@@ -3,14 +3,13 @@
 use std::{
     borrow::Borrow,
     cmp::{Ord, PartialOrd},
-    fmt::{Debug, Display},
+    fmt::{self, Debug, Display},
     hash::Hash,
     ops::Deref,
     str::FromStr,
 };
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
-pub use ed25519_dalek::{Signature, SignatureError};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use nested_enum_utils::common_fields;
 use rand_core::CryptoRng;
@@ -100,14 +99,12 @@ impl<'de> Deserialize<'de> for PublicKey {
 }
 
 impl PublicKey {
+    /// The length of an ed25519 `PublicKey`, in bytes.
+    pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
+
     /// Get this public key as a byte array.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
-    }
-
-    /// Returns the [`VerifyingKey`] for this `PublicKey`.
-    pub fn public(&self) -> VerifyingKey {
-        VerifyingKey::from_bytes(self.0.as_bytes()).expect("already verified")
     }
 
     /// Construct a `PublicKey` from a slice of bytes.
@@ -117,7 +114,7 @@ impl PublicKey {
     /// This will return a [`SignatureError`] if the bytes passed into this method do not represent
     /// a valid `ed25519_dalek` curve point. Will never fail for bytes return from [`Self::as_bytes`].
     /// See [`VerifyingKey::from_bytes`] for details.
-    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, KeyParsingError> {
         let key = VerifyingKey::from_bytes(bytes)?;
         let y = CompressedEdwardsY(key.to_bytes());
         Ok(Self(y))
@@ -129,7 +126,9 @@ impl PublicKey {
     ///
     /// Returns `Ok(())` if the signature is valid, and `Err` otherwise.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.public().verify_strict(message, signature)
+        self.as_verifying_key()
+            .verify_strict(message, &signature.0)
+            .map_err(|_| SignatureSnafu.build())
     }
 
     /// Convert to a hex string limited to the first 5 bytes for a friendly string
@@ -142,8 +141,17 @@ impl PublicKey {
         )
     }
 
-    /// The length of an ed25519 `PublicKey`, in bytes.
-    pub const LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
+    /// Needed for internal conversions, not part of the stable API.
+    #[doc(hidden)]
+    pub fn as_verifying_key(&self) -> VerifyingKey {
+        VerifyingKey::from_bytes(self.0.as_bytes()).expect("already verified")
+    }
+
+    /// Needed for internal conversions, not part of the stable API.
+    #[doc(hidden)]
+    pub fn from_verifying_key(key: VerifyingKey) -> Self {
+        Self(CompressedEdwardsY(key.to_bytes()))
+    }
 }
 
 struct PublicKeyShort([u8; 5]);
@@ -155,7 +163,7 @@ impl Display for PublicKeyShort {
 }
 
 impl TryFrom<&[u8]> for PublicKey {
-    type Error = SignatureError;
+    type Error = KeyParsingError;
 
     #[inline]
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
@@ -165,7 +173,7 @@ impl TryFrom<&[u8]> for PublicKey {
 }
 
 impl TryFrom<&[u8; 32]> for PublicKey {
-    type Error = SignatureError;
+    type Error = KeyParsingError;
 
     #[inline]
     fn try_from(bytes: &[u8; 32]) -> Result<Self, Self::Error> {
@@ -176,13 +184,6 @@ impl TryFrom<&[u8; 32]> for PublicKey {
 impl AsRef<[u8]> for PublicKey {
     fn as_ref(&self) -> &[u8] {
         self.as_bytes()
-    }
-}
-
-impl From<VerifyingKey> for PublicKey {
-    fn from(verifying_key: VerifyingKey) -> Self {
-        let key = verifying_key.to_bytes();
-        PublicKey(CompressedEdwardsY(key))
     }
 }
 
@@ -234,15 +235,13 @@ impl FromStr for PublicKey {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = decode_base32_hex(s)?;
 
-        Ok(Self::from_bytes(&bytes)?)
+        Self::from_bytes(&bytes)
     }
 }
 
 /// A secret key.
-#[derive(Clone)]
-pub struct SecretKey {
-    secret: SigningKey,
-}
+#[derive(Clone, zeroize::ZeroizeOnDrop)]
+pub struct SecretKey(SigningKey);
 
 impl Debug for SecretKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -264,7 +263,7 @@ impl Serialize for SecretKey {
     where
         S: serde::Serializer,
     {
-        self.secret.serialize(serializer)
+        self.0.serialize(serializer)
     }
 }
 
@@ -274,14 +273,15 @@ impl<'de> Deserialize<'de> for SecretKey {
         D: serde::Deserializer<'de>,
     {
         let secret = SigningKey::deserialize(deserializer)?;
-        Ok(secret.into())
+        Ok(Self(secret))
     }
 }
 
 impl SecretKey {
     /// The public key of this [`SecretKey`].
     pub fn public(&self) -> PublicKey {
-        self.secret.verifying_key().into()
+        let key = self.0.verifying_key().to_bytes();
+        PublicKey(CompressedEdwardsY(key))
     }
 
     /// Generate a new [`SecretKey`] with a randomness generator.
@@ -292,38 +292,33 @@ impl SecretKey {
     /// ```
     pub fn generate<R: CryptoRng + ?Sized>(csprng: &mut R) -> Self {
         let secret = SigningKey::generate(csprng);
-
-        Self { secret }
+        Self(secret)
     }
 
     /// Sign the given message and return a digital signature
     pub fn sign(&self, msg: &[u8]) -> Signature {
         use ed25519_dalek::Signer;
 
-        self.secret.sign(msg)
+        let sig = self.0.sign(msg);
+        Signature(sig)
     }
 
     /// Convert this to the bytes representing the secret part.
     /// The public part can always be recovered.
     pub fn to_bytes(&self) -> [u8; 32] {
-        self.secret.to_bytes()
+        self.0.to_bytes()
     }
 
     /// Create a secret key from its byte representation.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         let secret = SigningKey::from_bytes(bytes);
-        secret.into()
+        Self(secret)
     }
 
-    /// Returns the [`SigningKey`] for this `SecretKey`.
-    pub fn secret(&self) -> &SigningKey {
-        &self.secret
-    }
-}
-
-impl From<SigningKey> for SecretKey {
-    fn from(secret: SigningKey) -> Self {
-        SecretKey { secret }
+    /// Needed for internal conversions, not part of the stable API.
+    #[doc(hidden)]
+    pub fn as_signing_key(&self) -> &SigningKey {
+        &self.0
     }
 }
 
@@ -334,14 +329,50 @@ impl From<[u8; 32]> for SecretKey {
 }
 
 impl TryFrom<&[u8]> for SecretKey {
-    type Error = SignatureError;
+    type Error = KeyParsingError;
 
     #[inline]
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         let secret = SigningKey::try_from(bytes)?;
-        Ok(secret.into())
+        Ok(Self(secret))
     }
 }
+
+/// Ed25519 signature.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub struct Signature(ed25519_dalek::Signature);
+
+impl Debug for Signature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
+impl Display for Signature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Signature {
+    /// The length of an ed25519 `Signature`, in bytes.
+    pub const LENGTH: usize = ed25519_dalek::Signature::BYTE_SIZE;
+
+    /// Return the inner byte array.
+    pub fn to_bytes(&self) -> [u8; Self::LENGTH] {
+        self.0.to_bytes()
+    }
+
+    /// Parse an Ed25519 signature from a byte slice.
+    pub fn from_bytes(bytes: &[u8; Self::LENGTH]) -> Self {
+        Self(ed25519_dalek::Signature::from_bytes(bytes))
+    }
+}
+
+/// Verification of a signature failed.
+#[derive(Debug, Snafu)]
+#[snafu(display("Invalid signature"))]
+pub struct SignatureError;
 
 fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
     let mut bytes = [0u8; 32];

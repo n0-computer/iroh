@@ -13,9 +13,8 @@ use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use tracing::{debug, error, instrument, trace, warn};
 
-use crate::net_report::Report;
-
 use super::{MagicSock, mapped_addrs::MultipathMappedAddr, node_map::NodeStateMessage};
+use crate::net_report::Report;
 
 #[cfg(not(wasm_browser))]
 mod ip;
@@ -25,7 +24,6 @@ mod relay;
 pub(crate) use self::ip::IpTransport;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpSender};
-
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 
 /// Manages the different underlying data transports that the magicsock

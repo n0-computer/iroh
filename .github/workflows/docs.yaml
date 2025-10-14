@@ -32,7 +32,7 @@ jobs:
     - uses: actions/checkout@v5
     - uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: nightly-2025-02-20
+        toolchain: nightly-2025-10-09
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.9
 

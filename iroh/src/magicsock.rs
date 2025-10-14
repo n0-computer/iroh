@@ -49,6 +49,13 @@ use transports::{LocalAddrsWatch, MagicTransport};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
+use self::transports::IpTransport;
+use self::{
+    metrics::Metrics as MagicsockMetrics,
+    node_map::NodeMap,
+    transports::{RelayActorConfig, RelayTransport, Transports, TransportsSender},
+};
+#[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
@@ -64,14 +71,6 @@ use crate::{
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
-};
-
-#[cfg(not(wasm_browser))]
-use self::transports::IpTransport;
-use self::{
-    metrics::Metrics as MagicsockMetrics,
-    node_map::NodeMap,
-    transports::{RelayActorConfig, RelayTransport, Transports, TransportsSender},
 };
 
 mod metrics;
@@ -1267,7 +1266,7 @@ impl DiscoState {
         secret_key: &SecretKey,
     ) -> (Self, mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>) {
         let this_node_id = secret_key.public();
-        let secret_encryption_key = secret_ed_box(secret_key.secret());
+        let secret_encryption_key = secret_ed_box(secret_key);
         let (disco_sender, disco_receiver) = mpsc::channel(256);
 
         (
@@ -1308,7 +1307,7 @@ impl DiscoState {
     {
         let mut inner = self.secrets.lock().expect("poisoned");
         let x = inner.entry(node_id).or_insert_with(|| {
-            let public_key = public_ed_box(&node_id.public());
+            let public_key = public_ed_box(&node_id);
             SharedSecret::new(&self.secret_encryption_key, &public_key)
         });
         cb(x)
@@ -1433,6 +1432,9 @@ impl Actor {
         let mut portmap_watcher_closed = false;
 
         let mut net_report_watcher = self.msock.net_report.watch();
+
+        // ensure we are doing an initial publish of our addresses
+        self.msock.publish_my_addr();
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
@@ -1932,6 +1934,7 @@ mod tests {
     use tracing::{Instrument, error, info, info_span, instrument};
     use tracing_test::traced_test;
 
+    use super::{NodeIdMappedAddr, Options, mapped_addrs::MappedAddr, node_map::Source};
     use crate::{
         Endpoint, RelayMap, RelayMode, SecretKey,
         discovery::static_provider::StaticProvider,
@@ -1940,8 +1943,6 @@ mod tests {
         magicsock::{Handle, MagicSock},
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
-
-    use super::{NodeIdMappedAddr, Options, mapped_addrs::MappedAddr, node_map::Source};
 
     const ALPN: &[u8] = b"n0/test/1";
 

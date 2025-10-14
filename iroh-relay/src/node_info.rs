@@ -40,7 +40,7 @@ use std::{
     str::{FromStr, Utf8Error},
 };
 
-use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
+use iroh_base::{KeyParsingError, NodeAddr, NodeId, RelayUrl, SecretKey};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use url::Url;
@@ -81,7 +81,10 @@ pub enum DecodingError {
     #[snafu(display("length must be 32 bytes, but got {len} byte(s)"))]
     InvalidLength { len: usize },
     #[snafu(display("node id is not a valid public key"))]
-    InvalidSignature { source: SignatureError },
+    InvalidKey {
+        #[snafu(source(from(KeyParsingError, Box::new)))]
+        source: Box<KeyParsingError>,
+    },
 }
 
 /// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
@@ -89,12 +92,12 @@ pub enum DecodingError {
 pub trait NodeIdExt {
     /// Encodes a [`NodeId`] in [`z-base-32`] encoding.
     ///
-    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
     fn to_z32(&self) -> String;
 
     /// Parses a [`NodeId`] from [`z-base-32`] encoding.
     ///
-    /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+    /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
     fn from_z32(s: &str) -> Result<NodeId, DecodingError>;
 }
 
@@ -108,7 +111,7 @@ impl NodeIdExt for NodeId {
         let bytes: &[u8; 32] = &bytes
             .try_into()
             .map_err(|_| InvalidLengthSnafu { len: s.len() }.build())?;
-        let node_id = NodeId::from_bytes(bytes).context(InvalidSignatureSnafu)?;
+        let node_id = NodeId::from_bytes(bytes).context(InvalidKeySnafu)?;
         Ok(node_id)
     }
 }
@@ -561,7 +564,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         };
         let pubkey = packet.public_key();
         let pubkey_z32 = pubkey.to_z32();
-        let node_id = NodeId::from(*pubkey.verifying_key());
+        let node_id = NodeId::from_bytes(&pubkey.verifying_key().to_bytes()).expect("valid key");
         let zone = dns::Name::new(&pubkey_z32).expect("z32 encoding is valid");
         let txt_data = packet
             .all_resource_records()

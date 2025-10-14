@@ -1,9 +1,8 @@
-use std::sync::Arc;
 use std::{
     collections::{BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 use iroh_base::{NodeAddr, NodeId, RelayUrl};
@@ -13,28 +12,24 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{Instrument, info_span, trace, warn};
 
-use crate::disco::{self};
-#[cfg(any(test, feature = "test-utils"))]
-use crate::endpoint::PathSelection;
-
-use super::mapped_addrs::{AddrMap, RelayMappedAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use super::transports::TransportsSender;
 #[cfg(not(any(test, feature = "test-utils")))]
 use super::transports::TransportsSender;
-use super::{DirectAddr, DiscoState};
 use super::{
-    MagicsockMetrics,
-    mapped_addrs::NodeIdMappedAddr,
+    DirectAddr, DiscoState, MagicsockMetrics,
+    mapped_addrs::{AddrMap, NodeIdMappedAddr, RelayMappedAddr},
     transports::{self, OwnedTransmit},
 };
+use crate::disco::{self};
+#[cfg(any(test, feature = "test-utils"))]
+use crate::endpoint::PathSelection;
 
 mod node_state;
 mod path_state;
 
-pub use node_state::{ConnectionType, PathInfo, TransportType};
-
 pub(super) use node_state::NodeStateMessage;
+pub use node_state::{ConnectionType, PathInfo, TransportType};
 
 // TODO: use this
 // /// Number of nodes that are inactive for which we keep info about. This limit is enforced

@@ -27,11 +27,28 @@ use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
+// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
+pub use quinn::{
+    AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
+    ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
+    ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
+    SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
+    WeakConnectionHandle, WriteError,
+};
 use quinn_proto::PathId;
+pub use quinn_proto::{
+    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
+    congestion::{Controller, ControllerFactory},
+    crypto::{
+        AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
+        ServerConfig as CryptoServerConfig, UnsupportedVersion,
+    },
+};
 use snafu::{ResultExt, Snafu, ensure};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+pub use super::magicsock::{AddNodeAddrError, ConnectionType, DirectAddr, DirectAddrType};
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
 #[cfg(not(wasm_browser))]
@@ -45,31 +62,12 @@ use crate::{
         self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, OwnAddressSnafu,
         PATH_MAX_IDLE_TIMEOUT, PathInfo,
         mapped_addrs::{MappedAddr, MultipathMappedAddr, NodeIdMappedAddr},
-        node_map::TransportType,
+        node_map::{Source, TransportType},
     },
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
-
-// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
-pub use quinn::{
-    AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
-    ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
-    ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
-    SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
-    WeakConnectionHandle, WriteError,
-};
-pub use quinn_proto::{
-    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
-    congestion::{Controller, ControllerFactory},
-    crypto::{
-        AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
-        ServerConfig as CryptoServerConfig, UnsupportedVersion,
-    },
-};
-
-pub use super::magicsock::{AddNodeAddrError, ConnectionType, DirectAddr, DirectAddrType};
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///
@@ -718,7 +716,7 @@ impl Endpoint {
         ensure!(node_addr.node_id != self.node_id(), SelfConnectSnafu);
 
         if !node_addr.is_empty() {
-            self.add_node_addr(node_addr.clone()).await?;
+            self.add_node_addr(node_addr.clone(), Source::App).await?;
         }
         let node_id = node_addr.node_id;
         trace!(dst_node_id = %node_id.fmt_short(), "connecting");
@@ -793,7 +791,7 @@ impl Endpoint {
     /// connecting to this node. Any address that matches this node's direct addresses will be
     /// silently ignored.
     ///
-    /// See also [`Endpoint::add_node_addr_with_source`].
+    /// The *source* is used for logging exclusively and will not be stored.
     ///
     /// # Using node discovery instead
     ///
@@ -806,48 +804,11 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    async fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
-        self.add_node_addr_inner(node_addr, magicsock::node_map::Source::App)
-            .await
-    }
-
-    /// Informs this [`Endpoint`] about addresses of the iroh node, noting the source.
-    ///
-    /// This updates the local state for the remote node.  If the provided [`NodeAddr`] contains a
-    /// [`RelayUrl`] this will be used as the new relay server for this node.  If it contains any
-    /// new IP endpoints they will also be stored and tried when next connecting to this node. Any
-    /// address that matches this node's direct addresses will be silently ignored. The *source* is
-    /// used for logging exclusively and will not be stored.
-    ///
-    /// # Using node discovery instead
-    ///
-    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
-    /// This provides more flexibility and future proofing.
-    ///
-    /// # Errors
-    ///
-    /// Will return an error if we attempt to add our own [`NodeId`] to the node map or
-    /// if the direct addresses are a subset of ours.
-    ///
-    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub(crate) async fn add_node_addr_with_source(
+    /// [`RelayUrl`]: crate::RelayUrl
+    pub(crate) async fn add_node_addr(
         &self,
         node_addr: NodeAddr,
-        source: &'static str,
-    ) -> Result<(), AddNodeAddrError> {
-        self.add_node_addr_inner(
-            node_addr,
-            magicsock::node_map::Source::NamedApp {
-                name: source.into(),
-            },
-        )
-        .await
-    }
-
-    async fn add_node_addr_inner(
-        &self,
-        node_addr: NodeAddr,
-        source: magicsock::node_map::Source,
+        source: Source,
     ) -> Result<(), AddNodeAddrError> {
         // Connecting to ourselves is not supported.
         snafu::ensure!(node_addr.node_id != self.node_id(), OwnAddressSnafu);
@@ -960,7 +921,10 @@ impl Endpoint {
     ///
     /// Once this has been resolved once, this will always immediately resolve.
     ///
-    /// This has no timeout, so if that is needed, you need to wrap it in a timeout.
+    /// This has no timeout, so if that is needed, you need to wrap it in a
+    /// timeout. We recommend using a timeout close to
+    /// [`crate::net_report::TIMEOUT`], so you can be sure that at least one
+    /// [`crate::net_report::Report`] has been attempted.
     ///
     /// To understand if the endpoint has gone back "offline",
     /// you must use the [`Endpoint::watch_node_addr`] method, to
@@ -1976,9 +1940,11 @@ impl Connection {
                         return Err(RemoteNodeIdSnafu.build());
                     }
 
-                    let peer_id = VerifyingKey::from_public_key_der(&certs[0])
-                        .map_err(|_| RemoteNodeIdSnafu.build())?
-                        .into();
+                    let peer_id = NodeId::from_verifying_key(
+                        VerifyingKey::from_public_key_der(&certs[0])
+                            .map_err(|_| RemoteNodeIdSnafu.build())?,
+                    );
+
                     Ok(peer_id)
                 }
                 Err(err) => {
@@ -2186,10 +2152,6 @@ mod tests {
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Connecting to ourself"));
 
-        let res = ep.add_node_addr(my_addr).await;
-        assert!(res.is_err());
-        let err = res.err().unwrap();
-        assert!(err.to_string().starts_with("Adding our own address"));
         Ok(())
     }
 
@@ -2602,27 +2564,30 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_bidi_send_recv() -> Result {
+        let disco = StaticProvider::new();
         let ep1 = Endpoint::builder()
+            .discovery(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled);
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
 
-        let ep1 = ep1.bind().await?;
         let ep2 = Endpoint::builder()
+            .discovery(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled);
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
 
-        let ep2 = ep2.bind().await?;
+        disco.add_node_info(ep1.node_addr());
+        disco.add_node_info(ep2.node_addr());
 
-        let ep1_nodeaddr = ep1.node_addr();
-        let ep2_nodeaddr = ep2.node_addr();
-        ep1.add_node_addr(ep2_nodeaddr.clone()).await?;
-        ep2.add_node_addr(ep1_nodeaddr.clone()).await?;
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
         eprintln!("node id 1 {ep1_nodeid}");
         eprintln!("node id 2 {ep2_nodeid}");
 
-        async fn connect_hello(ep: Endpoint, dst: NodeAddr) -> Result {
+        async fn connect_hello(ep: Endpoint, dst: NodeId) -> Result {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let (mut send, mut recv) = conn.open_bi().await.e()?;
             info!("sending hello");
@@ -2669,14 +2634,14 @@ mod tests {
             ep2 = %ep2.node_id().fmt_short(),
             dst = %ep1_nodeid.fmt_short(),
         )));
-        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeaddr).instrument(
+        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeid).instrument(
             info_span!(
                 "p1_connect",
                 ep1 = %ep1.node_id().fmt_short(),
                 dst = %ep2_nodeid.fmt_short(),
             ),
         ));
-        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeaddr).instrument(
+        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeid).instrument(
             info_span!(
                 "p2_connect",
                 ep2 = %ep2.node_id().fmt_short(),

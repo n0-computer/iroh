@@ -16,6 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+use super::{Source, TransportsSenderMessage, path_state::PathState};
 // TODO: Use this
 // #[cfg(any(test, feature = "test-utils"))]
 // use crate::endpoint::PathSelection;
@@ -29,8 +30,6 @@ use crate::{
     },
     util::MaybeFuture,
 };
-
-use super::{Source, TransportsSenderMessage, path_state::PathState};
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per node.

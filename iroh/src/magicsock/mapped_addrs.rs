@@ -1,5 +1,4 @@
 //! The various mapped addresses we use.
-//!
 
 //! We use non-IP transports to carry datagrams.  Yet Quinn needs to address those
 //! transports using IPv6 addresses.  These defines mappings of several IPv6 Unique Local

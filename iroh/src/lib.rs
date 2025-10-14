@@ -250,7 +250,7 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(wasm_browser, allow(unused))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
-#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
+#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
 mod disco;
 mod key;
@@ -273,6 +273,7 @@ pub mod protocol;
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
+    Signature, SignatureError,
 };
 pub use iroh_relay::{RelayMap, RelayNode, node_info};
 pub use n0_watcher::Watcher;

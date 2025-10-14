@@ -27,6 +27,7 @@ use crate::{
 /// [`NodeId`]: crate::key::NodeId
 /// [`Display`]: std::fmt::Display
 /// [`FromStr`]: std::str::FromStr
+/// ['RelayUrl`]: crate::relay_url::RelayUrl
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[display("{}", Ticket::serialize(self))]
 pub struct NodeTicket {
