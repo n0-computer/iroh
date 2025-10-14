@@ -12,12 +12,12 @@ pub(crate) const NONCE_LEN: usize = 24;
 const AEAD_DATA: &[u8] = &[];
 
 pub(super) fn public_ed_box(key: &PublicKey) -> crypto_box::PublicKey {
-    let key = ed25519_dalek::VerifyingKey::from_bytes(key.as_bytes()).expect("valid key");
+    let key = key.as_verifying_key();
     crypto_box::PublicKey::from(key.to_montgomery())
 }
 
 pub(super) fn secret_ed_box(key: &SecretKey) -> crypto_box::SecretKey {
-    let key = ed25519_dalek::SigningKey::from_bytes(&key.to_bytes());
+    let key = key.as_signing_key();
     crypto_box::SecretKey::from(key.to_scalar())
 }
 

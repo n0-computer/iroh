@@ -146,6 +146,12 @@ impl PublicKey {
     pub fn as_verifying_key(&self) -> VerifyingKey {
         VerifyingKey::from_bytes(self.0.as_bytes()).expect("already verified")
     }
+
+    /// Needed for internal conversions, not part of the stable API.
+    #[doc(hidden)]
+    pub fn from_verifying_key(key: VerifyingKey) -> Self {
+        Self(CompressedEdwardsY(key.to_bytes()))
+    }
 }
 
 struct PublicKeyShort([u8; 5]);
