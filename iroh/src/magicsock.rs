@@ -605,11 +605,11 @@ impl MagicSock {
                 // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
                 // which we do in Endpoint::bind.
                 if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
-                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: DISCO packet");
+                    trace!(src = ?source_addr, len = datagram.len(), "UDP recv: DISCO packet");
                     self.handle_disco_message(sender, sealed_box, source_addr);
                     datagram[0] = 0u8;
                 } else {
-                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: QUIC packet");
+                    trace!(src = ?source_addr, len = datagram.len(), "UDP recv: QUIC packet");
                     match source_addr {
                         transports::Addr::Ip(SocketAddr::V4(..)) => {
                             self.metrics
