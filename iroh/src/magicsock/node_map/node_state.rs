@@ -330,10 +330,18 @@ impl NodeStateActor {
                 },
             );
 
-            // Store PathId(0) and select best path, check if holepunching is needed.
+            // Store PathId(0), set path_status and select best path, check if holepunching
+            // is needed.
             if let Some(conn) = handle.upgrade() {
                 if let Some(path_remote) = self.path_transports_addr(&conn, PathId::ZERO) {
                     trace!(?path_remote, "added new connection");
+                    if let Some(path) = conn.path(PathId::ZERO) {
+                        let status = match path_remote {
+                            transports::Addr::Ip(_) => PathStatus::Available,
+                            transports::Addr::Relay(_, _) => PathStatus::Backup,
+                        };
+                        path.set_status(status).ok();
+                    }
                     self.path_id_map
                         .insert((conn_id, PathId::ZERO), path_remote.clone());
                     self.paths
