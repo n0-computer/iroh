@@ -2244,7 +2244,7 @@ dependencies = [
  "n0-snafu",
  "n0-watcher",
  "nested_enum_utils",
- "netdev 0.36.0",
+ "netdev",
  "netwatch",
  "parse-size",
  "pin-project",
@@ -2867,23 +2867,6 @@ dependencies = [
 
 [[package]]
 name = "netdev"
-version = "0.36.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "862209dce034f82a44c95ce2b5183730d616f2a68746b9c1959aa2572e77c0a1"
-dependencies = [
- "dlopen2",
- "ipnet",
- "libc",
- "netlink-packet-core",
- "netlink-packet-route 0.22.0",
- "netlink-sys",
- "once_cell",
- "system-configuration",
- "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "netdev"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daa1e3eaf125c54c21e6221df12dd2a0a682784a068782dd564c836c0f281b6d"
@@ -2995,7 +2978,7 @@ dependencies = [
  "n0-future 0.1.3",
  "n0-watcher",
  "nested_enum_utils",
- "netdev 0.37.3",
+ "netdev",
  "netlink-packet-core",
  "netlink-packet-route 0.24.0",
  "netlink-proto",
