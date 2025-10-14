@@ -87,19 +87,8 @@ pub use self::{
     report::{RelayLatencies, Report},
     reportgen::QuicConfig,
 };
-use crate::util::MaybeFuture;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
-
-/// The maximum latency of all nodes, if none are found yet.
-///
-/// Normally the max latency of all nodes is computed, but if we don't yet know any nodes
-/// latencies we return this as default.  This is the value of the initial QAD probe
-/// delays.  It is only used as time to wait for further latencies to arrive, which *should*
-/// never happen unless there already is at least one latency.  Yet here we are, defining a
-/// default which will never be used.
-const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
-
 const ENOUGH_NODES: usize = 3;
 
 /// Client to run net_reports.
@@ -141,25 +130,26 @@ impl QadConns {
         }
     }
 
-    fn current(&self) -> Vec<ProbeReport> {
-        let mut reports = Vec::new();
+    fn current_v4(&self) -> Option<ProbeReport> {
         if let Some((_, ref conn)) = self.v4 {
             if let Some(mut r) = conn.observer.get() {
                 // grab latest rtt
                 r.latency = conn.conn.rtt();
-                reports.push(ProbeReport::QadIpv4(r));
+                return Some(ProbeReport::QadIpv4(r));
             }
         }
+        None
+    }
 
+    fn current_v6(&self) -> Option<ProbeReport> {
         if let Some((_, ref conn)) = self.v6 {
             if let Some(mut r) = conn.observer.get() {
                 // grab latest rtt
                 r.latency = conn.conn.rtt();
-                reports.push(ProbeReport::QadIpv6(r));
+                return Some(ProbeReport::QadIpv6(r));
             }
         }
-
-        reports
+        None
     }
 
     fn watch_v4(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
@@ -282,7 +272,8 @@ impl Client {
         }
         self.metrics.reports.inc();
 
-        let enough_relays = std::cmp::min(self.relay_map.len(), ENOUGH_NODES);
+        let num_relays = self.relay_map.len();
+        let enough_relays = std::cmp::min(num_relays, ENOUGH_NODES);
         #[cfg(wasm_browser)]
         let if_state = IfStateDetails::default();
         #[cfg(not(wasm_browser))]
@@ -315,71 +306,69 @@ impl Client {
             report.update(&r);
         }
 
-        let mut timeout_fut = std::pin::pin!(MaybeFuture::default());
+        if self.have_enough_reports(&if_state, do_full, num_relays, &report) {
+            // check if we already have enough probes immediately after QAD returns
+            trace!("have enough probe reports, aborting further probes");
+            // shuts down the probes
+            drop(actor);
+        } else {
+            #[cfg(not(wasm_browser))]
+            let mut qad_v4_stream = self.qad_conns.watch_v4();
+            #[cfg(wasm_browser)]
+            let mut qad_v4_stream = n0_future::stream::empty::<Option<()>>();
+            #[cfg(not(wasm_browser))]
+            let mut qad_v6_stream = self.qad_conns.watch_v6();
+            #[cfg(wasm_browser)]
+            let mut qad_v6_stream = n0_future::stream::empty::<Option<()>>();
 
-        #[cfg(not(wasm_browser))]
-        let mut qad_v4_stream = self.qad_conns.watch_v4();
-        #[cfg(wasm_browser)]
-        let mut qad_v4_stream = n0_future::stream::empty::<Option<()>>();
-        #[cfg(not(wasm_browser))]
-        let mut qad_v6_stream = self.qad_conns.watch_v6();
-        #[cfg(wasm_browser)]
-        let mut qad_v6_stream = n0_future::stream::empty::<Option<()>>();
+            loop {
+                tokio::select! {
+                    biased;
 
-        loop {
-            tokio::select! {
-                biased;
-
-                _ = &mut timeout_fut, if timeout_fut.is_some() => {
-                    trace!("timeout done, shutting down");
-                    drop(actor); // shuts down the probes
-                    break;
-                }
-
-                Some(Some(r)) = qad_v4_stream.next() => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!(?r, "new report from QAD V4");
-                        report.update(&ProbeReport::QadIpv4(r));
+                    Some(Some(r)) = qad_v4_stream.next() => {
+                        #[cfg(not(wasm_browser))]
+                        {
+                            trace!(?r, "new report from QAD V4");
+                            report.update(&ProbeReport::QadIpv4(r));
+                        }
                     }
-                }
 
-                Some(Some(r)) = qad_v6_stream.next() => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!(?r, "new report from QAD V6");
-                        report.update(&ProbeReport::QadIpv6(r));
+                    Some(Some(r)) = qad_v6_stream.next() => {
+                        #[cfg(not(wasm_browser))]
+                        {
+                            trace!(?r, "new report from QAD V6");
+                            report.update(&ProbeReport::QadIpv6(r));
+                        }
                     }
-                }
 
-                maybe_probe = probe_rx.recv() => {
-                    let Some(probe_res) = maybe_probe else {
-                        break;
-                    };
-                    trace!(?probe_res, "handling probe");
-                    match probe_res {
-                        ProbeFinished::Regular(probe) => match probe {
-                            Ok(probe) => {
-                                report.update(&probe);
-                                if timeout_fut.is_none() {
-                                    if let Some(timeout) = self.have_enough_reports(enough_relays, &report) {
-                                        timeout_fut.as_mut().set_future(time::sleep(timeout));
+                    maybe_probe = probe_rx.recv() => {
+                        let Some(probe_res) = maybe_probe else {
+                            break;
+                        };
+                        match probe_res {
+                            ProbeFinished::Regular(probe) => match probe {
+                                Ok(probe) => {
+                                    report.update(&probe);
+                                    if self.have_enough_reports(&if_state, do_full, num_relays, &report) {
+                                        trace!("have enough probe reports, aborting further probes");
+                                        // shuts down the probes
+                                        drop(actor);
+                                        break;
                                     }
                                 }
+                                Err(err) => {
+                                    trace!("probe failed: {:?}", err);
+                                }
+                            },
+                            #[cfg(not(wasm_browser))]
+                            ProbeFinished::CaptivePortal(portal) => {
+                                report.captive_portal = portal;
                             }
-                            Err(err) => {
-                                trace!("probe errored: {:?}", err);
-                            }
-                        },
-                        #[cfg(not(wasm_browser))]
-                        ProbeFinished::CaptivePortal(portal) => {
-                            report.captive_portal = portal;
                         }
                     }
                 }
             }
         }
-
         self.add_report_history_and_set_preferred_relay(&mut report);
         debug!(
             ?report,
@@ -424,9 +413,23 @@ impl Client {
                 self.qad_conns.v6.take();
             }
         }
-        if self.qad_conns.v4.is_some() && self.qad_conns.v6.is_some() == if_state.have_v6 {
-            trace!("not spawning QAD, already have probes");
-            return self.qad_conns.current();
+
+        let v4_report = self.qad_conns.current_v4();
+        let v6_report = self.qad_conns.current_v6();
+        let needs_v4_probe = v4_report.is_none();
+        let needs_v6_probe = v6_report.is_some() != if_state.have_v6;
+
+        let mut reports = Vec::new();
+
+        if let Some(report) = v4_report {
+            reports.push(report);
+        }
+        if let Some(report) = v6_report {
+            reports.push(report);
+        }
+
+        if !needs_v4_probe && !needs_v6_probe {
+            return reports;
         }
 
         // TODO: randomize choice?
@@ -438,7 +441,7 @@ impl Client {
         let cancel_v6 = CancellationToken::new();
 
         for relay_node in self.relay_map.nodes().take(MAX_RELAYS) {
-            if if_state.have_v4 {
+            if if_state.have_v4 && needs_v4_probe {
                 debug!(?relay_node.url, "v4 QAD probe");
                 let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
                 let relay_node = relay_node.clone();
@@ -456,7 +459,7 @@ impl Client {
                 );
             }
 
-            if if_state.have_v6 {
+            if if_state.have_v6 && needs_v6_probe {
                 debug!(?relay_node.url, "v6 QAD probe");
                 let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
                 let relay_node = relay_node.clone();
@@ -474,8 +477,6 @@ impl Client {
                 );
             }
         }
-
-        let mut reports = Vec::new();
 
         // We set _pending to true if at least one report was started for each category.
         // If we did not start any report for either category, _pending is set to false right away
@@ -576,32 +577,91 @@ impl Client {
         reports
     }
 
-    fn have_enough_reports(&self, enough_relays: usize, report: &Report) -> Option<Duration> {
-        // Once we've heard from enough relay servers (3), start a timer to give up on the other
-        // probes. The timer's duration is a function of whether this is our initial full
-        // probe or an incremental one. For incremental ones, wait for the duration of the
-        // slowest relay. For initial ones, double that.
-        let latencies: Vec<Duration> = report.relay_latency.iter().map(|(_, l)| l).collect();
-        let have_enough_latencies = latencies.len() >= enough_relays;
+    /// Check if we have enough information to consider the current report "good enough".
+    fn have_enough_reports(
+        &self,
+        state: &IfStateDetails,
+        do_full: bool,
+        num_relays: usize,
+        report: &Report,
+    ) -> bool {
+        #[cfg_attr(wasm_browser, allow(unused_mut))]
+        let mut num_ipv4 = 0;
+        #[cfg_attr(wasm_browser, allow(unused_mut))]
+        let mut num_ipv6 = 0;
+        let mut num_https = 0;
+        for (typ, _, _) in report.relay_latency.iter() {
+            match typ {
+                #[cfg(not(wasm_browser))]
+                Probe::QadIpv4 => {
+                    num_ipv4 += 1;
+                }
+                #[cfg(not(wasm_browser))]
+                Probe::QadIpv6 => {
+                    num_ipv6 += 1;
+                }
+                Probe::Https => {
+                    num_https += 1;
+                }
+            }
+        }
 
-        if have_enough_latencies {
-            let timeout = match self.reports.last.is_some() {
-                true => Duration::from_secs(0),
-                false => latencies
-                    .iter()
-                    .max()
-                    .copied()
-                    .unwrap_or(DEFAULT_MAX_LATENCY),
-            };
-            debug!(
-                reports=latencies.len(),
-                delay=?timeout,
-                "Have enough probe reports, aborting further probes soon",
-            );
-
-            Some(timeout)
+        if do_full {
+            // Full report, require more probes
+            match (state.have_v4, state.have_v6) {
+                (true, true) => {
+                    // Both IPv4 and IPv6 are expected to be available
+                    if num_ipv4 >= 2 && num_ipv6 >= 1 || num_ipv6 >= 2 && num_ipv4 >= 1 {
+                        return true;
+                    }
+                }
+                (true, false) => {
+                    // Just Ipv4 is expected
+                    if num_ipv4 >= 2 {
+                        return true;
+                    }
+                }
+                (false, true) => {
+                    // Just Ipv6 is expected
+                    if num_ipv6 >= 2 {
+                        return true;
+                    }
+                }
+                (false, false) => {}
+            }
+            if num_https >= num_relays {
+                // If we have at least one https probe per relay, we are happy
+                return true;
+            }
+            false
         } else {
-            None
+            // Incremental reports, here the requirements are reduced further
+            match (state.have_v4, state.have_v6) {
+                (true, true) => {
+                    // Both IPv4 and IPv6 are expected to be available
+                    if num_ipv4 >= 1 && num_ipv6 >= 1 {
+                        return true;
+                    }
+                }
+                (true, false) => {
+                    // Just Ipv4 is expected
+                    if num_ipv4 >= 1 {
+                        return true;
+                    }
+                }
+                (false, true) => {
+                    // Just Ipv6 is expected
+                    if num_ipv6 >= 1 {
+                        return true;
+                    }
+                }
+                (false, false) => {}
+            }
+            if num_https >= num_relays {
+                // If we have at least one https probe per relay, we are happy
+                return true;
+            }
+            false
         }
     }
 
@@ -653,7 +713,7 @@ impl Client {
         let mut best_any = Duration::default();
         let mut old_relay_cur_latency = Duration::default();
         {
-            for (url, duration) in r.relay_latency.iter() {
+            for (_, url, duration) in r.relay_latency.iter() {
                 if Some(url) == prev_relay.as_ref() {
                     old_relay_cur_latency = duration;
                 }
