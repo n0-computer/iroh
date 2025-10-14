@@ -713,7 +713,7 @@ impl Endpoint {
         ensure!(node_addr.node_id != self.node_id(), SelfConnectSnafu);
 
         if !node_addr.is_empty() {
-            self.add_node_addr(node_addr.clone())?;
+            self.add_node_addr(node_addr.clone(), Source::App)?;
         }
         let node_id = node_addr.node_id;
         let direct_addresses = node_addr.direct_addresses.clone();
@@ -797,7 +797,7 @@ impl Endpoint {
     /// connecting to this node. Any address that matches this node's direct addresses will be
     /// silently ignored.
     ///
-    /// See also [`Endpoint::add_node_addr_with_source`].
+    /// The *source* is used for logging exclusively and will not be stored.
     ///
     /// # Using node discovery instead
     ///
@@ -811,48 +811,10 @@ impl Endpoint {
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     /// [`RelayUrl`]: crate::RelayUrl
-    fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
-        self.add_node_addr_inner(node_addr, magicsock::Source::App)
-    }
-
-    /// Informs this [`Endpoint`] about addresses of the iroh node, noting the source.
-    ///
-    /// This updates the local state for the remote node.  If the provided [`NodeAddr`] contains a
-    /// [`RelayUrl`] this will be used as the new relay server for this node.  If it contains any
-    /// new IP endpoints they will also be stored and tried when next connecting to this node. Any
-    /// address that matches this node's direct addresses will be silently ignored. The *source* is
-    /// used for logging exclusively and will not be stored.
-    ///
-    /// # Using node discovery instead
-    ///
-    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
-    /// This provides more flexibility and future proofing.
-    ///
-    /// # Errors
-    ///
-    /// Will return an error if we attempt to add our own [`NodeId`] to the node map or
-    /// if the direct addresses are a subset of ours.
-    ///
-    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    ///
-    /// [`RelayUrl`]: crate::RelayUrl
-    pub fn add_node_addr_with_source(
+    pub(crate) fn add_node_addr(
         &self,
         node_addr: NodeAddr,
-        source: &'static str,
-    ) -> Result<(), AddNodeAddrError> {
-        self.add_node_addr_inner(
-            node_addr,
-            magicsock::Source::NamedApp {
-                name: source.into(),
-            },
-        )
-    }
-
-    fn add_node_addr_inner(
-        &self,
-        node_addr: NodeAddr,
-        source: magicsock::Source,
+        source: Source,
     ) -> Result<(), AddNodeAddrError> {
         // Connecting to ourselves is not supported.
         snafu::ensure!(node_addr.node_id != self.node_id(), OwnAddressSnafu);
@@ -2208,11 +2170,6 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Connecting to ourself"));
-
-        let res = ep.add_node_addr(my_addr);
-        assert!(res.is_err());
-        let err = res.err().unwrap();
-        assert!(err.to_string().starts_with("Adding our own address"));
         Ok(())
     }
 
@@ -2474,27 +2431,30 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_bidi_send_recv() -> Result {
+        let disco = StaticProvider::new();
         let ep1 = Endpoint::builder()
+            .discovery(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled);
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
 
-        let ep1 = ep1.bind().await?;
         let ep2 = Endpoint::builder()
+            .discovery(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled);
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
 
-        let ep2 = ep2.bind().await?;
+        disco.add_node_info(ep1.node_addr());
+        disco.add_node_info(ep2.node_addr());
 
-        let ep1_nodeaddr = ep1.node_addr();
-        let ep2_nodeaddr = ep2.node_addr();
-        ep1.add_node_addr(ep2_nodeaddr.clone())?;
-        ep2.add_node_addr(ep1_nodeaddr.clone())?;
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
         eprintln!("node id 1 {ep1_nodeid}");
         eprintln!("node id 2 {ep2_nodeid}");
 
-        async fn connect_hello(ep: Endpoint, dst: NodeAddr) -> Result {
+        async fn connect_hello(ep: Endpoint, dst: NodeId) -> Result {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let (mut send, mut recv) = conn.open_bi().await.e()?;
             info!("sending hello");
@@ -2541,14 +2501,14 @@ mod tests {
             ep2 = %ep2.node_id().fmt_short(),
             dst = %ep1_nodeid.fmt_short(),
         )));
-        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeaddr).instrument(
+        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeid).instrument(
             info_span!(
                 "p1_connect",
                 ep1 = %ep1.node_id().fmt_short(),
                 dst = %ep2_nodeid.fmt_short(),
             ),
         ));
-        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeaddr).instrument(
+        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeid).instrument(
             info_span!(
                 "p2_connect",
                 ep2 = %ep2.node_id().fmt_short(),
