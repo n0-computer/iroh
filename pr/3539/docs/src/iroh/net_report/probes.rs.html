@@ -101,7 +101,7 @@
 <a href=#101 id=101 data-nosnippet>101</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>initial(relay_map: <span class="kw-2">&amp;</span>RelayMap, protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;Probe&gt;) -&gt; <span class="self">Self </span>{
 <a href=#102 id=102 data-nosnippet>102</a>        <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self</span>::default();
 <a href=#103 id=103 data-nosnippet>103</a>
-<a href=#104 id=104 data-nosnippet>104</a>        <span class="kw">for </span>relay_node <span class="kw">in </span>relay_map.nodes() {
+<a href=#104 id=104 data-nosnippet>104</a>        <span class="kw">for </span>relay_node <span class="kw">in </span>relay_map.nodes::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;() {
 <a href=#105 id=105 data-nosnippet>105</a>            <span class="kw">let </span><span class="kw-2">mut </span>https_probes = ProbeSet::new(Probe::Https);
 <a href=#106 id=106 data-nosnippet>106</a>
 <a href=#107 id=107 data-nosnippet>107</a>            <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0u32</span>..<span class="number">3 </span>{
@@ -194,8 +194,8 @@
 <a href=#194 id=194 data-nosnippet>194</a>    <span class="attr">#[tokio::test]
 <a href=#195 id=195 data-nosnippet>195</a>    </span><span class="kw">async fn </span>test_initial_probeplan() {
 <a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>relay_node_1 = <span class="kw-2">&amp;</span>relay_map.nodes::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">0</span>];
+<a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>relay_node_2 = <span class="kw-2">&amp;</span>relay_map.nodes::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">1</span>];
 <a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>default_protocols());
 <a href=#200 id=200 data-nosnippet>200</a>
 <a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">let </span>expected_plan: ProbePlan = [
@@ -234,8 +234,8 @@
 <a href=#234 id=234 data-nosnippet>234</a>    <span class="attr">#[tokio::test]
 <a href=#235 id=235 data-nosnippet>235</a>    </span><span class="kw">async fn </span>test_initial_probeplan_some_protocols() {
 <a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="kw">let </span>relay_node_1 = <span class="kw-2">&amp;</span>relay_map.nodes::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">0</span>];
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>relay_node_2 = <span class="kw-2">&amp;</span>relay_map.nodes::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">1</span>];
 <a href=#239 id=239 data-nosnippet>239</a>        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>BTreeSet::from([Probe::Https]));
 <a href=#240 id=240 data-nosnippet>240</a>
 <a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">let </span>expected_plan: ProbePlan = [

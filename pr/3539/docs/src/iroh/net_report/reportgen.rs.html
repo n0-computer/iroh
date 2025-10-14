@@ -566,7 +566,7 @@
 <a href=#566 id=566 data-nosnippet>566</a>    <span class="kw">let </span>url = <span class="kw">match </span>preferred_relay {
 <a href=#567 id=567 data-nosnippet>567</a>        <span class="prelude-val">Some</span>(url) =&gt; url,
 <a href=#568 id=568 data-nosnippet>568</a>        <span class="prelude-val">None </span>=&gt; {
-<a href=#569 id=569 data-nosnippet>569</a>            <span class="kw">let </span>urls: Vec&lt;<span class="kw">_</span>&gt; = dm.nodes().map(|n| n.url.clone()).collect();
+<a href=#569 id=569 data-nosnippet>569</a>            <span class="kw">let </span>urls: Vec&lt;<span class="kw">_</span>&gt; = dm.urls();
 <a href=#570 id=570 data-nosnippet>570</a>            <span class="kw">if </span>urls.is_empty() {
 <a href=#571 id=571 data-nosnippet>571</a>                <span class="macro">debug!</span>(<span class="string">"No suitable relay node for captive portal check"</span>);
 <a href=#572 id=572 data-nosnippet>572</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
