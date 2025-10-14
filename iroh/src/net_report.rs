@@ -306,63 +306,69 @@ impl Client {
             report.update(&r);
         }
 
-        #[cfg(not(wasm_browser))]
-        let mut qad_v4_stream = self.qad_conns.watch_v4();
-        #[cfg(wasm_browser)]
-        let mut qad_v4_stream = n0_future::stream::empty::<Option<()>>();
-        #[cfg(not(wasm_browser))]
-        let mut qad_v6_stream = self.qad_conns.watch_v6();
-        #[cfg(wasm_browser)]
-        let mut qad_v6_stream = n0_future::stream::empty::<Option<()>>();
+        if self.have_enough_reports(&if_state, do_full, num_relays, &report) {
+            // check if we already have enough probes immediately after QAD returns
+            trace!("have enough probe reports, aborting further probes");
+            // shuts down the probes
+            drop(actor);
+        } else {
+            #[cfg(not(wasm_browser))]
+            let mut qad_v4_stream = self.qad_conns.watch_v4();
+            #[cfg(wasm_browser)]
+            let mut qad_v4_stream = n0_future::stream::empty::<Option<()>>();
+            #[cfg(not(wasm_browser))]
+            let mut qad_v6_stream = self.qad_conns.watch_v6();
+            #[cfg(wasm_browser)]
+            let mut qad_v6_stream = n0_future::stream::empty::<Option<()>>();
 
-        loop {
-            tokio::select! {
-                biased;
+            loop {
+                tokio::select! {
+                    biased;
 
-                Some(Some(r)) = qad_v4_stream.next() => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!(?r, "new report from QAD V4");
-                        report.update(&ProbeReport::QadIpv4(r));
-                    }
-                }
-
-                Some(Some(r)) = qad_v6_stream.next() => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!(?r, "new report from QAD V6");
-                        report.update(&ProbeReport::QadIpv6(r));
-                    }
-                }
-
-                maybe_probe = probe_rx.recv() => {
-                    let Some(probe_res) = maybe_probe else {
-                        break;
-                    };
-                    match probe_res {
-                        ProbeFinished::Regular(probe) => match probe {
-                            Ok(probe) => {
-                                report.update(&probe);
-                                if self.have_enough_reports(&if_state, do_full, num_relays, &report) {
-                                    trace!("have enough probe reports, aborting further probes");
-                                    // shuts down the probes
-                                    drop(actor);
-                                    break;
-                                }
-                            }
-                            Err(err) => {
-                                trace!("probe failed: {:?}", err);
-                            }
-                        },
+                    Some(Some(r)) = qad_v4_stream.next() => {
                         #[cfg(not(wasm_browser))]
-                        ProbeFinished::CaptivePortal(portal) => {
-                            report.captive_portal = portal;
+                        {
+                            trace!(?r, "new report from QAD V4");
+                            report.update(&ProbeReport::QadIpv4(r));
+                        }
+                    }
+
+                    Some(Some(r)) = qad_v6_stream.next() => {
+                        #[cfg(not(wasm_browser))]
+                        {
+                            trace!(?r, "new report from QAD V6");
+                            report.update(&ProbeReport::QadIpv6(r));
+                        }
+                    }
+
+                    maybe_probe = probe_rx.recv() => {
+                        let Some(probe_res) = maybe_probe else {
+                            break;
+                        };
+                        match probe_res {
+                            ProbeFinished::Regular(probe) => match probe {
+                                Ok(probe) => {
+                                    report.update(&probe);
+                                    if self.have_enough_reports(&if_state, do_full, num_relays, &report) {
+                                        trace!("have enough probe reports, aborting further probes");
+                                        // shuts down the probes
+                                        drop(actor);
+                                        break;
+                                    }
+                                }
+                                Err(err) => {
+                                    trace!("probe failed: {:?}", err);
+                                }
+                            },
+                            #[cfg(not(wasm_browser))]
+                            ProbeFinished::CaptivePortal(portal) => {
+                                report.captive_portal = portal;
+                            }
                         }
                     }
                 }
             }
         }
-
         self.add_report_history_and_set_preferred_relay(&mut report);
         debug!(
             ?report,
