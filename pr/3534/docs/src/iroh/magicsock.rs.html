@@ -1408,7 +1408,7 @@
 <a href=#1408 id=1408 data-nosnippet>1408</a>        });
 <a href=#1409 id=1409 data-nosnippet>1409</a>        <span class="kw">let </span>relay_transports = <span class="macro">vec!</span>[relay_transport];
 <a href=#1410 id=1410 data-nosnippet>1410</a>
-<a href=#1411 id=1411 data-nosnippet>1411</a>        <span class="kw">let </span>secret_encryption_key = secret_ed_box(secret_key.secret());
+<a href=#1411 id=1411 data-nosnippet>1411</a>        <span class="kw">let </span>secret_encryption_key = secret_ed_box(<span class="kw-2">&amp;</span>secret_key);
 <a href=#1412 id=1412 data-nosnippet>1412</a>        <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#1413 id=1413 data-nosnippet>1413</a>        </span><span class="kw">let </span>ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 <a href=#1414 id=1414 data-nosnippet>1414</a>
@@ -1687,7 +1687,7 @@
 <a href=#1687 id=1687 data-nosnippet>1687</a>    {
 <a href=#1688 id=1688 data-nosnippet>1688</a>        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.secrets.lock().expect(<span class="string">"poisoned"</span>);
 <a href=#1689 id=1689 data-nosnippet>1689</a>        <span class="kw">let </span>x = inner.entry(node_id).or_insert_with(|| {
-<a href=#1690 id=1690 data-nosnippet>1690</a>            <span class="kw">let </span>public_key = public_ed_box(<span class="kw-2">&amp;</span>node_id.public());
+<a href=#1690 id=1690 data-nosnippet>1690</a>            <span class="kw">let </span>public_key = public_ed_box(<span class="kw-2">&amp;</span>node_id);
 <a href=#1691 id=1691 data-nosnippet>1691</a>            SharedSecret::new(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_encryption_key, <span class="kw-2">&amp;</span>public_key)
 <a href=#1692 id=1692 data-nosnippet>1692</a>        });
 <a href=#1693 id=1693 data-nosnippet>1693</a>        cb(x)
