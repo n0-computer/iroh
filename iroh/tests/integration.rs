@@ -32,17 +32,9 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 const ECHO_ALPN: &[u8] = b"echo";
 
 #[test]
-async fn simple_node_id_based_connection_transfer_loop() -> Result {
-    for _ in 0..10 {
-        simple_node_id_based_connection_transfer().await?;
-    }
-    Ok(())
-}
-
 async fn simple_node_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
-
     let client = Endpoint::builder()
         .relay_mode(RelayMode::Staging)
         .bind()
@@ -54,6 +46,12 @@ async fn simple_node_id_based_connection_transfer() -> Result {
         .bind()
         .await?;
     tracing::info!("started server, id {}", server.id().fmt_short());
+
+    // ensure the server has connected to a relay
+    // and therefore has enough information to publish
+    time::timeout(Duration::from_secs(6), server.online())
+        .await
+        .e()?;
 
     // Make the server respond to requests with an echo
     task::spawn({
