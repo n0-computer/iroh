@@ -101,7 +101,7 @@ impl ProbePlan {
     pub(super) fn initial(relay_map: &RelayMap, protocols: &BTreeSet<Probe>) -> Self {
         let mut plan = Self::default();
 
-        for relay_node in relay_map.nodes() {
+        for relay_node in relay_map.nodes::<Vec<_>>() {
             let mut https_probes = ProbeSet::new(Probe::Https);
 
             for attempt in 0u32..3 {
@@ -194,8 +194,8 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan() {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let relay_node_1 = relay_map.nodes().next().unwrap();
-        let relay_node_2 = relay_map.nodes().nth(1).unwrap();
+        let relay_node_1 = &relay_map.nodes::<Vec<_>>()[0];
+        let relay_node_2 = &relay_map.nodes::<Vec<_>>()[1];
         let plan = ProbePlan::initial(&relay_map, &default_protocols());
 
         let expected_plan: ProbePlan = [
@@ -234,8 +234,8 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan_some_protocols() {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let relay_node_1 = relay_map.nodes().next().unwrap();
-        let relay_node_2 = relay_map.nodes().nth(1).unwrap();
+        let relay_node_1 = &relay_map.nodes::<Vec<_>>()[0];
+        let relay_node_2 = &relay_map.nodes::<Vec<_>>()[1];
         let plan = ProbePlan::initial(&relay_map, &BTreeSet::from([Probe::Https]));
 
         let expected_plan: ProbePlan = [
