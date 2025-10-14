@@ -32,7 +32,14 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 const ECHO_ALPN: &[u8] = b"echo";
 
 #[test]
-async fn simple_endpoint_id_based_connection_transfer() -> Result {
+async fn simple_node_id_based_connection_transfer_loop() -> Result {
+    for _ in 0..10 {
+        simple_node_id_based_connection_transfer().await?;
+    }
+    Ok(())
+}
+
+async fn simple_node_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
 
@@ -40,17 +47,21 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
         .relay_mode(RelayMode::Staging)
         .bind()
         .await?;
+    tracing::info!("started client, id {}", client.id().fmt_short());
     let server = Endpoint::builder()
         .relay_mode(RelayMode::Staging)
         .alpns(vec![ECHO_ALPN.to_vec()])
         .bind()
         .await?;
+    tracing::info!("started server, id {}", server.id().fmt_short());
 
     // Make the server respond to requests with an echo
     task::spawn({
+        tracing::info!("waiting for incoming connections on the server");
         let server = server.clone();
         async move {
             while let Some(incoming) = server.accept().await {
+                tracing::info!("accepting connection");
                 let conn = incoming.await.e()?;
                 let endpoint_id = conn.remote_id()?;
                 tracing::info!(endpoint_id = %endpoint_id.fmt_short(), "Accepted connection");
@@ -76,6 +87,9 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     // Wait for pkarr records to be published
     time::timeout(Duration::from_secs(10), {
         let endpoint_id = server.id();
+        tracing::info!(
+            "start timeout waiting for records to be published, waiting for {endpoint_id} resolution"
+        );
         async move {
             let resolver = PkarrResolver::n0_dns().build();
             loop {
@@ -83,12 +97,15 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
                 time::sleep(Duration::from_secs(1)).await;
 
                 let Some(mut stream) = resolver.resolve(endpoint_id) else {
+                    tracing::info!("unable to get resolver stream, looping");
                     continue;
                 };
                 let Ok(Some(item)) = stream.try_next().await else {
+                    tracing::info!("no items on stream when resolving, looping");
                     continue;
                 };
                 if item.relay_url().is_some() {
+                    tracing::info!("home relay found");
                     break;
                 }
             }
