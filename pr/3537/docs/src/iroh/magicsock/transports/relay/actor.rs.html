@@ -1478,102 +1478,97 @@
 <a href=#1478 id=1478 data-nosnippet>1478</a>    <span class="attr">#[tokio::test]
 <a href=#1479 id=1479 data-nosnippet>1479</a>    #[traced_test]
 <a href=#1480 id=1480 data-nosnippet>1480</a>    </span><span class="kw">async fn </span>test_active_relay_inactive() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1481 id=1481 data-nosnippet>1481</a>        <span class="comment">// tracing_subscriber::fmt::init();
+<a href=#1481 id=1481 data-nosnippet>1481</a>        <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1482 id=1482 data-nosnippet>1482</a>
-<a href=#1483 id=1483 data-nosnippet>1483</a>        </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">100 </span>{
-<a href=#1484 id=1484 data-nosnippet>1484</a>            <span class="macro">println!</span>(<span class="string">"---- round: {i}"</span>);
-<a href=#1485 id=1485 data-nosnippet>1485</a>            <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1486 id=1486 data-nosnippet>1486</a>
-<a href=#1487 id=1487 data-nosnippet>1487</a>            <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
-<a href=#1488 id=1488 data-nosnippet>1488</a>            <span class="kw">let </span>(datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1489 id=1489 data-nosnippet>1489</a>            <span class="kw">let </span>(_send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1490 id=1490 data-nosnippet>1490</a>            <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
-<a href=#1491 id=1491 data-nosnippet>1491</a>            <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1492 id=1492 data-nosnippet>1492</a>            <span class="kw">let </span>cancel_token = CancellationToken::new();
-<a href=#1493 id=1493 data-nosnippet>1493</a>            <span class="kw">let </span><span class="kw-2">mut </span>task = start_active_relay_actor(
-<a href=#1494 id=1494 data-nosnippet>1494</a>                secret_key,
-<a href=#1495 id=1495 data-nosnippet>1495</a>                cancel_token.clone(),
-<a href=#1496 id=1496 data-nosnippet>1496</a>                relay_url,
-<a href=#1497 id=1497 data-nosnippet>1497</a>                prio_inbox_rx,
-<a href=#1498 id=1498 data-nosnippet>1498</a>                inbox_rx,
-<a href=#1499 id=1499 data-nosnippet>1499</a>                send_datagram_rx,
-<a href=#1500 id=1500 data-nosnippet>1500</a>                datagram_recv_tx,
-<a href=#1501 id=1501 data-nosnippet>1501</a>                <span class="macro">info_span!</span>(<span class="string">"actor-under-test"</span>),
-<a href=#1502 id=1502 data-nosnippet>1502</a>            );
-<a href=#1503 id=1503 data-nosnippet>1503</a>
-<a href=#1504 id=1504 data-nosnippet>1504</a>            <span class="comment">// Wait until the actor is connected to the relay server.
-<a href=#1505 id=1505 data-nosnippet>1505</a>            </span>tokio::time::timeout(Duration::from_millis(<span class="number">200</span>), <span class="kw">async </span>{
-<a href=#1506 id=1506 data-nosnippet>1506</a>                <span class="kw">loop </span>{
-<a href=#1507 id=1507 data-nosnippet>1507</a>                    <span class="kw">let </span>(tx, rx) = oneshot::channel();
-<a href=#1508 id=1508 data-nosnippet>1508</a>                    inbox_tx.send(ActiveRelayMessage::PingServer(tx)).<span class="kw">await</span>.ok();
-<a href=#1509 id=1509 data-nosnippet>1509</a>                    <span class="kw">if </span>tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), rx)
-<a href=#1510 id=1510 data-nosnippet>1510</a>                        .<span class="kw">await
-<a href=#1511 id=1511 data-nosnippet>1511</a>                        </span>.map(|resp| resp.is_ok())
-<a href=#1512 id=1512 data-nosnippet>1512</a>                        .unwrap_or_default()
-<a href=#1513 id=1513 data-nosnippet>1513</a>                    {
-<a href=#1514 id=1514 data-nosnippet>1514</a>                        <span class="kw">break</span>;
-<a href=#1515 id=1515 data-nosnippet>1515</a>                    }
-<a href=#1516 id=1516 data-nosnippet>1516</a>                }
-<a href=#1517 id=1517 data-nosnippet>1517</a>            })
-<a href=#1518 id=1518 data-nosnippet>1518</a>            .<span class="kw">await
-<a href=#1519 id=1519 data-nosnippet>1519</a>            </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
-<a href=#1520 id=1520 data-nosnippet>1520</a>
-<a href=#1521 id=1521 data-nosnippet>1521</a>            <span class="comment">// From now on, we pause time
-<a href=#1522 id=1522 data-nosnippet>1522</a>            </span>tokio::time::pause();
-<a href=#1523 id=1523 data-nosnippet>1523</a>            <span class="comment">// We now have an idling ActiveRelayActor.  If we advance time just a little it
-<a href=#1524 id=1524 data-nosnippet>1524</a>            // should stay alive.
-<a href=#1525 id=1525 data-nosnippet>1525</a>            </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2"</span>);
-<a href=#1526 id=1526 data-nosnippet>1526</a>            tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / <span class="number">2</span>).<span class="kw">await</span>;
-<a href=#1527 id=1527 data-nosnippet>1527</a>
-<a href=#1528 id=1528 data-nosnippet>1528</a>            <span class="macro">assert!</span>(
-<a href=#1529 id=1529 data-nosnippet>1529</a>                tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), <span class="kw-2">&amp;mut </span>task)
-<a href=#1530 id=1530 data-nosnippet>1530</a>                    .<span class="kw">await
-<a href=#1531 id=1531 data-nosnippet>1531</a>                    </span>.is_err(),
-<a href=#1532 id=1532 data-nosnippet>1532</a>                <span class="string">"actor task terminated"
-<a href=#1533 id=1533 data-nosnippet>1533</a>            </span>);
-<a href=#1534 id=1534 data-nosnippet>1534</a>
-<a href=#1535 id=1535 data-nosnippet>1535</a>            <span class="comment">// If we advance time a lot it should finish.
-<a href=#1536 id=1536 data-nosnippet>1536</a>            </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME"</span>);
-<a href=#1537 id=1537 data-nosnippet>1537</a>            tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).<span class="kw">await</span>;
-<a href=#1538 id=1538 data-nosnippet>1538</a>            <span class="macro">assert!</span>(
-<a href=#1539 id=1539 data-nosnippet>1539</a>                tokio::time::timeout(Duration::from_millis(<span class="number">1000</span>), task)
-<a href=#1540 id=1540 data-nosnippet>1540</a>                    .<span class="kw">await
-<a href=#1541 id=1541 data-nosnippet>1541</a>                    </span>.is_ok(),
-<a href=#1542 id=1542 data-nosnippet>1542</a>                <span class="string">"actor task still running"
-<a href=#1543 id=1543 data-nosnippet>1543</a>            </span>);
-<a href=#1544 id=1544 data-nosnippet>1544</a>
-<a href=#1545 id=1545 data-nosnippet>1545</a>            tokio::time::resume();
-<a href=#1546 id=1546 data-nosnippet>1546</a>            cancel_token.cancel();
-<a href=#1547 id=1547 data-nosnippet>1547</a>        }
-<a href=#1548 id=1548 data-nosnippet>1548</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1549 id=1549 data-nosnippet>1549</a>    }
+<a href=#1483 id=1483 data-nosnippet>1483</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
+<a href=#1484 id=1484 data-nosnippet>1484</a>        <span class="kw">let </span>(datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1485 id=1485 data-nosnippet>1485</a>        <span class="kw">let </span>(_send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1486 id=1486 data-nosnippet>1486</a>        <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
+<a href=#1487 id=1487 data-nosnippet>1487</a>        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1488 id=1488 data-nosnippet>1488</a>        <span class="kw">let </span>cancel_token = CancellationToken::new();
+<a href=#1489 id=1489 data-nosnippet>1489</a>        <span class="kw">let </span><span class="kw-2">mut </span>task = start_active_relay_actor(
+<a href=#1490 id=1490 data-nosnippet>1490</a>            secret_key,
+<a href=#1491 id=1491 data-nosnippet>1491</a>            cancel_token.clone(),
+<a href=#1492 id=1492 data-nosnippet>1492</a>            relay_url,
+<a href=#1493 id=1493 data-nosnippet>1493</a>            prio_inbox_rx,
+<a href=#1494 id=1494 data-nosnippet>1494</a>            inbox_rx,
+<a href=#1495 id=1495 data-nosnippet>1495</a>            send_datagram_rx,
+<a href=#1496 id=1496 data-nosnippet>1496</a>            datagram_recv_tx,
+<a href=#1497 id=1497 data-nosnippet>1497</a>            <span class="macro">info_span!</span>(<span class="string">"actor-under-test"</span>),
+<a href=#1498 id=1498 data-nosnippet>1498</a>        );
+<a href=#1499 id=1499 data-nosnippet>1499</a>
+<a href=#1500 id=1500 data-nosnippet>1500</a>        <span class="comment">// Wait until the actor is connected to the relay server.
+<a href=#1501 id=1501 data-nosnippet>1501</a>        </span>tokio::time::timeout(Duration::from_millis(<span class="number">200</span>), <span class="kw">async </span>{
+<a href=#1502 id=1502 data-nosnippet>1502</a>            <span class="kw">loop </span>{
+<a href=#1503 id=1503 data-nosnippet>1503</a>                <span class="kw">let </span>(tx, rx) = oneshot::channel();
+<a href=#1504 id=1504 data-nosnippet>1504</a>                inbox_tx.send(ActiveRelayMessage::PingServer(tx)).<span class="kw">await</span>.ok();
+<a href=#1505 id=1505 data-nosnippet>1505</a>                <span class="kw">if </span>tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), rx)
+<a href=#1506 id=1506 data-nosnippet>1506</a>                    .<span class="kw">await
+<a href=#1507 id=1507 data-nosnippet>1507</a>                    </span>.map(|resp| resp.is_ok())
+<a href=#1508 id=1508 data-nosnippet>1508</a>                    .unwrap_or_default()
+<a href=#1509 id=1509 data-nosnippet>1509</a>                {
+<a href=#1510 id=1510 data-nosnippet>1510</a>                    <span class="kw">break</span>;
+<a href=#1511 id=1511 data-nosnippet>1511</a>                }
+<a href=#1512 id=1512 data-nosnippet>1512</a>            }
+<a href=#1513 id=1513 data-nosnippet>1513</a>        })
+<a href=#1514 id=1514 data-nosnippet>1514</a>        .<span class="kw">await
+<a href=#1515 id=1515 data-nosnippet>1515</a>        </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
+<a href=#1516 id=1516 data-nosnippet>1516</a>
+<a href=#1517 id=1517 data-nosnippet>1517</a>        <span class="comment">// From now on, we pause time
+<a href=#1518 id=1518 data-nosnippet>1518</a>        </span>tokio::time::pause();
+<a href=#1519 id=1519 data-nosnippet>1519</a>        <span class="comment">// We now have an idling ActiveRelayActor.  If we advance time just a little it
+<a href=#1520 id=1520 data-nosnippet>1520</a>        // should stay alive.
+<a href=#1521 id=1521 data-nosnippet>1521</a>        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2"</span>);
+<a href=#1522 id=1522 data-nosnippet>1522</a>        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / <span class="number">2</span>).<span class="kw">await</span>;
+<a href=#1523 id=1523 data-nosnippet>1523</a>
+<a href=#1524 id=1524 data-nosnippet>1524</a>        <span class="macro">assert!</span>(
+<a href=#1525 id=1525 data-nosnippet>1525</a>            tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), <span class="kw-2">&amp;mut </span>task)
+<a href=#1526 id=1526 data-nosnippet>1526</a>                .<span class="kw">await
+<a href=#1527 id=1527 data-nosnippet>1527</a>                </span>.is_err(),
+<a href=#1528 id=1528 data-nosnippet>1528</a>            <span class="string">"actor task terminated"
+<a href=#1529 id=1529 data-nosnippet>1529</a>        </span>);
+<a href=#1530 id=1530 data-nosnippet>1530</a>
+<a href=#1531 id=1531 data-nosnippet>1531</a>        <span class="comment">// If we advance time a lot it should finish.
+<a href=#1532 id=1532 data-nosnippet>1532</a>        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME"</span>);
+<a href=#1533 id=1533 data-nosnippet>1533</a>        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).<span class="kw">await</span>;
+<a href=#1534 id=1534 data-nosnippet>1534</a>        <span class="macro">assert!</span>(
+<a href=#1535 id=1535 data-nosnippet>1535</a>            tokio::time::timeout(Duration::from_millis(<span class="number">1000</span>), task)
+<a href=#1536 id=1536 data-nosnippet>1536</a>                .<span class="kw">await
+<a href=#1537 id=1537 data-nosnippet>1537</a>                </span>.is_ok(),
+<a href=#1538 id=1538 data-nosnippet>1538</a>            <span class="string">"actor task still running"
+<a href=#1539 id=1539 data-nosnippet>1539</a>        </span>);
+<a href=#1540 id=1540 data-nosnippet>1540</a>
+<a href=#1541 id=1541 data-nosnippet>1541</a>        tokio::time::resume();
+<a href=#1542 id=1542 data-nosnippet>1542</a>        cancel_token.cancel();
+<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1544 id=1544 data-nosnippet>1544</a>    }
+<a href=#1545 id=1545 data-nosnippet>1545</a>
+<a href=#1546 id=1546 data-nosnippet>1546</a>    <span class="attr">#[tokio::test]
+<a href=#1547 id=1547 data-nosnippet>1547</a>    </span><span class="kw">async fn </span>test_ping_tracker() {
+<a href=#1548 id=1548 data-nosnippet>1548</a>        tokio::time::pause();
+<a href=#1549 id=1549 data-nosnippet>1549</a>        <span class="kw">let </span><span class="kw-2">mut </span>tracker = PingTracker::default();
 <a href=#1550 id=1550 data-nosnippet>1550</a>
-<a href=#1551 id=1551 data-nosnippet>1551</a>    <span class="attr">#[tokio::test]
-<a href=#1552 id=1552 data-nosnippet>1552</a>    </span><span class="kw">async fn </span>test_ping_tracker() {
-<a href=#1553 id=1553 data-nosnippet>1553</a>        tokio::time::pause();
-<a href=#1554 id=1554 data-nosnippet>1554</a>        <span class="kw">let </span><span class="kw-2">mut </span>tracker = PingTracker::default();
+<a href=#1551 id=1551 data-nosnippet>1551</a>        <span class="kw">let </span>ping0 = tracker.new_ping();
+<a href=#1552 id=1552 data-nosnippet>1552</a>
+<a href=#1553 id=1553 data-nosnippet>1553</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
+<a href=#1554 id=1554 data-nosnippet>1554</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"no ping timeout has elapsed yet"</span>);
 <a href=#1555 id=1555 data-nosnippet>1555</a>
-<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="kw">let </span>ping0 = tracker.new_ping();
-<a href=#1557 id=1557 data-nosnippet>1557</a>
-<a href=#1558 id=1558 data-nosnippet>1558</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1559 id=1559 data-nosnippet>1559</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"no ping timeout has elapsed yet"</span>);
-<a href=#1560 id=1560 data-nosnippet>1560</a>
-<a href=#1561 id=1561 data-nosnippet>1561</a>        tracker.pong_received(ping0);
+<a href=#1556 id=1556 data-nosnippet>1556</a>        tracker.pong_received(ping0);
+<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
+<a href=#1558 id=1558 data-nosnippet>1558</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping completed before timeout"</span>);
+<a href=#1559 id=1559 data-nosnippet>1559</a>
+<a href=#1560 id=1560 data-nosnippet>1560</a>        <span class="kw">let </span>_ping1 = tracker.new_ping();
+<a href=#1561 id=1561 data-nosnippet>1561</a>
 <a href=#1562 id=1562 data-nosnippet>1562</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1563 id=1563 data-nosnippet>1563</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping completed before timeout"</span>);
+<a href=#1563 id=1563 data-nosnippet>1563</a>        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout should have happened"</span>);
 <a href=#1564 id=1564 data-nosnippet>1564</a>
-<a href=#1565 id=1565 data-nosnippet>1565</a>        <span class="kw">let </span>_ping1 = tracker.new_ping();
+<a href=#1565 id=1565 data-nosnippet>1565</a>        <span class="kw">let </span>_ping2 = tracker.new_ping();
 <a href=#1566 id=1566 data-nosnippet>1566</a>
-<a href=#1567 id=1567 data-nosnippet>1567</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1568 id=1568 data-nosnippet>1568</a>        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout should have happened"</span>);
-<a href=#1569 id=1569 data-nosnippet>1569</a>
-<a href=#1570 id=1570 data-nosnippet>1570</a>        <span class="kw">let </span>_ping2 = tracker.new_ping();
-<a href=#1571 id=1571 data-nosnippet>1571</a>
-<a href=#1572 id=1572 data-nosnippet>1572</a>        tokio::time::sleep(Duration::from_secs(<span class="number">10</span>)).<span class="kw">await</span>;
-<a href=#1573 id=1573 data-nosnippet>1573</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1574 id=1574 data-nosnippet>1574</a>        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout happened in the past"</span>);
-<a href=#1575 id=1575 data-nosnippet>1575</a>
-<a href=#1576 id=1576 data-nosnippet>1576</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1577 id=1577 data-nosnippet>1577</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping timeout should only happen once"</span>);
-<a href=#1578 id=1578 data-nosnippet>1578</a>    }
-<a href=#1579 id=1579 data-nosnippet>1579</a>}</code></pre></div></section></main></body></html>
+<a href=#1567 id=1567 data-nosnippet>1567</a>        tokio::time::sleep(Duration::from_secs(<span class="number">10</span>)).<span class="kw">await</span>;
+<a href=#1568 id=1568 data-nosnippet>1568</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
+<a href=#1569 id=1569 data-nosnippet>1569</a>        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout happened in the past"</span>);
+<a href=#1570 id=1570 data-nosnippet>1570</a>
+<a href=#1571 id=1571 data-nosnippet>1571</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
+<a href=#1572 id=1572 data-nosnippet>1572</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping timeout should only happen once"</span>);
+<a href=#1573 id=1573 data-nosnippet>1573</a>    }
+<a href=#1574 id=1574 data-nosnippet>1574</a>}</code></pre></div></section></main></body></html>
