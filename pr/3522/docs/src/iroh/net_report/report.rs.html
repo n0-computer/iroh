@@ -172,18 +172,18 @@
 <a href=#172 id=172 data-nosnippet>172</a>
 <a href=#173 id=173 data-nosnippet>173</a>    <span class="doccomment">/// Returns an iterator over all the relays and their latencies.
 <a href=#174 id=174 data-nosnippet>174</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#175 id=175 data-nosnippet>175</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (<span class="kw-2">&amp;</span><span class="lifetime">'_ </span>RelayUrl, Duration)&gt; + <span class="lifetime">'_ </span>{
+<a href=#175 id=175 data-nosnippet>175</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (Probe, <span class="kw-2">&amp;</span><span class="lifetime">'_ </span>RelayUrl, Duration)&gt; + <span class="lifetime">'_ </span>{
 <a href=#176 id=176 data-nosnippet>176</a>        <span class="self">self</span>.https
 <a href=#177 id=177 data-nosnippet>177</a>            .iter()
-<a href=#178 id=178 data-nosnippet>178</a>            .chain(<span class="self">self</span>.ipv4.iter())
-<a href=#179 id=179 data-nosnippet>179</a>            .chain(<span class="self">self</span>.ipv6.iter())
-<a href=#180 id=180 data-nosnippet>180</a>            .map(|(k, v)| (k, <span class="kw-2">*</span>v))
+<a href=#178 id=178 data-nosnippet>178</a>            .map(|(url, l)| (Probe::Https, url, <span class="kw-2">*</span>l))
+<a href=#179 id=179 data-nosnippet>179</a>            .chain(<span class="self">self</span>.ipv4.iter().map(|(url, l)| (Probe::QadIpv4, url, <span class="kw-2">*</span>l)))
+<a href=#180 id=180 data-nosnippet>180</a>            .chain(<span class="self">self</span>.ipv6.iter().map(|(url, l)| (Probe::QadIpv6, url, <span class="kw-2">*</span>l)))
 <a href=#181 id=181 data-nosnippet>181</a>    }
 <a href=#182 id=182 data-nosnippet>182</a>
 <a href=#183 id=183 data-nosnippet>183</a>    <span class="doccomment">/// Returns an iterator over all the relays and their latencies.
 <a href=#184 id=184 data-nosnippet>184</a>    </span><span class="attr">#[cfg(wasm_browser)]
-<a href=#185 id=185 data-nosnippet>185</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (<span class="kw-2">&amp;</span><span class="lifetime">'_ </span>RelayUrl, Duration)&gt; + <span class="lifetime">'_ </span>{
-<a href=#186 id=186 data-nosnippet>186</a>        <span class="self">self</span>.https.iter().map(|(k, v)| (k, <span class="kw-2">*</span>v))
+<a href=#185 id=185 data-nosnippet>185</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (Probe, <span class="kw-2">&amp;</span><span class="lifetime">'_ </span>RelayUrl, Duration)&gt; + <span class="lifetime">'_ </span>{
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="self">self</span>.https.iter().map(|(k, v)| (Probe::Https, k, <span class="kw-2">*</span>v))
 <a href=#187 id=187 data-nosnippet>187</a>    }
 <a href=#188 id=188 data-nosnippet>188</a>
 <a href=#189 id=189 data-nosnippet>189</a>    <span class="attr">#[cfg(not(wasm_browser))]
