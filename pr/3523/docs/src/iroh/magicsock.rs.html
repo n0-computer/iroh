@@ -2576,7 +2576,7 @@
 <a href=#2576 id=2576 data-nosnippet>2576</a>            <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
 <a href=#2577 id=2577 data-nosnippet>2577</a>            transport_config.max_idle_timeout(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">10</span>).try_into().unwrap()));
 <a href=#2578 id=2578 data-nosnippet>2578</a>
-<a href=#2579 id=2579 data-nosnippet>2579</a>            <span class="kw">let </span>endpoint = Endpoint::builder()
+<a href=#2579 id=2579 data-nosnippet>2579</a>            <span class="kw">let </span>endpoint = Endpoint::empty_builder()
 <a href=#2580 id=2580 data-nosnippet>2580</a>                .secret_key(secret_key.clone())
 <a href=#2581 id=2581 data-nosnippet>2581</a>                .transport_config(transport_config)
 <a href=#2582 id=2582 data-nosnippet>2582</a>                .relay_mode(relay_mode)
