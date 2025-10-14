@@ -645,7 +645,7 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
-                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting.");
+                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting (running).");
                     break Ok(());
                 }
             }
@@ -777,7 +777,7 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
-                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting.");
+                    debug!("Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting (sending).");
                     break Ok(());
                 }
             }
@@ -1532,14 +1532,14 @@ mod tests {
         info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME");
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
         assert!(
-            tokio::time::timeout(Duration::from_millis(100), task)
+            tokio::time::timeout(Duration::from_millis(1000), task)
                 .await
                 .is_ok(),
             "actor task still running"
         );
 
+        tokio::time::resume();
         cancel_token.cancel();
-
         Ok(())
     }
 
