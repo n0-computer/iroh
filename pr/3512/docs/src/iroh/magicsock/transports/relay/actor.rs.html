@@ -645,7 +645,7 @@
 <a href=#645 id=645 data-nosnippet>645</a>                    }
 <a href=#646 id=646 data-nosnippet>646</a>                }
 <a href=#647 id=647 data-nosnippet>647</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span><span class="self">self</span>.inactive_timeout, <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
-<a href=#648 id=648 data-nosnippet>648</a>                    <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting."</span>);
+<a href=#648 id=648 data-nosnippet>648</a>                    <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting (running)."</span>);
 <a href=#649 id=649 data-nosnippet>649</a>                    <span class="kw">break </span><span class="prelude-val">Ok</span>(());
 <a href=#650 id=650 data-nosnippet>650</a>                }
 <a href=#651 id=651 data-nosnippet>651</a>            }
@@ -777,7 +777,7 @@
 <a href=#777 id=777 data-nosnippet>777</a>                    }
 <a href=#778 id=778 data-nosnippet>778</a>                }
 <a href=#779 id=779 data-nosnippet>779</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span><span class="self">self</span>.inactive_timeout, <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
-<a href=#780 id=780 data-nosnippet>780</a>                    <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting."</span>);
+<a href=#780 id=780 data-nosnippet>780</a>                    <span class="macro">debug!</span>(<span class="string">"Inactive for {RELAY_INACTIVE_CLEANUP_TIME:?}, exiting (sending)."</span>);
 <a href=#781 id=781 data-nosnippet>781</a>                    <span class="kw">break </span><span class="prelude-val">Ok</span>(());
 <a href=#782 id=782 data-nosnippet>782</a>                }
 <a href=#783 id=783 data-nosnippet>783</a>            }
@@ -1532,14 +1532,14 @@
 <a href=#1532 id=1532 data-nosnippet>1532</a>        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME"</span>);
 <a href=#1533 id=1533 data-nosnippet>1533</a>        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).<span class="kw">await</span>;
 <a href=#1534 id=1534 data-nosnippet>1534</a>        <span class="macro">assert!</span>(
-<a href=#1535 id=1535 data-nosnippet>1535</a>            tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), task)
+<a href=#1535 id=1535 data-nosnippet>1535</a>            tokio::time::timeout(Duration::from_millis(<span class="number">1000</span>), task)
 <a href=#1536 id=1536 data-nosnippet>1536</a>                .<span class="kw">await
 <a href=#1537 id=1537 data-nosnippet>1537</a>                </span>.is_ok(),
 <a href=#1538 id=1538 data-nosnippet>1538</a>            <span class="string">"actor task still running"
 <a href=#1539 id=1539 data-nosnippet>1539</a>        </span>);
 <a href=#1540 id=1540 data-nosnippet>1540</a>
-<a href=#1541 id=1541 data-nosnippet>1541</a>        cancel_token.cancel();
-<a href=#1542 id=1542 data-nosnippet>1542</a>
+<a href=#1541 id=1541 data-nosnippet>1541</a>        tokio::time::resume();
+<a href=#1542 id=1542 data-nosnippet>1542</a>        cancel_token.cancel();
 <a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="prelude-val">Ok</span>(())
 <a href=#1544 id=1544 data-nosnippet>1544</a>    }
 <a href=#1545 id=1545 data-nosnippet>1545</a>
