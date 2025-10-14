@@ -12,12 +12,12 @@
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">const </span>AEAD_DATA: <span class="kw-2">&amp;</span>[u8] = <span class="kw-2">&amp;</span>[];
 <a href=#13 id=13 data-nosnippet>13</a>
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>public_ed_box(key: <span class="kw-2">&amp;</span>PublicKey) -&gt; crypto_box::PublicKey {
-<a href=#15 id=15 data-nosnippet>15</a>    <span class="kw">let </span>key = ed25519_dalek::VerifyingKey::from_bytes(key.as_bytes()).expect(<span class="string">"valid key"</span>);
+<a href=#15 id=15 data-nosnippet>15</a>    <span class="kw">let </span>key = key.as_verifying_key();
 <a href=#16 id=16 data-nosnippet>16</a>    crypto_box::PublicKey::from(key.to_montgomery())
 <a href=#17 id=17 data-nosnippet>17</a>}
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>secret_ed_box(key: <span class="kw-2">&amp;</span>SecretKey) -&gt; crypto_box::SecretKey {
-<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">let </span>key = ed25519_dalek::SigningKey::from_bytes(<span class="kw-2">&amp;</span>key.to_bytes());
+<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">let </span>key = key.as_signing_key();
 <a href=#21 id=21 data-nosnippet>21</a>    crypto_box::SecretKey::from(key.to_scalar())
 <a href=#22 id=22 data-nosnippet>22</a>}
 <a href=#23 id=23 data-nosnippet>23</a>
