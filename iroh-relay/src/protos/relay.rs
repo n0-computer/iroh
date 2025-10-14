@@ -10,7 +10,7 @@
 use std::num::NonZeroU16;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use iroh_base::{NodeId, SignatureError};
+use iroh_base::{KeyParsingError, NodeId};
 use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
@@ -59,7 +59,7 @@ pub enum Error {
     #[snafu(transparent)]
     FrameTypeError { source: FrameTypeError },
     #[snafu(display("Invalid public key"))]
-    InvalidPublicKey { source: SignatureError },
+    InvalidPublicKey { source: KeyParsingError },
     #[snafu(display("Invalid frame encoding"))]
     InvalidFrame {},
     #[snafu(display("Invalid frame type: {frame_type:?}"))]
@@ -216,7 +216,7 @@ impl Datagrams {
         + self.contents.len()
     }
 
-    #[allow(clippy::len_zero)]
+    #[allow(clippy::len_zero, clippy::result_large_err)]
     fn from_bytes(mut bytes: Bytes, is_batch: bool) -> Result<Self, Error> {
         if is_batch {
             // 1 bytes ECN, 2 bytes segment size

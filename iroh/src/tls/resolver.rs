@@ -29,7 +29,7 @@ impl AlwaysResolvesCert {
     pub(super) fn new(secret_key: &SecretKey) -> Result<Self, CreateConfigError> {
         // Directly use the key
         let client_private_key = secret_key
-            .secret()
+            .as_signing_key()
             .to_pkcs8_pem(LineEnding::default())
             .expect("key is valid");
 

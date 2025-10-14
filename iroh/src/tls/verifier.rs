@@ -55,7 +55,7 @@ pub(super) struct ServerCertificateVerifier;
 
 fn public_key_to_spki(remote_peer_id: &PublicKey) -> SubjectPublicKeyInfoDer<'static> {
     let der_key = remote_peer_id
-        .public()
+        .as_verifying_key()
         .to_public_key_der()
         .expect("valid key");
     SubjectPublicKeyInfoDer::from(der_key.into_vec())
