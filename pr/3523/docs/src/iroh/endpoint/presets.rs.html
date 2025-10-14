@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>//! # async fn wrapper() -&gt; n0_snafu::Result {
 <a href=#7 id=7 data-nosnippet>7</a>//! use iroh::{Endpoint, Watcher, endpoint::presets};
 <a href=#8 id=8 data-nosnippet>8</a>//!
-<a href=#9 id=9 data-nosnippet>9</a>//! let endpoint = Endpoint::builder().preset(presets::N0).bind().await?;
+<a href=#9 id=9 data-nosnippet>9</a>//! let endpoint = Endpoint::empty_builder().preset(presets::N0).bind().await?;
 <a href=#10 id=10 data-nosnippet>10</a>//! # let _ = endpoint;
 <a href=#11 id=11 data-nosnippet>11</a>//! # Ok(())
 <a href=#12 id=12 data-nosnippet>12</a>//! # }
