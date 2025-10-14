@@ -863,6 +863,11 @@ impl NodeStateActor {
     /// direct paths are close from all connections.
     #[instrument(skip_all)]
     fn select_path(&mut self) {
+        // TODO: Only consider paths that are actively open: that is we received the open
+        // event and have not closed it yet, or have not received a close.  Otherwise we
+        // might select from paths that doen't work.  Plus we might not have a
+        // representative RTT time yet.
+
         // Find the lowest RTT across all connections for each open path.  The long way, so
         // we get to trace-log *all* RTTs.
         let mut all_path_rtts: FxHashMap<transports::Addr, Vec<Duration>> = FxHashMap::default();
