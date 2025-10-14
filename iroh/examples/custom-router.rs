@@ -3,9 +3,9 @@
 //! We will create a router that allows adding or removing protocols at runtime.
 
 use iroh::{
+    Endpoint, NodeAddr, RelayMode,
     endpoint::{ApplicationClose, ConnectError, Connection, ConnectionError, TransportErrorCode},
     protocol::{AcceptError, ProtocolHandler},
-    Endpoint, NodeAddr, RelayMode, Watcher,
 };
 
 use self::router::{AddProtocolOutcome, Router, StopAcceptingError};
@@ -24,7 +24,7 @@ async fn main() -> n0_snafu::Result {
         .accept(ALPN_1, TestProtocol(1))
         .spawn();
 
-    let addr = router.endpoint().node_addr().initialized().await?;
+    let addr = router.endpoint().node_addr();
 
     // Create our client endpoint.
     let client = Endpoint::builder()
@@ -79,6 +79,8 @@ async fn main() -> n0_snafu::Result {
         Err(StopAcceptingError::UnknownAlpn {})
     ));
 
+    println!("all tests passed");
+
     Ok(())
 }
 
@@ -124,8 +126,8 @@ pub mod router {
 
     use futures_util::future::join_all;
     use iroh::{
-        protocol::{DynProtocolHandler, ProtocolHandler},
         Endpoint,
+        protocol::{DynProtocolHandler, ProtocolHandler},
     };
     use n0_future::{
         task::{self, AbortOnDropHandle},
@@ -133,11 +135,11 @@ pub mod router {
     };
     use snafu::Snafu;
     use tokio::{
-        sync::{mpsc, oneshot, Mutex},
+        sync::{Mutex, mpsc, oneshot},
         task::JoinSet,
     };
     use tokio_util::sync::CancellationToken;
-    use tracing::{debug, error, info_span, trace, warn, Instrument};
+    use tracing::{Instrument, debug, error, info_span, trace, warn};
 
     /// The built router.
     ///

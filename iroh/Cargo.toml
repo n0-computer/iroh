@@ -218,3 +218,7 @@ required-features = []
 [[example]]
 name = "0rtt"
 required-features = []
+
+[[example]]
+name = "custom-router"
+required-features = []
