@@ -2,11 +2,21 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.93.1](https://github.com/n0-computer/iroh/compare/v0.93.0..0.93.1) - 2025-10-09
+## [0.93.2](https://github.com/n0-computer/iroh/compare/v0.93.1..0.93.2) - 2025-10-13
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Ensure initial addresses are published via discovery ([#3525](https://github.com/n0-computer/iroh/issues/3525)) - ([ca85faa](https://github.com/n0-computer/iroh/commit/ca85faac23d8509030a956000e56ae25f5610fcd))
+
+## [0.93.1](https://github.com/n0-computer/iroh/compare/v0.93.0..v0.93.1) - 2025-10-09
 
 ### 📚 Documentation
 
 - Fix docs.rs docs generation ([#3514](https://github.com/n0-computer/iroh/issues/3514)) - ([5f54493](https://github.com/n0-computer/iroh/commit/5f54493cc90fc12209c2ea942bb2594929827f82))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([8677fd8](https://github.com/n0-computer/iroh/commit/8677fd8e899726bce46ef44f3216fe96770198f2))
 
 ## [0.93.0](https://github.com/n0-computer/iroh/compare/v0.92.0..v0.93.0) - 2025-10-09
 
