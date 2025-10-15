@@ -137,7 +137,7 @@ This repository contains a workspace of crates:
 
 ## License
 
-Copyright 2024 N0, INC.
+Copyright 2025 N0, INC.
 
 This project is licensed under either of
 
