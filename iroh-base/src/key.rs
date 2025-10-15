@@ -50,19 +50,19 @@ impl Ord for PublicKey {
     }
 }
 
-/// The identifier for a node in the (iroh) network.
+/// The identifier for an endpoint in the (iroh) network.
 ///
-/// Each node in iroh has a unique identifier created as a cryptographic key.  This can be
-/// used to globally identify a node.  Since it is also a cryptographic key it is also the
-/// mechanism by which all traffic is always encrypted for a specific node only.
+/// Each endpoint in iroh has a unique identifier created as a cryptographic key.  This can be
+/// used to globally identify an endpoint.  Since it is also a cryptographic key it is also the
+/// mechanism by which all traffic is always encrypted for a specific endpoint only.
 ///
 /// This is equivalent to [`PublicKey`].  By convention we will (or should) use `PublicKey`
-/// as type name when performing cryptographic operations, but use `NodeId` when referencing
-/// a node.  E.g.:
+/// as type name when performing cryptographic operations, but use `EndpointId` when referencing
+/// an endpoint.  E.g.:
 ///
 /// - `encrypt(key: PublicKey)`
-/// - `send_to(node: NodeId)`
-pub type NodeId = PublicKey;
+/// - `send_to(endpoint: EndpointId)`
+pub type EndpointId = PublicKey;
 
 impl Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -452,8 +452,8 @@ mod tests {
     }
 
     #[test]
-    fn test_regression_parse_node_id_panic() {
-        let not_a_node_id = "foobarbaz";
-        assert!(PublicKey::from_str(not_a_node_id).is_err());
+    fn test_regression_parse_endpoint_id_panic() {
+        let not_a_endpoint_id = "foobarbaz";
+        assert!(PublicKey::from_str(not_a_endpoint_id).is_err());
     }
 }

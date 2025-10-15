@@ -1,4 +1,4 @@
-//! Tickets for nodes.
+//! Tickets for endpoints.
 
 use std::str::FromStr;
 
@@ -6,35 +6,35 @@ use serde::{Deserialize, Serialize};
 
 use super::{Variant0AddrInfo, Variant0NodeAddr};
 use crate::{
-    node_addr::NodeAddr,
+    endpoint_addr::EndpointAddr,
     ticket::{self, ParseError, Ticket},
 };
 
-/// A token containing information for establishing a connection to a node.
+/// A token containing information for establishing a connection to an endpoint.
 ///
 /// Contains
-/// - The [`NodeId`] of the node to connect to (a 32-byte ed25519 public key).
-/// - If used, the ['RelayUrl`] of on which the node can be reached.
-/// - Any *direct addresses* on which the node might be reachable.
+/// - The [`EndpointId`] of the endpoint to connect to (a 32-byte ed25519 public key).
+/// - If used, the ['RelayUrl`] of on which the endpoint can be reached.
+/// - Any *direct addresses* on which the endpoint might be reachable.
 ///
-/// This allows establishing a connection to the node in most circumstances where it is
+/// This allows establishing a connection to the endpoint in most circumstances where it is
 /// possible to do so.
 ///
-/// This [`NodeTicket`] is a single item which can be easily serialized and deserialized and
+/// This [`EndpointTicket`] is a single item which can be easily serialized and deserialized and
 /// implements the [`Ticket`] trait.  The [`Display`] and [`FromStr`] traits can also be
 /// used to round-trip the ticket to string.
 ///
-/// [`NodeId`]: crate::key::NodeId
+/// [`EndpointId`]: crate::key::EndpointId
 /// [`Display`]: std::fmt::Display
 /// [`FromStr`]: std::str::FromStr
 /// ['RelayUrl`]: crate::relay_url::RelayUrl
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
 #[display("{}", Ticket::serialize(self))]
-pub struct NodeTicket {
-    node: NodeAddr,
+pub struct EndpointTicket {
+    node: EndpointAddr,
 }
 
-/// Wire format for [`NodeTicket`].
+/// Wire format for [`EndpointTicket`].
 #[derive(Serialize, Deserialize)]
 enum TicketWireFormat {
     Variant0(Variant0NodeTicket),
@@ -46,13 +46,13 @@ struct Variant0NodeTicket {
     node: Variant0NodeAddr,
 }
 
-impl Ticket for NodeTicket {
+impl Ticket for EndpointTicket {
     const KIND: &'static str = "node";
 
     fn to_bytes(&self) -> Vec<u8> {
         let data = TicketWireFormat::Variant0(Variant0NodeTicket {
             node: Variant0NodeAddr {
-                node_id: self.node.node_id,
+                node_id: self.node.endpoint_id,
                 info: Variant0AddrInfo {
                     relay_url: self.node.relay_url.clone(),
                     direct_addresses: self.node.direct_addresses.clone(),
@@ -66,8 +66,8 @@ impl Ticket for NodeTicket {
         let res: TicketWireFormat = postcard::from_bytes(bytes)?;
         let TicketWireFormat::Variant0(Variant0NodeTicket { node }) = res;
         Ok(Self {
-            node: NodeAddr {
-                node_id: node.node_id,
+            node: EndpointAddr {
+                endpoint_id: node.node_id,
                 relay_url: node.info.relay_url,
                 direct_addresses: node.info.direct_addresses,
             },
@@ -75,7 +75,7 @@ impl Ticket for NodeTicket {
     }
 }
 
-impl FromStr for NodeTicket {
+impl FromStr for EndpointTicket {
     type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -83,44 +83,44 @@ impl FromStr for NodeTicket {
     }
 }
 
-impl NodeTicket {
+impl EndpointTicket {
     /// Creates a new ticket.
-    pub fn new(node: NodeAddr) -> Self {
+    pub fn new(node: EndpointAddr) -> Self {
         Self { node }
     }
 
-    /// The [`NodeAddr`] of the provider for this ticket.
-    pub fn node_addr(&self) -> &NodeAddr {
+    /// The [`EndpointAddr`] of the provider for this ticket.
+    pub fn endpoint_addr(&self) -> &EndpointAddr {
         &self.node
     }
 }
 
-impl From<NodeAddr> for NodeTicket {
+impl From<EndpointAddr> for EndpointTicket {
     /// Creates a ticket from given addressing info.
-    fn from(addr: NodeAddr) -> Self {
+    fn from(addr: EndpointAddr) -> Self {
         Self { node: addr }
     }
 }
 
-impl From<NodeTicket> for NodeAddr {
+impl From<EndpointTicket> for EndpointAddr {
     /// Returns the addressing info from given ticket.
-    fn from(ticket: NodeTicket) -> Self {
+    fn from(ticket: EndpointTicket) -> Self {
         ticket.node
     }
 }
 
-impl Serialize for NodeTicket {
+impl Serialize for EndpointTicket {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         if serializer.is_human_readable() {
             serializer.serialize_str(&self.to_string())
         } else {
-            let NodeTicket { node } = self;
+            let EndpointTicket { node } = self;
             (node).serialize(serializer)
         }
     }
 }
 
-impl<'de> Deserialize<'de> for NodeTicket {
+impl<'de> Deserialize<'de> for EndpointTicket {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         if deserializer.is_human_readable() {
             let s = String::deserialize(deserializer)?;
@@ -142,13 +142,13 @@ mod tests {
     use super::*;
     use crate::key::{PublicKey, SecretKey};
 
-    fn make_ticket() -> NodeTicket {
+    fn make_ticket() -> EndpointTicket {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let peer = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 1234));
         let relay_url = None;
-        NodeTicket {
-            node: NodeAddr::from_parts(peer, relay_url, [addr]),
+        EndpointTicket {
+            node: EndpointAddr::from_parts(peer, relay_url, [addr]),
         }
     }
 
@@ -156,7 +156,7 @@ mod tests {
     fn test_ticket_postcard() {
         let ticket = make_ticket();
         let bytes = postcard::to_stdvec(&ticket).unwrap();
-        let ticket2: NodeTicket = postcard::from_bytes(&bytes).unwrap();
+        let ticket2: EndpointTicket = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(ticket2, ticket);
     }
 
@@ -164,19 +164,19 @@ mod tests {
     fn test_ticket_json() {
         let ticket = make_ticket();
         let json = serde_json::to_string(&ticket).unwrap();
-        let ticket2: NodeTicket = serde_json::from_str(&json).unwrap();
+        let ticket2: EndpointTicket = serde_json::from_str(&json).unwrap();
         assert_eq!(ticket2, ticket);
     }
 
     #[test]
     fn test_ticket_base32() {
-        let node_id =
+        let endpoint_id =
             PublicKey::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
                 .unwrap();
 
-        let ticket = NodeTicket {
-            node: NodeAddr::from_parts(
-                node_id,
+        let ticket = EndpointTicket {
+            node: EndpointAddr::from_parts(
+                endpoint_id,
                 Some("http://derp.me./".parse().unwrap()),
                 ["127.0.0.1:1024".parse().unwrap()],
             ),

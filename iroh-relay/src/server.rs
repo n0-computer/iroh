@@ -23,7 +23,7 @@ use http::{
     response::Builder as ResponseBuilder,
 };
 use hyper::body::Incoming;
-use iroh_base::NodeId;
+use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use n0_future::{StreamExt, future::Boxed};
@@ -131,30 +131,30 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub access: AccessConfig,
 }
 
-/// Controls which nodes are allowed to use the relay.
+/// Controls which endpoints are allowed to use the relay.
 #[derive(derive_more::Debug)]
 pub enum AccessConfig {
     /// Everyone
     Everyone,
-    /// Only nodes for which the function returns `Access::Allow`.
+    /// Only endpoints for which the function returns `Access::Allow`.
     #[debug("restricted")]
-    Restricted(Box<dyn Fn(NodeId) -> Boxed<Access> + Send + Sync + 'static>),
+    Restricted(Box<dyn Fn(EndpointId) -> Boxed<Access> + Send + Sync + 'static>),
 }
 
 impl AccessConfig {
-    /// Is this node allowed?
-    pub async fn is_allowed(&self, node: NodeId) -> bool {
+    /// Is this endpoint allowed?
+    pub async fn is_allowed(&self, endpoint: EndpointId) -> bool {
         match self {
             Self::Everyone => true,
             Self::Restricted(check) => {
-                let res = check(node).await;
+                let res = check(endpoint).await;
                 matches!(res, Access::Allow)
             }
         }
     }
 }
 
-/// Access restriction for a node.
+/// Access restriction for an endpoint.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Access {
     /// Access is allowed.
@@ -761,7 +761,7 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use http::StatusCode;
-    use iroh_base::{NodeId, RelayUrl, SecretKey};
+    use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_snafu::Result;
     use rand::SeedableRng;
@@ -800,14 +800,14 @@ mod tests {
     async fn try_send_recv(
         client_a: &mut crate::client::Client,
         client_b: &mut crate::client::Client,
-        b_key: NodeId,
+        b_key: EndpointId,
         msg: Datagrams,
     ) -> Result<RelayToClientMsg> {
         // try resend 10 times
         for _ in 0..10 {
             client_a
                 .send(ClientToRelayMsg::Datagrams {
-                    dst_node_id: b_key,
+                    dst_endpoint_id: b_key,
                     datagrams: msg.clone(),
                 })
                 .await?;
@@ -927,14 +927,14 @@ mod tests {
         let msg = Datagrams::from("hello, b");
         let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
         let RelayToClientMsg::Datagrams {
-            remote_node_id,
+            remote_endpoint_id,
             datagrams,
         } = res
         else {
             panic!("client_b received unexpected message {res:?}");
         };
 
-        assert_eq!(a_key, remote_node_id);
+        assert_eq!(a_key, remote_endpoint_id);
         assert_eq!(msg, datagrams);
 
         info!("sending b -> a");
@@ -943,14 +943,14 @@ mod tests {
         let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
 
         let RelayToClientMsg::Datagrams {
-            remote_node_id,
+            remote_endpoint_id,
             datagrams,
         } = res
         else {
             panic!("client_a received unexpected message {res:?}");
         };
 
-        assert_eq!(b_key, remote_node_id);
+        assert_eq!(b_key, remote_endpoint_id);
         assert_eq!(msg, datagrams);
 
         Ok(())
@@ -972,11 +972,11 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
-                access: AccessConfig::Restricted(Box::new(move |node_id| {
+                access: AccessConfig::Restricted(Box::new(move |endpoint_id| {
                     async move {
-                        info!("checking {}", node_id);
-                        // reject node a
-                        if node_id == a_key {
+                        info!("checking {}", endpoint_id);
+                        // reject endpoint a
+                        if endpoint_id == a_key {
                             Access::Deny
                         } else {
                             Access::Allow
@@ -1028,11 +1028,11 @@ mod tests {
         let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone()).await?;
 
         if let RelayToClientMsg::Datagrams {
-            remote_node_id,
+            remote_endpoint_id,
             datagrams,
         } = res
         {
-            assert_eq!(b_key, remote_node_id);
+            assert_eq!(b_key, remote_endpoint_id);
             assert_eq!(msg, datagrams);
         } else {
             panic!("client_c received unexpected message {res:?}");
@@ -1070,7 +1070,7 @@ mod tests {
         for _i in 0..1000 {
             client_a
                 .send(ClientToRelayMsg::Datagrams {
-                    dst_node_id: b_key,
+                    dst_endpoint_id: b_key,
                     datagrams: msg.clone(),
                 })
                 .await?;

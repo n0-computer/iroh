@@ -86,7 +86,7 @@ impl std::fmt::Display for IpMappedAddr {
 /// A Map of [`IpMappedAddresses`] to [`SocketAddr`].
 // TODO(ramfox): before this is ready to be used beyond QAD, we should add
 // mechanisms for keeping track of "aliveness" and pruning address, as we do
-// with the `NodeMap`
+// with the `EndpointMap`
 #[derive(Debug, Clone, Default)]
 pub(crate) struct IpMappedAddresses(Arc<std::sync::Mutex<Inner>>);
 

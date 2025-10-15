@@ -9,11 +9,11 @@ use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
-use crate::{key::NodeId, relay_url::RelayUrl};
+use crate::{key::EndpointId, relay_url::RelayUrl};
 
-mod node;
+mod endpoint;
 
-pub use self::node::NodeTicket;
+pub use self::endpoint::EndpointTicket;
 
 /// A ticket is a serializable object combining information required for an operation.
 ///
@@ -104,7 +104,7 @@ impl ParseError {
 
 #[derive(Serialize, Deserialize)]
 struct Variant0NodeAddr {
-    node_id: NodeId,
+    node_id: EndpointId,
     info: Variant0AddrInfo,
 }
 

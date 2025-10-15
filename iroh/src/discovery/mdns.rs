@@ -1,9 +1,9 @@
-//! A discovery service that uses an mdns-like service to discover local nodes.
+//! A discovery service that uses an mdns-like service to discover local endpoints.
 //!
-//! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
+//! This allows you to use an mdns-like swarm discovery service to find address information about endpoints that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
 //!
-//! When [`MdnsDiscovery`] is enabled, it's possible to get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
+//! When [`MdnsDiscovery`] is enabled, it's possible to get a list of the locally discovered endpoints by filtering a list of `RemoteInfo`s.
 //!
 //! ```no_run
 //! use std::time::Duration;
@@ -21,18 +21,18 @@
 //!     let endpoint = Endpoint::builder().bind().await.unwrap();
 //!
 //!     // Register the discovery services with the endpoint
-//!     let mdns = MdnsDiscovery::builder().build(endpoint.node_id()).unwrap();
+//!     let mdns = MdnsDiscovery::builder().build(endpoint.id()).unwrap();
 //!     endpoint.discovery().add(mdns.clone());
 //!
 //!     // Subscribe to the discovery events
 //!     let mut events = mdns.subscribe().await;
 //!     while let Some(event) = events.next().await {
 //!         match event {
-//!             DiscoveryEvent::Discovered { node_info, .. } => {
-//!                 println!("MDNS discovered: {:?}", node_info);
+//!             DiscoveryEvent::Discovered { endpoint_info, .. } => {
+//!                 println!("MDNS discovered: {:?}", endpoint_info);
 //!             }
-//!             DiscoveryEvent::Expired { node_id } => {
-//!                 println!("MDNS expired: {node_id}");
+//!             DiscoveryEvent::Expired { endpoint_id } => {
+//!                 println!("MDNS expired: {endpoint_id}");
 //!             }
 //!         }
 //!     }
@@ -45,7 +45,7 @@ use std::{
     sync::Arc,
 };
 
-use iroh_base::{NodeId, PublicKey};
+use iroh_base::{EndpointId, PublicKey};
 use n0_future::{
     Stream,
     boxed::BoxStream,
@@ -58,7 +58,7 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{Instrument, debug, error, info_span, trace, warn};
 
 use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
-use crate::discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo};
+use crate::discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo};
 
 /// The n0 local service name
 const N0_SERVICE_NAME: &str = "irohv1";
@@ -85,14 +85,17 @@ pub struct MdnsDiscovery {
     sender: mpsc::Sender<Message>,
     advertise: bool,
     /// When `local_addrs` changes, we re-publish our info.
-    local_addrs: Watchable<Option<NodeData>>,
+    local_addrs: Watchable<Option<EndpointData>>,
 }
 
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>),
-    Timeout(NodeId, usize),
+    Resolve(
+        EndpointId,
+        mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>,
+    ),
+    Timeout(EndpointId, usize),
     Subscribe(mpsc::Sender<DiscoveryEvent>),
 }
 
@@ -110,7 +113,7 @@ impl Subscribers {
         self.0.push(subscriber);
     }
 
-    /// Sends the `node_id` and `item` to each subscriber.
+    /// Sends the `endpoint_id` and `item` to each subscriber.
     ///
     /// Cleans up any subscribers that have been dropped.
     fn send(&mut self, item: DiscoveryEvent) {
@@ -152,7 +155,7 @@ impl MdnsDiscoveryBuilder {
         }
     }
 
-    /// Sets whether this node should advertise its presence.
+    /// Sets whether this endpoint should advertise its presence.
     ///
     /// Default is true.
     pub fn advertise(mut self, advertise: bool) -> Self {
@@ -180,8 +183,8 @@ impl MdnsDiscoveryBuilder {
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    pub fn build(self, node_id: NodeId) -> Result<MdnsDiscovery, IntoDiscoveryError> {
-        MdnsDiscovery::new(node_id, self.advertise, self.service_name)
+    pub fn build(self, endpoint_id: EndpointId) -> Result<MdnsDiscovery, IntoDiscoveryError> {
+        MdnsDiscovery::new(endpoint_id, self.advertise, self.service_name)
     }
 }
 
@@ -196,7 +199,7 @@ impl IntoDiscovery for MdnsDiscoveryBuilder {
         self,
         context: &DiscoveryContext,
     ) -> Result<impl Discovery, IntoDiscoveryError> {
-        self.build(context.node_id())
+        self.build(context.endpoint_id())
     }
 }
 
@@ -205,16 +208,16 @@ impl IntoDiscovery for MdnsDiscoveryBuilder {
 pub enum DiscoveryEvent {
     /// A peer was discovered or it's information was updated.
     Discovered {
-        /// The node info for the node, as discovered.
-        node_info: NodeInfo,
-        /// Optional timestamp when this node address info was last updated.
+        /// The endpoint info for the endpoint, as discovered.
+        endpoint_info: EndpointInfo,
+        /// Optional timestamp when this endpoint address info was last updated.
         last_updated: Option<u64>,
     },
     /// A peer was expired due to being inactive, unreachable, or otherwise
     /// unavailable.
     Expired {
-        /// The id of the node that expired.
-        node_id: NodeId,
+        /// The id of the endpoint that expired.
+        endpoint_id: EndpointId,
     },
 }
 
@@ -227,7 +230,7 @@ impl MdnsDiscovery {
     /// Create a new [`MdnsDiscovery`] Service.
     ///
     /// This starts a [`Discoverer`] that broadcasts your addresses (if advertise is set to true)
-    /// and receives addresses from other nodes in your local network.
+    /// and receives addresses from other endpoints in your local network.
     ///
     /// # Errors
     /// Returns an error if the network does not allow ipv4 OR ipv6.
@@ -235,7 +238,7 @@ impl MdnsDiscovery {
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     fn new(
-        node_id: NodeId,
+        endpoint_id: EndpointId,
         advertise: bool,
         service_name: String,
     ) -> Result<Self, IntoDiscoveryError> {
@@ -244,7 +247,7 @@ impl MdnsDiscovery {
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
         let discovery = MdnsDiscovery::spawn_discoverer(
-            node_id,
+            endpoint_id,
             advertise,
             task_sender.clone(),
             BTreeSet::new(),
@@ -252,10 +255,10 @@ impl MdnsDiscovery {
             &rt,
         )?;
 
-        let local_addrs: Watchable<Option<NodeData>> = Watchable::default();
+        let local_addrs: Watchable<Option<EndpointData>> = Watchable::default();
         let mut addrs_change = local_addrs.watch();
         let discovery_fut = async move {
-            let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
+            let mut endpoint_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut subscribers = Subscribers::new();
             let mut last_id = 0;
             let mut senders: HashMap<
@@ -264,7 +267,7 @@ impl MdnsDiscovery {
             > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
-                trace!(?node_addrs, "MdnsDiscovery Service loop tick");
+                trace!(?endpoint_addrs, "MdnsDiscovery Service loop tick");
                 let msg = tokio::select! {
                     msg = recv.recv() => {
                         msg
@@ -296,40 +299,42 @@ impl MdnsDiscovery {
                     Some(msg) => msg,
                 };
                 match msg {
-                    Message::Discovery(discovered_node_id, peer_info) => {
+                    Message::Discovery(discovered_endpoint_id, peer_info) => {
                         trace!(
-                            ?discovered_node_id,
+                            ?discovered_endpoint_id,
                             ?peer_info,
                             "MdnsDiscovery Message::Discovery"
                         );
-                        let discovered_node_id = match PublicKey::from_str(&discovered_node_id) {
-                            Ok(node_id) => node_id,
+                        let discovered_endpoint_id = match PublicKey::from_str(
+                            &discovered_endpoint_id,
+                        ) {
+                            Ok(endpoint_id) => endpoint_id,
                             Err(e) => {
                                 warn!(
-                                    discovered_node_id,
-                                    "couldn't parse node_id from mdns discovery service: {e:?}"
+                                    discovered_endpoint_id,
+                                    "couldn't parse endpoint_id from mdns discovery service: {e:?}"
                                 );
                                 continue;
                             }
                         };
 
-                        if discovered_node_id == node_id {
+                        if discovered_endpoint_id == endpoint_id {
                             continue;
                         }
 
                         if peer_info.is_expiry() {
                             trace!(
-                                ?discovered_node_id,
-                                "removing node from MdnsDiscovery address book"
+                                ?discovered_endpoint_id,
+                                "removing endpoint from MdnsDiscovery address book"
                             );
-                            node_addrs.remove(&discovered_node_id);
+                            endpoint_addrs.remove(&discovered_endpoint_id);
                             subscribers.send(DiscoveryEvent::Expired {
-                                node_id: discovered_node_id,
+                                endpoint_id: discovered_endpoint_id,
                             });
                             continue;
                         }
 
-                        let entry = node_addrs.entry(discovered_node_id);
+                        let entry = endpoint_addrs.entry(discovered_endpoint_id);
                         if let std::collections::hash_map::Entry::Occupied(ref entry) = entry {
                             if entry.get() == &peer_info {
                                 // this is a republish we already know about
@@ -338,14 +343,14 @@ impl MdnsDiscovery {
                         }
 
                         debug!(
-                            ?discovered_node_id,
+                            ?discovered_endpoint_id,
                             ?peer_info,
-                            "adding node to MdnsDiscovery address book"
+                            "adding endpoint to MdnsDiscovery address book"
                         );
 
                         let mut resolved = false;
-                        let item = peer_to_discovery_item(&peer_info, &discovered_node_id);
-                        if let Some(senders) = senders.get(&discovered_node_id) {
+                        let item = peer_to_discovery_item(&peer_info, &discovered_endpoint_id);
+                        if let Some(senders) = senders.get(&discovered_endpoint_id) {
                             trace!(?item, senders = senders.len(), "sending DiscoveryItem");
                             resolved = true;
                             for sender in senders.values() {
@@ -354,48 +359,48 @@ impl MdnsDiscovery {
                         }
                         entry.or_insert(peer_info);
 
-                        // only send nodes to the `subscriber` if they weren't explicitly resolved
-                        // in other words, nodes sent to the `subscribers` should only be the ones that
+                        // only send endpoints to the `subscriber` if they weren't explicitly resolved
+                        // in other words, endpoints sent to the `subscribers` should only be the ones that
                         // have been "passively" discovered
                         if !resolved {
                             subscribers.send(DiscoveryEvent::Discovered {
-                                node_info: item.node_info,
+                                endpoint_info: item.endpoint_info,
                                 last_updated: item.last_updated,
                             });
                         }
                     }
-                    Message::Resolve(node_id, sender) => {
+                    Message::Resolve(endpoint_id, sender) => {
                         let id = last_id + 1;
                         last_id = id;
-                        trace!(?node_id, "MdnsDiscovery Message::SendAddrs");
-                        if let Some(peer_info) = node_addrs.get(&node_id) {
-                            let item = peer_to_discovery_item(peer_info, &node_id);
+                        trace!(?endpoint_id, "MdnsDiscovery Message::SendAddrs");
+                        if let Some(peer_info) = endpoint_addrs.get(&endpoint_id) {
+                            let item = peer_to_discovery_item(peer_info, &endpoint_id);
                             debug!(?item, "sending DiscoveryItem");
                             sender.send(Ok(item)).await.ok();
                         }
-                        if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
-                            senders_for_node_id.insert(id, sender);
+                        if let Some(senders_for_endpoint_id) = senders.get_mut(&endpoint_id) {
+                            senders_for_endpoint_id.insert(id, sender);
                         } else {
-                            let mut senders_for_node_id = HashMap::new();
-                            senders_for_node_id.insert(id, sender);
-                            senders.insert(node_id, senders_for_node_id);
+                            let mut senders_for_endpoint_id = HashMap::new();
+                            senders_for_endpoint_id.insert(id, sender);
+                            senders.insert(endpoint_id, senders_for_endpoint_id);
                         }
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
                             time::sleep(DISCOVERY_DURATION).await;
-                            trace!(?node_id, "discovery timeout");
+                            trace!(?endpoint_id, "discovery timeout");
                             timeout_sender
-                                .send(Message::Timeout(node_id, id))
+                                .send(Message::Timeout(endpoint_id, id))
                                 .await
                                 .ok();
                         });
                     }
-                    Message::Timeout(node_id, id) => {
-                        trace!(?node_id, "MdnsDiscovery Message::Timeout");
-                        if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
-                            senders_for_node_id.remove(&id);
-                            if senders_for_node_id.is_empty() {
-                                senders.remove(&node_id);
+                    Message::Timeout(endpoint_id, id) => {
+                        trace!(?endpoint_id, "MdnsDiscovery Message::Timeout");
+                        if let Some(senders_for_endpoint_id) = senders.get_mut(&endpoint_id) {
+                            senders_for_endpoint_id.remove(&id);
+                            if senders_for_endpoint_id.is_empty() {
+                                senders.remove(&endpoint_id);
                             }
                         }
                     }
@@ -415,7 +420,7 @@ impl MdnsDiscovery {
         })
     }
 
-    /// Subscribe to discovered nodes
+    /// Subscribe to discovered endpoints
     pub async fn subscribe(&self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
         let (sender, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
@@ -424,7 +429,7 @@ impl MdnsDiscovery {
     }
 
     fn spawn_discoverer(
-        node_id: PublicKey,
+        endpoint_id: PublicKey,
         advertise: bool,
         sender: mpsc::Sender<Message>,
         socketaddrs: BTreeSet<SocketAddr>,
@@ -432,24 +437,27 @@ impl MdnsDiscovery {
         rt: &tokio::runtime::Handle,
     ) -> Result<DropGuard, IntoDiscoveryError> {
         let spawn_rt = rt.clone();
-        let callback = move |node_id: &str, peer: &Peer| {
+        let callback = move |endpoint_id: &str, peer: &Peer| {
             trace!(
-                node_id,
+                endpoint_id,
                 ?peer,
                 "Received peer information from MdnsDiscovery"
             );
 
             let sender = sender.clone();
-            let node_id = node_id.to_string();
+            let endpoint_id = endpoint_id.to_string();
             let peer = peer.clone();
             spawn_rt.spawn(async move {
-                sender.send(Message::Discovery(node_id, peer)).await.ok();
+                sender
+                    .send(Message::Discovery(endpoint_id, peer))
+                    .await
+                    .ok();
             });
         };
-        let node_id_str = data_encoding::BASE32_NOPAD
-            .encode(node_id.as_bytes())
+        let endpoint_id_str = data_encoding::BASE32_NOPAD
+            .encode(endpoint_id.as_bytes())
             .to_ascii_lowercase();
-        let mut discoverer = Discoverer::new_interactive(service_name, node_id_str)
+        let mut discoverer = Discoverer::new_interactive(service_name, endpoint_id_str)
             .with_callback(callback)
             .with_ip_class(IpClass::Auto);
         if advertise {
@@ -475,7 +483,7 @@ impl MdnsDiscovery {
     }
 }
 
-fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
+fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryItem {
     let direct_addresses: BTreeSet<SocketAddr> = peer
         .addrs()
         .iter()
@@ -494,21 +502,24 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
     } else {
         None
     };
-    let node_info = NodeInfo::new(*node_id)
+    let endpoint_info = EndpointInfo::new(*endpoint_id)
         .with_direct_addresses(direct_addresses)
         .with_user_data(user_data);
-    DiscoveryItem::new(node_info, NAME, None)
+    DiscoveryItem::new(endpoint_info, NAME, None)
 }
 
 impl Discovery for MdnsDiscovery {
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         let stream = async move {
             discovery_sender
-                .send(Message::Resolve(node_id, send))
+                .send(Message::Resolve(endpoint_id, send))
                 .await
                 .ok();
             tokio_stream::wrappers::ReceiverStream::new(recv)
@@ -516,7 +527,7 @@ impl Discovery for MdnsDiscovery {
         Some(Box::pin(stream.flatten_stream()))
     }
 
-    fn publish(&self, data: &NodeData) {
+    fn publish(&self, data: &EndpointData) {
         if self.advertise {
             self.local_addrs.set(Some(data.clone())).ok();
         }
@@ -547,28 +558,33 @@ mod tests {
             // Create discoverer A with advertise=false (only listens)
             let (_, discovery_a) = make_discoverer(&mut rng, false)?;
             // Create discoverer B with advertise=true (will broadcast)
-            let (node_id_b, discovery_b) = make_discoverer(&mut rng, true)?;
+            let (endpoint_id_b, discovery_b) = make_discoverer(&mut rng, true)?;
 
             // make addr info for discoverer b
             let user_data: UserData = "foobar".parse()?;
-            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
-                .with_user_data(Some(user_data.clone()));
+            let endpoint_data =
+                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
+                    .with_user_data(Some(user_data.clone()));
 
-            // resolve twice to ensure we can create separate streams for the same node_id
+            // resolve twice to ensure we can create separate streams for the same endpoint_id
             let mut s1 = discovery_a.subscribe().await.filter(|event| match event {
-                DiscoveryEvent::Discovered { node_info, .. } => node_info.node_id == node_id_b,
+                DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                    endpoint_info.endpoint_id == endpoint_id_b
+                }
                 _ => false,
             });
             let mut s2 = discovery_a.subscribe().await.filter(|event| match event {
-                DiscoveryEvent::Discovered { node_info, .. } => node_info.node_id == node_id_b,
+                DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                    endpoint_info.endpoint_id == endpoint_id_b
+                }
                 _ => false,
             });
 
-            tracing::debug!(?node_id_b, "Discovering node id b");
+            tracing::debug!(?endpoint_id_b, "Discovering endpoint id b");
             // publish discovery_b's address
-            discovery_b.publish(&node_data);
+            discovery_b.publish(&endpoint_data);
             let DiscoveryEvent::Discovered {
-                node_info: s1_node_info,
+                endpoint_info: s1_endpoint_info,
                 ..
             } = tokio::time::timeout(Duration::from_secs(5), s1.next())
                 .await
@@ -578,7 +594,7 @@ mod tests {
                 panic!("Received unexpected discovery event");
             };
             let DiscoveryEvent::Discovered {
-                node_info: s2_node_info,
+                endpoint_info: s2_endpoint_info,
                 ..
             } = tokio::time::timeout(Duration::from_secs(5), s2.next())
                 .await
@@ -587,8 +603,8 @@ mod tests {
             else {
                 panic!("Received unexpected discovery event");
             };
-            assert_eq!(s1_node_info.data, node_data);
-            assert_eq!(s2_node_info.data, node_data);
+            assert_eq!(s1_endpoint_info.data, endpoint_data);
+            assert_eq!(s2_endpoint_info.data, endpoint_data);
 
             Ok(())
         }
@@ -598,17 +614,18 @@ mod tests {
         async fn mdns_publish_expire() -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let (_, discovery_a) = make_discoverer(&mut rng, false)?;
-            let (node_id_b, discovery_b) = make_discoverer(&mut rng, true)?;
+            let (endpoint_id_b, discovery_b) = make_discoverer(&mut rng, true)?;
 
             // publish discovery_b's address
-            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
-                .with_user_data(Some("".parse()?));
-            discovery_b.publish(&node_data);
+            let endpoint_data =
+                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
+                    .with_user_data(Some("".parse()?));
+            discovery_b.publish(&endpoint_data);
 
             let mut s1 = discovery_a.subscribe().await;
-            tracing::debug!(?node_id_b, "Discovering node id b");
+            tracing::debug!(?endpoint_id_b, "Discovering endpoint id b");
 
-            // Wait for the specific node to be discovered
+            // Wait for the specific endpoint to be discovered
             loop {
                 let event = tokio::time::timeout(Duration::from_secs(5), s1.next())
                     .await
@@ -616,8 +633,8 @@ mod tests {
                     .expect("Stream should not be closed");
 
                 match event {
-                    DiscoveryEvent::Discovered { node_info, .. }
-                        if node_info.node_id == node_id_b =>
+                    DiscoveryEvent::Discovered { endpoint_info, .. }
+                        if endpoint_info.endpoint_id == endpoint_id_b =>
                     {
                         break;
                     }
@@ -625,11 +642,11 @@ mod tests {
                 }
             }
 
-            // Shutdown node B
+            // Shutdown endpoint B
             drop(discovery_b);
             tokio::time::sleep(Duration::from_secs(5)).await;
 
-            // Wait for the expiration event for the specific node
+            // Wait for the expiration event for the specific endpoint
             loop {
                 let event = tokio::time::timeout(Duration::from_secs(10), s1.next())
                     .await
@@ -638,8 +655,8 @@ mod tests {
 
                 match event {
                     DiscoveryEvent::Expired {
-                        node_id: expired_node_id,
-                    } if expired_node_id == node_id_b => {
+                        endpoint_id: expired_endpoint_id,
+                    } if expired_endpoint_id == endpoint_id_b => {
                         break;
                     }
                     _ => continue, // Ignore other events
@@ -654,19 +671,22 @@ mod tests {
         async fn mdns_subscribe() -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-            let num_nodes = 5;
-            let mut node_ids = BTreeSet::new();
+            let num_endpoints = 5;
+            let mut endpoint_ids = BTreeSet::new();
             let mut discoverers = vec![];
 
             let (_, discovery) = make_discoverer(&mut rng, false)?;
-            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+            let endpoint_data =
+                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
 
-            for i in 0..num_nodes {
-                let (node_id, discovery) = make_discoverer(&mut rng, true)?;
-                let user_data: UserData = format!("node{i}").parse()?;
-                let node_data = node_data.clone().with_user_data(Some(user_data.clone()));
-                node_ids.insert((node_id, Some(user_data)));
-                discovery.publish(&node_data);
+            for i in 0..num_endpoints {
+                let (endpoint_id, discovery) = make_discoverer(&mut rng, true)?;
+                let user_data: UserData = format!("endpoint{i}").parse()?;
+                let endpoint_data = endpoint_data
+                    .clone()
+                    .with_user_data(Some(user_data.clone()));
+                endpoint_ids.insert((endpoint_id, Some(user_data)));
+                discovery.publish(&endpoint_data);
                 discoverers.push(discovery);
             }
 
@@ -674,21 +694,22 @@ mod tests {
 
             let test = async move {
                 let mut got_ids = BTreeSet::new();
-                while got_ids.len() != num_nodes {
-                    if let Some(DiscoveryEvent::Discovered { node_info, .. }) = events.next().await
+                while got_ids.len() != num_endpoints {
+                    if let Some(DiscoveryEvent::Discovered { endpoint_info, .. }) =
+                        events.next().await
                     {
-                        let data = node_info.data.user_data().cloned();
-                        if node_ids.contains(&(node_info.node_id, data.clone())) {
-                            got_ids.insert((node_info.node_id, data));
+                        let data = endpoint_info.data.user_data().cloned();
+                        if endpoint_ids.contains(&(endpoint_info.endpoint_id, data.clone())) {
+                            got_ids.insert((endpoint_info.endpoint_id, data));
                         }
                     } else {
                         whatever!(
-                            "no more events, only got {} ids, expected {num_nodes}\n",
+                            "no more events, only got {} ids, expected {num_endpoints}\n",
                             got_ids.len()
                         );
                     }
                 }
-                assert_eq!(got_ids, node_ids);
+                assert_eq!(got_ids, endpoint_ids);
                 Ok::<_, Error>(())
             };
             tokio::time::timeout(Duration::from_secs(5), test)
@@ -698,30 +719,33 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
-        async fn non_advertising_node_not_discovered() -> Result {
+        async fn non_advertising_endpoint_not_discovered() -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
             let (_, discovery_a) = make_discoverer(&mut rng, false)?;
-            let (node_id_b, discovery_b) = make_discoverer(&mut rng, false)?;
+            let (endpoint_id_b, discovery_b) = make_discoverer(&mut rng, false)?;
 
-            let (node_id_c, discovery_c) = make_discoverer(&mut rng, true)?;
-            let node_data_c =
-                NodeData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
-            discovery_c.publish(&node_data_c);
+            let (endpoint_id_c, discovery_c) = make_discoverer(&mut rng, true)?;
+            let endpoint_data_c =
+                EndpointData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
+            discovery_c.publish(&endpoint_data_c);
 
-            let node_data_b =
-                NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
-            discovery_b.publish(&node_data_b);
+            let endpoint_data_b =
+                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+            discovery_b.publish(&endpoint_data_b);
 
-            let mut stream_c = discovery_a.resolve(node_id_c).unwrap();
+            let mut stream_c = discovery_a.resolve(endpoint_id_c).unwrap();
             let result_c = tokio::time::timeout(Duration::from_secs(2), stream_c.next()).await;
-            assert!(result_c.is_ok(), "Advertising node should be discoverable");
+            assert!(
+                result_c.is_ok(),
+                "Advertising endpoint should be discoverable"
+            );
 
-            let mut stream_b = discovery_a.resolve(node_id_b).unwrap();
+            let mut stream_b = discovery_a.resolve(endpoint_id_b).unwrap();
             let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
             assert!(
                 result_b.is_err(),
-                "Expected timeout since node b isn't advertising"
+                "Expected timeout since endpoint b isn't advertising"
             );
 
             Ok(())
@@ -751,37 +775,37 @@ mod tests {
                 .service_name("different.name")
                 .build(id_c)?;
 
-            let node_data_a =
-                NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
-            discovery_a.publish(&node_data_a);
+            let endpoint_data_a =
+                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+            discovery_a.publish(&endpoint_data_a);
 
-            let node_data_b =
-                NodeData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
-            discovery_b.publish(&node_data_b);
+            let endpoint_data_b =
+                EndpointData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
+            discovery_b.publish(&endpoint_data_b);
 
-            let node_data_c =
-                NodeData::new(None, BTreeSet::from(["0.0.0.0:33333".parse().unwrap()]));
-            discovery_c.publish(&node_data_c);
+            let endpoint_data_c =
+                EndpointData::new(None, BTreeSet::from(["0.0.0.0:33333".parse().unwrap()]));
+            discovery_c.publish(&endpoint_data_c);
 
             let mut stream_a = discovery_a.resolve(id_b).unwrap();
             let result_a = tokio::time::timeout(Duration::from_secs(2), stream_a.next()).await;
             assert!(
                 result_a.is_err(),
-                "Node on a different service should NOT be discoverable"
+                "Endpoint on a different service should NOT be discoverable"
             );
 
             let mut stream_b = discovery_b.resolve(id_c).unwrap();
             let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
             assert!(
                 result_b.is_ok(),
-                "Node on the same service should be discoverable"
+                "Endpoint on the same service should be discoverable"
             );
 
             let mut stream_b = discovery_b.resolve(id_a).unwrap();
             let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
             assert!(
                 result_b.is_err(),
-                "Node on a different service should NOT be discoverable"
+                "Endpoint on a different service should NOT be discoverable"
             );
 
             Ok(())
@@ -791,12 +815,12 @@ mod tests {
             rng: &mut R,
             advertise: bool,
         ) -> Result<(PublicKey, MdnsDiscovery)> {
-            let node_id = SecretKey::generate(rng).public();
+            let endpoint_id = SecretKey::generate(rng).public();
             Ok((
-                node_id,
+                endpoint_id,
                 MdnsDiscovery::builder()
                     .advertise(advertise)
-                    .build(node_id)?,
+                    .build(endpoint_id)?,
             ))
         }
     }

@@ -1,4 +1,4 @@
-//! The private and public keys of a node.
+//! The private and public keys of an endpoint.
 
 use std::fmt::Debug;
 

@@ -12,7 +12,7 @@ use hickory_resolver::{
     config::{ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
 };
-use iroh_base::NodeId;
+use iroh_base::EndpointId;
 use n0_future::{
     StreamExt,
     boxed::BoxFuture,
@@ -26,13 +26,13 @@ use url::Url;
 
 use crate::{
     defaults::timeouts::DNS_TIMEOUT,
-    node_info::{self, NodeInfo, ParseError},
+    endpoint_info::{self, EndpointInfo, ParseError},
 };
 
-/// The n0 testing DNS node origin, for production.
-pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
-/// The n0 testing DNS node origin, for testing.
-pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
+/// The n0 testing DNS endpoint origin, for production.
+pub const N0_DNS_ENDPOINT_ORIGIN_PROD: &str = "dns.iroh.link";
+/// The n0 testing DNS endpoint origin, for testing.
+pub const N0_DNS_ENDPOINT_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
 /// Percent of total delay to jitter. 20 means +/- 20% of delay.
 const MAX_JITTER_PERCENT: u64 = 20;
@@ -114,7 +114,7 @@ pub enum LookupError {
     },
 }
 
-/// Error returned when an input value is too long for [`crate::node_info::UserData`].
+/// Error returned when an input value is too long for [`crate::endpoint_info::UserData`].
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
@@ -411,64 +411,67 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up node info by [`NodeId`] and origin domain name.
+    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
     ///
-    /// To lookup nodes that published their node info to the DNS servers run by n0,
-    /// pass [`N0_DNS_NODE_ORIGIN_PROD`] as `origin`.
-    pub async fn lookup_node_by_id(
+    /// To lookup endpoints that published their endpoint info to the DNS servers run by n0,
+    /// pass [`N0_DNS_ENDPOINT_ORIGIN_PROD`] as `origin`.
+    pub async fn lookup_endpoint_by_id(
         &self,
-        node_id: &NodeId,
+        endpoint_id: &EndpointId,
         origin: &str,
-    ) -> Result<NodeInfo, LookupError> {
-        let name = node_info::node_domain(node_id, origin);
-        let name = node_info::ensure_iroh_txt_label(name);
+    ) -> Result<EndpointInfo, LookupError> {
+        let name = endpoint_info::endpoint_domain(endpoint_id, origin);
+        let name = endpoint_info::ensure_iroh_txt_label(name);
         let lookup = self
             .lookup_txt(name.clone(), DNS_TIMEOUT)
             .await
             .context(LookupFailedSnafu)?;
-        let info = NodeInfo::from_txt_lookup(name, lookup).context(ParseSnafu)?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup).context(ParseSnafu)?;
         Ok(info)
     }
 
-    /// Looks up node info by DNS name.
-    pub async fn lookup_node_by_domain_name(&self, name: &str) -> Result<NodeInfo, LookupError> {
-        let name = node_info::ensure_iroh_txt_label(name.to_string());
+    /// Looks up endpoint info by DNS name.
+    pub async fn lookup_endpoint_by_domain_name(
+        &self,
+        name: &str,
+    ) -> Result<EndpointInfo, LookupError> {
+        let name = endpoint_info::ensure_iroh_txt_label(name.to_string());
         let lookup = self
             .lookup_txt(name.clone(), DNS_TIMEOUT)
             .await
             .context(LookupFailedSnafu)?;
-        let info = NodeInfo::from_txt_lookup(name, lookup).context(ParseSnafu)?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup).context(ParseSnafu)?;
         Ok(info)
     }
 
-    /// Looks up node info by DNS name in a staggered fashion.
+    /// Looks up endpoint info by DNS name in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
-    pub async fn lookup_node_by_domain_name_staggered(
+    pub async fn lookup_endpoint_by_domain_name_staggered(
         &self,
         name: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeInfo, StaggeredError<LookupError>> {
-        let f = || self.lookup_node_by_domain_name(name);
+    ) -> Result<EndpointInfo, StaggeredError<LookupError>> {
+        let f = || self.lookup_endpoint_by_domain_name(name);
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up node info by [`NodeId`] and origin domain name.
+    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
-    pub async fn lookup_node_by_id_staggered(
+    pub async fn lookup_endpoint_by_id_staggered(
         &self,
-        node_id: &NodeId,
+        endpoint_id: &EndpointId,
         origin: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeInfo, StaggeredError<LookupError>> {
-        let f = || self.lookup_node_by_id(node_id, origin);
+    ) -> Result<EndpointInfo, StaggeredError<LookupError>> {
+        let f = || self.lookup_endpoint_by_id(endpoint_id, origin);
         stagger_call(f, delays_ms).await
     }
 }

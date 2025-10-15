@@ -1,7 +1,7 @@
 use clap::{Parser, ValueEnum};
 use iroh::{
-    NodeId,
-    discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
+    EndpointId,
+    discovery::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     dns::DnsResolver,
 };
 use n0_snafu::{Result, ResultExt};
@@ -31,15 +31,15 @@ struct Cli {
 
 #[derive(Debug, Parser)]
 enum Command {
-    /// Resolve node info by node id.
-    Node {
-        /// The node id to resolve.
-        node_id: NodeId,
-        /// Use a custom domain when resolving node info via DNS.
+    /// Resolve endpoint info by endpoint id.
+    Endpoint {
+        /// The endpoint id to resolve.
+        endpoint_id: EndpointId,
+        /// Use a custom domain when resolving endpoint info via DNS.
         #[clap(long)]
         dns_origin_domain: Option<String>,
     },
-    /// Resolve node info by domain.
+    /// Resolve endpoint info by domain.
     Domain { domain: String },
 }
 
@@ -62,21 +62,23 @@ async fn main() -> Result<()> {
         }
     };
     let resolved = match args.command {
-        Command::Node {
-            node_id,
+        Command::Endpoint {
+            endpoint_id,
             dns_origin_domain,
         } => {
             let origin_domain = match (&dns_origin_domain, args.env) {
                 (Some(domain), _) => domain,
-                (None, Env::Prod) => N0_DNS_NODE_ORIGIN_PROD,
-                (None, Env::Staging) => N0_DNS_NODE_ORIGIN_STAGING,
+                (None, Env::Prod) => N0_DNS_ENDPOINT_ORIGIN_PROD,
+                (None, Env::Staging) => N0_DNS_ENDPOINT_ORIGIN_STAGING,
                 (None, Env::Dev) => DEV_DNS_ORIGIN_DOMAIN,
             };
-            resolver.lookup_node_by_id(&node_id, origin_domain).await?
+            resolver
+                .lookup_endpoint_by_id(&endpoint_id, origin_domain)
+                .await?
         }
-        Command::Domain { domain } => resolver.lookup_node_by_domain_name(&domain).await?,
+        Command::Domain { domain } => resolver.lookup_endpoint_by_domain_name(&domain).await?,
     };
-    println!("resolved node {}", resolved.node_id);
+    println!("resolved endpoint {}", resolved.endpoint_id);
     if let Some(url) = resolved.relay_url() {
         println!("    relay={url}")
     }

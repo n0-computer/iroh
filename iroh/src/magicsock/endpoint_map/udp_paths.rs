@@ -1,10 +1,10 @@
-//! Path state for UDP addresses of a single peer node.
+//! Path state for UDP addresses of a single peer endpoint.
 //!
-//! This started as simply moving the [`NodeState`]'s `direct_addresses` and `best_addr`
+//! This started as simply moving the [`EndpointState`]'s `direct_addresses` and `best_addr`
 //! into one place together.  The aim is for external places to not directly interact with
 //! the inside and instead only notifies this struct of state changes to each path.
 //!
-//! [`NodeState`]: super::node_state::NodeState
+//! [`EndpointState`]: super::endpoint_state::EndpointState
 use std::{collections::BTreeMap, net::SocketAddr};
 
 use n0_future::time::Instant;
@@ -15,22 +15,22 @@ use super::{IpPort, path_state::PathState};
 /// The address on which to send datagrams over UDP.
 ///
 /// The [`MagicSock`] sends packets to zero or one UDP address, depending on the known paths
-/// to the remote node.  This conveys the UDP address to send on from the [`NodeUdpPaths`]
-/// to the [`NodeState`].
+/// to the remote endpoint.  This conveys the UDP address to send on from the [`EndpointUdpPaths`]
+/// to the [`EndpointState`].
 ///
-/// [`NodeUdpPaths`] contains all the UDP path states, while [`NodeState`] has to decide the
+/// [`EndpointUdpPaths`] contains all the UDP path states, while [`EndpointState`] has to decide the
 /// bigger picture including the relay server.
 ///
-/// See [`NodeUdpPaths::send_addr`].
+/// See [`EndpointUdpPaths::send_addr`].
 ///
 /// [`MagicSock`]: crate::magicsock::MagicSock
-/// [`NodeState`]: super::node_state::NodeState
+/// [`EndpointState`]: super::endpoint_state::EndpointState
 #[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub(super) enum UdpSendAddr {
-    /// The UDP address can be relied on to deliver data to the remote node.
+    /// The UDP address can be relied on to deliver data to the remote endpoint.
     ///
     /// This means this path is usable with a reasonable latency and can be fully trusted to
-    /// transport payload data to the remote node.
+    /// transport payload data to the remote endpoint.
     Valid(SocketAddr),
     /// The UDP address is highly likely to work, but has not been used for a while.
     ///
@@ -39,14 +39,14 @@ pub(super) enum UdpSendAddr {
     Outdated(SocketAddr),
     /// The UDP address is not known to work, but it might.
     ///
-    /// We know this UDP address belongs to the remote node, but we do not know if the path
+    /// We know this UDP address belongs to the remote endpoint, but we do not know if the path
     /// already works or may need holepunching before it will start to work.  It might even
     /// never work.  It is still useful to send to this together with backup path,
     /// i.e. relay, in case the path works: if the path does not need holepunching it might
     /// be much faster.  And if there is no relay path at all it might be the only way to
     /// establish a connection.
     Unconfirmed(SocketAddr),
-    /// No known UDP path exists to the remote node.
+    /// No known UDP path exists to the remote endpoint.
     #[default]
     None,
 }
@@ -62,20 +62,20 @@ impl UdpSendAddr {
     }
 }
 
-/// The UDP paths for a single node.
+/// The UDP paths for a single endpoint.
 ///
 /// Paths are identified by the [`IpPort`] of their UDP address.
 ///
-/// Initially this collects two structs directly from the [`NodeState`] into one place,
+/// Initially this collects two structs directly from the [`EndpointState`] into one place,
 /// leaving the APIs and astractions the same.  The goal is that this slowly migrates
 /// directly interacting with this data into only receiving [`PathState`] updates.  This
 /// will consolidate the logic of direct path selection and make this simpler to reason
 /// about.  However doing that all at once is too large a refactor.
 ///
-/// [`NodeState`]: super::node_state::NodeState
+/// [`EndpointState`]: super::endpoint_state::EndpointState
 #[derive(Debug, Default)]
-pub(super) struct NodeUdpPaths {
-    /// The state for each of this node's direct paths.
+pub(super) struct EndpointUdpPaths {
+    /// The state for each of this endpoint's direct paths.
     paths: BTreeMap<IpPort, PathState>,
     /// The current address we use to send on.
     ///
@@ -94,7 +94,7 @@ pub(super) struct NodeUdpPaths {
 
 pub(super) struct MutAccess<'a> {
     now: Instant,
-    inner: &'a mut NodeUdpPaths,
+    inner: &'a mut EndpointUdpPaths,
 }
 
 impl<'a> MutAccess<'a> {
@@ -115,7 +115,7 @@ impl Drop for MutAccess<'_> {
     }
 }
 
-impl NodeUdpPaths {
+impl EndpointUdpPaths {
     pub(super) fn new() -> Self {
         Default::default()
     }

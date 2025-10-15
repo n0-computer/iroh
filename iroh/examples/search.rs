@@ -1,10 +1,10 @@
-//! Example protocol for running search on a remote node.
+//! Example protocol for running search on a remote endpoint.
 //!
 //! We are building a very simple protocol here.
 //!
-//! Our protocol allows querying the text stored on the other node.
+//! Our protocol allows querying the text stored on the other endpoint.
 //!
-//! The example is contrived - we only use memory nodes, and our database is a hashmap in a mutex,
+//! The example is contrived - we only use memory endpoints, and our database is a hashmap in a mutex,
 //! and our queries just match if the query string appears as-is.
 //!
 //! ## Usage
@@ -13,14 +13,14 @@
 //!
 //!     cargo run --example search --features=examples  -- listen "hello-world" "foo-bar" "hello-moon"
 //!
-//! This spawns an iroh endpoint with three blobs. It will print the node's node id.
+//! This spawns an iroh endpoint with three blobs. It will print the endpoint's endpoint id.
 //!
 //! In another terminal, run
 //!
-//!     cargo run --example search --features=examples  -- query <node-id> hello
+//!     cargo run --example search --features=examples  -- query <endpoint-id> hello
 //!
-//! Replace <node-id> with the node id from above. This will connect to the listening node with our
-//! protocol and query for the string `hello`. The listening node will return a number of how many
+//! Replace <endpoint-id> with the endpoint id from above. This will connect to the listening endpoint with our
+//! protocol and query for the string `hello`. The listening endpoint will return a number of how many
 //! strings match the query.
 //!
 //! For this example, this will print:
@@ -33,7 +33,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use clap::Parser;
 use iroh::{
-    Endpoint, NodeId,
+    Endpoint, EndpointId,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
@@ -49,15 +49,15 @@ pub struct Cli {
 
 #[derive(Debug, Parser)]
 pub enum Command {
-    /// Spawn a node in listening mode.
+    /// Spawn an endpoint in listening mode.
     Listen {
         /// Each text string will be imported as a blob and inserted into the search database.
         text: Vec<String>,
     },
-    /// Query a remote node for data and print the results.
+    /// Query a remote endpoint for data and print the results.
     Query {
-        /// The node id of the node we want to query.
-        node_id: NodeId,
+        /// The endpoint id of the endpoint we want to query.
+        endpoint_id: EndpointId,
         /// The text we want to match.
         query: String,
     },
@@ -66,7 +66,7 @@ pub enum Command {
 /// Each protocol is identified by its ALPN string.
 ///
 /// The ALPN, or application-layer protocol negotiation, is exchanged in the connection handshake,
-/// and the connection is aborted unless both nodes pass the same bytestring.
+/// and the connection is aborted unless both endpoints pass the same bytestring.
 const ALPN: &[u8] = b"iroh-example/text-search/0";
 
 #[tokio::main]
@@ -78,18 +78,18 @@ async fn main() -> Result<()> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Build our protocol handler. The `builder` exposes access to various subsystems in the
-    // iroh node. In our case, we need a blobs client and the endpoint.
+    // iroh endpoint. In our case, we need a blobs client and the endpoint.
     let proto = BlobSearch::new(endpoint.clone());
 
     let builder = Router::builder(endpoint);
 
-    // Add our protocol, identified by our ALPN, to the node, and spawn the node.
+    // Add our protocol, identified by our ALPN, to the endpoint, and spawn the endpoint.
     let router = builder.accept(ALPN, proto.clone()).spawn();
 
     match args.command {
         Command::Listen { text } => {
-            let node_id = router.endpoint().node_id();
-            println!("our node id: {node_id}");
+            let endpoint_id = router.endpoint().id();
+            println!("our endpoint id: {endpoint_id}");
 
             // Insert the text strings as blobs and index them.
             for text in text.into_iter() {
@@ -99,11 +99,11 @@ async fn main() -> Result<()> {
             // Wait for Ctrl-C to be pressed.
             tokio::signal::ctrl_c().await.e()?;
         }
-        Command::Query { node_id, query } => {
-            // Query the remote node.
+        Command::Query { endpoint_id, query } => {
+            // Query the remote endpoint.
             // This will send the query over our protocol, read hashes on the reply stream,
             // and download each hash over iroh-blobs.
-            let num_matches = proto.query_remote(node_id, &query).await?;
+            let num_matches = proto.query_remote(endpoint_id, &query).await?;
 
             // Print out our query results.
             println!("Found {num_matches} matches");
@@ -127,9 +127,9 @@ impl ProtocolHandler for BlobSearch {
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        // We can get the remote's node id from the connection.
-        let node_id = connection.remote_node_id()?;
-        println!("accepted connection from {node_id}");
+        // We can get the remote's endpoint id from the connection.
+        let endpoint_id = connection.remote_id()?;
+        println!("accepted connection from {endpoint_id}");
 
         // Our protocol is a simple request-response protocol, so we expect the
         // connecting peer to open a single bi-directional stream.
@@ -170,12 +170,12 @@ impl BlobSearch {
         }
     }
 
-    /// Query a remote node, download all matching blobs and print the results.
-    pub async fn query_remote(&self, node_id: NodeId, query: &str) -> Result<u64> {
-        // Establish a connection to our node.
-        // We use the default node discovery in iroh, so we can connect by node id without
+    /// Query a remote endpoint, download all matching blobs and print the results.
+    pub async fn query_remote(&self, endpoint_id: EndpointId, query: &str) -> Result<u64> {
+        // Establish a connection to our endpoint.
+        // We use the default endpoint discovery in iroh, so we can connect by endpoint id without
         // providing further information.
-        let conn = self.endpoint.connect(node_id, ALPN).await?;
+        let conn = self.endpoint.connect(endpoint_id, ALPN).await?;
 
         // Open a bi-directional in our connection.
         let (mut send, mut recv) = conn.open_bi().await.e()?;

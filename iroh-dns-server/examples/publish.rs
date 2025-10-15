@@ -2,13 +2,13 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::{Parser, ValueEnum};
 use iroh::{
-    NodeId, SecretKey,
+    EndpointId, SecretKey,
     discovery::{
         UserData,
-        dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
+        dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrRelayClient},
     },
-    node_info::{IROH_TXT_NAME, NodeIdExt, NodeInfo},
+    endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME},
 };
 use n0_snafu::{Result, ResultExt};
 use url::Url;
@@ -31,7 +31,7 @@ pub enum Env {
 
 /// Publish a record to an irohdns server.
 ///
-/// You have to set the IROH_SECRET environment variable to the node secret for which to publish.
+/// You have to set the IROH_SECRET environment variable to the endpoint secret for which to publish.
 #[derive(Parser, Debug)]
 struct Cli {
     /// Environment to publish to.
@@ -49,7 +49,7 @@ struct Cli {
     /// Direct addresses to publish.
     #[clap(short, long)]
     addr: Vec<SocketAddr>,
-    /// User data to publish for this node
+    /// User data to publish for this endpoint
     #[clap(short, long)]
     user_data: Option<UserData>,
 }
@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
             .context("failed to parse IROH_SECRET environment variable as iroh secret key")?,
         Err(_) => {
             let s = SecretKey::generate(&mut rand::rng());
-            println!("Generated a new node secret. To reuse, set");
+            println!("Generated a new endpoint secret. To reuse, set");
             println!(
                 "\tIROH_SECRET={}",
                 data_encoding::HEXLOWER.encode(&s.to_bytes())
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
         }
     };
 
-    let node_id = secret_key.public();
+    let endpoint_id = secret_key.public();
     let pkarr_relay_url = match (args.pkarr_relay_url, args.env) {
         (Some(url), _) => url,
         (None, Env::Staging) => N0_DNS_PKARR_RELAY_STAGING.parse().expect("valid url"),
@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
         None
     };
 
-    println!("announce node {node_id}:");
+    println!("announce endpoint {endpoint_id}:");
     if let Some(relay_url) = &relay_url {
         println!("    relay={relay_url}");
     }
@@ -103,11 +103,11 @@ async fn main() -> Result<()> {
     println!("publish to {pkarr_relay_url} ...");
 
     let pkarr = PkarrRelayClient::new(pkarr_relay_url);
-    let node_info = NodeInfo::new(node_id)
+    let endpoint_info = EndpointInfo::new(endpoint_id)
         .with_relay_url(relay_url.map(Into::into))
         .with_direct_addresses(args.addr.into_iter().collect())
         .with_user_data(args.user_data);
-    let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+    let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
     tracing::debug!("signed packet: {signed_packet:?}");
     pkarr.publish(&signed_packet).await?;
 
@@ -116,30 +116,30 @@ async fn main() -> Result<()> {
 
     match args.env {
         Env::Staging => {
-            println!("   cargo run --example resolve -- --env staging node {node_id}");
+            println!("   cargo run --example resolve -- --env staging endpoint {endpoint_id}");
             println!(
                 "   dig {} TXT",
-                fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_STAGING)
+                fmt_domain(&endpoint_id, N0_DNS_ENDPOINT_ORIGIN_STAGING)
             )
         }
         Env::Prod => {
-            println!("   cargo run --example resolve -- --env prod node {node_id}");
+            println!("   cargo run --example resolve -- --env prod endpoint {endpoint_id}");
             println!(
                 "   dig {} TXT",
-                fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_PROD)
+                fmt_domain(&endpoint_id, N0_DNS_ENDPOINT_ORIGIN_PROD)
             )
         }
         Env::Dev => {
-            println!("    cargo run --example resolve -- --env dev node {node_id}");
+            println!("    cargo run --example resolve -- --env dev endpoint {endpoint_id}");
             println!(
                 "    dig @localhost -p 5300 {} TXT",
-                fmt_domain(&node_id, DEV_DNS_ORIGIN_DOMAIN)
+                fmt_domain(&endpoint_id, DEV_DNS_ORIGIN_DOMAIN)
             )
         }
     }
     Ok(())
 }
 
-fn fmt_domain(node_id: &NodeId, origin: &str) -> String {
-    format!("{IROH_TXT_NAME}.{}.{origin}", node_id.to_z32())
+fn fmt_domain(endpoint_id: &EndpointId, origin: &str) -> String {
+    format!("{IROH_TXT_NAME}.{}.{origin}", endpoint_id.to_z32())
 }

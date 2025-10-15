@@ -1,20 +1,20 @@
-//! Node address discovery.
+//! Endpoint address discovery.
 //!
-//! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
-//! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
+//! To connect to an iroh endpoint a [`EndpointAddr`] is needed, which may contain a
+//! [`RelayUrl`] or one or more *direct addresses* in addition to the [`EndpointId`].
 //!
-//! Since there is a conversion from [`NodeId`] to [`NodeAddr`], you can also use
-//! connect directly with a [`NodeId`].
+//! Since there is a conversion from [`EndpointId`] to [`EndpointAddr`], you can also use
+//! connect directly with a [`EndpointId`].
 //!
 //! For this to work however, the endpoint has to get the addressing  information by
 //! other means.
 //!
-//! Node discovery is an automated system for an [`Endpoint`] to retrieve this addressing
-//! information.  Each iroh node will automatically publish their own addressing
+//! Endpoint discovery is an automated system for an [`Endpoint`] to retrieve this addressing
+//! information.  Each iroh endpoint will automatically publish their own addressing
 //! information.  Usually this means publishing which [`RelayUrl`] to use for their
-//! [`NodeId`], but they could also publish their direct addresses.
+//! [`EndpointId`], but they could also publish their direct addresses.
 //!
-//! The [`Discovery`] trait is used to define node discovery.  This allows multiple
+//! The [`Discovery`] trait is used to define endpoint discovery.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
 //! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
 //! The [`Builder::add_discovery`] method is used to add a discovery mechanism to an
@@ -34,7 +34,7 @@
 //!   using HTTP.
 //!
 //! - [`MdnsDiscovery`]: mdns::MdnsDiscovery which uses the crate `swarm-discovery`, an
-//!   opinionated mDNS implementation, to discover nodes on the local network.
+//!   opinionated mDNS implementation, to discover endpoints on the local network.
 //!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
@@ -96,7 +96,7 @@
 //! # }
 //! ```
 //!
-//! [`NodeAddr`]: iroh_base::NodeAddr
+//! [`EndpointAddr`]: iroh_base::EndpointAddr
 //! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
@@ -110,7 +110,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use iroh_base::{NodeAddr, NodeId};
+use iroh_base::{EndpointAddr, EndpointId};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -124,7 +124,7 @@ use tracing::{Instrument, debug, error_span, warn};
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-pub use crate::node_info::{NodeData, NodeInfo, ParseError, UserData};
+pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData};
 use crate::{Endpoint, SecretKey};
 
 #[cfg(not(wasm_browser))]
@@ -199,8 +199,8 @@ pub struct DiscoveryContext<'a> {
 }
 
 impl DiscoveryContext<'_> {
-    /// Returns the [`NodeId`] of the endpoint.
-    pub fn node_id(&self) -> NodeId {
+    /// Returns the [`EndpointId`] of the endpoint.
+    pub fn endpoint_id(&self) -> EndpointId {
         self.secret_key.public()
     }
 
@@ -264,8 +264,8 @@ impl IntoDiscoveryError {
 pub enum DiscoveryError {
     #[snafu(display("No discovery service configured"))]
     NoServiceConfigured {},
-    #[snafu(display("Discovery produced no results for {}", node_id.fmt_short()))]
-    NoResults { node_id: NodeId },
+    #[snafu(display("Discovery produced no results for {}", endpoint_id.fmt_short()))]
+    NoResults { endpoint_id: EndpointId },
     #[snafu(display("Service '{provenance}' error"))]
     User {
         provenance: &'static str,
@@ -291,16 +291,16 @@ impl DiscoveryError {
     }
 }
 
-/// Node discovery for [`super::Endpoint`].
+/// Endpoint discovery for [`super::Endpoint`].
 ///
-/// This trait defines publishing and resolving addressing information for a [`NodeId`].
-/// This enables connecting to other nodes with only knowing the [`NodeId`], by using this
+/// This trait defines publishing and resolving addressing information for a [`EndpointId`].
+/// This enables connecting to other endpoints with only knowing the [`EndpointId`], by using this
 /// [`Discovery`] system to look up the actual addressing information.  It is common for
-/// implementations to require each node to publish their own information before it can be
-/// looked up by other nodes.
+/// implementations to require each endpoint to publish their own information before it can be
+/// looked up by other endpoints.
 ///
 /// The published addressing information can include both a [`RelayUrl`] and/or direct
-/// addresses. See [`NodeData`] for details.
+/// addresses. See [`EndpointData`] for details.
 ///
 /// To allow for discovery, the [`super::Endpoint`] will call `publish` whenever
 /// discovery information changes. If a discovery mechanism requires a periodic
@@ -308,78 +308,85 @@ impl DiscoveryError {
 ///
 /// [`RelayUrl`]: crate::RelayUrl
 pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
-    /// Publishes the given [`NodeData`] to the discovery mechanism.
+    /// Publishes the given [`EndpointData`] to the discovery mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
     /// publishing. If publishing is async, the implementation should start it's own task.
     ///
     /// This will be called from a tokio task, so it is safe to spawn new tasks.
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
-    fn publish(&self, _data: &NodeData) {}
+    fn publish(&self, _data: &EndpointData) {}
 
-    /// Resolves the [`DiscoveryItem`] for the given [`NodeId`].
+    /// Resolves the [`DiscoveryItem`] for the given [`EndpointId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
     fn resolve(
         &self,
-        _node_id: NodeId,
+        _endpoint_id: EndpointId,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         None
     }
 }
 
 impl<T: Discovery> Discovery for Arc<T> {
-    fn publish(&self, data: &NodeData) {
+    fn publish(&self, data: &EndpointData) {
         self.as_ref().publish(data);
     }
 
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
-        self.as_ref().resolve(node_id)
+    fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        self.as_ref().resolve(endpoint_id)
     }
 }
 
-/// Node discovery results from [`Discovery`] services.
+/// Endpoint discovery results from [`Discovery`] services.
 ///
 /// This is the item in the streams returned from [`Discovery::resolve`].
-/// It contains the [`NodeData`] about the discovered node,
+/// It contains the [`EndpointData`] about the discovered endpoint,
 /// and some additional metadata about the discovery.
 ///
-/// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
+/// This struct derefs to [`EndpointData`], so you can access the methods from [`EndpointData`]
 /// directly from [`DiscoveryItem`].
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DiscoveryItem {
-    /// The node info for the node, as discovered by the the discovery service.
-    node_info: NodeInfo,
+    /// The endpoint info for the endpoint, as discovered by the the discovery service.
+    endpoint_info: EndpointInfo,
     /// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
     provenance: &'static str,
-    /// Optional timestamp when this node address info was last updated.
+    /// Optional timestamp when this endpoint address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
-    // TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each node to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
+    // TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each endpoint to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     last_updated: Option<u64>,
 }
 
 impl DiscoveryItem {
-    /// Creates a new [`DiscoveryItem`] from a [`NodeInfo`].
-    pub fn new(node_info: NodeInfo, provenance: &'static str, last_updated: Option<u64>) -> Self {
+    /// Creates a new [`DiscoveryItem`] from a [`EndpointInfo`].
+    pub fn new(
+        endpoint_info: EndpointInfo,
+        provenance: &'static str,
+        last_updated: Option<u64>,
+    ) -> Self {
         Self {
-            node_info,
+            endpoint_info,
             provenance,
             last_updated,
         }
     }
 
-    /// Returns the node id of the discovered node.
-    pub fn node_id(&self) -> NodeId {
-        self.node_info.node_id
+    /// Returns the endpoint id of the discovered endpoint.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_info.endpoint_id
     }
 
-    /// Returns the [`NodeInfo`] for the discovered node.
-    pub fn node_info(&self) -> &NodeInfo {
-        &self.node_info
+    /// Returns the [`EndpointInfo`] for the discovered endpoint.
+    pub fn endpoint_info(&self) -> &EndpointInfo {
+        &self.endpoint_info
     }
 
     /// Returns the provenance of this discovery item.
@@ -390,39 +397,39 @@ impl DiscoveryItem {
         self.provenance
     }
 
-    /// Returns the optional timestamp when this node info was last updated.
+    /// Returns the optional timestamp when this endpoint info was last updated.
     ///
     /// The value is microseconds since the unix epoch.
     pub fn last_updated(&self) -> Option<u64> {
         self.last_updated
     }
 
-    /// Converts into a [`NodeAddr`] by cloning the needed fields.
-    pub fn to_node_addr(&self) -> NodeAddr {
-        self.node_info.to_node_addr()
+    /// Converts into a [`EndpointAddr`] by cloning the needed fields.
+    pub fn to_endpoint_addr(&self) -> EndpointAddr {
+        self.endpoint_info.to_endpoint_addr()
     }
 
-    /// Converts into a [`NodeAddr`] without cloning.
-    pub fn into_node_addr(self) -> NodeAddr {
-        self.node_info.into_node_addr()
+    /// Converts into a [`EndpointAddr`] without cloning.
+    pub fn into_endpoint_addr(self) -> EndpointAddr {
+        self.endpoint_info.into_endpoint_addr()
     }
 
     /// Returns any user-defined data.
     pub fn user_data(&self) -> Option<UserData> {
-        self.node_info().data.user_data().cloned()
+        self.endpoint_info().data.user_data().cloned()
     }
 }
 
 impl std::ops::Deref for DiscoveryItem {
-    type Target = NodeData;
+    type Target = EndpointData;
     fn deref(&self) -> &Self::Target {
-        &self.node_info.data
+        &self.endpoint_info.data
     }
 }
 
-impl From<DiscoveryItem> for NodeInfo {
+impl From<DiscoveryItem> for EndpointInfo {
     fn from(item: DiscoveryItem) -> Self {
-        item.node_info
+        item.endpoint_info
     }
 }
 
@@ -433,7 +440,7 @@ impl From<DiscoveryItem> for NodeInfo {
 pub struct ConcurrentDiscovery {
     services: Arc<RwLock<Vec<Box<dyn Discovery>>>>,
     /// The data last published, used to publish when adding a new service.
-    last_data: Arc<RwLock<Option<NodeData>>>,
+    last_data: Arc<RwLock<Option<EndpointData>>>,
 }
 
 impl ConcurrentDiscovery {
@@ -495,7 +502,7 @@ where
 }
 
 impl Discovery for ConcurrentDiscovery {
-    fn publish(&self, data: &NodeData) {
+    fn publish(&self, data: &EndpointData) {
         let services = self.services.read().expect("poisoned");
         for service in &*services {
             service.publish(data);
@@ -507,11 +514,14 @@ impl Discovery for ConcurrentDiscovery {
             .replace(data.clone());
     }
 
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let services = self.services.read().expect("poisoned");
         let streams = services
             .iter()
-            .filter_map(|service| service.resolve(node_id));
+            .filter_map(|service| service.resolve(endpoint_id));
 
         let streams = n0_future::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
@@ -522,7 +532,7 @@ impl Discovery for ConcurrentDiscovery {
 /// start a discovery task.
 const MAX_AGE: Duration = Duration::from_secs(10);
 
-/// A wrapper around a tokio task which runs a node discovery.
+/// A wrapper around a tokio task which runs an endpoint discovery.
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<(), DiscoveryError>>,
     _task: AbortOnDropHandle<()>,
@@ -530,13 +540,13 @@ pub(super) struct DiscoveryTask {
 
 impl DiscoveryTask {
     /// Starts a discovery task.
-    pub(super) fn start(ep: Endpoint, node_id: NodeId) -> Result<Self, DiscoveryError> {
+    pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
         ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
-        let me = ep.node_id();
+        let me = ep.id();
         let task = task::spawn(
-            async move { Self::run(ep, node_id, on_first_tx).await }.instrument(
-                error_span!("discovery", me = %me.fmt_short(), node = %node_id.fmt_short()),
+            async move { Self::run(ep, endpoint_id, on_first_tx).await }.instrument(
+                error_span!("discovery", me = %me.fmt_short(), endpoint = %endpoint_id.fmt_short()),
             ),
         );
         Ok(Self {
@@ -545,7 +555,7 @@ impl DiscoveryTask {
         })
     }
 
-    /// Starts a discovery task after a delay and only if no path to the node was recently active.
+    /// Starts a discovery task after a delay and only if no path to the endpoint was recently active.
     ///
     /// This returns `None` if we received data or control messages from the remote endpoint
     /// recently enough. If not it returns a [`DiscoveryTask`].
@@ -555,32 +565,32 @@ impl DiscoveryTask {
     /// Otherwise, or if no `delay` is set, the discovery will be started.
     pub(super) fn maybe_start_after_delay(
         ep: &Endpoint,
-        node_id: NodeId,
+        endpoint_id: EndpointId,
         delay: Option<Duration>,
     ) -> Result<Option<Self>, DiscoveryError> {
         // If discovery is not needed, don't even spawn a task.
-        if !ep.needs_discovery(node_id, MAX_AGE) {
+        if !ep.needs_discovery(endpoint_id, MAX_AGE) {
             return Ok(None);
         }
         ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
-        let me = ep.node_id();
+        let me = ep.id();
         let task = task::spawn(
             async move {
                 // If delay is set, wait and recheck if discovery is needed. If not, early-exit.
                 if let Some(delay) = delay {
                     time::sleep(delay).await;
-                    if !ep.needs_discovery(node_id, MAX_AGE) {
+                    if !ep.needs_discovery(endpoint_id, MAX_AGE) {
                         debug!("no discovery needed, abort");
                         on_first_tx.send(Ok(())).ok();
                         return;
                     }
                 }
-                Self::run(ep, node_id, on_first_tx).await
+                Self::run(ep, endpoint_id, on_first_tx).await
             }
             .instrument(
-                error_span!("discovery", me = %me.fmt_short(), node = %node_id.fmt_short()),
+                error_span!("discovery", me = %me.fmt_short(), endpoint = %endpoint_id.fmt_short()),
             ),
         );
         Ok(Some(Self {
@@ -598,22 +608,22 @@ impl DiscoveryTask {
 
     fn create_stream(
         ep: &Endpoint,
-        node_id: NodeId,
+        endpoint_id: EndpointId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
         ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let stream = ep
             .discovery()
-            .resolve(node_id)
-            .ok_or(NoResultsSnafu { node_id }.build())?;
+            .resolve(endpoint_id)
+            .ok_or(NoResultsSnafu { endpoint_id }.build())?;
         Ok(stream)
     }
 
     async fn run(
         ep: Endpoint,
-        node_id: NodeId,
+        endpoint_id: EndpointId,
         on_first_tx: oneshot::Sender<Result<(), DiscoveryError>>,
     ) {
-        let mut stream = match Self::create_stream(&ep, node_id) {
+        let mut stream = match Self::create_stream(&ep, endpoint_id) {
             Ok(stream) => stream,
             Err(err) => {
                 on_first_tx.send(Err(err)).ok();
@@ -626,16 +636,16 @@ impl DiscoveryTask {
             match stream.next().await {
                 Some(Ok(r)) => {
                     let provenance = r.provenance;
-                    let node_addr = r.to_node_addr();
-                    if node_addr.is_empty() {
+                    let endpoint_addr = r.to_endpoint_addr();
+                    if endpoint_addr.is_empty() {
                         debug!(%provenance, "empty address found");
                         continue;
                     }
-                    debug!(%provenance, addr = ?node_addr, "new address found");
+                    debug!(%provenance, addr = ?endpoint_addr, "new address found");
                     let source = crate::magicsock::Source::Discovery {
                         name: provenance.to_string(),
                     };
-                    ep.add_node_addr(node_addr, source).ok();
+                    ep.add_endpoint_addr(endpoint_addr, source).ok();
 
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
@@ -649,7 +659,7 @@ impl DiscoveryTask {
             }
         }
         if let Some(tx) = on_first_tx.take() {
-            tx.send(Err(NoResultsSnafu { node_id }.build())).ok();
+            tx.send(Err(NoResultsSnafu { endpoint_id }.build())).ok();
         }
     }
 }
@@ -663,7 +673,7 @@ mod tests {
         time::SystemTime,
     };
 
-    use iroh_base::{NodeAddr, SecretKey};
+    use iroh_base::{EndpointAddr, SecretKey};
     use n0_snafu::{Error, Result, ResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{Rng, SeedableRng};
@@ -673,17 +683,17 @@ mod tests {
     use super::*;
     use crate::{Endpoint, RelayMode, endpoint::ConnectOptions};
 
-    type InfoStore = HashMap<NodeId, (NodeData, u64)>;
+    type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
-        nodes: Arc<Mutex<InfoStore>>,
+        endpoints: Arc<Mutex<InfoStore>>,
     }
 
     impl TestDiscoveryShared {
-        pub fn create_discovery(&self, node_id: NodeId) -> TestDiscovery {
+        pub fn create_discovery(&self, endpoint_id: EndpointId) -> TestDiscovery {
             TestDiscovery {
-                node_id,
+                endpoint_id,
                 shared: self.clone(),
                 publish: true,
                 resolve_wrong: false,
@@ -691,9 +701,9 @@ mod tests {
             }
         }
 
-        pub fn create_lying_discovery(&self, node_id: NodeId) -> TestDiscovery {
+        pub fn create_lying_discovery(&self, endpoint_id: EndpointId) -> TestDiscovery {
             TestDiscovery {
-                node_id,
+                endpoint_id,
                 shared: self.clone(),
                 publish: false,
                 resolve_wrong: true,
@@ -704,7 +714,7 @@ mod tests {
 
     #[derive(Debug)]
     struct TestDiscovery {
-        node_id: NodeId,
+        endpoint_id: EndpointId,
         shared: TestDiscoveryShared,
         publish: bool,
         resolve_wrong: bool,
@@ -712,43 +722,48 @@ mod tests {
     }
 
     impl Discovery for TestDiscovery {
-        fn publish(&self, data: &NodeData) {
+        fn publish(&self, data: &EndpointData) {
             if !self.publish {
                 return;
             }
             let now = system_time_now();
             self.shared
-                .nodes
+                .endpoints
                 .lock()
                 .unwrap()
-                .insert(self.node_id, (data.clone(), now));
+                .insert(self.endpoint_id, (data.clone(), now));
         }
 
         fn resolve(
             &self,
-            node_id: NodeId,
+            endpoint_id: EndpointId,
         ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             let addr_info = if self.resolve_wrong {
                 let ts = system_time_now() - 100_000;
                 let port: u16 = rand::rng().random_range(10_000..20_000);
                 // "240.0.0.0/4" is reserved and unreachable
                 let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                let data = NodeData::new(None, BTreeSet::from([addr]));
+                let data = EndpointData::new(None, BTreeSet::from([addr]));
                 Some((data, ts))
             } else {
-                self.shared.nodes.lock().unwrap().get(&node_id).cloned()
+                self.shared
+                    .endpoints
+                    .lock()
+                    .unwrap()
+                    .get(&endpoint_id)
+                    .cloned()
             };
             let stream = match addr_info {
                 Some((data, ts)) => {
                     let item = DiscoveryItem::new(
-                        NodeInfo::from_parts(node_id, data),
+                        EndpointInfo::from_parts(endpoint_id, data),
                         "test-disco",
                         Some(ts),
                     );
                     let delay = self.delay;
                     let fut = async move {
                         time::sleep(delay).await;
-                        tracing::debug!("resolve: {} = {item:?}", node_id.fmt_short());
+                        tracing::debug!("resolve: {} = {item:?}", endpoint_id.fmt_short());
                         Ok(item)
                     };
                     n0_future::stream::once_future(fut).boxed()
@@ -763,11 +778,11 @@ mod tests {
     struct EmptyDiscovery;
 
     impl Discovery for EmptyDiscovery {
-        fn publish(&self, _data: &NodeData) {}
+        fn publish(&self, _data: &EndpointData) {}
 
         fn resolve(
             &self,
-            _node_id: NodeId,
+            _endpoint_id: EndpointId,
         ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             Some(n0_future::stream::empty().boxed())
         }
@@ -792,7 +807,7 @@ mod tests {
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
-        let ep1_addr = NodeAddr::new(ep1.node_id());
+        let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -816,7 +831,7 @@ mod tests {
             let disco = Arc::new(disco);
             new_endpoint(secret, disco).await
         };
-        let ep1_addr = NodeAddr::new(ep1.node_id());
+        let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -841,7 +856,7 @@ mod tests {
             disco.add(disco2);
             new_endpoint(secret, disco).await
         };
-        let ep1_addr = NodeAddr::new(ep1.node_id());
+        let ep1_addr = EndpointAddr::new(ep1.id());
 
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
@@ -875,7 +890,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
 
-        let _conn = ep2.connect(ep1.node_id(), TEST_ALPN).await?;
+        let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;
         Ok(())
     }
 
@@ -905,14 +920,14 @@ mod tests {
         let opts = ConnectOptions::new().with_transport_config(Arc::new(config));
 
         let res = ep2
-            .connect_with_opts(ep1.node_id(), TEST_ALPN, opts)
+            .connect_with_opts(ep1.id(), TEST_ALPN, opts)
             .await? // -> Connecting works
             .await; // -> Connection is expected to fail
         assert!(res.is_err());
         Ok(())
     }
 
-    /// This test first adds a wrong address manually (e.g. from an outdated&node_id ticket).
+    /// This test first adds a wrong address manually (e.g. from an outdated&endpoint_id ticket).
     /// Connect should still succeed because the discovery service will be invoked (after a delay).
     #[tokio::test]
     #[traced_test]
@@ -931,8 +946,8 @@ mod tests {
             new_endpoint(secret, disco).await
         };
 
-        let ep1_wrong_addr = NodeAddr {
-            node_id: ep1.node_id(),
+        let ep1_wrong_addr = EndpointAddr {
+            endpoint_id: ep1.id(),
             relay_url: None,
             direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
         };
@@ -980,14 +995,14 @@ mod tests {
     }
 }
 
-/// This module contains end-to-end tests for DNS node discovery.
+/// This module contains end-to-end tests for DNS endpoint discovery.
 ///
 /// The tests run a minimal test DNS server to resolve against, and a minimal pkarr relay to
 /// publish to. The DNS and pkarr servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
-    use iroh_base::{NodeAddr, SecretKey};
-    use iroh_relay::{RelayMap, node_info::UserData};
+    use iroh_base::{EndpointAddr, SecretKey};
+    use iroh_relay::{RelayMap, endpoint_info::UserData};
     use n0_future::time::Duration;
     use n0_snafu::{Error, Result, ResultExt};
     use rand::{CryptoRng, SeedableRng};
@@ -996,9 +1011,9 @@ mod test_dns_pkarr {
 
     use crate::{
         Endpoint, RelayMode,
-        discovery::{NodeData, pkarr::PkarrPublisher},
+        discovery::{EndpointData, pkarr::PkarrPublisher},
         dns::DnsResolver,
-        node_info::NodeInfo,
+        endpoint_info::EndpointInfo,
         test_utils::{
             DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
         },
@@ -1017,19 +1032,19 @@ mod test_dns_pkarr {
             .context("Running DNS server")?;
 
         let secret_key = SecretKey::generate(&mut rng);
-        let node_info = NodeInfo::new(secret_key.public())
+        let endpoint_info = EndpointInfo::new(secret_key.public())
             .with_relay_url(Some("https://relay.example".parse().unwrap()));
-        let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+        let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
             .upsert(signed_packet)
             .context("update and insert signed packet")?;
 
         let resolver = DnsResolver::with_nameserver(nameserver);
         let resolved = resolver
-            .lookup_node_by_id(&node_info.node_id, &origin)
+            .lookup_endpoint_by_id(&endpoint_info.endpoint_id, &origin)
             .await?;
 
-        assert_eq!(resolved, node_info);
+        assert_eq!(resolved, endpoint_info);
 
         Ok(())
     }
@@ -1045,7 +1060,7 @@ mod test_dns_pkarr {
             .context("DnsPkarrServer")?;
 
         let secret_key = SecretKey::generate(&mut rng);
-        let node_id = secret_key.public();
+        let endpoint_id = secret_key.public();
 
         let relay_url = Some("https://relay.example".parse().unwrap());
 
@@ -1053,25 +1068,27 @@ mod test_dns_pkarr {
         let publisher =
             PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone()).build(secret_key);
         let user_data: UserData = "foobar".parse().unwrap();
-        let data = NodeData::new(relay_url.clone(), Default::default())
+        let data = EndpointData::new(relay_url.clone(), Default::default())
             .with_user_data(Some(user_data.clone()));
         // does not block, update happens in background task
-        publisher.update_node_data(&data);
+        publisher.update_endpoint_data(&data);
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
-            .on_node(&node_id, PUBLISH_TIMEOUT)
+            .on_endpoint(&endpoint_id, PUBLISH_TIMEOUT)
             .await
-            .context("wait for on node update")?;
-        let resolved = resolver.lookup_node_by_id(&node_id, &origin).await?;
+            .context("wait for on endpoint update")?;
+        let resolved = resolver
+            .lookup_endpoint_by_id(&endpoint_id, &origin)
+            .await?;
         println!("resolved {resolved:?}");
 
-        let expected_addr = NodeAddr {
-            node_id,
+        let expected_addr = EndpointAddr {
+            endpoint_id,
             relay_url,
             direct_addresses: Default::default(),
         };
 
-        assert_eq!(resolved.to_node_addr(), expected_addr);
+        assert_eq!(resolved.to_endpoint_addr(), expected_addr);
         assert_eq!(resolved.user_data(), Some(&user_data));
         Ok(())
     }
@@ -1091,12 +1108,12 @@ mod test_dns_pkarr {
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
-            .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
+            .on_endpoint(&ep1.id(), PUBLISH_TIMEOUT)
             .await
-            .context("wait for on node update")?;
+            .context("wait for on endpoint update")?;
 
-        // we connect only by node id!
-        let _conn = ep2.connect(ep1.node_id(), TEST_ALPN).await?;
+        // we connect only by endpoint id!
+        let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;
         Ok(())
     }
 

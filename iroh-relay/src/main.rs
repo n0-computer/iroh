@@ -12,7 +12,7 @@ use std::{
 
 use clap::Parser;
 use http::StatusCode;
-use iroh_base::NodeId;
+use iroh_base::EndpointId;
 use iroh_relay::{
     defaults::{
         DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
@@ -30,8 +30,8 @@ use url::Url;
 
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
-/// The header name for setting the node id in HTTP auth requests.
-const X_IROH_NODE_ID: &str = "X-Iroh-NodeId";
+/// The header name for setting the endpoint id in HTTP auth requests.
+const X_IROH_ENDPOINT_ID: &str = "X-Iroh-NodeId";
 /// Environment variable to read a bearer token for HTTP auth requests from.
 const ENV_HTTP_BEARER_TOKEN: &str = "IROH_RELAY_HTTP_BEARER_TOKEN";
 
@@ -110,7 +110,7 @@ struct Config {
     ///
     /// Defaults to `true`.
     ///
-    /// When disabled, the relay will not proxy traffic between nodes. This leaves only
+    /// When disabled, the relay will not proxy traffic between endpoints. This leaves only
     /// the QUIC server running (if `enable_quic_addr_discovery` is `true`), which helps
     /// with NAT traversal by reporting observed addresses but does not relay any data.
     /// This is useful for holepunching-only relay servers.
@@ -166,7 +166,7 @@ struct Config {
     key_cache_capacity: Option<usize>,
     /// Access control for relaying connections.
     ///
-    /// This controls which nodes are allowed to relay connections, other endpoints are not controlled by this.
+    /// This controls which endpoints are allowed to relay connections, other endpoints are not controlled by this.
     #[serde(default)]
     access: AccessConfig,
 }
@@ -177,17 +177,17 @@ enum AccessConfig {
     /// Allows everyone
     #[default]
     Everyone,
-    /// Allows only these nodes.
-    Allowlist(Vec<NodeId>),
-    /// Allows everyone, except these nodes.
-    Denylist(Vec<NodeId>),
-    /// Performs a HTTP POST request to determine access for each node that connects to the relay.
+    /// Allows only these endpoints.
+    Allowlist(Vec<EndpointId>),
+    /// Allows everyone, except these endpoints.
+    Denylist(Vec<EndpointId>),
+    /// Performs a HTTP POST request to determine access for each endpoint that connects to the relay.
     ///
-    /// The request will have a header `X-Iroh-Node-Id` set to the hex-encoded node id attempting
+    /// The request will have a header `X-Iroh-Endpoint-Id` set to the hex-encoded endpoint id attempting
     /// to connect to the relay.
     ///
     /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
-    /// In all other cases, the node will be denied access.
+    /// In all other cases, the endpoint will be denied access.
     Http(HttpAccessConfig),
 }
 
@@ -210,10 +210,10 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
             AccessConfig::Everyone => iroh_relay::server::AccessConfig::Everyone,
             AccessConfig::Allowlist(allow_list) => {
                 let allow_list = Arc::new(allow_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |endpoint_id| {
                     let allow_list = allow_list.clone();
                     async move {
-                        if allow_list.contains(&node_id) {
+                        if allow_list.contains(&endpoint_id) {
                             iroh_relay::server::Access::Allow
                         } else {
                             iroh_relay::server::Access::Deny
@@ -224,10 +224,10 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
             }
             AccessConfig::Denylist(deny_list) => {
                 let deny_list = Arc::new(deny_list);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |endpoint_id| {
                     let deny_list = deny_list.clone();
                     async move {
-                        if deny_list.contains(&node_id) {
+                        if deny_list.contains(&endpoint_id) {
                             iroh_relay::server::Access::Deny
                         } else {
                             iroh_relay::server::Access::Allow
@@ -246,26 +246,26 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                     config.bearer_token = Some(token);
                 }
                 let config = Arc::new(config);
-                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |endpoint_id| {
                     let client = client.clone();
                     let config = config.clone();
-                    async move { http_access_check(&client, &config, node_id).await }.boxed()
+                    async move { http_access_check(&client, &config, endpoint_id).await }.boxed()
                 }))
             }
         }
     }
 }
 
-#[tracing::instrument("http-access-check", skip_all, fields(node_id=%node_id.fmt_short()))]
+#[tracing::instrument("http-access-check", skip_all, fields(endpoint_id=%endpoint_id.fmt_short()))]
 async fn http_access_check(
     client: &reqwest::Client,
     config: &HttpAccessConfig,
-    node_id: NodeId,
+    endpoint_id: EndpointId,
 ) -> iroh_relay::server::Access {
     use iroh_relay::server::Access;
     debug!(url=%config.url, "Check relay access via HTTP POST");
 
-    match http_access_check_inner(client, config, node_id).await {
+    match http_access_check_inner(client, config, endpoint_id).await {
         Ok(()) => {
             debug!("HTTP access check OK: Allow access");
             Access::Allow
@@ -280,11 +280,11 @@ async fn http_access_check(
 async fn http_access_check_inner(
     client: &reqwest::Client,
     config: &HttpAccessConfig,
-    node_id: NodeId,
+    endpoint_id: EndpointId,
 ) -> Result<()> {
     let mut request = client
         .post(config.url.clone())
-        .header(X_IROH_NODE_ID, node_id.to_string());
+        .header(X_IROH_ENDPOINT_ID, endpoint_id.to_string());
     if let Some(token) = config.bearer_token.as_ref() {
         request = request.header(http::header::AUTHORIZATION, format!("Bearer {token}"));
     }
@@ -774,17 +774,17 @@ mod tests {
         assert_eq!(config.access, AccessConfig::Everyone);
 
         let mut rng = ChaCha8Rng::seed_from_u64(0);
-        let node_id = SecretKey::generate(&mut rng).public();
+        let endpoint_id = SecretKey::generate(&mut rng).public();
 
         let config = format!(
             "
             access.allowlist = [
-              \"{node_id}\",
+              \"{endpoint_id}\",
             ]
         "
         );
         let config = Config::from_str(dbg!(&config))?;
-        assert_eq!(config.access, AccessConfig::Allowlist(vec![node_id]));
+        assert_eq!(config.access, AccessConfig::Allowlist(vec![endpoint_id]));
 
         let config = r#"
             access.http.url = "https://example.com/foo/bar?boo=baz"

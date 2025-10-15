@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use iroh_base::{NodeId, RelayUrl};
+use iroh_base::{EndpointId, RelayUrl};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use smallvec::SmallVec;
@@ -40,8 +40,8 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     (
         n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
         n0_watcher::Join<
-            Option<(RelayUrl, NodeId)>,
-            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>>,
+            Option<(RelayUrl, EndpointId)>,
+            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
         >,
     ),
     Vec<Addr>,
@@ -50,8 +50,8 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
 #[cfg(wasm_browser)]
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     n0_watcher::Join<
-        Option<(RelayUrl, NodeId)>,
-        n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>>,
+        Option<(RelayUrl, EndpointId)>,
+        n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
     >,
     Vec<Addr>,
 >;
@@ -162,7 +162,7 @@ impl Transports {
                         relays
                             .into_iter()
                             .flatten()
-                            .map(|(relay_url, node_id)| Addr::Relay(relay_url, node_id)),
+                            .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id)),
                     )
                     .collect()
             })
@@ -307,7 +307,7 @@ pub(crate) struct Transmit<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Addr {
     Ip(SocketAddr),
-    Relay(RelayUrl, NodeId),
+    Relay(RelayUrl, EndpointId),
 }
 
 impl Default for Addr {
@@ -327,8 +327,8 @@ impl From<SocketAddr> for Addr {
     }
 }
 
-impl From<(RelayUrl, NodeId)> for Addr {
-    fn from(value: (RelayUrl, NodeId)) -> Self {
+impl From<(RelayUrl, EndpointId)> for Addr {
+    fn from(value: (RelayUrl, EndpointId)) -> Self {
         Self::Relay(value.0, value.1)
     }
 }
@@ -385,11 +385,11 @@ impl UdpSender {
                     }
                 }
             }
-            Addr::Relay(url, node_id) => {
+            Addr::Relay(url, endpoint_id) => {
                 for sender in &self.relay {
-                    if sender.is_valid_send_addr(url, node_id) {
+                    if sender.is_valid_send_addr(url, endpoint_id) {
                         any_match = true;
-                        match sender.send(url.clone(), *node_id, transmit).await {
+                        match sender.send(url.clone(), *endpoint_id, transmit).await {
                             Ok(()) => {
                                 return Ok(());
                             }
@@ -433,10 +433,10 @@ impl UdpSender {
                     }
                 }
             }
-            Addr::Relay(url, node_id) => {
+            Addr::Relay(url, endpoint_id) => {
                 for sender in &mut self.relay {
-                    if sender.is_valid_send_addr(url, node_id) {
-                        match sender.poll_send(cx, url.clone(), *node_id, transmit) {
+                    if sender.is_valid_send_addr(url, endpoint_id) {
+                        match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
@@ -472,10 +472,10 @@ impl UdpSender {
                     }
                 }
             }
-            Addr::Relay(url, node_id) => {
+            Addr::Relay(url, endpoint_id) => {
                 for transport in &self.relay {
-                    if transport.is_valid_send_addr(url, node_id) {
-                        match transport.try_send(url.clone(), *node_id, transmit) {
+                    if transport.is_valid_send_addr(url, endpoint_id) {
+                        match transport.try_send(url.clone(), *endpoint_id, transmit) {
                             Ok(()) => return Ok(()),
                             Err(_err) => {
                                 continue;
@@ -507,7 +507,7 @@ impl quinn::UdpSender for UdpSender {
             // come back at any time or missing should be transient so chooses to let
             // these kind of errors time out.  See test_try_send_no_send_addr to try
             // this out.
-            error!("no paths available for node, voiding transmit");
+            error!("no paths available for endpoint, voiding transmit");
             return Poll::Ready(Ok(()));
         }
 
@@ -558,7 +558,7 @@ impl quinn::UdpSender for UdpSender {
             // come back at any time or missing should be transient so chooses to let
             // these kind of errors time out.  See test_try_send_no_send_addr to try
             // this out.
-            error!("no paths available for node, voiding transmit");
+            error!("no paths available for endpoint, voiding transmit");
             return Ok(());
         }
 

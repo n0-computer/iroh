@@ -10,7 +10,7 @@ use std::{
 };
 
 use dashmap::DashMap;
-use iroh_base::NodeId;
+use iroh_base::EndpointId;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
@@ -30,9 +30,9 @@ pub(super) struct Clients(Arc<Inner>);
 #[derive(Debug, Default)]
 struct Inner {
     /// The list of all currently connected clients.
-    clients: DashMap<NodeId, Client>,
+    clients: DashMap<EndpointId, Client>,
     /// Map of which client has sent where
-    sent_to: DashMap<NodeId, HashSet<NodeId>>,
+    sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
     /// Connection ID Counter
     next_connection_id: AtomicU64,
 }
@@ -49,14 +49,14 @@ impl Clients {
 
     /// Builds the client handler and starts the read & write loops for the connection.
     pub async fn register(&self, client_config: Config, metrics: Arc<Metrics>) {
-        let node_id = client_config.node_id;
+        let endpoint_id = client_config.endpoint_id;
         let connection_id = self.get_connection_id();
-        trace!(remote_node = %node_id.fmt_short(), "registering client");
+        trace!(remote_endpoint = %endpoint_id.fmt_short(), "registering client");
 
         let client = Client::new(client_config, connection_id, self, metrics);
-        if let Some(old_client) = self.0.clients.insert(node_id, client) {
+        if let Some(old_client) = self.0.clients.insert(endpoint_id, client) {
             debug!(
-                remote_node = %node_id.fmt_short(),
+                remote_endpoint = %endpoint_id.fmt_short(),
                 "multiple connections found, pruning old connection",
             );
             old_client.shutdown().await;
@@ -72,18 +72,18 @@ impl Clients {
     /// peer is gone from the network.
     ///
     /// Must be passed a matching connection_id.
-    pub(super) fn unregister(&self, connection_id: u64, node_id: NodeId) {
+    pub(super) fn unregister(&self, connection_id: u64, endpoint_id: EndpointId) {
         trace!(
-            node_id = %node_id.fmt_short(),
+            endpoint_id = %endpoint_id.fmt_short(),
             connection_id, "unregistering client"
         );
 
         if let Some((_, client)) = self
             .0
             .clients
-            .remove_if(&node_id, |_, c| c.connection_id() == connection_id)
+            .remove_if(&endpoint_id, |_, c| c.connection_id() == connection_id)
         {
-            if let Some((_, sent_to)) = self.0.sent_to.remove(&node_id) {
+            if let Some((_, sent_to)) = self.0.sent_to.remove(&endpoint_id) {
                 for key in sent_to {
                     match client.try_send_peer_gone(key) {
                         Ok(_) => {}
@@ -105,12 +105,12 @@ impl Clients {
         }
     }
 
-    /// Attempt to send a packet to client with [`NodeId`] `dst`.
+    /// Attempt to send a packet to client with [`EndpointId`] `dst`.
     pub(super) fn send_packet(
         &self,
-        dst: NodeId,
+        dst: EndpointId,
         data: Datagrams,
-        src: NodeId,
+        src: EndpointId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
@@ -145,12 +145,12 @@ impl Clients {
         }
     }
 
-    /// Attempt to send a disco packet to client with [`NodeId`] `dst`.
+    /// Attempt to send a disco packet to client with [`EndpointId`] `dst`.
     pub(super) fn send_disco_packet(
         &self,
-        dst: NodeId,
+        dst: EndpointId,
         data: Datagrams,
-        src: NodeId,
+        src: EndpointId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
@@ -228,11 +228,11 @@ mod tests {
         }
     }
 
-    fn test_client_builder(key: NodeId) -> (Config, Conn) {
+    fn test_client_builder(key: EndpointId) -> (Config, Conn) {
         let (server, client) = tokio::io::duplex(1024);
         (
             Config {
-                node_id: key,
+                endpoint_id: key,
                 stream: RelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
-                remote_node_id: b_key,
+                remote_endpoint_id: b_key,
                 datagrams: data.to_vec().into(),
             }
         );
@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
-                remote_node_id: b_key,
+                remote_endpoint_id: b_key,
                 datagrams: data.to_vec().into(),
             }
         );

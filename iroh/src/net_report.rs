@@ -22,7 +22,7 @@ use defaults::timeouts::PROBES_TIMEOUT;
 pub use defaults::timeouts::TIMEOUT;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
-use iroh_relay::RelayNode;
+use iroh_relay::RelayConfig;
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
@@ -89,7 +89,7 @@ pub use self::{
 };
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
-const ENOUGH_NODES: usize = 3;
+const ENOUGH_ENDPOINTS: usize = 3;
 
 /// Client to run net_reports.
 #[derive(Debug)]
@@ -273,7 +273,7 @@ impl Client {
         self.metrics.reports.inc();
 
         let num_relays = self.relay_map.len();
-        let enough_relays = std::cmp::min(num_relays, ENOUGH_NODES);
+        let enough_relays = std::cmp::min(num_relays, ENOUGH_ENDPOINTS);
         #[cfg(wasm_browser)]
         let if_state = IfStateDetails::default();
         #[cfg(not(wasm_browser))]
@@ -440,39 +440,49 @@ impl Client {
         let mut v6_buf = JoinSet::new();
         let cancel_v6 = CancellationToken::new();
 
-        let nodes = self.relay_map.nodes::<Vec<_>>();
-        for relay_node in nodes.into_iter().take(MAX_RELAYS) {
+        let endpoints = self.relay_map.endpoints::<Vec<_>>();
+        for relay_endpoint in endpoints.into_iter().take(MAX_RELAYS) {
             if if_state.have_v4 && needs_v4_probe {
-                debug!(?relay_node.url, "v4 QAD probe");
+                debug!(?relay_endpoint.url, "v4 QAD probe");
                 let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
-                let relay_node = relay_node.clone();
+                let relay_endpoint = relay_endpoint.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
-                let relay_url = relay_node.url.clone();
+                let relay_url = relay_endpoint.url.clone();
                 v4_buf.spawn(
                     cancel_v4
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v4(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v4(
+                                ip_mapped_addrs,
+                                relay_endpoint,
+                                quic_client,
+                                dns_resolver,
+                            ),
                         ))
                         .instrument(warn_span!("QAD-IPv4", %relay_url)),
                 );
             }
 
             if if_state.have_v6 && needs_v6_probe {
-                debug!(?relay_node.url, "v6 QAD probe");
+                debug!(?relay_endpoint.url, "v6 QAD probe");
                 let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
-                let relay_node = relay_node.clone();
+                let relay_endpoint = relay_endpoint.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
-                let relay_url = relay_node.url.clone();
+                let relay_url = relay_endpoint.url.clone();
                 v6_buf.spawn(
                     cancel_v6
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v6(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v6(
+                                ip_mapped_addrs,
+                                relay_endpoint,
+                                quic_client,
+                                dns_resolver,
+                            ),
                         ))
                         .instrument(warn_span!("QAD-IPv6", %relay_url)),
                 );
@@ -506,7 +516,7 @@ impl Client {
                             match res {
                                 Ok((r, conn)) => {
                                     debug!(?r, "got v4 QAD conn");
-                                    let url = r.node.clone();
+                                    let url = r.relay.clone();
                                     reports.push(ProbeReport::QadIpv4(r));
                                     if self.qad_conns.v4.is_none() {
                                         self.qad_conns.v4.replace((url, conn));
@@ -541,7 +551,7 @@ impl Client {
                             match res {
                                 Ok((r, conn)) => {
                                     debug!(?r, "got v6 QAD conn");
-                                    let url = r.node.clone();
+                                    let url = r.relay.clone();
                                     reports.push(ProbeReport::QadIpv6(r));
                                     if self.qad_conns.v6.is_none() {
                                         self.qad_conns.v6.replace((url, conn));
@@ -746,18 +756,18 @@ impl Client {
 #[cfg(not(wasm_browser))]
 async fn run_probe_v4(
     ip_mapped_addrs: Option<IpMappedAddresses>,
-    relay_node: Arc<RelayNode>,
+    relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
 
-    let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await?;
+    let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay).await?;
     let relay_addr =
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
-    let host = relay_node.url.host_str().context("missing host url")?;
+    let host = relay.url.host_str().context("missing host url")?;
     let conn = quic_client.create_conn(relay_addr, host).await?;
     let mut receiver = conn.observed_external_addr();
 
@@ -768,13 +778,13 @@ async fn run_probe_v4(
         .context("receiver dropped")?
         .expect("known");
     let report = QadProbeReport {
-        node: relay_node.url.clone(),
+        relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
         latency: conn.rtt(),
     };
 
     let observer = Watchable::new(None);
-    let node = relay_node.url.clone();
+    let endpoint = relay.url.clone();
     let handle = task::spawn({
         let conn = conn.clone();
         let observer = observer.clone();
@@ -788,7 +798,7 @@ async fn run_probe_v4(
                 trace!(?val, ?relay_addr, ?latency, "got addr V4");
                 observer
                     .set(val.map(|addr| QadProbeReport {
-                        node: node.clone(),
+                        relay: endpoint.clone(),
                         addr,
                         latency,
                     }))
@@ -814,17 +824,17 @@ async fn run_probe_v4(
 #[cfg(not(wasm_browser))]
 async fn run_probe_v6(
     ip_mapped_addrs: Option<IpMappedAddresses>,
-    relay_node: Arc<RelayNode>,
+    relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
-    let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await?;
+    let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay).await?;
     let relay_addr =
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
-    let host = relay_node.url.host_str().context("missing host url")?;
+    let host = relay.url.host_str().context("missing host url")?;
     let conn = quic_client.create_conn(relay_addr, host).await?;
     let mut receiver = conn.observed_external_addr();
 
@@ -835,13 +845,13 @@ async fn run_probe_v6(
         .context("receiver dropped")?
         .expect("known");
     let report = QadProbeReport {
-        node: relay_node.url.clone(),
+        relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
         latency: conn.rtt(),
     };
 
     let observer = Watchable::new(None);
-    let node = relay_node.url.clone();
+    let endpoint = relay.url.clone();
     let handle = task::spawn({
         let observer = observer.clone();
         let conn = conn.clone();
@@ -855,7 +865,7 @@ async fn run_probe_v6(
                 trace!(?val, ?relay_addr, ?latency, "got addr V6");
                 observer
                     .set(val.map(|addr| QadProbeReport {
-                        node: node.clone(),
+                        relay: endpoint.clone(),
                         addr,
                         latency,
                     }))
@@ -882,21 +892,21 @@ async fn run_probe_v6(
 mod test_utils {
     //! Creates a relay server against which to perform tests
 
-    use iroh_relay::{RelayNode, RelayQuicConfig, server};
+    use iroh_relay::{RelayConfig, RelayQuicConfig, server};
 
-    pub(crate) async fn relay() -> (server::Server, RelayNode) {
+    pub(crate) async fn relay() -> (server::Server, RelayConfig) {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
         let quic = Some(RelayQuicConfig {
             port: server.quic_addr().expect("server should run quic").port(),
         });
-        let node_desc = RelayNode {
+        let endpoint_desc = RelayConfig {
             url: server.https_url().expect("should work as relay"),
             quic,
         };
 
-        (server, node_desc)
+        (server, endpoint_desc)
     }
 
     /// Create a [`crate::RelayMap`] of the given size.
@@ -905,13 +915,13 @@ mod test_utils {
     /// often _not_ match the order of the servers.
     pub(crate) async fn relay_map(relays: usize) -> (Vec<server::Server>, crate::RelayMap) {
         let mut servers = Vec::with_capacity(relays);
-        let mut nodes = Vec::with_capacity(relays);
+        let mut endpoints = Vec::with_capacity(relays);
         for _ in 0..relays {
-            let (relay_server, node) = relay().await;
+            let (relay_server, endpoint) = relay().await;
             servers.push(relay_server);
-            nodes.push(node);
+            endpoints.push(endpoint);
         }
-        (servers, crate::RelayMap::from_iter(nodes))
+        (servers, crate::RelayMap::from_iter(endpoints))
     }
 }
 

@@ -2,7 +2,7 @@
 
 use std::{pin::Pin, sync::Arc, task::Poll};
 
-use iroh_base::NodeId;
+use iroh_base::EndpointId;
 use n0_future::{
     MergeUnbounded, Stream, StreamExt,
     task::{self, AbortOnDropHandle},
@@ -48,14 +48,14 @@ pub(super) enum RttMessage {
         connection: quinn::WeakConnectionHandle,
         /// Path changes for this connection from the magic socket.
         conn_type_changes: n0_watcher::Stream<n0_watcher::Direct<ConnectionType>>,
-        /// For reporting-only, the Node ID of this connection.
-        node_id: NodeId,
+        /// For reporting-only, the Endpoint ID of this connection.
+        endpoint_id: EndpointId,
     },
 }
 
 /// Actor to coordinate congestion controller state with magic socket state.
 ///
-/// The magic socket can change the underlying network path, between two nodes.  If we can
+/// The magic socket can change the underlying network path, between two endpoints.  If we can
 /// inform the QUIC congestion controller of this event it will work much more efficiently.
 #[derive(derive_more::Debug)]
 struct RttActor {
@@ -68,7 +68,7 @@ struct RttActor {
 #[derive(Debug)]
 struct MappedStream {
     stream: n0_watcher::Stream<n0_watcher::Direct<ConnectionType>>,
-    node_id: NodeId,
+    endpoint_id: EndpointId,
     /// Reference to the connection.
     connection: quinn::WeakConnectionHandle,
     /// This an indiciator of whether this connection was direct before.
@@ -98,7 +98,7 @@ impl Stream for MappedStream {
                 let mut became_direct = false;
                 if self.connection.network_path_changed() {
                     debug!(
-                        node_id = %self.node_id.fmt_short(),
+                        endpoint_id = %self.endpoint_id.fmt_short(),
                         new_type = ?new_conn_type,
                         "Congestion controller state reset",
                     );
@@ -146,9 +146,9 @@ impl RttActor {
             RttMessage::NewConnection {
                 connection,
                 conn_type_changes,
-                node_id,
+                endpoint_id,
             } => {
-                self.handle_new_connection(connection, conn_type_changes, node_id);
+                self.handle_new_connection(connection, conn_type_changes, endpoint_id);
             }
         }
     }
@@ -158,12 +158,12 @@ impl RttActor {
         &mut self,
         connection: quinn::WeakConnectionHandle,
         conn_type_changes: n0_watcher::Stream<n0_watcher::Direct<ConnectionType>>,
-        node_id: NodeId,
+        endpoint_id: EndpointId,
     ) {
         self.connection_events.push(MappedStream {
             stream: conn_type_changes,
             connection,
-            node_id,
+            endpoint_id,
             was_direct_before: false,
         });
         self.metrics.connection_handshake_success.inc();
