@@ -364,14 +364,14 @@
 <a href=#364 id=364 data-nosnippet>364</a>        <span class="kw">for </span>probe_set <span class="kw">in </span>plan.iter() {
 <a href=#365 id=365 data-nosnippet>365</a>            <span class="kw">let </span>set_token = token.child_token();
 <a href=#366 id=366 data-nosnippet>366</a>            <span class="kw">let </span>proto = probe_set.proto();
-<a href=#367 id=367 data-nosnippet>367</a>            <span class="kw">for </span>(delay, relay_endpoint) <span class="kw">in </span>probe_set.params() {
+<a href=#367 id=367 data-nosnippet>367</a>            <span class="kw">for </span>(delay, relay) <span class="kw">in </span>probe_set.params() {
 <a href=#368 id=368 data-nosnippet>368</a>                <span class="kw">let </span>probe_token = set_token.child_token();
 <a href=#369 id=369 data-nosnippet>369</a>
 <a href=#370 id=370 data-nosnippet>370</a>                <span class="kw">let </span>fut = probe_token.run_until_cancelled_owned(time::timeout(
 <a href=#371 id=371 data-nosnippet>371</a>                    PROBES_TIMEOUT,
 <a href=#372 id=372 data-nosnippet>372</a>                    proto.run(
 <a href=#373 id=373 data-nosnippet>373</a>                        <span class="kw-2">*</span>delay,
-<a href=#374 id=374 data-nosnippet>374</a>                        relay_endpoint.clone(),
+<a href=#374 id=374 data-nosnippet>374</a>                        relay.clone(),
 <a href=#375 id=375 data-nosnippet>375</a>                        <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#376 id=376 data-nosnippet>376</a>                        </span><span class="self">self</span>.socket_state.clone(),
 <a href=#377 id=377 data-nosnippet>377</a>                        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
@@ -398,7 +398,7 @@
 <a href=#398 id=398 data-nosnippet>398</a>                        <span class="string">"run-probe"</span>,
 <a href=#399 id=399 data-nosnippet>399</a>                        <span class="question-mark">?</span>proto,
 <a href=#400 id=400 data-nosnippet>400</a>                        <span class="question-mark">?</span>delay,
-<a href=#401 id=401 data-nosnippet>401</a>                        <span class="question-mark">?</span>relay_endpoint,
+<a href=#401 id=401 data-nosnippet>401</a>                        <span class="question-mark">?</span>relay,
 <a href=#402 id=402 data-nosnippet>402</a>                    )),
 <a href=#403 id=403 data-nosnippet>403</a>                );
 <a href=#404 id=404 data-nosnippet>404</a>            }
