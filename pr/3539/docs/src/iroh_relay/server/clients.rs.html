@@ -10,7 +10,7 @@
 <a href=#10 id=10 data-nosnippet>10</a>};
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>dashmap::DashMap;
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>iroh_base::NodeId;
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>iroh_base::EndpointId;
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>tokio::sync::mpsc::error::TrySendError;
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>tracing::{debug, trace};
 <a href=#16 id=16 data-nosnippet>16</a>
@@ -30,9 +30,9 @@
 <a href=#30 id=30 data-nosnippet>30</a><span class="attr">#[derive(Debug, Default)]
 <a href=#31 id=31 data-nosnippet>31</a></span><span class="kw">struct </span>Inner {
 <a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// The list of all currently connected clients.
-<a href=#33 id=33 data-nosnippet>33</a>    </span>clients: DashMap&lt;NodeId, Client&gt;,
+<a href=#33 id=33 data-nosnippet>33</a>    </span>clients: DashMap&lt;EndpointId, Client&gt;,
 <a href=#34 id=34 data-nosnippet>34</a>    <span class="doccomment">/// Map of which client has sent where
-<a href=#35 id=35 data-nosnippet>35</a>    </span>sent_to: DashMap&lt;NodeId, HashSet&lt;NodeId&gt;&gt;,
+<a href=#35 id=35 data-nosnippet>35</a>    </span>sent_to: DashMap&lt;EndpointId, HashSet&lt;EndpointId&gt;&gt;,
 <a href=#36 id=36 data-nosnippet>36</a>    <span class="doccomment">/// Connection ID Counter
 <a href=#37 id=37 data-nosnippet>37</a>    </span>next_connection_id: AtomicU64,
 <a href=#38 id=38 data-nosnippet>38</a>}
@@ -49,14 +49,14 @@
 <a href=#49 id=49 data-nosnippet>49</a>
 <a href=#50 id=50 data-nosnippet>50</a>    <span class="doccomment">/// Builds the client handler and starts the read &amp; write loops for the connection.
 <a href=#51 id=51 data-nosnippet>51</a>    </span><span class="kw">pub async fn </span>register(<span class="kw-2">&amp;</span><span class="self">self</span>, client_config: Config, metrics: Arc&lt;Metrics&gt;) {
-<a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>node_id = client_config.node_id;
+<a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>endpoint_id = client_config.endpoint_id;
 <a href=#53 id=53 data-nosnippet>53</a>        <span class="kw">let </span>connection_id = <span class="self">self</span>.get_connection_id();
-<a href=#54 id=54 data-nosnippet>54</a>        <span class="macro">trace!</span>(remote_node = %node_id.fmt_short(), <span class="string">"registering client"</span>);
+<a href=#54 id=54 data-nosnippet>54</a>        <span class="macro">trace!</span>(remote_endpoint = %endpoint_id.fmt_short(), <span class="string">"registering client"</span>);
 <a href=#55 id=55 data-nosnippet>55</a>
 <a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>client = Client::new(client_config, connection_id, <span class="self">self</span>, metrics);
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(node_id, client) {
+<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(endpoint_id, client) {
 <a href=#58 id=58 data-nosnippet>58</a>            <span class="macro">debug!</span>(
-<a href=#59 id=59 data-nosnippet>59</a>                remote_node = %node_id.fmt_short(),
+<a href=#59 id=59 data-nosnippet>59</a>                remote_endpoint = %endpoint_id.fmt_short(),
 <a href=#60 id=60 data-nosnippet>60</a>                <span class="string">"multiple connections found, pruning old connection"</span>,
 <a href=#61 id=61 data-nosnippet>61</a>            );
 <a href=#62 id=62 data-nosnippet>62</a>            old_client.shutdown().<span class="kw">await</span>;
@@ -72,18 +72,18 @@
 <a href=#72 id=72 data-nosnippet>72</a>    /// peer is gone from the network.
 <a href=#73 id=73 data-nosnippet>73</a>    ///
 <a href=#74 id=74 data-nosnippet>74</a>    /// Must be passed a matching connection_id.
-<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>unregister(<span class="kw-2">&amp;</span><span class="self">self</span>, connection_id: u64, node_id: NodeId) {
+<a href=#75 id=75 data-nosnippet>75</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>unregister(<span class="kw-2">&amp;</span><span class="self">self</span>, connection_id: u64, endpoint_id: EndpointId) {
 <a href=#76 id=76 data-nosnippet>76</a>        <span class="macro">trace!</span>(
-<a href=#77 id=77 data-nosnippet>77</a>            node_id = %node_id.fmt_short(),
+<a href=#77 id=77 data-nosnippet>77</a>            endpoint_id = %endpoint_id.fmt_short(),
 <a href=#78 id=78 data-nosnippet>78</a>            connection_id, <span class="string">"unregistering client"
 <a href=#79 id=79 data-nosnippet>79</a>        </span>);
 <a href=#80 id=80 data-nosnippet>80</a>
 <a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, client)) = <span class="self">self
 <a href=#82 id=82 data-nosnippet>82</a>            </span>.<span class="number">0
 <a href=#83 id=83 data-nosnippet>83</a>            </span>.clients
-<a href=#84 id=84 data-nosnippet>84</a>            .remove_if(<span class="kw-2">&amp;</span>node_id, |<span class="kw">_</span>, c| c.connection_id() == connection_id)
+<a href=#84 id=84 data-nosnippet>84</a>            .remove_if(<span class="kw-2">&amp;</span>endpoint_id, |<span class="kw">_</span>, c| c.connection_id() == connection_id)
 <a href=#85 id=85 data-nosnippet>85</a>        {
-<a href=#86 id=86 data-nosnippet>86</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, sent_to)) = <span class="self">self</span>.<span class="number">0</span>.sent_to.remove(<span class="kw-2">&amp;</span>node_id) {
+<a href=#86 id=86 data-nosnippet>86</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, sent_to)) = <span class="self">self</span>.<span class="number">0</span>.sent_to.remove(<span class="kw-2">&amp;</span>endpoint_id) {
 <a href=#87 id=87 data-nosnippet>87</a>                <span class="kw">for </span>key <span class="kw">in </span>sent_to {
 <a href=#88 id=88 data-nosnippet>88</a>                    <span class="kw">match </span>client.try_send_peer_gone(key) {
 <a href=#89 id=89 data-nosnippet>89</a>                        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {}
@@ -105,12 +105,12 @@
 <a href=#105 id=105 data-nosnippet>105</a>        }
 <a href=#106 id=106 data-nosnippet>106</a>    }
 <a href=#107 id=107 data-nosnippet>107</a>
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="doccomment">/// Attempt to send a packet to client with [`NodeId`] `dst`.
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="doccomment">/// Attempt to send a packet to client with [`EndpointId`] `dst`.
 <a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_packet(
 <a href=#110 id=110 data-nosnippet>110</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#111 id=111 data-nosnippet>111</a>        dst: NodeId,
+<a href=#111 id=111 data-nosnippet>111</a>        dst: EndpointId,
 <a href=#112 id=112 data-nosnippet>112</a>        data: Datagrams,
-<a href=#113 id=113 data-nosnippet>113</a>        src: NodeId,
+<a href=#113 id=113 data-nosnippet>113</a>        src: EndpointId,
 <a href=#114 id=114 data-nosnippet>114</a>        metrics: <span class="kw-2">&amp;</span>Metrics,
 <a href=#115 id=115 data-nosnippet>115</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ForwardPacketError&gt; {
 <a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
@@ -145,12 +145,12 @@
 <a href=#145 id=145 data-nosnippet>145</a>        }
 <a href=#146 id=146 data-nosnippet>146</a>    }
 <a href=#147 id=147 data-nosnippet>147</a>
-<a href=#148 id=148 data-nosnippet>148</a>    <span class="doccomment">/// Attempt to send a disco packet to client with [`NodeId`] `dst`.
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="doccomment">/// Attempt to send a disco packet to client with [`EndpointId`] `dst`.
 <a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_disco_packet(
 <a href=#150 id=150 data-nosnippet>150</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#151 id=151 data-nosnippet>151</a>        dst: NodeId,
+<a href=#151 id=151 data-nosnippet>151</a>        dst: EndpointId,
 <a href=#152 id=152 data-nosnippet>152</a>        data: Datagrams,
-<a href=#153 id=153 data-nosnippet>153</a>        src: NodeId,
+<a href=#153 id=153 data-nosnippet>153</a>        src: EndpointId,
 <a href=#154 id=154 data-nosnippet>154</a>        metrics: <span class="kw-2">&amp;</span>Metrics,
 <a href=#155 id=155 data-nosnippet>155</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ForwardPacketError&gt; {
 <a href=#156 id=156 data-nosnippet>156</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
@@ -228,11 +228,11 @@
 <a href=#228 id=228 data-nosnippet>228</a>        }
 <a href=#229 id=229 data-nosnippet>229</a>    }
 <a href=#230 id=230 data-nosnippet>230</a>
-<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">fn </span>test_client_builder(key: NodeId) -&gt; (Config, Conn) {
+<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">fn </span>test_client_builder(key: EndpointId) -&gt; (Config, Conn) {
 <a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>(server, client) = tokio::io::duplex(<span class="number">1024</span>);
 <a href=#233 id=233 data-nosnippet>233</a>        (
 <a href=#234 id=234 data-nosnippet>234</a>            Config {
-<a href=#235 id=235 data-nosnippet>235</a>                node_id: key,
+<a href=#235 id=235 data-nosnippet>235</a>                endpoint_id: key,
 <a href=#236 id=236 data-nosnippet>236</a>                stream: RelayedStream::test(server),
 <a href=#237 id=237 data-nosnippet>237</a>                write_timeout: Duration::from_secs(<span class="number">1</span>),
 <a href=#238 id=238 data-nosnippet>238</a>                channel_capacity: <span class="number">10</span>,
@@ -260,7 +260,7 @@
 <a href=#260 id=260 data-nosnippet>260</a>        <span class="macro">assert_eq!</span>(
 <a href=#261 id=261 data-nosnippet>261</a>            frame,
 <a href=#262 id=262 data-nosnippet>262</a>            RelayToClientMsg::Datagrams {
-<a href=#263 id=263 data-nosnippet>263</a>                remote_node_id: b_key,
+<a href=#263 id=263 data-nosnippet>263</a>                remote_endpoint_id: b_key,
 <a href=#264 id=264 data-nosnippet>264</a>                datagrams: data.to_vec().into(),
 <a href=#265 id=265 data-nosnippet>265</a>            }
 <a href=#266 id=266 data-nosnippet>266</a>        );
@@ -271,7 +271,7 @@
 <a href=#271 id=271 data-nosnippet>271</a>        <span class="macro">assert_eq!</span>(
 <a href=#272 id=272 data-nosnippet>272</a>            frame,
 <a href=#273 id=273 data-nosnippet>273</a>            RelayToClientMsg::Datagrams {
-<a href=#274 id=274 data-nosnippet>274</a>                remote_node_id: b_key,
+<a href=#274 id=274 data-nosnippet>274</a>                remote_endpoint_id: b_key,
 <a href=#275 id=275 data-nosnippet>275</a>                datagrams: data.to_vec().into(),
 <a href=#276 id=276 data-nosnippet>276</a>            }
 <a href=#277 id=277 data-nosnippet>277</a>        );

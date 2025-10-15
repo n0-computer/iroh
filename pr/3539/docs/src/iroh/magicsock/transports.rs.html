@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>    task::{Context, Poll},
 <a href=#7 id=7 data-nosnippet>7</a>};
 <a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>iroh_base::{EndpointId, RelayUrl};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>n0_watcher::Watcher;
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>relay::{RelayNetworkChangeSender, RelaySender};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>smallvec::SmallVec;
@@ -40,8 +40,8 @@
 <a href=#40 id=40 data-nosnippet>40</a>    (
 <a href=#41 id=41 data-nosnippet>41</a>        n0_watcher::Join&lt;SocketAddr, n0_watcher::Direct&lt;SocketAddr&gt;&gt;,
 <a href=#42 id=42 data-nosnippet>42</a>        n0_watcher::Join&lt;
-<a href=#43 id=43 data-nosnippet>43</a>            <span class="prelude-ty">Option</span>&lt;(RelayUrl, NodeId)&gt;,
-<a href=#44 id=44 data-nosnippet>44</a>            n0_watcher::Map&lt;n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;, <span class="prelude-ty">Option</span>&lt;(RelayUrl, NodeId)&gt;&gt;,
+<a href=#43 id=43 data-nosnippet>43</a>            <span class="prelude-ty">Option</span>&lt;(RelayUrl, EndpointId)&gt;,
+<a href=#44 id=44 data-nosnippet>44</a>            n0_watcher::Map&lt;n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;, <span class="prelude-ty">Option</span>&lt;(RelayUrl, EndpointId)&gt;&gt;,
 <a href=#45 id=45 data-nosnippet>45</a>        &gt;,
 <a href=#46 id=46 data-nosnippet>46</a>    ),
 <a href=#47 id=47 data-nosnippet>47</a>    Vec&lt;Addr&gt;,
@@ -50,8 +50,8 @@
 <a href=#50 id=50 data-nosnippet>50</a><span class="attr">#[cfg(wasm_browser)]
 <a href=#51 id=51 data-nosnippet>51</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>LocalAddrsWatch = n0_watcher::Map&lt;
 <a href=#52 id=52 data-nosnippet>52</a>    n0_watcher::Join&lt;
-<a href=#53 id=53 data-nosnippet>53</a>        <span class="prelude-ty">Option</span>&lt;(RelayUrl, NodeId)&gt;,
-<a href=#54 id=54 data-nosnippet>54</a>        n0_watcher::Map&lt;n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;, <span class="prelude-ty">Option</span>&lt;(RelayUrl, NodeId)&gt;&gt;,
+<a href=#53 id=53 data-nosnippet>53</a>        <span class="prelude-ty">Option</span>&lt;(RelayUrl, EndpointId)&gt;,
+<a href=#54 id=54 data-nosnippet>54</a>        n0_watcher::Map&lt;n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;, <span class="prelude-ty">Option</span>&lt;(RelayUrl, EndpointId)&gt;&gt;,
 <a href=#55 id=55 data-nosnippet>55</a>    &gt;,
 <a href=#56 id=56 data-nosnippet>56</a>    Vec&lt;Addr&gt;,
 <a href=#57 id=57 data-nosnippet>57</a>&gt;;
@@ -162,7 +162,7 @@
 <a href=#162 id=162 data-nosnippet>162</a>                        relays
 <a href=#163 id=163 data-nosnippet>163</a>                            .into_iter()
 <a href=#164 id=164 data-nosnippet>164</a>                            .flatten()
-<a href=#165 id=165 data-nosnippet>165</a>                            .map(|(relay_url, node_id)| Addr::Relay(relay_url, node_id)),
+<a href=#165 id=165 data-nosnippet>165</a>                            .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id)),
 <a href=#166 id=166 data-nosnippet>166</a>                    )
 <a href=#167 id=167 data-nosnippet>167</a>                    .collect()
 <a href=#168 id=168 data-nosnippet>168</a>            })
@@ -307,7 +307,7 @@
 <a href=#307 id=307 data-nosnippet>307</a><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 <a href=#308 id=308 data-nosnippet>308</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Addr {
 <a href=#309 id=309 data-nosnippet>309</a>    Ip(SocketAddr),
-<a href=#310 id=310 data-nosnippet>310</a>    Relay(RelayUrl, NodeId),
+<a href=#310 id=310 data-nosnippet>310</a>    Relay(RelayUrl, EndpointId),
 <a href=#311 id=311 data-nosnippet>311</a>}
 <a href=#312 id=312 data-nosnippet>312</a>
 <a href=#313 id=313 data-nosnippet>313</a><span class="kw">impl </span>Default <span class="kw">for </span>Addr {
@@ -327,8 +327,8 @@
 <a href=#327 id=327 data-nosnippet>327</a>    }
 <a href=#328 id=328 data-nosnippet>328</a>}
 <a href=#329 id=329 data-nosnippet>329</a>
-<a href=#330 id=330 data-nosnippet>330</a><span class="kw">impl </span>From&lt;(RelayUrl, NodeId)&gt; <span class="kw">for </span>Addr {
-<a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">fn </span>from(value: (RelayUrl, NodeId)) -&gt; <span class="self">Self </span>{
+<a href=#330 id=330 data-nosnippet>330</a><span class="kw">impl </span>From&lt;(RelayUrl, EndpointId)&gt; <span class="kw">for </span>Addr {
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="kw">fn </span>from(value: (RelayUrl, EndpointId)) -&gt; <span class="self">Self </span>{
 <a href=#332 id=332 data-nosnippet>332</a>        <span class="self">Self</span>::Relay(value.<span class="number">0</span>, value.<span class="number">1</span>)
 <a href=#333 id=333 data-nosnippet>333</a>    }
 <a href=#334 id=334 data-nosnippet>334</a>}
@@ -385,11 +385,11 @@
 <a href=#385 id=385 data-nosnippet>385</a>                    }
 <a href=#386 id=386 data-nosnippet>386</a>                }
 <a href=#387 id=387 data-nosnippet>387</a>            }
-<a href=#388 id=388 data-nosnippet>388</a>            Addr::Relay(url, node_id) =&gt; {
+<a href=#388 id=388 data-nosnippet>388</a>            Addr::Relay(url, endpoint_id) =&gt; {
 <a href=#389 id=389 data-nosnippet>389</a>                <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.relay {
-<a href=#390 id=390 data-nosnippet>390</a>                    <span class="kw">if </span>sender.is_valid_send_addr(url, node_id) {
+<a href=#390 id=390 data-nosnippet>390</a>                    <span class="kw">if </span>sender.is_valid_send_addr(url, endpoint_id) {
 <a href=#391 id=391 data-nosnippet>391</a>                        any_match = <span class="bool-val">true</span>;
-<a href=#392 id=392 data-nosnippet>392</a>                        <span class="kw">match </span>sender.send(url.clone(), <span class="kw-2">*</span>node_id, transmit).<span class="kw">await </span>{
+<a href=#392 id=392 data-nosnippet>392</a>                        <span class="kw">match </span>sender.send(url.clone(), <span class="kw-2">*</span>endpoint_id, transmit).<span class="kw">await </span>{
 <a href=#393 id=393 data-nosnippet>393</a>                            <span class="prelude-val">Ok</span>(()) =&gt; {
 <a href=#394 id=394 data-nosnippet>394</a>                                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#395 id=395 data-nosnippet>395</a>                            }
@@ -433,10 +433,10 @@
 <a href=#433 id=433 data-nosnippet>433</a>                    }
 <a href=#434 id=434 data-nosnippet>434</a>                }
 <a href=#435 id=435 data-nosnippet>435</a>            }
-<a href=#436 id=436 data-nosnippet>436</a>            Addr::Relay(url, node_id) =&gt; {
+<a href=#436 id=436 data-nosnippet>436</a>            Addr::Relay(url, endpoint_id) =&gt; {
 <a href=#437 id=437 data-nosnippet>437</a>                <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.relay {
-<a href=#438 id=438 data-nosnippet>438</a>                    <span class="kw">if </span>sender.is_valid_send_addr(url, node_id) {
-<a href=#439 id=439 data-nosnippet>439</a>                        <span class="kw">match </span>sender.poll_send(cx, url.clone(), <span class="kw-2">*</span>node_id, transmit) {
+<a href=#438 id=438 data-nosnippet>438</a>                    <span class="kw">if </span>sender.is_valid_send_addr(url, endpoint_id) {
+<a href=#439 id=439 data-nosnippet>439</a>                        <span class="kw">match </span>sender.poll_send(cx, url.clone(), <span class="kw-2">*</span>endpoint_id, transmit) {
 <a href=#440 id=440 data-nosnippet>440</a>                            Poll::Pending =&gt; {}
 <a href=#441 id=441 data-nosnippet>441</a>                            Poll::Ready(res) =&gt; <span class="kw">return </span>Poll::Ready(res),
 <a href=#442 id=442 data-nosnippet>442</a>                        }
@@ -472,10 +472,10 @@
 <a href=#472 id=472 data-nosnippet>472</a>                    }
 <a href=#473 id=473 data-nosnippet>473</a>                }
 <a href=#474 id=474 data-nosnippet>474</a>            }
-<a href=#475 id=475 data-nosnippet>475</a>            Addr::Relay(url, node_id) =&gt; {
+<a href=#475 id=475 data-nosnippet>475</a>            Addr::Relay(url, endpoint_id) =&gt; {
 <a href=#476 id=476 data-nosnippet>476</a>                <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.relay {
-<a href=#477 id=477 data-nosnippet>477</a>                    <span class="kw">if </span>transport.is_valid_send_addr(url, node_id) {
-<a href=#478 id=478 data-nosnippet>478</a>                        <span class="kw">match </span>transport.try_send(url.clone(), <span class="kw-2">*</span>node_id, transmit) {
+<a href=#477 id=477 data-nosnippet>477</a>                    <span class="kw">if </span>transport.is_valid_send_addr(url, endpoint_id) {
+<a href=#478 id=478 data-nosnippet>478</a>                        <span class="kw">match </span>transport.try_send(url.clone(), <span class="kw-2">*</span>endpoint_id, transmit) {
 <a href=#479 id=479 data-nosnippet>479</a>                            <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
 <a href=#480 id=480 data-nosnippet>480</a>                            <span class="prelude-val">Err</span>(_err) =&gt; {
 <a href=#481 id=481 data-nosnippet>481</a>                                <span class="kw">continue</span>;
@@ -507,7 +507,7 @@
 <a href=#507 id=507 data-nosnippet>507</a>            // come back at any time or missing should be transient so chooses to let
 <a href=#508 id=508 data-nosnippet>508</a>            // these kind of errors time out.  See test_try_send_no_send_addr to try
 <a href=#509 id=509 data-nosnippet>509</a>            // this out.
-<a href=#510 id=510 data-nosnippet>510</a>            </span><span class="macro">error!</span>(<span class="string">"no paths available for node, voiding transmit"</span>);
+<a href=#510 id=510 data-nosnippet>510</a>            </span><span class="macro">error!</span>(<span class="string">"no paths available for endpoint, voiding transmit"</span>);
 <a href=#511 id=511 data-nosnippet>511</a>            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(()));
 <a href=#512 id=512 data-nosnippet>512</a>        }
 <a href=#513 id=513 data-nosnippet>513</a>
@@ -558,7 +558,7 @@
 <a href=#558 id=558 data-nosnippet>558</a>            // come back at any time or missing should be transient so chooses to let
 <a href=#559 id=559 data-nosnippet>559</a>            // these kind of errors time out.  See test_try_send_no_send_addr to try
 <a href=#560 id=560 data-nosnippet>560</a>            // this out.
-<a href=#561 id=561 data-nosnippet>561</a>            </span><span class="macro">error!</span>(<span class="string">"no paths available for node, voiding transmit"</span>);
+<a href=#561 id=561 data-nosnippet>561</a>            </span><span class="macro">error!</span>(<span class="string">"no paths available for endpoint, voiding transmit"</span>);
 <a href=#562 id=562 data-nosnippet>562</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#563 id=563 data-nosnippet>563</a>        }
 <a href=#564 id=564 data-nosnippet>564</a>
