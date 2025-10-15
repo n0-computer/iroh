@@ -16,7 +16,7 @@ use iroh::{
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::ConnectionError,
 };
-use iroh_base::ticket::EndpointTicket;
+use iroh_tickets::endpoint::EndpointTicket;
 use n0_future::task::AbortOnDropHandle;
 use n0_snafu::{Result, ResultExt};
 use n0_watcher::Watcher as _;

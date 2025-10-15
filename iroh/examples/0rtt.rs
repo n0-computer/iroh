@@ -6,7 +6,7 @@ use iroh::{
     SecretKey,
     endpoint::{Connecting, Connection},
 };
-use iroh_base::ticket::EndpointTicket;
+use iroh_tickets::endpoint::EndpointTicket;
 use n0_future::{StreamExt, future};
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
