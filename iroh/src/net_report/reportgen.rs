@@ -364,14 +364,14 @@ impl Actor {
         for probe_set in plan.iter() {
             let set_token = token.child_token();
             let proto = probe_set.proto();
-            for (delay, relay_endpoint) in probe_set.params() {
+            for (delay, relay) in probe_set.params() {
                 let probe_token = set_token.child_token();
 
                 let fut = probe_token.run_until_cancelled_owned(time::timeout(
                     PROBES_TIMEOUT,
                     proto.run(
                         *delay,
-                        relay_endpoint.clone(),
+                        relay.clone(),
                         #[cfg(not(wasm_browser))]
                         self.socket_state.clone(),
                         #[cfg(any(test, feature = "test-utils"))]
@@ -398,7 +398,7 @@ impl Actor {
                         "run-probe",
                         ?proto,
                         ?delay,
-                        ?relay_endpoint,
+                        ?relay,
                     )),
                 );
             }
