@@ -3,9 +3,9 @@
     pub relay_url: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.RelayUrl.html" title="struct iroh_base::RelayUrl">RelayUrl</a>&gt;,
     pub direct_addresses: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/collections/btree/set/struct.BTreeSet.html" title="struct alloc::collections::btree::set::BTreeSet">BTreeSet</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/enum.SocketAddr.html" title="enum core::net::socket_addr::SocketAddr">SocketAddr</a>&gt;,
 }</code></pre><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>key</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Network-level addressing information for an iroh endpoint.</p>
-<p>This combines a endpoint’s identifier with network-level addressing information of how to
+<p>This combines an endpoint’s identifier with network-level addressing information of how to
 contact the endpoint.</p>
-<p>To establish a network connection to a endpoint both the <a href="type.EndpointId.html" title="type iroh_base::EndpointId"><code>EndpointId</code></a> and one or more network
+<p>To establish a network connection to an endpoint both the <a href="type.EndpointId.html" title="type iroh_base::EndpointId"><code>EndpointId</code></a> and one or more network
 paths are needed.  The network paths can come from various sources:</p>
 <ul>
 <li>

@@ -532,7 +532,7 @@
 <a href=#532 id=532 data-nosnippet>532</a>/// start a discovery task.
 <a href=#533 id=533 data-nosnippet>533</a></span><span class="kw">const </span>MAX_AGE: Duration = Duration::from_secs(<span class="number">10</span>);
 <a href=#534 id=534 data-nosnippet>534</a>
-<a href=#535 id=535 data-nosnippet>535</a><span class="doccomment">/// A wrapper around a tokio task which runs a endpoint discovery.
+<a href=#535 id=535 data-nosnippet>535</a><span class="doccomment">/// A wrapper around a tokio task which runs an endpoint discovery.
 <a href=#536 id=536 data-nosnippet>536</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DiscoveryTask {
 <a href=#537 id=537 data-nosnippet>537</a>    on_first_rx: oneshot::Receiver&lt;<span class="prelude-ty">Result</span>&lt;(), DiscoveryError&gt;&gt;,
 <a href=#538 id=538 data-nosnippet>538</a>    _task: AbortOnDropHandle&lt;()&gt;,

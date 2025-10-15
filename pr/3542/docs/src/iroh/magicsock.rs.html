@@ -165,7 +165,7 @@
 <a href=#165 id=165 data-nosnippet>165</a><span class="doccomment">/// Iroh connectivity layer.
 <a href=#166 id=166 data-nosnippet>166</a>///
 <a href=#167 id=167 data-nosnippet>167</a>/// This is responsible for routing packets to endpoints based on endpoint IDs, it will initially
-<a href=#168 id=168 data-nosnippet>168</a>/// route packets via a relay and transparently try and establish a endpoint-to-endpoint
+<a href=#168 id=168 data-nosnippet>168</a>/// route packets via a relay and transparently try and establish an endpoint-to-endpoint
 <a href=#169 id=169 data-nosnippet>169</a>/// connection and upgrade to it.  It will also keep looking for better connections as the
 <a href=#170 id=170 data-nosnippet>170</a>/// network details of both endpoints change.
 <a href=#171 id=171 data-nosnippet>171</a>///
@@ -407,7 +407,7 @@
 <a href=#407 id=407 data-nosnippet>407</a>            .get_quic_mapped_addr_for_endpoint_key(endpoint_id)
 <a href=#408 id=408 data-nosnippet>408</a>    }
 <a href=#409 id=409 data-nosnippet>409</a>
-<a href=#410 id=410 data-nosnippet>410</a>    <span class="doccomment">/// Add addresses for a endpoint to the magic socket's addresbook.
+<a href=#410 id=410 data-nosnippet>410</a>    <span class="doccomment">/// Add addresses for an endpoint to the magic socket's addresbook.
 <a href=#411 id=411 data-nosnippet>411</a>    </span><span class="attr">#[instrument(skip_all)]
 <a href=#412 id=412 data-nosnippet>412</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>add_endpoint_addr(
 <a href=#413 id=413 data-nosnippet>413</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -2408,13 +2408,13 @@
 <a href=#2408 id=2408 data-nosnippet>2408</a>    }
 <a href=#2409 id=2409 data-nosnippet>2409</a>}
 <a href=#2410 id=2410 data-nosnippet>2410</a>
-<a href=#2411 id=2411 data-nosnippet>2411</a><span class="doccomment">/// The fake address used by the QUIC layer to address a endpoint.
+<a href=#2411 id=2411 data-nosnippet>2411</a><span class="doccomment">/// The fake address used by the QUIC layer to address an endpoint.
 <a href=#2412 id=2412 data-nosnippet>2412</a>///
-<a href=#2413 id=2413 data-nosnippet>2413</a>/// You can consider this as nothing more than a lookup key for a endpoint the [`MagicSock`] knows
+<a href=#2413 id=2413 data-nosnippet>2413</a>/// You can consider this as nothing more than a lookup key for an endpoint the [`MagicSock`] knows
 <a href=#2414 id=2414 data-nosnippet>2414</a>/// about.
 <a href=#2415 id=2415 data-nosnippet>2415</a>///
-<a href=#2416 id=2416 data-nosnippet>2416</a>/// [`MagicSock`] can reach a endpoint by several real socket addresses, or maybe even via the relay
-<a href=#2417 id=2417 data-nosnippet>2417</a>/// endpoint.  The QUIC layer however needs to address a endpoint by a stable [`SocketAddr`] so
+<a href=#2416 id=2416 data-nosnippet>2416</a>/// [`MagicSock`] can reach an endpoint by several real socket addresses, or maybe even via the relay
+<a href=#2417 id=2417 data-nosnippet>2417</a>/// endpoint.  The QUIC layer however needs to address an endpoint by a stable [`SocketAddr`] so
 <a href=#2418 id=2418 data-nosnippet>2418</a>/// that normal socket APIs can function.  Thus when a new endpoint is introduced to a [`MagicSock`]
 <a href=#2419 id=2419 data-nosnippet>2419</a>/// it is given a new fake address.  This is the type of that address.
 <a href=#2420 id=2420 data-nosnippet>2420</a>///
@@ -2683,7 +2683,7 @@
 <a href=#2683 id=2683 data-nosnippet>2683</a>    /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
 <a href=#2684 id=2684 data-nosnippet>2684</a>    </span><span class="attr">#[instrument(skip_all)]
 <a href=#2685 id=2685 data-nosnippet>2685</a>    </span><span class="kw">async fn </span>mesh_stacks(stacks: Vec&lt;MagicStack&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;JoinSet&lt;()&gt;&gt; {
-<a href=#2686 id=2686 data-nosnippet>2686</a>        <span class="doccomment">/// Registers endpoint addresses of a endpoint to all other endpoints.
+<a href=#2686 id=2686 data-nosnippet>2686</a>        <span class="doccomment">/// Registers endpoint addresses of an endpoint to all other endpoints.
 <a href=#2687 id=2687 data-nosnippet>2687</a>        </span><span class="kw">fn </span>update_direct_addrs(
 <a href=#2688 id=2688 data-nosnippet>2688</a>            stacks: <span class="kw-2">&amp;</span>[MagicStack],
 <a href=#2689 id=2689 data-nosnippet>2689</a>            my_idx: usize,

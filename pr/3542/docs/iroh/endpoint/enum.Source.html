@@ -11,7 +11,7 @@
     },
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The origin or <em>source</em> through which an address associated with a remote endpoint
 was discovered.</p>
-<p>An aggregate of the <a href="enum.Source.html" title="enum iroh::endpoint::Source"><code>Source</code></a>s of all the addresses of a endpoint describe the
+<p>An aggregate of the <a href="enum.Source.html" title="enum iroh::endpoint::Source"><code>Source</code></a>s of all the addresses of an endpoint describe the
 <a href="enum.Source.html" title="enum iroh::endpoint::Source"><code>Source</code></a>s of the endpoint itself.</p>
 <p>A <a href="enum.Source.html" title="enum iroh::endpoint::Source"><code>Source</code></a> helps track how and where an address was learned. Multiple
 sources can be associated with a single address, if we have discovered this
@@ -22,8 +22,8 @@ how the address was obtained.</p>
 discovered, such as a configured discovery service, the network itself
 (if another endpoint has reached out to us), or as a user supplied <a href="../struct.EndpointAddr.html" title="struct iroh::EndpointAddr"><code>EndpointAddr</code></a>.</p>
 </div></details><h2 id="variants" class="variants section-header">Variants<a href="#variants" class="anchor">§</a></h2><div class="variants"><section id="variant.Saved" class="variant"><a href="#variant.Saved" class="anchor">§</a><h3 class="code-header">Saved</h3></section><div class="docblock"><p>Address was loaded from the fs.</p>
-</div><section id="variant.Udp" class="variant"><a href="#variant.Udp" class="anchor">§</a><h3 class="code-header">Udp</h3></section><div class="docblock"><p>A endpoint communicated with us first via UDP.</p>
-</div><section id="variant.Relay" class="variant"><a href="#variant.Relay" class="anchor">§</a><h3 class="code-header">Relay</h3></section><div class="docblock"><p>A endpoint communicated with us first via relay.</p>
+</div><section id="variant.Udp" class="variant"><a href="#variant.Udp" class="anchor">§</a><h3 class="code-header">Udp</h3></section><div class="docblock"><p>An endpoint communicated with us first via UDP.</p>
+</div><section id="variant.Relay" class="variant"><a href="#variant.Relay" class="anchor">§</a><h3 class="code-header">Relay</h3></section><div class="docblock"><p>An endpoint communicated with us first via relay.</p>
 </div><section id="variant.App" class="variant"><a href="#variant.App" class="anchor">§</a><h3 class="code-header">App</h3></section><div class="docblock"><p>Application layer added the address directly.</p>
 </div><section id="variant.Discovery" class="variant"><a href="#variant.Discovery" class="anchor">§</a><h3 class="code-header">Discovery</h3></section><div class="docblock"><p>The address was discovered by a discovery service.</p>
 </div><div class="sub-variant" id="variant.Discovery.fields"><h4>Fields</h4><div class="sub-variant-field"><span id="variant.Discovery.field.name" class="section-header"><a href="#variant.Discovery.field.name" class="anchor field">§</a><code>name: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/string/struct.String.html" title="struct alloc::string::String">String</a></code></span><div class="docblock"><p>The name of the discovery service that discovered the address.</p>

@@ -8,7 +8,7 @@
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Information about a <em>direct address</em>.</p>
 <p>The <em>direct addresses</em> of an iroh endpoint are those that could be used by other endpoints to
 establish direct connectivity, depending on the network situation. Due to NAT configurations,
-for example, not all direct addresses of a endpoint are usable by all peers.</p>
+for example, not all direct addresses of an endpoint are usable by all peers.</p>
 </div></details><h2 id="fields" class="fields section-header">Fields<a href="#fields" class="anchor">§</a></h2><span id="structfield.addr" class="structfield section-header"><a href="#structfield.addr" class="anchor field">§</a><code>addr: <a class="enum" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/enum.SocketAddr.html" title="enum core::net::socket_addr::SocketAddr">SocketAddr</a></code></span><div class="docblock"><p>The UDP address reported by the remote endpoint.</p>
 </div><span id="structfield.latency" class="structfield section-header"><a href="#structfield.latency" class="anchor field">§</a><code>latency: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/core/time/struct.Duration.html" title="struct core::time::Duration">Duration</a>&gt;</code></span><div class="docblock"><p>The latency to the remote endpoint over this network path.</p>
 <p>If there has never been any connectivity via this address no latency will be known.</p>

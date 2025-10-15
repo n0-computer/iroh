@@ -119,11 +119,11 @@
 <a href=#119 id=119 data-nosnippet>119</a>    sent_pings: HashMap&lt;stun_rs::TransactionId, SentPing&gt;,
 <a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Last time this endpoint was used.
 <a href=#121 id=121 data-nosnippet>121</a>    ///
-<a href=#122 id=122 data-nosnippet>122</a>    /// A endpoint is marked as in use when sending datagrams to them, or when having received
+<a href=#122 id=122 data-nosnippet>122</a>    /// An endpoint is marked as in use when sending datagrams to them, or when having received
 <a href=#123 id=123 data-nosnippet>123</a>    /// datagrams from it. Regardless of whether the datagrams are payload or DISCO, and whether
 <a href=#124 id=124 data-nosnippet>124</a>    /// they go via UDP or the relay.
 <a href=#125 id=125 data-nosnippet>125</a>    ///
-<a href=#126 id=126 data-nosnippet>126</a>    /// Note that sending datagrams to a endpoint does not mean the endpoint receives them.
+<a href=#126 id=126 data-nosnippet>126</a>    /// Note that sending datagrams to an endpoint does not mean the endpoint receives them.
 <a href=#127 id=127 data-nosnippet>127</a>    </span>last_used: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
 <a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// Last time we sent a call-me-maybe.
 <a href=#129 id=129 data-nosnippet>129</a>    ///
@@ -1300,7 +1300,7 @@
 <a href=#1300 id=1300 data-nosnippet>1300</a>///
 <a href=#1301 id=1301 data-nosnippet>1301</a>/// The *direct addresses* of an iroh endpoint are those that could be used by other endpoints to
 <a href=#1302 id=1302 data-nosnippet>1302</a>/// establish direct connectivity, depending on the network situation. Due to NAT configurations,
-<a href=#1303 id=1303 data-nosnippet>1303</a>/// for example, not all direct addresses of a endpoint are usable by all peers.
+<a href=#1303 id=1303 data-nosnippet>1303</a>/// for example, not all direct addresses of an endpoint are usable by all peers.
 <a href=#1304 id=1304 data-nosnippet>1304</a></span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 <a href=#1305 id=1305 data-nosnippet>1305</a></span><span class="kw">pub struct </span>DirectAddrInfo {
 <a href=#1306 id=1306 data-nosnippet>1306</a>    <span class="doccomment">/// The UDP address reported by the remote endpoint.
@@ -1374,8 +1374,8 @@
 <a href=#1374 id=1374 data-nosnippet>1374</a>
 <a href=#1375 id=1375 data-nosnippet>1375</a><span class="doccomment">/// Details about a remote iroh endpoint which is known to this endpoint.
 <a href=#1376 id=1376 data-nosnippet>1376</a>///
-<a href=#1377 id=1377 data-nosnippet>1377</a>/// Having details of a endpoint does not mean it can be connected to, nor that it has ever been
-<a href=#1378 id=1378 data-nosnippet>1378</a>/// connected to in the past. There are various reasons a endpoint might be known: it could have
+<a href=#1377 id=1377 data-nosnippet>1377</a>/// Having details of an endpoint does not mean it can be connected to, nor that it has ever been
+<a href=#1378 id=1378 data-nosnippet>1378</a>/// connected to in the past. There are various reasons an endpoint might be known: it could have
 <a href=#1379 id=1379 data-nosnippet>1379</a>/// been manually added via [`Endpoint::add_endpoint_addr`], it could have been added by some
 <a href=#1380 id=1380 data-nosnippet>1380</a>/// discovery mechanism, the endpoint could have contacted this endpoint, etc.
 <a href=#1381 id=1381 data-nosnippet>1381</a>///

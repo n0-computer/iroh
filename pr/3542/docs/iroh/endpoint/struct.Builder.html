@@ -31,7 +31,7 @@ will result in an error.</p>
 <p>If you want to combine multiple discovery services, you can use
 <a href="struct.Builder.html#method.add_discovery" title="method iroh::endpoint::Builder::add_discovery"><code>Builder::add_discovery</code></a> instead. This will internally create a
 <a href="../discovery/struct.ConcurrentDiscovery.html" title="struct iroh::discovery::ConcurrentDiscovery"><code>crate::discovery::ConcurrentDiscovery</code></a>.</p>
-<p>If no discovery service is set, connecting to a endpoint without providing its
+<p>If no discovery service is set, connecting to an endpoint without providing its
 direct addresses or relay URLs will fail.</p>
 <p>See the documentation of the <a href="../discovery/trait.Discovery.html" title="trait iroh::discovery::Discovery"><code>crate::discovery::Discovery</code></a> trait for details.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.add_discovery" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#300-303">Source</a><h4 class="code-header">pub fn <a href="#method.add_discovery" class="fn">add_discovery</a>(self, discovery: impl <a class="trait" href="../discovery/trait.IntoDiscovery.html" title="trait iroh::discovery::IntoDiscovery">IntoDiscovery</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Adds a discovery mechanism for this endpoint.</p>
@@ -41,7 +41,7 @@ the endpoint. Discovery services that need to publish information need
 to use this secret key to sign the information.</p>
 <p>If you add multiple discovery services, they will be combined using a
 <a href="../discovery/struct.ConcurrentDiscovery.html" title="struct iroh::discovery::ConcurrentDiscovery"><code>crate::discovery::ConcurrentDiscovery</code></a>.</p>
-<p>If no discovery service is set, connecting to a endpoint without providing its
+<p>If no discovery service is set, connecting to an endpoint without providing its
 direct addresses or relay URLs will fail.</p>
 <p>To clear all discovery services, use <a href="struct.Builder.html#method.clear_discovery" title="method iroh::endpoint::Builder::clear_discovery"><code>Builder::clear_discovery</code></a>.</p>
 <p>See the documentation of the <a href="../discovery/trait.Discovery.html" title="trait iroh::discovery::Discovery"><code>crate::discovery::Discovery</code></a> trait for details.</p>

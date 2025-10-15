@@ -116,7 +116,7 @@
 <a href=#116 id=116 data-nosnippet>116</a>    }
 <a href=#117 id=117 data-nosnippet>117</a>}
 <a href=#118 id=118 data-nosnippet>118</a>
-<a href=#119 id=119 data-nosnippet>119</a><span class="doccomment">/// Data about a endpoint that may be published to and resolved from discovery services.
+<a href=#119 id=119 data-nosnippet>119</a><span class="doccomment">/// Data about an endpoint that may be published to and resolved from discovery services.
 <a href=#120 id=120 data-nosnippet>120</a>///
 <a href=#121 id=121 data-nosnippet>121</a>/// This includes an optional [`RelayUrl`], a set of direct addresses, and the optional
 <a href=#122 id=122 data-nosnippet>122</a>/// [`UserData`], a string that can be set by applications and is not parsed or used by iroh
@@ -267,7 +267,7 @@
 <a href=#267 id=267 data-nosnippet>267</a>    </span>}
 <a href=#268 id=268 data-nosnippet>268</a>}
 <a href=#269 id=269 data-nosnippet>269</a>
-<a href=#270 id=270 data-nosnippet>270</a><span class="doccomment">/// Information about a endpoint that may be published to and resolved from discovery services.
+<a href=#270 id=270 data-nosnippet>270</a><span class="doccomment">/// Information about an endpoint that may be published to and resolved from discovery services.
 <a href=#271 id=271 data-nosnippet>271</a>///
 <a href=#272 id=272 data-nosnippet>272</a>/// This struct couples a [`EndpointId`] with its associated [`EndpointData`].
 <a href=#273 id=273 data-nosnippet>273</a></span><span class="attr">#[derive(derive_more::Debug, Clone, Eq, PartialEq)]
@@ -518,7 +518,7 @@
 <a href=#518 id=518 data-nosnippet>518</a>}
 <a href=#519 id=519 data-nosnippet>519</a>
 <a href=#520 id=520 data-nosnippet>520</a><span class="kw">impl</span>&lt;T: FromStr + Display + Hash + Ord&gt; TxtAttrs&lt;T&gt; {
-<a href=#521 id=521 data-nosnippet>521</a>    <span class="doccomment">/// Creates [`TxtAttrs`] from a endpoint id and an iterator of key-value pairs.
+<a href=#521 id=521 data-nosnippet>521</a>    <span class="doccomment">/// Creates [`TxtAttrs`] from an endpoint id and an iterator of key-value pairs.
 <a href=#522 id=522 data-nosnippet>522</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_parts(
 <a href=#523 id=523 data-nosnippet>523</a>        endpoint_id: EndpointId,
 <a href=#524 id=524 data-nosnippet>524</a>        pairs: <span class="kw">impl </span>Iterator&lt;Item = (T, String)&gt;,
@@ -530,7 +530,7 @@
 <a href=#530 id=530 data-nosnippet>530</a>        <span class="self">Self </span>{ attrs, endpoint_id }
 <a href=#531 id=531 data-nosnippet>531</a>    }
 <a href=#532 id=532 data-nosnippet>532</a>
-<a href=#533 id=533 data-nosnippet>533</a>    <span class="doccomment">/// Creates [`TxtAttrs`] from a endpoint id and an iterator of "{key}={value}" strings.
+<a href=#533 id=533 data-nosnippet>533</a>    <span class="doccomment">/// Creates [`TxtAttrs`] from an endpoint id and an iterator of "{key}={value}" strings.
 <a href=#534 id=534 data-nosnippet>534</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_strings(
 <a href=#535 id=535 data-nosnippet>535</a>        endpoint_id: EndpointId,
 <a href=#536 id=536 data-nosnippet>536</a>        strings: <span class="kw">impl </span>Iterator&lt;Item = String&gt;,
@@ -692,7 +692,7 @@
 <a href=#692 id=692 data-nosnippet>692</a>        <span class="macro">assert_eq!</span>(expected, actual);
 <a href=#693 id=693 data-nosnippet>693</a>    }
 <a href=#694 id=694 data-nosnippet>694</a>
-<a href=#695 id=695 data-nosnippet>695</a>    <span class="doccomment">/// There used to be a bug where uploading a EndpointAddr with more than only exactly
+<a href=#695 id=695 data-nosnippet>695</a>    <span class="doccomment">/// There used to be a bug where uploading an EndpointAddr with more than only exactly
 <a href=#696 id=696 data-nosnippet>696</a>    /// one relay URL or one publicly reachable IP addr would prevent connection
 <a href=#697 id=697 data-nosnippet>697</a>    /// establishment.
 <a href=#698 id=698 data-nosnippet>698</a>    ///
