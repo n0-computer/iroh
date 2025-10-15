@@ -864,7 +864,7 @@ impl Endpoint {
     /// to ensure that the `EndpointAddr` will contain enough information to allow this endpoint
     /// to be dialable by a remote endpoint over the internet.
     ///
-    /// You can use the [`Endpoint::watch_endpoint_addr`] method to get updates when the `EndpointAddr`
+    /// You can use the [`Endpoint::watch_addr`] method to get updates when the `EndpointAddr`
     /// changes.
     pub fn addr(&self) -> EndpointAddr {
         self.watch_addr().get()
@@ -930,7 +930,7 @@ impl Endpoint {
     /// with a [`EndpointAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
     #[cfg(wasm_browser)]
-    pub fn watch_endpoint_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
+    pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `EndpointAddr` have *some* way
         // of connecting to us.
@@ -957,7 +957,7 @@ impl Endpoint {
     /// [`crate::net_report::Report`] has been attempted.
     ///
     /// To understand if the endpoint has gone back "offline",
-    /// you must use the [`Endpoint::watch_endpoint_addr`] method, to
+    /// you must use the [`Endpoint::watch_addr`] method, to
     /// get information on the current relay and direct address information.
     pub async fn online(&self) {
         self.msock.home_relay().initialized().await;
