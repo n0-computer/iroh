@@ -516,7 +516,7 @@
 <a href=#516 id=516 data-nosnippet>516</a>                            <span class="kw">match </span>res {
 <a href=#517 id=517 data-nosnippet>517</a>                                <span class="prelude-val">Ok</span>((r, conn)) =&gt; {
 <a href=#518 id=518 data-nosnippet>518</a>                                    <span class="macro">debug!</span>(<span class="question-mark">?</span>r, <span class="string">"got v4 QAD conn"</span>);
-<a href=#519 id=519 data-nosnippet>519</a>                                    <span class="kw">let </span>url = r.endpoint.clone();
+<a href=#519 id=519 data-nosnippet>519</a>                                    <span class="kw">let </span>url = r.relay.clone();
 <a href=#520 id=520 data-nosnippet>520</a>                                    reports.push(ProbeReport::QadIpv4(r));
 <a href=#521 id=521 data-nosnippet>521</a>                                    <span class="kw">if </span><span class="self">self</span>.qad_conns.v4.is_none() {
 <a href=#522 id=522 data-nosnippet>522</a>                                        <span class="self">self</span>.qad_conns.v4.replace((url, conn));
@@ -551,7 +551,7 @@
 <a href=#551 id=551 data-nosnippet>551</a>                            <span class="kw">match </span>res {
 <a href=#552 id=552 data-nosnippet>552</a>                                <span class="prelude-val">Ok</span>((r, conn)) =&gt; {
 <a href=#553 id=553 data-nosnippet>553</a>                                    <span class="macro">debug!</span>(<span class="question-mark">?</span>r, <span class="string">"got v6 QAD conn"</span>);
-<a href=#554 id=554 data-nosnippet>554</a>                                    <span class="kw">let </span>url = r.endpoint.clone();
+<a href=#554 id=554 data-nosnippet>554</a>                                    <span class="kw">let </span>url = r.relay.clone();
 <a href=#555 id=555 data-nosnippet>555</a>                                    reports.push(ProbeReport::QadIpv6(r));
 <a href=#556 id=556 data-nosnippet>556</a>                                    <span class="kw">if </span><span class="self">self</span>.qad_conns.v6.is_none() {
 <a href=#557 id=557 data-nosnippet>557</a>                                        <span class="self">self</span>.qad_conns.v6.replace((url, conn));
@@ -756,18 +756,18 @@
 <a href=#756 id=756 data-nosnippet>756</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#757 id=757 data-nosnippet>757</a></span><span class="kw">async fn </span>run_probe_v4(
 <a href=#758 id=758 data-nosnippet>758</a>    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-<a href=#759 id=759 data-nosnippet>759</a>    relay_endpoint: Arc&lt;RelayConfig&gt;,
+<a href=#759 id=759 data-nosnippet>759</a>    relay: Arc&lt;RelayConfig&gt;,
 <a href=#760 id=760 data-nosnippet>760</a>    quic_client: QuicClient,
 <a href=#761 id=761 data-nosnippet>761</a>    dns_resolver: DnsResolver,
 <a href=#762 id=762 data-nosnippet>762</a>) -&gt; n0_snafu::Result&lt;(QadProbeReport, QadConn)&gt; {
 <a href=#763 id=763 data-nosnippet>763</a>    <span class="kw">use </span>n0_snafu::ResultExt;
 <a href=#764 id=764 data-nosnippet>764</a>
-<a href=#765 id=765 data-nosnippet>765</a>    <span class="kw">let </span>relay_addr_orig = reportgen::get_relay_addr_ipv4(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay_endpoint).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#765 id=765 data-nosnippet>765</a>    <span class="kw">let </span>relay_addr_orig = reportgen::get_relay_addr_ipv4(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#766 id=766 data-nosnippet>766</a>    <span class="kw">let </span>relay_addr =
 <a href=#767 id=767 data-nosnippet>767</a>        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 <a href=#768 id=768 data-nosnippet>768</a>
 <a href=#769 id=769 data-nosnippet>769</a>    <span class="macro">debug!</span>(<span class="question-mark">?</span>relay_addr_orig, <span class="question-mark">?</span>relay_addr, <span class="string">"relay addr v4"</span>);
-<a href=#770 id=770 data-nosnippet>770</a>    <span class="kw">let </span>host = relay_endpoint.url.host_str().context(<span class="string">"missing host url"</span>)<span class="question-mark">?</span>;
+<a href=#770 id=770 data-nosnippet>770</a>    <span class="kw">let </span>host = relay.url.host_str().context(<span class="string">"missing host url"</span>)<span class="question-mark">?</span>;
 <a href=#771 id=771 data-nosnippet>771</a>    <span class="kw">let </span>conn = quic_client.create_conn(relay_addr, host).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#772 id=772 data-nosnippet>772</a>    <span class="kw">let </span><span class="kw-2">mut </span>receiver = conn.observed_external_addr();
 <a href=#773 id=773 data-nosnippet>773</a>
@@ -778,13 +778,13 @@
 <a href=#778 id=778 data-nosnippet>778</a>        </span>.context(<span class="string">"receiver dropped"</span>)<span class="question-mark">?
 <a href=#779 id=779 data-nosnippet>779</a>        </span>.expect(<span class="string">"known"</span>);
 <a href=#780 id=780 data-nosnippet>780</a>    <span class="kw">let </span>report = QadProbeReport {
-<a href=#781 id=781 data-nosnippet>781</a>        endpoint: relay_endpoint.url.clone(),
+<a href=#781 id=781 data-nosnippet>781</a>        relay: relay.url.clone(),
 <a href=#782 id=782 data-nosnippet>782</a>        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
 <a href=#783 id=783 data-nosnippet>783</a>        latency: conn.rtt(),
 <a href=#784 id=784 data-nosnippet>784</a>    };
 <a href=#785 id=785 data-nosnippet>785</a>
 <a href=#786 id=786 data-nosnippet>786</a>    <span class="kw">let </span>observer = Watchable::new(<span class="prelude-val">None</span>);
-<a href=#787 id=787 data-nosnippet>787</a>    <span class="kw">let </span>endpoint = relay_endpoint.url.clone();
+<a href=#787 id=787 data-nosnippet>787</a>    <span class="kw">let </span>endpoint = relay.url.clone();
 <a href=#788 id=788 data-nosnippet>788</a>    <span class="kw">let </span>handle = task::spawn({
 <a href=#789 id=789 data-nosnippet>789</a>        <span class="kw">let </span>conn = conn.clone();
 <a href=#790 id=790 data-nosnippet>790</a>        <span class="kw">let </span>observer = observer.clone();
@@ -798,7 +798,7 @@
 <a href=#798 id=798 data-nosnippet>798</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>val, <span class="question-mark">?</span>relay_addr, <span class="question-mark">?</span>latency, <span class="string">"got addr V4"</span>);
 <a href=#799 id=799 data-nosnippet>799</a>                observer
 <a href=#800 id=800 data-nosnippet>800</a>                    .set(val.map(|addr| QadProbeReport {
-<a href=#801 id=801 data-nosnippet>801</a>                        endpoint: endpoint.clone(),
+<a href=#801 id=801 data-nosnippet>801</a>                        relay: endpoint.clone(),
 <a href=#802 id=802 data-nosnippet>802</a>                        addr,
 <a href=#803 id=803 data-nosnippet>803</a>                        latency,
 <a href=#804 id=804 data-nosnippet>804</a>                    }))
@@ -824,17 +824,17 @@
 <a href=#824 id=824 data-nosnippet>824</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#825 id=825 data-nosnippet>825</a></span><span class="kw">async fn </span>run_probe_v6(
 <a href=#826 id=826 data-nosnippet>826</a>    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-<a href=#827 id=827 data-nosnippet>827</a>    relay_endpoint: Arc&lt;RelayConfig&gt;,
+<a href=#827 id=827 data-nosnippet>827</a>    relay: Arc&lt;RelayConfig&gt;,
 <a href=#828 id=828 data-nosnippet>828</a>    quic_client: QuicClient,
 <a href=#829 id=829 data-nosnippet>829</a>    dns_resolver: DnsResolver,
 <a href=#830 id=830 data-nosnippet>830</a>) -&gt; n0_snafu::Result&lt;(QadProbeReport, QadConn)&gt; {
 <a href=#831 id=831 data-nosnippet>831</a>    <span class="kw">use </span>n0_snafu::ResultExt;
-<a href=#832 id=832 data-nosnippet>832</a>    <span class="kw">let </span>relay_addr_orig = reportgen::get_relay_addr_ipv6(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay_endpoint).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#832 id=832 data-nosnippet>832</a>    <span class="kw">let </span>relay_addr_orig = reportgen::get_relay_addr_ipv6(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#833 id=833 data-nosnippet>833</a>    <span class="kw">let </span>relay_addr =
 <a href=#834 id=834 data-nosnippet>834</a>        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 <a href=#835 id=835 data-nosnippet>835</a>
 <a href=#836 id=836 data-nosnippet>836</a>    <span class="macro">debug!</span>(<span class="question-mark">?</span>relay_addr_orig, <span class="question-mark">?</span>relay_addr, <span class="string">"relay addr v6"</span>);
-<a href=#837 id=837 data-nosnippet>837</a>    <span class="kw">let </span>host = relay_endpoint.url.host_str().context(<span class="string">"missing host url"</span>)<span class="question-mark">?</span>;
+<a href=#837 id=837 data-nosnippet>837</a>    <span class="kw">let </span>host = relay.url.host_str().context(<span class="string">"missing host url"</span>)<span class="question-mark">?</span>;
 <a href=#838 id=838 data-nosnippet>838</a>    <span class="kw">let </span>conn = quic_client.create_conn(relay_addr, host).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#839 id=839 data-nosnippet>839</a>    <span class="kw">let </span><span class="kw-2">mut </span>receiver = conn.observed_external_addr();
 <a href=#840 id=840 data-nosnippet>840</a>
@@ -845,13 +845,13 @@
 <a href=#845 id=845 data-nosnippet>845</a>        </span>.context(<span class="string">"receiver dropped"</span>)<span class="question-mark">?
 <a href=#846 id=846 data-nosnippet>846</a>        </span>.expect(<span class="string">"known"</span>);
 <a href=#847 id=847 data-nosnippet>847</a>    <span class="kw">let </span>report = QadProbeReport {
-<a href=#848 id=848 data-nosnippet>848</a>        endpoint: relay_endpoint.url.clone(),
+<a href=#848 id=848 data-nosnippet>848</a>        relay: relay.url.clone(),
 <a href=#849 id=849 data-nosnippet>849</a>        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
 <a href=#850 id=850 data-nosnippet>850</a>        latency: conn.rtt(),
 <a href=#851 id=851 data-nosnippet>851</a>    };
 <a href=#852 id=852 data-nosnippet>852</a>
 <a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">let </span>observer = Watchable::new(<span class="prelude-val">None</span>);
-<a href=#854 id=854 data-nosnippet>854</a>    <span class="kw">let </span>endpoint = relay_endpoint.url.clone();
+<a href=#854 id=854 data-nosnippet>854</a>    <span class="kw">let </span>endpoint = relay.url.clone();
 <a href=#855 id=855 data-nosnippet>855</a>    <span class="kw">let </span>handle = task::spawn({
 <a href=#856 id=856 data-nosnippet>856</a>        <span class="kw">let </span>observer = observer.clone();
 <a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">let </span>conn = conn.clone();
@@ -865,7 +865,7 @@
 <a href=#865 id=865 data-nosnippet>865</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>val, <span class="question-mark">?</span>relay_addr, <span class="question-mark">?</span>latency, <span class="string">"got addr V6"</span>);
 <a href=#866 id=866 data-nosnippet>866</a>                observer
 <a href=#867 id=867 data-nosnippet>867</a>                    .set(val.map(|addr| QadProbeReport {
-<a href=#868 id=868 data-nosnippet>868</a>                        endpoint: endpoint.clone(),
+<a href=#868 id=868 data-nosnippet>868</a>                        relay: endpoint.clone(),
 <a href=#869 id=869 data-nosnippet>869</a>                        addr,
 <a href=#870 id=870 data-nosnippet>870</a>                        latency,
 <a href=#871 id=871 data-nosnippet>871</a>                    }))

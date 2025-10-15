@@ -343,7 +343,7 @@
 <a href=#343 id=343 data-nosnippet>343</a>    /// - Probes get aborted in several ways:
 <a href=#344 id=344 data-nosnippet>344</a>    ///   - A running it can fail and abort the entire probe set if it deems the
 <a href=#345 id=345 data-nosnippet>345</a>    ///     failure permanent.  Probes in a probe set are essentially retries.
-<a href=#346 id=346 data-nosnippet>346</a>    ///   - Once there are [`ProbeReport`]s from enough endpoints, all remaining probes are
+<a href=#346 id=346 data-nosnippet>346</a>    ///   - Once there are [`ProbeReport`]s from enough relays, all remaining probes are
 <a href=#347 id=347 data-nosnippet>347</a>    ///     aborted.  That is, the main actor loop stops polling them.
 <a href=#348 id=348 data-nosnippet>348</a>    </span><span class="kw">fn </span>spawn_probes_task(
 <a href=#349 id=349 data-nosnippet>349</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
@@ -433,9 +433,9 @@
 <a href=#433 id=433 data-nosnippet>433</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#434 id=434 data-nosnippet>434</a>#[derive(Debug, Clone, PartialEq, Eq)]
 <a href=#435 id=435 data-nosnippet>435</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>QadProbeReport {
-<a href=#436 id=436 data-nosnippet>436</a>    <span class="doccomment">/// The relay endpoint that was probed
-<a href=#437 id=437 data-nosnippet>437</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) endpoint: RelayUrl,
-<a href=#438 id=438 data-nosnippet>438</a>    <span class="doccomment">/// The latency to the relay endpoint.
+<a href=#436 id=436 data-nosnippet>436</a>    <span class="doccomment">/// The relay that was probed
+<a href=#437 id=437 data-nosnippet>437</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) relay: RelayUrl,
+<a href=#438 id=438 data-nosnippet>438</a>    <span class="doccomment">/// The latency to the relay.
 <a href=#439 id=439 data-nosnippet>439</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) latency: Duration,
 <a href=#440 id=440 data-nosnippet>440</a>    <span class="doccomment">/// The discovered public address.
 <a href=#441 id=441 data-nosnippet>441</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) addr: SocketAddr,
@@ -443,9 +443,9 @@
 <a href=#443 id=443 data-nosnippet>443</a>
 <a href=#444 id=444 data-nosnippet>444</a><span class="attr">#[derive(Debug, Clone)]
 <a href=#445 id=445 data-nosnippet>445</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>HttpsProbeReport {
-<a href=#446 id=446 data-nosnippet>446</a>    <span class="doccomment">/// The relay endpoint that was probed
-<a href=#447 id=447 data-nosnippet>447</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) endpoint: RelayUrl,
-<a href=#448 id=448 data-nosnippet>448</a>    <span class="doccomment">/// The latency to the relay endpoint.
+<a href=#446 id=446 data-nosnippet>446</a>    <span class="doccomment">/// The relay that was probed
+<a href=#447 id=447 data-nosnippet>447</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) relay: RelayUrl,
+<a href=#448 id=448 data-nosnippet>448</a>    <span class="doccomment">/// The latency to the relay.
 <a href=#449 id=449 data-nosnippet>449</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) latency: Duration,
 <a href=#450 id=450 data-nosnippet>450</a>}
 <a href=#451 id=451 data-nosnippet>451</a>
@@ -467,8 +467,8 @@
 <a href=#467 id=467 data-nosnippet>467</a>#[snafu(module)]
 <a href=#468 id=468 data-nosnippet>468</a>#[non_exhaustive]
 <a href=#469 id=469 data-nosnippet>469</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>QuicError {
-<a href=#470 id=470 data-nosnippet>470</a>    <span class="attr">#[snafu(display(<span class="string">"No QUIC endpoint available"</span>))]
-<a href=#471 id=471 data-nosnippet>471</a>    </span>NoEndpoint,
+<a href=#470 id=470 data-nosnippet>470</a>    <span class="attr">#[snafu(display(<span class="string">"No relay available"</span>))]
+<a href=#471 id=471 data-nosnippet>471</a>    </span>NoRelay,
 <a href=#472 id=472 data-nosnippet>472</a>    <span class="attr">#[snafu(display(<span class="string">"URL must have 'host' to use QUIC address discovery probes"</span>))]
 <a href=#473 id=473 data-nosnippet>473</a>    </span>InvalidUrl,
 <a href=#474 id=474 data-nosnippet>474</a>}
@@ -492,7 +492,7 @@
 <a href=#492 id=492 data-nosnippet>492</a>    </span><span class="kw">async fn </span>run(
 <a href=#493 id=493 data-nosnippet>493</a>        <span class="self">self</span>,
 <a href=#494 id=494 data-nosnippet>494</a>        delay: Duration,
-<a href=#495 id=495 data-nosnippet>495</a>        relay_endpoint: Arc&lt;RelayConfig&gt;,
+<a href=#495 id=495 data-nosnippet>495</a>        relay: Arc&lt;RelayConfig&gt;,
 <a href=#496 id=496 data-nosnippet>496</a>        <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
 <a href=#497 id=497 data-nosnippet>497</a>        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))] </span>insecure_skip_relay_cert_verify: bool,
 <a href=#498 id=498 data-nosnippet>498</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
@@ -507,7 +507,7 @@
 <a href=#507 id=507 data-nosnippet>507</a>                <span class="kw">match </span>run_https_probe(
 <a href=#508 id=508 data-nosnippet>508</a>                    <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#509 id=509 data-nosnippet>509</a>                    </span><span class="kw-2">&amp;</span>socket_state.dns_resolver,
-<a href=#510 id=510 data-nosnippet>510</a>                    relay_endpoint.url.clone(),
+<a href=#510 id=510 data-nosnippet>510</a>                    relay.url.clone(),
 <a href=#511 id=511 data-nosnippet>511</a>                    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 <a href=#512 id=512 data-nosnippet>512</a>                    </span>insecure_skip_relay_cert_verify,
 <a href=#513 id=513 data-nosnippet>513</a>                )
@@ -558,7 +558,7 @@
 <a href=#558 id=558 data-nosnippet>558</a>    dm: <span class="kw-2">&amp;</span>RelayMap,
 <a href=#559 id=559 data-nosnippet>559</a>    preferred_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#560 id=560 data-nosnippet>560</a>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, CaptivePortalError&gt; {
-<a href=#561 id=561 data-nosnippet>561</a>    <span class="comment">// If we have a preferred relay endpoint and we can use it for non-QAD requests, try that;
+<a href=#561 id=561 data-nosnippet>561</a>    <span class="comment">// If we have a preferred relay and we can use it for non-QAD requests, try that;
 <a href=#562 id=562 data-nosnippet>562</a>    // otherwise, pick a random one suitable for non-STUN requests.
 <a href=#563 id=563 data-nosnippet>563</a>
 <a href=#564 id=564 data-nosnippet>564</a>    </span><span class="kw">use </span><span class="kw">crate</span>::util::reqwest_client_builder;
@@ -570,7 +570,7 @@
 <a href=#570 id=570 data-nosnippet>570</a>        <span class="prelude-val">None </span>=&gt; {
 <a href=#571 id=571 data-nosnippet>571</a>            <span class="kw">let </span>urls: Vec&lt;<span class="kw">_</span>&gt; = dm.urls();
 <a href=#572 id=572 data-nosnippet>572</a>            <span class="kw">if </span>urls.is_empty() {
-<a href=#573 id=573 data-nosnippet>573</a>                <span class="macro">debug!</span>(<span class="string">"No suitable relay endpoint for captive portal check"</span>);
+<a href=#573 id=573 data-nosnippet>573</a>                <span class="macro">debug!</span>(<span class="string">"No suitable relay for captive portal check"</span>);
 <a href=#574 id=574 data-nosnippet>574</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
 <a href=#575 id=575 data-nosnippet>575</a>            }
 <a href=#576 id=576 data-nosnippet>576</a>
@@ -633,8 +633,8 @@
 <a href=#633 id=633 data-nosnippet>633</a>
 <a href=#634 id=634 data-nosnippet>634</a><span class="doccomment">/// Returns the proper port based on the protocol of the probe.
 <a href=#635 id=635 data-nosnippet>635</a></span><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#636 id=636 data-nosnippet>636</a></span><span class="kw">fn </span>get_quic_port(relay_endpoint: <span class="kw-2">&amp;</span>RelayConfig) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
-<a href=#637 id=637 data-nosnippet>637</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = relay_endpoint.quic {
+<a href=#636 id=636 data-nosnippet>636</a></span><span class="kw">fn </span>get_quic_port(relay: <span class="kw-2">&amp;</span>RelayConfig) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
+<a href=#637 id=637 data-nosnippet>637</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = relay.quic {
 <a href=#638 id=638 data-nosnippet>638</a>        <span class="kw">if </span>quic.port == <span class="number">0 </span>{
 <a href=#639 id=639 data-nosnippet>639</a>            <span class="prelude-val">Some</span>(DEFAULT_RELAY_QUIC_PORT)
 <a href=#640 id=640 data-nosnippet>640</a>        } <span class="kw">else </span>{
@@ -664,23 +664,23 @@
 <a href=#664 id=664 data-nosnippet>664</a>    </span>MissingPort,
 <a href=#665 id=665 data-nosnippet>665</a>}
 <a href=#666 id=666 data-nosnippet>666</a>
-<a href=#667 id=667 data-nosnippet>667</a><span class="doccomment">/// Returns the IP address to use to communicate to this relay endpoint for quic.
+<a href=#667 id=667 data-nosnippet>667</a><span class="doccomment">/// Returns the IP address to use to communicate to this relay for quic.
 <a href=#668 id=668 data-nosnippet>668</a></span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#669 id=669 data-nosnippet>669</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>get_relay_addr_ipv4(
 <a href=#670 id=670 data-nosnippet>670</a>    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
-<a href=#671 id=671 data-nosnippet>671</a>    relay_endpoint: <span class="kw-2">&amp;</span>RelayConfig,
+<a href=#671 id=671 data-nosnippet>671</a>    relay: <span class="kw-2">&amp;</span>RelayConfig,
 <a href=#672 id=672 data-nosnippet>672</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddrV4, GetRelayAddrError&gt; {
-<a href=#673 id=673 data-nosnippet>673</a>    <span class="kw">let </span>port = get_quic_port(relay_endpoint).context(get_relay_addr_error::MissingPortSnafu)<span class="question-mark">?</span>;
-<a href=#674 id=674 data-nosnippet>674</a>    relay_lookup_ipv4_staggered(dns_resolver, relay_endpoint, port).<span class="kw">await
+<a href=#673 id=673 data-nosnippet>673</a>    <span class="kw">let </span>port = get_quic_port(relay).context(get_relay_addr_error::MissingPortSnafu)<span class="question-mark">?</span>;
+<a href=#674 id=674 data-nosnippet>674</a>    relay_lookup_ipv4_staggered(dns_resolver, relay, port).<span class="kw">await
 <a href=#675 id=675 data-nosnippet>675</a></span>}
 <a href=#676 id=676 data-nosnippet>676</a>
 <a href=#677 id=677 data-nosnippet>677</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#678 id=678 data-nosnippet>678</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>get_relay_addr_ipv6(
 <a href=#679 id=679 data-nosnippet>679</a>    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
-<a href=#680 id=680 data-nosnippet>680</a>    relay_endpoint: <span class="kw-2">&amp;</span>RelayConfig,
+<a href=#680 id=680 data-nosnippet>680</a>    relay: <span class="kw-2">&amp;</span>RelayConfig,
 <a href=#681 id=681 data-nosnippet>681</a>) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddrV6, GetRelayAddrError&gt; {
-<a href=#682 id=682 data-nosnippet>682</a>    <span class="kw">let </span>port = get_quic_port(relay_endpoint).context(get_relay_addr_error::MissingPortSnafu)<span class="question-mark">?</span>;
-<a href=#683 id=683 data-nosnippet>683</a>    relay_lookup_ipv6_staggered(dns_resolver, relay_endpoint, port).<span class="kw">await
+<a href=#682 id=682 data-nosnippet>682</a>    <span class="kw">let </span>port = get_quic_port(relay).context(get_relay_addr_error::MissingPortSnafu)<span class="question-mark">?</span>;
+<a href=#683 id=683 data-nosnippet>683</a>    relay_lookup_ipv6_staggered(dns_resolver, relay, port).<span class="kw">await
 <a href=#684 id=684 data-nosnippet>684</a></span>}
 <a href=#685 id=685 data-nosnippet>685</a>
 <a href=#686 id=686 data-nosnippet>686</a><span class="doccomment">/// Do a staggared ipv4 DNS lookup based on [`RelayConfig`]
@@ -772,11 +772,11 @@
 <a href=#772 id=772 data-nosnippet>772</a></span><span class="attr">#[allow(clippy::unused_async)]
 <a href=#773 id=773 data-nosnippet>773</a></span><span class="kw">async fn </span>run_https_probe(
 <a href=#774 id=774 data-nosnippet>774</a>    <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
-<a href=#775 id=775 data-nosnippet>775</a>    relay_endpoint: RelayUrl,
+<a href=#775 id=775 data-nosnippet>775</a>    relay: RelayUrl,
 <a href=#776 id=776 data-nosnippet>776</a>    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))] </span>insecure_skip_relay_cert_verify: bool,
 <a href=#777 id=777 data-nosnippet>777</a>) -&gt; <span class="prelude-ty">Result</span>&lt;HttpsProbeReport, MeasureHttpsLatencyError&gt; {
 <a href=#778 id=778 data-nosnippet>778</a>    <span class="macro">trace!</span>(<span class="string">"HTTPS probe start"</span>);
-<a href=#779 id=779 data-nosnippet>779</a>    <span class="kw">let </span>url = relay_endpoint.join(RELAY_PROBE_PATH)<span class="question-mark">?</span>;
+<a href=#779 id=779 data-nosnippet>779</a>    <span class="kw">let </span>url = relay.join(RELAY_PROBE_PATH)<span class="question-mark">?</span>;
 <a href=#780 id=780 data-nosnippet>780</a>
 <a href=#781 id=781 data-nosnippet>781</a>    <span class="comment">// This should also use same connection establishment as relay client itself, which
 <a href=#782 id=782 data-nosnippet>782</a>    // needs to be more configurable so users can do more crazy things:
@@ -833,60 +833,57 @@
 <a href=#833 id=833 data-nosnippet>833</a>            }
 <a href=#834 id=834 data-nosnippet>834</a>        }
 <a href=#835 id=835 data-nosnippet>835</a>
-<a href=#836 id=836 data-nosnippet>836</a>        <span class="prelude-val">Ok</span>(HttpsProbeReport {
-<a href=#837 id=837 data-nosnippet>837</a>            endpoint: relay_endpoint,
-<a href=#838 id=838 data-nosnippet>838</a>            latency,
-<a href=#839 id=839 data-nosnippet>839</a>        })
-<a href=#840 id=840 data-nosnippet>840</a>    } <span class="kw">else </span>{
-<a href=#841 id=841 data-nosnippet>841</a>        <span class="prelude-val">Err</span>(measure_https_latency_error::InvalidResponseSnafu {
-<a href=#842 id=842 data-nosnippet>842</a>            status: response.status(),
-<a href=#843 id=843 data-nosnippet>843</a>        }
-<a href=#844 id=844 data-nosnippet>844</a>        .build())
-<a href=#845 id=845 data-nosnippet>845</a>    }
-<a href=#846 id=846 data-nosnippet>846</a>}
-<a href=#847 id=847 data-nosnippet>847</a>
-<a href=#848 id=848 data-nosnippet>848</a><span class="attr">#[cfg(test)]
-<a href=#849 id=849 data-nosnippet>849</a></span><span class="kw">mod </span>tests {
-<a href=#850 id=850 data-nosnippet>850</a>    <span class="kw">use </span>std::net::Ipv4Addr;
-<a href=#851 id=851 data-nosnippet>851</a>
-<a href=#852 id=852 data-nosnippet>852</a>    <span class="kw">use </span>iroh_relay::dns::DnsResolver;
-<a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
-<a href=#854 id=854 data-nosnippet>854</a>    <span class="kw">use </span>tracing_test::traced_test;
-<a href=#855 id=855 data-nosnippet>855</a>
-<a href=#856 id=856 data-nosnippet>856</a>    <span class="kw">use super</span>::{<span class="kw">super</span>::test_utils, <span class="kw-2">*</span>};
-<a href=#857 id=857 data-nosnippet>857</a>
-<a href=#858 id=858 data-nosnippet>858</a>    <span class="attr">#[tokio::test]
-<a href=#859 id=859 data-nosnippet>859</a>    </span><span class="kw">async fn </span>test_measure_https_latency() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#860 id=860 data-nosnippet>860</a>        <span class="kw">let </span>(_server, relay) = test_utils::relay().<span class="kw">await</span>;
-<a href=#861 id=861 data-nosnippet>861</a>        <span class="kw">let </span>dns_resolver = DnsResolver::new();
-<a href=#862 id=862 data-nosnippet>862</a>        <span class="macro">tracing::info!</span>(relay_url = <span class="question-mark">?</span>relay.url , <span class="string">"RELAY_URL"</span>);
-<a href=#863 id=863 data-nosnippet>863</a>        <span class="kw">let </span>report = run_https_probe(<span class="kw-2">&amp;</span>dns_resolver, relay.url, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#864 id=864 data-nosnippet>864</a>
-<a href=#865 id=865 data-nosnippet>865</a>        <span class="macro">assert!</span>(report.latency &gt; Duration::ZERO);
+<a href=#836 id=836 data-nosnippet>836</a>        <span class="prelude-val">Ok</span>(HttpsProbeReport { relay, latency })
+<a href=#837 id=837 data-nosnippet>837</a>    } <span class="kw">else </span>{
+<a href=#838 id=838 data-nosnippet>838</a>        <span class="prelude-val">Err</span>(measure_https_latency_error::InvalidResponseSnafu {
+<a href=#839 id=839 data-nosnippet>839</a>            status: response.status(),
+<a href=#840 id=840 data-nosnippet>840</a>        }
+<a href=#841 id=841 data-nosnippet>841</a>        .build())
+<a href=#842 id=842 data-nosnippet>842</a>    }
+<a href=#843 id=843 data-nosnippet>843</a>}
+<a href=#844 id=844 data-nosnippet>844</a>
+<a href=#845 id=845 data-nosnippet>845</a><span class="attr">#[cfg(test)]
+<a href=#846 id=846 data-nosnippet>846</a></span><span class="kw">mod </span>tests {
+<a href=#847 id=847 data-nosnippet>847</a>    <span class="kw">use </span>std::net::Ipv4Addr;
+<a href=#848 id=848 data-nosnippet>848</a>
+<a href=#849 id=849 data-nosnippet>849</a>    <span class="kw">use </span>iroh_relay::dns::DnsResolver;
+<a href=#850 id=850 data-nosnippet>850</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+<a href=#851 id=851 data-nosnippet>851</a>    <span class="kw">use </span>tracing_test::traced_test;
+<a href=#852 id=852 data-nosnippet>852</a>
+<a href=#853 id=853 data-nosnippet>853</a>    <span class="kw">use super</span>::{<span class="kw">super</span>::test_utils, <span class="kw-2">*</span>};
+<a href=#854 id=854 data-nosnippet>854</a>
+<a href=#855 id=855 data-nosnippet>855</a>    <span class="attr">#[tokio::test]
+<a href=#856 id=856 data-nosnippet>856</a>    </span><span class="kw">async fn </span>test_measure_https_latency() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">let </span>(_server, relay) = test_utils::relay().<span class="kw">await</span>;
+<a href=#858 id=858 data-nosnippet>858</a>        <span class="kw">let </span>dns_resolver = DnsResolver::new();
+<a href=#859 id=859 data-nosnippet>859</a>        <span class="macro">tracing::info!</span>(relay_url = <span class="question-mark">?</span>relay.url , <span class="string">"RELAY_URL"</span>);
+<a href=#860 id=860 data-nosnippet>860</a>        <span class="kw">let </span>report = run_https_probe(<span class="kw-2">&amp;</span>dns_resolver, relay.url, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#861 id=861 data-nosnippet>861</a>
+<a href=#862 id=862 data-nosnippet>862</a>        <span class="macro">assert!</span>(report.latency &gt; Duration::ZERO);
+<a href=#863 id=863 data-nosnippet>863</a>
+<a href=#864 id=864 data-nosnippet>864</a>        <span class="prelude-val">Ok</span>(())
+<a href=#865 id=865 data-nosnippet>865</a>    }
 <a href=#866 id=866 data-nosnippet>866</a>
-<a href=#867 id=867 data-nosnippet>867</a>        <span class="prelude-val">Ok</span>(())
-<a href=#868 id=868 data-nosnippet>868</a>    }
-<a href=#869 id=869 data-nosnippet>869</a>
-<a href=#870 id=870 data-nosnippet>870</a>    <span class="attr">#[tokio::test]
-<a href=#871 id=871 data-nosnippet>871</a>    #[traced_test]
-<a href=#872 id=872 data-nosnippet>872</a>    </span><span class="kw">async fn </span>test_qad_probe_v4() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
-<a href=#874 id=874 data-nosnippet>874</a>        <span class="kw">let </span>relay = Arc::new(relay);
-<a href=#875 id=875 data-nosnippet>875</a>        <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
-<a href=#876 id=876 data-nosnippet>876</a>        <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).e()<span class="question-mark">?</span>;
-<a href=#877 id=877 data-nosnippet>877</a>        <span class="kw">let </span>client_addr = ep.local_addr().e()<span class="question-mark">?</span>;
+<a href=#867 id=867 data-nosnippet>867</a>    <span class="attr">#[tokio::test]
+<a href=#868 id=868 data-nosnippet>868</a>    #[traced_test]
+<a href=#869 id=869 data-nosnippet>869</a>    </span><span class="kw">async fn </span>test_qad_probe_v4() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#870 id=870 data-nosnippet>870</a>        <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
+<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw">let </span>relay = Arc::new(relay);
+<a href=#872 id=872 data-nosnippet>872</a>        <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
+<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).e()<span class="question-mark">?</span>;
+<a href=#874 id=874 data-nosnippet>874</a>        <span class="kw">let </span>client_addr = ep.local_addr().e()<span class="question-mark">?</span>;
+<a href=#875 id=875 data-nosnippet>875</a>
+<a href=#876 id=876 data-nosnippet>876</a>        <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
+<a href=#877 id=877 data-nosnippet>877</a>        <span class="kw">let </span>dns_resolver = DnsResolver::default();
 <a href=#878 id=878 data-nosnippet>878</a>
-<a href=#879 id=879 data-nosnippet>879</a>        <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
-<a href=#880 id=880 data-nosnippet>880</a>        <span class="kw">let </span>dns_resolver = DnsResolver::default();
-<a href=#881 id=881 data-nosnippet>881</a>
-<a href=#882 id=882 data-nosnippet>882</a>        <span class="kw">let </span>(report, conn) = <span class="kw">super</span>::<span class="kw">super</span>::run_probe_v4(<span class="prelude-val">None</span>, relay, quic_client, dns_resolver)
-<a href=#883 id=883 data-nosnippet>883</a>            .<span class="kw">await
-<a href=#884 id=884 data-nosnippet>884</a>            </span>.unwrap();
-<a href=#885 id=885 data-nosnippet>885</a>
-<a href=#886 id=886 data-nosnippet>886</a>        <span class="macro">assert_eq!</span>(report.addr, client_addr);
-<a href=#887 id=887 data-nosnippet>887</a>        drop(conn);
-<a href=#888 id=888 data-nosnippet>888</a>        ep.wait_idle().<span class="kw">await</span>;
-<a href=#889 id=889 data-nosnippet>889</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#890 id=890 data-nosnippet>890</a>        <span class="prelude-val">Ok</span>(())
-<a href=#891 id=891 data-nosnippet>891</a>    }
-<a href=#892 id=892 data-nosnippet>892</a>}</code></pre></div></section></main></body></html>
+<a href=#879 id=879 data-nosnippet>879</a>        <span class="kw">let </span>(report, conn) = <span class="kw">super</span>::<span class="kw">super</span>::run_probe_v4(<span class="prelude-val">None</span>, relay, quic_client, dns_resolver)
+<a href=#880 id=880 data-nosnippet>880</a>            .<span class="kw">await
+<a href=#881 id=881 data-nosnippet>881</a>            </span>.unwrap();
+<a href=#882 id=882 data-nosnippet>882</a>
+<a href=#883 id=883 data-nosnippet>883</a>        <span class="macro">assert_eq!</span>(report.addr, client_addr);
+<a href=#884 id=884 data-nosnippet>884</a>        drop(conn);
+<a href=#885 id=885 data-nosnippet>885</a>        ep.wait_idle().<span class="kw">await</span>;
+<a href=#886 id=886 data-nosnippet>886</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#887 id=887 data-nosnippet>887</a>        <span class="prelude-val">Ok</span>(())
+<a href=#888 id=888 data-nosnippet>888</a>    }
+<a href=#889 id=889 data-nosnippet>889</a>}</code></pre></div></section></main></body></html>

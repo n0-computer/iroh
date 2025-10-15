@@ -638,9 +638,9 @@
 <a href=#638 id=638 data-nosnippet>638</a>    </span><span class="kw">pub async fn </span>insert_relay(
 <a href=#639 id=639 data-nosnippet>639</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#640 id=640 data-nosnippet>640</a>        relay: RelayUrl,
-<a href=#641 id=641 data-nosnippet>641</a>        endpoint: Arc&lt;RelayConfig&gt;,
+<a href=#641 id=641 data-nosnippet>641</a>        config: Arc&lt;RelayConfig&gt;,
 <a href=#642 id=642 data-nosnippet>642</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RelayConfig&gt;&gt; {
-<a href=#643 id=643 data-nosnippet>643</a>        <span class="self">self</span>.msock.insert_relay(relay, endpoint).<span class="kw">await
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="self">self</span>.msock.insert_relay(relay, config).<span class="kw">await
 <a href=#644 id=644 data-nosnippet>644</a>    </span>}
 <a href=#645 id=645 data-nosnippet>645</a>
 <a href=#646 id=646 data-nosnippet>646</a>    <span class="doccomment">/// Removes the configuration from the [`RelayMap`] for the provided [`RelayUrl`].
@@ -1955,7 +1955,7 @@
 <a href=#1955 id=1955 data-nosnippet>1955</a>    ///
 <a href=#1956 id=1956 data-nosnippet>1956</a>    /// [`PublicKey`]: iroh_base::PublicKey
 <a href=#1957 id=1957 data-nosnippet>1957</a>    </span><span class="comment">// TODO: Would be nice if this could be infallible.
-<a href=#1958 id=1958 data-nosnippet>1958</a>    </span><span class="kw">pub fn </span>remote_endpoint_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;EndpointId, RemoteEndpointIdError&gt; {
+<a href=#1958 id=1958 data-nosnippet>1958</a>    </span><span class="kw">pub fn </span>remote_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;EndpointId, RemoteEndpointIdError&gt; {
 <a href=#1959 id=1959 data-nosnippet>1959</a>        <span class="kw">let </span>data = <span class="self">self</span>.peer_identity();
 <a href=#1960 id=1960 data-nosnippet>1960</a>        <span class="kw">match </span>data {
 <a href=#1961 id=1961 data-nosnippet>1961</a>            <span class="prelude-val">None </span>=&gt; {
@@ -2049,7 +2049,7 @@
 <a href=#2049 id=2049 data-nosnippet>2049</a>    remote_endpoint_id: <span class="prelude-ty">Option</span>&lt;EndpointId&gt;,
 <a href=#2050 id=2050 data-nosnippet>2050</a>) {
 <a href=#2051 id=2051 data-nosnippet>2051</a>    <span class="comment">// If we can't notify the rtt-actor that's not great but not critical.
-<a href=#2052 id=2052 data-nosnippet>2052</a>    </span><span class="kw">let </span><span class="prelude-val">Some</span>(endpoint_id) = remote_endpoint_id.or_else(|| conn.remote_endpoint_id().ok()) <span class="kw">else </span>{
+<a href=#2052 id=2052 data-nosnippet>2052</a>    </span><span class="kw">let </span><span class="prelude-val">Some</span>(endpoint_id) = remote_endpoint_id.or_else(|| conn.remote_id().ok()) <span class="kw">else </span>{
 <a href=#2053 id=2053 data-nosnippet>2053</a>        <span class="macro">warn!</span>(<span class="question-mark">?</span>conn, <span class="string">"failed to get remote endpoint id"</span>);
 <a href=#2054 id=2054 data-nosnippet>2054</a>        <span class="kw">return</span>;
 <a href=#2055 id=2055 data-nosnippet>2055</a>    };
@@ -2335,7 +2335,7 @@
 <a href=#2335 id=2335 data-nosnippet>2335</a>                    <span class="macro">info!</span>(<span class="string">"[server] round {i}"</span>);
 <a href=#2336 id=2336 data-nosnippet>2336</a>                    <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 <a href=#2337 id=2337 data-nosnippet>2337</a>                    <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
-<a href=#2338 id=2338 data-nosnippet>2338</a>                    <span class="kw">let </span>endpoint_id = conn.remote_endpoint_id()<span class="question-mark">?</span>;
+<a href=#2338 id=2338 data-nosnippet>2338</a>                    <span class="kw">let </span>endpoint_id = conn.remote_id()<span class="question-mark">?</span>;
 <a href=#2339 id=2339 data-nosnippet>2339</a>                    <span class="macro">info!</span>(%i, peer = %endpoint_id.fmt_short(), <span class="string">"accepted connection"</span>);
 <a href=#2340 id=2340 data-nosnippet>2340</a>                    <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 <a href=#2341 id=2341 data-nosnippet>2341</a>                    <span class="kw">let </span><span class="kw-2">mut </span>buf = <span class="macro">vec!</span>[<span class="number">0u8</span>; chunk_size];
@@ -2612,7 +2612,7 @@
 <a href=#2612 id=2612 data-nosnippet>2612</a>            <span class="kw">let </span><span class="kw-2">mut </span>iconn = incoming.accept().e()<span class="question-mark">?</span>;
 <a href=#2613 id=2613 data-nosnippet>2613</a>            <span class="kw">let </span>alpn = iconn.alpn().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2614 id=2614 data-nosnippet>2614</a>            <span class="kw">let </span>conn = iconn.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
-<a href=#2615 id=2615 data-nosnippet>2615</a>            <span class="kw">let </span>endpoint_id = conn.remote_endpoint_id()<span class="question-mark">?</span>;
+<a href=#2615 id=2615 data-nosnippet>2615</a>            <span class="kw">let </span>endpoint_id = conn.remote_id()<span class="question-mark">?</span>;
 <a href=#2616 id=2616 data-nosnippet>2616</a>            <span class="macro">assert_eq!</span>(endpoint_id, src);
 <a href=#2617 id=2617 data-nosnippet>2617</a>            <span class="macro">assert_eq!</span>(alpn, TEST_ALPN);
 <a href=#2618 id=2618 data-nosnippet>2618</a>            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
@@ -2710,7 +2710,7 @@
 <a href=#2710 id=2710 data-nosnippet>2710</a>        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
 <a href=#2711 id=2711 data-nosnippet>2711</a>            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.expect(<span class="string">"ep closed"</span>);
 <a href=#2712 id=2712 data-nosnippet>2712</a>            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
-<a href=#2713 id=2713 data-nosnippet>2713</a>            <span class="kw">let </span>endpoint_id = conn.remote_endpoint_id()<span class="question-mark">?</span>;
+<a href=#2713 id=2713 data-nosnippet>2713</a>            <span class="kw">let </span>endpoint_id = conn.remote_id()<span class="question-mark">?</span>;
 <a href=#2714 id=2714 data-nosnippet>2714</a>            <span class="macro">tracing::info!</span>(endpoint_id=%endpoint_id.fmt_short(), <span class="string">"accepted connection"</span>);
 <a href=#2715 id=2715 data-nosnippet>2715</a>            <span class="prelude-val">Ok</span>(conn)
 <a href=#2716 id=2716 data-nosnippet>2716</a>        }
