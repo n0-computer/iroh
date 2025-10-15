@@ -21,9 +21,7 @@
 //!     let endpoint = Endpoint::builder().bind().await.unwrap();
 //!
 //!     // Register the discovery services with the endpoint
-//!     let mdns = MdnsDiscovery::builder()
-//!         .build(endpoint.endpoint_id())
-//!         .unwrap();
+//!     let mdns = MdnsDiscovery::builder().build(endpoint.id()).unwrap();
 //!     endpoint.discovery().add(mdns.clone());
 //!
 //!     // Subscribe to the discovery events

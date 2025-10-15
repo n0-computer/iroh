@@ -935,7 +935,7 @@ impl Endpoint {
         // for the home relay instead. This makes the `EndpointAddr` have *some* way
         // of connecting to us.
         let watch_relay = self.msock.home_relay();
-        let endpoint_id = self.endpoint_id();
+        let endpoint_id = self.id();
         watch_relay
             .map(move |mut relays| {
                 EndpointAddr::from_parts(endpoint_id, relays.pop(), std::iter::empty())
