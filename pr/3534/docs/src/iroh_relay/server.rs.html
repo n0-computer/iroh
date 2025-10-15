@@ -23,7 +23,7 @@
 <a href=#23 id=23 data-nosnippet>23</a>    response::Builder <span class="kw">as </span>ResponseBuilder,
 <a href=#24 id=24 data-nosnippet>24</a>};
 <a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>hyper::body::Incoming;
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>iroh_base::NodeId;
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>iroh_base::EndpointId;
 <a href=#27 id=27 data-nosnippet>27</a><span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
 <a href=#28 id=28 data-nosnippet>28</a></span><span class="kw">use </span>iroh_base::RelayUrl;
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>n0_future::{StreamExt, future::Boxed};
@@ -131,30 +131,30 @@
 <a href=#131 id=131 data-nosnippet>131</a>    </span><span class="kw">pub </span>access: AccessConfig,
 <a href=#132 id=132 data-nosnippet>132</a>}
 <a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a><span class="doccomment">/// Controls which nodes are allowed to use the relay.
+<a href=#134 id=134 data-nosnippet>134</a><span class="doccomment">/// Controls which endpoints are allowed to use the relay.
 <a href=#135 id=135 data-nosnippet>135</a></span><span class="attr">#[derive(derive_more::Debug)]
 <a href=#136 id=136 data-nosnippet>136</a></span><span class="kw">pub enum </span>AccessConfig {
 <a href=#137 id=137 data-nosnippet>137</a>    <span class="doccomment">/// Everyone
 <a href=#138 id=138 data-nosnippet>138</a>    </span>Everyone,
-<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Only nodes for which the function returns `Access::Allow`.
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Only endpoints for which the function returns `Access::Allow`.
 <a href=#140 id=140 data-nosnippet>140</a>    </span><span class="attr">#[debug(<span class="string">"restricted"</span>)]
-<a href=#141 id=141 data-nosnippet>141</a>    </span>Restricted(Box&lt;<span class="kw">dyn </span>Fn(NodeId) -&gt; Boxed&lt;Access&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;),
+<a href=#141 id=141 data-nosnippet>141</a>    </span>Restricted(Box&lt;<span class="kw">dyn </span>Fn(EndpointId) -&gt; Boxed&lt;Access&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;),
 <a href=#142 id=142 data-nosnippet>142</a>}
 <a href=#143 id=143 data-nosnippet>143</a>
 <a href=#144 id=144 data-nosnippet>144</a><span class="kw">impl </span>AccessConfig {
-<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Is this node allowed?
-<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">pub async fn </span>is_allowed(<span class="kw-2">&amp;</span><span class="self">self</span>, node: NodeId) -&gt; bool {
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// Is this endpoint allowed?
+<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">pub async fn </span>is_allowed(<span class="kw-2">&amp;</span><span class="self">self</span>, endpoint: EndpointId) -&gt; bool {
 <a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#148 id=148 data-nosnippet>148</a>            <span class="self">Self</span>::Everyone =&gt; <span class="bool-val">true</span>,
 <a href=#149 id=149 data-nosnippet>149</a>            <span class="self">Self</span>::Restricted(check) =&gt; {
-<a href=#150 id=150 data-nosnippet>150</a>                <span class="kw">let </span>res = check(node).<span class="kw">await</span>;
+<a href=#150 id=150 data-nosnippet>150</a>                <span class="kw">let </span>res = check(endpoint).<span class="kw">await</span>;
 <a href=#151 id=151 data-nosnippet>151</a>                <span class="macro">matches!</span>(res, Access::Allow)
 <a href=#152 id=152 data-nosnippet>152</a>            }
 <a href=#153 id=153 data-nosnippet>153</a>        }
 <a href=#154 id=154 data-nosnippet>154</a>    }
 <a href=#155 id=155 data-nosnippet>155</a>}
 <a href=#156 id=156 data-nosnippet>156</a>
-<a href=#157 id=157 data-nosnippet>157</a><span class="doccomment">/// Access restriction for a node.
+<a href=#157 id=157 data-nosnippet>157</a><span class="doccomment">/// Access restriction for an endpoint.
 <a href=#158 id=158 data-nosnippet>158</a></span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 <a href=#159 id=159 data-nosnippet>159</a></span><span class="kw">pub enum </span>Access {
 <a href=#160 id=160 data-nosnippet>160</a>    <span class="doccomment">/// Access is allowed.
@@ -761,7 +761,7 @@
 <a href=#761 id=761 data-nosnippet>761</a>    <span class="kw">use </span>std::{net::Ipv4Addr, time::Duration};
 <a href=#762 id=762 data-nosnippet>762</a>
 <a href=#763 id=763 data-nosnippet>763</a>    <span class="kw">use </span>http::StatusCode;
-<a href=#764 id=764 data-nosnippet>764</a>    <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
+<a href=#764 id=764 data-nosnippet>764</a>    <span class="kw">use </span>iroh_base::{EndpointId, RelayUrl, SecretKey};
 <a href=#765 id=765 data-nosnippet>765</a>    <span class="kw">use </span>n0_future::{FutureExt, SinkExt, StreamExt};
 <a href=#766 id=766 data-nosnippet>766</a>    <span class="kw">use </span>n0_snafu::Result;
 <a href=#767 id=767 data-nosnippet>767</a>    <span class="kw">use </span>rand::SeedableRng;
@@ -800,14 +800,14 @@
 <a href=#800 id=800 data-nosnippet>800</a>    </span><span class="kw">async fn </span>try_send_recv(
 <a href=#801 id=801 data-nosnippet>801</a>        client_a: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
 <a href=#802 id=802 data-nosnippet>802</a>        client_b: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
-<a href=#803 id=803 data-nosnippet>803</a>        b_key: NodeId,
+<a href=#803 id=803 data-nosnippet>803</a>        b_key: EndpointId,
 <a href=#804 id=804 data-nosnippet>804</a>        msg: Datagrams,
 <a href=#805 id=805 data-nosnippet>805</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;RelayToClientMsg&gt; {
 <a href=#806 id=806 data-nosnippet>806</a>        <span class="comment">// try resend 10 times
 <a href=#807 id=807 data-nosnippet>807</a>        </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
 <a href=#808 id=808 data-nosnippet>808</a>            client_a
 <a href=#809 id=809 data-nosnippet>809</a>                .send(ClientToRelayMsg::Datagrams {
-<a href=#810 id=810 data-nosnippet>810</a>                    dst_node_id: b_key,
+<a href=#810 id=810 data-nosnippet>810</a>                    dst_endpoint_id: b_key,
 <a href=#811 id=811 data-nosnippet>811</a>                    datagrams: msg.clone(),
 <a href=#812 id=812 data-nosnippet>812</a>                })
 <a href=#813 id=813 data-nosnippet>813</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -927,14 +927,14 @@
 <a href=#927 id=927 data-nosnippet>927</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, b"</span>);
 <a href=#928 id=928 data-nosnippet>928</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_a, <span class="kw-2">&amp;mut </span>client_b, b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#929 id=929 data-nosnippet>929</a>        <span class="kw">let </span>RelayToClientMsg::Datagrams {
-<a href=#930 id=930 data-nosnippet>930</a>            remote_node_id,
+<a href=#930 id=930 data-nosnippet>930</a>            remote_endpoint_id,
 <a href=#931 id=931 data-nosnippet>931</a>            datagrams,
 <a href=#932 id=932 data-nosnippet>932</a>        } = res
 <a href=#933 id=933 data-nosnippet>933</a>        <span class="kw">else </span>{
 <a href=#934 id=934 data-nosnippet>934</a>            <span class="macro">panic!</span>(<span class="string">"client_b received unexpected message {res:?}"</span>);
 <a href=#935 id=935 data-nosnippet>935</a>        };
 <a href=#936 id=936 data-nosnippet>936</a>
-<a href=#937 id=937 data-nosnippet>937</a>        <span class="macro">assert_eq!</span>(a_key, remote_node_id);
+<a href=#937 id=937 data-nosnippet>937</a>        <span class="macro">assert_eq!</span>(a_key, remote_endpoint_id);
 <a href=#938 id=938 data-nosnippet>938</a>        <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#939 id=939 data-nosnippet>939</a>
 <a href=#940 id=940 data-nosnippet>940</a>        <span class="macro">info!</span>(<span class="string">"sending b -&gt; a"</span>);
@@ -943,14 +943,14 @@
 <a href=#943 id=943 data-nosnippet>943</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_a, a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#944 id=944 data-nosnippet>944</a>
 <a href=#945 id=945 data-nosnippet>945</a>        <span class="kw">let </span>RelayToClientMsg::Datagrams {
-<a href=#946 id=946 data-nosnippet>946</a>            remote_node_id,
+<a href=#946 id=946 data-nosnippet>946</a>            remote_endpoint_id,
 <a href=#947 id=947 data-nosnippet>947</a>            datagrams,
 <a href=#948 id=948 data-nosnippet>948</a>        } = res
 <a href=#949 id=949 data-nosnippet>949</a>        <span class="kw">else </span>{
 <a href=#950 id=950 data-nosnippet>950</a>            <span class="macro">panic!</span>(<span class="string">"client_a received unexpected message {res:?}"</span>);
 <a href=#951 id=951 data-nosnippet>951</a>        };
 <a href=#952 id=952 data-nosnippet>952</a>
-<a href=#953 id=953 data-nosnippet>953</a>        <span class="macro">assert_eq!</span>(b_key, remote_node_id);
+<a href=#953 id=953 data-nosnippet>953</a>        <span class="macro">assert_eq!</span>(b_key, remote_endpoint_id);
 <a href=#954 id=954 data-nosnippet>954</a>        <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#955 id=955 data-nosnippet>955</a>
 <a href=#956 id=956 data-nosnippet>956</a>        <span class="prelude-val">Ok</span>(())
@@ -972,11 +972,11 @@
 <a href=#972 id=972 data-nosnippet>972</a>                tls: <span class="prelude-val">None</span>,
 <a href=#973 id=973 data-nosnippet>973</a>                limits: Default::default(),
 <a href=#974 id=974 data-nosnippet>974</a>                key_cache_capacity: <span class="prelude-val">Some</span>(<span class="number">1024</span>),
-<a href=#975 id=975 data-nosnippet>975</a>                access: AccessConfig::Restricted(Box::new(<span class="kw">move </span>|node_id| {
+<a href=#975 id=975 data-nosnippet>975</a>                access: AccessConfig::Restricted(Box::new(<span class="kw">move </span>|endpoint_id| {
 <a href=#976 id=976 data-nosnippet>976</a>                    <span class="kw">async move </span>{
-<a href=#977 id=977 data-nosnippet>977</a>                        <span class="macro">info!</span>(<span class="string">"checking {}"</span>, node_id);
-<a href=#978 id=978 data-nosnippet>978</a>                        <span class="comment">// reject node a
-<a href=#979 id=979 data-nosnippet>979</a>                        </span><span class="kw">if </span>node_id == a_key {
+<a href=#977 id=977 data-nosnippet>977</a>                        <span class="macro">info!</span>(<span class="string">"checking {}"</span>, endpoint_id);
+<a href=#978 id=978 data-nosnippet>978</a>                        <span class="comment">// reject endpoint a
+<a href=#979 id=979 data-nosnippet>979</a>                        </span><span class="kw">if </span>endpoint_id == a_key {
 <a href=#980 id=980 data-nosnippet>980</a>                            Access::Deny
 <a href=#981 id=981 data-nosnippet>981</a>                        } <span class="kw">else </span>{
 <a href=#982 id=982 data-nosnippet>982</a>                            Access::Allow
@@ -1028,11 +1028,11 @@
 <a href=#1028 id=1028 data-nosnippet>1028</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_c, c_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1029 id=1029 data-nosnippet>1029</a>
 <a href=#1030 id=1030 data-nosnippet>1030</a>        <span class="kw">if let </span>RelayToClientMsg::Datagrams {
-<a href=#1031 id=1031 data-nosnippet>1031</a>            remote_node_id,
+<a href=#1031 id=1031 data-nosnippet>1031</a>            remote_endpoint_id,
 <a href=#1032 id=1032 data-nosnippet>1032</a>            datagrams,
 <a href=#1033 id=1033 data-nosnippet>1033</a>        } = res
 <a href=#1034 id=1034 data-nosnippet>1034</a>        {
-<a href=#1035 id=1035 data-nosnippet>1035</a>            <span class="macro">assert_eq!</span>(b_key, remote_node_id);
+<a href=#1035 id=1035 data-nosnippet>1035</a>            <span class="macro">assert_eq!</span>(b_key, remote_endpoint_id);
 <a href=#1036 id=1036 data-nosnippet>1036</a>            <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1037 id=1037 data-nosnippet>1037</a>        } <span class="kw">else </span>{
 <a href=#1038 id=1038 data-nosnippet>1038</a>            <span class="macro">panic!</span>(<span class="string">"client_c received unexpected message {res:?}"</span>);
@@ -1070,7 +1070,7 @@
 <a href=#1070 id=1070 data-nosnippet>1070</a>        <span class="kw">for </span>_i <span class="kw">in </span><span class="number">0</span>..<span class="number">1000 </span>{
 <a href=#1071 id=1071 data-nosnippet>1071</a>            client_a
 <a href=#1072 id=1072 data-nosnippet>1072</a>                .send(ClientToRelayMsg::Datagrams {
-<a href=#1073 id=1073 data-nosnippet>1073</a>                    dst_node_id: b_key,
+<a href=#1073 id=1073 data-nosnippet>1073</a>                    dst_endpoint_id: b_key,
 <a href=#1074 id=1074 data-nosnippet>1074</a>                    datagrams: msg.clone(),
 <a href=#1075 id=1075 data-nosnippet>1075</a>                })
 <a href=#1076 id=1076 data-nosnippet>1076</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
