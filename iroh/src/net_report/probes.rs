@@ -6,7 +6,7 @@
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
-use iroh_relay::{RelayEndpoint, RelayMap};
+use iroh_relay::{RelayConfig, RelayMap};
 use n0_future::time::Duration;
 use snafu::Snafu;
 
@@ -49,7 +49,7 @@ pub(super) struct ProbeSet {
     /// The [`Probe`] all the probes in this set have.
     proto: Probe,
     /// The data in the set.
-    probes: Vec<(Duration, Arc<RelayEndpoint>)>,
+    probes: Vec<(Duration, Arc<RelayConfig>)>,
 }
 
 #[derive(Debug, Snafu)]
@@ -68,7 +68,7 @@ impl ProbeSet {
         self.proto
     }
 
-    fn push(&mut self, delay: Duration, endpoint: Arc<RelayEndpoint>) {
+    fn push(&mut self, delay: Duration, endpoint: Arc<RelayConfig>) {
         self.probes.push((delay, endpoint));
     }
 
@@ -76,7 +76,7 @@ impl ProbeSet {
         self.probes.is_empty()
     }
 
-    pub(super) fn params(&self) -> impl Iterator<Item = &(Duration, Arc<RelayEndpoint>)> {
+    pub(super) fn params(&self) -> impl Iterator<Item = &(Duration, Arc<RelayConfig>)> {
         self.probes.iter()
     }
 }
@@ -176,7 +176,7 @@ mod tests {
     /// Shorthand which declares a new ProbeSet.
     ///
     /// `$kind`: The `Probe`.
-    /// `$endpoint`: Expression which will be an `Arc<RelayEndpoint>`.
+    /// `$endpoint`: Expression which will be an `Arc<RelayConfig>`.
     /// `$delays`: A `Vec` of the delays for this probe.
     macro_rules! probeset {
         (proto: Probe::$kind:ident, relay: $endpoint:expr, delays: $delays:expr,) => {

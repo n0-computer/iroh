@@ -22,7 +22,7 @@ use defaults::timeouts::PROBES_TIMEOUT;
 pub use defaults::timeouts::TIMEOUT;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
-use iroh_relay::RelayEndpoint;
+use iroh_relay::RelayConfig;
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
@@ -756,7 +756,7 @@ impl Client {
 #[cfg(not(wasm_browser))]
 async fn run_probe_v4(
     ip_mapped_addrs: Option<IpMappedAddresses>,
-    relay_endpoint: Arc<RelayEndpoint>,
+    relay_endpoint: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
@@ -824,7 +824,7 @@ async fn run_probe_v4(
 #[cfg(not(wasm_browser))]
 async fn run_probe_v6(
     ip_mapped_addrs: Option<IpMappedAddresses>,
-    relay_endpoint: Arc<RelayEndpoint>,
+    relay_endpoint: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
@@ -892,16 +892,16 @@ async fn run_probe_v6(
 mod test_utils {
     //! Creates a relay server against which to perform tests
 
-    use iroh_relay::{RelayEndpoint, RelayQuicConfig, server};
+    use iroh_relay::{RelayConfig, RelayQuicConfig, server};
 
-    pub(crate) async fn relay() -> (server::Server, RelayEndpoint) {
+    pub(crate) async fn relay() -> (server::Server, RelayConfig) {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
         let quic = Some(RelayQuicConfig {
             port: server.quic_addr().expect("server should run quic").port(),
         });
-        let endpoint_desc = RelayEndpoint {
+        let endpoint_desc = RelayConfig {
             url: server.https_url().expect("should work as relay"),
             quic,
         };

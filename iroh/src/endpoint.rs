@@ -22,7 +22,7 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
-use iroh_relay::{RelayEndpoint, RelayMap};
+use iroh_relay::{RelayConfig, RelayMap};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
@@ -638,15 +638,15 @@ impl Endpoint {
     pub async fn insert_relay(
         &self,
         relay: RelayUrl,
-        endpoint: Arc<RelayEndpoint>,
-    ) -> Option<Arc<RelayEndpoint>> {
+        endpoint: Arc<RelayConfig>,
+    ) -> Option<Arc<RelayConfig>> {
         self.msock.insert_relay(relay, endpoint).await
     }
 
     /// Removes the configuration from the [`RelayMap`] for the provided [`RelayUrl`].
     ///
     /// Returns any existing configuration.
-    pub async fn remove_relay(&self, relay: &RelayUrl) -> Option<Arc<RelayEndpoint>> {
+    pub async fn remove_relay(&self, relay: &RelayUrl) -> Option<Arc<RelayConfig>> {
         self.msock.remove_relay(relay).await
     }
 

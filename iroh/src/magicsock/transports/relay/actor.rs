@@ -1287,7 +1287,7 @@ mod tests {
     ///
     /// This actor will connect to the relay server, pretending to be an iroh endpoint, and echo
     /// back any datagram it receives from the relay.  This is used by the
-    /// [`ActiveRelayEndpoint`] under test to check connectivity works.
+    /// [`ActiveRelayActor`] under test to check connectivity works.
     fn start_echo_endpoint(relay_url: RelayUrl) -> (EndpointId, AbortOnDropHandle<()>) {
         let secret_key = SecretKey::from_bytes(&[8u8; 32]);
         let (recv_datagram_tx, mut recv_datagram_rx) = mpsc::channel(16);

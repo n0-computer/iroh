@@ -31,7 +31,7 @@ use std::{
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey};
-use iroh_relay::{RelayEndpoint, RelayMap};
+use iroh_relay::{RelayConfig, RelayMap};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -301,8 +301,8 @@ impl MagicSock {
     pub(crate) async fn insert_relay(
         &self,
         relay: RelayUrl,
-        endpoint: Arc<RelayEndpoint>,
-    ) -> Option<Arc<RelayEndpoint>> {
+        endpoint: Arc<RelayConfig>,
+    ) -> Option<Arc<RelayConfig>> {
         let res = self.relay_map.insert(relay, endpoint);
         self.actor_sender
             .send(ActorMessage::RelayMapChange)
@@ -311,7 +311,7 @@ impl MagicSock {
         res
     }
 
-    pub(crate) async fn remove_relay(&self, relay: &RelayUrl) -> Option<Arc<RelayEndpoint>> {
+    pub(crate) async fn remove_relay(&self, relay: &RelayUrl) -> Option<Arc<RelayConfig>> {
         let res = self.relay_map.remove(relay);
         self.actor_sender
             .send(ActorMessage::RelayMapChange)

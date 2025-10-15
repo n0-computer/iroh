@@ -4,10 +4,10 @@ use std::net::Ipv4Addr;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 use iroh_base::RelayUrl;
 use iroh_relay::{
-    RelayEndpoint, RelayMap, RelayQuicConfig,
+    RelayConfig, RelayMap, RelayQuicConfig,
     server::{
-        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
-        TlsConfig,
+        AccessConfig, CertConfig, QuicConfig, RelayConfig as RelayServerConfig, Server,
+        ServerConfig, SpawnError, TlsConfig,
     },
 };
 use tokio::sync::oneshot;
@@ -54,7 +54,7 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
         None
     };
     let config = ServerConfig {
-        relay: Some(RelayConfig {
+        relay: Some(RelayServerConfig {
             http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             tls: Some(tls),
             limits: Default::default(),
@@ -72,7 +72,7 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
     let quic = server
         .quic_addr()
         .map(|addr| RelayQuicConfig { port: addr.port() });
-    let n: RelayMap = RelayEndpoint {
+    let n: RelayMap = RelayConfig {
         url: url.clone(),
         quic,
     }

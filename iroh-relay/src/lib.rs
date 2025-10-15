@@ -52,7 +52,7 @@ pub use protos::relay::MAX_PACKET_SIZE;
 
 pub use self::{
     ping_tracker::PingTracker,
-    relay_map::{RelayEndpoint, RelayMap, RelayQuicConfig},
+    relay_map::{RelayConfig, RelayMap, RelayQuicConfig},
 };
 
 /// This trait allows anything that ends up potentially

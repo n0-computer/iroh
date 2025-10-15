@@ -275,7 +275,7 @@ pub use iroh_base::{
     EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
     Signature, SignatureError,
 };
-pub use iroh_relay::{RelayEndpoint, RelayMap, endpoint_info};
+pub use iroh_relay::{RelayConfig, RelayMap, endpoint_info};
 pub use n0_watcher::Watcher;
 
 #[cfg(any(test, feature = "test-utils"))]

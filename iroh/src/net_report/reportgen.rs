@@ -26,7 +26,7 @@ use std::{
 use http::StatusCode;
 use iroh_base::RelayUrl;
 use iroh_relay::{
-    RelayEndpoint, RelayMap, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH,
+    RelayConfig, RelayMap, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH,
 };
 #[cfg(not(wasm_browser))]
 use iroh_relay::{
@@ -492,7 +492,7 @@ impl Probe {
     async fn run(
         self,
         delay: Duration,
-        relay_endpoint: Arc<RelayEndpoint>,
+        relay_endpoint: Arc<RelayConfig>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
         #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
     ) -> Result<ProbeReport, ProbeError> {
@@ -633,7 +633,7 @@ async fn check_captive_portal(
 
 /// Returns the proper port based on the protocol of the probe.
 #[cfg(not(wasm_browser))]
-fn get_quic_port(relay_endpoint: &RelayEndpoint) -> Option<u16> {
+fn get_quic_port(relay_endpoint: &RelayConfig) -> Option<u16> {
     if let Some(ref quic) = relay_endpoint.quic {
         if quic.port == 0 {
             Some(DEFAULT_RELAY_QUIC_PORT)
@@ -656,8 +656,8 @@ pub enum GetRelayAddrError {
     NoAddrFound,
     #[snafu(display("DNS lookup failed"))]
     DnsLookup { source: StaggeredError<DnsError> },
-    #[snafu(display("Relay endpoint is not suitable for non-STUN probes"))]
-    UnsupportedRelayEndpoint,
+    #[snafu(display("Relay is not suitable"))]
+    UnsupportedRelay,
     #[snafu(display("HTTPS probes are not implemented"))]
     UnsupportedHttps,
     #[snafu(display("No port available for this protocol"))]
@@ -668,7 +668,7 @@ pub enum GetRelayAddrError {
 #[cfg(not(wasm_browser))]
 pub(super) async fn get_relay_addr_ipv4(
     dns_resolver: &DnsResolver,
-    relay_endpoint: &RelayEndpoint,
+    relay_endpoint: &RelayConfig,
 ) -> Result<SocketAddrV4, GetRelayAddrError> {
     let port = get_quic_port(relay_endpoint).context(get_relay_addr_error::MissingPortSnafu)?;
     relay_lookup_ipv4_staggered(dns_resolver, relay_endpoint, port).await
@@ -677,19 +677,19 @@ pub(super) async fn get_relay_addr_ipv4(
 #[cfg(not(wasm_browser))]
 pub(super) async fn get_relay_addr_ipv6(
     dns_resolver: &DnsResolver,
-    relay_endpoint: &RelayEndpoint,
+    relay_endpoint: &RelayConfig,
 ) -> Result<SocketAddrV6, GetRelayAddrError> {
     let port = get_quic_port(relay_endpoint).context(get_relay_addr_error::MissingPortSnafu)?;
     relay_lookup_ipv6_staggered(dns_resolver, relay_endpoint, port).await
 }
 
-/// Do a staggared ipv4 DNS lookup based on [`RelayEndpoint`]
+/// Do a staggared ipv4 DNS lookup based on [`RelayConfig`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
 #[cfg(not(wasm_browser))]
 async fn relay_lookup_ipv4_staggered(
     dns_resolver: &DnsResolver,
-    relay: &RelayEndpoint,
+    relay: &RelayConfig,
     port: u16,
 ) -> Result<SocketAddrV4, GetRelayAddrError> {
     match relay.url.host() {
@@ -716,13 +716,13 @@ async fn relay_lookup_ipv4_staggered(
     }
 }
 
-/// Do a staggared ipv6 DNS lookup based on [`RelayEndpoint`]
+/// Do a staggared ipv6 DNS lookup based on [`RelayConfig`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
 #[cfg(not(wasm_browser))]
 async fn relay_lookup_ipv6_staggered(
     dns_resolver: &DnsResolver,
-    relay: &RelayEndpoint,
+    relay: &RelayConfig,
     port: u16,
 ) -> Result<SocketAddrV6, GetRelayAddrError> {
     match relay.url.host() {
