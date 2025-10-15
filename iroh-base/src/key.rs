@@ -50,15 +50,15 @@ impl Ord for PublicKey {
     }
 }
 
-/// The identifier for a endpoint in the (iroh) network.
+/// The identifier for an endpoint in the (iroh) network.
 ///
 /// Each endpoint in iroh has a unique identifier created as a cryptographic key.  This can be
-/// used to globally identify a endpoint.  Since it is also a cryptographic key it is also the
+/// used to globally identify an endpoint.  Since it is also a cryptographic key it is also the
 /// mechanism by which all traffic is always encrypted for a specific endpoint only.
 ///
 /// This is equivalent to [`PublicKey`].  By convention we will (or should) use `PublicKey`
 /// as type name when performing cryptographic operations, but use `EndpointId` when referencing
-/// a endpoint.  E.g.:
+/// an endpoint.  E.g.:
 ///
 /// - `encrypt(key: PublicKey)`
 /// - `send_to(endpoint: EndpointId)`

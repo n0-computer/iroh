@@ -154,7 +154,7 @@ impl AccessConfig {
     }
 }
 
-/// Access restriction for a endpoint.
+/// Access restriction for an endpoint.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Access {
     /// Access is allowed.

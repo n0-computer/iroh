@@ -18,7 +18,7 @@ const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 /// The delay before starting HTTPS probes.
 const HTTPS_OFFSET: Duration = Duration::from_millis(200);
 
-/// The protocol used to time a endpoint's latency.
+/// The protocol used to time an endpoint's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
 pub enum Probe {

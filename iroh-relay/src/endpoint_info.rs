@@ -116,7 +116,7 @@ impl EndpointIdExt for EndpointId {
     }
 }
 
-/// Data about a endpoint that may be published to and resolved from discovery services.
+/// Data about an endpoint that may be published to and resolved from discovery services.
 ///
 /// This includes an optional [`RelayUrl`], a set of direct addresses, and the optional
 /// [`UserData`], a string that can be set by applications and is not parsed or used by iroh
@@ -267,7 +267,7 @@ impl AsRef<str> for UserData {
     }
 }
 
-/// Information about a endpoint that may be published to and resolved from discovery services.
+/// Information about an endpoint that may be published to and resolved from discovery services.
 ///
 /// This struct couples a [`EndpointId`] with its associated [`EndpointData`].
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
@@ -518,7 +518,7 @@ impl From<&EndpointInfo> for TxtAttrs<IrohAttr> {
 }
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
-    /// Creates [`TxtAttrs`] from a endpoint id and an iterator of key-value pairs.
+    /// Creates [`TxtAttrs`] from an endpoint id and an iterator of key-value pairs.
     pub(crate) fn from_parts(
         endpoint_id: EndpointId,
         pairs: impl Iterator<Item = (T, String)>,
@@ -530,7 +530,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Self { attrs, endpoint_id }
     }
 
-    /// Creates [`TxtAttrs`] from a endpoint id and an iterator of "{key}={value}" strings.
+    /// Creates [`TxtAttrs`] from an endpoint id and an iterator of "{key}={value}" strings.
     pub(crate) fn from_strings(
         endpoint_id: EndpointId,
         strings: impl Iterator<Item = String>,
@@ -692,7 +692,7 @@ mod tests {
         assert_eq!(expected, actual);
     }
 
-    /// There used to be a bug where uploading a EndpointAddr with more than only exactly
+    /// There used to be a bug where uploading an EndpointAddr with more than only exactly
     /// one relay URL or one publicly reachable IP addr would prevent connection
     /// establishment.
     ///

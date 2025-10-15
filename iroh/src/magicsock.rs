@@ -165,7 +165,7 @@ pub(crate) struct Handle {
 /// Iroh connectivity layer.
 ///
 /// This is responsible for routing packets to endpoints based on endpoint IDs, it will initially
-/// route packets via a relay and transparently try and establish a endpoint-to-endpoint
+/// route packets via a relay and transparently try and establish an endpoint-to-endpoint
 /// connection and upgrade to it.  It will also keep looking for better connections as the
 /// network details of both endpoints change.
 ///
@@ -407,7 +407,7 @@ impl MagicSock {
             .get_quic_mapped_addr_for_endpoint_key(endpoint_id)
     }
 
-    /// Add addresses for a endpoint to the magic socket's addresbook.
+    /// Add addresses for an endpoint to the magic socket's addresbook.
     #[instrument(skip_all)]
     pub(crate) fn add_endpoint_addr(
         &self,
@@ -2408,13 +2408,13 @@ impl DiscoveredDirectAddrs {
     }
 }
 
-/// The fake address used by the QUIC layer to address a endpoint.
+/// The fake address used by the QUIC layer to address an endpoint.
 ///
-/// You can consider this as nothing more than a lookup key for a endpoint the [`MagicSock`] knows
+/// You can consider this as nothing more than a lookup key for an endpoint the [`MagicSock`] knows
 /// about.
 ///
-/// [`MagicSock`] can reach a endpoint by several real socket addresses, or maybe even via the relay
-/// endpoint.  The QUIC layer however needs to address a endpoint by a stable [`SocketAddr`] so
+/// [`MagicSock`] can reach an endpoint by several real socket addresses, or maybe even via the relay
+/// endpoint.  The QUIC layer however needs to address an endpoint by a stable [`SocketAddr`] so
 /// that normal socket APIs can function.  Thus when a new endpoint is introduced to a [`MagicSock`]
 /// it is given a new fake address.  This is the type of that address.
 ///
@@ -2683,7 +2683,7 @@ mod tests {
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     #[instrument(skip_all)]
     async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<JoinSet<()>> {
-        /// Registers endpoint addresses of a endpoint to all other endpoints.
+        /// Registers endpoint addresses of an endpoint to all other endpoints.
         fn update_direct_addrs(
             stacks: &[MagicStack],
             my_idx: usize,

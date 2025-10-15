@@ -1,10 +1,10 @@
 //! Addressing for iroh endpoints.
 //!
-//! This module contains some common addressing types for iroh.  A endpoint is uniquely
+//! This module contains some common addressing types for iroh.  An endpoint is uniquely
 //! identified by the [`EndpointId`] but that does not make it addressable on the network layer.
 //! For this the addition of a [`RelayUrl`] and/or direct addresses are required.
 //!
-//! The primary way of addressing a endpoint is by using the [`EndpointAddr`].
+//! The primary way of addressing an endpoint is by using the [`EndpointAddr`].
 
 use std::{collections::BTreeSet, net::SocketAddr};
 
@@ -14,10 +14,10 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 
 /// Network-level addressing information for an iroh endpoint.
 ///
-/// This combines a endpoint's identifier with network-level addressing information of how to
+/// This combines an endpoint's identifier with network-level addressing information of how to
 /// contact the endpoint.
 ///
-/// To establish a network connection to a endpoint both the [`EndpointId`] and one or more network
+/// To establish a network connection to an endpoint both the [`EndpointId`] and one or more network
 /// paths are needed.  The network paths can come from various sources:
 ///
 /// - A [discovery] service which can provide routing information for a given [`EndpointId`].

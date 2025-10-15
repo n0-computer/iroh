@@ -271,7 +271,7 @@ impl Builder {
     /// [`Builder::add_discovery`] instead. This will internally create a
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
-    /// If no discovery service is set, connecting to a endpoint without providing its
+    /// If no discovery service is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
@@ -291,7 +291,7 @@ impl Builder {
     /// If you add multiple discovery services, they will be combined using a
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
-    /// If no discovery service is set, connecting to a endpoint without providing its
+    /// If no discovery service is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
     /// To clear all discovery services, use [`Builder::clear_discovery`].
@@ -1954,7 +1954,7 @@ impl Connection {
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of a endpoint is also known as a [`EndpointId`].  This [`PublicKey`] is
+    /// The [`PublicKey`] of an endpoint is also known as a [`EndpointId`].  This [`PublicKey`] is
     /// included in the TLS certificate presented during the handshake when connecting.
     /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
     /// connection.

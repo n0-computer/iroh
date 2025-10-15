@@ -532,7 +532,7 @@ impl Discovery for ConcurrentDiscovery {
 /// start a discovery task.
 const MAX_AGE: Duration = Duration::from_secs(10);
 
-/// A wrapper around a tokio task which runs a endpoint discovery.
+/// A wrapper around a tokio task which runs an endpoint discovery.
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<(), DiscoveryError>>,
     _task: AbortOnDropHandle<()>,

@@ -37,7 +37,7 @@ const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 /// It stores endpoint addresses in DNS records, signed by the endpoint's private key, and publishes
 /// them to the BitTorrent Mainline DHT.  See the [pkarr module] for more details.
 ///
-/// This implements the [`Discovery`] trait to be used as a endpoint discovery service which can
+/// This implements the [`Discovery`] trait to be used as an endpoint discovery service which can
 /// be used as both a publisher and resolver.  Calling [`DhtDiscovery::publish`] will start
 /// a background task that periodically publishes the endpoint address.
 ///

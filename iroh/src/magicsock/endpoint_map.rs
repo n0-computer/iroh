@@ -41,7 +41,7 @@ const MAX_INACTIVE_ENDPOINTS: usize = 30;
 ///   is static and never changes.
 ///
 /// - The endpoints's public key, aka `PublicKey` or "endpoint_key".  This is static and never changes,
-///   however a endpoint could be added when this is not yet known.
+///   however an endpoint could be added when this is not yet known.
 ///
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
 ///   These come and go as the endpoint moves around on the internet
@@ -78,7 +78,7 @@ enum EndpointStateKey {
 /// The origin or *source* through which an address associated with a remote endpoint
 /// was discovered.
 ///
-/// An aggregate of the [`Source`]s of all the addresses of a endpoint describe the
+/// An aggregate of the [`Source`]s of all the addresses of an endpoint describe the
 /// [`Source`]s of the endpoint itself.
 ///
 /// A [`Source`] helps track how and where an address was learned. Multiple
@@ -97,9 +97,9 @@ enum EndpointStateKey {
 pub enum Source {
     /// Address was loaded from the fs.
     Saved,
-    /// A endpoint communicated with us first via UDP.
+    /// An endpoint communicated with us first via UDP.
     Udp,
-    /// A endpoint communicated with us first via relay.
+    /// An endpoint communicated with us first via relay.
     Relay,
     /// Application layer added the address directly.
     App,
@@ -140,7 +140,7 @@ impl EndpointMap {
         }
     }
 
-    /// Add the contact information for a endpoint.
+    /// Add the contact information for an endpoint.
     pub(super) fn add_endpoint_addr(
         &self,
         endpoint_addr: EndpointAddr,
@@ -372,7 +372,7 @@ impl EndpointMapInner {
         me
     }
 
-    /// Add the contact information for a endpoint.
+    /// Add the contact information for an endpoint.
     #[instrument(skip_all, fields(endpoint = %endpoint_addr.endpoint_id.fmt_short()))]
     fn add_endpoint_addr(
         &mut self,
@@ -419,7 +419,7 @@ impl EndpointMapInner {
         }
     }
 
-    /// Removes a direct address from a endpoint.
+    /// Removes a direct address from an endpoint.
     fn remove_by_ipp(&mut self, ipp: IpPort, now: Instant, why: &'static str) {
         if let Some(id) = self.by_ip_port.remove(&ipp) {
             if let Entry::Occupied(mut entry) = self.by_id.entry(id) {

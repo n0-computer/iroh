@@ -119,11 +119,11 @@ pub(super) struct EndpointState {
     sent_pings: HashMap<stun_rs::TransactionId, SentPing>,
     /// Last time this endpoint was used.
     ///
-    /// A endpoint is marked as in use when sending datagrams to them, or when having received
+    /// An endpoint is marked as in use when sending datagrams to them, or when having received
     /// datagrams from it. Regardless of whether the datagrams are payload or DISCO, and whether
     /// they go via UDP or the relay.
     ///
-    /// Note that sending datagrams to a endpoint does not mean the endpoint receives them.
+    /// Note that sending datagrams to an endpoint does not mean the endpoint receives them.
     last_used: Option<Instant>,
     /// Last time we sent a call-me-maybe.
     ///
@@ -1300,7 +1300,7 @@ pub enum ControlMsg {
 ///
 /// The *direct addresses* of an iroh endpoint are those that could be used by other endpoints to
 /// establish direct connectivity, depending on the network situation. Due to NAT configurations,
-/// for example, not all direct addresses of a endpoint are usable by all peers.
+/// for example, not all direct addresses of an endpoint are usable by all peers.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DirectAddrInfo {
     /// The UDP address reported by the remote endpoint.
@@ -1374,8 +1374,8 @@ impl From<RelayUrlInfo> for RelayUrl {
 
 /// Details about a remote iroh endpoint which is known to this endpoint.
 ///
-/// Having details of a endpoint does not mean it can be connected to, nor that it has ever been
-/// connected to in the past. There are various reasons a endpoint might be known: it could have
+/// Having details of an endpoint does not mean it can be connected to, nor that it has ever been
+/// connected to in the past. There are various reasons an endpoint might be known: it could have
 /// been manually added via [`Endpoint::add_endpoint_addr`], it could have been added by some
 /// discovery mechanism, the endpoint could have contacted this endpoint, etc.
 ///

@@ -10,7 +10,7 @@ use crate::{
     ticket::{self, ParseError, Ticket},
 };
 
-/// A token containing information for establishing a connection to a endpoint.
+/// A token containing information for establishing a connection to an endpoint.
 ///
 /// Contains
 /// - The [`EndpointId`] of the endpoint to connect to (a 32-byte ed25519 public key).

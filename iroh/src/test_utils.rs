@@ -153,7 +153,7 @@ pub(crate) mod dns_and_pkarr_servers {
             DnsResolver::with_nameserver(self.nameserver)
         }
 
-        /// Wait until a Pkarr announce for a endpoint is published to the server.
+        /// Wait until a Pkarr announce for an endpoint is published to the server.
         ///
         /// If `timeout` elapses an error is returned.
         pub async fn on_endpoint(

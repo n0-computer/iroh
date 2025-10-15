@@ -221,7 +221,7 @@ impl IntoDiscovery for PkarrPublisherBuilder {
 /// This publisher uses HTTP to publish endpoint discovery information to a pkarr relay
 /// server, see the [module docs] for details.
 ///
-/// This implements the [`Discovery`] trait to be used as a endpoint discovery service.  Note
+/// This implements the [`Discovery`] trait to be used as an endpoint discovery service.  Note
 /// that it only publishes endpoint discovery information, for the corresponding resolver use
 /// the [`PkarrResolver`] together with [`ConcurrentDiscovery`].
 ///
@@ -455,7 +455,7 @@ impl IntoDiscovery for PkarrResolverBuilder {
 /// The resolver uses HTTP to query endpoint discovery information from a pkarr relay server,
 /// see the [module docs] for details.
 ///
-/// This implements the [`Discovery`] trait to be used as a endpoint discovery service.  Note
+/// This implements the [`Discovery`] trait to be used as an endpoint discovery service.  Note
 /// that it only resolves endpoint discovery information, for the corresponding publisher use
 /// the [`PkarrPublisher`] together with [`ConcurrentDiscovery`].
 ///

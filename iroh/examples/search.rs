@@ -49,7 +49,7 @@ pub struct Cli {
 
 #[derive(Debug, Parser)]
 pub enum Command {
-    /// Spawn a endpoint in listening mode.
+    /// Spawn an endpoint in listening mode.
     Listen {
         /// Each text string will be imported as a blob and inserted into the search database.
         text: Vec<String>,

@@ -2,7 +2,7 @@
 //! pkarr endpoint discovery.
 //!
 //! Starting the example without args creates a server that publishes its
-//! address to the DHT. Starting the example with a endpoint id as argument
+//! address to the DHT. Starting the example with an endpoint id as argument
 //! looks up the address of the endpoint id in the DHT and connects to it.
 //!
 //! You can look at the published pkarr DNS record using <https://app.pkarr.org/>.
