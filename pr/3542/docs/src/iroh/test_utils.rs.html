@@ -4,10 +4,10 @@
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>iroh_base::RelayUrl;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>iroh_relay::{
-<a href=#7 id=7 data-nosnippet>7</a>    RelayEndpoint, RelayMap, RelayQuicConfig,
+<a href=#7 id=7 data-nosnippet>7</a>    RelayConfig, RelayMap, RelayQuicConfig,
 <a href=#8 id=8 data-nosnippet>8</a>    server::{
-<a href=#9 id=9 data-nosnippet>9</a>        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
-<a href=#10 id=10 data-nosnippet>10</a>        TlsConfig,
+<a href=#9 id=9 data-nosnippet>9</a>        AccessConfig, CertConfig, QuicConfig, RelayConfig <span class="kw">as </span>RelayServerConfig, Server,
+<a href=#10 id=10 data-nosnippet>10</a>        ServerConfig, SpawnError, TlsConfig,
 <a href=#11 id=11 data-nosnippet>11</a>    },
 <a href=#12 id=12 data-nosnippet>12</a>};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>tokio::sync::oneshot;
@@ -54,7 +54,7 @@
 <a href=#54 id=54 data-nosnippet>54</a>        <span class="prelude-val">None
 <a href=#55 id=55 data-nosnippet>55</a>    </span>};
 <a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">let </span>config = ServerConfig {
-<a href=#57 id=57 data-nosnippet>57</a>        relay: <span class="prelude-val">Some</span>(RelayConfig {
+<a href=#57 id=57 data-nosnippet>57</a>        relay: <span class="prelude-val">Some</span>(RelayServerConfig {
 <a href=#58 id=58 data-nosnippet>58</a>            http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
 <a href=#59 id=59 data-nosnippet>59</a>            tls: <span class="prelude-val">Some</span>(tls),
 <a href=#60 id=60 data-nosnippet>60</a>            limits: Default::default(),
@@ -72,7 +72,7 @@
 <a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">let </span>quic = server
 <a href=#73 id=73 data-nosnippet>73</a>        .quic_addr()
 <a href=#74 id=74 data-nosnippet>74</a>        .map(|addr| RelayQuicConfig { port: addr.port() });
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span>n: RelayMap = RelayEndpoint {
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span>n: RelayMap = RelayConfig {
 <a href=#76 id=76 data-nosnippet>76</a>        url: url.clone(),
 <a href=#77 id=77 data-nosnippet>77</a>        quic,
 <a href=#78 id=78 data-nosnippet>78</a>    }

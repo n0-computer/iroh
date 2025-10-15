@@ -447,7 +447,7 @@
 <a href=#447 id=447 data-nosnippet>447</a>
 <a href=#448 id=448 data-nosnippet>448</a>                        <span class="kw">let </span>protocols = protocols.clone();
 <a href=#449 id=449 data-nosnippet>449</a>                        <span class="kw">let </span>token = handler_cancel_token.child_token();
-<a href=#450 id=450 data-nosnippet>450</a>                        <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"router.accept"</span>, me=%endpoint.endpoint_id().fmt_short(), remote=Empty, alpn=Empty);
+<a href=#450 id=450 data-nosnippet>450</a>                        <span class="kw">let </span>span = <span class="macro">info_span!</span>(<span class="string">"router.accept"</span>, me=%endpoint.id().fmt_short(), remote=Empty, alpn=Empty);
 <a href=#451 id=451 data-nosnippet>451</a>                        join_set.spawn(<span class="kw">async move </span>{
 <a href=#452 id=452 data-nosnippet>452</a>                            token.run_until_cancelled(handle_connection(incoming, protocols)).<span class="kw">await
 <a href=#453 id=453 data-nosnippet>453</a>                        </span>}.instrument(span));
@@ -628,7 +628,7 @@
 <a href=#628 id=628 data-nosnippet>628</a>        </span><span class="kw">let </span>proto = AccessLimit::new(Echo, |_endpoint_id| <span class="bool-val">false</span>);
 <a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span>r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 <a href=#630 id=630 data-nosnippet>630</a>
-<a href=#631 id=631 data-nosnippet>631</a>        <span class="kw">let </span>addr1 = r1.endpoint().endpoint_addr();
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="kw">let </span>addr1 = r1.endpoint().addr();
 <a href=#632 id=632 data-nosnippet>632</a>        <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>addr1);
 <a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>e2 = Endpoint::builder()
 <a href=#634 id=634 data-nosnippet>634</a>            .relay_mode(RelayMode::Disabled)
@@ -681,7 +681,7 @@
 <a href=#681 id=681 data-nosnippet>681</a>            .accept(TEST_ALPN, TestProtocol::default())
 <a href=#682 id=682 data-nosnippet>682</a>            .spawn();
 <a href=#683 id=683 data-nosnippet>683</a>        <span class="macro">eprintln!</span>(<span class="string">"waiting for endpoint addr"</span>);
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>addr = router.endpoint().endpoint_addr();
+<a href=#684 id=684 data-nosnippet>684</a>        <span class="kw">let </span>addr = router.endpoint().addr();
 <a href=#685 id=685 data-nosnippet>685</a>
 <a href=#686 id=686 data-nosnippet>686</a>        <span class="macro">eprintln!</span>(<span class="string">"creating ep2"</span>);
 <a href=#687 id=687 data-nosnippet>687</a>        <span class="kw">let </span>endpoint2 = Endpoint::builder()

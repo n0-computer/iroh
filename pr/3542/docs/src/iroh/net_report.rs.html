@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">pub use </span>defaults::timeouts::TIMEOUT;
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>iroh_base::RelayUrl;
 <a href=#24 id=24 data-nosnippet>24</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">use </span>iroh_relay::RelayEndpoint;
+<a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">use </span>iroh_relay::RelayConfig;
 <a href=#26 id=26 data-nosnippet>26</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">use </span>iroh_relay::dns::DnsResolver;
 <a href=#28 id=28 data-nosnippet>28</a><span class="attr">#[cfg(not(wasm_browser))]
@@ -756,7 +756,7 @@
 <a href=#756 id=756 data-nosnippet>756</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#757 id=757 data-nosnippet>757</a></span><span class="kw">async fn </span>run_probe_v4(
 <a href=#758 id=758 data-nosnippet>758</a>    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-<a href=#759 id=759 data-nosnippet>759</a>    relay_endpoint: Arc&lt;RelayEndpoint&gt;,
+<a href=#759 id=759 data-nosnippet>759</a>    relay_endpoint: Arc&lt;RelayConfig&gt;,
 <a href=#760 id=760 data-nosnippet>760</a>    quic_client: QuicClient,
 <a href=#761 id=761 data-nosnippet>761</a>    dns_resolver: DnsResolver,
 <a href=#762 id=762 data-nosnippet>762</a>) -&gt; n0_snafu::Result&lt;(QadProbeReport, QadConn)&gt; {
@@ -824,7 +824,7 @@
 <a href=#824 id=824 data-nosnippet>824</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#825 id=825 data-nosnippet>825</a></span><span class="kw">async fn </span>run_probe_v6(
 <a href=#826 id=826 data-nosnippet>826</a>    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-<a href=#827 id=827 data-nosnippet>827</a>    relay_endpoint: Arc&lt;RelayEndpoint&gt;,
+<a href=#827 id=827 data-nosnippet>827</a>    relay_endpoint: Arc&lt;RelayConfig&gt;,
 <a href=#828 id=828 data-nosnippet>828</a>    quic_client: QuicClient,
 <a href=#829 id=829 data-nosnippet>829</a>    dns_resolver: DnsResolver,
 <a href=#830 id=830 data-nosnippet>830</a>) -&gt; n0_snafu::Result&lt;(QadProbeReport, QadConn)&gt; {
@@ -892,16 +892,16 @@
 <a href=#892 id=892 data-nosnippet>892</a></span><span class="kw">mod </span>test_utils {
 <a href=#893 id=893 data-nosnippet>893</a>    <span class="doccomment">//! Creates a relay server against which to perform tests
 <a href=#894 id=894 data-nosnippet>894</a>
-<a href=#895 id=895 data-nosnippet>895</a>    </span><span class="kw">use </span>iroh_relay::{RelayEndpoint, RelayQuicConfig, server};
+<a href=#895 id=895 data-nosnippet>895</a>    </span><span class="kw">use </span>iroh_relay::{RelayConfig, RelayQuicConfig, server};
 <a href=#896 id=896 data-nosnippet>896</a>
-<a href=#897 id=897 data-nosnippet>897</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, RelayEndpoint) {
+<a href=#897 id=897 data-nosnippet>897</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, RelayConfig) {
 <a href=#898 id=898 data-nosnippet>898</a>        <span class="kw">let </span>server = server::Server::spawn(server::testing::server_config())
 <a href=#899 id=899 data-nosnippet>899</a>            .<span class="kw">await
 <a href=#900 id=900 data-nosnippet>900</a>            </span>.expect(<span class="string">"should serve relay"</span>);
 <a href=#901 id=901 data-nosnippet>901</a>        <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(RelayQuicConfig {
 <a href=#902 id=902 data-nosnippet>902</a>            port: server.quic_addr().expect(<span class="string">"server should run quic"</span>).port(),
 <a href=#903 id=903 data-nosnippet>903</a>        });
-<a href=#904 id=904 data-nosnippet>904</a>        <span class="kw">let </span>endpoint_desc = RelayEndpoint {
+<a href=#904 id=904 data-nosnippet>904</a>        <span class="kw">let </span>endpoint_desc = RelayConfig {
 <a href=#905 id=905 data-nosnippet>905</a>            url: server.https_url().expect(<span class="string">"should work as relay"</span>),
 <a href=#906 id=906 data-nosnippet>906</a>            quic,
 <a href=#907 id=907 data-nosnippet>907</a>        };

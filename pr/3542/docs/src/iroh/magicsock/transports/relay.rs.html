@@ -400,7 +400,7 @@
 <a href=#400 id=400 data-nosnippet>400</a>    </span><span class="kw">async fn </span>test_relay_datagram_queue() {
 <a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>capacity = <span class="number">16</span>;
 <a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>(sender, <span class="kw-2">mut </span>receiver) = mpsc::channel(capacity);
-<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>url = staging::default_na_relay_endpoint().url;
+<a href=#403 id=403 data-nosnippet>403</a>        <span class="kw">let </span>url = staging::default_na_relay().url;
 <a href=#404 id=404 data-nosnippet>404</a>
 <a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
 <a href=#406 id=406 data-nosnippet>406</a>

@@ -543,7 +543,7 @@
 <a href=#543 id=543 data-nosnippet>543</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start(ep: Endpoint, endpoint_id: EndpointId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, DiscoveryError&gt; {
 <a href=#544 id=544 data-nosnippet>544</a>        <span class="macro">ensure!</span>(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
 <a href=#545 id=545 data-nosnippet>545</a>        <span class="kw">let </span>(on_first_tx, on_first_rx) = oneshot::channel();
-<a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">let </span>me = ep.endpoint_id();
+<a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">let </span>me = ep.id();
 <a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">let </span>task = task::spawn(
 <a href=#548 id=548 data-nosnippet>548</a>            <span class="kw">async move </span>{ <span class="self">Self</span>::run(ep, endpoint_id, on_first_tx).<span class="kw">await </span>}.instrument(
 <a href=#549 id=549 data-nosnippet>549</a>                <span class="macro">error_span!</span>(<span class="string">"discovery"</span>, me = %me.fmt_short(), endpoint = %endpoint_id.fmt_short()),
@@ -575,7 +575,7 @@
 <a href=#575 id=575 data-nosnippet>575</a>        <span class="macro">ensure!</span>(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
 <a href=#576 id=576 data-nosnippet>576</a>        <span class="kw">let </span>(on_first_tx, on_first_rx) = oneshot::channel();
 <a href=#577 id=577 data-nosnippet>577</a>        <span class="kw">let </span>ep = ep.clone();
-<a href=#578 id=578 data-nosnippet>578</a>        <span class="kw">let </span>me = ep.endpoint_id();
+<a href=#578 id=578 data-nosnippet>578</a>        <span class="kw">let </span>me = ep.id();
 <a href=#579 id=579 data-nosnippet>579</a>        <span class="kw">let </span>task = task::spawn(
 <a href=#580 id=580 data-nosnippet>580</a>            <span class="kw">async move </span>{
 <a href=#581 id=581 data-nosnippet>581</a>                <span class="comment">// If delay is set, wait and recheck if discovery is needed. If not, early-exit.
@@ -807,7 +807,7 @@
 <a href=#807 id=807 data-nosnippet>807</a>            <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
 <a href=#808 id=808 data-nosnippet>808</a>            new_endpoint(secret, disco).<span class="kw">await
 <a href=#809 id=809 data-nosnippet>809</a>        </span>};
-<a href=#810 id=810 data-nosnippet>810</a>        <span class="kw">let </span>ep1_addr = EndpointAddr::new(ep1.endpoint_id());
+<a href=#810 id=810 data-nosnippet>810</a>        <span class="kw">let </span>ep1_addr = EndpointAddr::new(ep1.id());
 <a href=#811 id=811 data-nosnippet>811</a>        <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#812 id=812 data-nosnippet>812</a>        <span class="prelude-val">Ok</span>(())
 <a href=#813 id=813 data-nosnippet>813</a>    }
@@ -831,7 +831,7 @@
 <a href=#831 id=831 data-nosnippet>831</a>            <span class="kw">let </span>disco = Arc::new(disco);
 <a href=#832 id=832 data-nosnippet>832</a>            new_endpoint(secret, disco).<span class="kw">await
 <a href=#833 id=833 data-nosnippet>833</a>        </span>};
-<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">let </span>ep1_addr = EndpointAddr::new(ep1.endpoint_id());
+<a href=#834 id=834 data-nosnippet>834</a>        <span class="kw">let </span>ep1_addr = EndpointAddr::new(ep1.id());
 <a href=#835 id=835 data-nosnippet>835</a>        <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#836 id=836 data-nosnippet>836</a>        <span class="prelude-val">Ok</span>(())
 <a href=#837 id=837 data-nosnippet>837</a>    }
@@ -856,7 +856,7 @@
 <a href=#856 id=856 data-nosnippet>856</a>            disco.add(disco2);
 <a href=#857 id=857 data-nosnippet>857</a>            new_endpoint(secret, disco).<span class="kw">await
 <a href=#858 id=858 data-nosnippet>858</a>        </span>};
-<a href=#859 id=859 data-nosnippet>859</a>        <span class="kw">let </span>ep1_addr = EndpointAddr::new(ep1.endpoint_id());
+<a href=#859 id=859 data-nosnippet>859</a>        <span class="kw">let </span>ep1_addr = EndpointAddr::new(ep1.id());
 <a href=#860 id=860 data-nosnippet>860</a>
 <a href=#861 id=861 data-nosnippet>861</a>        <span class="kw">let </span>_conn = ep2
 <a href=#862 id=862 data-nosnippet>862</a>            .connect(ep1_addr, TEST_ALPN)
@@ -890,7 +890,7 @@
 <a href=#890 id=890 data-nosnippet>890</a>            new_endpoint(secret, disco).<span class="kw">await
 <a href=#891 id=891 data-nosnippet>891</a>        </span>};
 <a href=#892 id=892 data-nosnippet>892</a>
-<a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">let </span>_conn = ep2.connect(ep1.endpoint_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">let </span>_conn = ep2.connect(ep1.id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#894 id=894 data-nosnippet>894</a>        <span class="prelude-val">Ok</span>(())
 <a href=#895 id=895 data-nosnippet>895</a>    }
 <a href=#896 id=896 data-nosnippet>896</a>
@@ -920,7 +920,7 @@
 <a href=#920 id=920 data-nosnippet>920</a>        <span class="kw">let </span>opts = ConnectOptions::new().with_transport_config(Arc::new(config));
 <a href=#921 id=921 data-nosnippet>921</a>
 <a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">let </span>res = ep2
-<a href=#923 id=923 data-nosnippet>923</a>            .connect_with_opts(ep1.endpoint_id(), TEST_ALPN, opts)
+<a href=#923 id=923 data-nosnippet>923</a>            .connect_with_opts(ep1.id(), TEST_ALPN, opts)
 <a href=#924 id=924 data-nosnippet>924</a>            .<span class="kw">await</span><span class="question-mark">? </span><span class="comment">// -&gt; Connecting works
 <a href=#925 id=925 data-nosnippet>925</a>            </span>.<span class="kw">await</span>; <span class="comment">// -&gt; Connection is expected to fail
 <a href=#926 id=926 data-nosnippet>926</a>        </span><span class="macro">assert!</span>(res.is_err());
@@ -947,7 +947,7 @@
 <a href=#947 id=947 data-nosnippet>947</a>        </span>};
 <a href=#948 id=948 data-nosnippet>948</a>
 <a href=#949 id=949 data-nosnippet>949</a>        <span class="kw">let </span>ep1_wrong_addr = EndpointAddr {
-<a href=#950 id=950 data-nosnippet>950</a>            endpoint_id: ep1.endpoint_id(),
+<a href=#950 id=950 data-nosnippet>950</a>            endpoint_id: ep1.id(),
 <a href=#951 id=951 data-nosnippet>951</a>            relay_url: <span class="prelude-val">None</span>,
 <a href=#952 id=952 data-nosnippet>952</a>            direct_addresses: BTreeSet::from([<span class="string">"240.0.0.1:1000"</span>.parse().unwrap()]),
 <a href=#953 id=953 data-nosnippet>953</a>        };
@@ -1108,12 +1108,12 @@
 <a href=#1108 id=1108 data-nosnippet>1108</a>
 <a href=#1109 id=1109 data-nosnippet>1109</a>        <span class="comment">// wait until our shared state received the update from pkarr publishing
 <a href=#1110 id=1110 data-nosnippet>1110</a>        </span>dns_pkarr_server
-<a href=#1111 id=1111 data-nosnippet>1111</a>            .on_endpoint(<span class="kw-2">&amp;</span>ep1.endpoint_id(), PUBLISH_TIMEOUT)
+<a href=#1111 id=1111 data-nosnippet>1111</a>            .on_endpoint(<span class="kw-2">&amp;</span>ep1.id(), PUBLISH_TIMEOUT)
 <a href=#1112 id=1112 data-nosnippet>1112</a>            .<span class="kw">await
 <a href=#1113 id=1113 data-nosnippet>1113</a>            </span>.context(<span class="string">"wait for on endpoint update"</span>)<span class="question-mark">?</span>;
 <a href=#1114 id=1114 data-nosnippet>1114</a>
 <a href=#1115 id=1115 data-nosnippet>1115</a>        <span class="comment">// we connect only by endpoint id!
-<a href=#1116 id=1116 data-nosnippet>1116</a>        </span><span class="kw">let </span>_conn = ep2.connect(ep1.endpoint_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1116 id=1116 data-nosnippet>1116</a>        </span><span class="kw">let </span>_conn = ep2.connect(ep1.id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1117 id=1117 data-nosnippet>1117</a>        <span class="prelude-val">Ok</span>(())
 <a href=#1118 id=1118 data-nosnippet>1118</a>    }
 <a href=#1119 id=1119 data-nosnippet>1119</a>

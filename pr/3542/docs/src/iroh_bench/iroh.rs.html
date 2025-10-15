@@ -54,7 +54,7 @@
 <a href=#54 id=54 data-nosnippet>54</a>
 <a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>addr = ep.bound_sockets();
 <a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>addr = SocketAddr::new(<span class="string">"127.0.0.1"</span>.parse().unwrap(), addr[<span class="number">0</span>].port());
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = EndpointAddr::new(ep.endpoint_id()).with_direct_addresses([addr]);
+<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = EndpointAddr::new(ep.id()).with_direct_addresses([addr]);
 <a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = relay_url {
 <a href=#59 id=59 data-nosnippet>59</a>            addr = addr.with_relay_url(relay_url.clone());
 <a href=#60 id=60 data-nosnippet>60</a>        }

@@ -1287,7 +1287,7 @@
 <a href=#1287 id=1287 data-nosnippet>1287</a>    ///
 <a href=#1288 id=1288 data-nosnippet>1288</a>    /// This actor will connect to the relay server, pretending to be an iroh endpoint, and echo
 <a href=#1289 id=1289 data-nosnippet>1289</a>    /// back any datagram it receives from the relay.  This is used by the
-<a href=#1290 id=1290 data-nosnippet>1290</a>    /// [`ActiveRelayEndpoint`] under test to check connectivity works.
+<a href=#1290 id=1290 data-nosnippet>1290</a>    /// [`ActiveRelayActor`] under test to check connectivity works.
 <a href=#1291 id=1291 data-nosnippet>1291</a>    </span><span class="kw">fn </span>start_echo_endpoint(relay_url: RelayUrl) -&gt; (EndpointId, AbortOnDropHandle&lt;()&gt;) {
 <a href=#1292 id=1292 data-nosnippet>1292</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">8u8</span>; <span class="number">32</span>]);
 <a href=#1293 id=1293 data-nosnippet>1293</a>        <span class="kw">let </span>(recv_datagram_tx, <span class="kw-2">mut </span>recv_datagram_rx) = mpsc::channel(<span class="number">16</span>);
