@@ -265,7 +265,7 @@
 <a href=#265 id=265 data-nosnippet>265</a>    </span>client_rx_ratelimit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
 <a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// The capacity of the key cache.
 <a href=#267 id=267 data-nosnippet>267</a>    </span>key_cache_capacity: usize,
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="doccomment">/// Access config for nodes.
+<a href=#268 id=268 data-nosnippet>268</a>    <span class="doccomment">/// Access config for endpoints.
 <a href=#269 id=269 data-nosnippet>269</a>    </span>access: AccessConfig,
 <a href=#270 id=270 data-nosnippet>270</a>    metrics: <span class="prelude-ty">Option</span>&lt;Arc&lt;Metrics&gt;&gt;,
 <a href=#271 id=271 data-nosnippet>271</a>}
@@ -689,14 +689,14 @@
 <a href=#689 id=689 data-nosnippet>689</a>
 <a href=#690 id=690 data-nosnippet>690</a>        <span class="macro">trace!</span>(<span class="string">"accept: build client conn"</span>);
 <a href=#691 id=691 data-nosnippet>691</a>        <span class="kw">let </span>client_conn_builder = Config {
-<a href=#692 id=692 data-nosnippet>692</a>            node_id: client_key,
+<a href=#692 id=692 data-nosnippet>692</a>            endpoint_id: client_key,
 <a href=#693 id=693 data-nosnippet>693</a>            stream: io,
 <a href=#694 id=694 data-nosnippet>694</a>            write_timeout: <span class="self">self</span>.write_timeout,
 <a href=#695 id=695 data-nosnippet>695</a>            channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
 <a href=#696 id=696 data-nosnippet>696</a>        };
 <a href=#697 id=697 data-nosnippet>697</a>        <span class="macro">trace!</span>(<span class="string">"accept: create client"</span>);
-<a href=#698 id=698 data-nosnippet>698</a>        <span class="kw">let </span>node_id = client_conn_builder.node_id;
-<a href=#699 id=699 data-nosnippet>699</a>        <span class="macro">trace!</span>(node_id = %node_id.fmt_short(), <span class="string">"create client"</span>);
+<a href=#698 id=698 data-nosnippet>698</a>        <span class="kw">let </span>endpoint_id = client_conn_builder.endpoint_id;
+<a href=#699 id=699 data-nosnippet>699</a>        <span class="macro">trace!</span>(endpoint_id = %endpoint_id.fmt_short(), <span class="string">"create client"</span>);
 <a href=#700 id=700 data-nosnippet>700</a>
 <a href=#701 id=701 data-nosnippet>701</a>        <span class="comment">// build and register client, starting up read &amp; write loops for the client
 <a href=#702 id=702 data-nosnippet>702</a>        // connection
@@ -952,7 +952,7 @@
 <a href=#952 id=952 data-nosnippet>952</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"hi there, client b!"</span>);
 <a href=#953 id=953 data-nosnippet>953</a>        client_a
 <a href=#954 id=954 data-nosnippet>954</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#955 id=955 data-nosnippet>955</a>                dst_node_id: b_key,
+<a href=#955 id=955 data-nosnippet>955</a>                dst_endpoint_id: b_key,
 <a href=#956 id=956 data-nosnippet>956</a>                datagrams: msg.clone(),
 <a href=#957 id=957 data-nosnippet>957</a>            })
 <a href=#958 id=958 data-nosnippet>958</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -966,7 +966,7 @@
 <a href=#966 id=966 data-nosnippet>966</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"right back at ya, client b!"</span>);
 <a href=#967 id=967 data-nosnippet>967</a>        client_b
 <a href=#968 id=968 data-nosnippet>968</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#969 id=969 data-nosnippet>969</a>                dst_node_id: a_key,
+<a href=#969 id=969 data-nosnippet>969</a>                dst_endpoint_id: a_key,
 <a href=#970 id=970 data-nosnippet>970</a>                datagrams: msg.clone(),
 <a href=#971 id=971 data-nosnippet>971</a>            })
 <a href=#972 id=972 data-nosnippet>972</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1007,7 +1007,7 @@
 <a href=#1007 id=1007 data-nosnippet>1007</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)) =&gt; {
 <a href=#1008 id=1008 data-nosnippet>1008</a>                <span class="macro">info!</span>(<span class="string">"got message on: {msg:?}"</span>);
 <a href=#1009 id=1009 data-nosnippet>1009</a>                <span class="kw">if let </span>RelayToClientMsg::Datagrams {
-<a href=#1010 id=1010 data-nosnippet>1010</a>                    remote_node_id: source,
+<a href=#1010 id=1010 data-nosnippet>1010</a>                    remote_endpoint_id: source,
 <a href=#1011 id=1011 data-nosnippet>1011</a>                    datagrams,
 <a href=#1012 id=1012 data-nosnippet>1012</a>                } = msg
 <a href=#1013 id=1013 data-nosnippet>1013</a>                {
@@ -1074,7 +1074,7 @@
 <a href=#1074 id=1074 data-nosnippet>1074</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"hi there, client b!"</span>);
 <a href=#1075 id=1075 data-nosnippet>1075</a>        client_a
 <a href=#1076 id=1076 data-nosnippet>1076</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1077 id=1077 data-nosnippet>1077</a>                dst_node_id: b_key,
+<a href=#1077 id=1077 data-nosnippet>1077</a>                dst_endpoint_id: b_key,
 <a href=#1078 id=1078 data-nosnippet>1078</a>                datagrams: msg.clone(),
 <a href=#1079 id=1079 data-nosnippet>1079</a>            })
 <a href=#1080 id=1080 data-nosnippet>1080</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1088,7 +1088,7 @@
 <a href=#1088 id=1088 data-nosnippet>1088</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"right back at ya, client b!"</span>);
 <a href=#1089 id=1089 data-nosnippet>1089</a>        client_b
 <a href=#1090 id=1090 data-nosnippet>1090</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1091 id=1091 data-nosnippet>1091</a>                dst_node_id: a_key,
+<a href=#1091 id=1091 data-nosnippet>1091</a>                dst_endpoint_id: a_key,
 <a href=#1092 id=1092 data-nosnippet>1092</a>                datagrams: msg.clone(),
 <a href=#1093 id=1093 data-nosnippet>1093</a>            })
 <a href=#1094 id=1094 data-nosnippet>1094</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1154,16 +1154,16 @@
 <a href=#1154 id=1154 data-nosnippet>1154</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"hello client b!!"</span>);
 <a href=#1155 id=1155 data-nosnippet>1155</a>        client_a
 <a href=#1156 id=1156 data-nosnippet>1156</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1157 id=1157 data-nosnippet>1157</a>                dst_node_id: public_key_b,
+<a href=#1157 id=1157 data-nosnippet>1157</a>                dst_endpoint_id: public_key_b,
 <a href=#1158 id=1158 data-nosnippet>1158</a>                datagrams: msg.clone(),
 <a href=#1159 id=1159 data-nosnippet>1159</a>            })
 <a href=#1160 id=1160 data-nosnippet>1160</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1161 id=1161 data-nosnippet>1161</a>        <span class="kw">match </span>client_b.next().<span class="kw">await</span>.unwrap()<span class="question-mark">? </span>{
 <a href=#1162 id=1162 data-nosnippet>1162</a>            RelayToClientMsg::Datagrams {
-<a href=#1163 id=1163 data-nosnippet>1163</a>                remote_node_id,
+<a href=#1163 id=1163 data-nosnippet>1163</a>                remote_endpoint_id,
 <a href=#1164 id=1164 data-nosnippet>1164</a>                datagrams,
 <a href=#1165 id=1165 data-nosnippet>1165</a>            } =&gt; {
-<a href=#1166 id=1166 data-nosnippet>1166</a>                <span class="macro">assert_eq!</span>(public_key_a, remote_node_id);
+<a href=#1166 id=1166 data-nosnippet>1166</a>                <span class="macro">assert_eq!</span>(public_key_a, remote_endpoint_id);
 <a href=#1167 id=1167 data-nosnippet>1167</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1168 id=1168 data-nosnippet>1168</a>            }
 <a href=#1169 id=1169 data-nosnippet>1169</a>            msg =&gt; {
@@ -1175,16 +1175,16 @@
 <a href=#1175 id=1175 data-nosnippet>1175</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"nice to meet you client a!!"</span>);
 <a href=#1176 id=1176 data-nosnippet>1176</a>        client_b
 <a href=#1177 id=1177 data-nosnippet>1177</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1178 id=1178 data-nosnippet>1178</a>                dst_node_id: public_key_a,
+<a href=#1178 id=1178 data-nosnippet>1178</a>                dst_endpoint_id: public_key_a,
 <a href=#1179 id=1179 data-nosnippet>1179</a>                datagrams: msg.clone(),
 <a href=#1180 id=1180 data-nosnippet>1180</a>            })
 <a href=#1181 id=1181 data-nosnippet>1181</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1182 id=1182 data-nosnippet>1182</a>        <span class="kw">match </span>client_a.next().<span class="kw">await</span>.unwrap()<span class="question-mark">? </span>{
 <a href=#1183 id=1183 data-nosnippet>1183</a>            RelayToClientMsg::Datagrams {
-<a href=#1184 id=1184 data-nosnippet>1184</a>                remote_node_id,
+<a href=#1184 id=1184 data-nosnippet>1184</a>                remote_endpoint_id,
 <a href=#1185 id=1185 data-nosnippet>1185</a>                datagrams,
 <a href=#1186 id=1186 data-nosnippet>1186</a>            } =&gt; {
-<a href=#1187 id=1187 data-nosnippet>1187</a>                <span class="macro">assert_eq!</span>(public_key_b, remote_node_id);
+<a href=#1187 id=1187 data-nosnippet>1187</a>                <span class="macro">assert_eq!</span>(public_key_b, remote_endpoint_id);
 <a href=#1188 id=1188 data-nosnippet>1188</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1189 id=1189 data-nosnippet>1189</a>            }
 <a href=#1190 id=1190 data-nosnippet>1190</a>            msg =&gt; {
@@ -1199,7 +1199,7 @@
 <a href=#1199 id=1199 data-nosnippet>1199</a>        <span class="macro">info!</span>(<span class="string">"Fail to send message from A to B."</span>);
 <a href=#1200 id=1200 data-nosnippet>1200</a>        <span class="kw">let </span>res = client_a
 <a href=#1201 id=1201 data-nosnippet>1201</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1202 id=1202 data-nosnippet>1202</a>                dst_node_id: public_key_b,
+<a href=#1202 id=1202 data-nosnippet>1202</a>                dst_endpoint_id: public_key_b,
 <a href=#1203 id=1203 data-nosnippet>1203</a>                datagrams: Datagrams::from(<span class="string">b"try to send"</span>),
 <a href=#1204 id=1204 data-nosnippet>1204</a>            })
 <a href=#1205 id=1205 data-nosnippet>1205</a>            .<span class="kw">await</span>;
@@ -1254,16 +1254,16 @@
 <a href=#1254 id=1254 data-nosnippet>1254</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"hello client b!!"</span>);
 <a href=#1255 id=1255 data-nosnippet>1255</a>        client_a
 <a href=#1256 id=1256 data-nosnippet>1256</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1257 id=1257 data-nosnippet>1257</a>                dst_node_id: public_key_b,
+<a href=#1257 id=1257 data-nosnippet>1257</a>                dst_endpoint_id: public_key_b,
 <a href=#1258 id=1258 data-nosnippet>1258</a>                datagrams: msg.clone(),
 <a href=#1259 id=1259 data-nosnippet>1259</a>            })
 <a href=#1260 id=1260 data-nosnippet>1260</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1261 id=1261 data-nosnippet>1261</a>        <span class="kw">match </span>client_b.next().<span class="kw">await</span>.expect(<span class="string">"eos"</span>)<span class="question-mark">? </span>{
 <a href=#1262 id=1262 data-nosnippet>1262</a>            RelayToClientMsg::Datagrams {
-<a href=#1263 id=1263 data-nosnippet>1263</a>                remote_node_id,
+<a href=#1263 id=1263 data-nosnippet>1263</a>                remote_endpoint_id,
 <a href=#1264 id=1264 data-nosnippet>1264</a>                datagrams,
 <a href=#1265 id=1265 data-nosnippet>1265</a>            } =&gt; {
-<a href=#1266 id=1266 data-nosnippet>1266</a>                <span class="macro">assert_eq!</span>(public_key_a, remote_node_id);
+<a href=#1266 id=1266 data-nosnippet>1266</a>                <span class="macro">assert_eq!</span>(public_key_a, remote_endpoint_id);
 <a href=#1267 id=1267 data-nosnippet>1267</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1268 id=1268 data-nosnippet>1268</a>            }
 <a href=#1269 id=1269 data-nosnippet>1269</a>            msg =&gt; {
@@ -1275,16 +1275,16 @@
 <a href=#1275 id=1275 data-nosnippet>1275</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"nice to meet you client a!!"</span>);
 <a href=#1276 id=1276 data-nosnippet>1276</a>        client_b
 <a href=#1277 id=1277 data-nosnippet>1277</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1278 id=1278 data-nosnippet>1278</a>                dst_node_id: public_key_a,
+<a href=#1278 id=1278 data-nosnippet>1278</a>                dst_endpoint_id: public_key_a,
 <a href=#1279 id=1279 data-nosnippet>1279</a>                datagrams: msg.clone(),
 <a href=#1280 id=1280 data-nosnippet>1280</a>            })
 <a href=#1281 id=1281 data-nosnippet>1281</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1282 id=1282 data-nosnippet>1282</a>        <span class="kw">match </span>client_a.next().<span class="kw">await</span>.expect(<span class="string">"eos"</span>)<span class="question-mark">? </span>{
 <a href=#1283 id=1283 data-nosnippet>1283</a>            RelayToClientMsg::Datagrams {
-<a href=#1284 id=1284 data-nosnippet>1284</a>                remote_node_id,
+<a href=#1284 id=1284 data-nosnippet>1284</a>                remote_endpoint_id,
 <a href=#1285 id=1285 data-nosnippet>1285</a>                datagrams,
 <a href=#1286 id=1286 data-nosnippet>1286</a>            } =&gt; {
-<a href=#1287 id=1287 data-nosnippet>1287</a>                <span class="macro">assert_eq!</span>(public_key_b, remote_node_id);
+<a href=#1287 id=1287 data-nosnippet>1287</a>                <span class="macro">assert_eq!</span>(public_key_b, remote_endpoint_id);
 <a href=#1288 id=1288 data-nosnippet>1288</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1289 id=1289 data-nosnippet>1289</a>            }
 <a href=#1290 id=1290 data-nosnippet>1290</a>            msg =&gt; {
@@ -1306,16 +1306,16 @@
 <a href=#1306 id=1306 data-nosnippet>1306</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"are you still there, b?!"</span>);
 <a href=#1307 id=1307 data-nosnippet>1307</a>        client_a
 <a href=#1308 id=1308 data-nosnippet>1308</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1309 id=1309 data-nosnippet>1309</a>                dst_node_id: public_key_b,
+<a href=#1309 id=1309 data-nosnippet>1309</a>                dst_endpoint_id: public_key_b,
 <a href=#1310 id=1310 data-nosnippet>1310</a>                datagrams: msg.clone(),
 <a href=#1311 id=1311 data-nosnippet>1311</a>            })
 <a href=#1312 id=1312 data-nosnippet>1312</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1313 id=1313 data-nosnippet>1313</a>        <span class="kw">match </span>new_client_b.next().<span class="kw">await</span>.expect(<span class="string">"eos"</span>)<span class="question-mark">? </span>{
 <a href=#1314 id=1314 data-nosnippet>1314</a>            RelayToClientMsg::Datagrams {
-<a href=#1315 id=1315 data-nosnippet>1315</a>                remote_node_id,
+<a href=#1315 id=1315 data-nosnippet>1315</a>                remote_endpoint_id,
 <a href=#1316 id=1316 data-nosnippet>1316</a>                datagrams,
 <a href=#1317 id=1317 data-nosnippet>1317</a>            } =&gt; {
-<a href=#1318 id=1318 data-nosnippet>1318</a>                <span class="macro">assert_eq!</span>(public_key_a, remote_node_id);
+<a href=#1318 id=1318 data-nosnippet>1318</a>                <span class="macro">assert_eq!</span>(public_key_a, remote_endpoint_id);
 <a href=#1319 id=1319 data-nosnippet>1319</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1320 id=1320 data-nosnippet>1320</a>            }
 <a href=#1321 id=1321 data-nosnippet>1321</a>            msg =&gt; {
@@ -1327,16 +1327,16 @@
 <a href=#1327 id=1327 data-nosnippet>1327</a>        <span class="kw">let </span>msg = Datagrams::from(<span class="string">b"just had a spot of trouble but I'm back now,a!!"</span>);
 <a href=#1328 id=1328 data-nosnippet>1328</a>        new_client_b
 <a href=#1329 id=1329 data-nosnippet>1329</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1330 id=1330 data-nosnippet>1330</a>                dst_node_id: public_key_a,
+<a href=#1330 id=1330 data-nosnippet>1330</a>                dst_endpoint_id: public_key_a,
 <a href=#1331 id=1331 data-nosnippet>1331</a>                datagrams: msg.clone(),
 <a href=#1332 id=1332 data-nosnippet>1332</a>            })
 <a href=#1333 id=1333 data-nosnippet>1333</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1334 id=1334 data-nosnippet>1334</a>        <span class="kw">match </span>client_a.next().<span class="kw">await</span>.expect(<span class="string">"eos"</span>)<span class="question-mark">? </span>{
 <a href=#1335 id=1335 data-nosnippet>1335</a>            RelayToClientMsg::Datagrams {
-<a href=#1336 id=1336 data-nosnippet>1336</a>                remote_node_id,
+<a href=#1336 id=1336 data-nosnippet>1336</a>                remote_endpoint_id,
 <a href=#1337 id=1337 data-nosnippet>1337</a>                datagrams,
 <a href=#1338 id=1338 data-nosnippet>1338</a>            } =&gt; {
-<a href=#1339 id=1339 data-nosnippet>1339</a>                <span class="macro">assert_eq!</span>(public_key_b, remote_node_id);
+<a href=#1339 id=1339 data-nosnippet>1339</a>                <span class="macro">assert_eq!</span>(public_key_b, remote_endpoint_id);
 <a href=#1340 id=1340 data-nosnippet>1340</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1341 id=1341 data-nosnippet>1341</a>            }
 <a href=#1342 id=1342 data-nosnippet>1342</a>            msg =&gt; {
@@ -1350,7 +1350,7 @@
 <a href=#1350 id=1350 data-nosnippet>1350</a>        <span class="macro">info!</span>(<span class="string">"Sending message from A to B fails"</span>);
 <a href=#1351 id=1351 data-nosnippet>1351</a>        <span class="kw">let </span>res = client_a
 <a href=#1352 id=1352 data-nosnippet>1352</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#1353 id=1353 data-nosnippet>1353</a>                dst_node_id: public_key_b,
+<a href=#1353 id=1353 data-nosnippet>1353</a>                dst_endpoint_id: public_key_b,
 <a href=#1354 id=1354 data-nosnippet>1354</a>                datagrams: Datagrams::from(<span class="string">b"try to send"</span>),
 <a href=#1355 id=1355 data-nosnippet>1355</a>            })
 <a href=#1356 id=1356 data-nosnippet>1356</a>            .<span class="kw">await</span>;

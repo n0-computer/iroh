@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>bytes::Bytes;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>iroh::{
-<a href=#8 id=8 data-nosnippet>8</a>    Endpoint, NodeAddr, RelayMode, RelayUrl,
+<a href=#8 id=8 data-nosnippet>8</a>    Endpoint, EndpointAddr, RelayMode, RelayUrl,
 <a href=#9 id=9 data-nosnippet>9</a>    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
 <a href=#10 id=10 data-nosnippet>10</a>};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a>    rt: <span class="kw-2">&amp;</span>tokio::runtime::Runtime,
 <a href=#23 id=23 data-nosnippet>23</a>    relay_url: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#24 id=24 data-nosnippet>24</a>    opt: <span class="kw-2">&amp;</span>Opt,
-<a href=#25 id=25 data-nosnippet>25</a>) -&gt; (NodeAddr, Endpoint) {
+<a href=#25 id=25 data-nosnippet>25</a>) -&gt; (EndpointAddr, Endpoint) {
 <a href=#26 id=26 data-nosnippet>26</a>    <span class="kw">let </span>_guard = rt.enter();
 <a href=#27 id=27 data-nosnippet>27</a>    rt.block_on(<span class="kw">async move </span>{
 <a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">let </span>relay_mode = relay_url
@@ -54,7 +54,7 @@
 <a href=#54 id=54 data-nosnippet>54</a>
 <a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>addr = ep.bound_sockets();
 <a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>addr = SocketAddr::new(<span class="string">"127.0.0.1"</span>.parse().unwrap(), addr[<span class="number">0</span>].port());
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
+<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = EndpointAddr::new(ep.id()).with_direct_addresses([addr]);
 <a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = relay_url {
 <a href=#59 id=59 data-nosnippet>59</a>            addr = addr.with_relay_url(relay_url.clone());
 <a href=#60 id=60 data-nosnippet>60</a>        }
@@ -64,7 +64,7 @@
 <a href=#64 id=64 data-nosnippet>64</a>
 <a href=#65 id=65 data-nosnippet>65</a><span class="doccomment">/// Create and run a client
 <a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub async fn </span>client(
-<a href=#67 id=67 data-nosnippet>67</a>    server_addr: NodeAddr,
+<a href=#67 id=67 data-nosnippet>67</a>    server_addr: EndpointAddr,
 <a href=#68 id=68 data-nosnippet>68</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#69 id=69 data-nosnippet>69</a>    opt: Opt,
 <a href=#70 id=70 data-nosnippet>70</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ClientStats&gt; {
@@ -83,7 +83,7 @@
 <a href=#83 id=83 data-nosnippet>83</a>
 <a href=#84 id=84 data-nosnippet>84</a><span class="doccomment">/// Create a client endpoint and client connection
 <a href=#85 id=85 data-nosnippet>85</a></span><span class="kw">pub async fn </span>connect_client(
-<a href=#86 id=86 data-nosnippet>86</a>    server_addr: NodeAddr,
+<a href=#86 id=86 data-nosnippet>86</a>    server_addr: EndpointAddr,
 <a href=#87 id=87 data-nosnippet>87</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#88 id=88 data-nosnippet>88</a>    opt: Opt,
 <a href=#89 id=89 data-nosnippet>89</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, Connection)&gt; {

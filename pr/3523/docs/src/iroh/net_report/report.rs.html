@@ -66,12 +66,12 @@
 <a href=#66 id=66 data-nosnippet>66</a>        <span class="kw">match </span>report {
 <a href=#67 id=67 data-nosnippet>67</a>            ProbeReport::Https(report) =&gt; {
 <a href=#68 id=68 data-nosnippet>68</a>                <span class="self">self</span>.relay_latency
-<a href=#69 id=69 data-nosnippet>69</a>                    .update_relay(report.node.clone(), report.latency, Probe::Https);
+<a href=#69 id=69 data-nosnippet>69</a>                    .update_relay(report.relay.clone(), report.latency, Probe::Https);
 <a href=#70 id=70 data-nosnippet>70</a>            }
 <a href=#71 id=71 data-nosnippet>71</a>            <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#72 id=72 data-nosnippet>72</a>            </span>ProbeReport::QadIpv4(report) =&gt; {
 <a href=#73 id=73 data-nosnippet>73</a>                <span class="self">self</span>.relay_latency.update_relay(
-<a href=#74 id=74 data-nosnippet>74</a>                    report.node.clone(),
+<a href=#74 id=74 data-nosnippet>74</a>                    report.relay.clone(),
 <a href=#75 id=75 data-nosnippet>75</a>                    report.latency,
 <a href=#76 id=76 data-nosnippet>76</a>                    Probe::QadIpv4,
 <a href=#77 id=77 data-nosnippet>77</a>                );
@@ -99,7 +99,7 @@
 <a href=#99 id=99 data-nosnippet>99</a>            <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#100 id=100 data-nosnippet>100</a>            </span>ProbeReport::QadIpv6(report) =&gt; {
 <a href=#101 id=101 data-nosnippet>101</a>                <span class="self">self</span>.relay_latency.update_relay(
-<a href=#102 id=102 data-nosnippet>102</a>                    report.node.clone(),
+<a href=#102 id=102 data-nosnippet>102</a>                    report.relay.clone(),
 <a href=#103 id=103 data-nosnippet>103</a>                    report.latency,
 <a href=#104 id=104 data-nosnippet>104</a>                    Probe::QadIpv6,
 <a href=#105 id=105 data-nosnippet>105</a>                );
@@ -127,7 +127,7 @@
 <a href=#127 id=127 data-nosnippet>127</a>    }
 <a href=#128 id=128 data-nosnippet>128</a>}
 <a href=#129 id=129 data-nosnippet>129</a>
-<a href=#130 id=130 data-nosnippet>130</a><span class="doccomment">/// Latencies per relay node.
+<a href=#130 id=130 data-nosnippet>130</a><span class="doccomment">/// Latencies per relay endpoint.
 <a href=#131 id=131 data-nosnippet>131</a></span><span class="attr">#[derive(Debug, Default, PartialEq, Eq, Clone, Serialize, Deserialize)]
 <a href=#132 id=132 data-nosnippet>132</a></span><span class="kw">pub struct </span>RelayLatencies {
 <a href=#133 id=133 data-nosnippet>133</a>    <span class="attr">#[cfg(not(wasm_browser))]

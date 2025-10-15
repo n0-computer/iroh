@@ -86,7 +86,7 @@
 <a href=#86 id=86 data-nosnippet>86</a><span class="doccomment">/// A Map of [`IpMappedAddresses`] to [`SocketAddr`].
 <a href=#87 id=87 data-nosnippet>87</a></span><span class="comment">// TODO(ramfox): before this is ready to be used beyond QAD, we should add
 <a href=#88 id=88 data-nosnippet>88</a>// mechanisms for keeping track of "aliveness" and pruning address, as we do
-<a href=#89 id=89 data-nosnippet>89</a>// with the `NodeMap`
+<a href=#89 id=89 data-nosnippet>89</a>// with the `EndpointMap`
 <a href=#90 id=90 data-nosnippet>90</a></span><span class="attr">#[derive(Debug, Clone, Default)]
 <a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>IpMappedAddresses(Arc&lt;std::sync::Mutex&lt;Inner&gt;&gt;);
 <a href=#92 id=92 data-nosnippet>92</a>

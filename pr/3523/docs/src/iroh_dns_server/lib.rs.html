@@ -23,7 +23,7 @@
 <a href=#23 id=23 data-nosnippet>23</a>
 <a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">use </span>iroh::{
 <a href=#25 id=25 data-nosnippet>25</a>        RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
-<a href=#26 id=26 data-nosnippet>26</a>        node_info::NodeInfo,
+<a href=#26 id=26 data-nosnippet>26</a>        endpoint_info::EndpointInfo,
 <a href=#27 id=27 data-nosnippet>27</a>    };
 <a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">use </span>pkarr::{SignedPacket, Timestamp};
@@ -171,18 +171,18 @@
 <a href=#171 id=171 data-nosnippet>171</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#172 id=172 data-nosnippet>172</a>
 <a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#174 id=174 data-nosnippet>174</a>        <span class="kw">let </span>node_id = secret_key.public();
+<a href=#174 id=174 data-nosnippet>174</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">let </span>pkarr = PkarrRelayClient::new(pkarr_relay);
 <a href=#176 id=176 data-nosnippet>176</a>        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span>node_info = NodeInfo::new(node_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
+<a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">let </span>signed_packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 <a href=#179 id=179 data-nosnippet>179</a>
 <a href=#180 id=180 data-nosnippet>180</a>        pkarr.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#181 id=181 data-nosnippet>181</a>
 <a href=#182 id=182 data-nosnippet>182</a>        <span class="kw">let </span>resolver = test_resolver(nameserver);
-<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span>res = resolver.lookup_node_by_id(<span class="kw-2">&amp;</span>node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span>res = resolver.lookup_endpoint_by_id(<span class="kw-2">&amp;</span>endpoint_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#184 id=184 data-nosnippet>184</a>
-<a href=#185 id=185 data-nosnippet>185</a>        <span class="macro">assert_eq!</span>(res.node_id, node_id);
+<a href=#185 id=185 data-nosnippet>185</a>        <span class="macro">assert_eq!</span>(res.endpoint_id, endpoint_id);
 <a href=#186 id=186 data-nosnippet>186</a>        <span class="macro">assert_eq!</span>(res.relay_url(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url));
 <a href=#187 id=187 data-nosnippet>187</a>
 <a href=#188 id=188 data-nosnippet>188</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -239,10 +239,10 @@
 <a href=#239 id=239 data-nosnippet>239</a>
 <a href=#240 id=240 data-nosnippet>240</a>        <span class="comment">// create a signed packet
 <a href=#241 id=241 data-nosnippet>241</a>        </span><span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>node_id = secret_key.public();
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#243 id=243 data-nosnippet>243</a>        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">let </span>node_info = NodeInfo::new(node_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
-<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
+<a href=#244 id=244 data-nosnippet>244</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
+<a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>signed_packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 <a href=#246 id=246 data-nosnippet>246</a>
 <a href=#247 id=247 data-nosnippet>247</a>        <span class="comment">// publish the signed packet to our DHT
 <a href=#248 id=248 data-nosnippet>248</a>        </span><span class="kw">let </span>pkarr = pkarr::Client::builder()
@@ -254,9 +254,9 @@
 <a href=#254 id=254 data-nosnippet>254</a>
 <a href=#255 id=255 data-nosnippet>255</a>        <span class="comment">// resolve via DNS from our server, which will lookup from our DHT
 <a href=#256 id=256 data-nosnippet>256</a>        </span><span class="kw">let </span>resolver = test_resolver(nameserver);
-<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">let </span>res = resolver.lookup_node_by_id(<span class="kw-2">&amp;</span>node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">let </span>res = resolver.lookup_endpoint_by_id(<span class="kw-2">&amp;</span>endpoint_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#258 id=258 data-nosnippet>258</a>
-<a href=#259 id=259 data-nosnippet>259</a>        <span class="macro">assert_eq!</span>(res.node_id, node_id);
+<a href=#259 id=259 data-nosnippet>259</a>        <span class="macro">assert_eq!</span>(res.endpoint_id, endpoint_id);
 <a href=#260 id=260 data-nosnippet>260</a>        <span class="macro">assert_eq!</span>(res.relay_url(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url));
 <a href=#261 id=261 data-nosnippet>261</a>
 <a href=#262 id=262 data-nosnippet>262</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -269,10 +269,10 @@
 <a href=#269 id=269 data-nosnippet>269</a>
 <a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">fn </span>random_signed_packet&lt;R: CryptoRng + <span class="question-mark">?</span>Sized&gt;(rng: <span class="kw-2">&amp;mut </span>R) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
 <a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">let </span>secret_key = SecretKey::generate(rng);
-<a href=#272 id=272 data-nosnippet>272</a>        <span class="kw">let </span>node_id = secret_key.public();
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
 <a href=#273 id=273 data-nosnippet>273</a>        <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;
-<a href=#274 id=274 data-nosnippet>274</a>        <span class="kw">let </span>node_info = NodeInfo::new(node_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw">let </span>packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
+<a href=#274 id=274 data-nosnippet>274</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
+<a href=#275 id=275 data-nosnippet>275</a>        <span class="kw">let </span>packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 <a href=#276 id=276 data-nosnippet>276</a>        <span class="prelude-val">Ok</span>(packet)
 <a href=#277 id=277 data-nosnippet>277</a>    }
 <a href=#278 id=278 data-nosnippet>278</a>}</code></pre></div></section></main></body></html>
