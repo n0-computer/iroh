@@ -270,7 +270,7 @@ impl EndpointArgs {
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
-        let endpoint_id = endpoint.endpoint_id();
+        let endpoint_id = endpoint.id();
         println!("Our endpoint id:\n\t{endpoint_id}");
 
         if self.relay_only {
@@ -281,7 +281,7 @@ impl EndpointArgs {
                 .ok();
         }
 
-        let endpoint_addr = endpoint.endpoint_addr();
+        let endpoint_addr = endpoint.addr();
 
         println!("Our direct addresses:");
         for addr in &endpoint_addr.direct_addresses {
@@ -300,13 +300,13 @@ impl EndpointArgs {
 }
 
 async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
-    let endpoint_id = endpoint.endpoint_id();
+    let endpoint_id = endpoint.id();
 
-    let endpoint_addr = endpoint.endpoint_addr();
+    let endpoint_addr = endpoint.addr();
     let ticket = EndpointTicket::new(endpoint_addr);
     println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
-    let mut endpoint_addr = endpoint.endpoint_addr();
+    let mut endpoint_addr = endpoint.addr();
     endpoint_addr.direct_addresses = Default::default();
     let ticket = EndpointTicket::new(endpoint_addr);
     println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);
@@ -384,7 +384,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 }
 
 async fn fetch(endpoint: Endpoint, ticket: &str) -> Result<()> {
-    let me = endpoint.endpoint_id().fmt_short();
+    let me = endpoint.id().fmt_short();
     let ticket: EndpointTicket = ticket.parse()?;
     let remote_endpoint_id = ticket.endpoint_addr().endpoint_id;
     let start = Instant::now();

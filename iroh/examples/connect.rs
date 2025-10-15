@@ -54,8 +54,8 @@ async fn main() -> Result<()> {
     // wait for the endpoint to be online
     endpoint.online().await;
 
-    let endpoint_addr = endpoint.endpoint_addr();
-    let me = endpoint.endpoint_id();
+    let endpoint_addr = endpoint.addr();
+    let me = endpoint.id();
     println!("endpoint id: {me}");
     println!("endpoint listening addresses:");
     for addr in endpoint_addr.direct_addresses() {

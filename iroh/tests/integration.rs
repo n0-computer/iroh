@@ -77,7 +77,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
 
     // Wait for pkarr records to be published
     time::timeout(Duration::from_secs(10), {
-        let endpoint_id = server.endpoint_id();
+        let endpoint_id = server.id();
         async move {
             let resolver = PkarrResolver::n0_dns().build();
             loop {
@@ -99,8 +99,8 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     .await
     .e()?;
 
-    tracing::info!(to = %server.endpoint_id().fmt_short(), "Opening a connection");
-    let conn = client.connect(server.endpoint_id(), ECHO_ALPN).await?;
+    tracing::info!(to = %server.id().fmt_short(), "Opening a connection");
+    let conn = client.connect(server.id(), ECHO_ALPN).await?;
     tracing::info!("Connection opened");
 
     let (mut send, mut recv) = conn.open_bi().await.e()?;

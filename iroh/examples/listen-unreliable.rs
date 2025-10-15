@@ -32,14 +32,14 @@ async fn main() -> Result<()> {
         .bind()
         .await?;
 
-    let me = endpoint.endpoint_id();
+    let me = endpoint.id();
     println!("endpoint id: {me}");
     println!("endpoint listening addresses:");
 
     // wait for the endpoint to be online
     endpoint.online().await;
 
-    let endpoint_addr = endpoint.endpoint_addr();
+    let endpoint_addr = endpoint.addr();
     let local_addrs = endpoint_addr
         .direct_addresses
         .into_iter()

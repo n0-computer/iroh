@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
     println!("Discovering Local Endpoints Example!");
 
     let ep = Endpoint::builder().bind().await?;
-    let endpoint_id = ep.endpoint_id();
+    let endpoint_id = ep.id();
 
     let mdns = MdnsDiscovery::builder().build(endpoint_id)?;
     ep.discovery().add(mdns.clone());

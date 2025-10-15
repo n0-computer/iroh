@@ -543,7 +543,7 @@ impl DiscoveryTask {
     pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
         ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
-        let me = ep.endpoint_id();
+        let me = ep.id();
         let task = task::spawn(
             async move { Self::run(ep, endpoint_id, on_first_tx).await }.instrument(
                 error_span!("discovery", me = %me.fmt_short(), endpoint = %endpoint_id.fmt_short()),
@@ -575,7 +575,7 @@ impl DiscoveryTask {
         ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
-        let me = ep.endpoint_id();
+        let me = ep.id();
         let task = task::spawn(
             async move {
                 // If delay is set, wait and recheck if discovery is needed. If not, early-exit.
@@ -807,7 +807,7 @@ mod tests {
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
-        let ep1_addr = EndpointAddr::new(ep1.endpoint_id());
+        let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -831,7 +831,7 @@ mod tests {
             let disco = Arc::new(disco);
             new_endpoint(secret, disco).await
         };
-        let ep1_addr = EndpointAddr::new(ep1.endpoint_id());
+        let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -856,7 +856,7 @@ mod tests {
             disco.add(disco2);
             new_endpoint(secret, disco).await
         };
-        let ep1_addr = EndpointAddr::new(ep1.endpoint_id());
+        let ep1_addr = EndpointAddr::new(ep1.id());
 
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
@@ -890,7 +890,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
 
-        let _conn = ep2.connect(ep1.endpoint_id(), TEST_ALPN).await?;
+        let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;
         Ok(())
     }
 
@@ -920,7 +920,7 @@ mod tests {
         let opts = ConnectOptions::new().with_transport_config(Arc::new(config));
 
         let res = ep2
-            .connect_with_opts(ep1.endpoint_id(), TEST_ALPN, opts)
+            .connect_with_opts(ep1.id(), TEST_ALPN, opts)
             .await? // -> Connecting works
             .await; // -> Connection is expected to fail
         assert!(res.is_err());
@@ -947,7 +947,7 @@ mod tests {
         };
 
         let ep1_wrong_addr = EndpointAddr {
-            endpoint_id: ep1.endpoint_id(),
+            endpoint_id: ep1.id(),
             relay_url: None,
             direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
         };
@@ -1108,12 +1108,12 @@ mod test_dns_pkarr {
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
-            .on_endpoint(&ep1.endpoint_id(), PUBLISH_TIMEOUT)
+            .on_endpoint(&ep1.id(), PUBLISH_TIMEOUT)
             .await
             .context("wait for on endpoint update")?;
 
         // we connect only by endpoint id!
-        let _conn = ep2.connect(ep1.endpoint_id(), TEST_ALPN).await?;
+        let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;
         Ok(())
     }
 

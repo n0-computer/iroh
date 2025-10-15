@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     // wait for the endpoint to be online
     endpoint.online().await;
 
-    connect_side(endpoint.endpoint_addr()).await?;
+    connect_side(endpoint.addr()).await?;
 
     // This makes sure the endpoint is closed properly and connections close gracefully
     // and will indirectly close the tasks spawned by `start_accept_side`.

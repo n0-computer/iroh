@@ -88,7 +88,7 @@ async fn main() -> Result<()> {
 
     match args.command {
         Command::Listen { text } => {
-            let endpoint_id = router.endpoint().endpoint_id();
+            let endpoint_id = router.endpoint().id();
             println!("our endpoint id: {endpoint_id}");
 
             // Insert the text strings as blobs and index them.

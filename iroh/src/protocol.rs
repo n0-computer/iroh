@@ -447,7 +447,7 @@ impl RouterBuilder {
 
                         let protocols = protocols.clone();
                         let token = handler_cancel_token.child_token();
-                        let span = info_span!("router.accept", me=%endpoint.endpoint_id().fmt_short(), remote=Empty, alpn=Empty);
+                        let span = info_span!("router.accept", me=%endpoint.id().fmt_short(), remote=Empty, alpn=Empty);
                         join_set.spawn(async move {
                             token.run_until_cancelled(handle_connection(incoming, protocols)).await
                         }.instrument(span));
@@ -628,7 +628,7 @@ mod tests {
         let proto = AccessLimit::new(Echo, |_endpoint_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
-        let addr1 = r1.endpoint().endpoint_addr();
+        let addr1 = r1.endpoint().addr();
         dbg!(&addr1);
         let e2 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
@@ -681,7 +681,7 @@ mod tests {
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
         eprintln!("waiting for endpoint addr");
-        let addr = router.endpoint().endpoint_addr();
+        let addr = router.endpoint().addr();
 
         eprintln!("creating ep2");
         let endpoint2 = Endpoint::builder()

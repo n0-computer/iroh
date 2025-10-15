@@ -688,7 +688,7 @@ impl Endpoint {
         let conn = connecting.await?;
 
         debug!(
-            me = %self.endpoint_id().fmt_short(),
+            me = %self.id().fmt_short(),
             remote = %remote.fmt_short(),
             alpn = %String::from_utf8_lossy(alpn),
             "Connection established."
@@ -711,7 +711,7 @@ impl Endpoint {
     ///    establishing and maintaining direct connections.  Carefully test settings you use and
     ///    consider this currently as still rather experimental.
     #[instrument(name = "connect", skip_all, fields(
-        me = %self.endpoint_id().fmt_short(),
+        me = %self.id().fmt_short(),
         remote = tracing::field::Empty,
         alpn = String::from_utf8_lossy(alpn).to_string(),
     ))]
@@ -728,10 +728,7 @@ impl Endpoint {
         );
 
         // Connecting to ourselves is not supported.
-        ensure!(
-            endpoint_addr.endpoint_id != self.endpoint_id(),
-            SelfConnectSnafu
-        );
+        ensure!(endpoint_addr.endpoint_id != self.id(), SelfConnectSnafu);
 
         if !endpoint_addr.is_empty() {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
@@ -838,10 +835,7 @@ impl Endpoint {
         source: Source,
     ) -> Result<(), AddEndpointAddrError> {
         // Connecting to ourselves is not supported.
-        snafu::ensure!(
-            endpoint_addr.endpoint_id != self.endpoint_id(),
-            OwnAddressSnafu
-        );
+        snafu::ensure!(endpoint_addr.endpoint_id != self.id(), OwnAddressSnafu);
         self.msock.add_endpoint_addr(endpoint_addr, source)
     }
 
@@ -856,7 +850,7 @@ impl Endpoint {
     ///
     /// This ID is the unique addressing information of this endpoint and other peers must know
     /// it to be able to connect to this endpoint.
-    pub fn endpoint_id(&self) -> EndpointId {
+    pub fn id(&self) -> EndpointId {
         self.static_config.tls_config.secret_key.public()
     }
 
@@ -872,8 +866,8 @@ impl Endpoint {
     ///
     /// You can use the [`Endpoint::watch_endpoint_addr`] method to get updates when the `EndpointAddr`
     /// changes.
-    pub fn endpoint_addr(&self) -> EndpointAddr {
-        self.watch_endpoint_addr().get()
+    pub fn addr(&self) -> EndpointAddr {
+        self.watch_addr().get()
     }
 
     /// Returns a [`Watcher`] for the current [`EndpointAddr`] for this endpoint.
@@ -888,7 +882,7 @@ impl Endpoint {
     ///     .alpns(vec![b"my-alpn".to_vec()])
     ///     .bind()
     ///     .await?;
-    /// let endpoint_addr = endpoint.watch_endpoint_addr().get();
+    /// let endpoint_addr = endpoint.watch_addr().get();
     /// # let _ = endpoint_addr;
     /// # Ok(())
     /// # }
@@ -911,10 +905,10 @@ impl Endpoint {
     ///
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
-    pub fn watch_endpoint_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
+    pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
         let watch_addrs = self.msock.direct_addresses();
         let watch_relay = self.msock.home_relay();
-        let endpoint_id = self.endpoint_id();
+        let endpoint_id = self.id();
 
         watch_addrs
             .or(watch_relay)
@@ -2201,7 +2195,7 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        let my_addr = ep.endpoint_addr();
+        let my_addr = ep.addr();
         let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
@@ -2335,7 +2329,7 @@ mod tests {
             async move {
                 let eps = ep.bound_sockets();
 
-                info!(me = %ep.endpoint_id().fmt_short(), eps = ?eps, "server listening on");
+                info!(me = %ep.id().fmt_short(), eps = ?eps, "server listening on");
                 for i in 0..n_clients {
                     let round_start = Instant::now();
                     info!("[server] round {i}");
@@ -2376,7 +2370,7 @@ mod tests {
                     .await?;
                 let eps = ep.bound_sockets();
 
-                info!(me = %ep.endpoint_id().fmt_short(), eps=?eps, "client bound");
+                info!(me = %ep.id().fmt_short(), eps=?eps, "client bound");
                 let endpoint_addr =
                     EndpointAddr::new(server_endpoint_id).with_relay_url(relay_url.clone());
                 info!(to = ?endpoint_addr, "client connecting");
@@ -2447,7 +2441,7 @@ mod tests {
             }
         });
 
-        let addr = server.endpoint_addr();
+        let addr = server.addr();
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
         send.write_all(b"Hello, world!").await.e()?;
@@ -2502,7 +2496,7 @@ mod tests {
 
         server.online().await;
 
-        let mut addr = server.endpoint_addr();
+        let mut addr = server.addr();
         println!("round1: {:?}", addr);
 
         // remove direct addrs to force relay usage
@@ -2525,7 +2519,7 @@ mod tests {
             .clone();
         dbg!(&new_relay_map);
 
-        let addr_watcher = server.watch_endpoint_addr();
+        let addr_watcher = server.watch_addr();
 
         // add new new relay
         assert!(
@@ -2592,11 +2586,11 @@ mod tests {
             .bind()
             .await?;
 
-        disco.add_endpoint_info(ep1.endpoint_addr());
-        disco.add_endpoint_info(ep2.endpoint_addr());
+        disco.add_endpoint_info(ep1.addr());
+        disco.add_endpoint_info(ep2.addr());
 
-        let ep1_endpointid = ep1.endpoint_id();
-        let ep2_endpointid = ep2.endpoint_id();
+        let ep1_endpointid = ep1.id();
+        let ep2_endpointid = ep2.id();
         eprintln!("endpoint id 1 {ep1_endpointid}");
         eprintln!("endpoint id 2 {ep2_endpointid}");
 
@@ -2640,28 +2634,28 @@ mod tests {
         let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_endpointid).instrument(
             info_span!(
                 "p1_accept",
-                ep1 = %ep1.endpoint_id().fmt_short(),
+                ep1 = %ep1.id().fmt_short(),
                 dst = %ep2_endpointid.fmt_short(),
             ),
         ));
         let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_endpointid).instrument(
             info_span!(
                 "p2_accept",
-                ep2 = %ep2.endpoint_id().fmt_short(),
+                ep2 = %ep2.id().fmt_short(),
                 dst = %ep1_endpointid.fmt_short(),
             ),
         ));
         let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_endpointid).instrument(
             info_span!(
                 "p1_connect",
-                ep1 = %ep1.endpoint_id().fmt_short(),
+                ep1 = %ep1.id().fmt_short(),
                 dst = %ep2_endpointid.fmt_short(),
             ),
         ));
         let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_endpointid).instrument(
             info_span!(
                 "p2_connect",
-                ep2 = %ep2.endpoint_id().fmt_short(),
+                ep2 = %ep2.id().fmt_short(),
                 dst = %ep1_endpointid.fmt_short(),
             ),
         ));
@@ -2702,7 +2696,7 @@ mod tests {
                 .conn_type(endpoint_id)
                 .expect("connection exists")
                 .stream();
-            let src = ep.endpoint_id().fmt_short();
+            let src = ep.id().fmt_short();
             let dst = endpoint_id.fmt_short();
             while let Some(conn_type) = stream.next().await {
                 tracing::info!(me = %src, dst = %dst, conn_type = ?conn_type);
@@ -2721,10 +2715,10 @@ mod tests {
             Ok(conn)
         }
 
-        let ep1_endpointid = ep1.endpoint_id();
-        let ep2_endpointid = ep2.endpoint_id();
+        let ep1_endpointid = ep1.id();
+        let ep2_endpointid = ep2.id();
 
-        let ep1_endpointaddr = ep1.endpoint_addr();
+        let ep1_endpointaddr = ep1.addr();
         tracing::info!(
             "endpoint id 1 {ep1_endpointid}, relay URL {:?}",
             ep1_endpointaddr.relay_url()
@@ -2774,7 +2768,7 @@ mod tests {
             .bind()
             .await?;
 
-        assert!(!ep.endpoint_addr().direct_addresses.is_empty());
+        assert!(!ep.addr().direct_addresses.is_empty());
 
         Ok(())
     }
@@ -2930,9 +2924,9 @@ mod tests {
             .await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.endpoint_addr()).await?;
+        connect_client_0rtt_expect_err(&client, server.addr()).await?;
         // The second 0rtt attempt should work
-        connect_client_0rtt_expect_ok(&client, server.endpoint_addr(), true).await?;
+        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
 
         client.close().await;
         server.close().await;
@@ -2953,16 +2947,16 @@ mod tests {
             .await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.endpoint_addr()).await?;
+        connect_client_0rtt_expect_err(&client, server.addr()).await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
         let another =
             spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("another")).await?;
-        connect_client_0rtt_expect_err(&client, another.endpoint_addr()).await?;
+        connect_client_0rtt_expect_err(&client, another.addr()).await?;
         another.close().await;
 
-        connect_client_0rtt_expect_ok(&client, server.endpoint_addr(), true).await?;
+        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
 
         client.close().await;
         server.close().await;
@@ -2982,8 +2976,8 @@ mod tests {
         let server_key = SecretKey::generate(&mut rng);
         let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.endpoint_addr()).await?;
-        connect_client_0rtt_expect_ok(&client, server.endpoint_addr(), true).await?;
+        connect_client_0rtt_expect_err(&client, server.addr()).await?;
+        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
 
         server.close().await;
 
@@ -2992,7 +2986,7 @@ mod tests {
         // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
         // but the server will reject the early data because it discarded necessary state
         // to decrypt it when restarting.
-        connect_client_0rtt_expect_ok(&client, server.endpoint_addr(), false).await?;
+        connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
 
         client.close().await;
 
@@ -3008,7 +3002,7 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
-        let server_addr = server.endpoint_addr();
+        let server_addr = server.addr();
         let server_task = tokio::spawn(async move {
             let incoming = server.accept().await.e()?;
             let conn = incoming.await.e()?;
@@ -3058,7 +3052,7 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
-        let server_addr = server.endpoint_addr();
+        let server_addr = server.addr();
         let server_task = tokio::task::spawn(async move {
             let conn = server.accept().await.e()?.accept().e()?.await.e()?;
             let mut uni = conn.accept_uni().await.e()?;
@@ -3090,7 +3084,7 @@ mod tests {
 
         // test openmetrics encoding with labeled subregistries per endpoint
         fn register_endpoint(registry: &mut Registry, endpoint: &Endpoint) {
-            let id = endpoint.endpoint_id().fmt_short();
+            let id = endpoint.id().fmt_short();
             let sub_registry = registry.sub_registry_with_label("id", id.to_string());
             sub_registry.register_all(endpoint.metrics());
         }
@@ -3119,7 +3113,7 @@ mod tests {
             .alpns(accept_alpns)
             .bind()
             .await?;
-        let server_addr = server.endpoint_addr();
+        let server_addr = server.addr();
         let server_task = tokio::spawn({
             let server = server.clone();
             async move {
@@ -3243,7 +3237,7 @@ mod tests {
                 .bind()
                 .await
                 .e()?;
-            let addr = endpoint.endpoint_addr();
+            let addr = endpoint.addr();
             let router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
             Ok((router, addr))
         }
@@ -3275,7 +3269,7 @@ mod tests {
         // wait for the endpoint to be initialized. This should not be needed,
         // but we don't want to measure endpoint init time but connection time
         // from a fully initialized endpoint.
-        endpoint.endpoint_addr();
+        endpoint.addr();
         let t0 = Instant::now();
         for id in &ids {
             let conn = endpoint.connect(*id, NOOP_ALPN).await?;

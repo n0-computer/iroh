@@ -54,7 +54,7 @@ async fn main() -> n0_snafu::Result<()> {
     // wait for the endpoint to be online
     endpoint.online().await;
 
-    let endpoint_addr = endpoint.endpoint_addr();
+    let endpoint_addr = endpoint.addr();
     let me = endpoint_addr.endpoint_id;
     println!("endpoint id: {me}");
     println!("endpoint listening addresses:");

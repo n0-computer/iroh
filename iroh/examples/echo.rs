@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
     // wait for the endpoint to be online
     router.endpoint().online().await;
 
-    connect_side(router.endpoint().endpoint_addr()).await?;
+    connect_side(router.endpoint().addr()).await?;
 
     // This makes sure the endpoint in the router is closed properly and connections close gracefully
     router.shutdown().await.e()?;

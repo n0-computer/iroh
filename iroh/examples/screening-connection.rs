@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     let router = start_accept_side().await?;
     // Wait for the endpoint to be reachable
     router.endpoint().online().await;
-    let endpoint_addr = router.endpoint().endpoint_addr();
+    let endpoint_addr = router.endpoint().addr();
 
     // call connect three times. connection index 1 will be an odd number, and rejected.
     connect_side(&endpoint_addr).await?;

@@ -2711,8 +2711,8 @@ mod tests {
             let m = m.clone();
             let stacks = stacks.clone();
             tasks.spawn(async move {
-                let me = m.endpoint.endpoint_id().fmt_short();
-                let mut stream = m.endpoint.watch_endpoint_addr().stream();
+                let me = m.endpoint.id().fmt_short();
+                let mut stream = m.endpoint.watch_addr().stream();
                 while let Some(addr) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, addr.direct_addresses);
                     update_direct_addrs(&stacks, my_idx, addr.direct_addresses);
@@ -2722,13 +2722,12 @@ mod tests {
 
         // Wait for all endpoints to be registered with each other.
         time::timeout(Duration::from_secs(10), async move {
-            let all_endpoint_ids: Vec<_> =
-                stacks.iter().map(|ms| ms.endpoint.endpoint_id()).collect();
+            let all_endpoint_ids: Vec<_> = stacks.iter().map(|ms| ms.endpoint.id()).collect();
             loop {
                 let mut ready = Vec::with_capacity(stacks.len());
                 for ms in stacks.iter() {
                     let endpoints = ms.tracked_endpoints();
-                    let my_endpoint_id = ms.endpoint.endpoint_id();
+                    let my_endpoint_id = ms.endpoint.id();
                     let all_endpoints_meshed = all_endpoint_ids
                         .iter()
                         .filter(|endpoint_id| **endpoint_id != my_endpoint_id)
@@ -2747,7 +2746,7 @@ mod tests {
         Ok(tasks)
     }
 
-    #[instrument(skip_all, fields(me = %ep.endpoint.endpoint_id().fmt_short()))]
+    #[instrument(skip_all, fields(me = %ep.endpoint.id().fmt_short()))]
     async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> Result {
         info!("accepting conn");
         let conn = ep.endpoint.accept().await.expect("no conn");
@@ -2790,7 +2789,7 @@ mod tests {
         Ok(())
     }
 
-    #[instrument(skip_all, fields(me = %ep.endpoint.endpoint_id().fmt_short()))]
+    #[instrument(skip_all, fields(me = %ep.endpoint.id().fmt_short()))]
     async fn echo_sender(
         ep: MagicStack,
         dest_id: PublicKey,
@@ -2853,8 +2852,8 @@ mod tests {
         payload: &[u8],
         loss: ExpectedLoss,
     ) {
-        let send_endpoint_id = sender.endpoint.endpoint_id();
-        let recv_endpoint_id = receiver.endpoint.endpoint_id();
+        let send_endpoint_id = sender.endpoint.id();
+        let recv_endpoint_id = receiver.endpoint.id();
         info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
 
         let receiver_task = tokio::spawn(echo_receiver(receiver, loss));
@@ -2949,10 +2948,7 @@ mod tests {
         }));
 
         println!("first conn!");
-        let conn = m1
-            .endpoint
-            .connect(m2.endpoint.endpoint_addr(), ALPN)
-            .await?;
+        let conn = m1.endpoint.connect(m2.endpoint.addr(), ALPN).await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
         conn.closed().await;

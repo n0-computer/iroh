@@ -139,7 +139,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
         .relay_mode(iroh::RelayMode::Disabled)
         .bind()
         .await?;
-    let mut addrs = endpoint.watch_endpoint_addr().stream();
+    let mut addrs = endpoint.watch_addr().stream();
     let addr = loop {
         let Some(addr) = addrs.next().await else {
             snafu::whatever!("Address stream closed");
