@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -6,11 +7,14 @@ use std::{
     task::{Context, Poll},
 };
 
+use bytes::Bytes;
 use iroh_base::{NodeId, RelayUrl};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
-use smallvec::SmallVec;
-use tracing::{error, trace, warn};
+use tracing::{debug, error, instrument, trace, warn};
+
+use super::{MagicSock, mapped_addrs::MultipathMappedAddr, node_map::NodeStateMessage};
+use crate::net_report::Report;
 
 #[cfg(not(wasm_browser))]
 mod ip;
@@ -21,8 +25,6 @@ pub(crate) use self::ip::IpTransport;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
-use super::MagicSock;
-use crate::net_report::Report;
 
 /// Manages the different underlying data transports that the magicsock
 /// can support.
@@ -222,16 +224,15 @@ impl Transports {
         false
     }
 
-    pub(crate) fn create_sender(&self, msock: Arc<MagicSock>) -> UdpSender {
+    pub(crate) fn create_sender(&self) -> TransportsSender {
         #[cfg(not(wasm_browser))]
         let ip = self.ip.iter().map(|t| t.create_sender()).collect();
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
         let max_transmit_segments = self.max_transmit_segments();
 
-        UdpSender {
+        TransportsSender {
             #[cfg(not(wasm_browser))]
             ip,
-            msock,
             relay,
             max_transmit_segments,
         }
@@ -304,10 +305,40 @@ pub(crate) struct Transmit<'a> {
     pub(crate) segment_size: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An outgoing packet that can be sent across channels.
+#[derive(Debug, Clone)]
+pub(crate) struct OwnedTransmit {
+    pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
+    pub(crate) contents: Bytes,
+    pub(crate) segment_size: Option<usize>,
+}
+
+impl From<&quinn_udp::Transmit<'_>> for OwnedTransmit {
+    fn from(source: &quinn_udp::Transmit<'_>) -> Self {
+        Self {
+            ecn: source.ecn,
+            contents: Bytes::copy_from_slice(source.contents),
+            segment_size: source.segment_size,
+        }
+    }
+}
+
+/// Transports address.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Addr {
+    /// An IP address, should always be stored in its canonical form.
     Ip(SocketAddr),
+    /// A relay address.
     Relay(RelayUrl, NodeId),
+}
+
+impl fmt::Debug for Addr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Addr::Ip(addr) => write!(f, "Ip({addr})"),
+            Addr::Relay(url, node_id) => write!(f, "Relay({url}, {})", node_id.fmt_short()),
+        }
+    }
 }
 
 impl Default for Addr {
@@ -338,6 +369,17 @@ impl Addr {
         matches!(self, Self::Relay(..))
     }
 
+    pub(crate) fn is_ip(&self) -> bool {
+        matches!(self, Self::Ip(_))
+    }
+
+    pub(crate) fn is_ipv4(&self) -> bool {
+        match self {
+            Addr::Ip(socket_addr) => socket_addr.is_ipv4(),
+            Addr::Relay(_, _) => false,
+        }
+    }
+
     /// Returns `None` if not an `Ip`.
     pub(crate) fn into_socket_addr(self) -> Option<SocketAddr> {
         match self {
@@ -347,26 +389,25 @@ impl Addr {
     }
 }
 
+/// A sender that sends to all our transports.
 #[derive(Debug)]
-pub(crate) struct UdpSender {
-    msock: Arc<MagicSock>, // :(
+pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpSender>,
     relay: Vec<RelaySender>,
     max_transmit_segments: usize,
 }
 
-impl UdpSender {
+impl TransportsSender {
+    #[instrument(skip(self, transmit), fields(len = transmit.contents.len()))]
     pub(crate) async fn send(
         &self,
-        destination: &Addr,
+        dst: &Addr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
-        trace!(?destination, "sending");
-
         let mut any_match = false;
-        match destination {
+        match dst {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
             #[cfg(not(wasm_browser))]
@@ -376,6 +417,7 @@ impl UdpSender {
                         any_match = true;
                         match sender.send(*addr, src, transmit).await {
                             Ok(()) => {
+                                trace!("sent");
                                 return Ok(());
                             }
                             Err(err) => {
@@ -391,6 +433,7 @@ impl UdpSender {
                         any_match = true;
                         match sender.send(url.clone(), *node_id, transmit).await {
                             Ok(()) => {
+                                trace!("sent");
                                 return Ok(());
                             }
                             Err(err) => {
@@ -408,16 +451,15 @@ impl UdpSender {
         }
     }
 
+    #[instrument(name = "poll_send", skip(self, cx, transmit), fields(len = transmit.contents.len()))]
     pub(crate) fn inner_poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
-        destination: &Addr,
+        dst: &Addr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        trace!(?destination, "sending");
-
-        match destination {
+        match dst {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
                 return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
@@ -428,7 +470,13 @@ impl UdpSender {
                     if sender.is_valid_send_addr(addr) {
                         match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
                             Poll::Pending => {}
-                            Poll::Ready(res) => return Poll::Ready(res),
+                            Poll::Ready(res) => {
+                                match &res {
+                                    Ok(()) => trace!("sent"),
+                                    Err(err) => trace!("send failed: {err:#}"),
+                                }
+                                return Poll::Ready(res);
+                            }
                         }
                     }
                 }
@@ -438,7 +486,13 @@ impl UdpSender {
                     if sender.is_valid_send_addr(url, node_id) {
                         match sender.poll_send(cx, url.clone(), *node_id, transmit) {
                             Poll::Pending => {}
-                            Poll::Ready(res) => return Poll::Ready(res),
+                            Poll::Ready(res) => {
+                                match &res {
+                                    Ok(()) => trace!("sent"),
+                                    Err(err) => trace!("send failed: {err:#}"),
+                                }
+                                return Poll::Ready(res);
+                            }
                         }
                     }
                 }
@@ -446,149 +500,218 @@ impl UdpSender {
         }
         Poll::Pending
     }
+}
 
-    /// Best effort sending
-    pub(crate) fn inner_try_send(
-        &self,
-        destination: &Addr,
-        src: Option<IpAddr>,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        trace!(?destination, "sending, best effort");
+/// A [`Transports`] that works with [`MultipathMappedAddr`]s and their IPv6 representation.
+///
+/// The [`MultipathMappedAddr`]s have an IPv6 representation that Quinn uses.  This struct
+/// knows about these and maps them back to the transport [`Addr`]s used by the wrapped
+/// [`Transports`].
+#[derive(Debug)]
+pub(crate) struct MagicTransport {
+    msock: Arc<MagicSock>,
+    transports: Transports,
+}
 
-        match destination {
-            #[cfg(wasm_browser)]
-            Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
-            #[cfg(not(wasm_browser))]
-            Addr::Ip(addr) => {
-                for transport in &self.ip {
-                    if transport.is_valid_send_addr(addr) {
-                        match transport.try_send(*addr, src, transmit) {
-                            Ok(()) => return Ok(()),
-                            Err(_err) => {
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-            Addr::Relay(url, node_id) => {
-                for transport in &self.relay {
-                    if transport.is_valid_send_addr(url, node_id) {
-                        match transport.try_send(url.clone(), *node_id, transmit) {
-                            Ok(()) => return Ok(()),
-                            Err(_err) => {
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "no transport ready",
-        ))
+impl MagicTransport {
+    pub(crate) fn new(msock: Arc<MagicSock>, transports: Transports) -> Self {
+        Self { msock, transports }
     }
 }
 
-impl quinn::UdpSender for UdpSender {
+impl quinn::AsyncUdpSocket for MagicTransport {
+    fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
+        Box::pin(MagicSender {
+            msock: self.msock.clone(),
+            sender: self.transports.create_sender(),
+        })
+    }
+
+    fn poll_recv(
+        &mut self,
+        cx: &mut Context,
+        bufs: &mut [IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        self.transports.poll_recv(cx, bufs, meta, &self.msock)
+    }
+
+    #[cfg(not(wasm_browser))]
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        let addrs: Vec<_> = self
+            .transports
+            .local_addrs()
+            .into_iter()
+            .filter_map(|addr| {
+                let addr: SocketAddr = addr.into_socket_addr()?;
+                Some(addr)
+            })
+            .collect();
+
+        if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
+            return Ok(*addr);
+        }
+        if let Some(SocketAddr::V4(addr)) = addrs.first() {
+            // Pretend to be IPv6, because our `MappedAddr`s need to be IPv6.
+            let ip = addr.ip().to_ipv6_mapped().into();
+            return Ok(SocketAddr::new(ip, addr.port()));
+        }
+
+        Err(io::Error::other("no valid address available"))
+    }
+
+    #[cfg(wasm_browser)]
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        // Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
+        Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
+    }
+
+    fn max_receive_segments(&self) -> usize {
+        self.transports.max_receive_segments()
+    }
+
+    fn may_fragment(&self) -> bool {
+        self.transports.may_fragment()
+    }
+}
+
+/// A sender for [`MagicTransport`].
+///
+/// This is special in that it handles [`MultipathMappedAddr::Mixed`] by delegating to the
+/// [`MagicSock`] which expands it back to one or more [`Addr`]s and sends it
+/// using the underlying [`Transports`].
+// TODO: Can I just send the TransportsSender along in the NodeStateMessage::SendDatagram
+// message??  That way you don't have to hook up the sender into the NodeMap!
+#[derive(Debug)]
+#[pin_project::pin_project]
+pub(crate) struct MagicSender {
+    msock: Arc<MagicSock>,
+    #[pin]
+    sender: TransportsSender,
+}
+
+impl MagicSender {
+    /// Extracts the right [`Addr`] from the [`quinn_udp::Transmit`].
+    ///
+    /// Because Quinn does only know about IP transports we map other transports to private
+    /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
+    /// transmit's destination.
+    fn mapped_addr(&self, transmit: &quinn_udp::Transmit) -> io::Result<MultipathMappedAddr> {
+        self.msock
+            .metrics
+            .magicsock
+            .send_data
+            .inc_by(transmit.contents.len() as _);
+
+        if self.msock.is_closed() {
+            self.msock
+                .metrics
+                .magicsock
+                .send_data_network_down
+                .inc_by(transmit.contents.len() as _);
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            ));
+        }
+
+        Ok(MultipathMappedAddr::from(transmit.destination))
+    }
+}
+
+impl quinn::UdpSender for MagicSender {
     fn poll_send(
-        mut self: Pin<&mut Self>,
-        transmit: &quinn_udp::Transmit,
+        self: Pin<&mut Self>,
+        quinn_transmit: &quinn_udp::Transmit,
         cx: &mut Context,
     ) -> Poll<io::Result<()>> {
-        let active_paths = self.msock.prepare_send(&self, transmit)?;
+        // On errors this methods prefers returning Ok(()) to Quinn.  Returning an error
+        // should only happen if the error is permanent and fatal and it will never be
+        // possible to send anything again.  Doing so kills the Quinn EndpointDriver.  Most
+        // send errors are intermittent errors, returning Ok(()) in those cases will mean
+        // Quinn eventually considers the packets that had send errors as lost and will try
+        // and re-send them.
+        let mapped_addr = self.mapped_addr(quinn_transmit)?;
 
-        if active_paths.is_empty() {
-            // Returning Ok here means we let QUIC timeout.
-            // Returning an error would immediately fail a connection.
-            // The philosophy of quinn-udp is that a UDP connection could
-            // come back at any time or missing should be transient so chooses to let
-            // these kind of errors time out.  See test_try_send_no_send_addr to try
-            // this out.
-            error!("no paths available for node, voiding transmit");
-            return Poll::Ready(Ok(()));
-        }
+        let transport_addr = match mapped_addr {
+            MultipathMappedAddr::Mixed(mapped_addr) => {
+                let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(&mapped_addr)
+                else {
+                    error!(dst = ?mapped_addr, "unknown NodeIdMappedAddr, dropped transmit");
+                    return Poll::Ready(Ok(()));
+                };
 
-        let mut results = SmallVec::<[_; 3]>::new();
-
-        trace!(?active_paths, "attempting to send");
-
-        for destination in active_paths {
-            let src = transmit.src_ip;
-            let transmit = Transmit {
-                ecn: transmit.ecn,
-                contents: transmit.contents,
-                segment_size: transmit.segment_size,
-            };
-
-            let res = self
-                .as_mut()
-                .inner_poll_send(cx, &destination, src, &transmit);
-            match res {
-                Poll::Ready(Ok(())) => {
-                    trace!(dst = ?destination, "sent transmit");
+                // Note we drop the src_ip set in the Quinn Transmit.  This is only the
+                // Initial packet we are sending, so we do not yet have an src address we
+                // need to respond from.
+                if let Some(src_ip) = quinn_transmit.src_ip {
+                    warn!(dst = ?mapped_addr, ?src_ip, dst_node = %node_id.fmt_short(),
+                        "oops, flub didn't think this would happen");
                 }
-                Poll::Ready(Err(ref err)) => {
-                    warn!(dst = ?destination, "failed to send: {err:#}");
-                }
-                Poll::Pending => {}
+
+                let sender = self.msock.node_map.node_state_actor(node_id);
+                let transmit = OwnedTransmit::from(quinn_transmit);
+                return match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
+                    Ok(()) => {
+                        trace!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(), "sent transmit");
+                        Poll::Ready(Ok(()))
+                    }
+                    Err(err) => {
+                        // We do not want to block the next send which might be on a
+                        // different transport.  Instead we let Quinn handle this as
+                        // a lost datagram.
+                        // TODO: Revisit this: we might want to do something better.
+                        debug!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(),
+                            "NodeStateActor inbox {err:#}, dropped transmit");
+                        Poll::Ready(Ok(()))
+                    }
+                };
             }
-            results.push(res);
-        }
+            MultipathMappedAddr::Relay(relay_mapped_addr) => {
+                match self
+                    .msock
+                    .node_map
+                    .relay_mapped_addrs
+                    .lookup(&relay_mapped_addr)
+                {
+                    Some((relay_url, node_id)) => Addr::Relay(relay_url, node_id),
+                    None => {
+                        error!("unknown RelayMappedAddr, dropped transmit");
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+            }
+            MultipathMappedAddr::Ip(socket_addr) => Addr::Ip(socket_addr),
+        };
 
-        if results.iter().all(|p| matches!(p, Poll::Pending)) {
-            // Handle backpressure.
-            return Poll::Pending;
+        let transmit = Transmit {
+            ecn: quinn_transmit.ecn,
+            contents: quinn_transmit.contents,
+            segment_size: quinn_transmit.segment_size,
+        };
+        let this = self.project();
+
+        match this
+            .sender
+            .inner_poll_send(cx, &transport_addr, quinn_transmit.src_ip, &transmit)
+        {
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(ref err)) => {
+                warn!("dropped transmit: {err:#}");
+                Poll::Ready(Ok(()))
+            }
+            Poll::Pending => {
+                // We do not want to block the next send which might be on a
+                // different transport.  Instead we let Quinn handle this as a lost
+                // datagram.
+                // TODO: Revisit this: we might want to do something better.
+                trace!("transport pending, dropped transmit");
+                Poll::Ready(Ok(()))
+            }
         }
-        Poll::Ready(Ok(()))
     }
 
     fn max_transmit_segments(&self) -> usize {
-        self.max_transmit_segments
-    }
-
-    fn try_send(self: Pin<&mut Self>, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        let active_paths = self.msock.prepare_send(&self, transmit)?;
-        if active_paths.is_empty() {
-            // Returning Ok here means we let QUIC timeout.
-            // Returning an error would immediately fail a connection.
-            // The philosophy of quinn-udp is that a UDP connection could
-            // come back at any time or missing should be transient so chooses to let
-            // these kind of errors time out.  See test_try_send_no_send_addr to try
-            // this out.
-            error!("no paths available for node, voiding transmit");
-            return Ok(());
-        }
-
-        let mut results = SmallVec::<[_; 3]>::new();
-
-        trace!(?active_paths, "attempting to send");
-
-        for destination in active_paths {
-            let src = transmit.src_ip;
-            let transmit = Transmit {
-                ecn: transmit.ecn,
-                contents: transmit.contents,
-                segment_size: transmit.segment_size,
-            };
-
-            let res = self.inner_try_send(&destination, src, &transmit);
-            match res {
-                Ok(()) => {
-                    trace!(dst = ?destination, "sent transmit");
-                }
-                Err(ref err) => {
-                    warn!(dst = ?destination, "failed to send: {err:#}");
-                }
-            }
-            results.push(res);
-        }
-
-        if results.iter().all(|p| p.is_err()) {
-            return Err(io::Error::other("all failed"));
-        }
-        Ok(())
+        self.sender.max_transmit_segments
     }
 }

@@ -1,34 +1,40 @@
 use std::{
-    collections::{BTreeSet, HashMap, hash_map::Entry},
+    collections::{BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    sync::Mutex,
-    time::Duration,
+    sync::{Arc, Mutex},
 };
 
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use n0_future::time::Instant;
+use iroh_base::{NodeAddr, NodeId, RelayUrl};
+use n0_future::task::AbortOnDropHandle;
+use node_state::{NodeStateActor, NodeStateHandle};
 use serde::{Deserialize, Serialize};
-use stun_rs::TransactionId;
-use tracing::{debug, info, instrument, trace, warn};
+use tokio::sync::mpsc;
+use tracing::{Instrument, info_span, trace, warn};
 
-use self::node_state::{NodeState, Options, PingHandled};
-use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
-use crate::disco::{CallMeMaybe, Pong, SendAddr};
+#[cfg(any(test, feature = "test-utils"))]
+use super::transports::TransportsSender;
+#[cfg(not(any(test, feature = "test-utils")))]
+use super::transports::TransportsSender;
+use super::{
+    DirectAddr, DiscoState, MagicsockMetrics,
+    mapped_addrs::{AddrMap, NodeIdMappedAddr, RelayMappedAddr},
+    transports::{self, OwnedTransmit},
+};
+use crate::disco::{self};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
 mod node_state;
 mod path_state;
-mod path_validity;
-mod udp_paths;
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, RemoteInfo, SendPing};
+pub(super) use node_state::NodeStateMessage;
+pub use node_state::{ConnectionType, PathInfo, TransportType};
 
-/// Number of nodes that are inactive for which we keep info about. This limit is enforced
-/// periodically via [`NodeMap::prune_inactive`].
-const MAX_INACTIVE_NODES: usize = 30;
+// TODO: use this
+// /// Number of nodes that are inactive for which we keep info about. This limit is enforced
+// /// periodically via [`NodeMap::prune_inactive`].
+// const MAX_INACTIVE_NODES: usize = 30;
 
 /// Map of the [`NodeState`] information for all the known nodes.
 ///
@@ -47,32 +53,30 @@ const MAX_INACTIVE_NODES: usize = 30;
 ///   These come and go as the node moves around on the internet
 ///
 /// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct NodeMap {
+    /// The node ID of the local node.
+    local_node_id: NodeId,
     inner: Mutex<NodeMapInner>,
+    /// The mapping between [`NodeId`]s and [`NodeIdMappedAddr`]s.
+    pub(super) node_mapped_addrs: AddrMap<NodeId, NodeIdMappedAddr>,
+    /// The mapping between nodes via a relay and their [`RelayMappedAddr`]s.
+    pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, NodeId), RelayMappedAddr>,
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub(super) struct NodeMapInner {
-    by_node_key: HashMap<NodeId, usize>,
-    by_ip_port: HashMap<IpPort, usize>,
-    by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
-    by_id: HashMap<usize, NodeState>,
-    next_id: usize,
+    metrics: Arc<MagicsockMetrics>,
+    /// Handle to an actor that can send over the transports.
+    transports_handle: TransportsSenderHandle,
+    local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
+    disco: DiscoState,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
-}
-
-/// Identifier to look up a [`NodeState`] in the [`NodeMap`].
-///
-/// You can look up entries in [`NodeMap`] with various keys, depending on the context you
-/// have for the node.  These are all the keys the [`NodeMap`] can use.
-#[derive(Debug, Clone)]
-enum NodeStateKey {
-    Idx(usize),
-    NodeId(NodeId),
-    NodeIdMappedAddr(NodeIdMappedAddr),
-    IpPort(IpPort),
+    /// The [`NodeStateActor`] for each remote node.
+    ///
+    /// [`NodeStateActor`]: node_state::NodeStateActor
+    node_states: HashMap<NodeId, NodeStateHandle>,
 }
 
 /// The origin or *source* through which an address associated with a remote node
@@ -84,14 +88,6 @@ enum NodeStateKey {
 /// A [`Source`] helps track how and where an address was learned. Multiple
 /// sources can be associated with a single address, if we have discovered this
 /// address through multiple means.
-///
-/// Each time a [`NodeAddr`] is added to the node map a [`Source`] must be supplied to indicate
-/// how the address was obtained.
-///
-/// A [`Source`] can describe a variety of places that an address or node was
-/// discovered, such as a configured discovery service, the network itself
-/// (if another node has reached out to us), or as a user supplied [`NodeAddr`].
-
 #[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Source {
@@ -115,198 +111,67 @@ pub enum Source {
         /// The name of the application that added the node
         name: String,
     },
+    /// The address was advertised by a call-me-maybe DISCO message.
+    CallMeMaybe,
+    /// We received a ping on the path.
+    Ping,
+    /// We established a connection on this address.
+    ///
+    /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
+    /// was added to the [`NodeStateActor`].
+    ///
+    /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
+    /// [`NodeStateActor`]: self::node_state::NodeStateActor
+    Connection,
 }
 
 impl NodeMap {
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) fn load_from_vec(
-        nodes: Vec<NodeAddr>,
+    /// Creates a new [`NodeMap`].
+    pub(super) fn new(
+        local_node_id: NodeId,
         #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
-        have_ipv6: bool,
-        metrics: &Metrics,
+        metrics: Arc<MagicsockMetrics>,
+        sender: TransportsSender,
+        local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
+        disco: DiscoState,
     ) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(
-            nodes,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection,
-            have_ipv6,
-            metrics,
-        ))
-    }
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
 
-    fn from_inner(inner: NodeMapInner) -> Self {
+        #[cfg(any(test, feature = "test-utils"))]
+        let inner = {
+            let mut inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
+            inner.path_selection = path_selection;
+            inner
+        };
+
         Self {
+            local_node_id,
             inner: Mutex::new(inner),
+            node_mapped_addrs: Default::default(),
+            relay_mapped_addrs: Default::default(),
         }
     }
 
-    /// Add the contact information for a node.
-    pub(super) fn add_node_addr(
-        &self,
-        node_addr: NodeAddr,
-        source: Source,
-        have_v6: bool,
-        metrics: &Metrics,
-    ) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .add_node_addr(node_addr, source, have_v6, metrics)
-    }
-
-    /// Number of nodes currently listed.
-    pub(super) fn node_count(&self) -> usize {
-        self.inner.lock().expect("poisoned").node_count()
-    }
-
-    #[cfg(not(wasm_browser))]
-    pub(super) fn receive_udp(
-        &self,
-        udp_addr: SocketAddr,
-    ) -> Option<(PublicKey, NodeIdMappedAddr)> {
-        self.inner.lock().expect("poisoned").receive_udp(udp_addr)
-    }
-
-    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .receive_relay(relay_url, src)
-    }
-
-    pub(super) fn notify_ping_sent(
-        &self,
-        id: usize,
-        dst: SendAddr,
-        tx_id: stun_rs::TransactionId,
-        purpose: DiscoPingPurpose,
-        msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
-    ) {
-        if let Some(ep) = self
-            .inner
-            .lock()
-            .expect("poisoned")
-            .get_mut(NodeStateKey::Idx(id))
-        {
-            ep.ping_sent(dst, tx_id, purpose, msg_sender);
+    /// Adds addresses where a node might be contactable.
+    pub(super) async fn add_node_addr(&self, node_addr: NodeAddr, source: Source) {
+        if let Some(ref relay_url) = node_addr.relay_url {
+            // Ensure we have a RelayMappedAddress for this.
+            self.relay_mapped_addrs
+                .get(&(relay_url.clone(), node_addr.node_id));
         }
+        let node_state = self.node_state_actor(node_addr.node_id);
+
+        // This only fails if the sender is closed.  That means the NodeStateActor has
+        // stopped, which only happens during shutdown.
+        node_state
+            .send(NodeStateMessage::AddNodeAddr(node_addr, source))
+            .await
+            .ok();
     }
 
-    pub(super) fn notify_ping_timeout(
-        &self,
-        id: usize,
-        tx_id: stun_rs::TransactionId,
-        metrics: &Metrics,
-    ) {
-        if let Some(ep) = self
-            .inner
-            .lock()
-            .expect("poisoned")
-            .get_mut(NodeStateKey::Idx(id))
-        {
-            ep.ping_timeout(tx_id, Instant::now(), metrics);
-        }
-    }
-
-    pub(super) fn get_quic_mapped_addr_for_node_key(
-        &self,
-        node_key: NodeId,
-    ) -> Option<NodeIdMappedAddr> {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .get(NodeStateKey::NodeId(node_key))
-            .map(|ep| *ep.quic_mapped_addr())
-    }
-
-    /// Insert a received ping into the node map, and return whether a ping with this tx_id was already
-    /// received.
-    pub(super) fn handle_ping(
-        &self,
-        sender: PublicKey,
-        src: SendAddr,
-        tx_id: TransactionId,
-    ) -> PingHandled {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .handle_ping(sender, src, tx_id)
-    }
-
-    pub(super) fn handle_pong(
-        &self,
-        sender: PublicKey,
-        src: &transports::Addr,
-        pong: Pong,
-        metrics: &Metrics,
-    ) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .handle_pong(sender, src, pong, metrics)
-    }
-
-    #[must_use = "actions must be handled"]
-    pub(super) fn handle_call_me_maybe(
-        &self,
-        sender: PublicKey,
-        cm: CallMeMaybe,
-        metrics: &Metrics,
-    ) -> Vec<PingAction> {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .handle_call_me_maybe(sender, cm, metrics)
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub(super) fn get_send_addrs(
-        &self,
-        addr: NodeIdMappedAddr,
-        have_ipv6: bool,
-        metrics: &Metrics,
-    ) -> Option<(
-        PublicKey,
-        Option<SocketAddr>,
-        Option<RelayUrl>,
-        Vec<PingAction>,
-    )> {
-        let mut inner = self.inner.lock().expect("poisoned");
-        let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
-        let public_key = *ep.public_key();
-        trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
-        let (udp_addr, relay_url, ping_actions) = ep.get_send_addrs(have_ipv6, metrics);
-        Some((public_key, udp_addr, relay_url, ping_actions))
-    }
-
-    pub(super) fn reset_node_states(&self, metrics: &Metrics) {
-        let now = Instant::now();
-        let mut inner = self.inner.lock().expect("poisoned");
-        for (_, ep) in inner.node_states_mut() {
-            ep.note_connectivity_change(now, metrics);
-        }
-    }
-
-    pub(super) fn nodes_stayin_alive(&self, have_ipv6: bool) -> Vec<PingAction> {
-        let mut inner = self.inner.lock().expect("poisoned");
-        inner
-            .node_states_mut()
-            .flat_map(|(_idx, node_state)| node_state.stayin_alive(have_ipv6))
-            .collect()
-    }
-
-    /// Returns the [`RemoteInfo`]s for each node in the node map.
-    #[cfg(test)]
-    pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
-        // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
-        // we can't avoid `collect` here since it would hold a lock for an indefinite time. Even if
-        // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
-        // internal iterator will be a hassle, if possible at all.
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .remote_infos_iter(now)
-            .collect()
+    pub(super) fn node_mapped_addr(&self, node_id: NodeId) -> NodeIdMappedAddr {
+        self.node_mapped_addrs.get(&node_id)
     }
 
     /// Returns a [`n0_watcher::Direct`] for given node's [`ConnectionType`].
@@ -319,195 +184,104 @@ impl NodeMap {
         self.inner.lock().expect("poisoned").conn_type(node_id)
     }
 
-    pub(super) fn latency(&self, node_id: NodeId) -> Option<Duration> {
-        self.inner.lock().expect("poisoned").latency(node_id)
+    /// Returns the sender for the [`NodeStateActor`].
+    ///
+    /// If needed a new actor is started on demand.
+    ///
+    /// [`NodeStateActor`]: node_state::NodeStateActor
+    pub(super) fn node_state_actor(&self, node_id: NodeId) -> mpsc::Sender<NodeStateMessage> {
+        let mut inner = self.inner.lock().expect("poisoned");
+        match inner.node_states.get(&node_id) {
+            Some(handle) => handle.sender.clone(),
+            None => {
+                // Create a new NodeStateActor and insert it into the node map.
+                let sender = inner.transports_handle.inbox.clone();
+                let local_addrs = inner.local_addrs.clone();
+                let disco = inner.disco.clone();
+                let metrics = inner.metrics.clone();
+                let actor = NodeStateActor::new(
+                    node_id,
+                    self.local_node_id,
+                    sender,
+                    local_addrs,
+                    disco,
+                    self.relay_mapped_addrs.clone(),
+                    metrics,
+                );
+                let handle = actor.start();
+                let sender = handle.sender.clone();
+                inner.node_states.insert(node_id, handle);
+
+                // Ensure there is a NodeMappedAddr for this NodeId.
+                self.node_mapped_addrs.get(&node_id);
+                sender
+            }
+        }
     }
 
-    /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
-    pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.inner.lock().expect("poisoned").remote_info(node_id)
+    pub(super) fn handle_ping(&self, msg: disco::Ping, sender: NodeId, src: transports::Addr) {
+        if msg.node_key != sender {
+            warn!("DISCO Ping NodeId mismatch, ignoring ping");
+            return;
+        }
+        let node_state = self.node_state_actor(sender);
+        if let Err(err) = node_state.try_send(NodeStateMessage::PingReceived(msg, src)) {
+            // TODO: This is really, really bad and will drop pings under load.  But
+            //    DISCO pings are going away with QUIC-NAT-TRAVERSAL so I don't care.
+            warn!("DISCO Ping dropped: {err:#}");
+        }
     }
 
-    /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
-    pub(super) fn prune_inactive(&self) {
-        self.inner.lock().expect("poisoned").prune_inactive();
+    pub(super) fn handle_pong(&self, msg: disco::Pong, sender: NodeId, src: transports::Addr) {
+        let node_state = self.node_state_actor(sender);
+        if let Err(err) = node_state.try_send(NodeStateMessage::PongReceived(msg, src)) {
+            // TODO: This is really, really bad and will drop pongs under load.  But
+            //    DISCO pongs are going away with QUIC-NAT-TRAVERSAL so I don't care.
+            warn!("DISCO Pong dropped: {err:#}");
+        }
     }
 
-    pub(crate) fn on_direct_addr_discovered(&self, discovered: BTreeSet<SocketAddr>) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .on_direct_addr_discovered(discovered, Instant::now());
+    pub(super) fn handle_call_me_maybe(
+        &self,
+        msg: disco::CallMeMaybe,
+        sender: NodeId,
+        src: transports::Addr,
+    ) {
+        if !src.is_relay() {
+            warn!("DISCO CallMeMaybe packets should only come via relay");
+            return;
+        }
+        let node_state = self.node_state_actor(sender);
+        if let Err(err) = node_state.try_send(NodeStateMessage::CallMeMaybeReceived(msg)) {
+            // TODO: This is bad and will drop call-me-maybe's under load.  But
+            //    DISCO CallMeMaybe going away with QUIC-NAT-TRAVERSAL so I don't care.
+            warn!("DISCO CallMeMaybe dropped: {err:#}");
+        }
     }
 }
 
 impl NodeMapInner {
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    fn load_from_vec(
-        nodes: Vec<NodeAddr>,
-        #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
-        have_ipv6: bool,
-        metrics: &Metrics,
+    fn new(
+        metrics: Arc<MagicsockMetrics>,
+        sender: TransportsSender,
+        local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
+        disco: DiscoState,
     ) -> Self {
-        let mut me = Self {
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection,
-            ..Default::default()
-        };
-        for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved, have_ipv6, metrics);
-        }
-        me
-    }
-
-    /// Add the contact information for a node.
-    #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
-    fn add_node_addr(
-        &mut self,
-        node_addr: NodeAddr,
-        source: Source,
-        have_ipv6: bool,
-        metrics: &Metrics,
-    ) {
-        let source0 = source.clone();
-        let node_id = node_addr.node_id;
-        let relay_url = node_addr.relay_url.clone();
-        #[cfg(any(test, feature = "test-utils"))]
-        let path_selection = self.path_selection;
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
-            node_id,
-            relay_url,
-            active: false,
-            source,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection,
-        });
-        node_state.update_from_node_addr(
-            node_addr.relay_url.as_ref(),
-            &node_addr.direct_addresses,
-            source0,
-            have_ipv6,
+        let transports_handle = Self::start_transports_sender(sender);
+        Self {
             metrics,
-        );
-        let id = node_state.id();
-        for addr in node_addr.direct_addresses() {
-            self.set_node_state_for_ip_port(*addr, id);
+            transports_handle,
+            local_addrs,
+            disco,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection: Default::default(),
+            node_states: Default::default(),
         }
     }
 
-    /// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    pub(super) fn on_direct_addr_discovered(
-        &mut self,
-        discovered: BTreeSet<SocketAddr>,
-        now: Instant,
-    ) {
-        for addr in discovered {
-            self.remove_by_ipp(addr.into(), now, "matches our local addr")
-        }
-    }
-
-    /// Removes a direct address from a node.
-    fn remove_by_ipp(&mut self, ipp: IpPort, now: Instant, why: &'static str) {
-        if let Some(id) = self.by_ip_port.remove(&ipp) {
-            if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
-                let node = entry.get_mut();
-                node.remove_direct_addr(&ipp, now, why);
-                if node.direct_addresses().count() == 0 {
-                    let node_id = node.public_key();
-                    let mapped_addr = node.quic_mapped_addr();
-                    self.by_node_key.remove(node_id);
-                    self.by_quic_mapped_addr.remove(mapped_addr);
-                    debug!(node_id=%node_id.fmt_short(), why, "removing node");
-                    entry.remove();
-                }
-            }
-        }
-    }
-
-    fn get_id(&self, id: NodeStateKey) -> Option<usize> {
-        match id {
-            NodeStateKey::Idx(id) => Some(id),
-            NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
-            NodeStateKey::NodeIdMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
-            NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
-        }
-    }
-
-    fn get_mut(&mut self, id: NodeStateKey) -> Option<&mut NodeState> {
-        self.get_id(id).and_then(|id| self.by_id.get_mut(&id))
-    }
-
-    fn get(&self, id: NodeStateKey) -> Option<&NodeState> {
-        self.get_id(id).and_then(|id| self.by_id.get(&id))
-    }
-
-    fn get_or_insert_with(
-        &mut self,
-        id: NodeStateKey,
-        f: impl FnOnce() -> Options,
-    ) -> &mut NodeState {
-        let id = self.get_id(id);
-        match id {
-            None => self.insert_node(f()),
-            Some(id) => self.by_id.get_mut(&id).expect("is not empty"),
-        }
-    }
-
-    /// Number of nodes currently listed.
-    fn node_count(&self) -> usize {
-        self.by_id.len()
-    }
-
-    /// Marks the node we believe to be at `ipp` as recently used.
-    #[cfg(not(wasm_browser))]
-    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, NodeIdMappedAddr)> {
-        let ip_port: IpPort = udp_addr.into();
-        let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
-            trace!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
-            return None;
-        };
-        node_state.receive_udp(ip_port, Instant::now());
-        Some((*node_state.public_key(), *node_state.quic_mapped_addr()))
-    }
-
-    #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
-        #[cfg(any(test, feature = "test-utils"))]
-        let path_selection = self.path_selection;
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
-            trace!("packets from unknown node, insert into node map");
-            Options {
-                node_id: src,
-                relay_url: Some(relay_url.clone()),
-                active: true,
-                source: Source::Relay,
-                #[cfg(any(test, feature = "test-utils"))]
-                path_selection,
-            }
-        });
-        node_state.receive_relay(relay_url, src, Instant::now());
-        *node_state.quic_mapped_addr()
-    }
-
-    #[cfg(test)]
-    fn node_states(&self) -> impl Iterator<Item = (&usize, &NodeState)> {
-        self.by_id.iter()
-    }
-
-    fn node_states_mut(&mut self) -> impl Iterator<Item = (&usize, &mut NodeState)> {
-        self.by_id.iter_mut()
-    }
-
-    /// Get the [`RemoteInfo`]s for all nodes.
-    #[cfg(test)]
-    fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
-        self.node_states().map(move |(_, ep)| ep.info(now))
-    }
-
-    /// Get the [`RemoteInfo`]s for each node.
-    fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.get(NodeStateKey::NodeId(node_id))
-            .map(|ep| ep.info(Instant::now()))
+    fn start_transports_sender(sender: TransportsSender) -> TransportsSenderHandle {
+        let actor = TransportsSenderActor::new(sender);
+        actor.start()
     }
 
     /// Returns a stream of [`ConnectionType`].
@@ -519,178 +293,8 @@ impl NodeMapInner {
     ///
     /// Will return `None` if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.get(NodeStateKey::NodeId(node_id))
-            .map(|ep| ep.conn_type())
-    }
-
-    fn latency(&self, node_id: NodeId) -> Option<Duration> {
-        self.get(NodeStateKey::NodeId(node_id))
-            .and_then(|ep| ep.latency())
-    }
-
-    fn handle_pong(
-        &mut self,
-        sender: NodeId,
-        src: &transports::Addr,
-        pong: Pong,
-        metrics: &Metrics,
-    ) {
-        if let Some(ns) = self.get_mut(NodeStateKey::NodeId(sender)).as_mut() {
-            let insert = ns.handle_pong(&pong, src.clone().into(), metrics);
-            if let Some((src, key)) = insert {
-                self.set_node_key_for_ip_port(src, &key);
-            }
-            trace!(?insert, "received pong")
-        } else {
-            warn!("received pong: node unknown, ignore")
-        }
-    }
-
-    #[must_use = "actions must be handled"]
-    fn handle_call_me_maybe(
-        &mut self,
-        sender: NodeId,
-        cm: CallMeMaybe,
-        metrics: &Metrics,
-    ) -> Vec<PingAction> {
-        let ns_id = NodeStateKey::NodeId(sender);
-        if let Some(id) = self.get_id(ns_id.clone()) {
-            for number in &cm.my_numbers {
-                // ensure the new addrs are known
-                self.set_node_state_for_ip_port(*number, id);
-            }
-        }
-        match self.get_mut(ns_id) {
-            None => {
-                debug!("received call-me-maybe: ignore, node is unknown");
-                metrics.recv_disco_call_me_maybe_bad_disco.inc();
-                vec![]
-            }
-            Some(ns) => {
-                debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
-
-                ns.handle_call_me_maybe(cm, metrics)
-            }
-        }
-    }
-
-    fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
-        #[cfg(any(test, feature = "test-utils"))]
-        let path_selection = self.path_selection;
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(sender), || {
-            debug!("received ping: node unknown, add to node map");
-            let source = if src.is_relay() {
-                Source::Relay
-            } else {
-                Source::Udp
-            };
-            Options {
-                node_id: sender,
-                relay_url: src.relay_url(),
-                active: true,
-                source,
-                #[cfg(any(test, feature = "test-utils"))]
-                path_selection,
-            }
-        });
-
-        let handled = node_state.handle_ping(src.clone(), tx_id);
-        if let SendAddr::Udp(ref addr) = src {
-            if matches!(handled.role, PingRole::NewPath) {
-                self.set_node_key_for_ip_port(*addr, &sender);
-            }
-        }
-        handled
-    }
-
-    /// Inserts a new node into the [`NodeMap`].
-    fn insert_node(&mut self, options: Options) -> &mut NodeState {
-        info!(
-            node = %options.node_id.fmt_short(),
-            relay_url = ?options.relay_url,
-            source = %options.source,
-            "inserting new node in NodeMap",
-        );
-        let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1);
-        let node_state = NodeState::new(id, options);
-
-        // update indices
-        self.by_quic_mapped_addr
-            .insert(*node_state.quic_mapped_addr(), id);
-        self.by_node_key.insert(*node_state.public_key(), id);
-
-        self.by_id.insert(id, node_state);
-        self.by_id.get_mut(&id).expect("just inserted")
-    }
-
-    /// Makes future node lookups by ipp return the same endpoint as a lookup by nk.
-    ///
-    /// This should only be called with a fully verified mapping of ipp to
-    /// nk, because calling this function defines the endpoint we hand to
-    /// WireGuard for packets received from ipp.
-    fn set_node_key_for_ip_port(&mut self, ipp: impl Into<IpPort>, nk: &PublicKey) {
-        let ipp = ipp.into();
-        if let Some(id) = self.by_ip_port.get(&ipp) {
-            if !self.by_node_key.contains_key(nk) {
-                self.by_node_key.insert(*nk, *id);
-            }
-            self.by_ip_port.remove(&ipp);
-        }
-        if let Some(id) = self.by_node_key.get(nk) {
-            trace!("insert ip -> id: {:?} -> {}", ipp, id);
-            self.by_ip_port.insert(ipp, *id);
-        }
-    }
-
-    fn set_node_state_for_ip_port(&mut self, ipp: impl Into<IpPort>, id: usize) {
-        let ipp = ipp.into();
-        trace!(?ipp, ?id, "set endpoint for ip:port");
-        self.by_ip_port.insert(ipp, id);
-    }
-
-    /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
-    fn prune_inactive(&mut self) {
-        let now = Instant::now();
-        let mut prune_candidates: Vec<_> = self
-            .by_id
-            .values()
-            .filter(|node| !node.is_active(&now))
-            .map(|node| (*node.public_key(), node.last_used()))
-            .collect();
-
-        let prune_count = prune_candidates.len().saturating_sub(MAX_INACTIVE_NODES);
-        if prune_count == 0 {
-            // within limits
-            return;
-        }
-
-        prune_candidates.sort_unstable_by_key(|(_pk, last_used)| *last_used);
-        prune_candidates.truncate(prune_count);
-        for (public_key, last_used) in prune_candidates.into_iter() {
-            let node = public_key.fmt_short();
-            match last_used.map(|instant| instant.elapsed()) {
-                Some(last_used) => trace!(%node, ?last_used, "pruning inactive"),
-                None => trace!(%node, last_used=%"never", "pruning inactive"),
-            }
-
-            let Some(id) = self.by_node_key.remove(&public_key) else {
-                debug_assert!(false, "missing by_node_key entry for pk in by_id");
-                continue;
-            };
-
-            let Some(ep) = self.by_id.remove(&id) else {
-                debug_assert!(false, "missing by_id entry for id in by_node_key");
-                continue;
-            };
-
-            for ip_port in ep.direct_addresses() {
-                self.by_ip_port.remove(&ip_port);
-            }
-
-            self.by_quic_mapped_addr.remove(ep.quic_mapped_addr());
-        }
+    fn conn_type(&self, _node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
+        todo!();
     }
 }
 
@@ -731,205 +335,227 @@ impl IpPort {
     }
 }
 
+/// An actor that can send datagrams onto iroh transports.
+///
+/// The [`NodeStateActor`]s want to be able to send datagrams.  Because we can not create
+/// [`TransportsSender`]s on demand we must share one for the entire [`NodeMap`], which
+/// lives in this actor.
+///
+/// [`NodeStateActor`]: node_state::NodeStateActor
+#[derive(Debug)]
+struct TransportsSenderActor {
+    sender: TransportsSender,
+}
+
+impl TransportsSenderActor {
+    fn new(sender: TransportsSender) -> Self {
+        Self { sender }
+    }
+
+    fn start(self) -> TransportsSenderHandle {
+        // This actor gets an inbox size of exactly 1.  This is the same as if they had the
+        // underlying sender directly: either you can send or not, or you await until you
+        // can.  No need to introduce extra buffering.
+        let (tx, rx) = mpsc::channel(1);
+
+        let task = tokio::spawn(
+            async move {
+                self.run(rx).await;
+            }
+            .instrument(info_span!("TransportsSenderActor")),
+        );
+        TransportsSenderHandle {
+            inbox: tx,
+            _task: AbortOnDropHandle::new(task),
+        }
+    }
+
+    async fn run(self, mut inbox: mpsc::Receiver<TransportsSenderMessage>) {
+        use TransportsSenderMessage::SendDatagram;
+
+        while let Some(SendDatagram(dst, owned_transmit)) = inbox.recv().await {
+            let transmit = transports::Transmit {
+                ecn: owned_transmit.ecn,
+                contents: owned_transmit.contents.as_ref(),
+                segment_size: owned_transmit.segment_size,
+            };
+            let len = transmit.contents.len();
+            match self.sender.send(&dst, None, &transmit).await {
+                Ok(()) => {}
+                Err(err) => {
+                    trace!(?dst, %len, "transmit failed to send: {err:#}");
+                }
+            };
+        }
+        trace!("actor terminating");
+    }
+}
+
+#[derive(Debug)]
+struct TransportsSenderHandle {
+    inbox: mpsc::Sender<TransportsSenderMessage>,
+    _task: AbortOnDropHandle<()>,
+}
+
+#[derive(Debug)]
+enum TransportsSenderMessage {
+    SendDatagram(transports::Addr, OwnedTransmit),
+}
+
+impl From<(transports::Addr, OwnedTransmit)> for TransportsSenderMessage {
+    fn from(source: (transports::Addr, OwnedTransmit)) -> Self {
+        Self::SendDatagram(source.0, source.1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
 
-    use iroh_base::SecretKey;
-    use rand::SeedableRng;
     use tracing_test::traced_test;
 
-    use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
+    // use super::*;
 
-    impl NodeMap {
-        #[track_caller]
-        fn add_test_addr(&self, node_addr: NodeAddr) {
-            self.add_node_addr(
-                node_addr,
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-                true,
-                &Default::default(),
-            )
-        }
-    }
+    // impl NodeMap {
+    //     async fn add_test_addr(&self, node_addr: NodeAddr) {
+    //         self.add_node_addr(
+    //             node_addr,
+    //             Source::NamedApp {
+    //                 name: "test".into(),
+    //             },
+    //         )
+    //         .await;
+    //     }
+    // }
 
-    /// Test persisting and loading of known nodes.
+    // fn addr(port: u16) -> SocketAddr {
+    //     (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
+    // }
+
     #[tokio::test]
     #[traced_test]
-    async fn restore_from_vec() {
-        let node_map = NodeMap::default();
+    async fn test_prune_direct_addresses() {
+        panic!("support this again");
+        // let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
+        // let direct_addrs = DiscoveredDirectAddrs::default();
+        // let secret_key = SecretKey::generate(&mut rand::rngs::OsRng);
+        // let (disco, _) = DiscoState::new(&secret_key);
+        // let node_map = NodeMap::new(
+        //     secret_key.public(),
+        //     Default::default(),
+        //     transports.create_sender(),
+        //     direct_addrs.addrs.watch(),
+        //     disco,
+        // );
+        // let public_key = SecretKey::generate(rand::thread_rng()).public();
+        // let id = node_map
+        //     .inner
+        //     .lock()
+        //     .unwrap()
+        //     .insert_node(Options {
+        //         node_id: public_key,
+        //         relay_url: None,
+        //         active: false,
+        //         source: Source::NamedApp {
+        //             name: "test".into(),
+        //         },
+        //         path_selection: PathSelection::default(),
+        //     })
+        //     .id();
 
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let node_a = SecretKey::generate(&mut rng).public();
-        let node_b = SecretKey::generate(&mut rng).public();
-        let node_c = SecretKey::generate(&mut rng).public();
-        let node_d = SecretKey::generate(&mut rng).public();
+        // const LOCALHOST: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
 
-        let relay_x: RelayUrl = "https://my-relay-1.com".parse().unwrap();
-        let relay_y: RelayUrl = "https://my-relay-2.com".parse().unwrap();
+        // // add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
+        // // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
 
-        let direct_addresses_a = [addr(4000), addr(4001)];
-        let direct_addresses_c = [addr(5000)];
+        // info!("Adding active addresses");
+        // for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+        //     let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
+        //     let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
+        //     // add address
+        //     node_map.add_test_addr(node_addr).await;
+        //     // make it active
+        //     node_map.inner.lock().unwrap().receive_udp(addr);
+        // }
 
-        let node_addr_a = NodeAddr::new(node_a)
-            .with_relay_url(relay_x)
-            .with_direct_addresses(direct_addresses_a);
-        let node_addr_b = NodeAddr::new(node_b).with_relay_url(relay_y);
-        let node_addr_c = NodeAddr::new(node_c).with_direct_addresses(direct_addresses_c);
-        let node_addr_d = NodeAddr::new(node_d);
+        // info!("Adding offline/inactive addresses");
+        // for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
+        //     let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
+        //     let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
+        //     node_map.add_test_addr(node_addr).await;
+        // }
 
-        node_map.add_test_addr(node_addr_a);
-        node_map.add_test_addr(node_addr_b);
-        node_map.add_test_addr(node_addr_c);
-        node_map.add_test_addr(node_addr_d);
+        // let mut node_map_inner = node_map.inner.lock().unwrap();
+        // let endpoint = node_map_inner.by_id.get_mut(&id).unwrap();
 
-        let mut addrs: Vec<NodeAddr> = node_map
-            .list_remote_infos(Instant::now())
-            .into_iter()
-            .filter_map(|info| {
-                let addr: NodeAddr = info.into();
-                if addr.is_empty() {
-                    return None;
-                }
-                Some(addr)
-            })
-            .collect();
-        let loaded_node_map = NodeMap::load_from_vec(
-            addrs.clone(),
-            PathSelection::default(),
-            true,
-            &Default::default(),
-        );
+        // info!("Adding alive addresses");
+        // for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+        //     let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
+        //     let txid = stun_rs::TransactionId::from([i as u8; 12]);
+        //     // Note that this already invokes .prune_direct_addresses() because these are
+        //     // new UDP paths.
+        //     // endpoint.handle_ping(addr, txid);
+        // }
 
-        let mut loaded: Vec<NodeAddr> = loaded_node_map
-            .list_remote_infos(Instant::now())
-            .into_iter()
-            .filter_map(|info| {
-                let addr: NodeAddr = info.into();
-                if addr.is_empty() {
-                    return None;
-                }
-                Some(addr)
-            })
-            .collect();
+        // info!("Pruning addresses");
+        // endpoint.prune_direct_addresses(Instant::now());
 
-        loaded.sort_unstable();
-        addrs.sort_unstable();
+        // // Half the offline addresses should have been pruned.  All the active and alive
+        // // addresses should have been kept.
+        // assert_eq!(
+        //     endpoint.direct_addresses().count(),
+        //     MAX_INACTIVE_DIRECT_ADDRESSES * 3
+        // );
 
-        // compare the node maps via their known nodes
-        assert_eq!(addrs, loaded);
+        // // We should have both offline and alive addresses which are not active.
+        // assert_eq!(
+        //     endpoint
+        //         .direct_address_states()
+        //         .filter(|(_addr, state)| !state.is_active())
+        //         .count(),
+        //     MAX_INACTIVE_DIRECT_ADDRESSES * 2
+        // )
     }
 
-    fn addr(port: u16) -> SocketAddr {
-        (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
-    }
+    #[tokio::test]
+    async fn test_prune_inactive() {
+        panic!("support this again");
+        // let transports = Transports::new(Vec::new(), Vec::new(), Arc::new(1200.into()));
+        // let direct_addrs = DiscoveredDirectAddrs::default();
+        // let secret_key = SecretKey::generate(&mut rand::rngs::OsRng);
+        // let (disco, _) = DiscoState::new(&secret_key);
+        // let node_map = NodeMap::new(
+        //     secret_key.public(),
+        //     Default::default(),
+        //     transports.create_sender(),
+        //     direct_addrs.addrs.watch(),
+        //     disco,
+        // );
+        // // add one active node and more than MAX_INACTIVE_NODES inactive nodes
+        // let active_node = SecretKey::generate(rand::thread_rng()).public();
+        // let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
+        // node_map
+        //     .add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]))
+        //     .await;
+        // node_map
+        //     .inner
+        //     .lock()
+        //     .unwrap()
+        //     .receive_udp(addr)
+        //     .expect("registered");
 
-    #[test]
-    #[traced_test]
-    fn test_prune_direct_addresses() {
-        let node_map = NodeMap::default();
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let public_key = SecretKey::generate(&mut rng).public();
-        let id = node_map
-            .inner
-            .lock()
-            .unwrap()
-            .insert_node(Options {
-                node_id: public_key,
-                relay_url: None,
-                active: false,
-                source: Source::NamedApp {
-                    name: "test".into(),
-                },
-                path_selection: PathSelection::default(),
-            })
-            .id();
+        // for _ in 0..MAX_INACTIVE_NODES + 1 {
+        //     let node = SecretKey::generate(rand::thread_rng()).public();
+        //     node_map.add_test_addr(NodeAddr::new(node)).await;
+        // }
 
-        const LOCALHOST: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
-
-        // add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
-        // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
-
-        info!("Adding active addresses");
-        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
-            let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
-            let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
-            // add address
-            node_map.add_test_addr(node_addr);
-            // make it active
-            node_map.inner.lock().unwrap().receive_udp(addr);
-        }
-
-        info!("Adding offline/inactive addresses");
-        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
-            let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
-            let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
-            node_map.add_test_addr(node_addr);
-        }
-
-        let mut node_map_inner = node_map.inner.lock().unwrap();
-        let endpoint = node_map_inner.by_id.get_mut(&id).unwrap();
-
-        info!("Adding alive addresses");
-        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
-            let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
-            let txid = stun_rs::TransactionId::from([i as u8; 12]);
-            // Note that this already invokes .prune_direct_addresses() because these are
-            // new UDP paths.
-            endpoint.handle_ping(addr, txid);
-        }
-
-        info!("Pruning addresses");
-        endpoint.prune_direct_addresses(Instant::now());
-
-        // Half the offline addresses should have been pruned.  All the active and alive
-        // addresses should have been kept.
-        assert_eq!(
-            endpoint.direct_addresses().count(),
-            MAX_INACTIVE_DIRECT_ADDRESSES * 3
-        );
-
-        // We should have both offline and alive addresses which are not active.
-        assert_eq!(
-            endpoint
-                .direct_address_states()
-                .filter(|(_addr, state)| !state.is_active())
-                .count(),
-            MAX_INACTIVE_DIRECT_ADDRESSES * 2
-        )
-    }
-
-    #[test]
-    fn test_prune_inactive() {
-        let node_map = NodeMap::default();
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-
-        // add one active node and more than MAX_INACTIVE_NODES inactive nodes
-        let active_node = SecretKey::generate(&mut rng).public();
-        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
-        node_map
-            .inner
-            .lock()
-            .unwrap()
-            .receive_udp(addr)
-            .expect("registered");
-
-        for _ in 0..MAX_INACTIVE_NODES + 1 {
-            let node = SecretKey::generate(&mut rng).public();
-            node_map.add_test_addr(NodeAddr::new(node));
-        }
-
-        assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 2);
-        node_map.prune_inactive();
-        assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 1);
-        node_map
-            .inner
-            .lock()
-            .unwrap()
-            .get(NodeStateKey::NodeId(active_node))
-            .expect("should not be pruned");
+        // assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 2);
+        // node_map.prune_inactive();
+        // assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 1);
+        // node_map
+        //     .inner
+        //     .lock()
+        //     .unwrap()
+        //     .get(NodeStateKey::NodeId(active_node))
+        //     .expect("should not be pruned");
     }
 }
