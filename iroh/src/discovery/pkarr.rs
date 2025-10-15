@@ -1,8 +1,8 @@
-//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+//! A discovery service which publishes and resolves endpoint information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
-//! corresponding [`PublicKey`], also known as the [`NodeId`].  Additionally this pkarr
+//! corresponding [`PublicKey`], also known as the [`EndpointId`].  Additionally this pkarr
 //! Resource Record is signed using the same [`SecretKey`], ensuring authenticity of the
 //! record.
 //!
@@ -19,11 +19,11 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! For node discovery in iroh the pkarr Resource Records contain the addressing information,
-//! providing nodes which retrieve the pkarr Resource Record with enough detail
-//! to contact the iroh node.
+//! For endpoint discovery in iroh the pkarr Resource Records contain the addressing information,
+//! providing endpoints which retrieve the pkarr Resource Record with enough detail
+//! to contact the iroh endpoint.
 //!
-//! There are several node discovery services built on top of pkarr, which can be composed
+//! There are several endpoint discovery services built on top of pkarr, which can be composed
 //! to the application's needs:
 //!
 //! - [`PkarrPublisher`], which publishes to a pkarr relay server using HTTP.
@@ -40,14 +40,14 @@
 //! [Mainline DHT]: https://en.wikipedia.org/wiki/Mainline_DHT
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
-//! [`NodeId`]: crate::NodeId
+//! [`EndpointId`]: crate::EndpointId
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
 use std::sync::Arc;
 
-use iroh_base::{NodeId, RelayUrl, SecretKey};
-use iroh_relay::node_info::{EncodingError, NodeInfo};
+use iroh_base::{EndpointId, RelayUrl, SecretKey};
+use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
@@ -66,7 +66,7 @@ use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError}
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    discovery::{Discovery, DiscoveryItem, NodeData},
+    discovery::{Discovery, DiscoveryItem, EndpointData},
     endpoint::force_staging_infra,
     util::reqwest_client_builder,
 };
@@ -104,7 +104,7 @@ impl From<PkarrError> for DiscoveryError {
 ///
 /// This server is both a pkarr relay server as well as a DNS resolver, see the [module
 /// documentation].  However it does not interact with the Mainline DHT, so is a more
-/// central service.  It is a reliable service to use for node discovery.
+/// central service.  It is a reliable service to use for endpoint discovery.
 ///
 /// [number 0]: https://n0.computer
 /// [module documentation]: crate::discovery::pkarr
@@ -126,7 +126,7 @@ pub const N0_DNS_PKARR_RELAY_STAGING: &str = "https://staging-dns.iroh.link/pkar
 // TODO(flub): huh?
 pub const DEFAULT_PKARR_TTL: u32 = 30;
 
-/// Interval in which to republish the node info even if unchanged: 5 minutes.
+/// Interval in which to republish the endpoint info even if unchanged: 5 minutes.
 pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 /// Builder for [`PkarrPublisher`].
@@ -172,7 +172,7 @@ impl PkarrPublisherBuilder {
         self
     }
 
-    /// Sets the interval after which packets are republished even if our node info did not change.
+    /// Sets the interval after which packets are republished even if our endpoint info did not change.
     ///
     /// Default is [`DEFAULT_REPUBLISH_INTERVAL`].
     pub fn republish_interval(mut self, republish_interval: Duration) -> Self {
@@ -216,13 +216,13 @@ impl IntoDiscovery for PkarrPublisherBuilder {
     }
 }
 
-/// Publisher of node discovery information to a [pkarr] relay.
+/// Publisher of endpoint discovery information to a [pkarr] relay.
 ///
-/// This publisher uses HTTP to publish node discovery information to a pkarr relay
+/// This publisher uses HTTP to publish endpoint discovery information to a pkarr relay
 /// server, see the [module docs] for details.
 ///
-/// This implements the [`Discovery`] trait to be used as a node discovery service.  Note
-/// that it only publishes node discovery information, for the corresponding resolver use
+/// This implements the [`Discovery`] trait to be used as a endpoint discovery service.  Note
+/// that it only publishes endpoint discovery information, for the corresponding resolver use
 /// the [`PkarrResolver`] together with [`ConcurrentDiscovery`].
 ///
 /// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
@@ -233,13 +233,13 @@ impl IntoDiscovery for PkarrPublisherBuilder {
 /// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
-    node_id: NodeId,
-    watchable: Watchable<Option<NodeInfo>>,
+    endpoint_id: EndpointId,
+    watchable: Watchable<Option<EndpointInfo>>,
     _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
 
 impl PkarrPublisher {
-    /// Returns a [`PkarrPublisherBuilder`] that publishes node info to a [pkarr] relay at `pkarr_relay`.
+    /// Returns a [`PkarrPublisherBuilder`] that publishes endpoint info to a [pkarr] relay at `pkarr_relay`.
     ///
     /// If no further options are set, the pkarr publisher  will use [`DEFAULT_PKARR_TTL`] as the
     /// time-to-live value for the published packets, and it will republish discovery information
@@ -266,7 +266,7 @@ impl PkarrPublisher {
         #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
     ) -> Self {
         debug!("creating pkarr publisher that publishes to {pkarr_relay}");
-        let node_id = secret_key.public();
+        let endpoint_id = secret_key.public();
 
         #[cfg(wasm_browser)]
         let pkarr_client = PkarrRelayClient::new(pkarr_relay);
@@ -289,11 +289,11 @@ impl PkarrPublisher {
         let join_handle = task::spawn(
             service
                 .run()
-                .instrument(error_span!("pkarr_publish", me=%node_id.fmt_short())),
+                .instrument(error_span!("pkarr_publish", me=%endpoint_id.fmt_short())),
         );
         Self {
             watchable,
-            node_id,
+            endpoint_id,
             _drop_guard: Arc::new(AbortOnDropHandle::new(join_handle)),
         }
     }
@@ -312,34 +312,34 @@ impl PkarrPublisher {
         PkarrPublisherBuilder::n0_dns()
     }
 
-    /// Publishes the addressing information about this node to a pkarr relay.
+    /// Publishes the addressing information about this endpoint to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    pub fn update_node_data(&self, data: &NodeData) {
+    pub fn update_endpoint_data(&self, data: &EndpointData) {
         let mut data = data.clone();
         if data.relay_url().is_some() {
             // If relay url is set: only publish relay url, and no direct addrs.
             data.clear_direct_addresses();
         }
-        let info = NodeInfo::from_parts(self.node_id, data);
+        let info = EndpointInfo::from_parts(self.endpoint_id, data);
         self.watchable.set(Some(info)).ok();
     }
 }
 
 impl Discovery for PkarrPublisher {
-    fn publish(&self, data: &NodeData) {
-        self.update_node_data(data);
+    fn publish(&self, data: &EndpointData) {
+        self.update_endpoint_data(data);
     }
 }
 
-/// Publish node info to a pkarr relay.
+/// Publish endpoint info to a pkarr relay.
 #[derive(derive_more::Debug, Clone)]
 struct PublisherService {
     #[debug("SecretKey")]
     secret_key: SecretKey,
     #[debug("PkarrClient")]
     pkarr_client: PkarrRelayClient,
-    watcher: n0_watcher::Direct<Option<NodeInfo>>,
+    watcher: n0_watcher::Direct<Option<EndpointInfo>>,
     ttl: u32,
     republish_interval: Duration,
 }
@@ -377,22 +377,22 @@ impl PublisherService {
                     }
                 }
             }
-            // Wait until either the retry/republish timeout is reached, or the node info changed.
+            // Wait until either the retry/republish timeout is reached, or the endpoint info changed.
             tokio::select! {
                 res = self.watcher.updated() => match res {
-                    Ok(_) => debug!("Publish node info to pkarr (info changed)"),
+                    Ok(_) => debug!("Publish endpoint info to pkarr (info changed)"),
                     Err(Disconnected { .. }) => break,
                 },
-                _ = &mut republish => debug!("Publish node info to pkarr (interval elapsed)"),
+                _ = &mut republish => debug!("Publish endpoint info to pkarr (interval elapsed)"),
             }
         }
     }
 
-    async fn publish_current(&self, info: NodeInfo) -> Result<(), PkarrError> {
+    async fn publish_current(&self, info: EndpointInfo) -> Result<(), PkarrError> {
         debug!(
             data = ?info.data,
             pkarr_relay = %self.pkarr_client.pkarr_relay_url,
-            "Publish node info to pkarr"
+            "Publish endpoint info to pkarr"
         );
         let signed_packet = info
             .to_pkarr_signed_packet(&self.secret_key, self.ttl)
@@ -450,13 +450,13 @@ impl IntoDiscovery for PkarrResolverBuilder {
     }
 }
 
-/// Resolver of node discovery information from a [pkarr] relay.
+/// Resolver of endpoint discovery information from a [pkarr] relay.
 ///
-/// The resolver uses HTTP to query node discovery information from a pkarr relay server,
+/// The resolver uses HTTP to query endpoint discovery information from a pkarr relay server,
 /// see the [module docs] for details.
 ///
-/// This implements the [`Discovery`] trait to be used as a node discovery service.  Note
-/// that it only resolves node discovery information, for the corresponding publisher use
+/// This implements the [`Discovery`] trait to be used as a endpoint discovery service.  Note
+/// that it only resolves endpoint discovery information, for the corresponding publisher use
 /// the [`PkarrPublisher`] together with [`ConcurrentDiscovery`].
 ///
 /// [pkarr]: https://pkarr.org
@@ -501,11 +501,14 @@ impl PkarrResolver {
 }
 
 impl Discovery for PkarrResolver {
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
-            let signed_packet = pkarr_client.resolve(node_id).await?;
-            let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)
+            let signed_packet = pkarr_client.resolve(endpoint_id).await?;
+            let info = EndpointInfo::from_pkarr_signed_packet(&signed_packet)
                 .map_err(|err| DiscoveryError::from_err("pkarr", err))?;
             let item = DiscoveryItem::new(info, "pkarr", None);
             Ok(item)
@@ -548,10 +551,11 @@ impl PkarrRelayClient {
         }
     }
 
-    /// Resolves a [`SignedPacket`] for the given [`NodeId`].
-    pub async fn resolve(&self, node_id: NodeId) -> Result<SignedPacket, DiscoveryError> {
+    /// Resolves a [`SignedPacket`] for the given [`EndpointId`].
+    pub async fn resolve(&self, endpoint_id: EndpointId) -> Result<SignedPacket, DiscoveryError> {
         // We map the error to string, as in browsers the error is !Send
-        let public_key = pkarr::PublicKey::try_from(node_id.as_bytes()).context(PublicKeySnafu)?;
+        let public_key =
+            pkarr::PublicKey::try_from(endpoint_id.as_bytes()).context(PublicKeySnafu)?;
 
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()

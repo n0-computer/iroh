@@ -6,7 +6,7 @@ use iroh::{
     SecretKey,
     endpoint::{Connecting, Connection},
 };
-use iroh_base::ticket::NodeTicket;
+use iroh_base::ticket::EndpointTicket;
 use n0_future::{StreamExt, future};
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
@@ -16,8 +16,8 @@ const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
 
 #[derive(Parser)]
 struct Args {
-    /// The node id to connect to. If not set, the program will start a server.
-    node: Option<NodeTicket>,
+    /// The endpoint id to connect to. If not set, the program will start a server.
+    endpoint: Option<EndpointTicket>,
     /// Number of rounds to run.
     #[clap(long, default_value = "100")]
     rounds: u64,
@@ -92,7 +92,7 @@ async fn pingpong_0rtt(connecting: Connecting, i: u64) -> n0_snafu::Result<Conne
 }
 
 async fn connect(args: Args) -> n0_snafu::Result<()> {
-    let node_addr = args.node.unwrap().node_addr().clone();
+    let endpoint_addr = args.endpoint.unwrap().endpoint_addr().clone();
     let endpoint = iroh::Endpoint::builder()
         .relay_mode(iroh::RelayMode::Disabled)
         .keylog(true)
@@ -102,7 +102,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
     for i in 0..args.rounds {
         let t0 = Instant::now();
         let connecting = endpoint
-            .connect_with_opts(node_addr.clone(), PINGPONG_ALPN, Default::default())
+            .connect_with_opts(endpoint_addr.clone(), PINGPONG_ALPN, Default::default())
             .await?;
         let connection = if args.disable_0rtt {
             let connection = connecting.await.e()?;
@@ -139,7 +139,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
         .relay_mode(iroh::RelayMode::Disabled)
         .bind()
         .await?;
-    let mut addrs = endpoint.watch_node_addr().stream();
+    let mut addrs = endpoint.watch_endpoint_addr().stream();
     let addr = loop {
         let Some(addr) = addrs.next().await else {
             snafu::whatever!("Address stream closed");
@@ -149,8 +149,8 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
         }
     };
     println!("Listening on: {addr:?}");
-    println!("Node ID: {:?}", addr.node_id);
-    println!("Ticket: {}", NodeTicket::from(addr));
+    println!("Endpoint ID: {:?}", addr.endpoint_id);
+    println!("Ticket: {}", EndpointTicket::from(addr));
 
     let accept = async move {
         while let Some(incoming) = endpoint.accept().await {
@@ -185,7 +185,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
 async fn main() -> n0_snafu::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
-    if args.node.is_some() {
+    if args.endpoint.is_some() {
         connect(args).await?;
     } else {
         accept(args).await?;

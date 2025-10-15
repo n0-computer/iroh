@@ -18,7 +18,7 @@ const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 /// - For [`Source::trust_duration`] longer starting at the most recent
 ///   received application payload *while the path was valid*.
 ///
-/// [`PongReply`]: super::node_state::PongReply
+/// [`PongReply`]: super::endpoint_state::PongReply
 #[derive(Debug, Clone, Default)]
 pub(super) struct PathValidity(Option<Inner>);
 

@@ -1,56 +1,56 @@
-//! Addressing for iroh nodes.
+//! Addressing for iroh endpoints.
 //!
-//! This module contains some common addressing types for iroh.  A node is uniquely
-//! identified by the [`NodeId`] but that does not make it addressable on the network layer.
+//! This module contains some common addressing types for iroh.  A endpoint is uniquely
+//! identified by the [`EndpointId`] but that does not make it addressable on the network layer.
 //! For this the addition of a [`RelayUrl`] and/or direct addresses are required.
 //!
-//! The primary way of addressing a node is by using the [`NodeAddr`].
+//! The primary way of addressing a endpoint is by using the [`EndpointAddr`].
 
 use std::{collections::BTreeSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{NodeId, PublicKey, RelayUrl};
+use crate::{EndpointId, PublicKey, RelayUrl};
 
-/// Network-level addressing information for an iroh node.
+/// Network-level addressing information for an iroh endpoint.
 ///
-/// This combines a node's identifier with network-level addressing information of how to
-/// contact the node.
+/// This combines a endpoint's identifier with network-level addressing information of how to
+/// contact the endpoint.
 ///
-/// To establish a network connection to a node both the [`NodeId`] and one or more network
+/// To establish a network connection to a endpoint both the [`EndpointId`] and one or more network
 /// paths are needed.  The network paths can come from various sources:
 ///
-/// - A [discovery] service which can provide routing information for a given [`NodeId`].
+/// - A [discovery] service which can provide routing information for a given [`EndpointId`].
 ///
-/// - A [`RelayUrl`] of the node's [home relay], this allows establishing the connection via
+/// - A [`RelayUrl`] of the endpoint's [home relay], this allows establishing the connection via
 ///   the Relay server and is very reliable.
 ///
-/// - One or more *direct addresses* on which the node might be reachable.  Depending on the
-///   network location of both nodes it might not be possible to establish a direct
+/// - One or more *direct addresses* on which the endpoint might be reachable.  Depending on the
+///   network location of both endpoints it might not be possible to establish a direct
 ///   connection without the help of a [Relay server].
 ///
-/// This structure will always contain the required [`NodeId`] and will contain an optional
+/// This structure will always contain the required [`EndpointId`] and will contain an optional
 /// number of network-level addressing information.  It is a generic addressing type used
-/// whenever a connection to other nodes needs to be established.
+/// whenever a connection to other endpoints needs to be established.
 ///
-/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#node-discovery
+/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#endpoint-discovery
 /// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
 /// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct NodeAddr {
-    /// The node's identifier.
-    pub node_id: NodeId,
-    /// The node's home relay url.
+pub struct EndpointAddr {
+    /// The endpoint's identifier.
+    pub endpoint_id: EndpointId,
+    /// The endpoint's home relay url.
     pub relay_url: Option<RelayUrl>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
-impl NodeAddr {
-    /// Creates a new [`NodeAddr`] with no `relay_url` and no `direct_addresses`.
-    pub fn new(node_id: PublicKey) -> Self {
-        NodeAddr {
-            node_id,
+impl EndpointAddr {
+    /// Creates a new [`EndpointAddr`] with no `relay_url` and no `direct_addresses`.
+    pub fn new(endpoint_id: PublicKey) -> Self {
+        EndpointAddr {
+            endpoint_id,
             relay_url: None,
             direct_addresses: Default::default(),
         }
@@ -71,20 +71,20 @@ impl NodeAddr {
         self
     }
 
-    /// Creates a new [`NodeAddr`] from its parts.
+    /// Creates a new [`EndpointAddr`] from its parts.
     pub fn from_parts(
-        node_id: PublicKey,
+        endpoint_id: PublicKey,
         relay_url: Option<RelayUrl>,
         direct_addresses: impl IntoIterator<Item = SocketAddr>,
     ) -> Self {
         Self {
-            node_id,
+            endpoint_id,
             relay_url,
             direct_addresses: direct_addresses.into_iter().collect(),
         }
     }
 
-    /// Returns true, if only a [`NodeId`] is present.
+    /// Returns true, if only a [`EndpointId`] is present.
     pub fn is_empty(&self) -> bool {
         self.relay_url.is_none() && self.direct_addresses.is_empty()
     }
@@ -100,19 +100,19 @@ impl NodeAddr {
     }
 }
 
-impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
+impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for EndpointAddr {
     fn from(value: (PublicKey, Option<RelayUrl>, &[SocketAddr])) -> Self {
-        let (node_id, relay_url, direct_addresses_iter) = value;
-        NodeAddr {
-            node_id,
+        let (endpoint_id, relay_url, direct_addresses_iter) = value;
+        EndpointAddr {
+            endpoint_id,
             relay_url,
             direct_addresses: direct_addresses_iter.iter().copied().collect(),
         }
     }
 }
 
-impl From<NodeId> for NodeAddr {
-    fn from(node_id: NodeId) -> Self {
-        NodeAddr::new(node_id)
+impl From<EndpointId> for EndpointAddr {
+    fn from(endpoint_id: EndpointId) -> Self {
+        EndpointAddr::new(endpoint_id)
     }
 }

@@ -18,7 +18,7 @@ pub const DEFAULT_METRICS_PORT: u16 = 9090;
 
 /// Production configuration.
 pub mod prod {
-    use iroh_relay::{RelayMap, RelayNode, RelayQuicConfig};
+    use iroh_relay::{RelayEndpoint, RelayMap, RelayQuicConfig};
 
     use super::*;
 
@@ -32,43 +32,43 @@ pub mod prod {
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
         RelayMap::from_iter([
-            default_na_relay_node(),
-            default_eu_relay_node(),
-            default_ap_relay_node(),
+            default_na_relay_endpoint(),
+            default_eu_relay_endpoint(),
+            default_ap_relay_endpoint(),
         ])
     }
 
-    /// Get the default [`RelayNode`] for NA.
-    pub fn default_na_relay_node() -> RelayNode {
+    /// Get the default [`RelayEndpoint`] for NA.
+    pub fn default_na_relay_endpoint() -> RelayEndpoint {
         // The default NA relay server run by number0.
         let url: Url = format!("https://{NA_RELAY_HOSTNAME}")
             .parse()
             .expect("default url");
-        RelayNode {
+        RelayEndpoint {
             url: url.into(),
             quic: Some(RelayQuicConfig::default()),
         }
     }
 
-    /// Get the default [`RelayNode`] for EU.
-    pub fn default_eu_relay_node() -> RelayNode {
+    /// Get the default [`RelayEndpoint`] for EU.
+    pub fn default_eu_relay_endpoint() -> RelayEndpoint {
         // The default EU relay server run by number0.
         let url: Url = format!("https://{EU_RELAY_HOSTNAME}")
             .parse()
             .expect("default_url");
-        RelayNode {
+        RelayEndpoint {
             url: url.into(),
             quic: Some(RelayQuicConfig::default()),
         }
     }
 
-    /// Get the default [`RelayNode`] for Asia-Pacific
-    pub fn default_ap_relay_node() -> RelayNode {
+    /// Get the default [`RelayEndpoint`] for Asia-Pacific
+    pub fn default_ap_relay_endpoint() -> RelayEndpoint {
         // The default Asia-Pacific relay server run by number0.
         let url: Url = format!("https://{AP_RELAY_HOSTNAME}")
             .parse()
             .expect("default_url");
-        RelayNode {
+        RelayEndpoint {
             url: url.into(),
             quic: Some(RelayQuicConfig::default()),
         }
@@ -81,7 +81,7 @@ pub mod prod {
 ///
 /// Note: we have staging servers in EU and NA, but no corresponding staging server for AP at this time.
 pub mod staging {
-    use iroh_relay::{RelayMap, RelayNode, RelayQuicConfig};
+    use iroh_relay::{RelayEndpoint, RelayMap, RelayQuicConfig};
 
     use super::*;
 
@@ -92,28 +92,28 @@ pub mod staging {
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
-        RelayMap::from_iter([default_na_relay_node(), default_eu_relay_node()])
+        RelayMap::from_iter([default_na_relay_endpoint(), default_eu_relay_endpoint()])
     }
 
-    /// Get the default [`RelayNode`] for NA.
-    pub fn default_na_relay_node() -> RelayNode {
+    /// Get the default [`RelayEndpoint`] for NA.
+    pub fn default_na_relay_endpoint() -> RelayEndpoint {
         // The default NA relay server run by number0.
         let url: Url = format!("https://{NA_RELAY_HOSTNAME}")
             .parse()
             .expect("default url");
-        RelayNode {
+        RelayEndpoint {
             url: url.into(),
             quic: Some(RelayQuicConfig::default()),
         }
     }
 
-    /// Get the default [`RelayNode`] for EU.
-    pub fn default_eu_relay_node() -> RelayNode {
+    /// Get the default [`RelayEndpoint`] for EU.
+    pub fn default_eu_relay_endpoint() -> RelayEndpoint {
         // The default EU relay server run by number0.
         let url: Url = format!("https://{EU_RELAY_HOSTNAME}")
             .parse()
             .expect("default_url");
-        RelayNode {
+        RelayEndpoint {
             url: url.into(),
             quic: Some(RelayQuicConfig::default()),
         }

@@ -14,14 +14,14 @@ use crate::defaults::DEFAULT_RELAY_QUIC_PORT;
 /// Configuration of all the relay servers that can be used.
 #[derive(Debug, Clone)]
 pub struct RelayMap {
-    /// A map of the different relay IDs to the [`RelayNode`] information
-    nodes: Arc<RwLock<BTreeMap<RelayUrl, Arc<RelayNode>>>>,
+    /// A map of the different relay IDs to the [`RelayEndpoint`] information
+    endpoints: Arc<RwLock<BTreeMap<RelayUrl, Arc<RelayEndpoint>>>>,
 }
 
 impl PartialEq for RelayMap {
     fn eq(&self, other: &Self) -> bool {
-        let this = self.nodes.read().expect("poisoned");
-        let that = other.nodes.read().expect("poisoned");
+        let this = self.endpoints.read().expect("poisoned");
+        let that = other.endpoints.read().expect("poisoned");
         this.eq(&*that)
     }
 }
@@ -34,7 +34,7 @@ impl RelayMap {
     where
         T: FromIterator<RelayUrl>,
     {
-        self.nodes
+        self.endpoints
             .read()
             .expect("poisoned")
             .keys()
@@ -45,16 +45,16 @@ impl RelayMap {
     /// Create an empty relay map.
     pub fn empty() -> Self {
         Self {
-            nodes: Default::default(),
+            endpoints: Default::default(),
         }
     }
 
-    /// Returns an `Iterator` over all known nodes.
-    pub fn nodes<T>(&self) -> T
+    /// Returns an `Iterator` over all known endpoints.
+    pub fn endpoints<T>(&self) -> T
     where
-        T: FromIterator<Arc<RelayNode>>,
+        T: FromIterator<Arc<RelayEndpoint>>,
     {
-        self.nodes
+        self.endpoints
             .read()
             .expect("poisoned")
             .values()
@@ -62,43 +62,50 @@ impl RelayMap {
             .collect::<T>()
     }
 
-    /// Is this a known node?
-    pub fn contains_node(&self, url: &RelayUrl) -> bool {
-        self.nodes.read().expect("poisoned").contains_key(url)
+    /// Is this a known endpoint?
+    pub fn contains_endpoint(&self, url: &RelayUrl) -> bool {
+        self.endpoints.read().expect("poisoned").contains_key(url)
     }
 
-    /// Get the given node.
-    pub fn get_node(&self, url: &RelayUrl) -> Option<Arc<RelayNode>> {
-        self.nodes.read().expect("poisoned").get(url).cloned()
+    /// Get the given endpoint.
+    pub fn get_endpoint(&self, url: &RelayUrl) -> Option<Arc<RelayEndpoint>> {
+        self.endpoints.read().expect("poisoned").get(url).cloned()
     }
 
-    /// How many nodes are known?
+    /// How many endpoints are known?
     pub fn len(&self) -> usize {
-        self.nodes.read().expect("poisoned").len()
+        self.endpoints.read().expect("poisoned").len()
     }
 
-    /// Are there any nodes in this map?
+    /// Are there any endpoints in this map?
     pub fn is_empty(&self) -> bool {
-        self.nodes.read().expect("poisoned").is_empty()
+        self.endpoints.read().expect("poisoned").is_empty()
     }
 
     /// Insert a new relay.
-    pub fn insert(&self, url: RelayUrl, node: Arc<RelayNode>) -> Option<Arc<RelayNode>> {
-        self.nodes.write().expect("poisoned").insert(url, node)
+    pub fn insert(
+        &self,
+        url: RelayUrl,
+        endpoint: Arc<RelayEndpoint>,
+    ) -> Option<Arc<RelayEndpoint>> {
+        self.endpoints
+            .write()
+            .expect("poisoned")
+            .insert(url, endpoint)
     }
 
     /// Removes an existing relay by `RelayUrl`.
-    pub fn remove(&self, url: &RelayUrl) -> Option<Arc<RelayNode>> {
-        self.nodes.write().expect("poisoned").remove(url)
+    pub fn remove(&self, url: &RelayUrl) -> Option<Arc<RelayEndpoint>> {
+        self.endpoints.write().expect("poisoned").remove(url)
     }
 }
 
-impl FromIterator<RelayNode> for RelayMap {
-    fn from_iter<T: IntoIterator<Item = RelayNode>>(iter: T) -> Self {
+impl FromIterator<RelayEndpoint> for RelayMap {
+    fn from_iter<T: IntoIterator<Item = RelayEndpoint>>(iter: T) -> Self {
         Self {
-            nodes: Arc::new(RwLock::new(
+            endpoints: Arc::new(RwLock::new(
                 iter.into_iter()
-                    .map(|node| (node.url.clone(), Arc::new(node)))
+                    .map(|endpoint| (endpoint.url.clone(), Arc::new(endpoint)))
                     .collect(),
             )),
         }
@@ -108,21 +115,21 @@ impl FromIterator<RelayNode> for RelayMap {
 impl From<RelayUrl> for RelayMap {
     /// Creates a [`RelayMap`] from a [`RelayUrl`].
     ///
-    /// The [`RelayNode`]s in the [`RelayMap`] will have the default QUIC address
+    /// The [`RelayEndpoint`]s in the [`RelayMap`] will have the default QUIC address
     /// discovery ports.
     fn from(value: RelayUrl) -> Self {
         Self {
-            nodes: Arc::new(RwLock::new(
+            endpoints: Arc::new(RwLock::new(
                 [(value.clone(), Arc::new(value.into()))].into(),
             )),
         }
     }
 }
 
-impl From<RelayNode> for RelayMap {
-    fn from(value: RelayNode) -> Self {
+impl From<RelayEndpoint> for RelayMap {
+    fn from(value: RelayEndpoint) -> Self {
         Self {
-            nodes: Arc::new(RwLock::new([(value.url.clone(), Arc::new(value))].into())),
+            endpoints: Arc::new(RwLock::new([(value.url.clone(), Arc::new(value))].into())),
         }
     }
 }
@@ -130,11 +137,11 @@ impl From<RelayNode> for RelayMap {
 impl FromIterator<RelayUrl> for RelayMap {
     /// Creates a [`RelayMap`] from an iterator of [`RelayUrl`].
     ///
-    /// The [`RelayNode`]s in the [`RelayMap`] will have the default QUIC address
+    /// The [`RelayEndpoint`]s in the [`RelayMap`] will have the default QUIC address
     /// discovery ports.
     fn from_iter<T: IntoIterator<Item = RelayUrl>>(iter: T) -> Self {
         Self {
-            nodes: Arc::new(RwLock::new(
+            endpoints: Arc::new(RwLock::new(
                 iter.into_iter()
                     .map(|url| (url.clone(), Arc::new(url.into())))
                     .collect(),
@@ -155,7 +162,7 @@ impl fmt::Display for RelayMap {
 // Please note that this is documented in the `iroh.computer` repository under
 // `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
-pub struct RelayNode {
+pub struct RelayEndpoint {
     /// The [`RelayUrl`] where this relay server can be dialed.
     pub url: RelayUrl,
     /// Configuration to speak to the QUIC endpoint on the relay server.
@@ -166,7 +173,7 @@ pub struct RelayNode {
     pub quic: Option<RelayQuicConfig>,
 }
 
-impl From<RelayUrl> for RelayNode {
+impl From<RelayUrl> for RelayEndpoint {
     fn from(value: RelayUrl) -> Self {
         Self {
             url: value,
@@ -195,7 +202,7 @@ impl Default for RelayQuicConfig {
     }
 }
 
-impl fmt::Display for RelayNode {
+impl fmt::Display for RelayEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.url)
     }

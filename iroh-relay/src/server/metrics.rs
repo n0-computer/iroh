@@ -72,7 +72,7 @@ pub struct Metrics {
 
     /// Number of unique client keys per day
     pub unique_client_keys: Counter,
-    // TODO: enable when we can have multiple connections for one node id
+    // TODO: enable when we can have multiple connections for one endpoint id
     // pub duplicate_client_keys: Counter,
     // pub duplicate_client_conns: Counter,
     // TODO: only important stat that we cannot track right now

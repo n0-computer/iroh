@@ -38,7 +38,7 @@ use std::{
 };
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
-use iroh_base::{NodeId, RelayUrl, SecretKey};
+use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay, PingTracker,
     client::{Client, ConnectError, RecvError, SendError},
@@ -180,8 +180,8 @@ enum ActiveRelayMessage {
 /// here are processed immediately.
 #[derive(Debug)]
 enum ActiveRelayPrioMessage {
-    /// Returns whether or not this relay can reach the NodeId.
-    HasNodeRoute(NodeId, oneshot::Sender<bool>),
+    /// Returns whether or not this relay can reach the EndpointId.
+    HasEndpointRoute(EndpointId, oneshot::Sender<bool>),
 }
 
 /// Configuration needed to start an [`ActiveRelayActor`].
@@ -327,7 +327,7 @@ impl ActiveRelayActor {
     ///
     /// Primarily switches between the dialing and connected states.
     async fn run(mut self) {
-        // TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
+        // TODO(frando): decide what this metric means, it's either wrong here or in endpoint_state.rs.
         // From the existing description, it is wrong here.
         // self.metrics.num_relay_conns_added.inc();
 
@@ -354,7 +354,7 @@ impl ActiveRelayActor {
             }
         }
         debug!("exiting");
-        // TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
+        // TODO(frando): decide what this metric means, it's either wrong here or in endpoint_state.rs.
         // From the existing description, it is wrong here.
         // self.metrics.num_relay_conns_removed.inc();
     }
@@ -433,7 +433,7 @@ impl ActiveRelayActor {
                         break None;
                     };
                     match msg {
-                        ActiveRelayPrioMessage::HasNodeRoute(_peer, sender) => {
+                        ActiveRelayPrioMessage::HasEndpointRoute(_peer, sender) => {
                             sender.send(false).ok();
                         }
                     }
@@ -527,7 +527,7 @@ impl ActiveRelayActor {
 
         let mut state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),
-            nodes_present: BTreeSet::new(),
+            endpoints_present: BTreeSet::new(),
             last_packet_src: None,
             pong_pending: None,
             established: false,
@@ -561,8 +561,8 @@ impl ActiveRelayActor {
                         break Ok(());
                     };
                     match msg {
-                        ActiveRelayPrioMessage::HasNodeRoute(peer, sender) => {
-                            let has_peer = state.nodes_present.contains(&peer);
+                        ActiveRelayPrioMessage::HasEndpointRoute(peer, sender) => {
+                            let has_peer = state.endpoints_present.contains(&peer);
                             sender.send(has_peer).ok();
                         }
                     }
@@ -623,7 +623,7 @@ impl ActiveRelayActor {
                     let packet_iter = send_datagrams_buf.drain(..).map(|item| {
                         metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
                         Ok(ClientToRelayMsg::Datagrams {
-                            dst_node_id: item.remote_node,
+                            dst_endpoint_id: item.remote_endpoint,
                             datagrams: item.datagrams,
                         })
                     });
@@ -663,7 +663,7 @@ impl ActiveRelayActor {
     fn handle_relay_msg(&mut self, msg: RelayToClientMsg, state: &mut ConnectedRelayState) {
         match msg {
             RelayToClientMsg::Datagrams {
-                remote_node_id,
+                remote_endpoint_id,
                 datagrams,
             } => {
                 trace!(len = datagrams.contents.len(), "received msg");
@@ -671,24 +671,24 @@ impl ActiveRelayActor {
                 if state
                     .last_packet_src
                     .as_ref()
-                    .map(|p| *p != remote_node_id)
+                    .map(|p| *p != remote_endpoint_id)
                     .unwrap_or(true)
                 {
                     // Avoid map lookup with high throughput single peer.
-                    state.last_packet_src = Some(remote_node_id);
-                    state.nodes_present.insert(remote_node_id);
+                    state.last_packet_src = Some(remote_endpoint_id);
+                    state.endpoints_present.insert(remote_endpoint_id);
                 }
 
                 if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
                     url: self.url.clone(),
-                    src: remote_node_id,
+                    src: remote_endpoint_id,
                     datagrams,
                 }) {
                     warn!("Dropping received relay packet: {err:#}");
                 }
             }
-            RelayToClientMsg::NodeGone(node_id) => {
-                state.nodes_present.remove(&node_id);
+            RelayToClientMsg::EndpointGone(endpoint_id) => {
+                state.endpoints_present.remove(&endpoint_id);
             }
             RelayToClientMsg::Ping(data) => state.pong_pending = Some(data),
             RelayToClientMsg::Pong(data) => {
@@ -751,8 +751,8 @@ impl ActiveRelayActor {
                         break Ok(());
                     };
                     match msg {
-                        ActiveRelayPrioMessage::HasNodeRoute(peer, sender) => {
-                            let has_peer = state.nodes_present.contains(&peer);
+                        ActiveRelayPrioMessage::HasEndpointRoute(peer, sender) => {
+                            let has_peer = state.endpoints_present.contains(&peer);
                             sender.send(has_peer).ok();
                         }
                     }
@@ -794,13 +794,13 @@ impl ActiveRelayActor {
 struct ConnectedRelayState {
     /// Tracks pings we have sent, awaits pong replies.
     ping_tracker: PingTracker,
-    /// Nodes which are reachable via this relay server.
-    nodes_present: BTreeSet<NodeId>,
-    /// The [`NodeId`] from whom we received the last packet.
+    /// Endpoints which are reachable via this relay server.
+    endpoints_present: BTreeSet<EndpointId>,
+    /// The [`EndpointId`] from whom we received the last packet.
     ///
-    /// This is to avoid a slower lookup in the [`ConnectedRelayState::nodes_present`] map
-    /// when we are only communicating to a single remote node.
-    last_packet_src: Option<NodeId>,
+    /// This is to avoid a slower lookup in the [`ConnectedRelayState::endpoints_present`] map
+    /// when we are only communicating to a single remote endpoint.
+    last_packet_src: Option<EndpointId>,
     /// A pong we need to send ASAP.
     pong_pending: Option<[u8; 8]>,
     /// Whether the connection is to be considered established.
@@ -829,8 +829,8 @@ pub(super) enum RelayActorMessage {
 #[derive(Debug, Clone)]
 pub(crate) struct RelaySendItem {
     /// The destination for the datagrams.
-    pub(crate) remote_node: NodeId,
-    /// The home relay of the remote node.
+    pub(crate) remote_endpoint: EndpointId,
+    /// The home relay of the remote endpoint.
     pub(crate) url: RelayUrl,
     /// One or more datagrams to send.
     pub(crate) datagrams: Datagrams,
@@ -968,7 +968,7 @@ impl RelayActor {
     ) -> Option<impl Future<Output = ()> + use<>> {
         let url = item.url.clone();
         let handle = self
-            .active_relay_handle_for_node(&item.url, &item.remote_node)
+            .active_relay_handle_for_endpoint(&item.url, &item.remote_endpoint)
             .await;
         match handle.datagrams_send_queue.try_send(item) {
             Ok(()) => None,
@@ -1025,31 +1025,34 @@ impl RelayActor {
         self.active_relay_handle(home_url);
     }
 
-    /// Returns the handle for the [`ActiveRelayActor`] to reach `remote_node`.
+    /// Returns the handle for the [`ActiveRelayActor`] to reach `remote_endpoint`.
     ///
-    /// The node is expected to be reachable on `url`, but if no [`ActiveRelayActor`] for
-    /// `url` exists but another existing [`ActiveRelayActor`] already knows about the node,
-    /// that other node is used.
-    async fn active_relay_handle_for_node(
+    /// The endpoint is expected to be reachable on `url`, but if no [`ActiveRelayActor`] for
+    /// `url` exists but another existing [`ActiveRelayActor`] already knows about the endpoint,
+    /// that other endpoint is used.
+    async fn active_relay_handle_for_endpoint(
         &mut self,
         url: &RelayUrl,
-        remote_node: &NodeId,
+        remote_endpoint: &EndpointId,
     ) -> ActiveRelayHandle {
         if let Some(handle) = self.active_relays.get(url) {
             return handle.clone();
         }
 
         let mut found_relay: Option<RelayUrl> = None;
-        // If we don't have an open connection to the remote node's home relay, see if
-        // we have an open connection to a relay node where we'd heard from that peer
+        // If we don't have an open connection to the remote endpoint's home relay, see if
+        // we have an open connection to a relay endpoint where we'd heard from that peer
         // already.  E.g. maybe they dialed our home relay recently.
         {
-            // Futures which return Some(RelayUrl) if the relay knows about the remote node.
+            // Futures which return Some(RelayUrl) if the relay knows about the remote endpoint.
             let check_futs = self.active_relays.iter().map(|(url, handle)| async move {
                 let (tx, rx) = oneshot::channel();
                 handle
                     .prio_inbox_addr
-                    .send(ActiveRelayPrioMessage::HasNodeRoute(*remote_node, tx))
+                    .send(ActiveRelayPrioMessage::HasEndpointRoute(
+                        *remote_endpoint,
+                        tx,
+                    ))
                     .await
                     .ok();
                 match rx.await {
@@ -1192,8 +1195,8 @@ impl RelayActor {
             let mut s = String::new();
             if !self.active_relays.is_empty() {
                 s += ":";
-                for node in self.active_relay_sorted() {
-                    s += &format!(" relay-{node}");
+                for endpoint in self.active_relay_sorted() {
+                    s += &format!(" relay-{endpoint}");
                 }
             }
             s
@@ -1222,7 +1225,7 @@ struct ActiveRelayHandle {
 #[derive(Debug)]
 pub(crate) struct RelayRecvDatagram {
     pub(crate) url: RelayUrl,
-    pub(crate) src: NodeId,
+    pub(crate) src: EndpointId,
     pub(crate) datagrams: Datagrams,
 }
 
@@ -1233,7 +1236,7 @@ mod tests {
         time::Duration,
     };
 
-    use iroh_base::{NodeId, RelayUrl, SecretKey};
+    use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use iroh_relay::{PingTracker, protos::relay::Datagrams};
     use n0_snafu::{Error, Result, ResultExt};
     use tokio::sync::{mpsc, oneshot};
@@ -1280,12 +1283,12 @@ mod tests {
         AbortOnDropHandle::new(task)
     }
 
-    /// Starts an [`ActiveRelayActor`] as an "iroh echo node".
+    /// Starts an [`ActiveRelayActor`] as an "iroh echo endpoint".
     ///
-    /// This actor will connect to the relay server, pretending to be an iroh node, and echo
+    /// This actor will connect to the relay server, pretending to be an iroh endpoint, and echo
     /// back any datagram it receives from the relay.  This is used by the
-    /// [`ActiveRelayNode`] under test to check connectivity works.
-    fn start_echo_node(relay_url: RelayUrl) -> (NodeId, AbortOnDropHandle<()>) {
+    /// [`ActiveRelayEndpoint`] under test to check connectivity works.
+    fn start_echo_endpoint(relay_url: RelayUrl) -> (EndpointId, AbortOnDropHandle<()>) {
         let secret_key = SecretKey::from_bytes(&[8u8; 32]);
         let (recv_datagram_tx, mut recv_datagram_rx) = mpsc::channel(16);
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
@@ -1300,7 +1303,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             recv_datagram_tx,
-            info_span!("echo-node"),
+            info_span!("echo-endpoint"),
         );
         let echo_task = tokio::spawn({
             let relay_url = relay_url.clone();
@@ -1315,7 +1318,7 @@ mod tests {
                         } = recv;
                         info!(from = %src.fmt_short(), "Received datagram");
                         let send = RelaySendItem {
-                            remote_node: src,
+                            remote_endpoint: src,
                             url: relay_url.clone(),
                             datagrams,
                         };
@@ -1341,10 +1344,10 @@ mod tests {
         (secret_key.public(), supervisor_task)
     }
 
-    /// Sends a message to the echo node, receives the response.
+    /// Sends a message to the echo endpoint, receives the response.
     ///
     /// This takes care of retry and timeout.  Because we don't know when both the
-    /// node-under-test and the echo node will be ready and datagrams aren't queued to send
+    /// endpoint-under-test and the echo endpoint will be ready and datagrams aren't queued to send
     /// forever, we have to retry a few times.
     async fn send_recv_echo(
         item: RelaySendItem,
@@ -1380,7 +1383,7 @@ mod tests {
     #[traced_test]
     async fn test_active_relay_reconnect() -> Result {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
-        let (peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
+        let (peer_endpoint, _echo_endpoint_task) = start_echo_endpoint(relay_url.clone());
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
         let (datagram_recv_tx, mut datagram_recv_rx) = mpsc::channel(16);
@@ -1399,10 +1402,10 @@ mod tests {
             info_span!("actor-under-test"),
         );
 
-        // Send a datagram to our echo node.
+        // Send a datagram to our echo endpoint.
         info!("first echo");
         let hello_send_item = RelaySendItem {
-            remote_node: peer_node,
+            remote_endpoint: peer_endpoint,
             url: relay_url.clone(),
             datagrams: Datagrams::from(b"hello"),
         };

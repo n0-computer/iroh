@@ -6,7 +6,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -18,22 +18,22 @@ use tracing::{Level, debug, event, info, instrument, trace, warn};
 
 use super::{
     IpPort, Source,
-    path_state::{PathState, summarize_node_paths},
-    udp_paths::{NodeUdpPaths, UdpSendAddr},
+    path_state::{PathState, summarize_endpoint_paths},
+    udp_paths::{EndpointUdpPaths, UdpSendAddr},
 };
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
     magicsock::{
-        ActorMessage, HEARTBEAT_INTERVAL, MagicsockMetrics, NodeIdMappedAddr,
-        node_map::path_validity::PathValidity,
+        ActorMessage, EndpointIdMappedAddr, HEARTBEAT_INTERVAL, MagicsockMetrics,
+        endpoint_map::path_validity::PathValidity,
     },
 };
 
-/// Number of addresses that are not active that we keep around per node.
+/// Number of addresses that are not active that we keep around per endpoint.
 ///
-/// See [`NodeState::prune_direct_addresses`].
+/// See [`EndpointState::prune_direct_addresses`].
 pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
 
 /// How long since an endpoint path was last alive before it might be pruned.
@@ -59,7 +59,7 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
         relay_url: RelayUrl,
-        dst_node: NodeId,
+        dst_endpoint: EndpointId,
     },
     SendPing(SendPing),
 }
@@ -68,19 +68,19 @@ pub(in crate::magicsock) enum PingAction {
 pub(in crate::magicsock) struct SendPing {
     pub id: usize,
     pub dst: SendAddr,
-    pub dst_node: NodeId,
+    pub dst_endpoint: EndpointId,
     pub tx_id: stun_rs::TransactionId,
     pub purpose: DiscoPingPurpose,
 }
 
-/// Indicating an [`NodeState`] has handled a ping.
+/// Indicating an [`EndpointState`] has handled a ping.
 #[derive(Debug)]
 pub struct PingHandled {
-    /// What this ping did to the [`NodeState`].
+    /// What this ping did to the [`EndpointState`].
     pub role: PingRole,
     /// Whether the sender path should also be pinged.
     ///
-    /// This is the case if an [`NodeState`] does not yet have a direct path, i.e. it has no
+    /// This is the case if an [`EndpointState`] does not yet have a direct path, i.e. it has no
     /// best_addr.  In this case we want to ping right back to open the direct path in this
     /// direction as well.
     pub needs_ping_back: Option<SendPing>,
@@ -94,36 +94,36 @@ pub enum PingRole {
     Activate,
 }
 
-/// An iroh node, which we can have connections with.
+/// An iroh endpoint, which we can have connections with.
 ///
 /// The whole point of the magicsock is that we can have multiple **paths** to a particular
-/// node.  One of these paths is via the endpoint's home relay node but as we establish a
+/// endpoint.  One of these paths is via the endpoint's home relay endpoint but as we establish a
 /// connection we'll hopefully discover more direct paths.
 #[derive(Debug)]
-pub(super) struct NodeState {
-    /// The ID used as index in the [`NodeMap`].
+pub(super) struct EndpointState {
+    /// The ID used as index in the [`EndpointMap`].
     ///
-    /// [`NodeMap`]: super::NodeMap
+    /// [`EndpointMap`]: super::EndpointMap
     id: usize,
-    /// The UDP address used on the QUIC-layer to address this node.
-    quic_mapped_addr: NodeIdMappedAddr,
+    /// The UDP address used on the QUIC-layer to address this endpoint.
+    quic_mapped_addr: EndpointIdMappedAddr,
     /// The global identifier for this endpoint.
-    node_id: NodeId,
+    endpoint_id: EndpointId,
     /// The last time we pinged all endpoints.
     last_full_ping: Option<Instant>,
-    /// The url of relay node that we can relay over to communicate.
+    /// The url of relay endpoint that we can relay over to communicate.
     ///
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
     relay_url: Option<(RelayUrl, PathState)>,
-    udp_paths: NodeUdpPaths,
+    udp_paths: EndpointUdpPaths,
     sent_pings: HashMap<stun_rs::TransactionId, SentPing>,
-    /// Last time this node was used.
+    /// Last time this endpoint was used.
     ///
-    /// A node is marked as in use when sending datagrams to them, or when having received
+    /// A endpoint is marked as in use when sending datagrams to them, or when having received
     /// datagrams from it. Regardless of whether the datagrams are payload or DISCO, and whether
     /// they go via UDP or the relay.
     ///
-    /// Note that sending datagrams to a node does not mean the node receives them.
+    /// Note that sending datagrams to a endpoint does not mean the endpoint receives them.
     last_used: Option<Instant>,
     /// Last time we sent a call-me-maybe.
     ///
@@ -131,10 +131,10 @@ pub(super) struct NodeState {
     /// do a full ping + call-me-maybe.  Usually each side only needs to send one
     /// call-me-maybe to the other for holes to be punched in both directions however.  So
     /// we only try and send one per [`HEARTBEAT_INTERVAL`].  Each [`HEARTBEAT_INTERVAL`]
-    /// the [`NodeState::stayin_alive`] function is called, which will trigger new
+    /// the [`EndpointState::stayin_alive`] function is called, which will trigger new
     /// call-me-maybe messages as backup.
     last_call_me_maybe: Option<Instant>,
-    /// The type of connection we have to the node, either direct, relay, mixed, or none.
+    /// The type of connection we have to the endpoint, either direct, relay, mixed, or none.
     conn_type: Watchable<ConnectionType>,
     /// Whether the conn_type was ever observed to be `Direct` at some point.
     ///
@@ -145,10 +145,10 @@ pub(super) struct NodeState {
     path_selection: PathSelection,
 }
 
-/// Options for creating a new [`NodeState`].
+/// Options for creating a new [`EndpointState`].
 #[derive(Debug)]
 pub(super) struct Options {
-    pub(super) node_id: NodeId,
+    pub(super) endpoint_id: EndpointId,
     pub(super) relay_url: Option<RelayUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
@@ -157,31 +157,36 @@ pub(super) struct Options {
     pub(super) path_selection: PathSelection,
 }
 
-impl NodeState {
+impl EndpointState {
     pub(super) fn new(id: usize, options: Options) -> Self {
-        let quic_mapped_addr = NodeIdMappedAddr::generate();
+        let quic_mapped_addr = EndpointIdMappedAddr::generate();
 
         // TODO(frando): I don't think we need to track the `num_relay_conns_added`
         // metric here. We do so in `Self::addr_for_send`.
         // if options.relay_url.is_some() {
-        //     // we potentially have a relay connection to the node
+        //     // we potentially have a relay connection to the endpoint
         //     inc!(MagicsockMetrics, num_relay_conns_added);
         // }
 
         let now = Instant::now();
 
-        NodeState {
+        EndpointState {
             id,
             quic_mapped_addr,
-            node_id: options.node_id,
+            endpoint_id: options.endpoint_id,
             last_full_ping: None,
             relay_url: options.relay_url.map(|url| {
                 (
                     url.clone(),
-                    PathState::new(options.node_id, SendAddr::Relay(url), options.source, now),
+                    PathState::new(
+                        options.endpoint_id,
+                        SendAddr::Relay(url),
+                        options.source,
+                        now,
+                    ),
                 )
             }),
-            udp_paths: NodeUdpPaths::new(),
+            udp_paths: EndpointUdpPaths::new(),
             sent_pings: HashMap::new(),
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
@@ -193,10 +198,10 @@ impl NodeState {
     }
 
     pub(super) fn public_key(&self) -> &PublicKey {
-        &self.node_id
+        &self.endpoint_id
     }
 
-    pub(super) fn quic_mapped_addr(&self) -> &NodeIdMappedAddr {
+    pub(super) fn quic_mapped_addr(&self) -> &EndpointIdMappedAddr {
         &self.quic_mapped_addr
     }
 
@@ -237,7 +242,7 @@ impl NodeState {
         }
     }
 
-    /// Returns info about this node.
+    /// Returns info about this endpoint.
     pub(super) fn info(&self, now: Instant) -> RemoteInfo {
         let conn_type = self.conn_type.get();
         let latency = self.latency();
@@ -266,7 +271,7 @@ impl NodeState {
             .collect();
 
         RemoteInfo {
-            node_id: self.node_id,
+            endpoint_id: self.endpoint_id,
             relay_url: self.relay_url.clone().map(|r| r.into()),
             addrs,
             conn_type,
@@ -328,7 +333,7 @@ impl NodeState {
                 .has_been_direct
                 .swap(true, std::sync::atomic::Ordering::Relaxed);
             if !before {
-                metrics.nodes_contacted_directly.inc();
+                metrics.endpoints_contacted_directly.inc();
             }
         }
         if let Ok(prev_typ) = self.conn_type.set(typ.clone()) {
@@ -336,7 +341,7 @@ impl NodeState {
             event!(
                 target: "iroh::_events::conn_type::changed",
                 Level::DEBUG,
-                remote_node = %self.node_id.fmt_short(),
+                remote_endpoint = %self.endpoint_id.fmt_short(),
                 conn_type = ?typ,
             );
             info!(%typ, "new connection type");
@@ -373,7 +378,7 @@ impl NodeState {
         (best_addr, relay_url)
     }
 
-    /// Removes a direct address for this node.
+    /// Removes a direct address for this endpoint.
     ///
     /// If this is also the best address, it will be cleared as well.
     pub(super) fn remove_direct_addr(&mut self, ip_port: &IpPort, now: Instant, why: &'static str) {
@@ -393,7 +398,7 @@ impl NodeState {
     /// we only have a relay path, or our path is expired.
     ///
     /// When a call-me-maybe message is sent we also need to send pings to all known paths
-    /// of the endpoint.  The [`NodeState::send_call_me_maybe`] function takes care of this.
+    /// of the endpoint.  The [`EndpointState::send_call_me_maybe`] function takes care of this.
     #[cfg(not(wasm_browser))]
     #[instrument("want_call_me_maybe", skip_all)]
     fn want_call_me_maybe(&self, now: &Instant, have_ipv6: bool) -> bool {
@@ -440,7 +445,7 @@ impl NodeState {
     }
 
     /// Cleanup the expired ping for the passed in txid.
-    #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
+    #[instrument("disco", skip_all, fields(endpoint = %self.endpoint_id.fmt_short()))]
     pub(super) fn ping_timeout(
         &mut self,
         txid: stun_rs::TransactionId,
@@ -499,11 +504,11 @@ impl NodeState {
 
         let tx_id = stun_rs::TransactionId::default();
         trace!(tx = %HEXLOWER.encode(&tx_id), %dst, ?purpose,
-               dst = %self.node_id.fmt_short(), "start ping");
+               dst = %self.endpoint_id.fmt_short(), "start ping");
         event!(
             target: "iroh::_events::ping::sent",
             Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
+            remote_endpoint = %self.endpoint_id.fmt_short(),
             ?dst,
             txn = ?tx_id,
             ?purpose,
@@ -511,7 +516,7 @@ impl NodeState {
         Some(SendPing {
             id: self.id,
             dst,
-            dst_node: self.node_id,
+            dst_endpoint: self.endpoint_id,
             tx_id,
             purpose,
         })
@@ -599,7 +604,7 @@ impl NodeState {
         }
         // We send pings regardless of whether we have a RelayUrl.  If we were given any
         // direct address paths to contact but no RelayUrl, we still need to send a DISCO
-        // ping to the direct address paths so that the other node will learn about us and
+        // ping to the direct address paths so that the other endpoint will learn about us and
         // accepts the connection.
         let mut msgs = self.send_pings(now);
 
@@ -607,7 +612,7 @@ impl NodeState {
             debug!(%url, "queue call-me-maybe");
             msgs.push(PingAction::SendCallMeMaybe {
                 relay_url: url,
-                dst_node: self.node_id,
+                dst_endpoint: self.endpoint_id,
             });
             self.last_call_me_maybe = Some(now);
         } else {
@@ -617,9 +622,9 @@ impl NodeState {
         msgs
     }
 
-    /// Send DISCO Pings to all the paths of this node.
+    /// Send DISCO Pings to all the paths of this endpoint.
     ///
-    /// Any paths to the node which have not been recently pinged will be sent a disco
+    /// Any paths to the endpoint which have not been recently pinged will be sent a disco
     /// ping.
     ///
     /// The caller is responsible for sending the messages.
@@ -662,15 +667,15 @@ impl NodeState {
         ping_dsts.push(']');
         debug!(
             %ping_dsts,
-            dst = %self.node_id.fmt_short(),
-            paths = %summarize_node_paths(self.udp_paths.paths()),
-            "sending pings to node",
+            dst = %self.endpoint_id.fmt_short(),
+            paths = %summarize_endpoint_paths(self.udp_paths.paths()),
+            "sending pings to endpoint",
         );
         self.last_full_ping.replace(now);
         ping_msgs
     }
 
-    pub(super) fn update_from_node_addr(
+    pub(super) fn update_from_endpoint_addr(
         &mut self,
         new_relay_url: Option<&RelayUrl>,
         new_addrs: &BTreeSet<SocketAddr>,
@@ -697,13 +702,13 @@ impl NodeState {
 
         if new_relay_url.is_some() && new_relay_url != self.relay_url().as_ref() {
             debug!(
-                "Changing relay node from {:?} to {:?}",
+                "Changing relay endpoint from {:?} to {:?}",
                 self.relay_url, new_relay_url
             );
             self.relay_url = new_relay_url.map(|url| {
                 (
                     url.clone(),
-                    PathState::new(self.node_id, url.clone().into(), source.clone(), now),
+                    PathState::new(self.endpoint_id, url.clone().into(), source.clone(), now),
                 )
             });
         }
@@ -717,11 +722,11 @@ impl NodeState {
                     path_state.add_source(source.clone(), now);
                 })
                 .or_insert_with(|| {
-                    PathState::new(self.node_id, SendAddr::from(addr), source.clone(), now)
+                    PathState::new(self.endpoint_id, SendAddr::from(addr), source.clone(), now)
                 });
         }
         drop(access);
-        let paths = summarize_node_paths(self.udp_paths.paths());
+        let paths = summarize_endpoint_paths(self.udp_paths.paths());
         debug!(new = ?new_addrs , %paths, "added new direct paths for endpoint");
     }
 
@@ -746,9 +751,9 @@ impl NodeState {
                 match self.udp_paths.access_mut(now).paths().entry(addr.into()) {
                     Entry::Occupied(mut occupied) => occupied.get_mut().handle_ping(tx_id, now),
                     Entry::Vacant(vacant) => {
-                        info!(%addr, "new direct addr for node");
+                        info!(%addr, "new direct addr for endpoint");
                         vacant.insert(PathState::with_ping(
-                            self.node_id,
+                            self.endpoint_id,
                             path.clone(),
                             tx_id,
                             Source::Udp,
@@ -761,13 +766,13 @@ impl NodeState {
             SendAddr::Relay(ref url) => {
                 match self.relay_url.as_mut() {
                     Some((home_url, _state)) if home_url != url => {
-                        // either the node changed relays or we didn't have a relay address for the
-                        // node. In both cases, trust the new confirmed url
-                        info!(%url, "new relay addr for node");
+                        // either the endpoint changed relays or we didn't have a relay address for the
+                        // endpoint. In both cases, trust the new confirmed url
+                        info!(%url, "new relay addr for endpoint");
                         self.relay_url = Some((
                             url.clone(),
                             PathState::with_ping(
-                                self.node_id,
+                                self.endpoint_id,
                                 path.clone(),
                                 tx_id,
                                 Source::Relay,
@@ -778,11 +783,11 @@ impl NodeState {
                     }
                     Some((_home_url, state)) => state.handle_ping(tx_id, now),
                     None => {
-                        info!(%url, "new relay addr for node");
+                        info!(%url, "new relay addr for endpoint");
                         self.relay_url = Some((
                             url.clone(),
                             PathState::with_ping(
-                                self.node_id,
+                                self.endpoint_id,
                                 path.clone(),
                                 tx_id,
                                 Source::Relay,
@@ -797,7 +802,7 @@ impl NodeState {
         event!(
             target: "iroh::_events::ping::recv",
             Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
+            remote_endpoint = %self.endpoint_id.fmt_short(),
             src = ?path,
             txn = ?tx_id,
             ?role,
@@ -826,7 +831,7 @@ impl NodeState {
         debug!(
             ?role,
             needs_ping_back = ?needs_ping_back.is_some(),
-            paths = %summarize_node_paths(self.udp_paths.paths()),
+            paths = %summarize_endpoint_paths(self.udp_paths.paths()),
             "endpoint handled ping",
         );
         PingHandled {
@@ -858,7 +863,7 @@ impl NodeState {
         if prune_count == 0 {
             // nothing to do, within limits
             debug!(
-                paths = %summarize_node_paths(self.udp_paths.paths()),
+                paths = %summarize_endpoint_paths(self.udp_paths.paths()),
                 "prune addresses: {prune_count} pruned",
             );
             return;
@@ -872,14 +877,14 @@ impl NodeState {
             self.remove_direct_addr(&ip_port, now, "inactive");
         }
         debug!(
-            paths = %summarize_node_paths(self.udp_paths.paths()),
+            paths = %summarize_endpoint_paths(self.udp_paths.paths()),
             "prune addresses: {prune_count} pruned",
         );
     }
 
     /// Called when connectivity changes enough that we should question our earlier
     /// assumptions about which paths work.
-    #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
+    #[instrument("disco", skip_all, fields(endpoint = %self.endpoint_id.fmt_short()))]
     pub(super) fn note_connectivity_change(&mut self, now: Instant, metrics: &MagicsockMetrics) {
         let mut guard = self.udp_paths.access_mut(now);
         for es in guard.paths().values_mut() {
@@ -901,7 +906,7 @@ impl NodeState {
         event!(
             target: "iroh::_events::pong::recv",
             Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
+            remote_endpoint = %self.endpoint_id.fmt_short(),
             ?src,
             txn = ?m.tx_id,
         );
@@ -915,7 +920,7 @@ impl NodeState {
                 None
             }
             Some(sp) => {
-                let mut node_map_insert = None;
+                let mut endpoint_map_insert = None;
 
                 let now = Instant::now();
                 let latency = now - sp.at;
@@ -936,10 +941,10 @@ impl NodeState {
                             None => {
                                 warn!("ignoring pong: no state for src addr");
                                 // This is no longer an endpoint we care about.
-                                return node_map_insert;
+                                return endpoint_map_insert;
                             }
                             Some(st) => {
-                                node_map_insert = Some((addr, self.node_id));
+                                endpoint_map_insert = Some((addr, self.endpoint_id));
                                 st.add_pong_reply(
                                     PongReply {
                                         latency,
@@ -952,7 +957,7 @@ impl NodeState {
                             }
                         }
                         debug!(
-                            paths = %summarize_node_paths(self.udp_paths.paths()),
+                            paths = %summarize_endpoint_paths(self.udp_paths.paths()),
                             "handled pong",
                         );
                     }
@@ -988,14 +993,14 @@ impl NodeState {
                     debug_assert!(!is_relay, "mismatching relay & udp");
                 }
 
-                node_map_insert
+                endpoint_map_insert
             }
         }
     }
 
     /// Handles a DISCO CallMeMaybe discovery message.
     ///
-    /// The contract for use of this message is that the node has already pinged to us via
+    /// The contract for use of this message is that the endpoint has already pinged to us via
     /// UDP, so their stateful firewall should be open. Now we can Ping back and make it
     /// through.
     ///
@@ -1028,7 +1033,7 @@ impl NodeState {
                 .entry(ipp)
                 .or_insert_with(|| {
                     PathState::new(
-                        self.node_id,
+                        self.endpoint_id,
                         SendAddr::from(*peer_sockaddr),
                         Source::Relay,
                         now,
@@ -1058,25 +1063,28 @@ impl NodeState {
             self.last_call_me_maybe = None;
         }
         debug!(
-            paths = %summarize_node_paths(self.udp_paths.paths()),
+            paths = %summarize_endpoint_paths(self.udp_paths.paths()),
             "updated endpoint paths from call-me-maybe",
         );
         self.send_pings(now)
     }
 
-    /// Marks this node as having received a UDP payload message.
+    /// Marks this endpoint as having received a UDP payload message.
     #[cfg(not(wasm_browser))]
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
         let mut guard = self.udp_paths.access_mut(now);
         let Some(state) = guard.paths().get_mut(&addr) else {
-            debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
+            debug_assert!(
+                false,
+                "endpoint map inconsistency by_ip_port <-> direct addr"
+            );
             return;
         };
         state.receive_payload(now);
         self.last_used = Some(now);
     }
 
-    pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: NodeId, now: Instant) {
+    pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: EndpointId, now: Instant) {
         match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
@@ -1123,9 +1131,9 @@ impl NodeState {
         }
     }
 
-    /// Send a heartbeat to the node to keep the connection alive, or trigger a full ping
+    /// Send a heartbeat to the endpoint to keep the connection alive, or trigger a full ping
     /// if necessary.
-    #[instrument("stayin_alive", skip_all, fields(node = %self.node_id.fmt_short()))]
+    #[instrument("stayin_alive", skip_all, fields(endpoint = %self.endpoint_id.fmt_short()))]
     pub(super) fn stayin_alive(&mut self, have_ipv6: bool) -> Vec<PingAction> {
         trace!("stayin_alive");
         let now = Instant::now();
@@ -1171,7 +1179,7 @@ impl NodeState {
     /// This is in the hot path of `.poll_send()`.
     // TODO(matheus23): Make this take &self. That's not quite possible yet due to `send_call_me_maybe`
     // eventually calling `prune_direct_addresses` (which needs &mut self)
-    #[instrument("get_send_addrs", skip_all, fields(node = %self.node_id.fmt_short()))]
+    #[instrument("get_send_addrs", skip_all, fields(endpoint = %self.endpoint_id.fmt_short()))]
     pub(crate) fn get_send_addrs(
         &mut self,
         have_ipv6: bool,
@@ -1180,8 +1188,8 @@ impl NodeState {
         let now = Instant::now();
         let prev = self.last_used.replace(now);
         if prev.is_none() {
-            // this is the first time we are trying to connect to this node
-            metrics.nodes_contacted.inc();
+            // this is the first time we are trying to connect to this endpoint
+            metrics.endpoints_contacted.inc();
         }
         let (udp_addr, relay_url) = self.addr_for_send(have_ipv6, metrics);
 
@@ -1214,7 +1222,7 @@ impl NodeState {
     }
 }
 
-impl From<RemoteInfo> for NodeAddr {
+impl From<RemoteInfo> for EndpointAddr {
     fn from(info: RemoteInfo) -> Self {
         let direct_addresses = info
             .addrs
@@ -1222,8 +1230,8 @@ impl From<RemoteInfo> for NodeAddr {
             .map(|info| info.addr)
             .collect::<BTreeSet<_>>();
 
-        NodeAddr {
-            node_id: info.node_id,
+        EndpointAddr {
+            endpoint_id: info.endpoint_id,
             relay_url: info.relay_url.map(Into::into),
             direct_addresses,
         }
@@ -1277,10 +1285,10 @@ pub enum DiscoPingPurpose {
 /// The type of control message we have received.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, derive_more::Display)]
 pub enum ControlMsg {
-    /// We received a Ping from the node.
+    /// We received a Ping from the endpoint.
     #[display("ping←")]
     Ping,
-    /// We received a Pong from the node.
+    /// We received a Pong from the endpoint.
     #[display("pong←")]
     Pong,
     /// We received a CallMeMaybe.
@@ -1290,18 +1298,18 @@ pub enum ControlMsg {
 
 /// Information about a *direct address*.
 ///
-/// The *direct addresses* of an iroh node are those that could be used by other nodes to
+/// The *direct addresses* of an iroh endpoint are those that could be used by other endpoints to
 /// establish direct connectivity, depending on the network situation. Due to NAT configurations,
-/// for example, not all direct addresses of a node are usable by all peers.
+/// for example, not all direct addresses of a endpoint are usable by all peers.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DirectAddrInfo {
-    /// The UDP address reported by the remote node.
+    /// The UDP address reported by the remote endpoint.
     pub addr: SocketAddr,
-    /// The latency to the remote node over this network path.
+    /// The latency to the remote endpoint over this network path.
     ///
     /// If there has never been any connectivity via this address no latency will be known.
     pub latency: Option<Duration>,
-    /// Last control message received by this node about this address.
+    /// Last control message received by this endpoint about this address.
     ///
     /// This contains the elapsed duration since the control message was received and the
     /// kind of control message received at that time.  Only the most recent control message
@@ -1313,18 +1321,18 @@ pub struct DirectAddrInfo {
     pub last_control: Option<(Duration, ControlMsg)>,
     /// Elapsed time since the last payload message was received on this network path.
     ///
-    /// This indicates how long ago a QUIC datagram was received from the remote node sent
+    /// This indicates how long ago a QUIC datagram was received from the remote endpoint sent
     /// from this [`DirectAddrInfo::addr`].  It indicates the network path was in use to
     /// transport payload data.
     pub last_payload: Option<Duration>,
     /// Elapsed time since this network path was known to exist.
     ///
-    /// A network path is considered to exist only because the remote node advertised it.
+    /// A network path is considered to exist only because the remote endpoint advertised it.
     /// It may not mean the path is usable.  However, if there was any communication with
-    /// the remote node over this network path it also means the path exists.
+    /// the remote endpoint over this network path it also means the path exists.
     ///
     /// The elapsed time since *any* confirmation of the path's existence was received is
-    /// returned.  If the remote node moved networks and no longer has this path, this could
+    /// returned.  If the remote endpoint moved networks and no longer has this path, this could
     /// be a long duration.
     pub last_alive: Option<Duration>,
     /// A [`HashMap`] of [`Source`]s to [`Duration`]s.
@@ -1337,14 +1345,14 @@ pub struct DirectAddrInfo {
     pub sources: HashMap<Source, Duration>,
 }
 
-/// Information about the network path to a remote node via a relay server.
+/// Information about the network path to a remote endpoint via a relay server.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RelayUrlInfo {
     /// The relay URL.
     pub relay_url: RelayUrl,
     /// Elapsed time since this relay path last received payload or control data.
     pub last_alive: Option<Duration>,
-    /// Latency to the remote node over this relayed network path.
+    /// Latency to the remote endpoint over this relayed network path.
     pub latency: Option<Duration>,
 }
 
@@ -1364,34 +1372,34 @@ impl From<RelayUrlInfo> for RelayUrl {
     }
 }
 
-/// Details about a remote iroh node which is known to this node.
+/// Details about a remote iroh endpoint which is known to this endpoint.
 ///
-/// Having details of a node does not mean it can be connected to, nor that it has ever been
-/// connected to in the past. There are various reasons a node might be known: it could have
-/// been manually added via [`Endpoint::add_node_addr`], it could have been added by some
-/// discovery mechanism, the node could have contacted this node, etc.
+/// Having details of a endpoint does not mean it can be connected to, nor that it has ever been
+/// connected to in the past. There are various reasons a endpoint might be known: it could have
+/// been manually added via [`Endpoint::add_endpoint_addr`], it could have been added by some
+/// discovery mechanism, the endpoint could have contacted this endpoint, etc.
 ///
-/// [`Endpoint::add_node_addr`]: crate::endpoint::Endpoint::add_node_addr
+/// [`Endpoint::add_endpoint_addr`]: crate::endpoint::Endpoint::add_endpoint_addr
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RemoteInfo {
-    /// The globally unique identifier for this node.
-    pub node_id: NodeId,
+    /// The globally unique identifier for this endpoint.
+    pub endpoint_id: EndpointId,
     /// Relay server information, if available.
     pub relay_url: Option<RelayUrlInfo>,
-    /// The addresses at which this node might be reachable.
+    /// The addresses at which this endpoint might be reachable.
     ///
     /// Some of these addresses might only be valid for networks we are not part of, but the remote
-    /// node might be a part of.
+    /// endpoint might be a part of.
     pub addrs: Vec<DirectAddrInfo>,
-    /// The type of connection we have to the node, either direct or over relay.
+    /// The type of connection we have to the endpoint, either direct or over relay.
     pub conn_type: ConnectionType,
-    /// The latency of the current network path to the remote node.
+    /// The latency of the current network path to the remote endpoint.
     pub latency: Option<Duration>,
-    /// Time elapsed time since last we have sent to or received from the node.
+    /// Time elapsed time since last we have sent to or received from the endpoint.
     ///
     /// This is the duration since *any* data (payload or control messages) was sent or receive
-    /// from the remote node. Note that sending to the remote node does not imply
-    /// the remote node received anything.
+    /// from the remote endpoint. Note that sending to the remote endpoint does not imply
+    /// the remote endpoint received anything.
     pub last_used: Option<Duration>,
 }
 
@@ -1405,7 +1413,7 @@ impl RemoteInfo {
             .min()
     }
 
-    /// Whether there is a possible known network path to the remote node.
+    /// Whether there is a possible known network path to the remote endpoint.
     ///
     /// Note that this does not provide any guarantees of whether any network path is
     /// usable.
@@ -1443,7 +1451,7 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
-    use crate::magicsock::node_map::{NodeMap, NodeMapInner};
+    use crate::magicsock::endpoint_map::{EndpointMap, EndpointMapInner};
 
     #[test]
     fn test_remote_infos() {
@@ -1454,9 +1462,9 @@ mod tests {
         let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
         let latency = Duration::from_millis(50);
 
-        let relay_and_state = |node_id: NodeId, url: RelayUrl| {
+        let relay_and_state = |endpoint_id: EndpointId, url: RelayUrl| {
             let relay_state = PathState::with_pong_reply(
-                node_id,
+                endpoint_id,
                 PongReply {
                     latency,
                     pong_at: now,
@@ -1472,7 +1480,7 @@ mod tests {
         // endpoint with a `best_addr` that has a latency but no relay
         let (a_endpoint, a_socket_addr) = {
             let key = SecretKey::generate(&mut rng);
-            let node_id = key.public();
+            let endpoint_id = key.public();
             let ip_port = IpPort {
                 ip: Ipv4Addr::UNSPECIFIED.into(),
                 port: 10,
@@ -1480,7 +1488,7 @@ mod tests {
             let endpoint_state = BTreeMap::from([(
                 ip_port,
                 PathState::with_pong_reply(
-                    node_id,
+                    endpoint_id,
                     PongReply {
                         latency,
                         pong_at: now,
@@ -1490,13 +1498,13 @@ mod tests {
                 ),
             )]);
             (
-                NodeState {
+                EndpointState {
                     id: 0,
-                    quic_mapped_addr: NodeIdMappedAddr::generate(),
-                    node_id: key.public(),
+                    quic_mapped_addr: EndpointIdMappedAddr::generate(),
+                    endpoint_id: key.public(),
                     last_full_ping: None,
                     relay_url: None,
-                    udp_paths: NodeUdpPaths::from_parts(
+                    udp_paths: EndpointUdpPaths::from_parts(
                         endpoint_state,
                         UdpSendAddr::Valid(ip_port.into()),
                     ),
@@ -1515,13 +1523,13 @@ mod tests {
         let b_endpoint = {
             // let socket_addr = "0.0.0.0:9".parse().unwrap();
             let key = SecretKey::generate(&mut rng);
-            NodeState {
+            EndpointState {
                 id: 1,
-                quic_mapped_addr: NodeIdMappedAddr::generate(),
-                node_id: key.public(),
+                quic_mapped_addr: EndpointIdMappedAddr::generate(),
+                endpoint_id: key.public(),
                 last_full_ping: None,
                 relay_url: relay_and_state(key.public(), send_addr.clone()),
-                udp_paths: NodeUdpPaths::new(),
+                udp_paths: EndpointUdpPaths::new(),
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
@@ -1536,10 +1544,10 @@ mod tests {
         let c_endpoint = {
             // let socket_addr = "0.0.0.0:8".parse().unwrap();
             let key = SecretKey::generate(&mut rng);
-            NodeState {
+            EndpointState {
                 id: 2,
-                quic_mapped_addr: NodeIdMappedAddr::generate(),
-                node_id: key.public(),
+                quic_mapped_addr: EndpointIdMappedAddr::generate(),
+                endpoint_id: key.public(),
                 last_full_ping: None,
                 relay_url: Some((
                     send_addr.clone(),
@@ -1550,7 +1558,7 @@ mod tests {
                         now,
                     ),
                 )),
-                udp_paths: NodeUdpPaths::new(),
+                udp_paths: EndpointUdpPaths::new(),
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
@@ -1565,11 +1573,11 @@ mod tests {
         let (d_endpoint, d_socket_addr) = {
             let socket_addr: SocketAddr = "0.0.0.0:7".parse().unwrap();
             let key = SecretKey::generate(&mut rng);
-            let node_id = key.public();
+            let endpoint_id = key.public();
             let endpoint_state = BTreeMap::from([(
                 IpPort::from(socket_addr),
                 PathState::with_pong_reply(
-                    node_id,
+                    endpoint_id,
                     PongReply {
                         latency,
                         pong_at: now,
@@ -1579,13 +1587,13 @@ mod tests {
                 ),
             )]);
             (
-                NodeState {
+                EndpointState {
                     id: 3,
-                    quic_mapped_addr: NodeIdMappedAddr::generate(),
-                    node_id: key.public(),
+                    quic_mapped_addr: EndpointIdMappedAddr::generate(),
+                    endpoint_id: key.public(),
                     last_full_ping: None,
                     relay_url: relay_and_state(key.public(), send_addr.clone()),
-                    udp_paths: NodeUdpPaths::from_parts(
+                    udp_paths: EndpointUdpPaths::from_parts(
                         endpoint_state,
                         UdpSendAddr::Outdated(socket_addr),
                     ),
@@ -1606,7 +1614,7 @@ mod tests {
 
         let mut expect = Vec::from([
             RemoteInfo {
-                node_id: a_endpoint.node_id,
+                endpoint_id: a_endpoint.endpoint_id,
                 relay_url: None,
                 addrs: Vec::from([DirectAddrInfo {
                     addr: a_socket_addr,
@@ -1621,7 +1629,7 @@ mod tests {
                 last_used: Some(elapsed),
             },
             RemoteInfo {
-                node_id: b_endpoint.node_id,
+                endpoint_id: b_endpoint.endpoint_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: b_endpoint.relay_url.as_ref().unwrap().0.clone(),
                     last_alive: None,
@@ -1633,7 +1641,7 @@ mod tests {
                 last_used: Some(elapsed),
             },
             RemoteInfo {
-                node_id: c_endpoint.node_id,
+                endpoint_id: c_endpoint.endpoint_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: c_endpoint.relay_url.as_ref().unwrap().0.clone(),
                     last_alive: None,
@@ -1645,7 +1653,7 @@ mod tests {
                 last_used: Some(elapsed),
             },
             RemoteInfo {
-                node_id: d_endpoint.node_id,
+                endpoint_id: d_endpoint.endpoint_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: d_endpoint.relay_url.as_ref().unwrap().0.clone(),
                     last_alive: None,
@@ -1665,12 +1673,12 @@ mod tests {
             },
         ]);
 
-        let node_map = NodeMap::from_inner(NodeMapInner {
-            by_node_key: HashMap::from([
-                (a_endpoint.node_id, a_endpoint.id),
-                (b_endpoint.node_id, b_endpoint.id),
-                (c_endpoint.node_id, c_endpoint.id),
-                (d_endpoint.node_id, d_endpoint.id),
+        let endpoint_map = EndpointMap::from_inner(EndpointMapInner {
+            by_endpoint_key: HashMap::from([
+                (a_endpoint.endpoint_id, a_endpoint.id),
+                (b_endpoint.endpoint_id, b_endpoint.id),
+                (c_endpoint.endpoint_id, c_endpoint.id),
+                (d_endpoint.endpoint_id, d_endpoint.id),
             ]),
             by_ip_port: HashMap::from([
                 (a_socket_addr.into(), a_endpoint.id),
@@ -1691,9 +1699,9 @@ mod tests {
             next_id: 5,
             path_selection: PathSelection::default(),
         });
-        let mut got = node_map.list_remote_infos(later);
-        got.sort_by_key(|p| p.node_id);
-        expect.sort_by_key(|p| p.node_id);
+        let mut got = endpoint_map.list_remote_infos(later);
+        got.sort_by_key(|p| p.endpoint_id);
+        expect.sort_by_key(|p| p.endpoint_id);
         remove_non_deterministic_fields(&mut got);
         assert_eq!(expect, got);
     }
@@ -1714,7 +1722,7 @@ mod tests {
 
         let key = SecretKey::generate(&mut rng);
         let opts = Options {
-            node_id: key.public(),
+            endpoint_id: key.public(),
             relay_url: None,
             active: true,
             source: crate::magicsock::Source::NamedApp {
@@ -1722,7 +1730,7 @@ mod tests {
             },
             path_selection: PathSelection::default(),
         };
-        let mut ep = NodeState::new(0, opts);
+        let mut ep = EndpointState::new(0, opts);
 
         let my_numbers_count: u16 = (MAX_INACTIVE_DIRECT_ADDRESSES + 5).try_into().unwrap();
         let my_numbers = (0u16..my_numbers_count)

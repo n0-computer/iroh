@@ -6,7 +6,7 @@
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
-use iroh_relay::{RelayMap, RelayNode};
+use iroh_relay::{RelayEndpoint, RelayMap};
 use n0_future::time::Duration;
 use snafu::Snafu;
 
@@ -18,7 +18,7 @@ const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 /// The delay before starting HTTPS probes.
 const HTTPS_OFFSET: Duration = Duration::from_millis(200);
 
-/// The protocol used to time a node's latency.
+/// The protocol used to time a endpoint's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
 pub enum Probe {
@@ -49,7 +49,7 @@ pub(super) struct ProbeSet {
     /// The [`Probe`] all the probes in this set have.
     proto: Probe,
     /// The data in the set.
-    probes: Vec<(Duration, Arc<RelayNode>)>,
+    probes: Vec<(Duration, Arc<RelayEndpoint>)>,
 }
 
 #[derive(Debug, Snafu)]
@@ -68,15 +68,15 @@ impl ProbeSet {
         self.proto
     }
 
-    fn push(&mut self, delay: Duration, node: Arc<RelayNode>) {
-        self.probes.push((delay, node));
+    fn push(&mut self, delay: Duration, endpoint: Arc<RelayEndpoint>) {
+        self.probes.push((delay, endpoint));
     }
 
     fn is_empty(&self) -> bool {
         self.probes.is_empty()
     }
 
-    pub(super) fn params(&self) -> impl Iterator<Item = &(Duration, Arc<RelayNode>)> {
+    pub(super) fn params(&self) -> impl Iterator<Item = &(Duration, Arc<RelayEndpoint>)> {
         self.probes.iter()
     }
 }
@@ -101,12 +101,12 @@ impl ProbePlan {
     pub(super) fn initial(relay_map: &RelayMap, protocols: &BTreeSet<Probe>) -> Self {
         let mut plan = Self::default();
 
-        for relay_node in relay_map.nodes::<Vec<_>>() {
+        for relay_endpoint in relay_map.endpoints::<Vec<_>>() {
             let mut https_probes = ProbeSet::new(Probe::Https);
 
             for attempt in 0u32..3 {
                 let delay = HTTPS_OFFSET + DEFAULT_INITIAL_RETRANSMIT * attempt;
-                https_probes.push(delay, relay_node.clone());
+                https_probes.push(delay, relay_endpoint.clone());
             }
 
             plan.add_if_enabled(protocols, https_probes);
@@ -149,8 +149,8 @@ impl fmt::Display for ProbePlan {
         writeln!(f, "ProbePlan {{")?;
         for probe_set in self.set.iter() {
             writeln!(f, r#"    ProbeSet("{}") {{"#, probe_set.proto)?;
-            for (delay, node) in probe_set.probes.iter() {
-                writeln!(f, "        {delay:?} to {node},")?;
+            for (delay, endpoint) in probe_set.probes.iter() {
+                writeln!(f, "        {delay:?} to {endpoint},")?;
             }
             writeln!(f, "    }}")?;
         }
@@ -176,13 +176,13 @@ mod tests {
     /// Shorthand which declares a new ProbeSet.
     ///
     /// `$kind`: The `Probe`.
-    /// `$node`: Expression which will be an `Arc<RelayNode>`.
+    /// `$endpoint`: Expression which will be an `Arc<RelayEndpoint>`.
     /// `$delays`: A `Vec` of the delays for this probe.
     macro_rules! probeset {
-        (proto: Probe::$kind:ident, relay: $node:expr, delays: $delays:expr,) => {
+        (proto: Probe::$kind:ident, relay: $endpoint:expr, delays: $delays:expr,) => {
             ProbeSet {
                 proto: Probe::$kind,
-                probes: $delays.iter().map(|delay| (*delay, $node)).collect(),
+                probes: $delays.iter().map(|delay| (*delay, $endpoint)).collect(),
             }
         };
     }
@@ -194,14 +194,14 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan() {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let relay_node_1 = &relay_map.nodes::<Vec<_>>()[0];
-        let relay_node_2 = &relay_map.nodes::<Vec<_>>()[1];
+        let relay_endpoint_1 = &relay_map.endpoints::<Vec<_>>()[0];
+        let relay_endpoint_2 = &relay_map.endpoints::<Vec<_>>()[1];
         let plan = ProbePlan::initial(&relay_map, &default_protocols());
 
         let expected_plan: ProbePlan = [
             probeset! {
                 proto: Probe::Https,
-                relay: relay_node_1.clone(),
+                relay: relay_endpoint_1.clone(),
                 delays: [
                     Duration::from_millis(200),
                     Duration::from_millis(300),
@@ -210,7 +210,7 @@ mod tests {
             },
             probeset! {
                 proto: Probe::Https,
-                relay: relay_node_2.clone(),
+                relay: relay_endpoint_2.clone(),
                 delays: [
                     Duration::from_millis(200),
                     Duration::from_millis(300),
@@ -234,21 +234,21 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan_some_protocols() {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let relay_node_1 = &relay_map.nodes::<Vec<_>>()[0];
-        let relay_node_2 = &relay_map.nodes::<Vec<_>>()[1];
+        let relay_endpoint_1 = &relay_map.endpoints::<Vec<_>>()[0];
+        let relay_endpoint_2 = &relay_map.endpoints::<Vec<_>>()[1];
         let plan = ProbePlan::initial(&relay_map, &BTreeSet::from([Probe::Https]));
 
         let expected_plan: ProbePlan = [
             probeset! {
                 proto: Probe::Https,
-                relay: relay_node_1.clone(),
+                relay: relay_endpoint_1.clone(),
                 delays: [Duration::from_millis(200),
                          Duration::from_millis(300),
                          Duration::from_millis(400)],
             },
             probeset! {
                 proto: Probe::Https,
-                relay: relay_node_2.clone(),
+                relay: relay_endpoint_2.clone(),
                 delays: [Duration::from_millis(200),
                          Duration::from_millis(300),
                          Duration::from_millis(400)],

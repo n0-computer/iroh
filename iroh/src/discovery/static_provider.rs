@@ -1,43 +1,43 @@
-//! A static node discovery to manually add node addressing information.
+//! A static endpoint discovery to manually add endpoint addressing information.
 //!
-//! Often an application might get node addressing information out-of-band in an
-//! application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
+//! Often an application might get endpoint addressing information out-of-band in an
+//! application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
 //! This "static" addressing information is often only usable for a limited time so needs to
 //! be able to be removed again once know it is no longer useful.
 //!
 //! This is where the [`StaticProvider`] is useful: it allows applications to add and
-//! retract node addressing information that is otherwise out-of-band to iroh.
+//! retract endpoint addressing information that is otherwise out-of-band to iroh.
 //!
-//! [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
+//! [`EndpointTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.EndpointTicket
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
     sync::{Arc, RwLock},
 };
 
-use iroh_base::NodeId;
+use iroh_base::EndpointId;
 use n0_future::{
     boxed::BoxStream,
     stream::{self, StreamExt},
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
+use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo};
 
-/// A static node discovery to manually add node addressing information.
+/// A static endpoint discovery to manually add endpoint addressing information.
 ///
-/// Often an application might get node addressing information out-of-band in an
-/// application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
+/// Often an application might get endpoint addressing information out-of-band in an
+/// application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
 /// This "static" addressing information is often only usable for a limited time so needs to
 /// be able to be removed again once know it is no longer useful.
 ///
 /// This is where the [`StaticProvider`] is useful: it allows applications to add and
-/// retract node addressing information that is otherwise out-of-band to iroh.
+/// retract endpoint addressing information that is otherwise out-of-band to iroh.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use iroh::{Endpoint, NodeAddr, discovery::static_provider::StaticProvider};
+/// use iroh::{Endpoint, EndpointAddr, discovery::static_provider::StaticProvider};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
@@ -50,11 +50,11 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 ///     .bind()
 ///     .await?;
 ///
-/// // Sometime later add a RelayUrl for a fake NodeId.
-/// let node_id = SecretKey::from_bytes(&[0u8; 32]).public(); // Do not use fake secret keys!
-/// // You can pass either `NodeInfo` or `NodeAddr` to `add_node_info`.
-/// discovery.add_node_info(NodeAddr {
-///     node_id,
+/// // Sometime later add a RelayUrl for a fake EndpointId.
+/// let endpoint_id = SecretKey::from_bytes(&[0u8; 32]).public(); // Do not use fake secret keys!
+/// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
+/// discovery.add_endpoint_info(EndpointAddr {
+///     endpoint_id,
 ///     relay_url: Some("https://example.com".parse()?),
 ///     direct_addresses: Default::default(),
 /// });
@@ -63,25 +63,25 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 /// # }
 /// ```
 ///
-/// [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
+/// [`EndpointTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.EndpointTicket
 #[derive(Debug, Clone)]
 pub struct StaticProvider {
-    nodes: Arc<RwLock<BTreeMap<NodeId, StoredNodeInfo>>>,
+    endpoints: Arc<RwLock<BTreeMap<EndpointId, StoredEndpointInfo>>>,
     provenance: &'static str,
 }
 
 impl Default for StaticProvider {
     fn default() -> Self {
         Self {
-            nodes: Default::default(),
+            endpoints: Default::default(),
             provenance: Self::PROVENANCE,
         }
     }
 }
 
 #[derive(Debug)]
-struct StoredNodeInfo {
-    data: NodeData,
+struct StoredEndpointInfo {
+    data: EndpointData,
     last_updated: SystemTime,
 }
 
@@ -108,21 +108,21 @@ impl StaticProvider {
     /// [`Endpoint`]: crate::Endpoint
     pub fn with_provenance(provenance: &'static str) -> Self {
         Self {
-            nodes: Default::default(),
+            endpoints: Default::default(),
             provenance,
         }
     }
 
-    /// Creates a static discovery instance from node addresses.
+    /// Creates a static discovery instance from endpoint addresses.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use std::{net::SocketAddr, str::FromStr};
     ///
-    /// use iroh::{Endpoint, NodeAddr, discovery::static_provider::StaticProvider};
+    /// use iroh::{Endpoint, EndpointAddr, discovery::static_provider::StaticProvider};
     ///
-    /// # fn get_addrs() -> Vec<NodeAddr> {
+    /// # fn get_addrs() -> Vec<EndpointAddr> {
     /// #     Vec::new()
     /// # }
     /// # #[tokio::main]
@@ -131,44 +131,47 @@ impl StaticProvider {
     /// let addrs = get_addrs();
     ///
     /// // create a StaticProvider from the list of addrs.
-    /// let discovery = StaticProvider::from_node_info(addrs);
+    /// let discovery = StaticProvider::from_endpoint_info(addrs);
     /// // create an endpoint with the discovery
     /// let endpoint = Endpoint::builder().add_discovery(discovery).bind().await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn from_node_info(infos: impl IntoIterator<Item = impl Into<NodeInfo>>) -> Self {
+    pub fn from_endpoint_info(infos: impl IntoIterator<Item = impl Into<EndpointInfo>>) -> Self {
         let res = Self::default();
         for info in infos {
-            res.add_node_info(info);
+            res.add_endpoint_info(info);
         }
         res
     }
 
-    /// Sets node addressing information for the given node ID.
+    /// Sets endpoint addressing information for the given endpoint ID.
     ///
-    /// This will completely overwrite any existing info for the node.
+    /// This will completely overwrite any existing info for the endpoint.
     ///
-    /// Returns the [`NodeData`] of the previous entry, or `None` if there was no previous
-    /// entry for this node ID.
-    pub fn set_node_info(&self, node_info: impl Into<NodeInfo>) -> Option<NodeData> {
+    /// Returns the [`EndpointData`] of the previous entry, or `None` if there was no previous
+    /// entry for this endpoint ID.
+    pub fn set_endpoint_info(
+        &self,
+        endpoint_info: impl Into<EndpointInfo>,
+    ) -> Option<EndpointData> {
         let last_updated = SystemTime::now();
-        let NodeInfo { node_id, data } = node_info.into();
-        let mut guard = self.nodes.write().expect("poisoned");
-        let previous = guard.insert(node_id, StoredNodeInfo { data, last_updated });
+        let EndpointInfo { endpoint_id, data } = endpoint_info.into();
+        let mut guard = self.endpoints.write().expect("poisoned");
+        let previous = guard.insert(endpoint_id, StoredEndpointInfo { data, last_updated });
         previous.map(|x| x.data)
     }
 
-    /// Augments node addressing information for the given node ID.
+    /// Augments endpoint addressing information for the given endpoint ID.
     ///
     /// The provided addressing information is combined with the existing info in the static
     /// provider.  Any new direct addresses are added to those already present while the
     /// relay URL is overwritten.
-    pub fn add_node_info(&self, node_info: impl Into<NodeInfo>) {
+    pub fn add_endpoint_info(&self, endpoint_info: impl Into<EndpointInfo>) {
         let last_updated = SystemTime::now();
-        let NodeInfo { node_id, data } = node_info.into();
-        let mut guard = self.nodes.write().expect("poisoned");
-        match guard.entry(node_id) {
+        let EndpointInfo { endpoint_id, data } = endpoint_info.into();
+        let mut guard = self.endpoints.write().expect("poisoned");
+        match guard.entry(endpoint_id) {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
                 existing
@@ -179,46 +182,46 @@ impl StaticProvider {
                 existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) => {
-                entry.insert(StoredNodeInfo { data, last_updated });
+                entry.insert(StoredEndpointInfo { data, last_updated });
             }
         }
     }
 
-    /// Returns node addressing information for the given node ID.
-    pub fn get_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
-        let guard = self.nodes.read().expect("poisoned");
-        let info = guard.get(&node_id)?;
-        Some(NodeInfo::from_parts(node_id, info.data.clone()))
+    /// Returns endpoint addressing information for the given endpoint ID.
+    pub fn get_endpoint_info(&self, endpoint_id: EndpointId) -> Option<EndpointInfo> {
+        let guard = self.endpoints.read().expect("poisoned");
+        let info = guard.get(&endpoint_id)?;
+        Some(EndpointInfo::from_parts(endpoint_id, info.data.clone()))
     }
 
-    /// Removes all node addressing information for the given node ID.
+    /// Removes all endpoint addressing information for the given endpoint ID.
     ///
     /// Any removed information is returned.
-    pub fn remove_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
-        let mut guard = self.nodes.write().expect("poisoned");
-        let info = guard.remove(&node_id)?;
-        Some(NodeInfo::from_parts(node_id, info.data))
+    pub fn remove_endpoint_info(&self, endpoint_id: EndpointId) -> Option<EndpointInfo> {
+        let mut guard = self.endpoints.write().expect("poisoned");
+        let info = guard.remove(&endpoint_id)?;
+        Some(EndpointInfo::from_parts(endpoint_id, info.data))
     }
 }
 
 impl Discovery for StaticProvider {
-    fn publish(&self, _data: &NodeData) {}
+    fn publish(&self, _data: &EndpointData) {}
 
     fn resolve(
         &self,
-        node_id: NodeId,
+        endpoint_id: EndpointId,
     ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
-        let guard = self.nodes.read().expect("poisoned");
-        let info = guard.get(&node_id);
+        let guard = self.endpoints.read().expect("poisoned");
+        let info = guard.get(&endpoint_id);
         match info {
-            Some(node_info) => {
-                let last_updated = node_info
+            Some(endpoint_info) => {
+                let last_updated = endpoint_info
                     .last_updated
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .expect("time drift")
                     .as_micros() as u64;
                 let item = DiscoveryItem::new(
-                    NodeInfo::from_parts(node_id, node_info.data.clone()),
+                    EndpointInfo::from_parts(endpoint_id, endpoint_info.data.clone()),
                     self.provenance,
                     Some(last_updated),
                 );
@@ -231,7 +234,7 @@ impl Discovery for StaticProvider {
 
 #[cfg(test)]
 mod tests {
-    use iroh_base::{NodeAddr, SecretKey};
+    use iroh_base::{EndpointAddr, SecretKey};
     use n0_snafu::{Result, ResultExt};
 
     use super::*;
@@ -247,26 +250,28 @@ mod tests {
             .await?;
 
         let key = SecretKey::from_bytes(&[0u8; 32]);
-        let addr = NodeAddr {
-            node_id: key.public(),
+        let addr = EndpointAddr {
+            endpoint_id: key.public(),
             relay_url: Some("https://example.com".parse()?),
             direct_addresses: Default::default(),
         };
         let user_data = Some("foobar".parse().unwrap());
-        let node_info = NodeInfo::from(addr.clone()).with_user_data(user_data.clone());
-        discovery.add_node_info(node_info.clone());
+        let endpoint_info = EndpointInfo::from(addr.clone()).with_user_data(user_data.clone());
+        discovery.add_endpoint_info(endpoint_info.clone());
 
-        let back = discovery.get_node_info(key.public()).context("no addr")?;
+        let back = discovery
+            .get_endpoint_info(key.public())
+            .context("no addr")?;
 
-        assert_eq!(back, node_info);
+        assert_eq!(back, endpoint_info);
         assert_eq!(back.user_data(), user_data.as_ref());
-        assert_eq!(back.into_node_addr(), addr);
+        assert_eq!(back.into_endpoint_addr(), addr);
 
         let removed = discovery
-            .remove_node_info(key.public())
+            .remove_endpoint_info(key.public())
             .context("nothing removed")?;
-        assert_eq!(removed, node_info);
-        let res = discovery.get_node_info(key.public());
+        assert_eq!(removed, endpoint_info);
+        let res = discovery.get_endpoint_info(key.public());
         assert!(res.is_none());
 
         Ok(())
@@ -276,12 +281,12 @@ mod tests {
     async fn test_provenance() -> Result {
         let discovery = StaticProvider::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
-        let addr = NodeAddr {
-            node_id: key.public(),
+        let addr = EndpointAddr {
+            endpoint_id: key.public(),
             relay_url: Some("https://example.com".parse()?),
             direct_addresses: Default::default(),
         };
-        discovery.add_node_info(addr);
+        discovery.add_endpoint_info(addr);
         let mut stream = discovery.resolve(key.public()).unwrap();
         let item = stream.next().await.unwrap()?;
         assert_eq!(item.provenance(), "foo");

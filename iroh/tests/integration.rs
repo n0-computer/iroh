@@ -3,7 +3,7 @@
 //! At the moment, these tests unfortunately interact with deployed services, specifically
 //! the "real" DNS server infrastructure and "real" relays.
 //!
-//! The main reason is that running rust code natively and simultaneously in node.js via
+//! The main reason is that running rust code natively and simultaneously in endpoint.js via
 //! wasm-bindgen-test is not trivial. We want to avoid a situation where you need to
 //! remember to run *another* binary simultaneously to running `cargo test --test integration`.
 //!
@@ -25,14 +25,14 @@ use tracing::{Instrument, info_span};
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
 // Enable this if you want to run these tests in the browser.
-// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in nodejs.
+// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in endpointjs.
 // #[cfg(wasm_browser)]
 // wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 const ECHO_ALPN: &[u8] = b"echo";
 
 #[test]
-async fn simple_node_id_based_connection_transfer() -> Result {
+async fn simple_endpoint_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
 
@@ -54,8 +54,8 @@ async fn simple_node_id_based_connection_transfer() -> Result {
         async move {
             while let Some(incoming) = server.accept().await {
                 let conn = incoming.await.e()?;
-                let node_id = conn.remote_node_id()?;
-                tracing::info!(node_id = %node_id.fmt_short(), "Accepted connection");
+                let endpoint_id = conn.remote_endpoint_id()?;
+                tracing::info!(endpoint_id = %endpoint_id.fmt_short(), "Accepted connection");
 
                 let (mut send, mut recv) = conn.accept_bi().await.e()?;
                 let mut bytes_sent = 0;
@@ -77,14 +77,14 @@ async fn simple_node_id_based_connection_transfer() -> Result {
 
     // Wait for pkarr records to be published
     time::timeout(Duration::from_secs(10), {
-        let node_id = server.node_id();
+        let endpoint_id = server.endpoint_id();
         async move {
             let resolver = PkarrResolver::n0_dns().build();
             loop {
                 // Very rudimentary non-backoff algorithm
                 time::sleep(Duration::from_secs(1)).await;
 
-                let Some(mut stream) = resolver.resolve(node_id) else {
+                let Some(mut stream) = resolver.resolve(endpoint_id) else {
                     continue;
                 };
                 let Ok(Some(item)) = stream.try_next().await else {
@@ -99,8 +99,8 @@ async fn simple_node_id_based_connection_transfer() -> Result {
     .await
     .e()?;
 
-    tracing::info!(to = %server.node_id().fmt_short(), "Opening a connection");
-    let conn = client.connect(server.node_id(), ECHO_ALPN).await?;
+    tracing::info!(to = %server.endpoint_id().fmt_short(), "Opening a connection");
+    let conn = client.connect(server.endpoint_id(), ECHO_ALPN).await?;
     tracing::info!("Connection opened");
 
     let (mut send, mut recv) = conn.open_bi().await.e()?;

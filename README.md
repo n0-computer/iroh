@@ -39,7 +39,7 @@ To ensure these connections are as fast as possible, we [continuously measure ir
 
 ### Built on [QUIC]
 
-Iroh uses [Quinn] to establish [QUIC] connections between nodes.
+Iroh uses [Quinn] to establish [QUIC] connections between endpoints.
 This way you get authenticated encryption, concurrent streams with stream priorities, a datagram transport and avoid head-of-line-blocking out of the box.
 
 ## Compose Protocols
@@ -62,7 +62,7 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 
 let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
-// Open a connection to the accepting node
+// Open a connection to the accepting endpoint
 let conn = endpoint.connect(addr, ALPN).await?;
 
 // Open a bidirectional QUIC stream
@@ -132,7 +132,7 @@ This repository contains a workspace of crates:
 - `iroh`: The core library for hole-punching & communicating with relays.
 - `iroh-relay`: The relay server implementation. This is the code we run in production (and you can, too!).
 - `iroh-base`: Common types like `Hash`, key types or `RelayUrl`.
-- `iroh-dns-server`: DNS server implementation powering the `n0_discovery` for NodeIds, running at dns.iroh.link.
+- `iroh-dns-server`: DNS server implementation powering the `n0_discovery` for EndpointIds, running at dns.iroh.link.
 - `iroh-net-report`: Analyzes your host's networking ability & NAT.
 
 ## License

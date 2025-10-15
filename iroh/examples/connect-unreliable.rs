@@ -1,14 +1,14 @@
-//! The smallest example showing how to use iroh and [`iroh::Endpoint`] to connect to a remote node and pass bytes using unreliable datagrams.
+//! The smallest example showing how to use iroh and [`iroh::Endpoint`] to connect to a remote endpoint and pass bytes using unreliable datagrams.
 //!
-//! We use the node ID (the PublicKey of the remote node), the direct UDP addresses, and the relay url to achieve a connection.
+//! We use the endpoint ID (the PublicKey of the remote endpoint), the direct UDP addresses, and the relay url to achieve a connection.
 //!
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //!
-//! Run the `listen-unreliable` example first (`iroh/examples/listen-unreliable.rs`), which will give you instructions on how to run this example to watch two nodes connect and exchange bytes.
+//! Run the `listen-unreliable` example first (`iroh/examples/listen-unreliable.rs`), which will give you instructions on how to run this example to watch two endpoints connect and exchange bytes.
 use std::net::SocketAddr;
 
 use clap::Parser;
-use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
+use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey};
 use n0_snafu::ResultExt;
 use tracing::info;
 
@@ -17,13 +17,13 @@ const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 
 #[derive(Debug, Parser)]
 struct Cli {
-    /// The id of the remote node.
+    /// The id of the remote endpoint.
     #[clap(long)]
-    node_id: iroh::NodeId,
-    /// The list of direct UDP addresses for the remote node.
+    endpoint_id: iroh::EndpointId,
+    /// The list of direct UDP addresses for the remote endpoint.
     #[clap(long, value_parser, num_args = 1.., value_delimiter = ' ')]
     addrs: Vec<SocketAddr>,
-    /// The url of the relay server the remote node can also be reached at.
+    /// The url of the relay server the remote endpoint can also be reached at.
     #[clap(long)]
     relay_url: RelayUrl,
 }
@@ -36,9 +36,9 @@ async fn main() -> n0_snafu::Result<()> {
     let secret_key = SecretKey::generate(&mut rand::rng());
     println!("public key: {}", secret_key.public());
 
-    // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
+    // Build a `Endpoint`, which uses PublicKeys as endpoint identifiers, uses QUIC for directly connecting to other endpoints, and uses the relay protocol and relay servers to holepunch direct connections between endpoints when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = Endpoint::builder()
-        // The secret key is used to authenticate with other nodes. The PublicKey portion of this secret key is how we identify nodes, often referred to as the `node_id` in our codebase.
+        // The secret key is used to authenticate with other endpoints. The PublicKey portion of this secret key is how we identify endpoints, often referred to as the `endpoint_id` in our codebase.
         .secret_key(secret_key)
         // Set the ALPN protocols this endpoint will accept on incoming connections
         .alpns(vec![EXAMPLE_ALPN.to_vec()])
@@ -51,23 +51,23 @@ async fn main() -> n0_snafu::Result<()> {
         .bind()
         .await?;
 
-    // wait for the node to be online
+    // wait for the endpoint to be online
     endpoint.online().await;
 
-    let node_addr = endpoint.node_addr();
-    let me = node_addr.node_id;
-    println!("node id: {me}");
-    println!("node listening addresses:");
-    node_addr
+    let endpoint_addr = endpoint.endpoint_addr();
+    let me = endpoint_addr.endpoint_id;
+    println!("endpoint id: {me}");
+    println!("endpoint listening addresses:");
+    endpoint_addr
         .direct_addresses
         .iter()
         .for_each(|addr| println!("\t{addr}"));
-    let relay_url = node_addr
+    let relay_url = endpoint_addr
         .relay_url
         .expect("Should have a relay URL, assuming a default endpoint setup.");
-    println!("node relay server url: {relay_url}\n");
-    // Build a `NodeAddr` from the node_id, relay url, and UDP addresses.
-    let addr = NodeAddr::from_parts(args.node_id, Some(args.relay_url), args.addrs);
+    println!("endpoint relay server url: {relay_url}\n");
+    // Build a `EndpointAddr` from the endpoint_id, relay url, and UDP addresses.
+    let addr = EndpointAddr::from_parts(args.endpoint_id, Some(args.relay_url), args.addrs);
 
     // Attempt to connect, over the given ALPN.
     // Returns a QUIC connection.

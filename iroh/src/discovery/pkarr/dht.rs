@@ -1,13 +1,13 @@
-//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+//! Pkarr based endpoint discovery for iroh, supporting both relay servers and the DHT.
 //!
-//! This module contains pkarr-based node discovery for iroh which can use both pkarr
+//! This module contains pkarr-based endpoint discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
 //! overview of pkarr.
 //!
 //! [pkarr module]: super
 use std::sync::{Arc, Mutex};
 
-use iroh_base::{NodeId, SecretKey};
+use iroh_base::{EndpointId, SecretKey};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -19,11 +19,11 @@ use url::Url;
 
 use crate::{
     discovery::{
-        Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem, IntoDiscovery,
-        IntoDiscoveryError, NodeData,
+        Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem, EndpointData, IntoDiscovery,
+        IntoDiscoveryError,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
-    node_info::NodeInfo,
+    endpoint_info::EndpointInfo,
 };
 
 /// Republish delay for the DHT.
@@ -32,14 +32,14 @@ use crate::{
 /// published immediately.
 const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 
-/// Pkarr Mainline DHT and relay server node discovery.
+/// Pkarr Mainline DHT and relay server endpoint discovery.
 ///
-/// It stores node addresses in DNS records, signed by the node's private key, and publishes
+/// It stores endpoint addresses in DNS records, signed by the endpoint's private key, and publishes
 /// them to the BitTorrent Mainline DHT.  See the [pkarr module] for more details.
 ///
-/// This implements the [`Discovery`] trait to be used as a node discovery service which can
+/// This implements the [`Discovery`] trait to be used as a endpoint discovery service which can
 /// be used as both a publisher and resolver.  Calling [`DhtDiscovery::publish`] will start
-/// a background task that periodically publishes the node address.
+/// a background task that periodically publishes the endpoint address.
 ///
 /// [pkarr module]: super
 #[derive(Debug, Clone)]
@@ -55,13 +55,13 @@ impl Default for DhtDiscovery {
 struct Inner {
     /// Pkarr client for interacting with the DHT.
     pkarr: PkarrClient,
-    /// The background task that periodically publishes the node address.
+    /// The background task that periodically publishes the endpoint address.
     ///
     /// Due to [`AbortOnDropHandle`], this will be aborted when the discovery is dropped.
     task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Optional keypair for signing the DNS packets.
     ///
-    /// If this is None, the node will not publish its address to the DHT.
+    /// If this is None, the endpoint will not publish its address to the DHT.
     secret_key: Option<SecretKey>,
     /// Optional pkarr relay URL to use.
     relay_url: Option<Url>,
@@ -86,13 +86,13 @@ impl Inner {
 
         let maybe_packet = self.pkarr.resolve(&key).await;
         match maybe_packet {
-            Some(signed_packet) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
-                Ok(node_info) => {
-                    tracing::info!("discovered node info {:?}", node_info);
-                    Some(Ok(DiscoveryItem::new(node_info, "pkarr", None)))
+            Some(signed_packet) => match EndpointInfo::from_pkarr_signed_packet(&signed_packet) {
+                Ok(endpoint_info) => {
+                    tracing::info!("discovered endpoint info {:?}", endpoint_info);
+                    Some(Ok(DiscoveryItem::new(endpoint_info, "pkarr", None)))
                 }
                 Err(_err) => {
-                    tracing::debug!("failed to parse signed packet as node info");
+                    tracing::debug!("failed to parse signed packet as endpoint info");
                     None
                 }
             },
@@ -143,7 +143,7 @@ impl Builder {
 
     /// Sets the secret key to use for signing the DNS packets.
     ///
-    /// Without a secret key, the node will not publish its address to the DHT.
+    /// Without a secret key, the endpoint will not publish its address to the DHT.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
         self.secret_key = Some(secret_key);
         self
@@ -255,7 +255,7 @@ impl DhtDiscovery {
         Builder::default()
     }
 
-    /// Periodically publishes the node address to the DHT and/or relay.
+    /// Periodically publishes the endpoint address to the DHT and/or relay.
     async fn publish_loop(self, keypair: SecretKey, signed_packet: SignedPacket) {
         let this = self;
         let public_key =
@@ -290,17 +290,17 @@ impl DhtDiscovery {
 }
 
 impl Discovery for DhtDiscovery {
-    fn publish(&self, data: &NodeData) {
+    fn publish(&self, data: &EndpointData) {
         let Some(keypair) = &self.0.secret_key else {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
         if data.relay_url().is_none() && data.direct_addresses().is_empty() {
-            tracing::debug!("no relay url or direct addresses in node data, not publishing");
+            tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
             return;
         }
         tracing::debug!("publishing {data:?}");
-        let mut info = NodeInfo::from_parts(keypair.public(), data.clone());
+        let mut info = EndpointInfo::from_parts(keypair.public(), data.clone());
         if !self.0.include_direct_addresses {
             info.clear_direct_addresses();
         }
@@ -314,10 +314,13 @@ impl Discovery for DhtDiscovery {
         *task = Some(AbortOnDropHandle::new(curr));
     }
 
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let pkarr_public_key =
-            pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
-        tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
+            pkarr::PublicKey::try_from(endpoint_id.as_bytes()).expect("valid public key");
+        tracing::info!("resolving {} as {}", endpoint_id, pkarr_public_key.to_z32());
         let discovery = self.0.clone();
         let stream = n0_future::stream::once_future(async move {
             discovery.resolve_pkarr(pkarr_public_key).await
@@ -357,7 +360,7 @@ mod tests {
 
         let relay_url: RelayUrl = Url::parse("https://example.com").e()?.into();
 
-        let data = NodeData::default().with_relay_url(Some(relay_url.clone()));
+        let data = EndpointData::default().with_relay_url(Some(relay_url.clone()));
         discovery.publish(&data);
 
         // publish is fire and forget, so we have no way to wait until it is done.

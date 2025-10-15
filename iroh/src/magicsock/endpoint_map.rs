@@ -6,100 +6,100 @@ use std::{
     time::Duration,
 };
 
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl};
 use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::node_state::{NodeState, Options, PingHandled};
-use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
+use self::endpoint_state::{EndpointState, Options, PingHandled};
+use super::{ActorMessage, EndpointIdMappedAddr, metrics::Metrics, transports};
 use crate::disco::{CallMeMaybe, Pong, SendAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
-mod node_state;
+mod endpoint_state;
 mod path_state;
 mod path_validity;
 mod udp_paths;
 
-pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, RemoteInfo, SendPing};
+pub use endpoint_state::{ConnectionType, ControlMsg, DirectAddrInfo};
+pub(super) use endpoint_state::{DiscoPingPurpose, PingAction, PingRole, RemoteInfo, SendPing};
 
-/// Number of nodes that are inactive for which we keep info about. This limit is enforced
-/// periodically via [`NodeMap::prune_inactive`].
-const MAX_INACTIVE_NODES: usize = 30;
+/// Number of endpoints that are inactive for which we keep info about. This limit is enforced
+/// periodically via [`EndpointMap::prune_inactive`].
+const MAX_INACTIVE_ENDPOINTS: usize = 30;
 
-/// Map of the [`NodeState`] information for all the known nodes.
+/// Map of the [`EndpointState`] information for all the known endpoints.
 ///
-/// The nodes can be looked up by:
+/// The endpoints can be looked up by:
 ///
-/// - The node's ID in this map, only useful if you know the ID from an insert or lookup.
+/// - The endpoint's ID in this map, only useful if you know the ID from an insert or lookup.
 ///   This is static and never changes.
 ///
-/// - The [`NodeIdMappedAddr`] which internally identifies the node to the QUIC stack.  This
+/// - The [`EndpointIdMappedAddr`] which internally identifies the endpoint to the QUIC stack.  This
 ///   is static and never changes.
 ///
-/// - The nodes's public key, aka `PublicKey` or "node_key".  This is static and never changes,
-///   however a node could be added when this is not yet known.
+/// - The endpoints's public key, aka `PublicKey` or "endpoint_key".  This is static and never changes,
+///   however a endpoint could be added when this is not yet known.
 ///
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
-///   These come and go as the node moves around on the internet
+///   These come and go as the endpoint moves around on the internet
 ///
-/// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
+/// An index of endpointInfos by endpoint key, EndpointIdMappedAddr, and discovered ip:port endpoints.
 #[derive(Debug, Default)]
-pub(super) struct NodeMap {
-    inner: Mutex<NodeMapInner>,
+pub(super) struct EndpointMap {
+    inner: Mutex<EndpointMapInner>,
 }
 
 #[derive(Default, Debug)]
-pub(super) struct NodeMapInner {
-    by_node_key: HashMap<NodeId, usize>,
+pub(super) struct EndpointMapInner {
+    by_endpoint_key: HashMap<EndpointId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
-    by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
-    by_id: HashMap<usize, NodeState>,
+    by_quic_mapped_addr: HashMap<EndpointIdMappedAddr, usize>,
+    by_id: HashMap<usize, EndpointState>,
     next_id: usize,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
 }
 
-/// Identifier to look up a [`NodeState`] in the [`NodeMap`].
+/// Identifier to look up a [`EndpointState`] in the [`EndpointMap`].
 ///
-/// You can look up entries in [`NodeMap`] with various keys, depending on the context you
-/// have for the node.  These are all the keys the [`NodeMap`] can use.
+/// You can look up entries in [`EndpointMap`] with various keys, depending on the context you
+/// have for the endpoint.  These are all the keys the [`EndpointMap`] can use.
 #[derive(Debug, Clone)]
-enum NodeStateKey {
+enum EndpointStateKey {
     Idx(usize),
-    NodeId(NodeId),
-    NodeIdMappedAddr(NodeIdMappedAddr),
+    EndpointId(EndpointId),
+    EndpointIdMappedAddr(EndpointIdMappedAddr),
     IpPort(IpPort),
 }
 
-/// The origin or *source* through which an address associated with a remote node
+/// The origin or *source* through which an address associated with a remote endpoint
 /// was discovered.
 ///
-/// An aggregate of the [`Source`]s of all the addresses of a node describe the
-/// [`Source`]s of the node itself.
+/// An aggregate of the [`Source`]s of all the addresses of a endpoint describe the
+/// [`Source`]s of the endpoint itself.
 ///
 /// A [`Source`] helps track how and where an address was learned. Multiple
 /// sources can be associated with a single address, if we have discovered this
 /// address through multiple means.
 ///
-/// Each time a [`NodeAddr`] is added to the node map a [`Source`] must be supplied to indicate
+/// Each time a [`EndpointAddr`] is added to the endpoint map a [`Source`] must be supplied to indicate
 /// how the address was obtained.
 ///
-/// A [`Source`] can describe a variety of places that an address or node was
+/// A [`Source`] can describe a variety of places that an address or endpoint was
 /// discovered, such as a configured discovery service, the network itself
-/// (if another node has reached out to us), or as a user supplied [`NodeAddr`].
+/// (if another endpoint has reached out to us), or as a user supplied [`EndpointAddr`].
 
 #[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Source {
     /// Address was loaded from the fs.
     Saved,
-    /// A node communicated with us first via UDP.
+    /// A endpoint communicated with us first via UDP.
     Udp,
-    /// A node communicated with us first via relay.
+    /// A endpoint communicated with us first via relay.
     Relay,
     /// Application layer added the address directly.
     App,
@@ -109,24 +109,24 @@ pub enum Source {
         /// The name of the discovery service that discovered the address.
         name: String,
     },
-    /// Application layer with a specific name added the node directly.
+    /// Application layer with a specific name added the endpoint directly.
     #[strum(serialize = "{name}")]
     NamedApp {
-        /// The name of the application that added the node
+        /// The name of the application that added the endpoint
         name: String,
     },
 }
 
-impl NodeMap {
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+impl EndpointMap {
+    /// Create a new [`EndpointMap`] from a list of [`EndpointAddr`]s.
     pub(super) fn load_from_vec(
-        nodes: Vec<NodeAddr>,
+        endpoints: Vec<EndpointAddr>,
         #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
         have_ipv6: bool,
         metrics: &Metrics,
     ) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(
-            nodes,
+        Self::from_inner(EndpointMapInner::load_from_vec(
+            endpoints,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection,
             have_ipv6,
@@ -134,40 +134,46 @@ impl NodeMap {
         ))
     }
 
-    fn from_inner(inner: NodeMapInner) -> Self {
+    fn from_inner(inner: EndpointMapInner) -> Self {
         Self {
             inner: Mutex::new(inner),
         }
     }
 
-    /// Add the contact information for a node.
-    pub(super) fn add_node_addr(
+    /// Add the contact information for a endpoint.
+    pub(super) fn add_endpoint_addr(
         &self,
-        node_addr: NodeAddr,
+        endpoint_addr: EndpointAddr,
         source: Source,
         have_v6: bool,
         metrics: &Metrics,
     ) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .add_node_addr(node_addr, source, have_v6, metrics)
+        self.inner.lock().expect("poisoned").add_endpoint_addr(
+            endpoint_addr,
+            source,
+            have_v6,
+            metrics,
+        )
     }
 
-    /// Number of nodes currently listed.
-    pub(super) fn node_count(&self) -> usize {
-        self.inner.lock().expect("poisoned").node_count()
+    /// Number of endpoints currently listed.
+    pub(super) fn endpoint_count(&self) -> usize {
+        self.inner.lock().expect("poisoned").endpoint_count()
     }
 
     #[cfg(not(wasm_browser))]
     pub(super) fn receive_udp(
         &self,
         udp_addr: SocketAddr,
-    ) -> Option<(PublicKey, NodeIdMappedAddr)> {
+    ) -> Option<(PublicKey, EndpointIdMappedAddr)> {
         self.inner.lock().expect("poisoned").receive_udp(udp_addr)
     }
 
-    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
+    pub(super) fn receive_relay(
+        &self,
+        relay_url: &RelayUrl,
+        src: EndpointId,
+    ) -> EndpointIdMappedAddr {
         self.inner
             .lock()
             .expect("poisoned")
@@ -186,7 +192,7 @@ impl NodeMap {
             .inner
             .lock()
             .expect("poisoned")
-            .get_mut(NodeStateKey::Idx(id))
+            .get_mut(EndpointStateKey::Idx(id))
         {
             ep.ping_sent(dst, tx_id, purpose, msg_sender);
         }
@@ -202,24 +208,24 @@ impl NodeMap {
             .inner
             .lock()
             .expect("poisoned")
-            .get_mut(NodeStateKey::Idx(id))
+            .get_mut(EndpointStateKey::Idx(id))
         {
             ep.ping_timeout(tx_id, Instant::now(), metrics);
         }
     }
 
-    pub(super) fn get_quic_mapped_addr_for_node_key(
+    pub(super) fn get_quic_mapped_addr_for_endpoint_key(
         &self,
-        node_key: NodeId,
-    ) -> Option<NodeIdMappedAddr> {
+        endpoint_key: EndpointId,
+    ) -> Option<EndpointIdMappedAddr> {
         self.inner
             .lock()
             .expect("poisoned")
-            .get(NodeStateKey::NodeId(node_key))
+            .get(EndpointStateKey::EndpointId(endpoint_key))
             .map(|ep| *ep.quic_mapped_addr())
     }
 
-    /// Insert a received ping into the node map, and return whether a ping with this tx_id was already
+    /// Insert a received ping into the endpoint map, and return whether a ping with this tx_id was already
     /// received.
     pub(super) fn handle_ping(
         &self,
@@ -262,7 +268,7 @@ impl NodeMap {
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
         &self,
-        addr: NodeIdMappedAddr,
+        addr: EndpointIdMappedAddr,
         have_ipv6: bool,
         metrics: &Metrics,
     ) -> Option<(
@@ -272,30 +278,30 @@ impl NodeMap {
         Vec<PingAction>,
     )> {
         let mut inner = self.inner.lock().expect("poisoned");
-        let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
+        let ep = inner.get_mut(EndpointStateKey::EndpointIdMappedAddr(addr))?;
         let public_key = *ep.public_key();
-        trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
+        trace!(dest = %addr, endpoint_id = %public_key.fmt_short(), "dst mapped to EndpointId");
         let (udp_addr, relay_url, ping_actions) = ep.get_send_addrs(have_ipv6, metrics);
         Some((public_key, udp_addr, relay_url, ping_actions))
     }
 
-    pub(super) fn reset_node_states(&self, metrics: &Metrics) {
+    pub(super) fn reset_endpoint_states(&self, metrics: &Metrics) {
         let now = Instant::now();
         let mut inner = self.inner.lock().expect("poisoned");
-        for (_, ep) in inner.node_states_mut() {
+        for (_, ep) in inner.endpoint_states_mut() {
             ep.note_connectivity_change(now, metrics);
         }
     }
 
-    pub(super) fn nodes_stayin_alive(&self, have_ipv6: bool) -> Vec<PingAction> {
+    pub(super) fn endpoints_stayin_alive(&self, have_ipv6: bool) -> Vec<PingAction> {
         let mut inner = self.inner.lock().expect("poisoned");
         inner
-            .node_states_mut()
-            .flat_map(|(_idx, node_state)| node_state.stayin_alive(have_ipv6))
+            .endpoint_states_mut()
+            .flat_map(|(_idx, endpoint_state)| endpoint_state.stayin_alive(have_ipv6))
             .collect()
     }
 
-    /// Returns the [`RemoteInfo`]s for each node in the node map.
+    /// Returns the [`RemoteInfo`]s for each endpoint in the endpoint map.
     #[cfg(test)]
     pub(super) fn list_remote_infos(&self, now: Instant) -> Vec<RemoteInfo> {
         // NOTE: calls to this method will often call `into_iter` (or similar methods). Note that
@@ -309,26 +315,32 @@ impl NodeMap {
             .collect()
     }
 
-    /// Returns a [`n0_watcher::Direct`] for given node's [`ConnectionType`].
+    /// Returns a [`n0_watcher::Direct`] for given endpoint's [`ConnectionType`].
     ///
     /// # Errors
     ///
-    /// Will return `None` if there is not an entry in the [`NodeMap`] for
-    /// the `node_id`
-    pub(super) fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.inner.lock().expect("poisoned").conn_type(node_id)
+    /// Will return `None` if there is not an entry in the [`EndpointMap`] for
+    /// the `endpoint_id`
+    pub(super) fn conn_type(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Option<n0_watcher::Direct<ConnectionType>> {
+        self.inner.lock().expect("poisoned").conn_type(endpoint_id)
     }
 
-    pub(super) fn latency(&self, node_id: NodeId) -> Option<Duration> {
-        self.inner.lock().expect("poisoned").latency(node_id)
+    pub(super) fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+        self.inner.lock().expect("poisoned").latency(endpoint_id)
     }
 
-    /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
-    pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.inner.lock().expect("poisoned").remote_info(node_id)
+    /// Get the [`RemoteInfo`]s for the endpoint identified by [`EndpointId`].
+    pub(super) fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .remote_info(endpoint_id)
     }
 
-    /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
+    /// Prunes endpoints without recent activity so that at most [`MAX_INACTIVE_ENDPOINTS`] are kept.
     pub(super) fn prune_inactive(&self) {
         self.inner.lock().expect("poisoned").prune_inactive();
     }
@@ -341,10 +353,10 @@ impl NodeMap {
     }
 }
 
-impl NodeMapInner {
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+impl EndpointMapInner {
+    /// Create a new [`EndpointMap`] from a list of [`EndpointAddr`]s.
     fn load_from_vec(
-        nodes: Vec<NodeAddr>,
+        endpoints: Vec<EndpointAddr>,
         #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
         have_ipv6: bool,
         metrics: &Metrics,
@@ -354,48 +366,49 @@ impl NodeMapInner {
             path_selection,
             ..Default::default()
         };
-        for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved, have_ipv6, metrics);
+        for endpoint_addr in endpoints {
+            me.add_endpoint_addr(endpoint_addr, Source::Saved, have_ipv6, metrics);
         }
         me
     }
 
-    /// Add the contact information for a node.
-    #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
-    fn add_node_addr(
+    /// Add the contact information for a endpoint.
+    #[instrument(skip_all, fields(endpoint = %endpoint_addr.endpoint_id.fmt_short()))]
+    fn add_endpoint_addr(
         &mut self,
-        node_addr: NodeAddr,
+        endpoint_addr: EndpointAddr,
         source: Source,
         have_ipv6: bool,
         metrics: &Metrics,
     ) {
         let source0 = source.clone();
-        let node_id = node_addr.node_id;
-        let relay_url = node_addr.relay_url.clone();
+        let endpoint_id = endpoint_addr.endpoint_id;
+        let relay_url = endpoint_addr.relay_url.clone();
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
-            node_id,
-            relay_url,
-            active: false,
-            source,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection,
-        });
-        node_state.update_from_node_addr(
-            node_addr.relay_url.as_ref(),
-            &node_addr.direct_addresses,
+        let endpoint_state =
+            self.get_or_insert_with(EndpointStateKey::EndpointId(endpoint_id), || Options {
+                endpoint_id,
+                relay_url,
+                active: false,
+                source,
+                #[cfg(any(test, feature = "test-utils"))]
+                path_selection,
+            });
+        endpoint_state.update_from_endpoint_addr(
+            endpoint_addr.relay_url.as_ref(),
+            &endpoint_addr.direct_addresses,
             source0,
             have_ipv6,
             metrics,
         );
-        let id = node_state.id();
-        for addr in node_addr.direct_addresses() {
-            self.set_node_state_for_ip_port(*addr, id);
+        let id = endpoint_state.id();
+        for addr in endpoint_addr.direct_addresses() {
+            self.set_endpoint_state_for_ip_port(*addr, id);
         }
     }
 
-    /// Prunes direct addresses from nodes that claim to share an address we know points to us.
+    /// Prunes direct addresses from endpoints that claim to share an address we know points to us.
     pub(super) fn on_direct_addr_discovered(
         &mut self,
         discovered: BTreeSet<SocketAddr>,
@@ -406,78 +419,85 @@ impl NodeMapInner {
         }
     }
 
-    /// Removes a direct address from a node.
+    /// Removes a direct address from a endpoint.
     fn remove_by_ipp(&mut self, ipp: IpPort, now: Instant, why: &'static str) {
         if let Some(id) = self.by_ip_port.remove(&ipp) {
             if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
-                let node = entry.get_mut();
-                node.remove_direct_addr(&ipp, now, why);
-                if node.direct_addresses().count() == 0 {
-                    let node_id = node.public_key();
-                    let mapped_addr = node.quic_mapped_addr();
-                    self.by_node_key.remove(node_id);
+                let endpoint = entry.get_mut();
+                endpoint.remove_direct_addr(&ipp, now, why);
+                if endpoint.direct_addresses().count() == 0 {
+                    let endpoint_id = endpoint.public_key();
+                    let mapped_addr = endpoint.quic_mapped_addr();
+                    self.by_endpoint_key.remove(endpoint_id);
                     self.by_quic_mapped_addr.remove(mapped_addr);
-                    debug!(node_id=%node_id.fmt_short(), why, "removing node");
+                    debug!(endpoint_id=%endpoint_id.fmt_short(), why, "removing endpoint");
                     entry.remove();
                 }
             }
         }
     }
 
-    fn get_id(&self, id: NodeStateKey) -> Option<usize> {
+    fn get_id(&self, id: EndpointStateKey) -> Option<usize> {
         match id {
-            NodeStateKey::Idx(id) => Some(id),
-            NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
-            NodeStateKey::NodeIdMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
-            NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
+            EndpointStateKey::Idx(id) => Some(id),
+            EndpointStateKey::EndpointId(endpoint_key) => {
+                self.by_endpoint_key.get(&endpoint_key).copied()
+            }
+            EndpointStateKey::EndpointIdMappedAddr(addr) => {
+                self.by_quic_mapped_addr.get(&addr).copied()
+            }
+            EndpointStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
         }
     }
 
-    fn get_mut(&mut self, id: NodeStateKey) -> Option<&mut NodeState> {
+    fn get_mut(&mut self, id: EndpointStateKey) -> Option<&mut EndpointState> {
         self.get_id(id).and_then(|id| self.by_id.get_mut(&id))
     }
 
-    fn get(&self, id: NodeStateKey) -> Option<&NodeState> {
+    fn get(&self, id: EndpointStateKey) -> Option<&EndpointState> {
         self.get_id(id).and_then(|id| self.by_id.get(&id))
     }
 
     fn get_or_insert_with(
         &mut self,
-        id: NodeStateKey,
+        id: EndpointStateKey,
         f: impl FnOnce() -> Options,
-    ) -> &mut NodeState {
+    ) -> &mut EndpointState {
         let id = self.get_id(id);
         match id {
-            None => self.insert_node(f()),
+            None => self.insert_endpoint(f()),
             Some(id) => self.by_id.get_mut(&id).expect("is not empty"),
         }
     }
 
-    /// Number of nodes currently listed.
-    fn node_count(&self) -> usize {
+    /// Number of endpoints currently listed.
+    fn endpoint_count(&self) -> usize {
         self.by_id.len()
     }
 
-    /// Marks the node we believe to be at `ipp` as recently used.
+    /// Marks the endpoint we believe to be at `ipp` as recently used.
     #[cfg(not(wasm_browser))]
-    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, NodeIdMappedAddr)> {
+    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(EndpointId, EndpointIdMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
-        let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
-            trace!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
+        let Some(endpoint_state) = self.get_mut(EndpointStateKey::IpPort(ip_port)) else {
+            trace!(src=%udp_addr, "receive_udp: no endpoint_state found for addr, ignore");
             return None;
         };
-        node_state.receive_udp(ip_port, Instant::now());
-        Some((*node_state.public_key(), *node_state.quic_mapped_addr()))
+        endpoint_state.receive_udp(ip_port, Instant::now());
+        Some((
+            *endpoint_state.public_key(),
+            *endpoint_state.quic_mapped_addr(),
+        ))
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
+    fn receive_relay(&mut self, relay_url: &RelayUrl, src: EndpointId) -> EndpointIdMappedAddr {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
-            trace!("packets from unknown node, insert into node map");
+        let endpoint_state = self.get_or_insert_with(EndpointStateKey::EndpointId(src), || {
+            trace!("packets from unknown endpoint, insert into endpoint map");
             Options {
-                node_id: src,
+                endpoint_id: src,
                 relay_url: Some(relay_url.clone()),
                 active: true,
                 source: Source::Relay,
@@ -485,28 +505,28 @@ impl NodeMapInner {
                 path_selection,
             }
         });
-        node_state.receive_relay(relay_url, src, Instant::now());
-        *node_state.quic_mapped_addr()
+        endpoint_state.receive_relay(relay_url, src, Instant::now());
+        *endpoint_state.quic_mapped_addr()
     }
 
     #[cfg(test)]
-    fn node_states(&self) -> impl Iterator<Item = (&usize, &NodeState)> {
+    fn endpoint_states(&self) -> impl Iterator<Item = (&usize, &EndpointState)> {
         self.by_id.iter()
     }
 
-    fn node_states_mut(&mut self) -> impl Iterator<Item = (&usize, &mut NodeState)> {
+    fn endpoint_states_mut(&mut self) -> impl Iterator<Item = (&usize, &mut EndpointState)> {
         self.by_id.iter_mut()
     }
 
-    /// Get the [`RemoteInfo`]s for all nodes.
+    /// Get the [`RemoteInfo`]s for all endpoints.
     #[cfg(test)]
     fn remote_infos_iter(&self, now: Instant) -> impl Iterator<Item = RemoteInfo> + '_ {
-        self.node_states().map(move |(_, ep)| ep.info(now))
+        self.endpoint_states().map(move |(_, ep)| ep.info(now))
     }
 
-    /// Get the [`RemoteInfo`]s for each node.
-    fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.get(NodeStateKey::NodeId(node_id))
+    /// Get the [`RemoteInfo`]s for each endpoint.
+    fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+        self.get(EndpointStateKey::EndpointId(endpoint_id))
             .map(|ep| ep.info(Instant::now()))
     }
 
@@ -517,53 +537,53 @@ impl NodeMapInner {
     ///
     /// # Errors
     ///
-    /// Will return `None` if there is not an entry in the [`NodeMap`] for
+    /// Will return `None` if there is not an entry in the [`EndpointMap`] for
     /// the `public_key`
-    fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.get(NodeStateKey::NodeId(node_id))
+    fn conn_type(&self, endpoint_id: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
+        self.get(EndpointStateKey::EndpointId(endpoint_id))
             .map(|ep| ep.conn_type())
     }
 
-    fn latency(&self, node_id: NodeId) -> Option<Duration> {
-        self.get(NodeStateKey::NodeId(node_id))
+    fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+        self.get(EndpointStateKey::EndpointId(endpoint_id))
             .and_then(|ep| ep.latency())
     }
 
     fn handle_pong(
         &mut self,
-        sender: NodeId,
+        sender: EndpointId,
         src: &transports::Addr,
         pong: Pong,
         metrics: &Metrics,
     ) {
-        if let Some(ns) = self.get_mut(NodeStateKey::NodeId(sender)).as_mut() {
+        if let Some(ns) = self.get_mut(EndpointStateKey::EndpointId(sender)).as_mut() {
             let insert = ns.handle_pong(&pong, src.clone().into(), metrics);
             if let Some((src, key)) = insert {
-                self.set_node_key_for_ip_port(src, &key);
+                self.set_endpoint_key_for_ip_port(src, &key);
             }
             trace!(?insert, "received pong")
         } else {
-            warn!("received pong: node unknown, ignore")
+            warn!("received pong: endpoint unknown, ignore")
         }
     }
 
     #[must_use = "actions must be handled"]
     fn handle_call_me_maybe(
         &mut self,
-        sender: NodeId,
+        sender: EndpointId,
         cm: CallMeMaybe,
         metrics: &Metrics,
     ) -> Vec<PingAction> {
-        let ns_id = NodeStateKey::NodeId(sender);
+        let ns_id = EndpointStateKey::EndpointId(sender);
         if let Some(id) = self.get_id(ns_id.clone()) {
             for number in &cm.my_numbers {
                 // ensure the new addrs are known
-                self.set_node_state_for_ip_port(*number, id);
+                self.set_endpoint_state_for_ip_port(*number, id);
             }
         }
         match self.get_mut(ns_id) {
             None => {
-                debug!("received call-me-maybe: ignore, node is unknown");
+                debug!("received call-me-maybe: ignore, endpoint is unknown");
                 metrics.recv_disco_call_me_maybe_bad_disco.inc();
                 vec![]
             }
@@ -575,18 +595,23 @@ impl NodeMapInner {
         }
     }
 
-    fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
+    fn handle_ping(
+        &mut self,
+        sender: EndpointId,
+        src: SendAddr,
+        tx_id: TransactionId,
+    ) -> PingHandled {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(sender), || {
-            debug!("received ping: node unknown, add to node map");
+        let endpoint_state = self.get_or_insert_with(EndpointStateKey::EndpointId(sender), || {
+            debug!("received ping: endpoint unknown, add to endpoint map");
             let source = if src.is_relay() {
                 Source::Relay
             } else {
                 Source::Udp
             };
             Options {
-                node_id: sender,
+                endpoint_id: sender,
                 relay_url: src.relay_url(),
                 active: true,
                 source,
@@ -595,72 +620,75 @@ impl NodeMapInner {
             }
         });
 
-        let handled = node_state.handle_ping(src.clone(), tx_id);
+        let handled = endpoint_state.handle_ping(src.clone(), tx_id);
         if let SendAddr::Udp(ref addr) = src {
             if matches!(handled.role, PingRole::NewPath) {
-                self.set_node_key_for_ip_port(*addr, &sender);
+                self.set_endpoint_key_for_ip_port(*addr, &sender);
             }
         }
         handled
     }
 
-    /// Inserts a new node into the [`NodeMap`].
-    fn insert_node(&mut self, options: Options) -> &mut NodeState {
+    /// Inserts a new endpoint into the [`EndpointMap`].
+    fn insert_endpoint(&mut self, options: Options) -> &mut EndpointState {
         info!(
-            node = %options.node_id.fmt_short(),
+            endpoint = %options.endpoint_id.fmt_short(),
             relay_url = ?options.relay_url,
             source = %options.source,
-            "inserting new node in NodeMap",
+            "inserting new endpoint in EndpointMap",
         );
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
-        let node_state = NodeState::new(id, options);
+        let endpoint_state = EndpointState::new(id, options);
 
         // update indices
         self.by_quic_mapped_addr
-            .insert(*node_state.quic_mapped_addr(), id);
-        self.by_node_key.insert(*node_state.public_key(), id);
+            .insert(*endpoint_state.quic_mapped_addr(), id);
+        self.by_endpoint_key
+            .insert(*endpoint_state.public_key(), id);
 
-        self.by_id.insert(id, node_state);
+        self.by_id.insert(id, endpoint_state);
         self.by_id.get_mut(&id).expect("just inserted")
     }
 
-    /// Makes future node lookups by ipp return the same endpoint as a lookup by nk.
+    /// Makes future endpoint lookups by ipp return the same endpoint as a lookup by nk.
     ///
     /// This should only be called with a fully verified mapping of ipp to
     /// nk, because calling this function defines the endpoint we hand to
     /// WireGuard for packets received from ipp.
-    fn set_node_key_for_ip_port(&mut self, ipp: impl Into<IpPort>, nk: &PublicKey) {
+    fn set_endpoint_key_for_ip_port(&mut self, ipp: impl Into<IpPort>, nk: &PublicKey) {
         let ipp = ipp.into();
         if let Some(id) = self.by_ip_port.get(&ipp) {
-            if !self.by_node_key.contains_key(nk) {
-                self.by_node_key.insert(*nk, *id);
+            if !self.by_endpoint_key.contains_key(nk) {
+                self.by_endpoint_key.insert(*nk, *id);
             }
             self.by_ip_port.remove(&ipp);
         }
-        if let Some(id) = self.by_node_key.get(nk) {
+        if let Some(id) = self.by_endpoint_key.get(nk) {
             trace!("insert ip -> id: {:?} -> {}", ipp, id);
             self.by_ip_port.insert(ipp, *id);
         }
     }
 
-    fn set_node_state_for_ip_port(&mut self, ipp: impl Into<IpPort>, id: usize) {
+    fn set_endpoint_state_for_ip_port(&mut self, ipp: impl Into<IpPort>, id: usize) {
         let ipp = ipp.into();
         trace!(?ipp, ?id, "set endpoint for ip:port");
         self.by_ip_port.insert(ipp, id);
     }
 
-    /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
+    /// Prunes endpoints without recent activity so that at most [`MAX_INACTIVE_ENDPOINTS`] are kept.
     fn prune_inactive(&mut self) {
         let now = Instant::now();
         let mut prune_candidates: Vec<_> = self
             .by_id
             .values()
-            .filter(|node| !node.is_active(&now))
-            .map(|node| (*node.public_key(), node.last_used()))
+            .filter(|endpoint| !endpoint.is_active(&now))
+            .map(|endpoint| (*endpoint.public_key(), endpoint.last_used()))
             .collect();
 
-        let prune_count = prune_candidates.len().saturating_sub(MAX_INACTIVE_NODES);
+        let prune_count = prune_candidates
+            .len()
+            .saturating_sub(MAX_INACTIVE_ENDPOINTS);
         if prune_count == 0 {
             // within limits
             return;
@@ -669,19 +697,19 @@ impl NodeMapInner {
         prune_candidates.sort_unstable_by_key(|(_pk, last_used)| *last_used);
         prune_candidates.truncate(prune_count);
         for (public_key, last_used) in prune_candidates.into_iter() {
-            let node = public_key.fmt_short();
+            let endpoint = public_key.fmt_short();
             match last_used.map(|instant| instant.elapsed()) {
-                Some(last_used) => trace!(%node, ?last_used, "pruning inactive"),
-                None => trace!(%node, last_used=%"never", "pruning inactive"),
+                Some(last_used) => trace!(%endpoint, ?last_used, "pruning inactive"),
+                None => trace!(%endpoint, last_used=%"never", "pruning inactive"),
             }
 
-            let Some(id) = self.by_node_key.remove(&public_key) else {
-                debug_assert!(false, "missing by_node_key entry for pk in by_id");
+            let Some(id) = self.by_endpoint_key.remove(&public_key) else {
+                debug_assert!(false, "missing by_endpoint_key entry for pk in by_id");
                 continue;
             };
 
             let Some(ep) = self.by_id.remove(&id) else {
-                debug_assert!(false, "missing by_id entry for id in by_node_key");
+                debug_assert!(false, "missing by_id entry for id in by_endpoint_key");
                 continue;
             };
 
@@ -739,13 +767,13 @@ mod tests {
     use rand::SeedableRng;
     use tracing_test::traced_test;
 
-    use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
+    use super::{endpoint_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
 
-    impl NodeMap {
+    impl EndpointMap {
         #[track_caller]
-        fn add_test_addr(&self, node_addr: NodeAddr) {
-            self.add_node_addr(
-                node_addr,
+        fn add_test_addr(&self, endpoint_addr: EndpointAddr) {
+            self.add_endpoint_addr(
+                endpoint_addr,
                 Source::NamedApp {
                     name: "test".into(),
                 },
@@ -755,17 +783,17 @@ mod tests {
         }
     }
 
-    /// Test persisting and loading of known nodes.
+    /// Test persisting and loading of known endpoints.
     #[tokio::test]
     #[traced_test]
     async fn restore_from_vec() {
-        let node_map = NodeMap::default();
+        let endpoint_map = EndpointMap::default();
 
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let node_a = SecretKey::generate(&mut rng).public();
-        let node_b = SecretKey::generate(&mut rng).public();
-        let node_c = SecretKey::generate(&mut rng).public();
-        let node_d = SecretKey::generate(&mut rng).public();
+        let endpoint_a = SecretKey::generate(&mut rng).public();
+        let endpoint_b = SecretKey::generate(&mut rng).public();
+        let endpoint_c = SecretKey::generate(&mut rng).public();
+        let endpoint_d = SecretKey::generate(&mut rng).public();
 
         let relay_x: RelayUrl = "https://my-relay-1.com".parse().unwrap();
         let relay_y: RelayUrl = "https://my-relay-2.com".parse().unwrap();
@@ -773,41 +801,42 @@ mod tests {
         let direct_addresses_a = [addr(4000), addr(4001)];
         let direct_addresses_c = [addr(5000)];
 
-        let node_addr_a = NodeAddr::new(node_a)
+        let endpoint_addr_a = EndpointAddr::new(endpoint_a)
             .with_relay_url(relay_x)
             .with_direct_addresses(direct_addresses_a);
-        let node_addr_b = NodeAddr::new(node_b).with_relay_url(relay_y);
-        let node_addr_c = NodeAddr::new(node_c).with_direct_addresses(direct_addresses_c);
-        let node_addr_d = NodeAddr::new(node_d);
+        let endpoint_addr_b = EndpointAddr::new(endpoint_b).with_relay_url(relay_y);
+        let endpoint_addr_c =
+            EndpointAddr::new(endpoint_c).with_direct_addresses(direct_addresses_c);
+        let endpoint_addr_d = EndpointAddr::new(endpoint_d);
 
-        node_map.add_test_addr(node_addr_a);
-        node_map.add_test_addr(node_addr_b);
-        node_map.add_test_addr(node_addr_c);
-        node_map.add_test_addr(node_addr_d);
+        endpoint_map.add_test_addr(endpoint_addr_a);
+        endpoint_map.add_test_addr(endpoint_addr_b);
+        endpoint_map.add_test_addr(endpoint_addr_c);
+        endpoint_map.add_test_addr(endpoint_addr_d);
 
-        let mut addrs: Vec<NodeAddr> = node_map
+        let mut addrs: Vec<EndpointAddr> = endpoint_map
             .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
-                let addr: NodeAddr = info.into();
+                let addr: EndpointAddr = info.into();
                 if addr.is_empty() {
                     return None;
                 }
                 Some(addr)
             })
             .collect();
-        let loaded_node_map = NodeMap::load_from_vec(
+        let loaded_endpoint_map = EndpointMap::load_from_vec(
             addrs.clone(),
             PathSelection::default(),
             true,
             &Default::default(),
         );
 
-        let mut loaded: Vec<NodeAddr> = loaded_node_map
+        let mut loaded: Vec<EndpointAddr> = loaded_endpoint_map
             .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
-                let addr: NodeAddr = info.into();
+                let addr: EndpointAddr = info.into();
                 if addr.is_empty() {
                     return None;
                 }
@@ -818,7 +847,7 @@ mod tests {
         loaded.sort_unstable();
         addrs.sort_unstable();
 
-        // compare the node maps via their known nodes
+        // compare the endpoint maps via their known endpoints
         assert_eq!(addrs, loaded);
     }
 
@@ -829,15 +858,15 @@ mod tests {
     #[test]
     #[traced_test]
     fn test_prune_direct_addresses() {
-        let node_map = NodeMap::default();
+        let endpoint_map = EndpointMap::default();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let public_key = SecretKey::generate(&mut rng).public();
-        let id = node_map
+        let id = endpoint_map
             .inner
             .lock()
             .unwrap()
-            .insert_node(Options {
-                node_id: public_key,
+            .insert_endpoint(Options {
+                endpoint_id: public_key,
                 relay_url: None,
                 active: false,
                 source: Source::NamedApp {
@@ -855,22 +884,22 @@ mod tests {
         info!("Adding active addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
-            let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
+            let endpoint_addr = EndpointAddr::new(public_key).with_direct_addresses([addr]);
             // add address
-            node_map.add_test_addr(node_addr);
+            endpoint_map.add_test_addr(endpoint_addr);
             // make it active
-            node_map.inner.lock().unwrap().receive_udp(addr);
+            endpoint_map.inner.lock().unwrap().receive_udp(addr);
         }
 
         info!("Adding offline/inactive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
-            let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
-            node_map.add_test_addr(node_addr);
+            let endpoint_addr = EndpointAddr::new(public_key).with_direct_addresses([addr]);
+            endpoint_map.add_test_addr(endpoint_addr);
         }
 
-        let mut node_map_inner = node_map.inner.lock().unwrap();
-        let endpoint = node_map_inner.by_id.get_mut(&id).unwrap();
+        let mut endpoint_map_inner = endpoint_map.inner.lock().unwrap();
+        let endpoint = endpoint_map_inner.by_id.get_mut(&id).unwrap();
 
         info!("Adding alive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
@@ -903,33 +932,34 @@ mod tests {
 
     #[test]
     fn test_prune_inactive() {
-        let node_map = NodeMap::default();
+        let endpoint_map = EndpointMap::default();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        // add one active node and more than MAX_INACTIVE_NODES inactive nodes
-        let active_node = SecretKey::generate(&mut rng).public();
+        // add one active endpoint and more than MAX_INACTIVE_ENDPOINTS inactive endpoints
+        let active_endpoint = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
-        node_map
+        endpoint_map
+            .add_test_addr(EndpointAddr::new(active_endpoint).with_direct_addresses([addr]));
+        endpoint_map
             .inner
             .lock()
             .unwrap()
             .receive_udp(addr)
             .expect("registered");
 
-        for _ in 0..MAX_INACTIVE_NODES + 1 {
-            let node = SecretKey::generate(&mut rng).public();
-            node_map.add_test_addr(NodeAddr::new(node));
+        for _ in 0..MAX_INACTIVE_ENDPOINTS + 1 {
+            let endpoint = SecretKey::generate(&mut rng).public();
+            endpoint_map.add_test_addr(EndpointAddr::new(endpoint));
         }
 
-        assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 2);
-        node_map.prune_inactive();
-        assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 1);
-        node_map
+        assert_eq!(endpoint_map.endpoint_count(), MAX_INACTIVE_ENDPOINTS + 2);
+        endpoint_map.prune_inactive();
+        assert_eq!(endpoint_map.endpoint_count(), MAX_INACTIVE_ENDPOINTS + 1);
+        endpoint_map
             .inner
             .lock()
             .unwrap()
-            .get(NodeStateKey::NodeId(active_node))
+            .get(EndpointStateKey::EndpointId(active_endpoint))
             .expect("should not be pruned");
     }
 }

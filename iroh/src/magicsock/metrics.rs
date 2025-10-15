@@ -45,7 +45,7 @@ pub struct Metrics {
     pub recv_disco_call_me_maybe: Counter,
     pub recv_disco_call_me_maybe_bad_disco: Counter,
 
-    // How many times our relay home node DI has changed from non-zero to a different non-zero.
+    // How many times our relay home endpoint DI has changed from non-zero to a different non-zero.
     pub relay_home_change: Counter,
 
     /*
@@ -68,10 +68,10 @@ pub struct Metrics {
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
 
-    /// Number of nodes we have attempted to contact.
-    pub nodes_contacted: Counter,
-    /// Number of nodes we have managed to contact directly.
-    pub nodes_contacted_directly: Counter,
+    /// Number of endpoints we have attempted to contact.
+    pub endpoints_contacted: Counter,
+    /// Number of endpoints we have managed to contact directly.
+    pub endpoints_contacted_directly: Counter,
 
     /// Number of connections with a successful handshake.
     pub connection_handshake_success: Counter,

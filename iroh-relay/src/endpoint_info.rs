@@ -1,36 +1,36 @@
-//! Support for handling DNS resource records for dialing by [`NodeId`].
+//! Support for handling DNS resource records for dialing by [`EndpointId`].
 //!
-//! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
+//! Dialing by [`EndpointId`] is supported by iroh endpoints publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
 //!
 //! DNS records are published under the following names:
 //!
-//! `_iroh.<z32-node-id>.<origin-domain> TXT`
+//! `_iroh.<z32-endpoint-id>.<origin-domain> TXT`
 //!
 //! - `_iroh` is the record name as defined by [`IROH_TXT_NAME`].
 //!
-//! - `<z32-node-id>` is the [z-base-32] encoding of the [`NodeId`].
+//! - `<z32-endpoint-id>` is the [z-base-32] encoding of the [`EndpointId`].
 //!
 //! - `<origin-domain>` is the domain name of the publishing DNS server,
-//!   [`N0_DNS_NODE_ORIGIN_PROD`] is the server operated by number0 for production.
-//!   [`N0_DNS_NODE_ORIGIN_STAGING`] is the server operated by number0 for testing.
+//!   [`N0_DNS_ENDPOINT_ORIGIN_PROD`] is the server operated by number0 for production.
+//!   [`N0_DNS_ENDPOINT_ORIGIN_STAGING`] is the server operated by number0 for testing.
 //!
 //! - `TXT` is the DNS record type.
 //!
 //! The returned TXT records must contain a string value of the form `key=value` as defined
 //! in [RFC1464].  The following attributes are defined:
 //!
-//! - `relay=<url>`: The home [`RelayUrl`] of this node.
+//! - `relay=<url>`: The home [`RelayUrl`] of this endpoint.
 //!
-//! - `addr=<addr> <addr>`: A space-separated list of sockets addresses for this iroh node.
+//! - `addr=<addr> <addr>`: A space-separated list of sockets addresses for this iroh endpoint.
 //!   Each address is an IPv4 or IPv6 address with a port.
 //!
 //! [Pkarr]: https://app.pkarr.org
 //! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 //! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
 //! [`RelayUrl`]: iroh_base::RelayUrl
-//! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::dns::N0_DNS_NODE_ORIGIN_PROD
-//! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::dns::N0_DNS_NODE_ORIGIN_STAGING
+//! [`N0_DNS_ENDPOINT_ORIGIN_PROD`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_PROD
+//! [`N0_DNS_ENDPOINT_ORIGIN_STAGING`]: crate::dns::N0_DNS_ENDPOINT_ORIGIN_STAGING
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -40,7 +40,7 @@ use std::{
     str::{FromStr, Utf8Error},
 };
 
-use iroh_base::{KeyParsingError, NodeAddr, NodeId, RelayUrl, SecretKey};
+use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use url::Url;
@@ -76,66 +76,66 @@ pub enum EncodingError {
 #[non_exhaustive]
 #[snafu(visibility(pub(crate)))]
 pub enum DecodingError {
-    #[snafu(display("node id was not encoded in valid z32"))]
+    #[snafu(display("endpoint id was not encoded in valid z32"))]
     InvalidEncodingZ32 { source: z32::Z32Error },
     #[snafu(display("length must be 32 bytes, but got {len} byte(s)"))]
     InvalidLength { len: usize },
-    #[snafu(display("node id is not a valid public key"))]
+    #[snafu(display("endpoint id is not a valid public key"))]
     InvalidKey {
         #[snafu(source(from(KeyParsingError, Box::new)))]
         source: Box<KeyParsingError>,
     },
 }
 
-/// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
+/// Extension methods for [`EndpointId`] to encode to and decode from [`z32`],
 /// which is the encoding used in [`pkarr`] domain names.
-pub trait NodeIdExt {
-    /// Encodes a [`NodeId`] in [`z-base-32`] encoding.
+pub trait EndpointIdExt {
+    /// Encodes a [`EndpointId`] in [`z-base-32`] encoding.
     ///
     /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
     fn to_z32(&self) -> String;
 
-    /// Parses a [`NodeId`] from [`z-base-32`] encoding.
+    /// Parses a [`EndpointId`] from [`z-base-32`] encoding.
     ///
     /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-    fn from_z32(s: &str) -> Result<NodeId, DecodingError>;
+    fn from_z32(s: &str) -> Result<EndpointId, DecodingError>;
 }
 
-impl NodeIdExt for NodeId {
+impl EndpointIdExt for EndpointId {
     fn to_z32(&self) -> String {
         z32::encode(self.as_bytes())
     }
 
-    fn from_z32(s: &str) -> Result<NodeId, DecodingError> {
+    fn from_z32(s: &str) -> Result<EndpointId, DecodingError> {
         let bytes = z32::decode(s.as_bytes()).context(InvalidEncodingZ32Snafu)?;
         let bytes: &[u8; 32] = &bytes
             .try_into()
             .map_err(|_| InvalidLengthSnafu { len: s.len() }.build())?;
-        let node_id = NodeId::from_bytes(bytes).context(InvalidKeySnafu)?;
-        Ok(node_id)
+        let endpoint_id = EndpointId::from_bytes(bytes).context(InvalidKeySnafu)?;
+        Ok(endpoint_id)
     }
 }
 
-/// Data about a node that may be published to and resolved from discovery services.
+/// Data about a endpoint that may be published to and resolved from discovery services.
 ///
 /// This includes an optional [`RelayUrl`], a set of direct addresses, and the optional
 /// [`UserData`], a string that can be set by applications and is not parsed or used by iroh
 /// itself.
 ///
-/// This struct does not include the node's [`NodeId`], only the data *about* a certain
-/// node. See [`NodeInfo`] for a struct that contains a [`NodeId`] with associated [`NodeData`].
+/// This struct does not include the endpoint's [`EndpointId`], only the data *about* a certain
+/// endpoint. See [`EndpointInfo`] for a struct that contains a [`EndpointId`] with associated [`EndpointData`].
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
-pub struct NodeData {
-    /// URL of the home relay of this node.
+pub struct EndpointData {
+    /// URL of the home relay of this endpoint.
     relay_url: Option<RelayUrl>,
-    /// Direct addresses where this node can be reached.
+    /// Direct addresses where this endpoint can be reached.
     direct_addresses: BTreeSet<SocketAddr>,
-    /// Optional user-defined [`UserData`] for this node.
+    /// Optional user-defined [`UserData`] for this endpoint.
     user_data: Option<UserData>,
 }
 
-impl NodeData {
-    /// Creates a new [`NodeData`] with a relay URL and a set of direct addresses.
+impl EndpointData {
+    /// Creates a new [`EndpointData`] with a relay URL and a set of direct addresses.
     pub fn new(relay_url: Option<RelayUrl>, direct_addresses: BTreeSet<SocketAddr>) -> Self {
         Self {
             relay_url,
@@ -144,71 +144,71 @@ impl NodeData {
         }
     }
 
-    /// Sets the relay URL and returns the updated node data.
+    /// Sets the relay URL and returns the updated endpoint data.
     pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
         self.relay_url = relay_url;
         self
     }
 
-    /// Sets the direct addresses and returns the updated node data.
+    /// Sets the direct addresses and returns the updated endpoint data.
     pub fn with_direct_addresses(mut self, direct_addresses: BTreeSet<SocketAddr>) -> Self {
         self.direct_addresses = direct_addresses;
         self
     }
 
-    /// Sets the user-defined data and returns the updated node data.
+    /// Sets the user-defined data and returns the updated endpoint data.
     pub fn with_user_data(mut self, user_data: Option<UserData>) -> Self {
         self.user_data = user_data;
         self
     }
 
-    /// Returns the relay URL of the node.
+    /// Returns the relay URL of the endpoint.
     pub fn relay_url(&self) -> Option<&RelayUrl> {
         self.relay_url.as_ref()
     }
 
-    /// Returns the optional user-defined data of the node.
+    /// Returns the optional user-defined data of the endpoint.
     pub fn user_data(&self) -> Option<&UserData> {
         self.user_data.as_ref()
     }
 
-    /// Returns the direct addresses of the node.
+    /// Returns the direct addresses of the endpoint.
     pub fn direct_addresses(&self) -> &BTreeSet<SocketAddr> {
         &self.direct_addresses
     }
 
-    /// Removes all direct addresses from the node data.
+    /// Removes all direct addresses from the endpoint data.
     pub fn clear_direct_addresses(&mut self) {
         self.direct_addresses = Default::default();
     }
 
-    /// Adds direct addresses to the node data.
+    /// Adds direct addresses to the endpoint data.
     pub fn add_direct_addresses(&mut self, addrs: impl IntoIterator<Item = SocketAddr>) {
         self.direct_addresses.extend(addrs)
     }
 
-    /// Sets the relay URL of the node data.
+    /// Sets the relay URL of the endpoint data.
     pub fn set_relay_url(&mut self, relay_url: Option<RelayUrl>) {
         self.relay_url = relay_url
     }
 
-    /// Sets the user-defined data of the node data.
+    /// Sets the user-defined data of the endpoint data.
     pub fn set_user_data(&mut self, user_data: Option<UserData>) {
         self.user_data = user_data;
     }
 }
 
-impl From<NodeAddr> for NodeData {
-    fn from(node_addr: NodeAddr) -> Self {
+impl From<EndpointAddr> for EndpointData {
+    fn from(endpoint_addr: EndpointAddr) -> Self {
         Self {
-            relay_url: node_addr.relay_url,
-            direct_addresses: node_addr.direct_addresses,
+            relay_url: endpoint_addr.relay_url,
+            direct_addresses: endpoint_addr.direct_addresses,
             user_data: None,
         }
     }
 }
 
-// User-defined data that can be published and resolved through node discovery.
+// User-defined data that can be published and resolved through endpoint discovery.
 ///
 /// Under the hood this is a UTF-8 String is no longer than [`UserData::MAX_LENGTH`] bytes.
 ///
@@ -267,26 +267,26 @@ impl AsRef<str> for UserData {
     }
 }
 
-/// Information about a node that may be published to and resolved from discovery services.
+/// Information about a endpoint that may be published to and resolved from discovery services.
 ///
-/// This struct couples a [`NodeId`] with its associated [`NodeData`].
+/// This struct couples a [`EndpointId`] with its associated [`EndpointData`].
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
-pub struct NodeInfo {
-    /// The [`NodeId`] of the node this is about.
-    pub node_id: NodeId,
-    /// The information published about the node.
-    pub data: NodeData,
+pub struct EndpointInfo {
+    /// The [`EndpointId`] of the endpoint this is about.
+    pub endpoint_id: EndpointId,
+    /// The information published about the endpoint.
+    pub data: EndpointData,
 }
 
-impl From<TxtAttrs<IrohAttr>> for NodeInfo {
+impl From<TxtAttrs<IrohAttr>> for EndpointInfo {
     fn from(attrs: TxtAttrs<IrohAttr>) -> Self {
         (&attrs).into()
     }
 }
 
-impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
+impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
     fn from(attrs: &TxtAttrs<IrohAttr>) -> Self {
-        let node_id = attrs.node_id();
+        let endpoint_id = attrs.endpoint_id();
         let attrs = attrs.attrs();
         let relay_url = attrs
             .get(&IrohAttr::Relay)
@@ -306,71 +306,71 @@ impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
             .flatten()
             .next()
             .and_then(|s| UserData::from_str(s).ok());
-        let data = NodeData {
+        let data = EndpointData {
             relay_url: relay_url.map(Into::into),
             direct_addresses,
             user_data,
         };
-        Self { node_id, data }
+        Self { endpoint_id, data }
     }
 }
 
-impl From<NodeInfo> for NodeAddr {
-    fn from(value: NodeInfo) -> Self {
-        value.into_node_addr()
+impl From<EndpointInfo> for EndpointAddr {
+    fn from(value: EndpointInfo) -> Self {
+        value.into_endpoint_addr()
     }
 }
 
-impl From<NodeAddr> for NodeInfo {
-    fn from(addr: NodeAddr) -> Self {
-        Self::new(addr.node_id)
+impl From<EndpointAddr> for EndpointInfo {
+    fn from(addr: EndpointAddr) -> Self {
+        Self::new(addr.endpoint_id)
             .with_relay_url(addr.relay_url)
             .with_direct_addresses(addr.direct_addresses)
     }
 }
 
-impl NodeInfo {
-    /// Creates a new [`NodeInfo`] with an empty [`NodeData`].
-    pub fn new(node_id: NodeId) -> Self {
-        Self::from_parts(node_id, Default::default())
+impl EndpointInfo {
+    /// Creates a new [`EndpointInfo`] with an empty [`EndpointData`].
+    pub fn new(endpoint_id: EndpointId) -> Self {
+        Self::from_parts(endpoint_id, Default::default())
     }
 
-    /// Creates a new [`NodeInfo`] from its parts.
-    pub fn from_parts(node_id: NodeId, data: NodeData) -> Self {
-        Self { node_id, data }
+    /// Creates a new [`EndpointInfo`] from its parts.
+    pub fn from_parts(endpoint_id: EndpointId, data: EndpointData) -> Self {
+        Self { endpoint_id, data }
     }
 
-    /// Sets the relay URL and returns the updated node info.
+    /// Sets the relay URL and returns the updated endpoint info.
     pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
         self.data = self.data.with_relay_url(relay_url);
         self
     }
 
-    /// Sets the direct addresses and returns the updated node info.
+    /// Sets the direct addresses and returns the updated endpoint info.
     pub fn with_direct_addresses(mut self, direct_addresses: BTreeSet<SocketAddr>) -> Self {
         self.data = self.data.with_direct_addresses(direct_addresses);
         self
     }
 
-    /// Sets the user-defined data and returns the updated node info.
+    /// Sets the user-defined data and returns the updated endpoint info.
     pub fn with_user_data(mut self, user_data: Option<UserData>) -> Self {
         self.data = self.data.with_user_data(user_data);
         self
     }
 
-    /// Converts into a [`NodeAddr`] by cloning the needed fields.
-    pub fn to_node_addr(&self) -> NodeAddr {
-        NodeAddr {
-            node_id: self.node_id,
+    /// Converts into a [`EndpointAddr`] by cloning the needed fields.
+    pub fn to_endpoint_addr(&self) -> EndpointAddr {
+        EndpointAddr {
+            endpoint_id: self.endpoint_id,
             relay_url: self.data.relay_url.clone(),
             direct_addresses: self.data.direct_addresses.clone(),
         }
     }
 
-    /// Converts into a [`NodeAddr`] without cloning.
-    pub fn into_node_addr(self) -> NodeAddr {
-        NodeAddr {
-            node_id: self.node_id,
+    /// Converts into a [`EndpointAddr`] without cloning.
+    pub fn into_endpoint_addr(self) -> EndpointAddr {
+        EndpointAddr {
+            endpoint_id: self.endpoint_id,
             relay_url: self.data.relay_url,
             direct_addresses: self.data.direct_addresses,
         }
@@ -381,7 +381,7 @@ impl NodeInfo {
     }
 
     #[cfg(not(wasm_browser))]
-    /// Parses a [`NodeInfo`] from DNS TXT lookup.
+    /// Parses a [`EndpointInfo`] from DNS TXT lookup.
     pub fn from_txt_lookup(
         domain_name: String,
         lookup: impl Iterator<Item = crate::dns::TxtRecordData>,
@@ -390,7 +390,7 @@ impl NodeInfo {
         Ok(Self::from(attrs))
     }
 
-    /// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].
+    /// Parses a [`EndpointInfo`] from a [`pkarr::SignedPacket`].
     pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self, ParseError> {
         let attrs = TxtAttrs::from_pkarr_signed_packet(packet)?;
         Ok(attrs.into())
@@ -440,26 +440,26 @@ pub enum ParseError {
     },
 }
 
-impl std::ops::Deref for NodeInfo {
-    type Target = NodeData;
+impl std::ops::Deref for EndpointInfo {
+    type Target = EndpointData;
     fn deref(&self) -> &Self::Target {
         &self.data
     }
 }
 
-impl std::ops::DerefMut for NodeInfo {
+impl std::ops::DerefMut for EndpointInfo {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.data
     }
 }
 
-/// Parses a [`NodeId`] from iroh DNS name.
+/// Parses a [`EndpointId`] from iroh DNS name.
 ///
 /// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
-/// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
+/// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`EndpointId`]. Ignores
 /// subsequent labels.
 #[cfg(not(wasm_browser))]
-fn node_id_from_txt_name(name: &str) -> Result<NodeId, ParseError> {
+fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
     let num_labels = name.split(".").count();
     if num_labels < 2 {
         return Err(NumLabelsSnafu { num_labels }.build());
@@ -470,8 +470,8 @@ fn node_id_from_txt_name(name: &str) -> Result<NodeId, ParseError> {
         return Err(NotAnIrohRecordSnafu { label }.build());
     }
     let label = labels.next().expect("checked above");
-    let node_id = NodeId::from_z32(label)?;
-    Ok(node_id)
+    let endpoint_id = EndpointId::from_z32(label)?;
+    Ok(endpoint_id)
 }
 
 /// The attributes supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
@@ -497,12 +497,12 @@ pub(crate) enum IrohAttr {
 /// [`Display`].
 #[derive(Debug)]
 pub(crate) struct TxtAttrs<T> {
-    node_id: NodeId,
+    endpoint_id: EndpointId,
     attrs: BTreeMap<T, Vec<String>>,
 }
 
-impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
-    fn from(info: &NodeInfo) -> Self {
+impl From<&EndpointInfo> for TxtAttrs<IrohAttr> {
+    fn from(info: &EndpointInfo) -> Self {
         let mut attrs = vec![];
         if let Some(relay_url) = &info.data.relay_url {
             attrs.push((IrohAttr::Relay, relay_url.to_string()));
@@ -513,23 +513,26 @@ impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
         if let Some(user_data) = &info.data.user_data {
             attrs.push((IrohAttr::UserData, user_data.to_string()));
         }
-        Self::from_parts(info.node_id, attrs.into_iter())
+        Self::from_parts(info.endpoint_id, attrs.into_iter())
     }
 }
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
-    /// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
-    pub(crate) fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
+    /// Creates [`TxtAttrs`] from a endpoint id and an iterator of key-value pairs.
+    pub(crate) fn from_parts(
+        endpoint_id: EndpointId,
+        pairs: impl Iterator<Item = (T, String)>,
+    ) -> Self {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
             attrs.entry(k).or_default().push(v);
         }
-        Self { attrs, node_id }
+        Self { attrs, endpoint_id }
     }
 
-    /// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
+    /// Creates [`TxtAttrs`] from a endpoint id and an iterator of "{key}={value}" strings.
     pub(crate) fn from_strings(
-        node_id: NodeId,
+        endpoint_id: EndpointId,
         strings: impl Iterator<Item = String>,
     ) -> Result<Self, ParseError> {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
@@ -541,7 +544,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             let attr = T::from_str(key).map_err(|_| AttrFromStringSnafu { key }.build())?;
             attrs.entry(attr).or_default().push(value.to_string());
         }
-        Ok(Self { attrs, node_id })
+        Ok(Self { attrs, endpoint_id })
     }
 
     /// Returns the parsed attributes.
@@ -549,9 +552,9 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         &self.attrs
     }
 
-    /// Returns the node id.
-    pub(crate) fn node_id(&self) -> NodeId {
-        self.node_id
+    /// Returns the endpoint id.
+    pub(crate) fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_id
     }
 
     /// Parses a [`pkarr::SignedPacket`].
@@ -564,7 +567,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         };
         let pubkey = packet.public_key();
         let pubkey_z32 = pubkey.to_z32();
-        let node_id = NodeId::from_bytes(&pubkey.verifying_key().to_bytes()).expect("valid key");
+        let endpoint_id =
+            EndpointId::from_bytes(&pubkey.verifying_key().to_bytes()).expect("valid key");
         let zone = dns::Name::new(&pubkey_z32).expect("z32 encoding is valid");
         let txt_data = packet
             .all_resource_records()
@@ -577,7 +581,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             });
 
         let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
-        Self::from_strings(node_id, txt_strs)
+        Self::from_strings(endpoint_id, txt_strs)
     }
 
     /// Parses a TXT records lookup.
@@ -586,10 +590,10 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         name: String,
         lookup: impl Iterator<Item = crate::dns::TxtRecordData>,
     ) -> Result<Self, ParseError> {
-        let queried_node_id = node_id_from_txt_name(&name)?;
+        let queried_endpoint_id = endpoint_id_from_txt_name(&name)?;
 
         let strings = lookup.map(|record| record.to_string());
-        Self::from_strings(queried_node_id, strings)
+        Self::from_strings(queried_endpoint_id, strings)
     }
 
     fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
@@ -632,8 +636,8 @@ pub(crate) fn ensure_iroh_txt_label(name: String) -> String {
 }
 
 #[cfg(not(wasm_browser))]
-pub(crate) fn node_domain(node_id: &NodeId, origin: &str) -> String {
-    format!("{}.{}", NodeId::to_z32(node_id), origin)
+pub(crate) fn endpoint_domain(endpoint_id: &EndpointId, origin: &str) -> String {
+    format!("{}.{}", EndpointId::to_z32(endpoint_id), origin)
 }
 
 #[cfg(test)]
@@ -651,25 +655,25 @@ mod tests {
             },
         },
     };
-    use iroh_base::{NodeId, SecretKey};
+    use iroh_base::{EndpointId, SecretKey};
     use n0_snafu::{Result, ResultExt};
 
-    use super::{NodeData, NodeIdExt, NodeInfo};
+    use super::{EndpointData, EndpointIdExt, EndpointInfo};
     use crate::dns::TxtRecordData;
 
     #[test]
     fn txt_attr_roundtrip() {
-        let node_data = NodeData::new(
+        let endpoint_data = EndpointData::new(
             Some("https://example.com".parse().unwrap()),
             ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
         )
         .with_user_data(Some("foobar".parse().unwrap()));
-        let node_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
+        let endpoint_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
             .parse()
             .unwrap();
-        let expected = NodeInfo::from_parts(node_id, node_data);
+        let expected = EndpointInfo::from_parts(endpoint_id, endpoint_data);
         let attrs = expected.to_attrs();
-        let actual = NodeInfo::from(&attrs);
+        let actual = EndpointInfo::from(&attrs);
         assert_eq!(expected, actual);
     }
 
@@ -677,18 +681,18 @@ mod tests {
     fn signed_packet_roundtrip() {
         let secret_key =
             SecretKey::from_str("vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia").unwrap();
-        let node_data = NodeData::new(
+        let endpoint_data = EndpointData::new(
             Some("https://example.com".parse().unwrap()),
             ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
         )
         .with_user_data(Some("foobar".parse().unwrap()));
-        let expected = NodeInfo::from_parts(secret_key.public(), node_data);
+        let expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
-        let actual = NodeInfo::from_pkarr_signed_packet(&packet).unwrap();
+        let actual = EndpointInfo::from_pkarr_signed_packet(&packet).unwrap();
         assert_eq!(expected, actual);
     }
 
-    /// There used to be a bug where uploading a NodeAddr with more than only exactly
+    /// There used to be a bug where uploading a EndpointAddr with more than only exactly
     /// one relay URL or one publicly reachable IP addr would prevent connection
     /// establishment.
     ///
@@ -718,8 +722,8 @@ mod tests {
             Record::from_rdata(
                 Name::from_utf8(format!(
                     "_iroh.{}.dns.iroh.link.",
-                    NodeId::from_str(
-                        // Another NodeId
+                    EndpointId::from_str(
+                        // Another EndpointId
                         "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
                     )?
                     .to_z32()
@@ -752,9 +756,9 @@ mod tests {
             .into_iter()
             .map(|txt| TxtRecordData::from_iter(txt.iter().cloned()));
 
-        let node_info = NodeInfo::from_txt_lookup(name.to_string(), lookup)?;
+        let endpoint_info = EndpointInfo::from_txt_lookup(name.to_string(), lookup)?;
 
-        let expected_node_info = NodeInfo::new(NodeId::from_str(
+        let expected_endpoint_info = EndpointInfo::new(EndpointId::from_str(
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",
         )?)
         .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))
@@ -763,7 +767,7 @@ mod tests {
             "213.208.157.87:60165".parse().unwrap(),
         ]));
 
-        assert_eq!(node_info, expected_node_info);
+        assert_eq!(endpoint_info, expected_endpoint_info);
 
         Ok(())
     }

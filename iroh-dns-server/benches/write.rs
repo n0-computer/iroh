@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use iroh::{SecretKey, discovery::pkarr::PkarrRelayClient, node_info::NodeInfo};
+use iroh::{SecretKey, discovery::pkarr::PkarrRelayClient, endpoint_info::EndpointInfo};
 use iroh_dns_server::{ZoneStore, config::Config, metrics::Metrics, server::Server};
 use n0_snafu::Result;
 use rand_chacha::rand_core::SeedableRng;
@@ -33,13 +33,16 @@ fn benchmark_dns_server(c: &mut Criterion) {
 
                     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
                     let secret_key = SecretKey::generate(&mut rng);
-                    let node_id = secret_key.public();
+                    let endpoint_id = secret_key.public();
 
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
                     let pkarr = PkarrRelayClient::new(pkarr_relay);
                     let relay_url = "http://localhost:8080".parse().unwrap();
-                    let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url));
-                    let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30).unwrap();
+                    let endpoint_info =
+                        EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url));
+                    let signed_packet = endpoint_info
+                        .to_pkarr_signed_packet(&secret_key, 30)
+                        .unwrap();
 
                     let start = std::time::Instant::now();
                     for _ in 0..iters {

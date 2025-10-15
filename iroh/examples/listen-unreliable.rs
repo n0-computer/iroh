@@ -17,9 +17,9 @@ async fn main() -> Result<()> {
     let secret_key = SecretKey::generate(&mut rand::rng());
     println!("public key: {}", secret_key.public());
 
-    // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
+    // Build a `Endpoint`, which uses PublicKeys as endpoint identifiers, uses QUIC for directly connecting to other endpoints, and uses the relay servers to holepunch direct connections between endpoints when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = Endpoint::builder()
-        // The secret key is used to authenticate with other nodes. The PublicKey portion of this secret key is how we identify nodes, often referred to as the `node_id` in our codebase.
+        // The secret key is used to authenticate with other endpoints. The PublicKey portion of this secret key is how we identify endpoints, often referred to as the `endpoint_id` in our codebase.
         .secret_key(secret_key)
         // set the ALPN protocols this endpoint will accept on incoming connections
         .alpns(vec![EXAMPLE_ALPN.to_vec()])
@@ -32,15 +32,15 @@ async fn main() -> Result<()> {
         .bind()
         .await?;
 
-    let me = endpoint.node_id();
-    println!("node id: {me}");
-    println!("node listening addresses:");
+    let me = endpoint.endpoint_id();
+    println!("endpoint id: {me}");
+    println!("endpoint listening addresses:");
 
-    // wait for the node to be online
+    // wait for the endpoint to be online
     endpoint.online().await;
 
-    let node_addr = endpoint.node_addr();
-    let local_addrs = node_addr
+    let endpoint_addr = endpoint.endpoint_addr();
+    let local_addrs = endpoint_addr
         .direct_addresses
         .into_iter()
         .map(|addr| {
@@ -50,14 +50,14 @@ async fn main() -> Result<()> {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    let relay_url = node_addr
+    let relay_url = endpoint_addr
         .relay_url
         .expect("Should have a relay URL, assuming a default endpoint setup.");
-    println!("node relay server url: {relay_url}");
+    println!("endpoint relay server url: {relay_url}");
     println!("\nin a separate terminal run:");
 
     println!(
-        "\tcargo run --example connect-unreliable -- --node-id {me} --addrs \"{local_addrs}\" --relay-url {relay_url}\n"
+        "\tcargo run --example connect-unreliable -- --endpoint-id {me} --addrs \"{local_addrs}\" --relay-url {relay_url}\n"
     );
     // accept incoming connections, returns a normal QUIC connection
 
@@ -73,9 +73,9 @@ async fn main() -> Result<()> {
         };
         let alpn = connecting.alpn().await?;
         let conn = connecting.await.e()?;
-        let node_id = conn.remote_node_id()?;
+        let endpoint_id = conn.remote_endpoint_id()?;
         info!(
-            "new (unreliable) connection from {node_id} with ALPN {}",
+            "new (unreliable) connection from {endpoint_id} with ALPN {}",
             String::from_utf8_lossy(&alpn),
         );
         // spawn a task to handle reading and writing off of the connection

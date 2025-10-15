@@ -8,15 +8,15 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
-    dns::{DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
+    dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::ConnectionError,
 };
-use iroh_base::ticket::NodeTicket;
+use iroh_base::ticket::EndpointTicket;
 use n0_future::task::AbortOnDropHandle;
 use n0_snafu::{Result, ResultExt};
 use n0_watcher::Watcher as _;
@@ -32,7 +32,7 @@ const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";
 const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";
 const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 
-/// Transfer data between iroh nodes.
+/// Transfer data between iroh endpoints.
 ///
 /// This is a useful example to test connection establishment and transfer speed.
 ///
@@ -92,8 +92,8 @@ impl Env {
 
     fn dns_origin_domain(self) -> String {
         match self {
-            Env::Prod => N0_DNS_NODE_ORIGIN_PROD.to_string(),
-            Env::Staging => N0_DNS_NODE_ORIGIN_STAGING.to_string(),
+            Env::Prod => N0_DNS_ENDPOINT_ORIGIN_PROD.to_string(),
+            Env::Staging => N0_DNS_ENDPOINT_ORIGIN_STAGING.to_string(),
             Env::Dev => DEV_DNS_ORIGIN_DOMAIN.to_string(),
         }
     }
@@ -118,16 +118,16 @@ struct EndpointArgs {
     /// Use a custom pkarr server.
     #[clap(long)]
     pkarr_relay_url: Option<Url>,
-    /// Disable publishing node info to pkarr.
+    /// Disable publishing endpoint info to pkarr.
     #[clap(long, conflicts_with = "pkarr_relay_url")]
     no_pkarr_publish: bool,
-    /// Use a custom domain when resolving node info via DNS.
+    /// Use a custom domain when resolving endpoint info via DNS.
     #[clap(long)]
     dns_origin_domain: Option<String>,
-    /// Use a custom DNS server for resolving relay and node info domains.
+    /// Use a custom DNS server for resolving relay and endpoint info domains.
     #[clap(long)]
     dns_server: Option<String>,
-    /// Do not resolve node info via DNS.
+    /// Do not resolve endpoint info via DNS.
     #[clap(long)]
     no_dns_resolve: bool,
     #[clap(long)]
@@ -187,7 +187,7 @@ impl EndpointArgs {
                 .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
             Err(_) => {
                 let s = SecretKey::generate(&mut rand::rng());
-                println!("Generated a new node secret. To reuse, set");
+                println!("Generated a new endpoint secret. To reuse, set");
                 println!("\tIROH_SECRET={}", HEXLOWER.encode(&s.to_bytes()));
                 s
             }
@@ -270,8 +270,8 @@ impl EndpointArgs {
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
-        let node_id = endpoint.node_id();
-        println!("Our node id:\n\t{node_id}");
+        let endpoint_id = endpoint.endpoint_id();
+        println!("Our endpoint id:\n\t{endpoint_id}");
 
         if self.relay_only {
             endpoint.online().await;
@@ -281,14 +281,14 @@ impl EndpointArgs {
                 .ok();
         }
 
-        let node_addr = endpoint.node_addr();
+        let endpoint_addr = endpoint.endpoint_addr();
 
         println!("Our direct addresses:");
-        for addr in &node_addr.direct_addresses {
+        for addr in &endpoint_addr.direct_addresses {
             println!("\t{addr}");
         }
 
-        if let Some(url) = node_addr.relay_url {
+        if let Some(url) = endpoint_addr.relay_url {
             println!("Our home relay server:\t{url}");
         } else {
             println!("No home relay server found");
@@ -300,19 +300,19 @@ impl EndpointArgs {
 }
 
 async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
-    let node_id = endpoint.node_id();
+    let endpoint_id = endpoint.endpoint_id();
 
-    let node_addr = endpoint.node_addr();
-    let ticket = NodeTicket::new(node_addr);
+    let endpoint_addr = endpoint.endpoint_addr();
+    let ticket = EndpointTicket::new(endpoint_addr);
     println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
-    let mut node_addr = endpoint.node_addr();
-    node_addr.direct_addresses = Default::default();
-    let ticket = NodeTicket::new(node_addr);
+    let mut endpoint_addr = endpoint.endpoint_addr();
+    endpoint_addr.direct_addresses = Default::default();
+    let ticket = EndpointTicket::new(endpoint_addr);
     println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);
 
-    let ticket = NodeTicket::new(NodeAddr::new(node_id));
-    println!("Ticket with only our node id:\n{ticket}\n");
+    let ticket = EndpointTicket::new(EndpointAddr::new(endpoint_id));
+    println!("Ticket with only our endpoint id:\n{ticket}\n");
 
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
@@ -329,17 +329,17 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
         let endpoint_clone = endpoint.clone();
         tokio::spawn(async move {
             let conn = connecting.await.e()?;
-            let node_id = conn.remote_node_id()?;
+            let endpoint_id = conn.remote_endpoint_id()?;
             info!(
-                "new connection from {node_id} with ALPN {}",
+                "new connection from {endpoint_id} with ALPN {}",
                 String::from_utf8_lossy(TRANSFER_ALPN),
             );
 
-            let remote = node_id.fmt_short();
+            let remote = endpoint_id.fmt_short();
             println!("[{remote}] Connected");
 
             // Spawn a background task that prints connection type changes. Will be aborted on drop.
-            let _guard = watch_conn_type(&endpoint_clone, node_id);
+            let _guard = watch_conn_type(&endpoint_clone, endpoint_id);
 
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
@@ -356,9 +356,9 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             // it received this message.
             let res = tokio::time::timeout(Duration::from_secs(3), async move {
                 let closed = conn.closed().await;
-                let remote = node_id.fmt_short();
+                let remote = endpoint_id.fmt_short();
                 if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
-                    println!("[{remote}] Node disconnected with an error: {closed:#}");
+                    println!("[{remote}] Endpoint disconnected with an error: {closed:#}");
                 }
             })
             .await;
@@ -384,19 +384,19 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 }
 
 async fn fetch(endpoint: Endpoint, ticket: &str) -> Result<()> {
-    let me = endpoint.node_id().fmt_short();
-    let ticket: NodeTicket = ticket.parse()?;
-    let remote_node_id = ticket.node_addr().node_id;
+    let me = endpoint.endpoint_id().fmt_short();
+    let ticket: EndpointTicket = ticket.parse()?;
+    let remote_endpoint_id = ticket.endpoint_addr().endpoint_id;
     let start = Instant::now();
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
     let conn = endpoint
-        .connect(NodeAddr::from(ticket), TRANSFER_ALPN)
+        .connect(EndpointAddr::from(ticket), TRANSFER_ALPN)
         .await?;
-    println!("Connected to {remote_node_id}");
+    println!("Connected to {remote_endpoint_id}");
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(&endpoint, remote_node_id);
+    let _guard = watch_conn_type(&endpoint, remote_endpoint_id);
 
     // Use the Quinn API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await.e()?;
@@ -513,13 +513,13 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
     cfg.parse_size(s)
 }
 
-fn watch_conn_type(endpoint: &Endpoint, node_id: NodeId) -> AbortOnDropHandle<()> {
-    let mut stream = endpoint.conn_type(node_id).unwrap().stream();
+fn watch_conn_type(endpoint: &Endpoint, endpoint_id: EndpointId) -> AbortOnDropHandle<()> {
+    let mut stream = endpoint.conn_type(endpoint_id).unwrap().stream();
     let task = tokio::task::spawn(async move {
         while let Some(conn_type) = stream.next().await {
             println!(
                 "[{}] Connection type changed to: {conn_type}",
-                node_id.fmt_short()
+                endpoint_id.fmt_short()
             );
         }
     });

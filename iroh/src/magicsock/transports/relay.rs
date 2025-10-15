@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use iroh_base::{NodeId, RelayUrl};
+use iroh_base::{EndpointId, RelayUrl};
 use iroh_relay::protos::relay::Datagrams;
 use n0_future::{
     ready,
@@ -34,7 +34,7 @@ pub(crate) struct RelayTransport {
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: Watchable<Option<RelayUrl>>,
-    my_node_id: NodeId,
+    my_endpoint_id: EndpointId,
 }
 
 impl RelayTransport {
@@ -45,7 +45,7 @@ impl RelayTransport {
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
-        let my_node_id = config.secret_key.public();
+        let my_endpoint_id = config.secret_key.public();
         let my_relay = config.my_relay.clone();
 
         let relay_actor = RelayActor::new(config, relay_datagram_recv_tx);
@@ -66,7 +66,7 @@ impl RelayTransport {
             actor_sender,
             _actor_handle: actor_handle,
             my_relay,
-            my_node_id,
+            my_endpoint_id,
         }
     }
 
@@ -164,11 +164,11 @@ impl RelayTransport {
 
     pub(super) fn local_addr_watch(
         &self,
-    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>> {
-        let my_node_id = self.my_node_id;
+    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>> {
+        let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
             .watch()
-            .map(move |url| url.map(|url| (url, my_node_id)))
+            .map(move |url| url.map(|url| (url, my_endpoint_id)))
             .expect("disconnected")
     }
 
@@ -241,37 +241,37 @@ pub(crate) struct RelaySender {
 }
 
 impl RelaySender {
-    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _node_id: &NodeId) -> bool {
+    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _endpoint_id: &EndpointId) -> bool {
         true
     }
 
     pub(super) async fn send(
         &self,
         dest_url: RelayUrl,
-        dest_node: NodeId,
+        dest_endpoint: EndpointId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
         let contents = datagrams_from_transmit(transmit);
 
         let item = RelaySendItem {
-            remote_node: dest_node,
+            remote_endpoint: dest_endpoint,
             url: dest_url.clone(),
             datagrams: contents,
         };
 
-        let dest_node = item.remote_node;
+        let dest_endpoint = item.remote_endpoint;
         let dest_url = item.url.clone();
         let Some(sender) = self.sender.get_ref() else {
             return Err(io::Error::other("channel closed"));
         };
         match sender.send(item).await {
             Ok(_) => {
-                trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                trace!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
                         "send relay: message queued");
                 Ok(())
             }
             Err(mpsc::error::SendError(_)) => {
-                error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                error!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
                         "send relay: message dropped, channel to actor is closed");
                 Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
@@ -285,27 +285,27 @@ impl RelaySender {
         &mut self,
         cx: &mut Context,
         dest_url: RelayUrl,
-        dest_node: NodeId,
+        dest_endpoint: EndpointId,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         match ready!(self.sender.poll_reserve(cx)) {
             Ok(()) => {
-                trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                trace!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
                     "send relay: message queued");
 
                 let contents = datagrams_from_transmit(transmit);
                 let item = RelaySendItem {
-                    remote_node: dest_node,
+                    remote_endpoint: dest_endpoint,
                     url: dest_url.clone(),
                     datagrams: contents,
                 };
-                let dest_node = item.remote_node;
+                let dest_endpoint = item.remote_endpoint;
                 let dest_url = item.url.clone();
 
                 match self.sender.send_item(item) {
                     Ok(()) => Poll::Ready(Ok(())),
                     Err(_err) => {
-                        error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                        error!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
                       "send relay: message dropped, channel to actor is closed");
                         Poll::Ready(Err(io::Error::new(
                             io::ErrorKind::ConnectionReset,
@@ -315,7 +315,7 @@ impl RelaySender {
                 }
             }
             Err(_err) => {
-                error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                error!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
                       "send relay: message dropped, channel to actor is closed");
                 Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
@@ -328,18 +328,18 @@ impl RelaySender {
     pub(super) fn try_send(
         &self,
         dest_url: RelayUrl,
-        dest_node: NodeId,
+        dest_endpoint: EndpointId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
         let contents = datagrams_from_transmit(transmit);
 
         let item = RelaySendItem {
-            remote_node: dest_node,
+            remote_endpoint: dest_endpoint,
             url: dest_url.clone(),
             datagrams: contents,
         };
 
-        let dest_node = item.remote_node;
+        let dest_endpoint = item.remote_endpoint;
         let dest_url = item.url.clone();
 
         let Some(sender) = self.sender.get_ref() else {
@@ -348,12 +348,12 @@ impl RelaySender {
 
         match sender.try_send(item) {
             Ok(_) => {
-                trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                trace!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
                        "send relay: message queued");
                 Ok(())
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                error!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
                     "send relay: message dropped, channel to actor is closed");
                 Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
@@ -361,7 +361,7 @@ impl RelaySender {
                 ))
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                warn!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
                       "send relay: message dropped, channel to actor is full");
                 Err(io::Error::new(io::ErrorKind::WouldBlock, "channel full"))
             }
@@ -389,7 +389,7 @@ fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
 mod tests {
     use std::{collections::BTreeSet, time::Duration};
 
-    use iroh_base::NodeId;
+    use iroh_base::EndpointId;
     use tokio::task::JoinSet;
     use tracing::debug;
 
@@ -400,7 +400,7 @@ mod tests {
     async fn test_relay_datagram_queue() {
         let capacity = 16;
         let (sender, mut receiver) = mpsc::channel(capacity);
-        let url = staging::default_na_relay_node().url;
+        let url = staging::default_na_relay_endpoint().url;
 
         let mut tasks = JoinSet::new();
 
@@ -428,7 +428,7 @@ mod tests {
                     sender
                         .try_send(RelayRecvDatagram {
                             url,
-                            src: NodeId::from_bytes(&[0u8; 32]).unwrap(),
+                            src: EndpointId::from_bytes(&[0u8; 32]).unwrap(),
                             datagrams: Datagrams::from(&i.to_le_bytes()),
                         })
                         .unwrap();

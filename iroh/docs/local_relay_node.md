@@ -14,7 +14,7 @@ To connect to this iroh-relay when doing your normal iroh commands, adjust the i
 
 ```toml
 # iroh.config.toml:
-[[relay_nodes]]
+[[relay_endpoints]]
 url = "http://localhost:3340"
 ```
 

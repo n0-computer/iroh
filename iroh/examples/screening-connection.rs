@@ -1,6 +1,6 @@
 //! Very basic example to showcase how to write a protocol that rejects new
 //! connections based on internal state. Useful when you want an endpoint to
-//! stop accepting new connections for some reason only known to the node. Maybe
+//! stop accepting new connections for some reason only known to the endpoint. Maybe
 //! it's doing a migration, starting up, in a "maintenance mode", or serving
 //! too many connections.
 //!
@@ -13,7 +13,7 @@ use std::sync::{
 };
 
 use iroh::{
-    Endpoint, NodeAddr,
+    Endpoint, EndpointAddr,
     endpoint::{Connecting, Connection},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
@@ -22,7 +22,7 @@ use n0_snafu::{Result, ResultExt};
 /// Each protocol is identified by its ALPN string.
 ///
 /// The ALPN, or application-layer protocol negotiation, is exchanged in the connection handshake,
-/// and the connection is aborted unless both nodes pass the same bytestring.
+/// and the connection is aborted unless both endpoints pass the same bytestring.
 const ALPN: &[u8] = b"iroh-example/screening-connection/0";
 
 #[tokio::main]
@@ -30,14 +30,14 @@ async fn main() -> Result<()> {
     let router = start_accept_side().await?;
     // Wait for the endpoint to be reachable
     router.endpoint().online().await;
-    let node_addr = router.endpoint().node_addr();
+    let endpoint_addr = router.endpoint().endpoint_addr();
 
     // call connect three times. connection index 1 will be an odd number, and rejected.
-    connect_side(&node_addr).await?;
-    if let Err(err) = connect_side(&node_addr).await {
+    connect_side(&endpoint_addr).await?;
+    if let Err(err) = connect_side(&endpoint_addr).await {
         println!("Error connecting: {}", err);
     }
-    connect_side(&node_addr).await?;
+    connect_side(&endpoint_addr).await?;
 
     // This makes sure the endpoint in the router is closed properly and connections close gracefully
     router.shutdown().await.e()?;
@@ -45,10 +45,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn connect_side(addr: &NodeAddr) -> Result<()> {
+async fn connect_side(addr: &EndpointAddr) -> Result<()> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
-    // Open a connection to the accepting node
+    // Open a connection to the accepting endpoint
     let conn = endpoint.connect(addr.clone(), ALPN).await?;
 
     // Open a bidirectional QUIC stream
@@ -85,7 +85,7 @@ async fn start_accept_side() -> Result<Router> {
         conn_attempt_count: Arc::new(AtomicU64::new(0)),
     };
 
-    // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
+    // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the endpoint.
     let router = Router::builder(endpoint).accept(ALPN, echo).spawn();
 
     Ok(router)
@@ -124,9 +124,9 @@ impl ProtocolHandler for ScreenedEcho {
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        // We can get the remote's node id from the connection.
-        let node_id = connection.remote_node_id()?;
-        println!("accepted connection from {node_id}");
+        // We can get the remote's endpoint id from the connection.
+        let endpoint_id = connection.remote_endpoint_id()?;
+        println!("accepted connection from {endpoint_id}");
 
         // Our protocol is a simple request-response protocol, so we expect the
         // connecting peer to open a single bi-directional stream.

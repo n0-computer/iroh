@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use iroh_base::NodeId;
+use iroh_base::EndpointId;
 use n0_future::{SinkExt, StreamExt};
 use nested_enum_utils::common_fields;
 use rand::Rng;
@@ -32,7 +32,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub(super) struct Packet {
     /// The sender of the packet
-    src: NodeId,
+    src: EndpointId,
     /// The data packet bytes.
     data: Datagrams,
 }
@@ -40,7 +40,7 @@ pub(super) struct Packet {
 /// Configuration for a [`Client`].
 #[derive(Debug)]
 pub(super) struct Config {
-    pub(super) node_id: NodeId,
+    pub(super) endpoint_id: EndpointId,
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
@@ -53,7 +53,7 @@ pub(super) struct Config {
 #[derive(Debug)]
 pub(super) struct Client {
     /// Identity of the connected peer.
-    node_id: NodeId,
+    endpoint_id: EndpointId,
     /// Connection identifier.
     connection_id: u64,
     /// Used to close the connection loop.
@@ -65,7 +65,7 @@ pub(super) struct Client {
     /// Queue of disco packets intended for the client.
     disco_send_queue: mpsc::Sender<Packet>,
     /// Channel to notify the client that a previous sender has disconnected.
-    peer_gone: mpsc::Sender<NodeId>,
+    peer_gone: mpsc::Sender<EndpointId>,
 }
 
 impl Client {
@@ -79,7 +79,7 @@ impl Client {
         metrics: Arc<Metrics>,
     ) -> Client {
         let Config {
-            node_id,
+            endpoint_id,
             stream,
             write_timeout,
             channel_capacity,
@@ -96,8 +96,8 @@ impl Client {
             timeout: write_timeout,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
-            node_gone: peer_gone_r,
-            node_id,
+            endpoint_gone: peer_gone_r,
+            endpoint_id,
             connection_id,
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
@@ -109,12 +109,12 @@ impl Client {
         let io_done = done.clone();
         let handle = tokio::task::spawn(actor.run(io_done).instrument(tracing::info_span!(
             "client-connection-actor",
-            remote_node = %node_id.fmt_short(),
+            remote_endpoint = %endpoint_id.fmt_short(),
             connection_id = connection_id
         )));
 
         Client {
-            node_id,
+            endpoint_id,
             connection_id,
             handle: AbortOnDropHandle::new(handle),
             done,
@@ -135,7 +135,7 @@ impl Client {
         self.start_shutdown();
         if let Err(e) = self.handle.await {
             warn!(
-                remote_node = %self.node_id.fmt_short(),
+                remote_endpoint = %self.endpoint_id.fmt_short(),
                 "error closing actor loop: {e:#?}",
             );
         };
@@ -148,7 +148,7 @@ impl Client {
 
     pub(super) fn try_send_packet(
         &self,
-        src: NodeId,
+        src: EndpointId,
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
         self.send_queue.try_send(Packet { src, data })
@@ -156,13 +156,16 @@ impl Client {
 
     pub(super) fn try_send_disco_packet(
         &self,
-        src: NodeId,
+        src: EndpointId,
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
         self.disco_send_queue.try_send(Packet { src, data })
     }
 
-    pub(super) fn try_send_peer_gone(&self, key: NodeId) -> Result<(), TrySendError<NodeId>> {
+    pub(super) fn try_send_peer_gone(
+        &self,
+        key: EndpointId,
+    ) -> Result<(), TrySendError<EndpointId>> {
         self.peer_gone.try_send(key)
     }
 }
@@ -238,13 +241,13 @@ pub enum RunError {
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
-    #[snafu(display("Server.node_gone dropped"))]
-    NodeGoneDrop {
+    #[snafu(display("Server.endpoint_gone dropped"))]
+    EndpointGoneDrop {
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
-    #[snafu(display("NodeGone write frame failed"))]
-    NodeGoneWriteFrame {
+    #[snafu(display("EndpointGone write frame failed"))]
+    EndpointGoneWriteFrame {
         source: WriteFrameError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
@@ -278,7 +281,7 @@ pub enum RunError {
 ///
 /// On the "read" side, it can:
 ///     - receive a ping and write a pong back
-///     to speak to the node ID associated with that client.
+///     to speak to the endpoint ID associated with that client.
 #[derive(Debug)]
 struct Actor {
     /// IO Stream to talk to the client
@@ -290,9 +293,9 @@ struct Actor {
     /// Important packets queued to send to the client
     disco_send_queue: mpsc::Receiver<Packet>,
     /// Notify the client that a previous sender has disconnected
-    node_gone: mpsc::Receiver<NodeId>,
-    /// [`NodeId`] of this client
-    node_id: NodeId,
+    endpoint_gone: mpsc::Receiver<EndpointId>,
+    /// [`EndpointId`] of this client
+    endpoint_id: EndpointId,
     /// Connection identifier.
     connection_id: u64,
     /// Reference to the other connected clients.
@@ -309,7 +312,7 @@ impl Actor {
         // connection is accepted long before this in the HTTP server, but it is clearer to
         // handle the metric here.
         self.metrics.accepts.inc();
-        if self.client_counter.update(self.node_id) {
+        if self.client_counter.update(self.endpoint_id) {
             self.metrics.unique_client_keys.inc();
         }
         match self.run_inner(done).await {
@@ -321,7 +324,8 @@ impl Actor {
             }
         }
 
-        self.clients.unregister(self.connection_id, self.node_id);
+        self.clients
+            .unregister(self.connection_id, self.endpoint_id);
         self.metrics.disconnects.inc();
     }
 
@@ -364,11 +368,11 @@ impl Actor {
                     let packet = packet.ok_or(SendQueuePacketDropSnafu.build())?;
                     self.send_packet(packet).await.context(PacketSendSnafu)?;
                 }
-                // Last priority, sending left nodes
-                node_id = self.node_gone.recv() => {
-                    let node_id = node_id.ok_or(NodeGoneDropSnafu.build())?;
-                    trace!("node_id gone: {:?}", node_id);
-                    self.write_frame(RelayToClientMsg::NodeGone(node_id)).await.context(NodeGoneWriteFrameSnafu)?;
+                // Last priority, sending left endpoints
+                endpoint_id = self.endpoint_gone.recv() => {
+                    let endpoint_id = endpoint_id.ok_or(EndpointGoneDropSnafu.build())?;
+                    trace!("endpoint_id gone: {:?}", endpoint_id);
+                    self.write_frame(RelayToClientMsg::EndpointGone(endpoint_id)).await.context(EndpointGoneWriteFrameSnafu)?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -404,14 +408,14 @@ impl Actor {
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
     async fn send_raw(&mut self, packet: Packet) -> Result<(), WriteFrameError> {
-        let remote_node_id = packet.src;
+        let remote_endpoint_id = packet.src;
         let datagrams = packet.data;
 
         if let Ok(len) = datagrams.contents.len().try_into() {
             self.metrics.bytes_sent.inc_by(len);
         }
         self.write_frame(RelayToClientMsg::Datagrams {
-            remote_node_id,
+            remote_endpoint_id,
             datagrams,
         })
         .await
@@ -458,7 +462,7 @@ impl Actor {
 
         match frame {
             ClientToRelayMsg::Datagrams {
-                dst_node_id: dst_key,
+                dst_endpoint_id: dst_key,
                 datagrams,
             } => {
                 let packet_len = datagrams.contents.len();
@@ -484,17 +488,17 @@ impl Actor {
 
     fn handle_frame_send_packet(
         &self,
-        dst: NodeId,
+        dst: EndpointId,
         data: Datagrams,
     ) -> Result<(), ForwardPacketError> {
         if disco::looks_like_disco_wrapper(&data.contents) {
             self.metrics.disco_packets_recv.inc();
             self.clients
-                .send_disco_packet(dst, data, self.node_id, &self.metrics)?;
+                .send_disco_packet(dst, data, self.endpoint_id, &self.metrics)?;
         } else {
             self.metrics.send_packets_recv.inc();
             self.clients
-                .send_packet(dst, data, self.node_id, &self.metrics)?;
+                .send_packet(dst, data, self.endpoint_id, &self.metrics)?;
         }
         Ok(())
     }
@@ -530,10 +534,10 @@ impl ForwardPacketError {
     }
 }
 
-/// Tracks how many unique nodes have been seen during the last day.
+/// Tracks how many unique endpoints have been seen during the last day.
 #[derive(Debug)]
 struct ClientCounter {
-    clients: HashSet<NodeId>,
+    clients: HashSet<EndpointId>,
     last_clear_date: Date,
 }
 
@@ -555,8 +559,8 @@ impl ClientCounter {
         }
     }
 
-    /// Marks this node as seen, returns whether it is new today or not.
-    fn update(&mut self, client: NodeId) -> bool {
+    /// Marks this endpoint as seen, returns whether it is new today or not.
+    fn update(&mut self, client: EndpointId) -> bool {
         self.check_and_clear();
         self.clients.insert(client)
     }
@@ -606,7 +610,7 @@ mod tests {
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
-        let node_id = SecretKey::generate(&mut rng).public();
+        let endpoint_id = SecretKey::generate(&mut rng).public();
         let (io, io_rw) = tokio::io::duplex(1024);
         let mut io_rw = Conn::test(io_rw);
         let stream = RelayedStream::test(io);
@@ -618,9 +622,9 @@ mod tests {
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
-            node_gone: peer_gone_r,
+            endpoint_gone: peer_gone_r,
             connection_id: 0,
-            node_id,
+            endpoint_id,
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
@@ -638,7 +642,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let packet = Packet {
-            src: node_id,
+            src: endpoint_id,
             data: Datagrams::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await.context("send")?;
@@ -648,7 +652,7 @@ mod tests {
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
-                remote_node_id: node_id,
+                remote_endpoint_id: endpoint_id,
                 datagrams: data.to_vec().into()
             }
         );
@@ -665,16 +669,16 @@ mod tests {
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
-                remote_node_id: node_id,
+                remote_endpoint_id: endpoint_id,
                 datagrams: data.to_vec().into()
             }
         );
 
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(node_id).await.context("send")?;
-        let frame = recv_frame(FrameType::NodeGone, &mut io_rw).await.e()?;
-        assert_eq!(frame, RelayToClientMsg::NodeGone(node_id));
+        peer_gone_s.send(endpoint_id).await.context("send")?;
+        let frame = recv_frame(FrameType::EndpointGone, &mut io_rw).await.e()?;
+        assert_eq!(frame, RelayToClientMsg::EndpointGone(endpoint_id));
 
         // Read tests
         println!("--read");
@@ -695,7 +699,7 @@ mod tests {
         let data = b"hello world!";
         io_rw
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: target,
+                dst_endpoint_id: target,
                 datagrams: Datagrams::from(data),
             })
             .await
@@ -709,7 +713,7 @@ mod tests {
         disco_data.extend_from_slice(data);
         io_rw
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: target,
+                dst_endpoint_id: target,
                 datagrams: disco_data.clone().into(),
             })
             .await
@@ -738,7 +742,7 @@ mod tests {
         let data = Datagrams::from(b"hello world!!!!!");
         let target = SecretKey::generate(&mut rng).public();
         let frame = ClientToRelayMsg::Datagrams {
-            dst_node_id: target,
+            dst_endpoint_id: target,
             datagrams: data.clone(),
         };
         let frame_len = frame.to_bytes().len();

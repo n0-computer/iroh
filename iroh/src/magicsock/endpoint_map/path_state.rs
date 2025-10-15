@@ -1,20 +1,20 @@
-//! The state kept for each network path to a remote node.
+//! The state kept for each network path to a remote endpoint.
 
 use std::collections::{BTreeMap, HashMap};
 
-use iroh_base::NodeId;
+use iroh_base::EndpointId;
 use n0_future::time::{Duration, Instant};
 use tracing::{Level, debug, event};
 
 use super::{
     IpPort, PingRole, Source,
-    node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
+    endpoint_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
 };
 use crate::{
     disco::SendAddr,
     magicsock::{
         HEARTBEAT_INTERVAL, Metrics as MagicsockMetrics,
-        node_map::path_validity::{self, PathValidity},
+        endpoint_map::path_validity::{self, PathValidity},
     },
 };
 
@@ -24,15 +24,15 @@ use crate::{
 /// likely didn't through the firewall.
 const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
 
-/// State about a particular path to another [`NodeState`].
+/// State about a particular path to another [`EndpointState`].
 ///
 /// This state is used for both the relay path and any direct UDP paths.
 ///
-/// [`NodeState`]: super::node_state::NodeState
+/// [`EndpointState`]: super::endpoint_state::EndpointState
 #[derive(Debug, Clone)]
 pub(super) struct PathState {
-    /// The node for which this path exists.
-    node_id: NodeId,
+    /// The endpoint for which this path exists.
+    endpoint_id: EndpointId,
     /// The path this applies for.
     path: SendAddr,
     /// The last (outgoing) ping time.
@@ -65,11 +65,16 @@ pub(super) struct PathState {
 }
 
 impl PathState {
-    pub(super) fn new(node_id: NodeId, path: SendAddr, source: Source, now: Instant) -> Self {
+    pub(super) fn new(
+        endpoint_id: EndpointId,
+        path: SendAddr,
+        source: Source,
+        now: Instant,
+    ) -> Self {
         let mut sources = HashMap::new();
         sources.insert(source, now);
         Self {
-            node_id,
+            endpoint_id,
             path,
             last_ping: None,
             last_got_ping: None,
@@ -81,7 +86,7 @@ impl PathState {
     }
 
     pub(super) fn with_last_payload(
-        node_id: NodeId,
+        endpoint_id: EndpointId,
         path: SendAddr,
         source: Source,
         now: Instant,
@@ -89,7 +94,7 @@ impl PathState {
         let mut sources = HashMap::new();
         sources.insert(source, now);
         PathState {
-            node_id,
+            endpoint_id,
             path,
             last_ping: None,
             last_got_ping: None,
@@ -101,13 +106,13 @@ impl PathState {
     }
 
     pub(super) fn with_ping(
-        node_id: NodeId,
+        endpoint_id: EndpointId,
         path: SendAddr,
         tx_id: stun_rs::TransactionId,
         source: Source,
         now: Instant,
     ) -> Self {
-        let mut new = PathState::new(node_id, path, source, now);
+        let mut new = PathState::new(endpoint_id, path, source, now);
         new.handle_ping(tx_id, now);
         new
     }
@@ -118,7 +123,7 @@ impl PathState {
                 event!(
                     target: "iroh::_events::holepunched",
                     Level::DEBUG,
-                    remote_node = %self.node_id.fmt_short(),
+                    remote_endpoint = %self.endpoint_id.fmt_short(),
                     path = ?path,
                     direction = "outgoing",
                 );
@@ -137,9 +142,9 @@ impl PathState {
     }
 
     #[cfg(test)]
-    pub(super) fn with_pong_reply(node_id: NodeId, r: PongReply) -> Self {
+    pub(super) fn with_pong_reply(endpoint_id: EndpointId, r: PongReply) -> Self {
         PathState {
-            node_id,
+            endpoint_id,
             path: r.from.clone(),
             last_ping: None,
             last_got_ping: None,
@@ -264,7 +269,7 @@ impl PathState {
                         event!(
                             target: "iroh::_events::holepunched",
                             Level::DEBUG,
-                            remote_node = %self.node_id.fmt_short(),
+                            remote_endpoint = %self.endpoint_id.fmt_short(),
                             path = ?addr,
                             direction = "incoming",
                         );
@@ -313,7 +318,7 @@ impl PathState {
 }
 
 // TODO: Make an `EndpointPaths` struct and do things nicely.
-pub(super) fn summarize_node_paths(paths: &BTreeMap<IpPort, PathState>) -> String {
+pub(super) fn summarize_endpoint_paths(paths: &BTreeMap<IpPort, PathState>) -> String {
     use std::fmt::Write;
 
     let mut w = String::new();
