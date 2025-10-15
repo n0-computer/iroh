@@ -505,7 +505,7 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
     };
     match handler.on_connecting(connecting).await {
         Ok(connection) => {
-            if let Ok(remote) = connection.remote_endpoint_id() {
+            if let Ok(remote) = connection.remote_id() {
                 tracing::Span::current()
                     .record("remote", tracing::field::display(remote.fmt_short()));
             };
@@ -555,7 +555,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
     }
 
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
-        let remote = conn.remote_endpoint_id()?;
+        let remote = conn.remote_id()?;
         let is_allowed = (self.limiter)(remote);
         if !is_allowed {
             conn.close(0u32.into(), b"not allowed");

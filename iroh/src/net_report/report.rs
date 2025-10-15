@@ -65,16 +65,13 @@ impl Report {
     pub(super) fn update(&mut self, report: &ProbeReport) {
         match report {
             ProbeReport::Https(report) => {
-                self.relay_latency.update_relay(
-                    report.endpoint.clone(),
-                    report.latency,
-                    Probe::Https,
-                );
+                self.relay_latency
+                    .update_relay(report.relay.clone(), report.latency, Probe::Https);
             }
             #[cfg(not(wasm_browser))]
             ProbeReport::QadIpv4(report) => {
                 self.relay_latency.update_relay(
-                    report.endpoint.clone(),
+                    report.relay.clone(),
                     report.latency,
                     Probe::QadIpv4,
                 );
@@ -102,7 +99,7 @@ impl Report {
             #[cfg(not(wasm_browser))]
             ProbeReport::QadIpv6(report) => {
                 self.relay_latency.update_relay(
-                    report.endpoint.clone(),
+                    report.relay.clone(),
                     report.latency,
                     Probe::QadIpv6,
                 );

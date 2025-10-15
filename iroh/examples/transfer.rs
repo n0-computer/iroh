@@ -329,7 +329,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
         let endpoint_clone = endpoint.clone();
         tokio::spawn(async move {
             let conn = connecting.await.e()?;
-            let endpoint_id = conn.remote_endpoint_id()?;
+            let endpoint_id = conn.remote_id()?;
             info!(
                 "new connection from {endpoint_id} with ALPN {}",
                 String::from_utf8_lossy(TRANSFER_ALPN),

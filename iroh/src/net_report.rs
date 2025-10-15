@@ -516,7 +516,7 @@ impl Client {
                             match res {
                                 Ok((r, conn)) => {
                                     debug!(?r, "got v4 QAD conn");
-                                    let url = r.endpoint.clone();
+                                    let url = r.relay.clone();
                                     reports.push(ProbeReport::QadIpv4(r));
                                     if self.qad_conns.v4.is_none() {
                                         self.qad_conns.v4.replace((url, conn));
@@ -551,7 +551,7 @@ impl Client {
                             match res {
                                 Ok((r, conn)) => {
                                     debug!(?r, "got v6 QAD conn");
-                                    let url = r.endpoint.clone();
+                                    let url = r.relay.clone();
                                     reports.push(ProbeReport::QadIpv6(r));
                                     if self.qad_conns.v6.is_none() {
                                         self.qad_conns.v6.replace((url, conn));
@@ -756,18 +756,18 @@ impl Client {
 #[cfg(not(wasm_browser))]
 async fn run_probe_v4(
     ip_mapped_addrs: Option<IpMappedAddresses>,
-    relay_endpoint: Arc<RelayConfig>,
+    relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
 
-    let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_endpoint).await?;
+    let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay).await?;
     let relay_addr =
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
-    let host = relay_endpoint.url.host_str().context("missing host url")?;
+    let host = relay.url.host_str().context("missing host url")?;
     let conn = quic_client.create_conn(relay_addr, host).await?;
     let mut receiver = conn.observed_external_addr();
 
@@ -778,13 +778,13 @@ async fn run_probe_v4(
         .context("receiver dropped")?
         .expect("known");
     let report = QadProbeReport {
-        endpoint: relay_endpoint.url.clone(),
+        relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
         latency: conn.rtt(),
     };
 
     let observer = Watchable::new(None);
-    let endpoint = relay_endpoint.url.clone();
+    let endpoint = relay.url.clone();
     let handle = task::spawn({
         let conn = conn.clone();
         let observer = observer.clone();
@@ -798,7 +798,7 @@ async fn run_probe_v4(
                 trace!(?val, ?relay_addr, ?latency, "got addr V4");
                 observer
                     .set(val.map(|addr| QadProbeReport {
-                        endpoint: endpoint.clone(),
+                        relay: endpoint.clone(),
                         addr,
                         latency,
                     }))
@@ -824,17 +824,17 @@ async fn run_probe_v4(
 #[cfg(not(wasm_browser))]
 async fn run_probe_v6(
     ip_mapped_addrs: Option<IpMappedAddresses>,
-    relay_endpoint: Arc<RelayConfig>,
+    relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
-    let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_endpoint).await?;
+    let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay).await?;
     let relay_addr =
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
-    let host = relay_endpoint.url.host_str().context("missing host url")?;
+    let host = relay.url.host_str().context("missing host url")?;
     let conn = quic_client.create_conn(relay_addr, host).await?;
     let mut receiver = conn.observed_external_addr();
 
@@ -845,13 +845,13 @@ async fn run_probe_v6(
         .context("receiver dropped")?
         .expect("known");
     let report = QadProbeReport {
-        endpoint: relay_endpoint.url.clone(),
+        relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
         latency: conn.rtt(),
     };
 
     let observer = Watchable::new(None);
-    let endpoint = relay_endpoint.url.clone();
+    let endpoint = relay.url.clone();
     let handle = task::spawn({
         let observer = observer.clone();
         let conn = conn.clone();
@@ -865,7 +865,7 @@ async fn run_probe_v6(
                 trace!(?val, ?relay_addr, ?latency, "got addr V6");
                 observer
                     .set(val.map(|addr| QadProbeReport {
-                        endpoint: endpoint.clone(),
+                        relay: endpoint.clone(),
                         addr,
                         latency,
                     }))
