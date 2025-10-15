@@ -935,7 +935,7 @@
 <a href=#935 id=935 data-nosnippet>935</a>        // for the home relay instead. This makes the `EndpointAddr` have *some* way
 <a href=#936 id=936 data-nosnippet>936</a>        // of connecting to us.
 <a href=#937 id=937 data-nosnippet>937</a>        </span><span class="kw">let </span>watch_relay = <span class="self">self</span>.msock.home_relay();
-<a href=#938 id=938 data-nosnippet>938</a>        <span class="kw">let </span>endpoint_id = <span class="self">self</span>.endpoint_id();
+<a href=#938 id=938 data-nosnippet>938</a>        <span class="kw">let </span>endpoint_id = <span class="self">self</span>.id();
 <a href=#939 id=939 data-nosnippet>939</a>        watch_relay
 <a href=#940 id=940 data-nosnippet>940</a>            .map(<span class="kw">move </span>|<span class="kw-2">mut </span>relays| {
 <a href=#941 id=941 data-nosnippet>941</a>                EndpointAddr::from_parts(endpoint_id, relays.pop(), std::iter::empty())
