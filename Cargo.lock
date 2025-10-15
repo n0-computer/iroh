@@ -1983,7 +1983,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -2240,6 +2240,7 @@ dependencies = [
  "iroh-quinn-proto",
  "iroh-quinn-udp",
  "iroh-relay",
+ "iroh-tickets",
  "n0-future 0.3.0",
  "n0-snafu",
  "n0-watcher",
@@ -2534,6 +2535,21 @@ dependencies = [
  "webpki-roots 1.0.3",
  "ws_stream_wasm",
  "z32",
+]
+
+[[package]]
+name = "iroh-tickets"
+version = "0.1.0"
+source = "git+https://github.com/n0-computer/iroh-tickets#37b4eceede30c77af9112f8a6bd390f2ec4b5826"
+dependencies = [
+ "data-encoding",
+ "derive_more 2.0.1",
+ "iroh-base",
+ "n0-snafu",
+ "nested_enum_utils",
+ "postcard",
+ "serde",
+ "snafu",
 ]
 
 [[package]]

@@ -20,7 +20,6 @@ data-encoding = { version = "2.3.3", optional = true }
 ed25519-dalek = { version = "=3.0.0-pre.1", features = ["serde", "rand_core", "zeroize"], optional = true }
 derive_more = { version = "2.0.1", features = ["display"], optional = true }
 url = { version = "2.5.3", features = ["serde"], optional = true }
-postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 rand_core = { version = "0.9.3", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 snafu = { version = "0.8.5", features = ["rust_1_81"], optional = true }
@@ -39,8 +38,7 @@ serde_test = "1"
 
 
 [features]
-default = ["ticket", "relay"]
-ticket = ["key", "dep:postcard", "dep:data-encoding"]
+default = ["relay"]
 key = [
   "dep:curve25519-dalek",
   "dep:ed25519-dalek",

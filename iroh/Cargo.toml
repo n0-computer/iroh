@@ -143,6 +143,7 @@ tokio = { version = "1", features = [
 ] }
 serde_json = "1"
 iroh-relay = { path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
+iroh-tickets = { git = "https://github.com/n0-computer/iroh-tickets" }
 tracing-test = "0.2.5"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = [
@@ -150,7 +151,7 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
-iroh-base = { version = "0.93.2", default-features = false, features = ["key", "relay", "ticket"], path = "../iroh-base" }
+iroh-base = { version = "0.93.2", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
