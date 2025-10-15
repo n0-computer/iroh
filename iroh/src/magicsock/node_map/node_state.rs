@@ -1038,8 +1038,10 @@ pub(crate) enum NodeStateMessage {
     /// Process a received DISCO CallMeMaybe message.
     CallMeMaybeReceived(disco::CallMeMaybe),
     /// Process a received DISCO Ping message.
+    #[debug("PingReceived({:?}, src: {_1:?})", _0.tx_id)]
     PingReceived(disco::Ping, transports::Addr),
     /// Process a received DISCO Pong message.
+    #[debug("PongReceived({:?}, src: {_1:?})", _0.tx_id)]
     PongReceived(disco::Pong, transports::Addr),
     /// Asks if there is any possible path that could be used.
     ///

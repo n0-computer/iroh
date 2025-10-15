@@ -106,7 +106,7 @@ pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
 /// Pretty arbitrary and high right now.
-pub(crate) const MAX_MULTIPATH_PATHS: u32 = 32;
+pub(crate) const MAX_MULTIPATH_PATHS: u32 = 16;
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
