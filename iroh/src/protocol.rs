@@ -36,7 +36,7 @@ use std::{
     collections::BTreeMap,
     future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
 };
 
 use iroh_base::EndpointId;
@@ -50,7 +50,7 @@ use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
-    endpoint::{Connecting, Connection, RemoteEndpointIdError},
+    endpoint::{Connecting, Connection, Incoming, RemoteEndpointIdError},
 };
 
 /// The built router.
@@ -83,19 +83,25 @@ use crate::{
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, derive_more::Debug)]
 pub struct Router {
     endpoint: Endpoint,
     // `Router` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
     task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
     cancel_token: CancellationToken,
+    #[debug(skip)]
+    on_incoming: Arc<RwLock<IncomingFn>>,
 }
 
+type IncomingFn = Option<Box<dyn Fn(Incoming) -> Result<Incoming, AcceptError> + Send + Sync>>;
+
 /// Builder for creating a [`Router`] for accepting protocols.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct RouterBuilder {
     endpoint: Endpoint,
     protocols: ProtocolMap,
+    #[debug(skip)]
+    on_incoming: IncomingFn,
 }
 
 #[allow(missing_docs)]
@@ -324,6 +330,19 @@ impl Router {
         self.cancel_token.is_cancelled()
     }
 
+    /// Replace the current `on_incoming` function that is called each time we
+    /// accept a new connection from an endpoint.
+    ///
+    /// This function will intercept the connection when it is still an
+    /// [`Incoming`], and so can be rejected by examining the [`SocketAddr`].
+    pub fn on_incoming(&self, func: IncomingFn) {
+        let mut f = self
+            .on_incoming
+            .write()
+            .expect("on_incoming lock is poisoned");
+        *f = func;
+    }
+
     /// Shuts down the accept loop cleanly.
     ///
     /// When this function returns, all [`ProtocolHandler`]s will be shutdown and
@@ -359,6 +378,7 @@ impl RouterBuilder {
         Self {
             endpoint,
             protocols: ProtocolMap::default(),
+            on_incoming: None,
         }
     }
 
@@ -403,6 +423,9 @@ impl RouterBuilder {
         let cancel = CancellationToken::new();
         let cancel_token = cancel.clone();
 
+        let on_incoming = Arc::new(RwLock::new(self.on_incoming));
+        let on_incoming_loop = on_incoming.clone();
+
         let run_loop_fut = async move {
             // Make sure to cancel the token, if this future ever exits.
             let _cancel_guard = cancel_token.clone().drop_guard();
@@ -445,6 +468,19 @@ impl RouterBuilder {
                             break; // Endpoint is closed.
                         };
 
+                        let mut incoming = incoming;
+
+                        if let Some(ref on_incoming) = *on_incoming_loop.read().expect("on_incoming lock poisoned") {
+                            incoming = match on_incoming(incoming) {
+                                Ok(i) => i,
+                                Err(e) => {
+                                    error!("Connection rejected on Incoming: {e:?}");
+                                    break;
+                                }
+
+                            }
+                        }
+
                         let protocols = protocols.clone();
                         let token = handler_cancel_token.child_token();
                         let span = info_span!("router.accept", me=%endpoint.id().fmt_short(), remote=Empty, alpn=Empty);
@@ -479,6 +515,7 @@ impl RouterBuilder {
             endpoint: self.endpoint,
             task: Arc::new(Mutex::new(Some(task))),
             cancel_token: cancel,
+            on_incoming,
         }
     }
 }
@@ -572,7 +609,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Mutex, time::Duration};
+    use std::{net::SocketAddr, sync::Mutex, time::Duration};
 
     use n0_snafu::{Result, ResultExt};
     use quinn::ApplicationClose;
@@ -648,30 +685,30 @@ mod tests {
         Ok(())
     }
 
+    #[derive(Debug, Clone, Default)]
+    struct TestProtocol {
+        connections: Arc<Mutex<Vec<Connection>>>,
+    }
+
+    const TEST_ALPN: &[u8] = b"/iroh/test/1";
+
+    impl ProtocolHandler for TestProtocol {
+        async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+            self.connections.lock().expect("poisoned").push(connection);
+            Ok(())
+        }
+
+        async fn shutdown(&self) {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let mut connections = self.connections.lock().expect("poisoned");
+            for conn in connections.drain(..) {
+                conn.close(42u32.into(), b"shutdown");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn test_graceful_shutdown() -> Result {
-        #[derive(Debug, Clone, Default)]
-        struct TestProtocol {
-            connections: Arc<Mutex<Vec<Connection>>>,
-        }
-
-        const TEST_ALPN: &[u8] = b"/iroh/test/1";
-
-        impl ProtocolHandler for TestProtocol {
-            async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-                self.connections.lock().expect("poisoned").push(connection);
-                Ok(())
-            }
-
-            async fn shutdown(&self) {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                let mut connections = self.connections.lock().expect("poisoned");
-                for conn in connections.drain(..) {
-                    conn.close(42u32.into(), b"shutdown");
-                }
-            }
-        }
-
         eprintln!("creating ep1");
         let endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
@@ -703,6 +740,59 @@ mod tests {
                 reason: b"shutdown".to_vec().into()
             })
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_on_incoming() -> Result {
+        eprintln!("creating ep1");
+        let endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        eprintln!("creating router");
+        let router = Router::builder(endpoint)
+            .accept(TEST_ALPN, TestProtocol::default())
+            .spawn();
+
+        eprintln!("waiting for endpoint addr");
+        let addr = router.endpoint().addr();
+
+        eprintln!("creating ep2");
+        let endpoint_good = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+
+        let endpoint_bad = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let bad_ep_addrs: std::collections::BTreeSet<SocketAddr> =
+            endpoint_bad.addr().direct_addresses().cloned().collect();
+
+        let on_incoming = Box::new(move |incoming: Incoming| {
+            eprintln!("in `on_incoming` closure");
+            let remote_addr = incoming.remote_address();
+            eprintln!("checking to see if {remote_addr} is allowed");
+            eprintln!("bad addrs include: {bad_ep_addrs:?}");
+            if bad_ep_addrs.contains(&remote_addr) {
+                eprintln!("rejected");
+                return Err(AcceptError::NotAllowed {});
+            }
+            eprintln!("accepted");
+            Ok(incoming)
+        });
+
+        router.on_incoming(Some(on_incoming));
+
+        endpoint_good.connect(addr.clone(), TEST_ALPN).await?;
+        let res = endpoint_bad.connect(addr, TEST_ALPN).await;
+        assert!(res.is_err());
+
+        eprintln!("starting shutdown");
+        router.shutdown().await.e()?;
+
         Ok(())
     }
 }
