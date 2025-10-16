@@ -117,7 +117,7 @@ tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connec
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 ws_stream_wasm = { version = "0.7.4", default-features = false }
-getrandom = { version = "0.3.2", features = ["wasm_js"] }
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
