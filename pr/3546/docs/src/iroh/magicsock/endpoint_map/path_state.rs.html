@@ -11,7 +11,7 @@
 <a href=#11 id=11 data-nosnippet>11</a>    endpoint_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
 <a href=#12 id=12 data-nosnippet>12</a>};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use crate</span>::{
-<a href=#14 id=14 data-nosnippet>14</a>    disco::SendAddr,
+<a href=#14 id=14 data-nosnippet>14</a>    disco::{SendAddr, TransactionId},
 <a href=#15 id=15 data-nosnippet>15</a>    magicsock::{
 <a href=#16 id=16 data-nosnippet>16</a>        HEARTBEAT_INTERVAL, Metrics <span class="kw">as </span>MagicsockMetrics,
 <a href=#17 id=17 data-nosnippet>17</a>        endpoint_map::path_validity::{<span class="self">self</span>, PathValidity},
@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// If non-zero, means that this was an endpoint that we learned about at runtime (from an
 <a href=#42 id=42 data-nosnippet>42</a>    /// incoming ping). If so, we keep the time updated and use it to discard old candidates.
 <a href=#43 id=43 data-nosnippet>43</a>    </span><span class="comment">// NOTE: tx_id Originally added in tailscale due to &lt;https://github.com/tailscale/tailscale/issues/7078&gt;.
-<a href=#44 id=44 data-nosnippet>44</a>    </span>last_got_ping: <span class="prelude-ty">Option</span>&lt;(Instant, <span class="kw">crate</span>::disco::TransactionId)&gt;,
+<a href=#44 id=44 data-nosnippet>44</a>    </span>last_got_ping: <span class="prelude-ty">Option</span>&lt;(Instant, TransactionId)&gt;,
 <a href=#45 id=45 data-nosnippet>45</a>
 <a href=#46 id=46 data-nosnippet>46</a>    <span class="doccomment">/// The time this endpoint was last advertised via a call-me-maybe DISCO message.
 <a href=#47 id=47 data-nosnippet>47</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) call_me_maybe_time: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
@@ -108,7 +108,7 @@
 <a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_ping(
 <a href=#109 id=109 data-nosnippet>109</a>        endpoint_id: EndpointId,
 <a href=#110 id=110 data-nosnippet>110</a>        path: SendAddr,
-<a href=#111 id=111 data-nosnippet>111</a>        tx_id: <span class="kw">crate</span>::disco::TransactionId,
+<a href=#111 id=111 data-nosnippet>111</a>        tx_id: TransactionId,
 <a href=#112 id=112 data-nosnippet>112</a>        source: Source,
 <a href=#113 id=113 data-nosnippet>113</a>        now: Instant,
 <a href=#114 id=114 data-nosnippet>114</a>    ) -&gt; <span class="self">Self </span>{
@@ -247,93 +247,89 @@
 <a href=#247 id=247 data-nosnippet>247</a>        }
 <a href=#248 id=248 data-nosnippet>248</a>    }
 <a href=#249 id=249 data-nosnippet>249</a>
-<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle_ping(
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#252 id=252 data-nosnippet>252</a>        tx_id: <span class="kw">crate</span>::disco::TransactionId,
-<a href=#253 id=253 data-nosnippet>253</a>        now: Instant,
-<a href=#254 id=254 data-nosnippet>254</a>    ) -&gt; PingRole {
-<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">if </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>tx_id) == <span class="self">self</span>.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
-<a href=#256 id=256 data-nosnippet>256</a>            PingRole::Duplicate
-<a href=#257 id=257 data-nosnippet>257</a>        } <span class="kw">else </span>{
-<a href=#258 id=258 data-nosnippet>258</a>            <span class="kw">let </span>prev = <span class="self">self</span>.last_got_ping.replace((now, tx_id));
-<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">let </span>heartbeat_deadline = HEARTBEAT_INTERVAL + (HEARTBEAT_INTERVAL / <span class="number">2</span>);
-<a href=#260 id=260 data-nosnippet>260</a>            <span class="kw">match </span>prev {
-<a href=#261 id=261 data-nosnippet>261</a>                <span class="prelude-val">Some</span>((prev_time, _tx)) <span class="kw">if </span>now.duration_since(prev_time) &lt;= heartbeat_deadline =&gt; {
-<a href=#262 id=262 data-nosnippet>262</a>                    PingRole::LikelyHeartbeat
-<a href=#263 id=263 data-nosnippet>263</a>                }
-<a href=#264 id=264 data-nosnippet>264</a>                <span class="prelude-val">Some</span>((prev_time, _tx)) =&gt; {
-<a href=#265 id=265 data-nosnippet>265</a>                    <span class="macro">debug!</span>(
-<a href=#266 id=266 data-nosnippet>266</a>                        elapsed = <span class="question-mark">?</span>now.duration_since(prev_time),
-<a href=#267 id=267 data-nosnippet>267</a>                        <span class="string">"heartbeat missed, reactivating"</span>,
-<a href=#268 id=268 data-nosnippet>268</a>                    );
-<a href=#269 id=269 data-nosnippet>269</a>                    PingRole::Activate
-<a href=#270 id=270 data-nosnippet>270</a>                }
-<a href=#271 id=271 data-nosnippet>271</a>                <span class="prelude-val">None </span>=&gt; {
-<a href=#272 id=272 data-nosnippet>272</a>                    <span class="kw">if let </span>SendAddr::Udp(<span class="kw-2">ref </span>addr) = <span class="self">self</span>.path {
-<a href=#273 id=273 data-nosnippet>273</a>                        <span class="macro">event!</span>(
-<a href=#274 id=274 data-nosnippet>274</a>                            target: <span class="string">"iroh::_events::holepunched"</span>,
-<a href=#275 id=275 data-nosnippet>275</a>                            Level::DEBUG,
-<a href=#276 id=276 data-nosnippet>276</a>                            remote_endpoint = %<span class="self">self</span>.endpoint_id.fmt_short(),
-<a href=#277 id=277 data-nosnippet>277</a>                            path = <span class="question-mark">?</span>addr,
-<a href=#278 id=278 data-nosnippet>278</a>                            direction = <span class="string">"incoming"</span>,
-<a href=#279 id=279 data-nosnippet>279</a>                        );
-<a href=#280 id=280 data-nosnippet>280</a>                    }
-<a href=#281 id=281 data-nosnippet>281</a>                    PingRole::Activate
-<a href=#282 id=282 data-nosnippet>282</a>                }
-<a href=#283 id=283 data-nosnippet>283</a>            }
-<a href=#284 id=284 data-nosnippet>284</a>        }
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tx_id: TransactionId, now: Instant) -&gt; PingRole {
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">if </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>tx_id) == <span class="self">self</span>.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
+<a href=#252 id=252 data-nosnippet>252</a>            PingRole::Duplicate
+<a href=#253 id=253 data-nosnippet>253</a>        } <span class="kw">else </span>{
+<a href=#254 id=254 data-nosnippet>254</a>            <span class="kw">let </span>prev = <span class="self">self</span>.last_got_ping.replace((now, tx_id));
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">let </span>heartbeat_deadline = HEARTBEAT_INTERVAL + (HEARTBEAT_INTERVAL / <span class="number">2</span>);
+<a href=#256 id=256 data-nosnippet>256</a>            <span class="kw">match </span>prev {
+<a href=#257 id=257 data-nosnippet>257</a>                <span class="prelude-val">Some</span>((prev_time, _tx)) <span class="kw">if </span>now.duration_since(prev_time) &lt;= heartbeat_deadline =&gt; {
+<a href=#258 id=258 data-nosnippet>258</a>                    PingRole::LikelyHeartbeat
+<a href=#259 id=259 data-nosnippet>259</a>                }
+<a href=#260 id=260 data-nosnippet>260</a>                <span class="prelude-val">Some</span>((prev_time, _tx)) =&gt; {
+<a href=#261 id=261 data-nosnippet>261</a>                    <span class="macro">debug!</span>(
+<a href=#262 id=262 data-nosnippet>262</a>                        elapsed = <span class="question-mark">?</span>now.duration_since(prev_time),
+<a href=#263 id=263 data-nosnippet>263</a>                        <span class="string">"heartbeat missed, reactivating"</span>,
+<a href=#264 id=264 data-nosnippet>264</a>                    );
+<a href=#265 id=265 data-nosnippet>265</a>                    PingRole::Activate
+<a href=#266 id=266 data-nosnippet>266</a>                }
+<a href=#267 id=267 data-nosnippet>267</a>                <span class="prelude-val">None </span>=&gt; {
+<a href=#268 id=268 data-nosnippet>268</a>                    <span class="kw">if let </span>SendAddr::Udp(<span class="kw-2">ref </span>addr) = <span class="self">self</span>.path {
+<a href=#269 id=269 data-nosnippet>269</a>                        <span class="macro">event!</span>(
+<a href=#270 id=270 data-nosnippet>270</a>                            target: <span class="string">"iroh::_events::holepunched"</span>,
+<a href=#271 id=271 data-nosnippet>271</a>                            Level::DEBUG,
+<a href=#272 id=272 data-nosnippet>272</a>                            remote_endpoint = %<span class="self">self</span>.endpoint_id.fmt_short(),
+<a href=#273 id=273 data-nosnippet>273</a>                            path = <span class="question-mark">?</span>addr,
+<a href=#274 id=274 data-nosnippet>274</a>                            direction = <span class="string">"incoming"</span>,
+<a href=#275 id=275 data-nosnippet>275</a>                        );
+<a href=#276 id=276 data-nosnippet>276</a>                    }
+<a href=#277 id=277 data-nosnippet>277</a>                    PingRole::Activate
+<a href=#278 id=278 data-nosnippet>278</a>                }
+<a href=#279 id=279 data-nosnippet>279</a>            }
+<a href=#280 id=280 data-nosnippet>280</a>        }
+<a href=#281 id=281 data-nosnippet>281</a>    }
+<a href=#282 id=282 data-nosnippet>282</a>
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>add_source(<span class="kw-2">&amp;mut </span><span class="self">self</span>, source: Source, now: Instant) {
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="self">self</span>.sources.insert(source, now);
 <a href=#285 id=285 data-nosnippet>285</a>    }
 <a href=#286 id=286 data-nosnippet>286</a>
-<a href=#287 id=287 data-nosnippet>287</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>add_source(<span class="kw-2">&amp;mut </span><span class="self">self</span>, source: Source, now: Instant) {
-<a href=#288 id=288 data-nosnippet>288</a>        <span class="self">self</span>.sources.insert(source, now);
-<a href=#289 id=289 data-nosnippet>289</a>    }
-<a href=#290 id=290 data-nosnippet>290</a>
-<a href=#291 id=291 data-nosnippet>291</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="self">self</span>.last_ping = <span class="prelude-val">None</span>;
-<a href=#293 id=293 data-nosnippet>293</a>        <span class="self">self</span>.last_got_ping = <span class="prelude-val">None</span>;
-<a href=#294 id=294 data-nosnippet>294</a>        <span class="self">self</span>.call_me_maybe_time = <span class="prelude-val">None</span>;
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="self">self</span>.validity = PathValidity::empty();
-<a href=#296 id=296 data-nosnippet>296</a>    }
-<a href=#297 id=297 data-nosnippet>297</a>
-<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">fn </span>summary(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>w: <span class="kw">impl </span>std::fmt::Write) -&gt; std::fmt::Result {
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="macro">write!</span>(w, <span class="string">"{{ "</span>)<span class="question-mark">?</span>;
-<a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">if </span><span class="self">self</span>.is_active() {
-<a href=#301 id=301 data-nosnippet>301</a>            <span class="macro">write!</span>(w, <span class="string">"active "</span>)<span class="question-mark">?</span>;
-<a href=#302 id=302 data-nosnippet>302</a>        }
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_at) = <span class="self">self</span>.validity.latest_pong() {
-<a href=#304 id=304 data-nosnippet>304</a>            <span class="macro">write!</span>(w, <span class="string">"pong-received({:?} ago) "</span>, pong_at.elapsed())<span class="question-mark">?</span>;
-<a href=#305 id=305 data-nosnippet>305</a>        }
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(when) = <span class="self">self</span>.last_incoming_ping() {
-<a href=#307 id=307 data-nosnippet>307</a>            <span class="macro">write!</span>(w, <span class="string">"ping-received({:?} ago) "</span>, when.elapsed())<span class="question-mark">?</span>;
-<a href=#308 id=308 data-nosnippet>308</a>        }
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>when) = <span class="self">self</span>.last_ping {
-<a href=#310 id=310 data-nosnippet>310</a>            <span class="macro">write!</span>(w, <span class="string">"ping-sent({:?} ago) "</span>, when.elapsed())<span class="question-mark">?</span>;
-<a href=#311 id=311 data-nosnippet>311</a>        }
-<a href=#312 id=312 data-nosnippet>312</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(last_source) = <span class="self">self</span>.sources.iter().max_by_key(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, instant)| instant) {
-<a href=#313 id=313 data-nosnippet>313</a>            <span class="macro">write!</span>(
-<a href=#314 id=314 data-nosnippet>314</a>                w,
-<a href=#315 id=315 data-nosnippet>315</a>                <span class="string">"last-source: {}({:?} ago)"</span>,
-<a href=#316 id=316 data-nosnippet>316</a>                last_source.<span class="number">0</span>,
-<a href=#317 id=317 data-nosnippet>317</a>                last_source.<span class="number">1</span>.elapsed()
-<a href=#318 id=318 data-nosnippet>318</a>            )<span class="question-mark">?</span>;
-<a href=#319 id=319 data-nosnippet>319</a>        }
-<a href=#320 id=320 data-nosnippet>320</a>        <span class="macro">write!</span>(w, <span class="string">"}}"</span>)
-<a href=#321 id=321 data-nosnippet>321</a>    }
-<a href=#322 id=322 data-nosnippet>322</a>}
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="self">self</span>.last_ping = <span class="prelude-val">None</span>;
+<a href=#289 id=289 data-nosnippet>289</a>        <span class="self">self</span>.last_got_ping = <span class="prelude-val">None</span>;
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="self">self</span>.call_me_maybe_time = <span class="prelude-val">None</span>;
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="self">self</span>.validity = PathValidity::empty();
+<a href=#292 id=292 data-nosnippet>292</a>    }
+<a href=#293 id=293 data-nosnippet>293</a>
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="kw">fn </span>summary(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>w: <span class="kw">impl </span>std::fmt::Write) -&gt; std::fmt::Result {
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="macro">write!</span>(w, <span class="string">"{{ "</span>)<span class="question-mark">?</span>;
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">if </span><span class="self">self</span>.is_active() {
+<a href=#297 id=297 data-nosnippet>297</a>            <span class="macro">write!</span>(w, <span class="string">"active "</span>)<span class="question-mark">?</span>;
+<a href=#298 id=298 data-nosnippet>298</a>        }
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(pong_at) = <span class="self">self</span>.validity.latest_pong() {
+<a href=#300 id=300 data-nosnippet>300</a>            <span class="macro">write!</span>(w, <span class="string">"pong-received({:?} ago) "</span>, pong_at.elapsed())<span class="question-mark">?</span>;
+<a href=#301 id=301 data-nosnippet>301</a>        }
+<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(when) = <span class="self">self</span>.last_incoming_ping() {
+<a href=#303 id=303 data-nosnippet>303</a>            <span class="macro">write!</span>(w, <span class="string">"ping-received({:?} ago) "</span>, when.elapsed())<span class="question-mark">?</span>;
+<a href=#304 id=304 data-nosnippet>304</a>        }
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>when) = <span class="self">self</span>.last_ping {
+<a href=#306 id=306 data-nosnippet>306</a>            <span class="macro">write!</span>(w, <span class="string">"ping-sent({:?} ago) "</span>, when.elapsed())<span class="question-mark">?</span>;
+<a href=#307 id=307 data-nosnippet>307</a>        }
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(last_source) = <span class="self">self</span>.sources.iter().max_by_key(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, instant)| instant) {
+<a href=#309 id=309 data-nosnippet>309</a>            <span class="macro">write!</span>(
+<a href=#310 id=310 data-nosnippet>310</a>                w,
+<a href=#311 id=311 data-nosnippet>311</a>                <span class="string">"last-source: {}({:?} ago)"</span>,
+<a href=#312 id=312 data-nosnippet>312</a>                last_source.<span class="number">0</span>,
+<a href=#313 id=313 data-nosnippet>313</a>                last_source.<span class="number">1</span>.elapsed()
+<a href=#314 id=314 data-nosnippet>314</a>            )<span class="question-mark">?</span>;
+<a href=#315 id=315 data-nosnippet>315</a>        }
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="macro">write!</span>(w, <span class="string">"}}"</span>)
+<a href=#317 id=317 data-nosnippet>317</a>    }
+<a href=#318 id=318 data-nosnippet>318</a>}
+<a href=#319 id=319 data-nosnippet>319</a>
+<a href=#320 id=320 data-nosnippet>320</a><span class="comment">// TODO: Make an `EndpointPaths` struct and do things nicely.
+<a href=#321 id=321 data-nosnippet>321</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>summarize_endpoint_paths(paths: <span class="kw-2">&amp;</span>BTreeMap&lt;IpPort, PathState&gt;) -&gt; String {
+<a href=#322 id=322 data-nosnippet>322</a>    <span class="kw">use </span>std::fmt::Write;
 <a href=#323 id=323 data-nosnippet>323</a>
-<a href=#324 id=324 data-nosnippet>324</a><span class="comment">// TODO: Make an `EndpointPaths` struct and do things nicely.
-<a href=#325 id=325 data-nosnippet>325</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>summarize_endpoint_paths(paths: <span class="kw-2">&amp;</span>BTreeMap&lt;IpPort, PathState&gt;) -&gt; String {
-<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">use </span>std::fmt::Write;
-<a href=#327 id=327 data-nosnippet>327</a>
-<a href=#328 id=328 data-nosnippet>328</a>    <span class="kw">let </span><span class="kw-2">mut </span>w = String::new();
-<a href=#329 id=329 data-nosnippet>329</a>    <span class="macro">write!</span>(<span class="kw-2">&amp;mut </span>w, <span class="string">"["</span>).ok();
-<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">for </span>(i, (ipp, state)) <span class="kw">in </span>paths.iter().enumerate() {
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">if </span>i &gt; <span class="number">0 </span>{
-<a href=#332 id=332 data-nosnippet>332</a>            <span class="macro">write!</span>(<span class="kw-2">&amp;mut </span>w, <span class="string">", "</span>).ok();
-<a href=#333 id=333 data-nosnippet>333</a>        }
-<a href=#334 id=334 data-nosnippet>334</a>        <span class="macro">write!</span>(<span class="kw-2">&amp;mut </span>w, <span class="string">"{ipp}"</span>).ok();
-<a href=#335 id=335 data-nosnippet>335</a>        state.summary(<span class="kw-2">&amp;mut </span>w).ok();
-<a href=#336 id=336 data-nosnippet>336</a>    }
-<a href=#337 id=337 data-nosnippet>337</a>    <span class="macro">write!</span>(<span class="kw-2">&amp;mut </span>w, <span class="string">"]"</span>).ok();
-<a href=#338 id=338 data-nosnippet>338</a>    w
-<a href=#339 id=339 data-nosnippet>339</a>}</code></pre></div></section></main></body></html>
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">let </span><span class="kw-2">mut </span>w = String::new();
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="macro">write!</span>(<span class="kw-2">&amp;mut </span>w, <span class="string">"["</span>).ok();
+<a href=#326 id=326 data-nosnippet>326</a>    <span class="kw">for </span>(i, (ipp, state)) <span class="kw">in </span>paths.iter().enumerate() {
+<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">if </span>i &gt; <span class="number">0 </span>{
+<a href=#328 id=328 data-nosnippet>328</a>            <span class="macro">write!</span>(<span class="kw-2">&amp;mut </span>w, <span class="string">", "</span>).ok();
+<a href=#329 id=329 data-nosnippet>329</a>        }
+<a href=#330 id=330 data-nosnippet>330</a>        <span class="macro">write!</span>(<span class="kw-2">&amp;mut </span>w, <span class="string">"{ipp}"</span>).ok();
+<a href=#331 id=331 data-nosnippet>331</a>        state.summary(<span class="kw-2">&amp;mut </span>w).ok();
+<a href=#332 id=332 data-nosnippet>332</a>    }
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="macro">write!</span>(<span class="kw-2">&amp;mut </span>w, <span class="string">"]"</span>).ok();
+<a href=#334 id=334 data-nosnippet>334</a>    w
+<a href=#335 id=335 data-nosnippet>335</a>}</code></pre></div></section></main></body></html>

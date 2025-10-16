@@ -68,7 +68,7 @@
 <a href=#68 id=68 data-nosnippet>68</a></span><span class="kw">use </span><span class="kw">crate</span>::net_report::{IpMappedAddr, QuicConfig};
 <a href=#69 id=69 data-nosnippet>69</a><span class="kw">use crate</span>::{
 <a href=#70 id=70 data-nosnippet>70</a>    defaults::timeouts::NET_REPORT_TIMEOUT,
-<a href=#71 id=71 data-nosnippet>71</a>    disco::{<span class="self">self</span>, SendAddr},
+<a href=#71 id=71 data-nosnippet>71</a>    disco::{<span class="self">self</span>, SendAddr, TransactionId},
 <a href=#72 id=72 data-nosnippet>72</a>    discovery::{
 <a href=#73 id=73 data-nosnippet>73</a>        ConcurrentDiscovery, Discovery, DiscoveryContext, DynIntoDiscovery, EndpointData,
 <a href=#74 id=74 data-nosnippet>74</a>        IntoDiscoveryError, UserData,
@@ -1809,7 +1809,7 @@
 <a href=#1809 id=1809 data-nosnippet>1809</a>
 <a href=#1810 id=1810 data-nosnippet>1810</a><span class="attr">#[derive(Debug)]
 <a href=#1811 id=1811 data-nosnippet>1811</a></span><span class="kw">enum </span>ActorMessage {
-<a href=#1812 id=1812 data-nosnippet>1812</a>    EndpointPingExpired(usize, <span class="kw">crate</span>::disco::TransactionId),
+<a href=#1812 id=1812 data-nosnippet>1812</a>    EndpointPingExpired(usize, TransactionId),
 <a href=#1813 id=1813 data-nosnippet>1813</a>    NetworkChange,
 <a href=#1814 id=1814 data-nosnippet>1814</a>    ScheduleDirectAddrUpdate(UpdateReason, <span class="prelude-ty">Option</span>&lt;(EndpointId, RelayUrl)&gt;),
 <a href=#1815 id=1815 data-nosnippet>1815</a>    RelayMapChange,
