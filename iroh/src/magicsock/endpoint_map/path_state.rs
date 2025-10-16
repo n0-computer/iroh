@@ -247,7 +247,11 @@ impl PathState {
         }
     }
 
-    pub(super) fn handle_ping(&mut self, tx_id: crate::disco::TransactionId, now: Instant) -> PingRole {
+    pub(super) fn handle_ping(
+        &mut self,
+        tx_id: crate::disco::TransactionId,
+        now: Instant,
+    ) -> PingRole {
         if Some(&tx_id) == self.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
             PingRole::Duplicate
         } else {

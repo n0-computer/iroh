@@ -9,12 +9,11 @@ use std::{
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl};
 use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
-use crate::disco::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::endpoint_state::{EndpointState, Options, PingHandled};
 use super::{ActorMessage, EndpointIdMappedAddr, metrics::Metrics, transports};
-use crate::disco::{CallMeMaybe, Pong, SendAddr};
+use crate::disco::{CallMeMaybe, Pong, SendAddr, TransactionId};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
