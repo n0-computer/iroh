@@ -9,7 +9,7 @@ use n0_future::{
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
 use quinn_proto::{PathEvent, PathId, PathStatus};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Whatever};
 use tokio::sync::{mpsc, oneshot};
@@ -91,15 +91,13 @@ pub(super) struct EndpointStateActor {
     // Internal state - Quinn Connections we are managing.
     //
     /// All connections we have to this remote endpoint.
-    ///
-    /// The key is the [`quinn::Connection::stable_id`].
-    connections: FxHashMap<usize, ConnectionState>,
+    connections: FxHashMap<ConnId, ConnectionState>,
     /// Events emitted by Quinn about path changes.
     #[allow(clippy::type_complexity)]
     path_events: MergeUnbounded<
         Pin<
             Box<
-                dyn Stream<Item = (usize, Result<PathEvent, BroadcastStreamRecvError>)>
+                dyn Stream<Item = (ConnId, Result<PathEvent, BroadcastStreamRecvError>)>
                     + Send
                     + Sync,
             >,
@@ -124,7 +122,7 @@ pub(super) struct EndpointStateActor {
     /// a previous connection no longer exists.
     // TODO: We do exhaustive searches through this map to find items based on
     //    transports::Addr.  Perhaps a bi-directional map could be considered.
-    path_id_map: FxHashMap<(usize, PathId), transports::Addr>,
+    path_id_map: FxHashMap<(ConnId, PathId), transports::Addr>,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
     /// The path we currently consider the preferred path to the remote endpoint.
@@ -312,15 +310,14 @@ impl EndpointStateActor {
     ) {
         if let Some(conn) = handle.upgrade() {
             // Remove any conflicting stable_ids from the local state.
-            let stable_id = conn.stable_id();
-            self.connections.remove(&stable_id);
-            self.path_id_map.retain(|(id, _), _| *id != stable_id);
+            let conn_id = ConnId(conn.stable_id());
+            self.connections.remove(&conn_id);
+            self.path_id_map.retain(|(id, _), _| *id != conn_id);
 
             // This is a good time to clean up connections.
             self.cleanup_connections();
 
             // Store the connection and hook up paths events stream.
-            let conn_id = conn.stable_id();
             let events = BroadcastStream::new(conn.path_events());
             let stream = events.map(move |evt| (conn_id, evt));
             self.path_events.push(Box::pin(stream));
@@ -695,29 +692,29 @@ impl EndpointStateActor {
         };
 
         // The connections that already have this path.
-        let mut conns_with_path = BTreeSet::new();
+        let mut conns_with_path = FxHashSet::default();
         for ((conn_id, _), addr) in self.path_id_map.iter() {
             if addr == open_addr {
                 conns_with_path.insert(*conn_id);
             }
         }
 
-        for conn in self
+        for (conn_id, conn) in self
             .connections
             .iter()
-            .filter_map(|(conn_id, handle)| (!conns_with_path.contains(conn_id)).then_some(handle))
-            .filter_map(|c| c.handle.upgrade())
-            .filter(|conn| conn.side().is_client())
+            .filter(|(conn_id, _)| !conns_with_path.contains(conn_id))
+            .filter_map(|(id, c)| c.handle.upgrade().and_then(|c| Some((*id, c))))
+            .filter(|(_, conn)| conn.side().is_client())
         {
             let fut = conn.open_path_ensure(quic_addr, path_status);
             match fut.path_id() {
                 Some(path_id) => {
-                    trace!(conn_id = conn.stable_id(), ?path_id, "opening new path");
+                    trace!(?conn_id, ?path_id, "opening new path");
                     self.path_id_map
-                        .insert((conn.stable_id(), path_id), open_addr.clone());
+                        .insert((conn_id, path_id), open_addr.clone());
                 }
                 None => {
-                    let ret = poll_once(fut);
+                    let ret = now_or_never(fut);
                     warn!(?ret, "Opening path failed");
                 }
             }
@@ -727,7 +724,7 @@ impl EndpointStateActor {
     #[instrument(skip(self))]
     fn handle_path_event(
         &mut self,
-        conn_id: usize,
+        conn_id: ConnId,
         event: Result<PathEvent, BroadcastStreamRecvError>,
     ) {
         let Ok(event) = event else {
@@ -760,7 +757,7 @@ impl EndpointStateActor {
                         Level::DEBUG,
                         remote = %self.endpoint_id.fmt_short(),
                         ?addr,
-                        conn_id,
+                        ?conn_id,
                         ?path_id,
                     );
                     self.path_id_map.insert((conn_id, path_id), addr.clone());
@@ -793,7 +790,7 @@ impl EndpointStateActor {
                     Level::DEBUG,
                     remote = %self.endpoint_id.fmt_short(),
                     ?addr,
-                    conn_id,
+                    ?conn_id,
                     path_id = ?id,
                 );
                 // Remove this from the public PathInfo.
@@ -844,16 +841,12 @@ impl EndpointStateActor {
     fn cleanup_connections(&mut self) {
         self.connections.retain(|_, c| c.handle.upgrade().is_some());
 
-        let mut stable_ids = BTreeSet::new();
-        for state in self.connections.values() {
-            state
-                .handle
-                .upgrade()
-                .map(|conn| stable_ids.insert(conn.stable_id()));
+        let mut conn_ids = FxHashSet::default();
+        for (id, state) in self.connections.iter() {
+            state.handle.upgrade().map(|_| conn_ids.insert(id));
         }
 
-        self.path_id_map
-            .retain(|(stable_id, _), _| stable_ids.contains(stable_id));
+        self.path_id_map.retain(|(id, _), _| conn_ids.contains(id));
     }
 
     /// Selects the path with the lowest RTT, prefers direct paths.
@@ -862,7 +855,7 @@ impl EndpointStateActor {
     /// there are only relay paths, the relay path with the lowest RTT is chosen.
     ///
     /// The selected path is added to any connections which do not yet have it.  Any unused
-    /// direct paths are close from all connections.
+    /// direct paths are closed for all connections.
     #[instrument(skip_all)]
     fn select_path(&mut self) {
         // TODO: Only consider paths that are actively open: that is we received the open
@@ -945,7 +938,7 @@ impl EndpointStateActor {
         debug_assert_eq!(self.selected_path.as_ref(), Some(selected_path));
 
         // We create this to make sure we do not close the last direct path.
-        let mut paths_per_conn: FxHashMap<usize, Vec<PathId>> = FxHashMap::default();
+        let mut paths_per_conn: FxHashMap<ConnId, Vec<PathId>> = FxHashMap::default();
         for ((conn_id, path_id), addr) in self.path_id_map.iter() {
             if !addr.is_ip() {
                 continue;
@@ -1109,7 +1102,9 @@ pub enum ConnectionType {
 
 #[derive(Debug)]
 struct ConnectionState {
+    /// Weak handle to the connection.
     handle: WeakConnectionHandle,
+    /// The information we publish to users about the paths used in this connection.
     paths_info: Watchable<Vec<PathInfo>>,
 }
 
@@ -1160,8 +1155,15 @@ impl From<&transports::Addr> for TransportType {
     }
 }
 
+/// Newtype to track Connections.
+///
+/// The wrapped value is the [`Connection::stable_id`] value, and is thus only valid for
+/// active connections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ConnId(usize);
+
 /// Poll a future once, like n0_future::future::poll_once but sync.
-fn poll_once<T, F: Future<Output = T>>(fut: F) -> Option<T> {
+fn now_or_never<T, F: Future<Output = T>>(fut: F) -> Option<T> {
     let fut = std::pin::pin!(fut);
     match fut.poll(&mut std::task::Context::from_waker(std::task::Waker::noop())) {
         std::task::Poll::Ready(res) => Some(res),
