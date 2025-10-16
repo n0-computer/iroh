@@ -68,7 +68,7 @@
 <a href=#68 id=68 data-nosnippet>68</a></span><span class="kw">use </span><span class="kw">crate</span>::net_report::{IpMappedAddr, QuicConfig};
 <a href=#69 id=69 data-nosnippet>69</a><span class="kw">use crate</span>::{
 <a href=#70 id=70 data-nosnippet>70</a>    defaults::timeouts::NET_REPORT_TIMEOUT,
-<a href=#71 id=71 data-nosnippet>71</a>    disco::{<span class="self">self</span>, SendAddr},
+<a href=#71 id=71 data-nosnippet>71</a>    disco::{<span class="self">self</span>, SendAddr, TransactionId},
 <a href=#72 id=72 data-nosnippet>72</a>    discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
 <a href=#73 id=73 data-nosnippet>73</a>    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
 <a href=#74 id=74 data-nosnippet>74</a>    magicsock::endpoint_map::RemoteInfo,
@@ -1784,7 +1784,7 @@
 <a href=#1784 id=1784 data-nosnippet>1784</a>
 <a href=#1785 id=1785 data-nosnippet>1785</a><span class="attr">#[derive(Debug)]
 <a href=#1786 id=1786 data-nosnippet>1786</a></span><span class="kw">enum </span>ActorMessage {
-<a href=#1787 id=1787 data-nosnippet>1787</a>    EndpointPingExpired(usize, stun_rs::TransactionId),
+<a href=#1787 id=1787 data-nosnippet>1787</a>    EndpointPingExpired(usize, TransactionId),
 <a href=#1788 id=1788 data-nosnippet>1788</a>    NetworkChange,
 <a href=#1789 id=1789 data-nosnippet>1789</a>    ScheduleDirectAddrUpdate(UpdateReason, <span class="prelude-ty">Option</span>&lt;(EndpointId, RelayUrl)&gt;),
 <a href=#1790 id=1790 data-nosnippet>1790</a>    RelayMapChange,

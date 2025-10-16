@@ -11,7 +11,7 @@
 <a href=#11 id=11 data-nosnippet>11</a>    endpoint_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
 <a href=#12 id=12 data-nosnippet>12</a>};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use crate</span>::{
-<a href=#14 id=14 data-nosnippet>14</a>    disco::SendAddr,
+<a href=#14 id=14 data-nosnippet>14</a>    disco::{SendAddr, TransactionId},
 <a href=#15 id=15 data-nosnippet>15</a>    magicsock::{
 <a href=#16 id=16 data-nosnippet>16</a>        HEARTBEAT_INTERVAL, Metrics <span class="kw">as </span>MagicsockMetrics,
 <a href=#17 id=17 data-nosnippet>17</a>        endpoint_map::path_validity::{<span class="self">self</span>, PathValidity},
@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// If non-zero, means that this was an endpoint that we learned about at runtime (from an
 <a href=#42 id=42 data-nosnippet>42</a>    /// incoming ping). If so, we keep the time updated and use it to discard old candidates.
 <a href=#43 id=43 data-nosnippet>43</a>    </span><span class="comment">// NOTE: tx_id Originally added in tailscale due to &lt;https://github.com/tailscale/tailscale/issues/7078&gt;.
-<a href=#44 id=44 data-nosnippet>44</a>    </span>last_got_ping: <span class="prelude-ty">Option</span>&lt;(Instant, stun_rs::TransactionId)&gt;,
+<a href=#44 id=44 data-nosnippet>44</a>    </span>last_got_ping: <span class="prelude-ty">Option</span>&lt;(Instant, TransactionId)&gt;,
 <a href=#45 id=45 data-nosnippet>45</a>
 <a href=#46 id=46 data-nosnippet>46</a>    <span class="doccomment">/// The time this endpoint was last advertised via a call-me-maybe DISCO message.
 <a href=#47 id=47 data-nosnippet>47</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) call_me_maybe_time: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
@@ -108,7 +108,7 @@
 <a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_ping(
 <a href=#109 id=109 data-nosnippet>109</a>        endpoint_id: EndpointId,
 <a href=#110 id=110 data-nosnippet>110</a>        path: SendAddr,
-<a href=#111 id=111 data-nosnippet>111</a>        tx_id: stun_rs::TransactionId,
+<a href=#111 id=111 data-nosnippet>111</a>        tx_id: TransactionId,
 <a href=#112 id=112 data-nosnippet>112</a>        source: Source,
 <a href=#113 id=113 data-nosnippet>113</a>        now: Instant,
 <a href=#114 id=114 data-nosnippet>114</a>    ) -&gt; <span class="self">Self </span>{
@@ -247,7 +247,7 @@
 <a href=#247 id=247 data-nosnippet>247</a>        }
 <a href=#248 id=248 data-nosnippet>248</a>    }
 <a href=#249 id=249 data-nosnippet>249</a>
-<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tx_id: stun_rs::TransactionId, now: Instant) -&gt; PingRole {
+<a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tx_id: TransactionId, now: Instant) -&gt; PingRole {
 <a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">if </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>tx_id) == <span class="self">self</span>.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
 <a href=#252 id=252 data-nosnippet>252</a>            PingRole::Duplicate
 <a href=#253 id=253 data-nosnippet>253</a>        } <span class="kw">else </span>{
