@@ -41,7 +41,7 @@ pub(super) struct PathState {
     /// If non-zero, means that this was an endpoint that we learned about at runtime (from an
     /// incoming ping). If so, we keep the time updated and use it to discard old candidates.
     // NOTE: tx_id Originally added in tailscale due to <https://github.com/tailscale/tailscale/issues/7078>.
-    last_got_ping: Option<(Instant, stun_rs::TransactionId)>,
+    last_got_ping: Option<(Instant, crate::disco::TransactionId)>,
 
     /// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     pub(super) call_me_maybe_time: Option<Instant>,
@@ -108,7 +108,7 @@ impl PathState {
     pub(super) fn with_ping(
         endpoint_id: EndpointId,
         path: SendAddr,
-        tx_id: stun_rs::TransactionId,
+        tx_id: crate::disco::TransactionId,
         source: Source,
         now: Instant,
     ) -> Self {
@@ -247,7 +247,7 @@ impl PathState {
         }
     }
 
-    pub(super) fn handle_ping(&mut self, tx_id: stun_rs::TransactionId, now: Instant) -> PingRole {
+    pub(super) fn handle_ping(&mut self, tx_id: crate::disco::TransactionId, now: Instant) -> PingRole {
         if Some(&tx_id) == self.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
             PingRole::Duplicate
         } else {

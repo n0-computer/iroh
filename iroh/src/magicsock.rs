@@ -1809,7 +1809,7 @@ impl AsyncUdpSocket for MagicUdpSocket {
 
 #[derive(Debug)]
 enum ActorMessage {
-    EndpointPingExpired(usize, stun_rs::TransactionId),
+    EndpointPingExpired(usize, crate::disco::TransactionId),
     NetworkChange,
     ScheduleDirectAddrUpdate(UpdateReason, Option<(EndpointId, RelayUrl)>),
     RelayMapChange,

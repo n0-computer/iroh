@@ -19,13 +19,14 @@
 //! ```
 
 use std::{
-    fmt::Display,
+    fmt::{self, Display},
     net::{IpAddr, SocketAddr},
 };
 
 use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
 use nested_enum_utils::common_fields;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use snafu::{Snafu, ensure};
 use url::Url;
@@ -116,7 +117,7 @@ pub enum Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ping {
     /// Random client-generated per-ping transaction ID.
-    pub tx_id: stun_rs::TransactionId,
+    pub tx_id: crate::disco::TransactionId,
 
     /// Allegedly the ping sender's wireguard public key.
     /// It shouldn't be trusted by itself, but can be combined with
@@ -129,7 +130,7 @@ pub struct Ping {
 /// It includes the sender's source IP + port, so it's effectively a STUN response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pong {
-    pub tx_id: stun_rs::TransactionId,
+    pub tx_id: crate::disco::TransactionId,
     /// The observed address off the ping sender.
     ///
     /// 18 bytes (16+2) on the wire; v4-mapped ipv6 for IPv4.
@@ -221,7 +222,7 @@ impl Ping {
         let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
         let endpoint_key =
             PublicKey::try_from(raw_key).map_err(|_| InvalidEncodingSnafu.build())?;
-        let tx_id = stun_rs::TransactionId::from(tx_id);
+        let tx_id = crate::disco::TransactionId::from(tx_id);
 
         Ok(Ping {
             tx_id,
@@ -319,7 +320,7 @@ impl Pong {
     fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().map_err(|_| TooShortSnafu.build())?;
 
-        let tx_id = stun_rs::TransactionId::from(tx_id);
+        let tx_id = crate::disco::TransactionId::from(tx_id);
         let src = send_addr_from_bytes(&p[TX_LEN..])?;
 
         Ok(Pong {
@@ -432,6 +433,79 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
     [t as u8, ver]
 }
 
+const TRANSACTION_ID_SIZE: usize = 12;
+
+/// The transaction ID is a 96-bit identifier, used to uniquely identify
+/// STUN transactions. It primarily serves to correlate requests with
+/// responses, though it also plays a small role in helping to prevent
+/// certain types of attacks. The server also uses the transaction ID as
+/// a key to identify each transaction uniquely across all clients.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct TransactionId([u8; TRANSACTION_ID_SIZE]);
+
+impl fmt::Debug for TransactionId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "TransactionId(0x")?;
+        fmt_transcation_id(self.as_ref(), f)
+    }
+}
+
+impl fmt::Display for TransactionId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "transaction id (0x")?;
+        fmt_transcation_id(self.as_ref(), f)
+    }
+}
+
+fn fmt_transcation_id(bytes: &[u8], f: &mut fmt::Formatter) -> fmt::Result {
+    for byte in bytes {
+        write!(f, "{:02X}", byte)?;
+    }
+    write!(f, ")")
+}
+
+impl std::ops::Deref for TransactionId {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for TransactionId {
+    fn as_ref(&self) -> &[u8] {
+        &self.0[..]
+    }
+}
+
+impl From<&[u8; TRANSACTION_ID_SIZE]> for TransactionId {
+    fn from(buff: &[u8; TRANSACTION_ID_SIZE]) -> Self {
+        Self(*buff)
+    }
+}
+
+impl From<[u8; TRANSACTION_ID_SIZE]> for TransactionId {
+    fn from(buff: [u8; TRANSACTION_ID_SIZE]) -> Self {
+        Self(buff)
+    }
+}
+
+impl rand::distr::Distribution<TransactionId> for rand::distr::StandardUniform {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> TransactionId {
+        let mut buffer = [0u8; TRANSACTION_ID_SIZE];
+        rng.fill_bytes(&mut buffer);
+        TransactionId::from(buffer)
+    }
+}
+
+impl Default for TransactionId {
+    /// Creates a cryptographically random transaction ID chosen from the interval 0 .. 2**96-1.
+    fn default() -> Self {
+        let mut rng = rand::rng();
+        rng.random()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use iroh_base::SecretKey;
@@ -521,7 +595,7 @@ mod tests {
         let recv_key = SecretKey::generate(&mut rng);
 
         let msg = Message::Ping(Ping {
-            tx_id: stun_rs::TransactionId::default(),
+            tx_id: crate::disco::TransactionId::default(),
             endpoint_key: sender_key.public(),
         });
 
