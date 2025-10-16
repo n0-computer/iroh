@@ -24,7 +24,7 @@ use super::{
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
-    disco::{self, SendAddr},
+    disco::{self, SendAddr, TransactionId},
     magicsock::{
         ActorMessage, EndpointIdMappedAddr, HEARTBEAT_INTERVAL, MagicsockMetrics,
         endpoint_map::path_validity::PathValidity,
@@ -69,7 +69,7 @@ pub(in crate::magicsock) struct SendPing {
     pub id: usize,
     pub dst: SendAddr,
     pub dst_endpoint: EndpointId,
-    pub tx_id: crate::disco::TransactionId,
+    pub tx_id: TransactionId,
     pub purpose: DiscoPingPurpose,
 }
 
@@ -116,7 +116,7 @@ pub(super) struct EndpointState {
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
     relay_url: Option<(RelayUrl, PathState)>,
     udp_paths: EndpointUdpPaths,
-    sent_pings: HashMap<crate::disco::TransactionId, SentPing>,
+    sent_pings: HashMap<TransactionId, SentPing>,
     /// Last time this endpoint was used.
     ///
     /// An endpoint is marked as in use when sending datagrams to them, or when having received
@@ -448,7 +448,7 @@ impl EndpointState {
     #[instrument("disco", skip_all, fields(endpoint = %self.endpoint_id.fmt_short()))]
     pub(super) fn ping_timeout(
         &mut self,
-        txid: crate::disco::TransactionId,
+        txid: TransactionId,
         now: Instant,
         metrics: &MagicsockMetrics,
     ) {
@@ -502,7 +502,7 @@ impl EndpointState {
             return None; // Similar to `RelayOnly` mode, we don't send UDP pings for hole-punching.
         }
 
-        let tx_id = crate::disco::TransactionId::default();
+        let tx_id = TransactionId::default();
         trace!(tx = %HEXLOWER.encode(&tx_id), %dst, ?purpose,
                dst = %self.endpoint_id.fmt_short(), "start ping");
         event!(
@@ -526,7 +526,7 @@ impl EndpointState {
     pub(super) fn ping_sent(
         &mut self,
         to: SendAddr,
-        tx_id: crate::disco::TransactionId,
+        tx_id: TransactionId,
         purpose: DiscoPingPurpose,
         sender: mpsc::Sender<ActorMessage>,
     ) {
@@ -739,11 +739,7 @@ impl EndpointState {
     ///
     /// This is called once we've already verified that we got a valid discovery message
     /// from `self` via ep.
-    pub(super) fn handle_ping(
-        &mut self,
-        path: SendAddr,
-        tx_id: crate::disco::TransactionId,
-    ) -> PingHandled {
+    pub(super) fn handle_ping(&mut self, path: SendAddr, tx_id: TransactionId) -> PingHandled {
         let now = Instant::now();
 
         let role = match path {

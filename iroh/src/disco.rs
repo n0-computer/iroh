@@ -117,7 +117,7 @@ pub enum Message {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ping {
     /// Random client-generated per-ping transaction ID.
-    pub tx_id: crate::disco::TransactionId,
+    pub tx_id: TransactionId,
 
     /// Allegedly the ping sender's wireguard public key.
     /// It shouldn't be trusted by itself, but can be combined with
@@ -130,7 +130,7 @@ pub struct Ping {
 /// It includes the sender's source IP + port, so it's effectively a STUN response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pong {
-    pub tx_id: crate::disco::TransactionId,
+    pub tx_id: TransactionId,
     /// The observed address off the ping sender.
     ///
     /// 18 bytes (16+2) on the wire; v4-mapped ipv6 for IPv4.
@@ -222,7 +222,7 @@ impl Ping {
         let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
         let endpoint_key =
             PublicKey::try_from(raw_key).map_err(|_| InvalidEncodingSnafu.build())?;
-        let tx_id = crate::disco::TransactionId::from(tx_id);
+        let tx_id = TransactionId::from(tx_id);
 
         Ok(Ping {
             tx_id,
@@ -320,7 +320,7 @@ impl Pong {
     fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().map_err(|_| TooShortSnafu.build())?;
 
-        let tx_id = crate::disco::TransactionId::from(tx_id);
+        let tx_id = TransactionId::from(tx_id);
         let src = send_addr_from_bytes(&p[TX_LEN..])?;
 
         Ok(Pong {
@@ -435,9 +435,11 @@ const fn msg_header(t: MessageType, ver: u8) -> [u8; HEADER_LEN] {
 
 const TRANSACTION_ID_SIZE: usize = 12;
 
-/// The transaction ID is a 96-bit identifier, used to uniquely identify
-/// STUN transactions. It primarily serves to correlate requests with
-/// responses, though it also plays a small role in helping to prevent
+/// The transaction ID is a 96-bit identifier
+///
+/// It is used to uniquely identify STUN transactions.
+/// It primarily serves to correlate requests with responses,
+/// though it also plays a small role in helping to prevent
 /// certain types of attacks. The server also uses the transaction ID as
 /// a key to identify each transaction uniquely across all clients.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -595,7 +597,7 @@ mod tests {
         let recv_key = SecretKey::generate(&mut rng);
 
         let msg = Message::Ping(Ping {
-            tx_id: crate::disco::TransactionId::default(),
+            tx_id: TransactionId::default(),
             endpoint_key: sender_key.public(),
         });
 

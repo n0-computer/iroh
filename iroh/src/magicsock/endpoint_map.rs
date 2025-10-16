@@ -183,7 +183,7 @@ impl EndpointMap {
         &self,
         id: usize,
         dst: SendAddr,
-        tx_id: crate::disco::TransactionId,
+        tx_id: TransactionId,
         purpose: DiscoPingPurpose,
         msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
     ) {
@@ -197,12 +197,7 @@ impl EndpointMap {
         }
     }
 
-    pub(super) fn notify_ping_timeout(
-        &self,
-        id: usize,
-        tx_id: crate::disco::TransactionId,
-        metrics: &Metrics,
-    ) {
+    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: TransactionId, metrics: &Metrics) {
         if let Some(ep) = self
             .inner
             .lock()
@@ -903,7 +898,7 @@ mod tests {
         info!("Adding alive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
-            let txid = crate::disco::TransactionId::from([i as u8; 12]);
+            let txid = TransactionId::from([i as u8; 12]);
             // Note that this already invokes .prune_direct_addresses() because these are
             // new UDP paths.
             endpoint.handle_ping(addr, txid);
