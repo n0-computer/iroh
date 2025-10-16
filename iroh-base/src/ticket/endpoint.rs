@@ -52,7 +52,7 @@ impl Ticket for EndpointTicket {
     fn to_bytes(&self) -> Vec<u8> {
         let data = TicketWireFormat::Variant0(Variant0NodeTicket {
             node: Variant0NodeAddr {
-                node_id: self.node.endpoint_id,
+                node_id: self.node.id,
                 info: Variant0AddrInfo {
                     relay_url: self.node.relay_url.clone(),
                     direct_addresses: self.node.direct_addresses.clone(),

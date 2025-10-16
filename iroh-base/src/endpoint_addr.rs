@@ -39,26 +39,33 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EndpointAddr {
     /// The endpoint's identifier.
-    pub endpoint_id: EndpointId,
-    /// The endpoint's home relay url.
-    pub relay_url: Option<RelayUrl>,
-    /// Socket addresses where the peer might be reached directly.
-    pub direct_addresses: BTreeSet<SocketAddr>,
+    pub id: EndpointId,
+    /// The endpoint's addresses
+    pub addrs: BTreeSet<AddrType>,
+}
+
+/// Available address types.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum AddrType {
+    /// IP based addresses
+    Ip(SocketAddr),
+    /// Relays
+    Relay(RelayUrl),
 }
 
 impl EndpointAddr {
     /// Creates a new [`EndpointAddr`] with no `relay_url` and no `direct_addresses`.
-    pub fn new(endpoint_id: PublicKey) -> Self {
+    pub fn new(id: PublicKey) -> Self {
         EndpointAddr {
-            endpoint_id,
-            relay_url: None,
-            direct_addresses: Default::default(),
+            id,
+            addrs: Default::default(),
         }
     }
 
     /// Adds a relay url.
     pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
-        self.relay_url = Some(relay_url);
+        self.addrs.insert(AddrType::Relay(relay_url));
         self
     }
 
@@ -67,47 +74,56 @@ impl EndpointAddr {
         mut self,
         addresses: impl IntoIterator<Item = SocketAddr>,
     ) -> Self {
-        self.direct_addresses = addresses.into_iter().collect();
+        for addr in addresses.into_iter() {
+            self.addrs.insert(AddrType::Ip(addr));
+        }
         self
     }
 
     /// Creates a new [`EndpointAddr`] from its parts.
-    pub fn from_parts(
-        endpoint_id: PublicKey,
-        relay_url: Option<RelayUrl>,
-        direct_addresses: impl IntoIterator<Item = SocketAddr>,
-    ) -> Self {
+    pub fn from_parts(id: PublicKey, addrs: impl IntoIterator<Item = AddrType>) -> Self {
         Self {
-            endpoint_id,
-            relay_url,
-            direct_addresses: direct_addresses.into_iter().collect(),
+            id,
+            addrs: addrs.into_iter().collect(),
         }
     }
 
     /// Returns true, if only a [`EndpointId`] is present.
     pub fn is_empty(&self) -> bool {
-        self.relay_url.is_none() && self.direct_addresses.is_empty()
+        self.addrs.is_empty()
     }
 
     /// Returns the direct addresses of this peer.
     pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
-        self.direct_addresses.iter()
+        self.addrs.iter().filter_map(|addr| match addr {
+            AddrType::Ip(addr) => Some(addr),
+            _ => None,
+        })
     }
 
     /// Returns the relay url of this peer.
     pub fn relay_url(&self) -> Option<&RelayUrl> {
-        self.relay_url.as_ref()
+        self.addrs
+            .iter()
+            .filter_map(|addr| match addr {
+                AddrType::Relay(url) => Some(url),
+                _ => None,
+            })
+            .next()
     }
 }
 
 impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for EndpointAddr {
     fn from(value: (PublicKey, Option<RelayUrl>, &[SocketAddr])) -> Self {
-        let (endpoint_id, relay_url, direct_addresses_iter) = value;
-        EndpointAddr {
-            endpoint_id,
-            relay_url,
-            direct_addresses: direct_addresses_iter.iter().copied().collect(),
+        let (id, relay_url, direct_addresses_iter) = value;
+        let mut addrs = BTreeSet::new();
+        if let Some(url) = relay_url {
+            addrs.insert(AddrType::Relay(url));
         }
+        for addr in direct_addresses_iter {
+            addrs.insert(AddrType::Ip(*addr));
+        }
+        EndpointAddr { id, addrs }
     }
 }
 
