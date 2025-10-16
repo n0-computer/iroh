@@ -37,7 +37,7 @@ pub enum FrameType {
     /// to B so B can forget that a reverse path exists on that connection to get back to A
     ///
     /// 32B pub key of peer that's gone
-    NodeGone = 8,
+    EndpointGone = 8,
     /// Messages with these frames will be ignored.
     /// 8 byte ping payload, to be echoed back in FrameType::Pong
     Ping = 9,

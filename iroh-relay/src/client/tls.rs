@@ -146,11 +146,10 @@ impl MaybeTlsStreamBuilder {
         let port = url_port(&self.url).context(InvalidTargetPortSnafu)?;
         let addr = SocketAddr::new(dst_ip, port);
 
-        trace!(%self.url, %addr, "connecting to");
-        let tcp_stream = time::timeout(
-            DIAL_NODE_TIMEOUT,
-            async move { TcpStream::connect(addr).await },
-        )
+        trace!("connecting to {}", addr);
+        let tcp_stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, async move {
+            TcpStream::connect(addr).await
+        })
         .await??;
 
         tcp_stream.set_nodelay(true)?;
@@ -179,7 +178,7 @@ impl MaybeTlsStreamBuilder {
 
         debug!(%proxy_addr, "connecting to proxy");
 
-        let tcp_stream = time::timeout(DIAL_NODE_TIMEOUT, async move {
+        let tcp_stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, async move {
             TcpStream::connect(proxy_addr).await
         })
         .await??;

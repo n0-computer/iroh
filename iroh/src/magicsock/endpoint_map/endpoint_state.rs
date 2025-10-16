@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
 
-use iroh_base::{NodeAddr, NodeId, RelayUrl};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
 use n0_future::{
     MergeUnbounded, Stream, StreamExt,
     task::AbortOnDropHandle,
@@ -32,9 +32,9 @@ use crate::{
 };
 
 // TODO: use this
-// /// Number of addresses that are not active that we keep around per node.
+// /// Number of addresses that are not active that we keep around per endpoint.
 // ///
-// /// See [`NodeState::prune_direct_addresses`].
+// /// See [`EndpointState::prune_direct_addresses`].
 // pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
 
 // TODO: use this
@@ -61,15 +61,15 @@ use crate::{
 // TODO: Quinn should just do this.  Also, I made this value up.
 const APPLICATION_ABANDON_PATH: u8 = 30;
 
-/// The state we need to know about a single remote node.
+/// The state we need to know about a single remote endpoint.
 ///
-/// This actor manages all connections to the remote node.  It will trigger holepunching and
-/// select the best path etc.
-pub(super) struct NodeStateActor {
-    /// The node ID of the remote node.
-    node_id: NodeId,
-    /// The node ID of the local node.
-    local_node_id: NodeId,
+/// This actor manages all connections to the remote endpoint.  It will trigger holepunching
+/// and select the best path etc.
+pub(super) struct EndpointStateActor {
+    /// The endpoint ID of the remote endpoint.
+    endpoint_id: EndpointId,
+    /// The endpoint ID of the local endpoint.
+    local_endpoint_id: EndpointId,
 
     // Hooks into the rest of the MagicSocket.
     //
@@ -77,7 +77,7 @@ pub(super) struct NodeStateActor {
     metrics: Arc<MagicsockMetrics>,
     /// Allowing us to directly send datagrams.
     ///
-    /// Used for handling [`NodeStateMessage::SendDatagram`] messages.
+    /// Used for handling [`EndpointStateMessage::SendDatagram`] messages.
     transports_sender: mpsc::Sender<TransportsSenderMessage>,
     /// Our local addresses.
     ///
@@ -85,12 +85,12 @@ pub(super) struct NodeStateActor {
     local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// Shared state to allow to encrypt DISCO messages to peers.
     disco: DiscoState,
-    /// The mapping between nodes via a relay and their [`RelayMappedAddr`]s.
-    relay_mapped_addrs: AddrMap<(RelayUrl, NodeId), RelayMappedAddr>,
+    /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
+    relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
 
     // Internal state - Quinn Connections we are managing.
     //
-    /// All connections we have to this remote node.
+    /// All connections we have to this remote endpoint.
     ///
     /// The key is the [`quinn::Connection::stable_id`].
     connections: FxHashMap<usize, ConnectionState>,
@@ -119,7 +119,7 @@ pub(super) struct NodeStateActor {
     ///
     /// The `usize` is the [`Connection::stable_id`] of a connection.  It is important that
     /// this map is cleared of the stable ID of a new connection received from
-    /// [`NodeStateMessage::AddConnection`], because this ID is only unique within
+    /// [`EndpointStateMessage::AddConnection`], because this ID is only unique within
     /// *currently active* connections.  So there could be conflicts if we did not yet know
     /// a previous connection no longer exists.
     // TODO: We do exhaustive searches through this map to find items based on
@@ -127,7 +127,7 @@ pub(super) struct NodeStateActor {
     path_id_map: FxHashMap<(usize, PathId), transports::Addr>,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
-    /// The path we currently consider the preferred path to the remote node.
+    /// The path we currently consider the preferred path to the remote endpoint.
     ///
     /// **We expect this path to work.** If we become aware this path is broken then it is
     /// set back to `None`.  Having a selected path does not mean we may not be able to get
@@ -140,19 +140,19 @@ pub(super) struct NodeStateActor {
     scheduled_holepunch: Option<Instant>,
 }
 
-impl NodeStateActor {
+impl EndpointStateActor {
     pub(super) fn new(
-        node_id: NodeId,
-        local_node_id: NodeId,
+        endpoint_id: EndpointId,
+        local_endpoint_id: EndpointId,
         transports_sender: mpsc::Sender<TransportsSenderMessage>,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
-        relay_mapped_addrs: AddrMap<(RelayUrl, NodeId), RelayMappedAddr>,
+        relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
     ) -> Self {
         Self {
-            node_id,
-            local_node_id,
+            endpoint_id,
+            local_endpoint_id,
             metrics,
             transports_sender,
             local_addrs,
@@ -168,10 +168,10 @@ impl NodeStateActor {
         }
     }
 
-    pub(super) fn start(mut self) -> NodeStateHandle {
+    pub(super) fn start(mut self) -> EndpointStateHandle {
         let (tx, rx) = mpsc::channel(16);
-        let me = self.local_node_id;
-        let node_id = self.node_id;
+        let me = self.local_endpoint_id;
+        let endpoint_id = self.endpoint_id;
 
         // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
         // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
@@ -186,12 +186,12 @@ impl NodeStateActor {
             }
             .instrument(info_span!(
                 parent: None,
-                "NodeStateActor",
+                "EndpointStateActor",
                 me = %me.fmt_short(),
-                remote_node = %node_id.fmt_short(),
+                remote = %endpoint_id.fmt_short(),
             )),
         );
-        NodeStateHandle {
+        EndpointStateHandle {
             sender: tx,
             _task: AbortOnDropHandle::new(task),
         }
@@ -202,7 +202,10 @@ impl NodeStateActor {
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
     /// dicipline is needed to not turn pending for a long time.
-    async fn run(&mut self, mut inbox: mpsc::Receiver<NodeStateMessage>) -> Result<(), Whatever> {
+    async fn run(
+        &mut self,
+        mut inbox: mpsc::Receiver<EndpointStateMessage>,
+    ) -> Result<(), Whatever> {
         trace!("actor started");
         loop {
             let scheduled_hp = match self.scheduled_holepunch {
@@ -240,38 +243,38 @@ impl NodeStateActor {
     ///
     /// Error returns are fatal and kill the actor.
     #[instrument(skip(self))]
-    async fn handle_message(&mut self, msg: NodeStateMessage) -> Result<(), Whatever> {
+    async fn handle_message(&mut self, msg: EndpointStateMessage) -> Result<(), Whatever> {
         // trace!("handling message");
         match msg {
-            NodeStateMessage::SendDatagram(transmit) => {
+            EndpointStateMessage::SendDatagram(transmit) => {
                 self.handle_msg_send_datagram(transmit).await?;
             }
-            NodeStateMessage::AddConnection(handle, paths_info) => {
+            EndpointStateMessage::AddConnection(handle, paths_info) => {
                 self.handle_msg_add_connection(handle, paths_info).await;
             }
-            NodeStateMessage::AddNodeAddr(node_addr, source) => {
-                self.handle_msg_add_node_addr(node_addr, source);
+            EndpointStateMessage::AddEndpointAddr(addr, source) => {
+                self.handle_msg_add_endpoint_addr(addr, source);
             }
-            NodeStateMessage::CallMeMaybeReceived(msg) => {
+            EndpointStateMessage::CallMeMaybeReceived(msg) => {
                 self.handle_msg_call_me_maybe_received(msg).await;
             }
-            NodeStateMessage::PingReceived(ping, src) => {
+            EndpointStateMessage::PingReceived(ping, src) => {
                 self.handle_msg_ping_received(ping, src).await;
             }
-            NodeStateMessage::PongReceived(pong, src) => {
+            EndpointStateMessage::PongReceived(pong, src) => {
                 self.handle_msg_pong_received(pong, src);
             }
-            NodeStateMessage::CanSend(tx) => {
+            EndpointStateMessage::CanSend(tx) => {
                 self.handle_msg_can_send(tx);
             }
-            NodeStateMessage::Latency(tx) => {
+            EndpointStateMessage::Latency(tx) => {
                 self.handle_msg_latency(tx);
             }
         }
         Ok(())
     }
 
-    /// Handles [`NodeStateMessage::SendDatagram`].
+    /// Handles [`EndpointStateMessage::SendDatagram`].
     ///
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> Result<(), Whatever> {
@@ -299,7 +302,7 @@ impl NodeStateActor {
         Ok(())
     }
 
-    /// Handles [`NodeStateMessage::AddConnection`].
+    /// Handles [`EndpointStateMessage::AddConnection`].
     ///
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_add_connection(
@@ -357,33 +360,33 @@ impl NodeStateActor {
         }
     }
 
-    /// Handles [`NodeStateMessage::AddNodeAddr`].
-    fn handle_msg_add_node_addr(&mut self, node_addr: NodeAddr, source: Source) {
-        for sockaddr in node_addr.direct_addresses {
+    /// Handles [`EndpointStateMessage::AddEndpointAddr`].
+    fn handle_msg_add_endpoint_addr(&mut self, addr: EndpointAddr, source: Source) {
+        for sockaddr in addr.direct_addresses {
             let addr = transports::Addr::from(sockaddr);
             let path = self.paths.entry(addr).or_default();
             path.sources.insert(source.clone(), Instant::now());
         }
-        if let Some(relay_url) = node_addr.relay_url {
-            let addr = transports::Addr::from((relay_url, self.node_id));
+        if let Some(relay_url) = addr.relay_url {
+            let addr = transports::Addr::from((relay_url, self.endpoint_id));
             let path = self.paths.entry(addr).or_default();
             path.sources.insert(source, Instant::now());
         }
         trace!("added addressing information");
     }
 
-    /// Handles [`NodeStateMessage::CallMeMaybeReceived`].
+    /// Handles [`EndpointStateMessage::CallMeMaybeReceived`].
     async fn handle_msg_call_me_maybe_received(&mut self, msg: disco::CallMeMaybe) {
         event!(
             target: "iroh::_events::call_me_maybe::recv",
             Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
+            remote = %self.endpoint_id.fmt_short(),
             addrs = ?msg.my_numbers,
         );
         let now = Instant::now();
         for addr in msg.my_numbers {
             let dst = transports::Addr::Ip(addr);
-            let ping = disco::Ping::new(self.local_node_id);
+            let ping = disco::Ping::new(self.local_endpoint_id);
 
             let path = self.paths.entry(dst.clone()).or_default();
             path.sources.insert(Source::CallMeMaybe, now);
@@ -392,7 +395,7 @@ impl NodeStateActor {
             event!(
                 target: "iroh::_events::ping::sent",
                 Level::DEBUG,
-                remote_node = %self.node_id.fmt_short(),
+                remote = %self.endpoint_id.fmt_short(),
                 ?dst,
             );
             self.send_disco_message(dst, disco::Message::Ping(ping))
@@ -400,7 +403,7 @@ impl NodeStateActor {
         }
     }
 
-    /// Handles [`NodeStateMessage::PingReceived`].
+    /// Handles [`EndpointStateMessage::PingReceived`].
     async fn handle_msg_ping_received(&mut self, ping: disco::Ping, src: transports::Addr) {
         let transports::Addr::Ip(addr) = src else {
             warn!("received ping via relay transport, ignored");
@@ -409,7 +412,7 @@ impl NodeStateActor {
         event!(
             target: "iroh::_events::ping::recv",
             Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
+            remote = %self.endpoint_id.fmt_short(),
             ?src,
             txn = ?ping.tx_id,
         );
@@ -420,7 +423,7 @@ impl NodeStateActor {
         event!(
             target: "iroh::_events::pong::sent",
             Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
+            remote = %self.endpoint_id.fmt_short(),
             dst = ?src,
             txn = ?pong.tx_id,
         );
@@ -434,7 +437,7 @@ impl NodeStateActor {
         self.trigger_holepunching().await;
     }
 
-    /// Handles [`NodeStateMessage::PongReceived`].
+    /// Handles [`EndpointStateMessage::PongReceived`].
     fn handle_msg_pong_received(&mut self, pong: disco::Pong, src: transports::Addr) {
         let Some(state) = self.paths.get(&src) else {
             warn!(path = ?src, ?self.paths, "ignoring DISCO Pong for unknown path");
@@ -448,7 +451,7 @@ impl NodeStateActor {
         event!(
             target: "iroh::_events::pong::recv",
             Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
+            remote_endpoint = %self.endpoint_id.fmt_short(),
             ?src,
             txn = ?pong.tx_id,
         );
@@ -456,13 +459,13 @@ impl NodeStateActor {
         self.open_path(&src);
     }
 
-    /// Handles [`NodeStateMessage::CanSend`].
+    /// Handles [`EndpointStateMessage::CanSend`].
     fn handle_msg_can_send(&self, tx: oneshot::Sender<bool>) {
         let can_send = !self.paths.is_empty();
         tx.send(can_send).ok();
     }
 
-    /// Handles [`NodeStateMessage::Latency`].
+    /// Handles [`EndpointStateMessage::Latency`].
     fn handle_msg_latency(&self, tx: oneshot::Sender<Option<Duration>>) {
         let rtt = self.selected_path.as_ref().and_then(|addr| {
             for (conn_id, path_id) in self
@@ -485,9 +488,9 @@ impl NodeStateActor {
         tx.send(rtt).ok();
     }
 
-    /// Triggers holepunching to the remote node.
+    /// Triggers holepunching to the remote endpoint.
     ///
-    /// This will manage the entire process of holepunching with the remote node.
+    /// This will manage the entire process of holepunching with the remote endpoint.
     ///
     /// - If there already is a direct connection, nothing happens.
     /// - If there is no relay address known, nothing happens.
@@ -609,11 +612,11 @@ impl NodeStateActor {
 
         // Send DISCO Ping messages to all CallMeMaybe-advertised paths.
         for dst in remote_addrs.iter() {
-            let msg = disco::Ping::new(self.local_node_id);
+            let msg = disco::Ping::new(self.local_endpoint_id);
             event!(
                 target: "iroh::_events::ping::sent",
                 Level::DEBUG,
-                remote_node = %self.node_id.fmt_short(),
+                remote = %self.endpoint_id.fmt_short(),
                 ?dst,
                 txn = ?msg.tx_id,
             );
@@ -635,7 +638,7 @@ impl NodeStateActor {
         event!(
             target: "iroh::_events::call_me_maybe::sent",
             Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
+            remote = %self.endpoint_id.fmt_short(),
             dst = ?relay_addr,
             my_numbers = ?msg.my_numbers,
         );
@@ -649,10 +652,10 @@ impl NodeStateActor {
         });
     }
 
-    /// Sends a DISCO message to *this* remote node.
-    #[instrument(skip(self), fields(dst_node = %self.node_id.fmt_short()))]
+    /// Sends a DISCO message to *this* remote endpoint.
+    #[instrument(skip(self), fields(remote = %self.endpoint_id.fmt_short()))]
     async fn send_disco_message(&self, dst: transports::Addr, msg: disco::Message) {
-        let pkt = self.disco.encode_and_seal(self.node_id, &msg);
+        let pkt = self.disco.encode_and_seal(self.endpoint_id, &msg);
         let transmit = transports::OwnedTransmit {
             ecn: None,
             contents: pkt,
@@ -685,9 +688,9 @@ impl NodeStateActor {
         };
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
-            transports::Addr::Relay(relay_url, node_id) => self
+            transports::Addr::Relay(relay_url, eid) => self
                 .relay_mapped_addrs
-                .get(&(relay_url.clone(), *node_id))
+                .get(&(relay_url.clone(), *eid))
                 .private_socket_addr(),
         };
 
@@ -728,7 +731,7 @@ impl NodeStateActor {
         event: Result<PathEvent, BroadcastStreamRecvError>,
     ) {
         let Ok(event) = event else {
-            warn!("missed a PathEvent, NodeStateActor lagging");
+            warn!("missed a PathEvent, EndpointStateActor lagging");
             // TODO: Is it possible to recover using the sync APIs to figure out what the
             //    state of the connection and it's paths are?
             return;
@@ -755,7 +758,7 @@ impl NodeStateActor {
                     event!(
                         target: "iroh::_events::path::open",
                         Level::DEBUG,
-                        remote_node = %self.node_id.fmt_short(),
+                        remote = %self.endpoint_id.fmt_short(),
                         ?addr,
                         conn_id,
                         ?path_id,
@@ -788,7 +791,7 @@ impl NodeStateActor {
                 event!(
                     target: "iroh::_events::path::closed",
                     Level::DEBUG,
-                    remote_node = %self.node_id.fmt_short(),
+                    remote = %self.endpoint_id.fmt_short(),
                     ?addr,
                     conn_id,
                     path_id = ?id,
@@ -1013,9 +1016,9 @@ impl NodeStateActor {
     }
 }
 
-/// Messages to send to the [`NodeStateActor`].
+/// Messages to send to the [`EndpointStateActor`].
 #[derive(derive_more::Debug)]
-pub(crate) enum NodeStateMessage {
+pub(crate) enum EndpointStateMessage {
     /// Sends a datagram to all known paths.
     ///
     /// Used to send QUIC Initial packets.  If there is no working direct path this will
@@ -1026,15 +1029,15 @@ pub(crate) enum NodeStateMessage {
     /// Initial packets.
     #[debug("SendDatagram(..)")]
     SendDatagram(OwnedTransmit),
-    /// Adds an active connection to this remote node.
+    /// Adds an active connection to this remote endpoint.
     ///
     /// The connection will now be managed by this actor.  Holepunching will happen when
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
     AddConnection(WeakConnectionHandle, Watchable<Vec<PathInfo>>),
-    /// Adds a [`NodeAddr`] with locations where the node might be reachable.
-    AddNodeAddr(NodeAddr, Source),
+    /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
+    AddEndpointAddr(EndpointAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
     CallMeMaybeReceived(disco::CallMeMaybe),
     /// Process a received DISCO Ping message.
@@ -1055,12 +1058,12 @@ pub(crate) enum NodeStateMessage {
     Latency(oneshot::Sender<Option<Duration>>),
 }
 
-/// A handle to a [`NodeStateActor`].
+/// A handle to a [`EndpointStateActor`].
 ///
 /// Dropping this will stop the actor.
 #[derive(Debug)]
-pub(super) struct NodeStateHandle {
-    pub(super) sender: mpsc::Sender<NodeStateMessage>,
+pub(super) struct EndpointStateHandle {
+    pub(super) sender: mpsc::Sender<EndpointStateMessage>,
     _task: AbortOnDropHandle<()>,
 }
 

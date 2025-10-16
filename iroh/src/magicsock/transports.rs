@@ -8,12 +8,12 @@ use std::{
 };
 
 use bytes::Bytes;
-use iroh_base::{NodeId, RelayUrl};
+use iroh_base::{EndpointId, RelayUrl};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use tracing::{debug, error, instrument, trace, warn};
 
-use super::{MagicSock, mapped_addrs::MultipathMappedAddr, node_map::NodeStateMessage};
+use super::{MagicSock, endpoint_map::EndpointStateMessage, mapped_addrs::MultipathMappedAddr};
 use crate::net_report::Report;
 
 #[cfg(not(wasm_browser))]
@@ -42,8 +42,8 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     (
         n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
         n0_watcher::Join<
-            Option<(RelayUrl, NodeId)>,
-            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>>,
+            Option<(RelayUrl, EndpointId)>,
+            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
         >,
     ),
     Vec<Addr>,
@@ -52,8 +52,8 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
 #[cfg(wasm_browser)]
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     n0_watcher::Join<
-        Option<(RelayUrl, NodeId)>,
-        n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>>,
+        Option<(RelayUrl, EndpointId)>,
+        n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
     >,
     Vec<Addr>,
 >;
@@ -164,7 +164,7 @@ impl Transports {
                         relays
                             .into_iter()
                             .flatten()
-                            .map(|(relay_url, node_id)| Addr::Relay(relay_url, node_id)),
+                            .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id)),
                     )
                     .collect()
             })
@@ -329,7 +329,7 @@ pub(crate) enum Addr {
     /// An IP address, should always be stored in its canonical form.
     Ip(SocketAddr),
     /// A relay address.
-    Relay(RelayUrl, NodeId),
+    Relay(RelayUrl, EndpointId),
 }
 
 impl fmt::Debug for Addr {
@@ -358,8 +358,8 @@ impl From<SocketAddr> for Addr {
     }
 }
 
-impl From<(RelayUrl, NodeId)> for Addr {
-    fn from(value: (RelayUrl, NodeId)) -> Self {
+impl From<(RelayUrl, EndpointId)> for Addr {
+    fn from(value: (RelayUrl, EndpointId)) -> Self {
         Self::Relay(value.0, value.1)
     }
 }
@@ -427,11 +427,11 @@ impl TransportsSender {
                     }
                 }
             }
-            Addr::Relay(url, node_id) => {
+            Addr::Relay(url, endpoint_id) => {
                 for sender in &self.relay {
-                    if sender.is_valid_send_addr(url, node_id) {
+                    if sender.is_valid_send_addr(url, endpoint_id) {
                         any_match = true;
-                        match sender.send(url.clone(), *node_id, transmit).await {
+                        match sender.send(url.clone(), *endpoint_id, transmit).await {
                             Ok(()) => {
                                 trace!("sent");
                                 return Ok(());
@@ -481,10 +481,10 @@ impl TransportsSender {
                     }
                 }
             }
-            Addr::Relay(url, node_id) => {
+            Addr::Relay(url, endpoint_id) => {
                 for sender in &mut self.relay {
-                    if sender.is_valid_send_addr(url, node_id) {
-                        match sender.poll_send(cx, url.clone(), *node_id, transmit) {
+                    if sender.is_valid_send_addr(url, endpoint_id) {
+                        match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
                                 match &res {
@@ -635,7 +635,11 @@ impl quinn::UdpSender for MagicSender {
 
         let transport_addr = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
-                let Some(node_id) = self.msock.node_map.node_mapped_addrs.lookup(&mapped_addr)
+                let Some(node_id) = self
+                    .msock
+                    .endpoint_map
+                    .endpoint_mapped_addrs
+                    .lookup(&mapped_addr)
                 else {
                     error!(dst = ?mapped_addr, "unknown NodeIdMappedAddr, dropped transmit");
                     return Poll::Ready(Ok(()));
@@ -649,9 +653,9 @@ impl quinn::UdpSender for MagicSender {
                         "oops, flub didn't think this would happen");
                 }
 
-                let sender = self.msock.node_map.node_state_actor(node_id);
+                let sender = self.msock.endpoint_map.endpoint_state_actor(node_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
-                return match sender.try_send(NodeStateMessage::SendDatagram(transmit)) {
+                return match sender.try_send(EndpointStateMessage::SendDatagram(transmit)) {
                     Ok(()) => {
                         trace!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(), "sent transmit");
                         Poll::Ready(Ok(()))
@@ -670,7 +674,7 @@ impl quinn::UdpSender for MagicSender {
             MultipathMappedAddr::Relay(relay_mapped_addr) => {
                 match self
                     .msock
-                    .node_map
+                    .endpoint_map
                     .relay_mapped_addrs
                     .lookup(&relay_mapped_addr)
                 {

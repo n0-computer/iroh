@@ -5,7 +5,7 @@ use std::{
 
 use bytes::Bytes;
 use iroh::{
-    Endpoint, NodeAddr, RelayMode, RelayUrl,
+    Endpoint, EndpointAddr, RelayMode, RelayUrl,
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
 };
 use n0_snafu::{Result, ResultExt};
@@ -22,7 +22,7 @@ pub fn server_endpoint(
     rt: &tokio::runtime::Runtime,
     relay_url: &Option<RelayUrl>,
     opt: &Opt,
-) -> (NodeAddr, Endpoint) {
+) -> (EndpointAddr, Endpoint) {
     let _guard = rt.enter();
     rt.block_on(async move {
         let relay_mode = relay_url
@@ -54,7 +54,7 @@ pub fn server_endpoint(
 
         let addr = ep.bound_sockets();
         let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr[0].port());
-        let mut addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
+        let mut addr = EndpointAddr::new(ep.id()).with_direct_addresses([addr]);
         if let Some(relay_url) = relay_url {
             addr = addr.with_relay_url(relay_url.clone());
         }
@@ -64,7 +64,7 @@ pub fn server_endpoint(
 
 /// Create and run a client
 pub async fn client(
-    server_addr: NodeAddr,
+    server_addr: EndpointAddr,
     relay_url: Option<RelayUrl>,
     opt: Opt,
 ) -> Result<ClientStats> {
@@ -83,7 +83,7 @@ pub async fn client(
 
 /// Create a client endpoint and client connection
 pub async fn connect_client(
-    server_addr: NodeAddr,
+    server_addr: EndpointAddr,
     relay_url: Option<RelayUrl>,
     opt: Opt,
 ) -> Result<(Endpoint, Connection)> {

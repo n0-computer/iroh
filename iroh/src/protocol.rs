@@ -3,7 +3,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use iroh::{endpoint::{Connection, BindError}, protocol::{AcceptError, ProtocolHandler, Router}, Endpoint, NodeAddr};
+//! # use iroh::{endpoint::{Connection, BindError}, protocol::{AcceptError, ProtocolHandler, Router}, Endpoint, EndpointAddr};
 //! #
 //! # async fn test_compile() -> Result<(), BindError> {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
@@ -39,7 +39,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iroh_base::NodeId;
+use iroh_base::EndpointId;
 use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
@@ -50,7 +50,7 @@ use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
-    endpoint::{Connecting, Connection, RemoteNodeIdError},
+    endpoint::{Connecting, Connection, RemoteEndpointIdError},
 };
 
 /// The built router.
@@ -68,7 +68,7 @@ use crate::{
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use n0_snafu::ResultExt;
-/// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
+/// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, EndpointAddr};
 /// #
 /// # async fn test_compile() -> n0_snafu::Result<()> {
 /// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
@@ -110,7 +110,7 @@ pub enum AcceptError {
         span_trace: n0_snafu::SpanTrace,
     },
     #[snafu(transparent)]
-    MissingRemoteNodeId { source: RemoteNodeIdError },
+    MissingRemoteEndpointId { source: RemoteEndpointIdError },
     #[snafu(display("Not allowed."))]
     NotAllowed {},
 
@@ -148,7 +148,7 @@ impl From<quinn::ClosedStream> for AcceptError {
 /// With this trait, you can handle incoming connections for any protocol.
 ///
 /// Implement this trait on a struct that should handle incoming connections.
-/// The protocol handler must then be registered on the node for an ALPN protocol with
+/// The protocol handler must then be registered on the endpoint for an ALPN protocol with
 /// [`crate::protocol::RouterBuilder::accept`].
 ///
 /// See the [module documentation](crate::protocol) for an example.
@@ -379,7 +379,7 @@ impl RouterBuilder {
         self
     }
 
-    /// Returns the [`Endpoint`] of the node.
+    /// Returns the [`Endpoint`] of the endpoint.
     pub fn endpoint(&self) -> &Endpoint {
         &self.endpoint
     }
@@ -447,7 +447,7 @@ impl RouterBuilder {
 
                         let protocols = protocols.clone();
                         let token = handler_cancel_token.child_token();
-                        let span = info_span!("router.accept", me=%endpoint.node_id().fmt_short(), remote=Empty, alpn=Empty);
+                        let span = info_span!("router.accept", me=%endpoint.id().fmt_short(), remote=Empty, alpn=Empty);
                         join_set.spawn(async move {
                             token.run_until_cancelled(handle_connection(incoming, protocols)).await
                         }.instrument(span));
@@ -505,7 +505,7 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
     };
     match handler.on_connecting(connecting).await {
         Ok(connection) => {
-            if let Ok(remote) = connection.remote_node_id() {
+            if let Ok(remote) = connection.remote_id() {
                 tracing::Span::current()
                     .record("remote", tracing::field::display(remote.fmt_short()));
             };
@@ -527,17 +527,17 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
 pub struct AccessLimit<P: ProtocolHandler + Clone> {
     proto: P,
     #[debug("limiter")]
-    limiter: Arc<dyn Fn(NodeId) -> bool + Send + Sync + 'static>,
+    limiter: Arc<dyn Fn(EndpointId) -> bool + Send + Sync + 'static>,
 }
 
 impl<P: ProtocolHandler + Clone> AccessLimit<P> {
     /// Create a new `AccessLimit`.
     ///
-    /// The function should return `true` for nodes that are allowed to
+    /// The function should return `true` for endpoints that are allowed to
     /// connect, and `false` otherwise.
     pub fn new<F>(proto: P, limiter: F) -> Self
     where
-        F: Fn(NodeId) -> bool + Send + Sync + 'static,
+        F: Fn(EndpointId) -> bool + Send + Sync + 'static,
     {
         Self {
             proto,
@@ -555,7 +555,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
     }
 
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
-        let remote = conn.remote_node_id()?;
+        let remote = conn.remote_id()?;
         let is_allowed = (self.limiter)(remote);
         if !is_allowed {
             conn.close(0u32.into(), b"not allowed");
@@ -625,10 +625,10 @@ mod tests {
             .bind()
             .await?;
         // deny all access
-        let proto = AccessLimit::new(Echo, |_node_id| false);
+        let proto = AccessLimit::new(Echo, |_endpoint_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
-        let addr1 = r1.endpoint().node_addr();
+        let addr1 = r1.endpoint().addr();
         dbg!(&addr1);
         let e2 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
@@ -680,8 +680,8 @@ mod tests {
         let router = Router::builder(endpoint)
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
-        eprintln!("waiting for node addr");
-        let addr = router.endpoint().node_addr();
+        eprintln!("waiting for endpoint addr");
+        let addr = router.endpoint().addr();
 
         eprintln!("creating ep2");
         let endpoint2 = Endpoint::builder()

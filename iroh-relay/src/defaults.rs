@@ -29,7 +29,7 @@ pub(crate) mod timeouts {
 
     /// Timeout used by the relay client while connecting to the relay server,
     /// using `TcpStream::connect`
-    pub(crate) const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
+    pub(crate) const DIAL_ENDPOINT_TIMEOUT: Duration = Duration::from_millis(1500);
     /// Timeout for our async dns resolver
     pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(1);
 

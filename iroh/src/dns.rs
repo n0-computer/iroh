@@ -2,12 +2,14 @@
 //! [`crate::Endpoint`] if no custom resolver is configured.
 //!
 //! The resolver provides methods to resolve domain names to ipv4 and ipv6 addresses,
-//! and to resolve node ids to node addresses.
+//! and to resolve endpoint ids to endpoint addresses.
 //!
-//! See the [`node_info`](crate::node_info) module documentation for details on how
-//! iroh node records are structured.
+//! See the [`endpoint_info`](crate::endpoint_info) module documentation for details on how
+//! iroh endpoint records are structured.
 
-pub use iroh_relay::dns::{DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
+pub use iroh_relay::dns::{
+    DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING,
+};
 
 #[cfg(test)]
 pub(crate) mod tests {

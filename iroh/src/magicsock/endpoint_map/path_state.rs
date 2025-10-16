@@ -1,4 +1,4 @@
-//! The state kept for each network path to a remote node.
+//! The state kept for each network path to a remote endpoint.
 
 use std::collections::HashMap;
 

@@ -46,13 +46,13 @@ pub(crate) use key_cache::KeyCache;
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
-pub mod node_info;
+pub mod endpoint_info;
 
 pub use protos::relay::MAX_PACKET_SIZE;
 
 pub use self::{
     ping_tracker::PingTracker,
-    relay_map::{RelayMap, RelayNode, RelayQuicConfig},
+    relay_map::{RelayConfig, RelayMap, RelayQuicConfig},
 };
 
 /// This trait allows anything that ends up potentially

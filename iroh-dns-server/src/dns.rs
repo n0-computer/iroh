@@ -1,4 +1,4 @@
-//! Implementation of a DNS name server for iroh node announces
+//! Implementation of a DNS name server for iroh endpoint announces
 
 use std::{
     collections::BTreeMap,
@@ -54,7 +54,7 @@ pub struct DnsConfig {
     pub default_soa: String,
     /// Default time to live for returned DNS records (TXT & SOA)
     pub default_ttl: u32,
-    /// Domain used for serving the `_iroh_node.<nodeid>.<origin>` DNS TXT entry
+    /// Domain used for serving the `_iroh.<endpointid>.<origin>` DNS TXT entry
     pub origins: Vec<String>,
 
     /// `A` record to set for all origins

@@ -8,15 +8,15 @@
 pub mod ticket;
 
 #[cfg(feature = "key")]
-mod key;
+mod endpoint_addr;
 #[cfg(feature = "key")]
-mod node_addr;
+mod key;
 #[cfg(feature = "relay")]
 mod relay_url;
 
 #[cfg(feature = "key")]
-pub use self::key::{KeyParsingError, NodeId, PublicKey, SecretKey, Signature, SignatureError};
+pub use self::endpoint_addr::EndpointAddr;
 #[cfg(feature = "key")]
-pub use self::node_addr::NodeAddr;
+pub use self::key::{EndpointId, KeyParsingError, PublicKey, SecretKey, Signature, SignatureError};
 #[cfg(feature = "relay")]
 pub use self::relay_url::{RelayUrl, RelayUrlParseError};

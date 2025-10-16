@@ -27,20 +27,20 @@ const ADDR_GLOBAL_ID: [u8; 5] = [21, 7, 10, 81, 11];
 /// The Subnet ID for [`RelayMappedAddr].
 const RELAY_MAPPED_SUBNET: [u8; 2] = [0, 1];
 
-/// The Subnet ID for [`NodeIdMappedAddr`].
-const NODE_ID_SUBNET: [u8; 2] = [0; 2];
+/// The Subnet ID for [`EndpointIdMappedAddr`].
+const ENDPOINT_ID_SUBNET: [u8; 2] = [0; 2];
 
 /// The dummy port used for all mapped addresses.
 ///
-/// We map each entity, usually a [`NodeId`], to an IPv6 address.  But socket addresses
+/// We map each entity, usually an [`EndpointId`], to an IPv6 address.  But socket addresses
 /// involve ports, so we use a dummy fixed port when creating socket addresses.
 const MAPPED_PORT: u16 = 12345;
 
 /// Counter to always generate unique addresses for [`RelayMappedAddr`].
 static RELAY_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
-static NODE_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
+/// Counter to always generate unique addresses for [`EndpointIdMappedAddr`].
+static ENDPOINT_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Generic mapped address.
 ///
@@ -64,9 +64,9 @@ pub(crate) trait MappedAddr {
 /// address exists, only that it is semantically a valid mapped address.
 #[derive(Clone, Debug)]
 pub(crate) enum MultipathMappedAddr {
-    /// An address for a [`NodeId`], via one or more paths.
-    Mixed(NodeIdMappedAddr),
-    /// An address for a particular [`NodeId`] via a particular relay.
+    /// An address for a [`EndpointId`], via one or more paths.
+    Mixed(EndpointIdMappedAddr),
+    /// An address for a particular [`EndpointId`] via a particular relay.
     Relay(RelayMappedAddr),
     /// An IP based transport address.
     #[cfg(not(wasm_browser))]
@@ -78,7 +78,7 @@ impl From<SocketAddr> for MultipathMappedAddr {
         match value.ip() {
             IpAddr::V4(_) => Self::Ip(value),
             IpAddr::V6(addr) => {
-                if let Ok(addr) = NodeIdMappedAddr::try_from(addr) {
+                if let Ok(addr) = EndpointIdMappedAddr::try_from(addr) {
                     return Self::Mixed(addr);
                 }
                 if let Ok(addr) = RelayMappedAddr::try_from(addr) {
@@ -91,24 +91,24 @@ impl From<SocketAddr> for MultipathMappedAddr {
     }
 }
 
-/// An address used to address a node on any or all paths.
+/// An address used to address a endpoint on any or all paths.
 ///
-/// This is only used for initially connecting to a remote node.  We instruct Quinn to send
-/// to this address, and duplicate all packets for this address to send on all paths we
+/// This is only used for initially connecting to a remote endpoint.  We instruct Quinn to
+/// send to this address, and duplicate all packets for this address to send on all paths we
 /// might want to send the initial on:
 ///
-/// - If this the first connection to the remote node we don't know which path will work and
-///   send to all of them.
+/// - If this the first connection to the remote endpoint we don't know which path will work
+///   and send to all of them.
 ///
-/// - If there already is an active connection to this node we now which path to use.
+/// - If there already is an active connection to this endpoint we now which path to use.
 ///
 /// It is but a newtype around an IPv6 Unique Local Addr.  And in our QUIC-facing socket
 /// APIs like [`quinn::AsyncUdpSocket`] it comes in as the inner [`Ipv6Addr`], in those
 /// interfaces we have to be careful to do the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
+pub(crate) struct EndpointIdMappedAddr(Ipv6Addr);
 
-impl MappedAddr for NodeIdMappedAddr {
+impl MappedAddr for EndpointIdMappedAddr {
     /// Generates a globally unique fake UDP address.
     ///
     /// This generates and IPv6 Unique Local Address according to RFC 4193.
@@ -116,15 +116,15 @@ impl MappedAddr for NodeIdMappedAddr {
         let mut addr = [0u8; 16];
         addr[0] = ADDR_PREFIXL;
         addr[1..6].copy_from_slice(&ADDR_GLOBAL_ID);
-        addr[6..8].copy_from_slice(&NODE_ID_SUBNET);
+        addr[6..8].copy_from_slice(&ENDPOINT_ID_SUBNET);
 
-        let counter = NODE_ID_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let counter = ENDPOINT_ID_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
         addr[8..16].copy_from_slice(&counter.to_be_bytes());
 
         Self(Ipv6Addr::from(addr))
     }
 
-    /// Returns a consistent [`SocketAddr`] for the [`NodeIdMappedAddr`].
+    /// Returns a consistent [`SocketAddr`] for the [`EndpointIdMappedAddr`].
     ///
     /// This socket address does not have a routable IP address.
     ///
@@ -135,38 +135,38 @@ impl MappedAddr for NodeIdMappedAddr {
     }
 }
 
-impl std::fmt::Display for NodeIdMappedAddr {
+impl std::fmt::Display for EndpointIdMappedAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "NodeIdMappedAddr({})", self.0)
+        write!(f, "EndpointIdMappedAddr({})", self.0)
     }
 }
 
-impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
-    type Error = NodeIdMappedAddrError;
+impl TryFrom<Ipv6Addr> for EndpointIdMappedAddr {
+    type Error = EndpointIdMappedAddrError;
 
     fn try_from(value: Ipv6Addr) -> Result<Self, Self::Error> {
         let octets = value.octets();
         if octets[0] == ADDR_PREFIXL
             && octets[1..6] == ADDR_GLOBAL_ID
-            && octets[6..8] == NODE_ID_SUBNET
+            && octets[6..8] == ENDPOINT_ID_SUBNET
         {
             return Ok(Self(value));
         }
-        Err(NodeIdMappedAddrError)
+        Err(EndpointIdMappedAddrError)
     }
 }
 
-/// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
+/// Can occur when converting a [`SocketAddr`] to an [`EndpointIdMappedAddr`]
 #[derive(Debug, Snafu)]
 #[snafu(display("Failed to convert"))]
-pub(crate) struct NodeIdMappedAddrError;
+pub(crate) struct EndpointIdMappedAddrError;
 
-/// An Ipv6 ULA address, identifying a relay path for a [`NodeId`].
+/// An Ipv6 ULA address, identifying a relay path for a [`EndpointId`].
 ///
-/// Since iroh nodes are reachable via a relay server we have a network path indicated by
-/// the `(NodeId, RelayUrl)`.  However Quinn can only handle socket addresses, so we use
+/// Since iroh endpoint are reachable via a relay server we have a network path indicated by
+/// the `(EndpointId, RelayUrl)`.  However Quinn can only handle socket addresses, so we use
 /// IPv6 addresses in a private IPv6 Unique Local Address range, which map to a unique
-/// `(NodeId, RelayUrl)` pair.
+/// `(EndointId, RelayUrl)` pair.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub(crate) struct RelayMappedAddr(Ipv6Addr);
 
@@ -192,7 +192,7 @@ impl MappedAddr for RelayMappedAddr {
     /// This does not have a routable IP address.
     ///
     /// This uses a made-up, but fixed port number.  The [`RelayAddrMap`] creates a unique
-    /// [`RelayMappedAddr`] for each `(NodeId, RelayUrl)` pair and thus does not use the
+    /// [`RelayMappedAddr`] for each `(EndpointId, RelayUrl)` pair and thus does not use the
     /// port to map back to the original [`SocketAddr`].
     fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)

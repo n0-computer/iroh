@@ -5,12 +5,12 @@
 //!  * client responds to any [`FrameType::Ping`] with a [`FrameType::Pong`]
 //!  * clients sends [`FrameType::ClientToRelayDatagram`] or [`FrameType::ClientToRelayDatagramBatch`]
 //!  * server then sends [`FrameType::RelayToClientDatagram`] or [`FrameType::RelayToClientDatagramBatch`] to recipient
-//!  * server sends [`FrameType::NodeGone`] when the other client disconnects
+//!  * server sends [`FrameType::EndpointGone`] when the other client disconnects
 
 use std::num::NonZeroU16;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use iroh_base::{KeyParsingError, NodeId};
+use iroh_base::{EndpointId, KeyParsingError};
 use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
@@ -75,14 +75,14 @@ pub enum Error {
 pub enum RelayToClientMsg {
     /// Represents datagrams sent from relays (originally sent to them by another client).
     Datagrams {
-        /// The [`NodeId`] of the original sender.
-        remote_node_id: NodeId,
+        /// The [`EndpointId`] of the original sender.
+        remote_endpoint_id: EndpointId,
         /// The datagrams and related metadata.
         datagrams: Datagrams,
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the relay.
-    NodeGone(NodeId),
+    EndpointGone(EndpointId),
     /// A one-way message from relay to client, declaring the connection health state.
     Health {
         /// If set, is a description of why the connection is unhealthy.
@@ -121,10 +121,10 @@ pub enum ClientToRelayMsg {
     /// Reply to a [`RelayToClientMsg::Ping`] from a server
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
-    /// Request from the client to relay datagrams to given remote node.
+    /// Request from the client to relay datagrams to given remote endpoint.
     Datagrams {
-        /// The remote node to relay to.
-        dst_node_id: NodeId,
+        /// The remote endpoint to relay to.
+        dst_endpoint_id: EndpointId,
         /// The datagrams and related metadata to relay.
         datagrams: Datagrams,
     },
@@ -254,7 +254,7 @@ impl RelayToClientMsg {
                     FrameType::RelayToClientDatagram
                 }
             }
-            Self::NodeGone { .. } => FrameType::NodeGone,
+            Self::EndpointGone { .. } => FrameType::EndpointGone,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
             Self::Health { .. } => FrameType::Health,
@@ -275,14 +275,14 @@ impl RelayToClientMsg {
         dst = self.typ().write_to(dst);
         match self {
             Self::Datagrams {
-                remote_node_id,
+                remote_endpoint_id,
                 datagrams,
             } => {
-                dst.put(remote_node_id.as_ref());
+                dst.put(remote_endpoint_id.as_ref());
                 dst = datagrams.write_to(dst);
             }
-            Self::NodeGone(node_id) => {
-                dst.put(node_id.as_ref());
+            Self::EndpointGone(endpoint_id) => {
+                dst.put(endpoint_id.as_ref());
             }
             Self::Ping(data) => {
                 dst.put(&data[..]);
@@ -308,10 +308,10 @@ impl RelayToClientMsg {
     pub(crate) fn encoded_len(&self) -> usize {
         let payload_len = match self {
             Self::Datagrams { datagrams, .. } => {
-                32 // nodeid
+                32 // endpointid
                 + datagrams.encoded_len()
             }
-            Self::NodeGone(_) => 32,
+            Self::EndpointGone(_) => 32,
             Self::Ping(_) | Self::Pong(_) => 8,
             Self::Health { problem } => problem.len(),
             Self::Restarting { .. } => {
@@ -336,26 +336,26 @@ impl RelayToClientMsg {
 
         let res = match frame_type {
             FrameType::RelayToClientDatagram | FrameType::RelayToClientDatagramBatch => {
-                snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
+                snafu::ensure!(content.len() >= EndpointId::LENGTH, InvalidFrameSnafu);
 
-                let remote_node_id = cache
-                    .key_from_slice(&content[..NodeId::LENGTH])
+                let remote_endpoint_id = cache
+                    .key_from_slice(&content[..EndpointId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(
-                    content.slice(NodeId::LENGTH..),
+                    content.slice(EndpointId::LENGTH..),
                     frame_type == FrameType::RelayToClientDatagramBatch,
                 )?;
                 Self::Datagrams {
-                    remote_node_id,
+                    remote_endpoint_id,
                     datagrams,
                 }
             }
-            FrameType::NodeGone => {
-                snafu::ensure!(content.len() == NodeId::LENGTH, InvalidFrameSnafu);
-                let node_id = cache
+            FrameType::EndpointGone => {
+                snafu::ensure!(content.len() == EndpointId::LENGTH, InvalidFrameSnafu);
+                let endpoint_id = cache
                     .key_from_slice(content.as_ref())
                     .context(InvalidPublicKeySnafu)?;
-                Self::NodeGone(node_id)
+                Self::EndpointGone(endpoint_id)
             }
             FrameType::Ping => {
                 snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
@@ -428,10 +428,10 @@ impl ClientToRelayMsg {
         dst = self.typ().write_to(dst);
         match self {
             Self::Datagrams {
-                dst_node_id,
+                dst_endpoint_id,
                 datagrams,
             } => {
-                dst.put(dst_node_id.as_ref());
+                dst.put(dst_endpoint_id.as_ref());
                 dst = datagrams.write_to(dst);
             }
             Self::Ping(data) => {
@@ -448,7 +448,7 @@ impl ClientToRelayMsg {
         let payload_len = match self {
             Self::Ping(_) | Self::Pong(_) => 8,
             Self::Datagrams { datagrams, .. } => {
-                32 // node id
+                32 // endpoint id
                 + datagrams.encoded_len()
             }
         };
@@ -470,15 +470,15 @@ impl ClientToRelayMsg {
 
         let res = match frame_type {
             FrameType::ClientToRelayDatagram | FrameType::ClientToRelayDatagramBatch => {
-                let dst_node_id = cache
-                    .key_from_slice(&content[..NodeId::LENGTH])
+                let dst_endpoint_id = cache
+                    .key_from_slice(&content[..EndpointId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(
-                    content.slice(NodeId::LENGTH..),
+                    content.slice(EndpointId::LENGTH..),
                     frame_type == FrameType::ClientToRelayDatagramBatch,
                 )?;
                 Self::Datagrams {
-                    dst_node_id,
+                    dst_endpoint_id,
                     datagrams,
                 }
             }
@@ -542,7 +542,7 @@ mod tests {
                 20 69 73 20 64 6f 67 2e",
             ),
             (
-                RelayToClientMsg::NodeGone(client_key.public()).write_to(Vec::new()),
+                RelayToClientMsg::EndpointGone(client_key.public()).write_to(Vec::new()),
                 "08 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
                 61",
@@ -557,7 +557,7 @@ mod tests {
             ),
             (
                 RelayToClientMsg::Datagrams {
-                    remote_node_id: client_key.public(),
+                    remote_endpoint_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
                         segment_size: NonZeroU16::new(6),
@@ -580,7 +580,7 @@ mod tests {
             ),
             (
                 RelayToClientMsg::Datagrams {
-                    remote_node_id: client_key.public(),
+                    remote_endpoint_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
                         segment_size: None,
@@ -627,7 +627,7 @@ mod tests {
             ),
             (
                 ClientToRelayMsg::Datagrams {
-                    dst_node_id: client_key.public(),
+                    dst_endpoint_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
                         segment_size: NonZeroU16::new(6),
@@ -650,7 +650,7 @@ mod tests {
             ),
             (
                 ClientToRelayMsg::Datagrams {
-                    dst_node_id: client_key.public(),
+                    dst_endpoint_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
                         segment_size: None,
@@ -686,7 +686,7 @@ mod proptests {
         prop::array::uniform32(any::<u8>()).prop_map(SecretKey::from)
     }
 
-    fn key() -> impl Strategy<Value = NodeId> {
+    fn key() -> impl Strategy<Value = EndpointId> {
         secret_key().prop_map(|key| key.public())
     }
 
@@ -701,7 +701,7 @@ mod proptests {
 
     fn datagrams() -> impl Strategy<Value = Datagrams> {
         // The max payload size (conservatively, since with segment_size = 0 we'd have slightly more space)
-        const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - NodeId::LENGTH - 1 /* ECN bytes */ - 2 /* segment size */;
+        const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - EndpointId::LENGTH - 1 /* ECN bytes */ - 2 /* segment size */;
         (
             ecn(),
             prop::option::of(MAX_PAYLOAD_SIZE / 20..MAX_PAYLOAD_SIZE),
@@ -718,13 +718,13 @@ mod proptests {
 
     /// Generates a random valid frame
     fn server_client_frame() -> impl Strategy<Value = RelayToClientMsg> {
-        let recv_packet = (key(), datagrams()).prop_map(|(remote_node_id, datagrams)| {
+        let recv_packet = (key(), datagrams()).prop_map(|(remote_endpoint_id, datagrams)| {
             RelayToClientMsg::Datagrams {
-                remote_node_id,
+                remote_endpoint_id,
                 datagrams,
             }
         });
-        let node_gone = key().prop_map(RelayToClientMsg::NodeGone);
+        let endpoint_gone = key().prop_map(RelayToClientMsg::EndpointGone);
         let ping = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
         let health = ".{0,65536}"
@@ -738,15 +738,16 @@ mod proptests {
                 try_for: Duration::from_millis(try_for.into()),
             }
         });
-        prop_oneof![recv_packet, node_gone, ping, pong, health, restarting]
+        prop_oneof![recv_packet, endpoint_gone, ping, pong, health, restarting]
     }
 
     fn client_server_frame() -> impl Strategy<Value = ClientToRelayMsg> {
-        let send_packet =
-            (key(), datagrams()).prop_map(|(dst_node_id, datagrams)| ClientToRelayMsg::Datagrams {
-                dst_node_id,
+        let send_packet = (key(), datagrams()).prop_map(|(dst_endpoint_id, datagrams)| {
+            ClientToRelayMsg::Datagrams {
+                dst_endpoint_id,
                 datagrams,
-            });
+            }
+        });
         let ping = prop::array::uniform8(any::<u8>()).prop_map(ClientToRelayMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(ClientToRelayMsg::Pong);
         prop_oneof![send_packet, ping, pong]

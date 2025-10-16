@@ -137,7 +137,7 @@ pub struct ClientBuilder {
     /// The DNS resolver to use.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
-    /// Cache for public keys of remote nodes.
+    /// Cache for public keys of remote endpoints.
     key_cache: KeyCache,
 }
 

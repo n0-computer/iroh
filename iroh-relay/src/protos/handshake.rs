@@ -1,8 +1,8 @@
 //! Implements the handshake protocol that authenticates and authorizes clients connecting to the relays.
 //!
 //! The purpose of the handshake is to
-//! 1. Inform the relay of the client's NodeId
-//! 2. Check that the connecting client owns the secret key for its NodeId ("is authentic"/"authentication")
+//! 1. Inform the relay of the client's EndpointId
+//! 2. Check that the connecting client owns the secret key for its EndpointId ("is authentic"/"authentication")
 //! 3. Possibly check that the client has access to this relay, if the relay requires authorization.
 //!
 //! Additional complexity comes from the fact that there's two ways that clients can authenticate with
@@ -12,7 +12,7 @@
 //!
 //! 1. Once a websocket connection is opened, a client receives a challenge (the `ServerChallenge` frame)
 //! 2. The client sends back what is essentially a signature of that challenge with their secret key
-//!    that matches the NodeId they have, as well as the NodeId (the `ClientAuth` frame)
+//!    that matches the EndpointId they have, as well as the EndpointId (the `ClientAuth` frame)
 //!
 //! The second way is very similar to the [Concealed HTTP Auth RFC], and involves send a header that
 //! contains a signature of some shared keying material extracted from TLS ([RFC 5705]).
@@ -68,7 +68,7 @@ pub(crate) struct KeyMaterialClientAuth {
     pub(crate) key_material_suffix: [u8; 16],
 }
 
-/// A challenge for the client to sign with their secret key for NodeId authentication.
+/// A challenge for the client to sign with their secret key for EndpointId authentication.
 #[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ServerChallenge {
     /// The challenge to sign.
@@ -82,7 +82,7 @@ pub(crate) struct ServerChallenge {
 /// Used when authentication via [`KeyMaterialClientAuth`] didn't work.
 #[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ClientAuth {
-    /// The client's public key, a.k.a. the `NodeId`
+    /// The client's public key, a.k.a. the `EndpointId`
     pub(crate) public_key: PublicKey,
     /// A signature of (a hash of) the [`ServerChallenge`].
     ///

@@ -23,7 +23,7 @@ mod tests {
 
     use iroh::{
         RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
-        node_info::NodeInfo,
+        endpoint_info::EndpointInfo,
     };
     use n0_snafu::{Result, ResultExt};
     use pkarr::{SignedPacket, Timestamp};
@@ -171,18 +171,18 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let secret_key = SecretKey::generate(&mut rng);
-        let node_id = secret_key.public();
+        let endpoint_id = secret_key.public();
         let pkarr = PkarrRelayClient::new(pkarr_relay);
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
-        let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         pkarr.publish(&signed_packet).await?;
 
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_node_by_id(&node_id, origin).await?;
+        let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
 
-        assert_eq!(res.node_id, node_id);
+        assert_eq!(res.endpoint_id, endpoint_id);
         assert_eq!(res.relay_url(), Some(&relay_url));
 
         server.shutdown().await?;
@@ -239,10 +239,10 @@ mod tests {
 
         // create a signed packet
         let secret_key = SecretKey::generate(&mut rng);
-        let node_id = secret_key.public();
+        let endpoint_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
-        let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish the signed packet to our DHT
         let pkarr = pkarr::Client::builder()
@@ -254,9 +254,9 @@ mod tests {
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_node_by_id(&node_id, origin).await?;
+        let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
 
-        assert_eq!(res.node_id, node_id);
+        assert_eq!(res.endpoint_id, endpoint_id);
         assert_eq!(res.relay_url(), Some(&relay_url));
 
         server.shutdown().await?;
@@ -269,10 +269,10 @@ mod tests {
 
     fn random_signed_packet<R: CryptoRng + ?Sized>(rng: &mut R) -> Result<SignedPacket> {
         let secret_key = SecretKey::generate(rng);
-        let node_id = secret_key.public();
+        let endpoint_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
-        let packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         Ok(packet)
     }
 }

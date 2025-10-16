@@ -24,7 +24,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use iroh_base::{NodeId, PublicKey, RelayUrl};
+use iroh_base::{EndpointId, PublicKey, RelayUrl};
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Snafu, ensure};
@@ -121,17 +121,17 @@ pub struct Ping {
     /// Allegedly the ping sender's public key.
     ///
     /// It shouldn't be trusted by itself.
-    pub node_key: PublicKey,
+    pub endpoint_key: PublicKey,
 }
 
 impl Ping {
     /// Creates a ping message to ping `node_id`.
     ///
     /// Uses a randomly generated STUN transaction ID.
-    pub(crate) fn new(node_id: NodeId) -> Self {
+    pub(crate) fn new(endpoint_id: EndpointId) -> Self {
         Self {
             tx_id: stun_rs::TransactionId::default(),
-            node_key: node_id,
+            endpoint_key: endpoint_id,
         }
     }
 
@@ -140,10 +140,14 @@ impl Ping {
         ensure!(p.len() >= PING_LEN, TooShortSnafu);
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
         let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
-        let node_key = PublicKey::try_from(raw_key).map_err(|_| InvalidEncodingSnafu.build())?;
+        let endpoint_key =
+            PublicKey::try_from(raw_key).map_err(|_| InvalidEncodingSnafu.build())?;
         let tx_id = stun_rs::TransactionId::from(tx_id);
 
-        Ok(Ping { tx_id, node_key })
+        Ok(Ping {
+            tx_id,
+            endpoint_key,
+        })
     }
 
     fn as_bytes(&self) -> Vec<u8> {
@@ -152,7 +156,7 @@ impl Ping {
 
         out[..HEADER_LEN].copy_from_slice(&header);
         out[HEADER_LEN..HEADER_LEN + TX_LEN].copy_from_slice(&self.tx_id);
-        out[HEADER_LEN + TX_LEN..].copy_from_slice(self.node_key.as_ref());
+        out[HEADER_LEN + TX_LEN..].copy_from_slice(self.endpoint_key.as_ref());
 
         out
     }
@@ -440,10 +444,10 @@ mod tests {
         }
         let tests = [
             Test {
-                name: "ping_with_nodekey_src",
+                name: "ping_with_endpointkey_src",
                 m: Message::Ping(Ping {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    node_key: PublicKey::try_from(
+                    endpoint_key: PublicKey::try_from(
                         &[
                             190, 243, 65, 104, 37, 102, 175, 75, 243, 22, 69, 200, 167, 107, 24,
                             63, 216, 140, 120, 43, 4, 112, 16, 62, 117, 155, 45, 215, 72, 175, 40,
@@ -513,7 +517,7 @@ mod tests {
 
         let msg = Message::Ping(Ping {
             tx_id: stun_rs::TransactionId::default(),
-            node_key: sender_key.public(),
+            endpoint_key: sender_key.public(),
         });
 
         let sender_secret = secret_ed_box(&sender_key);

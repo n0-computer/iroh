@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use iroh_base::{NodeId, RelayUrl};
+use iroh_base::{EndpointId, RelayUrl};
 use iroh_relay::protos::relay::Datagrams;
 use n0_future::{
     ready,
@@ -34,7 +34,7 @@ pub(crate) struct RelayTransport {
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: Watchable<Option<RelayUrl>>,
-    my_node_id: NodeId,
+    my_endpoint_id: EndpointId,
 }
 
 impl RelayTransport {
@@ -45,7 +45,7 @@ impl RelayTransport {
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
-        let my_node_id = config.secret_key.public();
+        let my_endpoint_id = config.secret_key.public();
         let my_relay = config.my_relay.clone();
 
         let relay_actor = RelayActor::new(config, relay_datagram_recv_tx);
@@ -66,7 +66,7 @@ impl RelayTransport {
             actor_sender,
             _actor_handle: actor_handle,
             my_relay,
-            my_node_id,
+            my_endpoint_id,
         }
     }
 
@@ -164,11 +164,11 @@ impl RelayTransport {
 
     pub(super) fn local_addr_watch(
         &self,
-    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>> {
-        let my_node_id = self.my_node_id;
+    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>> {
+        let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
             .watch()
-            .map(move |url| url.map(|url| (url, my_node_id)))
+            .map(move |url| url.map(|url| (url, my_endpoint_id)))
             .expect("disconnected")
     }
 
@@ -241,20 +241,20 @@ pub(crate) struct RelaySender {
 }
 
 impl RelaySender {
-    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _node_id: &NodeId) -> bool {
+    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _endpoint_id: &EndpointId) -> bool {
         true
     }
 
     pub(super) async fn send(
         &self,
         dest_url: RelayUrl,
-        dest_node: NodeId,
+        dest_endpoint: EndpointId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
         let contents = datagrams_from_transmit(transmit);
 
         let item = RelaySendItem {
-            remote_node: dest_node,
+            remote_endpoint: dest_endpoint,
             url: dest_url.clone(),
             datagrams: contents,
         };
@@ -275,14 +275,14 @@ impl RelaySender {
         &mut self,
         cx: &mut Context,
         dest_url: RelayUrl,
-        dest_node: NodeId,
+        dest_endpoint: EndpointId,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         match ready!(self.sender.poll_reserve(cx)) {
             Ok(()) => {
                 let contents = datagrams_from_transmit(transmit);
                 let item = RelaySendItem {
-                    remote_node: dest_node,
+                    remote_endpoint: dest_endpoint,
                     url: dest_url.clone(),
                     datagrams: contents,
                 };
@@ -322,7 +322,7 @@ fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
 mod tests {
     use std::{collections::BTreeSet, time::Duration};
 
-    use iroh_base::NodeId;
+    use iroh_base::EndpointId;
     use tokio::task::JoinSet;
     use tracing::debug;
 
@@ -333,7 +333,7 @@ mod tests {
     async fn test_relay_datagram_queue() {
         let capacity = 16;
         let (sender, mut receiver) = mpsc::channel(capacity);
-        let url = staging::default_na_relay_node().url;
+        let url = staging::default_na_relay().url;
 
         let mut tasks = JoinSet::new();
 
@@ -361,7 +361,7 @@ mod tests {
                     sender
                         .try_send(RelayRecvDatagram {
                             url,
-                            src: NodeId::from_bytes(&[0u8; 32]).unwrap(),
+                            src: EndpointId::from_bytes(&[0u8; 32]).unwrap(),
                             datagrams: Datagrams::from(&i.to_le_bytes()),
                         })
                         .unwrap();

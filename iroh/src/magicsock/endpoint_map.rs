@@ -5,9 +5,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iroh_base::{NodeAddr, NodeId, RelayUrl};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
 use n0_future::task::AbortOnDropHandle;
-use node_state::{NodeStateActor, NodeStateHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{Instrument, info_span, trace, warn};
@@ -18,54 +17,39 @@ use super::transports::TransportsSender;
 use super::transports::TransportsSender;
 use super::{
     DirectAddr, DiscoState, MagicsockMetrics,
-    mapped_addrs::{AddrMap, NodeIdMappedAddr, RelayMappedAddr},
+    mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
     transports::{self, OwnedTransmit},
 };
 use crate::disco::{self};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
-mod node_state;
+mod endpoint_state;
 mod path_state;
 
-pub(super) use node_state::NodeStateMessage;
-pub use node_state::{ConnectionType, PathInfo, TransportType};
+pub(super) use endpoint_state::EndpointStateMessage;
+pub use endpoint_state::{ConnectionType, PathInfo, TransportType};
+use endpoint_state::{EndpointStateActor, EndpointStateHandle};
 
 // TODO: use this
-// /// Number of nodes that are inactive for which we keep info about. This limit is enforced
+// /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
 // /// periodically via [`NodeMap::prune_inactive`].
 // const MAX_INACTIVE_NODES: usize = 30;
 
-/// Map of the [`NodeState`] information for all the known nodes.
-///
-/// The nodes can be looked up by:
-///
-/// - The node's ID in this map, only useful if you know the ID from an insert or lookup.
-///   This is static and never changes.
-///
-/// - The [`NodeIdMappedAddr`] which internally identifies the node to the QUIC stack.  This
-///   is static and never changes.
-///
-/// - The nodes's public key, aka `PublicKey` or "node_key".  This is static and never changes,
-///   however a node could be added when this is not yet known.
-///
-/// - A public socket address on which they are reachable on the internet, known as ip-port.
-///   These come and go as the node moves around on the internet
-///
-/// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
+/// Map of the [`EndpointState`] information for all the known endpoints.
 #[derive(Debug)]
-pub(super) struct NodeMap {
-    /// The node ID of the local node.
-    local_node_id: NodeId,
-    inner: Mutex<NodeMapInner>,
-    /// The mapping between [`NodeId`]s and [`NodeIdMappedAddr`]s.
-    pub(super) node_mapped_addrs: AddrMap<NodeId, NodeIdMappedAddr>,
-    /// The mapping between nodes via a relay and their [`RelayMappedAddr`]s.
-    pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, NodeId), RelayMappedAddr>,
+pub(super) struct EndpointMap {
+    /// The endpoint ID of the local endpoint.
+    local_endpoint_id: EndpointId,
+    inner: Mutex<EndpointMapInner>,
+    /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
+    pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
+    /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
+    pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
 }
 
 #[derive(Debug)]
-pub(super) struct NodeMapInner {
+pub(super) struct EndpointMapInner {
     metrics: Arc<MagicsockMetrics>,
     /// Handle to an actor that can send over the transports.
     transports_handle: TransportsSenderHandle,
@@ -73,17 +57,17 @@ pub(super) struct NodeMapInner {
     disco: DiscoState,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
-    /// The [`NodeStateActor`] for each remote node.
+    /// The [`EndpointStateActor`] for each remote endpoint.
     ///
-    /// [`NodeStateActor`]: node_state::NodeStateActor
-    node_states: HashMap<NodeId, NodeStateHandle>,
+    /// [`EndpointStateActor`]: endpoint_state::EndpointStateActor
+    endpoint_states: HashMap<EndpointId, EndpointStateHandle>,
 }
 
-/// The origin or *source* through which an address associated with a remote node
+/// The origin or *source* through which an address associated with a remote endpoint
 /// was discovered.
 ///
-/// An aggregate of the [`Source`]s of all the addresses of a node describe the
-/// [`Source`]s of the node itself.
+/// An aggregate of the [`Source`]s of all the addresses of an endpoint describe the
+/// [`Source`]s of the endpoint itself.
 ///
 /// A [`Source`] helps track how and where an address was learned. Multiple
 /// sources can be associated with a single address, if we have discovered this
@@ -93,9 +77,9 @@ pub(super) struct NodeMapInner {
 pub enum Source {
     /// Address was loaded from the fs.
     Saved,
-    /// A node communicated with us first via UDP.
+    /// An endpoint communicated with us first via UDP.
     Udp,
-    /// A node communicated with us first via relay.
+    /// An endpoint communicated with us first via relay.
     Relay,
     /// Application layer added the address directly.
     App,
@@ -105,10 +89,10 @@ pub enum Source {
         /// The name of the discovery service that discovered the address.
         name: String,
     },
-    /// Application layer with a specific name added the node directly.
+    /// Application layer with a specific name added the endpoint directly.
     #[strum(serialize = "{name}")]
     NamedApp {
-        /// The name of the application that added the node
+        /// The name of the application that added the endpoint
         name: String,
     },
     /// The address was advertised by a call-me-maybe DISCO message.
@@ -125,10 +109,10 @@ pub enum Source {
     Connection,
 }
 
-impl NodeMap {
-    /// Creates a new [`NodeMap`].
+impl EndpointMap {
+    /// Creates a new [`EndpointMap`].
     pub(super) fn new(
-        local_node_id: NodeId,
+        local_endpoint_id: EndpointId,
         #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
@@ -136,72 +120,78 @@ impl NodeMap {
         disco: DiscoState,
     ) -> Self {
         #[cfg(not(any(test, feature = "test-utils")))]
-        let inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
+        let inner = EndpointMapInner::new(metrics, sender, local_addrs, disco);
 
         #[cfg(any(test, feature = "test-utils"))]
         let inner = {
-            let mut inner = NodeMapInner::new(metrics, sender, local_addrs, disco);
+            let mut inner = EndpointMapInner::new(metrics, sender, local_addrs, disco);
             inner.path_selection = path_selection;
             inner
         };
 
         Self {
-            local_node_id,
+            local_endpoint_id,
             inner: Mutex::new(inner),
-            node_mapped_addrs: Default::default(),
+            endpoint_mapped_addrs: Default::default(),
             relay_mapped_addrs: Default::default(),
         }
     }
 
     /// Adds addresses where a node might be contactable.
-    pub(super) async fn add_node_addr(&self, node_addr: NodeAddr, source: Source) {
-        if let Some(ref relay_url) = node_addr.relay_url {
+    pub(super) async fn add_endpoint_addr(&self, endpoint_addr: EndpointAddr, source: Source) {
+        if let Some(ref relay_url) = endpoint_addr.relay_url {
             // Ensure we have a RelayMappedAddress for this.
             self.relay_mapped_addrs
-                .get(&(relay_url.clone(), node_addr.node_id));
+                .get(&(relay_url.clone(), endpoint_addr.endpoint_id));
         }
-        let node_state = self.node_state_actor(node_addr.node_id);
+        let node_state = self.endpoint_state_actor(endpoint_addr.endpoint_id);
 
         // This only fails if the sender is closed.  That means the NodeStateActor has
         // stopped, which only happens during shutdown.
         node_state
-            .send(NodeStateMessage::AddNodeAddr(node_addr, source))
+            .send(EndpointStateMessage::AddEndpointAddr(endpoint_addr, source))
             .await
             .ok();
     }
 
-    pub(super) fn node_mapped_addr(&self, node_id: NodeId) -> NodeIdMappedAddr {
-        self.node_mapped_addrs.get(&node_id)
+    pub(super) fn endpoint_mapped_addr(&self, eid: EndpointId) -> EndpointIdMappedAddr {
+        self.endpoint_mapped_addrs.get(&eid)
     }
 
-    /// Returns a [`n0_watcher::Direct`] for given node's [`ConnectionType`].
+    /// Returns a [`n0_watcher::Direct`] for given endpoint's [`ConnectionType`].
     ///
     /// # Errors
     ///
-    /// Will return `None` if there is not an entry in the [`NodeMap`] for
-    /// the `node_id`
-    pub(super) fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.inner.lock().expect("poisoned").conn_type(node_id)
+    /// Will return `None` if there is not an entry in the [`EndpointMap`] for
+    /// the `endpoint_id`
+    pub(super) fn conn_type(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Option<n0_watcher::Direct<ConnectionType>> {
+        self.inner.lock().expect("poisoned").conn_type(endpoint_id)
     }
 
-    /// Returns the sender for the [`NodeStateActor`].
+    /// Returns the sender for the [`EndpointStateActor`].
     ///
     /// If needed a new actor is started on demand.
     ///
-    /// [`NodeStateActor`]: node_state::NodeStateActor
-    pub(super) fn node_state_actor(&self, node_id: NodeId) -> mpsc::Sender<NodeStateMessage> {
+    /// [`EndpointStateActor`]: endpoint_state::EndpointStateActor
+    pub(super) fn endpoint_state_actor(
+        &self,
+        eid: EndpointId,
+    ) -> mpsc::Sender<EndpointStateMessage> {
         let mut inner = self.inner.lock().expect("poisoned");
-        match inner.node_states.get(&node_id) {
+        match inner.endpoint_states.get(&eid) {
             Some(handle) => handle.sender.clone(),
             None => {
-                // Create a new NodeStateActor and insert it into the node map.
+                // Create a new EndpointStateActor and insert it into the endpoint map.
                 let sender = inner.transports_handle.inbox.clone();
                 let local_addrs = inner.local_addrs.clone();
                 let disco = inner.disco.clone();
                 let metrics = inner.metrics.clone();
-                let actor = NodeStateActor::new(
-                    node_id,
-                    self.local_node_id,
+                let actor = EndpointStateActor::new(
+                    eid,
+                    self.local_endpoint_id,
                     sender,
                     local_addrs,
                     disco,
@@ -210,31 +200,31 @@ impl NodeMap {
                 );
                 let handle = actor.start();
                 let sender = handle.sender.clone();
-                inner.node_states.insert(node_id, handle);
+                inner.endpoint_states.insert(eid, handle);
 
-                // Ensure there is a NodeMappedAddr for this NodeId.
-                self.node_mapped_addrs.get(&node_id);
+                // Ensure there is a EndpointMappedAddr for this EndpointId.
+                self.endpoint_mapped_addrs.get(&eid);
                 sender
             }
         }
     }
 
-    pub(super) fn handle_ping(&self, msg: disco::Ping, sender: NodeId, src: transports::Addr) {
-        if msg.node_key != sender {
-            warn!("DISCO Ping NodeId mismatch, ignoring ping");
+    pub(super) fn handle_ping(&self, msg: disco::Ping, sender: EndpointId, src: transports::Addr) {
+        if msg.endpoint_key != sender {
+            warn!("DISCO Ping EndpointId mismatch, ignoring ping");
             return;
         }
-        let node_state = self.node_state_actor(sender);
-        if let Err(err) = node_state.try_send(NodeStateMessage::PingReceived(msg, src)) {
+        let endpoint_state = self.endpoint_state_actor(sender);
+        if let Err(err) = endpoint_state.try_send(EndpointStateMessage::PingReceived(msg, src)) {
             // TODO: This is really, really bad and will drop pings under load.  But
             //    DISCO pings are going away with QUIC-NAT-TRAVERSAL so I don't care.
             warn!("DISCO Ping dropped: {err:#}");
         }
     }
 
-    pub(super) fn handle_pong(&self, msg: disco::Pong, sender: NodeId, src: transports::Addr) {
-        let node_state = self.node_state_actor(sender);
-        if let Err(err) = node_state.try_send(NodeStateMessage::PongReceived(msg, src)) {
+    pub(super) fn handle_pong(&self, msg: disco::Pong, sender: EndpointId, src: transports::Addr) {
+        let actor = self.endpoint_state_actor(sender);
+        if let Err(err) = actor.try_send(EndpointStateMessage::PongReceived(msg, src)) {
             // TODO: This is really, really bad and will drop pongs under load.  But
             //    DISCO pongs are going away with QUIC-NAT-TRAVERSAL so I don't care.
             warn!("DISCO Pong dropped: {err:#}");
@@ -244,15 +234,15 @@ impl NodeMap {
     pub(super) fn handle_call_me_maybe(
         &self,
         msg: disco::CallMeMaybe,
-        sender: NodeId,
+        sender: EndpointId,
         src: transports::Addr,
     ) {
         if !src.is_relay() {
             warn!("DISCO CallMeMaybe packets should only come via relay");
             return;
         }
-        let node_state = self.node_state_actor(sender);
-        if let Err(err) = node_state.try_send(NodeStateMessage::CallMeMaybeReceived(msg)) {
+        let actor = self.endpoint_state_actor(sender);
+        if let Err(err) = actor.try_send(EndpointStateMessage::CallMeMaybeReceived(msg)) {
             // TODO: This is bad and will drop call-me-maybe's under load.  But
             //    DISCO CallMeMaybe going away with QUIC-NAT-TRAVERSAL so I don't care.
             warn!("DISCO CallMeMaybe dropped: {err:#}");
@@ -260,7 +250,7 @@ impl NodeMap {
     }
 }
 
-impl NodeMapInner {
+impl EndpointMapInner {
     fn new(
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
@@ -275,7 +265,7 @@ impl NodeMapInner {
             disco,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: Default::default(),
-            node_states: Default::default(),
+            endpoint_states: Default::default(),
         }
     }
 
@@ -291,9 +281,9 @@ impl NodeMapInner {
     ///
     /// # Errors
     ///
-    /// Will return `None` if there is not an entry in the [`NodeMap`] for
+    /// Will return `None` if there is not an entry in the [`EndpointMap`] for
     /// the `public_key`
-    fn conn_type(&self, _node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
+    fn conn_type(&self, _eid: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
         todo!();
     }
 }

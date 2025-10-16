@@ -265,7 +265,7 @@ pub(super) struct ServerBuilder {
     client_rx_ratelimit: Option<ClientRateLimit>,
     /// The capacity of the key cache.
     key_cache_capacity: usize,
-    /// Access config for nodes.
+    /// Access config for endpoints.
     access: AccessConfig,
     metrics: Option<Arc<Metrics>>,
 }
@@ -689,14 +689,14 @@ impl Inner {
 
         trace!("accept: build client conn");
         let client_conn_builder = Config {
-            node_id: client_key,
+            endpoint_id: client_key,
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
         };
         trace!("accept: create client");
-        let node_id = client_conn_builder.node_id;
-        trace!(node_id = %node_id.fmt_short(), "create client");
+        let endpoint_id = client_conn_builder.endpoint_id;
+        trace!(endpoint_id = %endpoint_id.fmt_short(), "create client");
 
         // build and register client, starting up read & write loops for the client
         // connection
@@ -952,7 +952,7 @@ mod tests {
         let msg = Datagrams::from(b"hi there, client b!");
         client_a
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: b_key,
+                dst_endpoint_id: b_key,
                 datagrams: msg.clone(),
             })
             .await?;
@@ -966,7 +966,7 @@ mod tests {
         let msg = Datagrams::from(b"right back at ya, client b!");
         client_b
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: a_key,
+                dst_endpoint_id: a_key,
                 datagrams: msg.clone(),
             })
             .await?;
@@ -1007,7 +1007,7 @@ mod tests {
             Some(Ok(msg)) => {
                 info!("got message on: {msg:?}");
                 if let RelayToClientMsg::Datagrams {
-                    remote_node_id: source,
+                    remote_endpoint_id: source,
                     datagrams,
                 } = msg
                 {
@@ -1074,7 +1074,7 @@ mod tests {
         let msg = Datagrams::from(b"hi there, client b!");
         client_a
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: b_key,
+                dst_endpoint_id: b_key,
                 datagrams: msg.clone(),
             })
             .await?;
@@ -1088,7 +1088,7 @@ mod tests {
         let msg = Datagrams::from(b"right back at ya, client b!");
         client_b
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: a_key,
+                dst_endpoint_id: a_key,
                 datagrams: msg.clone(),
             })
             .await?;
@@ -1154,16 +1154,16 @@ mod tests {
         let msg = Datagrams::from(b"hello client b!!");
         client_a
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: public_key_b,
+                dst_endpoint_id: public_key_b,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_b.next().await.unwrap()? {
             RelayToClientMsg::Datagrams {
-                remote_node_id,
+                remote_endpoint_id,
                 datagrams,
             } => {
-                assert_eq!(public_key_a, remote_node_id);
+                assert_eq!(public_key_a, remote_endpoint_id);
                 assert_eq!(msg, datagrams);
             }
             msg => {
@@ -1175,16 +1175,16 @@ mod tests {
         let msg = Datagrams::from(b"nice to meet you client a!!");
         client_b
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: public_key_a,
+                dst_endpoint_id: public_key_a,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.unwrap()? {
             RelayToClientMsg::Datagrams {
-                remote_node_id,
+                remote_endpoint_id,
                 datagrams,
             } => {
-                assert_eq!(public_key_b, remote_node_id);
+                assert_eq!(public_key_b, remote_endpoint_id);
                 assert_eq!(msg, datagrams);
             }
             msg => {
@@ -1199,7 +1199,7 @@ mod tests {
         info!("Fail to send message from A to B.");
         let res = client_a
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: public_key_b,
+                dst_endpoint_id: public_key_b,
                 datagrams: Datagrams::from(b"try to send"),
             })
             .await;
@@ -1254,16 +1254,16 @@ mod tests {
         let msg = Datagrams::from(b"hello client b!!");
         client_a
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: public_key_b,
+                dst_endpoint_id: public_key_b,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_b.next().await.expect("eos")? {
             RelayToClientMsg::Datagrams {
-                remote_node_id,
+                remote_endpoint_id,
                 datagrams,
             } => {
-                assert_eq!(public_key_a, remote_node_id);
+                assert_eq!(public_key_a, remote_endpoint_id);
                 assert_eq!(msg, datagrams);
             }
             msg => {
@@ -1275,16 +1275,16 @@ mod tests {
         let msg = Datagrams::from(b"nice to meet you client a!!");
         client_b
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: public_key_a,
+                dst_endpoint_id: public_key_a,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.expect("eos")? {
             RelayToClientMsg::Datagrams {
-                remote_node_id,
+                remote_endpoint_id,
                 datagrams,
             } => {
-                assert_eq!(public_key_b, remote_node_id);
+                assert_eq!(public_key_b, remote_endpoint_id);
                 assert_eq!(msg, datagrams);
             }
             msg => {
@@ -1306,16 +1306,16 @@ mod tests {
         let msg = Datagrams::from(b"are you still there, b?!");
         client_a
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: public_key_b,
+                dst_endpoint_id: public_key_b,
                 datagrams: msg.clone(),
             })
             .await?;
         match new_client_b.next().await.expect("eos")? {
             RelayToClientMsg::Datagrams {
-                remote_node_id,
+                remote_endpoint_id,
                 datagrams,
             } => {
-                assert_eq!(public_key_a, remote_node_id);
+                assert_eq!(public_key_a, remote_endpoint_id);
                 assert_eq!(msg, datagrams);
             }
             msg => {
@@ -1327,16 +1327,16 @@ mod tests {
         let msg = Datagrams::from(b"just had a spot of trouble but I'm back now,a!!");
         new_client_b
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: public_key_a,
+                dst_endpoint_id: public_key_a,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.expect("eos")? {
             RelayToClientMsg::Datagrams {
-                remote_node_id,
+                remote_endpoint_id,
                 datagrams,
             } => {
-                assert_eq!(public_key_b, remote_node_id);
+                assert_eq!(public_key_b, remote_endpoint_id);
                 assert_eq!(msg, datagrams);
             }
             msg => {
@@ -1350,7 +1350,7 @@ mod tests {
         info!("Sending message from A to B fails");
         let res = client_a
             .send(ClientToRelayMsg::Datagrams {
-                dst_node_id: public_key_b,
+                dst_endpoint_id: public_key_b,
                 datagrams: Datagrams::from(b"try to send"),
             })
             .await;

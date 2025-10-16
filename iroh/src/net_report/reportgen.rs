@@ -25,7 +25,9 @@ use std::{
 
 use http::StatusCode;
 use iroh_base::RelayUrl;
-use iroh_relay::{RelayMap, RelayNode, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH};
+use iroh_relay::{
+    RelayConfig, RelayMap, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH,
+};
 #[cfg(not(wasm_browser))]
 use iroh_relay::{
     dns::{DnsError, DnsResolver, StaggeredError},
@@ -339,7 +341,7 @@ impl Actor {
     /// - Probes get aborted in several ways:
     ///   - A running it can fail and abort the entire probe set if it deems the
     ///     failure permanent.  Probes in a probe set are essentially retries.
-    ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
+    ///   - Once there are [`ProbeReport`]s from enough relays, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
     fn spawn_probes_task(
         &self,
@@ -360,14 +362,14 @@ impl Actor {
         for probe_set in plan.iter() {
             let set_token = token.child_token();
             let proto = probe_set.proto();
-            for (delay, relay_node) in probe_set.params() {
+            for (delay, relay) in probe_set.params() {
                 let probe_token = set_token.child_token();
 
                 let fut = probe_token.run_until_cancelled_owned(time::timeout(
                     PROBES_TIMEOUT,
                     proto.run(
                         *delay,
-                        relay_node.clone(),
+                        relay.clone(),
                         #[cfg(not(wasm_browser))]
                         self.socket_state.clone(),
                         #[cfg(any(test, feature = "test-utils"))]
@@ -394,7 +396,7 @@ impl Actor {
                         "run-probe",
                         ?proto,
                         ?delay,
-                        ?relay_node,
+                        ?relay,
                     )),
                 );
             }
@@ -429,9 +431,9 @@ impl ProbeReport {
 #[cfg(not(wasm_browser))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct QadProbeReport {
-    /// The relay node that was probed
-    pub(super) node: RelayUrl,
-    /// The latency to the relay node.
+    /// The relay that was probed
+    pub(super) relay: RelayUrl,
+    /// The latency to the relay.
     pub(super) latency: Duration,
     /// The discovered public address.
     pub(super) addr: SocketAddr,
@@ -439,9 +441,9 @@ pub(super) struct QadProbeReport {
 
 #[derive(Debug, Clone)]
 pub(super) struct HttpsProbeReport {
-    /// The relay node that was probed
-    pub(super) node: RelayUrl,
-    /// The latency to the relay node.
+    /// The relay that was probed
+    pub(super) relay: RelayUrl,
+    /// The latency to the relay.
     pub(super) latency: Duration,
 }
 
@@ -463,8 +465,8 @@ pub(super) enum ProbeError {
 #[snafu(module)]
 #[non_exhaustive]
 pub(super) enum QuicError {
-    #[snafu(display("No QUIC endpoint available"))]
-    NoEndpoint,
+    #[snafu(display("No relay available"))]
+    NoRelay,
     #[snafu(display("URL must have 'host' to use QUIC address discovery probes"))]
     InvalidUrl,
 }
@@ -488,7 +490,7 @@ impl Probe {
     async fn run(
         self,
         delay: Duration,
-        relay_node: Arc<RelayNode>,
+        relay: Arc<RelayConfig>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
         #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
     ) -> Result<ProbeReport, ProbeError> {
@@ -503,7 +505,7 @@ impl Probe {
                 match run_https_probe(
                     #[cfg(not(wasm_browser))]
                     &socket_state.dns_resolver,
-                    relay_node.url.clone(),
+                    relay.url.clone(),
                     #[cfg(any(test, feature = "test-utils"))]
                     insecure_skip_relay_cert_verify,
                 )
@@ -543,19 +545,19 @@ async fn check_captive_portal(
     dm: &RelayMap,
     preferred_relay: Option<RelayUrl>,
 ) -> Result<bool, CaptivePortalError> {
-    // If we have a preferred relay node and we can use it for non-QAD requests, try that;
+    // If we have a preferred relay and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
 
     use crate::util::reqwest_client_builder;
 
-    let preferred_relay = preferred_relay.and_then(|url| dm.get_node(&url).map(|_| url));
+    let preferred_relay = preferred_relay.and_then(|url| dm.get_endpoint(&url).map(|_| url));
 
     let url = match preferred_relay {
         Some(url) => url,
         None => {
             let urls: Vec<_> = dm.urls();
             if urls.is_empty() {
-                debug!("No suitable relay node for captive portal check");
+                debug!("No suitable relay for captive portal check");
                 return Ok(false);
             }
 
@@ -618,8 +620,8 @@ async fn check_captive_portal(
 
 /// Returns the proper port based on the protocol of the probe.
 #[cfg(not(wasm_browser))]
-fn get_quic_port(relay_node: &RelayNode) -> Option<u16> {
-    if let Some(ref quic) = relay_node.quic {
+fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
+    if let Some(ref quic) = relay.quic {
         if quic.port == 0 {
             Some(DEFAULT_RELAY_QUIC_PORT)
         } else {
@@ -644,40 +646,40 @@ pub enum GetRelayAddrError {
     },
     #[snafu(display("DNS lookup failed"))]
     DnsLookup { source: StaggeredError<DnsError> },
-    #[snafu(display("Relay node is not suitable for non-STUN probes"))]
-    UnsupportedRelayNode,
+    #[snafu(display("Relay is not suitable"))]
+    UnsupportedRelay,
     #[snafu(display("HTTPS probes are not implemented"))]
     UnsupportedHttps,
     #[snafu(display("No port available for this protocol"))]
     MissingPort,
 }
 
-/// Returns the IP address to use to communicate to this relay node for quic.
+/// Returns the IP address to use to communicate to this relay for quic.
 #[cfg(not(wasm_browser))]
 pub(super) async fn get_relay_addr_ipv4(
     dns_resolver: &DnsResolver,
-    relay_node: &RelayNode,
+    relay: &RelayConfig,
 ) -> Result<SocketAddrV4, GetRelayAddrError> {
-    let port = get_quic_port(relay_node).context(get_relay_addr_error::MissingPortSnafu)?;
-    relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await
+    let port = get_quic_port(relay).context(get_relay_addr_error::MissingPortSnafu)?;
+    relay_lookup_ipv4_staggered(dns_resolver, relay, port).await
 }
 
 #[cfg(not(wasm_browser))]
 pub(super) async fn get_relay_addr_ipv6(
     dns_resolver: &DnsResolver,
-    relay_node: &RelayNode,
+    relay: &RelayConfig,
 ) -> Result<SocketAddrV6, GetRelayAddrError> {
-    let port = get_quic_port(relay_node).context(get_relay_addr_error::MissingPortSnafu)?;
-    relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await
+    let port = get_quic_port(relay).context(get_relay_addr_error::MissingPortSnafu)?;
+    relay_lookup_ipv6_staggered(dns_resolver, relay, port).await
 }
 
-/// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
+/// Do a staggared ipv4 DNS lookup based on [`RelayConfig`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
 #[cfg(not(wasm_browser))]
 async fn relay_lookup_ipv4_staggered(
     dns_resolver: &DnsResolver,
-    relay: &RelayNode,
+    relay: &RelayConfig,
     port: u16,
 ) -> Result<SocketAddrV4, GetRelayAddrError> {
     match relay.url.host() {
@@ -714,13 +716,13 @@ async fn relay_lookup_ipv4_staggered(
     }
 }
 
-/// Do a staggared ipv6 DNS lookup based on [`RelayNode`]
+/// Do a staggared ipv6 DNS lookup based on [`RelayConfig`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
 #[cfg(not(wasm_browser))]
 async fn relay_lookup_ipv6_staggered(
     dns_resolver: &DnsResolver,
-    relay: &RelayNode,
+    relay: &RelayConfig,
     port: u16,
 ) -> Result<SocketAddrV6, GetRelayAddrError> {
     match relay.url.host() {
@@ -780,11 +782,11 @@ pub enum MeasureHttpsLatencyError {
 #[allow(clippy::unused_async)]
 async fn run_https_probe(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
-    relay_node: RelayUrl,
+    relay: RelayUrl,
     #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
-    let url = relay_node.join(RELAY_PROBE_PATH)?;
+    let url = relay.join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
@@ -841,10 +843,7 @@ async fn run_https_probe(
             }
         }
 
-        Ok(HttpsProbeReport {
-            node: relay_node,
-            latency,
-        })
+        Ok(HttpsProbeReport { relay, latency })
     } else {
         Err(measure_https_latency_error::InvalidResponseSnafu {
             status: response.status(),
