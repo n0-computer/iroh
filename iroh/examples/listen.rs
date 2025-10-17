@@ -71,7 +71,7 @@ async fn main() -> n0_snafu::Result<()> {
         };
         let alpn = connecting.alpn().await?;
         let conn = connecting.await.e()?;
-        let endpoint_id = conn.remote_id()?;
+        let endpoint_id = conn.remote_id();
         info!(
             "new connection from {endpoint_id} with ALPN {}",
             String::from_utf8_lossy(&alpn),
