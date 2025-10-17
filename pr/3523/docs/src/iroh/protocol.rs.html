@@ -581,11 +581,11 @@
 <a href=#581 id=581 data-nosnippet>581</a>    <span class="kw">use </span>quinn::ApplicationClose;
 <a href=#582 id=582 data-nosnippet>582</a>
 <a href=#583 id=583 data-nosnippet>583</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#584 id=584 data-nosnippet>584</a>    <span class="kw">use </span><span class="kw">crate</span>::endpoint::ConnectionError;
+<a href=#584 id=584 data-nosnippet>584</a>    <span class="kw">use crate</span>::{RelayMode, endpoint::ConnectionError};
 <a href=#585 id=585 data-nosnippet>585</a>
 <a href=#586 id=586 data-nosnippet>586</a>    <span class="attr">#[tokio::test]
 <a href=#587 id=587 data-nosnippet>587</a>    </span><span class="kw">async fn </span>test_shutdown() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#588 id=588 data-nosnippet>588</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#588 id=588 data-nosnippet>588</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#589 id=589 data-nosnippet>589</a>        <span class="kw">let </span>router = Router::builder(endpoint.clone()).spawn();
 <a href=#590 id=590 data-nosnippet>590</a>
 <a href=#591 id=591 data-nosnippet>591</a>        <span class="macro">assert!</span>(!router.is_shutdown());
@@ -623,14 +623,14 @@
 <a href=#623 id=623 data-nosnippet>623</a>    <span class="attr">#[tokio::test]
 <a href=#624 id=624 data-nosnippet>624</a>    </span><span class="kw">async fn </span>test_limiter() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#625 id=625 data-nosnippet>625</a>        <span class="comment">// tracing_subscriber::fmt::try_init().ok();
-<a href=#626 id=626 data-nosnippet>626</a>        </span><span class="kw">let </span>e1 = Endpoint::empty_builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#626 id=626 data-nosnippet>626</a>        </span><span class="kw">let </span>e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#627 id=627 data-nosnippet>627</a>        <span class="comment">// deny all access
 <a href=#628 id=628 data-nosnippet>628</a>        </span><span class="kw">let </span>proto = AccessLimit::new(Echo, |_endpoint_id| <span class="bool-val">false</span>);
 <a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span>r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 <a href=#630 id=630 data-nosnippet>630</a>
 <a href=#631 id=631 data-nosnippet>631</a>        <span class="kw">let </span>addr1 = r1.endpoint().addr();
 <a href=#632 id=632 data-nosnippet>632</a>        <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>addr1);
-<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>e2 = Endpoint::empty_builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>e2 = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#634 id=634 data-nosnippet>634</a>
 <a href=#635 id=635 data-nosnippet>635</a>        <span class="macro">println!</span>(<span class="string">"connecting"</span>);
 <a href=#636 id=636 data-nosnippet>636</a>        <span class="kw">let </span>conn = e2.connect(addr1, ECHO_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -670,7 +670,7 @@
 <a href=#670 id=670 data-nosnippet>670</a>        }
 <a href=#671 id=671 data-nosnippet>671</a>
 <a href=#672 id=672 data-nosnippet>672</a>        <span class="macro">eprintln!</span>(<span class="string">"creating ep1"</span>);
-<a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#674 id=674 data-nosnippet>674</a>        <span class="kw">let </span>router = Router::builder(endpoint)
 <a href=#675 id=675 data-nosnippet>675</a>            .accept(TEST_ALPN, TestProtocol::default())
 <a href=#676 id=676 data-nosnippet>676</a>            .spawn();
@@ -678,7 +678,7 @@
 <a href=#678 id=678 data-nosnippet>678</a>        <span class="kw">let </span>addr = router.endpoint().addr();
 <a href=#679 id=679 data-nosnippet>679</a>
 <a href=#680 id=680 data-nosnippet>680</a>        <span class="macro">eprintln!</span>(<span class="string">"creating ep2"</span>);
-<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span>endpoint2 = Endpoint::empty_builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#681 id=681 data-nosnippet>681</a>        <span class="kw">let </span>endpoint2 = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#682 id=682 data-nosnippet>682</a>        <span class="macro">eprintln!</span>(<span class="string">"connecting to {addr:?}"</span>);
 <a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>conn = endpoint2.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#684 id=684 data-nosnippet>684</a>

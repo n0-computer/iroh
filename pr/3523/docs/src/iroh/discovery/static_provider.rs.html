@@ -238,13 +238,13 @@
 <a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <a href=#239 id=239 data-nosnippet>239</a>
 <a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#241 id=241 data-nosnippet>241</a>    <span class="kw">use </span><span class="kw">crate</span>::Endpoint;
+<a href=#241 id=241 data-nosnippet>241</a>    <span class="kw">use crate</span>::{Endpoint, RelayMode};
 <a href=#242 id=242 data-nosnippet>242</a>
 <a href=#243 id=243 data-nosnippet>243</a>    <span class="attr">#[tokio::test]
 <a href=#244 id=244 data-nosnippet>244</a>    </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>discovery = StaticProvider::new();
 <a href=#246 id=246 data-nosnippet>246</a>
-<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>_ep = Endpoint::empty_builder()
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>_ep = Endpoint::empty_builder(RelayMode::Disabled)
 <a href=#248 id=248 data-nosnippet>248</a>            .discovery(discovery.clone())
 <a href=#249 id=249 data-nosnippet>249</a>            .bind()
 <a href=#250 id=250 data-nosnippet>250</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
