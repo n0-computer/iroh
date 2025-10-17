@@ -231,7 +231,7 @@ impl Discovery for StaticProvider {
 
 #[cfg(test)]
 mod tests {
-    use iroh_base::{AddrType, EndpointAddr, SecretKey};
+    use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use n0_snafu::{Result, ResultExt};
 
     use super::*;
@@ -249,7 +249,7 @@ mod tests {
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr {
             id: key.public(),
-            addrs: [AddrType::Relay("https://example.com".parse()?)]
+            addrs: [TransportAddr::Relay("https://example.com".parse()?)]
                 .into_iter()
                 .collect(),
         };
@@ -281,7 +281,7 @@ mod tests {
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr {
             id: key.public(),
-            addrs: [AddrType::Relay("https://example.com".parse()?)]
+            addrs: [TransportAddr::Relay("https://example.com".parse()?)]
                 .into_iter()
                 .collect(),
         };

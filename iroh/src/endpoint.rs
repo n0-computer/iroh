@@ -877,7 +877,7 @@ impl Endpoint {
         watch_addrs
             .or(watch_relay)
             .map(move |(addrs, relays)| {
-                use iroh_base::AddrType;
+                use iroh_base::TransportAddr;
 
                 debug_assert!(!addrs.is_empty(), "direct addresses must never be empty");
 
@@ -885,8 +885,8 @@ impl Endpoint {
                     endpoint_id,
                     relays
                         .into_iter()
-                        .map(AddrType::Relay)
-                        .chain(addrs.into_iter().map(|x| AddrType::Ip(x.addr))),
+                        .map(TransportAddr::Relay)
+                        .chain(addrs.into_iter().map(|x| TransportAddr::Ip(x.addr))),
                 )
             })
             .expect("watchable is alive - cannot be disconnected yet")
@@ -2135,7 +2135,7 @@ fn is_cgi() -> bool {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use iroh_base::{AddrType, EndpointAddr, EndpointId, SecretKey};
+    use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
@@ -2460,7 +2460,8 @@ mod tests {
         println!("round1: {:?}", addr);
 
         // remove direct addrs to force relay usage
-        addr.addrs.retain(|addr| !matches!(addr, AddrType::Ip(_)));
+        addr.addrs
+            .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
 
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
@@ -2509,7 +2510,8 @@ mod tests {
         assert_eq!(addr.relay_urls().next(), Some(&new_relay_url));
 
         // remove direct addrs to force relay usage
-        addr.addrs.retain(|addr| !matches!(addr, AddrType::Ip(_)));
+        addr.addrs
+            .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
 
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;

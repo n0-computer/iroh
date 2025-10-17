@@ -6,7 +6,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use iroh_base::{AddrType, EndpointAddr, EndpointId, PublicKey, RelayUrl};
+use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, TransportAddr};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -1225,11 +1225,11 @@ impl From<RemoteInfo> for EndpointAddr {
         let mut addrs = info
             .addrs
             .into_iter()
-            .map(|info| AddrType::Ip(info.addr))
+            .map(|info| TransportAddr::Ip(info.addr))
             .collect::<BTreeSet<_>>();
 
         if let Some(url) = info.relay_url {
-            addrs.insert(AddrType::Relay(url.into()));
+            addrs.insert(TransportAddr::Relay(url.into()));
         }
 
         EndpointAddr {

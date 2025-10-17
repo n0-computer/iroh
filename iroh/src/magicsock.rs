@@ -30,7 +30,7 @@ use std::{
 
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
-use iroh_base::{AddrType, EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey};
+use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_future::{
     task::{self, AbortOnDropHandle},
@@ -410,7 +410,7 @@ impl MagicSock {
     ) -> Result<(), AddEndpointAddrError> {
         let mut pruned: usize = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.addrs.remove(&AddrType::Ip(my_addr)) {
+            if addr.addrs.remove(&TransportAddr::Ip(my_addr)) {
                 warn!( endpoint_id=%addr.id.fmt_short(), %my_addr, %source, "not adding our addr for endpoint");
                 pruned += 1;
             }
@@ -1157,7 +1157,11 @@ impl MagicSock {
     /// Called whenever our addresses or home relay endpoint changes.
     fn publish_my_addr(&self) {
         let relay_url = self.my_relay();
-        let mut addrs: BTreeSet<_> = self.direct_addrs.sockaddrs().map(AddrType::Ip).collect();
+        let mut addrs: BTreeSet<_> = self
+            .direct_addrs
+            .sockaddrs()
+            .map(TransportAddr::Ip)
+            .collect();
 
         let user_data = self
             .discovery_user_data
@@ -1169,7 +1173,7 @@ impl MagicSock {
             return;
         }
         if let Some(url) = relay_url {
-            addrs.insert(AddrType::Relay(url));
+            addrs.insert(TransportAddr::Relay(url));
         }
 
         let data = EndpointData::new(addrs).with_user_data(user_data);
@@ -2542,7 +2546,7 @@ mod tests {
     use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
-    use iroh_base::{AddrType, EndpointAddr, EndpointId, PublicKey};
+    use iroh_base::{EndpointAddr, EndpointId, PublicKey, TransportAddr};
     use n0_future::{StreamExt, time};
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
@@ -2673,7 +2677,7 @@ mod tests {
 
                 let addr = EndpointAddr {
                     id: me.public(),
-                    addrs: new_addrs.iter().copied().map(AddrType::Ip).collect(),
+                    addrs: new_addrs.iter().copied().map(TransportAddr::Ip).collect(),
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -3236,7 +3240,7 @@ mod tests {
             .direct_addresses()
             .get()
             .into_iter()
-            .map(|x| AddrType::Ip(x.addr))
+            .map(|x| TransportAddr::Ip(x.addr))
             .collect();
         let endpoint_addr_2 = EndpointAddr {
             id: endpoint_id_2,
@@ -3349,7 +3353,7 @@ mod tests {
             .direct_addresses()
             .get()
             .into_iter()
-            .map(|x| AddrType::Ip(x.addr))
+            .map(|x| TransportAddr::Ip(x.addr))
             .collect();
         msock_1.endpoint_map.add_endpoint_addr(
             EndpointAddr {
@@ -3412,7 +3416,7 @@ mod tests {
         // relay url only
         let addr = EndpointAddr {
             id: SecretKey::generate(&mut rng).public(),
-            addrs: [AddrType::Relay("http://my-relay.com".parse().unwrap())]
+            addrs: [TransportAddr::Relay("http://my-relay.com".parse().unwrap())]
                 .into_iter()
                 .collect(),
         };
@@ -3425,7 +3429,7 @@ mod tests {
         // addrs only
         let addr = EndpointAddr {
             id: SecretKey::generate(&mut rng).public(),
-            addrs: [AddrType::Ip("127.0.0.1:1234".parse().unwrap())]
+            addrs: [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())]
                 .into_iter()
                 .collect(),
         };
@@ -3439,8 +3443,8 @@ mod tests {
         let addr = EndpointAddr {
             id: SecretKey::generate(&mut rng).public(),
             addrs: [
-                AddrType::Relay("http://my-relay.com".parse().unwrap()),
-                AddrType::Ip("127.0.0.1:1234".parse().unwrap()),
+                TransportAddr::Relay("http://my-relay.com".parse().unwrap()),
+                TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
             ]
             .into_iter()
             .collect(),
