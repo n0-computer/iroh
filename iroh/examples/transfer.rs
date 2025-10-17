@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    AddrType, Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
@@ -313,7 +313,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     let mut endpoint_addr = endpoint.addr();
     endpoint_addr
         .addrs
-        .retain(|addr| !matches!(addr, AddrType::Ip(_)));
+        .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
     let ticket = EndpointTicket::new(endpoint_addr);
     println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);
 

@@ -40,7 +40,7 @@ use std::{
     str::{FromStr, Utf8Error},
 };
 
-use iroh_base::{AddrType, EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey};
+use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey, TransportAddr};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use url::Url;
@@ -127,14 +127,14 @@ impl EndpointIdExt for EndpointId {
 #[derive(Debug, Clone, Default, Eq, PartialEq)]
 pub struct EndpointData {
     /// addresses where this endpoint can be reached.
-    addrs: BTreeSet<AddrType>,
+    addrs: BTreeSet<TransportAddr>,
     /// Optional user-defined [`UserData`] for this endpoint.
     user_data: Option<UserData>,
 }
 
 impl EndpointData {
     /// Creates a new [`EndpointData`] with a relay URL and a set of direct addresses.
-    pub fn new(addrs: impl IntoIterator<Item = AddrType>) -> Self {
+    pub fn new(addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
         Self {
             addrs: addrs.into_iter().collect(),
             user_data: None,
@@ -144,7 +144,7 @@ impl EndpointData {
     /// Sets the relay URL and returns the updated endpoint data.
     pub fn with_relay_url(mut self, relay_url: Option<RelayUrl>) -> Self {
         if let Some(url) = relay_url {
-            self.addrs.insert(AddrType::Relay(url));
+            self.addrs.insert(TransportAddr::Relay(url));
         }
         self
     }
@@ -152,7 +152,7 @@ impl EndpointData {
     /// Sets the direct addresses and returns the updated endpoint data.
     pub fn with_ip_addresses(mut self, addresses: BTreeSet<SocketAddr>) -> Self {
         for addr in addresses.into_iter() {
-            self.addrs.insert(AddrType::Ip(addr));
+            self.addrs.insert(TransportAddr::Ip(addr));
         }
         self
     }
@@ -166,7 +166,7 @@ impl EndpointData {
     /// Returns the relay URL of the endpoint.
     pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {
         self.addrs.iter().filter_map(|addr| match addr {
-            AddrType::Relay(url) => Some(url),
+            TransportAddr::Relay(url) => Some(url),
             _ => None,
         })
     }
@@ -179,24 +179,25 @@ impl EndpointData {
     /// Returns the direct addresses of the endpoint.
     pub fn ip_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.iter().filter_map(|addr| match addr {
-            AddrType::Ip(addr) => Some(addr),
+            TransportAddr::Ip(addr) => Some(addr),
             _ => None,
         })
     }
 
     /// Removes all direct addresses from the endpoint data.
     pub fn clear_direct_addresses(&mut self) {
-        self.addrs.retain(|addr| !matches!(addr, AddrType::Ip(_)));
+        self.addrs
+            .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
     }
 
     /// Removes all direct addresses from the endpoint data.
     pub fn clear_relay_urls(&mut self) {
         self.addrs
-            .retain(|addr| !matches!(addr, AddrType::Relay(_)));
+            .retain(|addr| !matches!(addr, TransportAddr::Relay(_)));
     }
 
     /// Add addresses to the endpoint data.
-    pub fn add_addrs(&mut self, addrs: impl IntoIterator<Item = AddrType>) {
+    pub fn add_addrs(&mut self, addrs: impl IntoIterator<Item = TransportAddr>) {
         for addr in addrs.into_iter() {
             self.addrs.insert(addr);
         }
@@ -208,7 +209,7 @@ impl EndpointData {
     }
 
     /// Returns the full list of all known addresses
-    pub fn addrs(&self) -> impl Iterator<Item = &AddrType> {
+    pub fn addrs(&self) -> impl Iterator<Item = &TransportAddr> {
         self.addrs.iter()
     }
 }
@@ -307,13 +308,13 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
             .into_iter()
             .flatten()
             .filter_map(|s| Url::parse(s).ok())
-            .map(|url| AddrType::Relay(url.into()));
+            .map(|url| TransportAddr::Relay(url.into()));
         let direct_addresses = attrs
             .get(&IrohAttr::Addr)
             .into_iter()
             .flatten()
             .filter_map(|s| SocketAddr::from_str(s).ok())
-            .map(AddrType::Ip);
+            .map(TransportAddr::Ip);
 
         let user_data = attrs
             .get(&IrohAttr::UserData)
@@ -519,8 +520,10 @@ impl From<&EndpointInfo> for TxtAttrs<IrohAttr> {
         let mut attrs = vec![];
         for addr in &info.data.addrs {
             match addr {
-                AddrType::Relay(relay_url) => attrs.push((IrohAttr::Relay, relay_url.to_string())),
-                AddrType::Ip(addr) => attrs.push((IrohAttr::Addr, addr.to_string())),
+                TransportAddr::Relay(relay_url) => {
+                    attrs.push((IrohAttr::Relay, relay_url.to_string()))
+                }
+                TransportAddr::Ip(addr) => attrs.push((IrohAttr::Addr, addr.to_string())),
                 _ => {}
             }
         }
@@ -670,7 +673,7 @@ mod tests {
             },
         },
     };
-    use iroh_base::{AddrType, EndpointId, SecretKey};
+    use iroh_base::{EndpointId, SecretKey, TransportAddr};
     use n0_snafu::{Result, ResultExt};
 
     use super::{EndpointData, EndpointIdExt, EndpointInfo};
@@ -679,8 +682,8 @@ mod tests {
     #[test]
     fn txt_attr_roundtrip() {
         let endpoint_data = EndpointData::new([
-            AddrType::Relay("https://example.com".parse().unwrap()),
-            AddrType::Ip("127.0.0.1:1234".parse().unwrap()),
+            TransportAddr::Relay("https://example.com".parse().unwrap()),
+            TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
         ])
         .with_user_data(Some("foobar".parse().unwrap()));
         let endpoint_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
@@ -697,8 +700,8 @@ mod tests {
         let secret_key =
             SecretKey::from_str("vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia").unwrap();
         let endpoint_data = EndpointData::new([
-            AddrType::Relay("https://example.com".parse().unwrap()),
-            AddrType::Ip("127.0.0.1:1234".parse().unwrap()),
+            TransportAddr::Relay("https://example.com".parse().unwrap()),
+            TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
         ])
         .with_user_data(Some("foobar".parse().unwrap()));
         let expected = EndpointInfo::from_parts(secret_key.public(), endpoint_data);

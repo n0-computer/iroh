@@ -637,7 +637,7 @@ mod tests {
         time::SystemTime,
     };
 
-    use iroh_base::{AddrType, EndpointAddr, SecretKey};
+    use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use n0_snafu::{Error, Result, ResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{CryptoRng, Rng, SeedableRng};
@@ -707,7 +707,7 @@ mod tests {
                 let port: u16 = rand::rng().random_range(10_000..20_000);
                 // "240.0.0.0/4" is reserved and unreachable
                 let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                let data = EndpointData::new([AddrType::Ip(addr)]);
+                let data = EndpointData::new([TransportAddr::Ip(addr)]);
                 Some((data, ts))
             } else {
                 self.shared
@@ -890,7 +890,7 @@ mod tests {
 
         let ep1_wrong_addr = EndpointAddr {
             id: ep1.id(),
-            addrs: [AddrType::Ip("240.0.0.1:1000".parse().unwrap())]
+            addrs: [TransportAddr::Ip("240.0.0.1:1000".parse().unwrap())]
                 .into_iter()
                 .collect(),
         };
@@ -956,7 +956,7 @@ mod tests {
 /// publish to. The DNS and pkarr servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
-    use iroh_base::{AddrType, EndpointAddr, SecretKey};
+    use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
     use n0_future::time::Duration;
     use n0_snafu::{Error, Result, ResultExt};
@@ -1017,7 +1017,9 @@ mod test_dns_pkarr {
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
 
-        let relay_url = Some(AddrType::Relay("https://relay.example".parse().unwrap()));
+        let relay_url = Some(TransportAddr::Relay(
+            "https://relay.example".parse().unwrap(),
+        ));
 
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         let publisher =

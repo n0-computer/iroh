@@ -41,13 +41,13 @@ pub struct EndpointAddr {
     /// The endpoint's identifier.
     pub id: EndpointId,
     /// The endpoint's addresses
-    pub addrs: BTreeSet<AddrType>,
+    pub addrs: BTreeSet<TransportAddr>,
 }
 
 /// Available address types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
-pub enum AddrType {
+pub enum TransportAddr {
     /// IP based addresses
     Ip(SocketAddr),
     /// Relays
@@ -65,7 +65,7 @@ impl EndpointAddr {
 
     /// Adds a relay url.
     pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
-        self.addrs.insert(AddrType::Relay(relay_url));
+        self.addrs.insert(TransportAddr::Relay(relay_url));
         self
     }
 
@@ -75,13 +75,13 @@ impl EndpointAddr {
         addresses: impl IntoIterator<Item = SocketAddr>,
     ) -> Self {
         for addr in addresses.into_iter() {
-            self.addrs.insert(AddrType::Ip(addr));
+            self.addrs.insert(TransportAddr::Ip(addr));
         }
         self
     }
 
     /// Creates a new [`EndpointAddr`] from its parts.
-    pub fn from_parts(id: PublicKey, addrs: impl IntoIterator<Item = AddrType>) -> Self {
+    pub fn from_parts(id: PublicKey, addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
         Self {
             id,
             addrs: addrs.into_iter().collect(),
@@ -96,7 +96,7 @@ impl EndpointAddr {
     /// Returns the direct addresses of this peer.
     pub fn ip_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.iter().filter_map(|addr| match addr {
-            AddrType::Ip(addr) => Some(addr),
+            TransportAddr::Ip(addr) => Some(addr),
             _ => None,
         })
     }
@@ -104,7 +104,7 @@ impl EndpointAddr {
     /// Returns the relay url of this peer.
     pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {
         self.addrs.iter().filter_map(|addr| match addr {
-            AddrType::Relay(url) => Some(url),
+            TransportAddr::Relay(url) => Some(url),
             _ => None,
         })
     }
@@ -115,10 +115,10 @@ impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for EndpointAddr {
         let (id, relay_url, direct_addresses_iter) = value;
         let mut addrs = BTreeSet::new();
         if let Some(url) = relay_url {
-            addrs.insert(AddrType::Relay(url));
+            addrs.insert(TransportAddr::Relay(url));
         }
         for addr in direct_addresses_iter {
-            addrs.insert(AddrType::Ip(*addr));
+            addrs.insert(TransportAddr::Ip(*addr));
         }
         EndpointAddr { id, addrs }
     }
@@ -148,11 +148,11 @@ mod tests {
     #[test]
     fn test_roundtrip_new_addr_type() {
         let old = vec![
-            AddrType::Ip("127.0.0.1:9".parse().unwrap()),
-            AddrType::Relay("https://example.com".parse().unwrap()),
+            TransportAddr::Ip("127.0.0.1:9".parse().unwrap()),
+            TransportAddr::Relay("https://example.com".parse().unwrap()),
         ];
         let old_ser = postcard::to_stdvec(&old).unwrap();
-        let old_back: Vec<AddrType> = postcard::from_bytes(&old_ser).unwrap();
+        let old_back: Vec<TransportAddr> = postcard::from_bytes(&old_ser).unwrap();
         assert_eq!(old, old_back);
 
         let new = vec![

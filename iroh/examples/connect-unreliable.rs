@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 
 use clap::Parser;
 use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey};
-use iroh_base::AddrType;
+use iroh_base::TransportAddr;
 use n0_snafu::ResultExt;
 use tracing::info;
 
@@ -71,8 +71,8 @@ async fn main() -> n0_snafu::Result<()> {
     let addrs = args
         .addrs
         .into_iter()
-        .map(AddrType::Ip)
-        .chain(std::iter::once(AddrType::Relay(args.relay_url)));
+        .map(TransportAddr::Ip)
+        .chain(std::iter::once(TransportAddr::Relay(args.relay_url)));
 
     let addr = EndpointAddr::from_parts(args.endpoint_id, addrs);
 

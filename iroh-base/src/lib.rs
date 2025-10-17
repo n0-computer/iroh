@@ -15,7 +15,7 @@ mod key;
 mod relay_url;
 
 #[cfg(feature = "key")]
-pub use self::endpoint_addr::{AddrType, EndpointAddr};
+pub use self::endpoint_addr::{EndpointAddr, TransportAddr};
 #[cfg(feature = "key")]
 pub use self::key::{EndpointId, KeyParsingError, PublicKey, SecretKey, Signature, SignatureError};
 #[cfg(feature = "relay")]
