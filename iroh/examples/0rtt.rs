@@ -144,7 +144,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
         let Some(addr) = addrs.next().await else {
             snafu::whatever!("Address stream closed");
         };
-        if !addr.direct_addresses.is_empty() {
+        if !addr.ip_addresses.is_empty() {
             break addr;
         }
     };

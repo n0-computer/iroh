@@ -410,8 +410,8 @@ impl MagicSock {
     ) -> Result<(), AddEndpointAddrError> {
         let mut pruned: usize = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.direct_addresses.remove(&my_addr) {
-                warn!( endpoint_id=%addr.endpoint_id.fmt_short(), %my_addr, %source, "not adding our addr for endpoint");
+            if addr.ip_addresses.remove(&my_addr) {
+                warn!( endpoint_id=%addr.id.fmt_short(), %my_addr, %source, "not adding our addr for endpoint");
                 pruned += 1;
             }
         }
@@ -2687,8 +2687,8 @@ mod tests {
                 let me = m.endpoint.id().fmt_short();
                 let mut stream = m.endpoint.watch_addr().stream();
                 while let Some(addr) = stream.next().await {
-                    info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, addr.direct_addresses);
-                    update_direct_addrs(&stacks, my_idx, addr.direct_addresses);
+                    info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, addr.ip_addresses().collect::<Vec<_>>());
+                    update_direct_addrs(&stacks, my_idx, addr.ip_addresses().copied().collect());
                 }
             });
         }

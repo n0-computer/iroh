@@ -59,7 +59,7 @@ async fn main() -> n0_snafu::Result<()> {
     println!("endpoint id: {me}");
     println!("endpoint listening addresses:");
     endpoint_addr
-        .direct_addresses
+        .ip_addresses
         .iter()
         .for_each(|addr| println!("\t{addr}"));
     let relay_url = endpoint_addr

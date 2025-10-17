@@ -43,7 +43,7 @@ async fn main() -> n0_snafu::Result<()> {
     let endpoint_addr = endpoint.addr();
 
     let local_addrs = endpoint_addr
-        .direct_addresses
+        .ip_addresses
         .iter()
         .map(|addr| {
             let addr = addr.to_string();

@@ -645,7 +645,7 @@ impl Endpoint {
         alpn: &[u8],
     ) -> Result<Connection, ConnectError> {
         let endpoint_addr = endpoint_addr.into();
-        let remote = endpoint_addr.endpoint_id;
+        let remote = endpoint_addr.id;
         let connecting = self
             .connect_with_opts(endpoint_addr, alpn, Default::default())
             .await?;
@@ -688,18 +688,18 @@ impl Endpoint {
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
         tracing::Span::current().record(
             "remote",
-            tracing::field::display(endpoint_addr.endpoint_id.fmt_short()),
+            tracing::field::display(endpoint_addr.id.fmt_short()),
         );
 
         // Connecting to ourselves is not supported.
-        ensure!(endpoint_addr.endpoint_id != self.id(), SelfConnectSnafu);
+        ensure!(endpoint_addr.id != self.id(), SelfConnectSnafu);
 
         if !endpoint_addr.is_empty() {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
         }
-        let endpoint_id = endpoint_addr.endpoint_id;
-        let direct_addresses = endpoint_addr.direct_addresses.clone();
-        let relay_url = endpoint_addr.relay_url.clone();
+        let endpoint_id = endpoint_addr.id;
+        let ip_addresses: Vec<_> = endpoint_addr.ip_addresses().cloned().collect();
+        let relay_url = endpoint_addr.relay_urls().next().cloned();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
         // address.  Start discovery for this endpoint if it's enabled and we have no valid or
@@ -719,7 +719,7 @@ impl Endpoint {
 
         debug!(
             ?mapped_addr,
-            ?direct_addresses,
+            ?ip_addresses,
             ?relay_url,
             "Attempting connection..."
         );
@@ -799,7 +799,7 @@ impl Endpoint {
         source: Source,
     ) -> Result<(), AddEndpointAddrError> {
         // Connecting to ourselves is not supported.
-        snafu::ensure!(endpoint_addr.endpoint_id != self.id(), OwnAddressSnafu);
+        snafu::ensure!(endpoint_addr.id != self.id(), OwnAddressSnafu);
         self.msock.add_endpoint_addr(endpoint_addr, source)
     }
 
@@ -876,13 +876,17 @@ impl Endpoint {
 
         watch_addrs
             .or(watch_relay)
-            .map(move |(addrs, mut relays)| {
+            .map(move |(addrs, relays)| {
+                use iroh_base::AddrType;
+
                 debug_assert!(!addrs.is_empty(), "direct addresses must never be empty");
 
                 EndpointAddr::from_parts(
                     endpoint_id,
-                    relays.pop(),
-                    addrs.into_iter().map(|x| x.addr),
+                    relays
+                        .into_iter()
+                        .map(AddrType::Relay)
+                        .chain(addrs.into_iter().map(|x| AddrType::Ip(x.addr))),
                 )
             })
             .expect("watchable is alive - cannot be disconnected yet")
@@ -1263,7 +1267,7 @@ impl Endpoint {
         &self,
         endpoint_addr: EndpointAddr,
     ) -> Result<(EndpointIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
-        let endpoint_id = endpoint_addr.endpoint_id;
+        let endpoint_id = endpoint_addr.id;
 
         // Only return a mapped addr if we have some way of dialing this endpoint, in other
         // words, we have either a relay URL or at least one direct address.
@@ -2456,7 +2460,7 @@ mod tests {
         println!("round1: {:?}", addr);
 
         // remove direct addrs to force relay usage
-        addr.direct_addresses.clear();
+        addr.ip_addresses.clear();
 
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
@@ -2505,7 +2509,7 @@ mod tests {
         assert_eq!(addr.relay_url, Some(new_relay_url));
 
         // remove direct addrs to force relay usage
-        addr.direct_addresses.clear();
+        addr.ip_addresses.clear();
 
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
@@ -2719,7 +2723,7 @@ mod tests {
             .bind()
             .await?;
 
-        assert!(!ep.addr().direct_addresses.is_empty());
+        assert!(!ep.addr().ip_addresses.is_empty());
 
         Ok(())
     }
@@ -3186,10 +3190,7 @@ mod tests {
             .iter()
             .map(|(_, addr)| addr.clone())
             .collect::<Vec<_>>();
-        let ids = addrs
-            .iter()
-            .map(|addr| addr.endpoint_id)
-            .collect::<Vec<_>>();
+        let ids = addrs.iter().map(|addr| addr.id).collect::<Vec<_>>();
         let discovery = StaticProvider::from_endpoint_info(addrs);
         let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
             .discovery(discovery)

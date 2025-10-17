@@ -288,7 +288,7 @@ impl EndpointArgs {
         let endpoint_addr = endpoint.addr();
 
         println!("Our direct addresses:");
-        for addr in &endpoint_addr.direct_addresses {
+        for addr in &endpoint_addr.ip_addresses {
             println!("\t{addr}");
         }
 
@@ -311,7 +311,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
     let mut endpoint_addr = endpoint.addr();
-    endpoint_addr.direct_addresses = Default::default();
+    endpoint_addr.ip_addresses = Default::default();
     let ticket = EndpointTicket::new(endpoint_addr);
     println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);
 
