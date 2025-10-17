@@ -206,6 +206,11 @@ impl EndpointData {
     pub fn set_user_data(&mut self, user_data: Option<UserData>) {
         self.user_data = user_data;
     }
+
+    /// Returns the full list of all known addresses
+    pub fn addrs(&self) -> impl Iterator<Item = &AddrType> {
+        self.addrs.iter()
+    }
 }
 
 impl From<EndpointAddr> for EndpointData {
@@ -333,7 +338,7 @@ impl From<EndpointInfo> for EndpointAddr {
 impl From<EndpointAddr> for EndpointInfo {
     fn from(addr: EndpointAddr) -> Self {
         let mut info = Self::new(addr.id);
-        info.add_addrs(addr.addrs.into_iter());
+        info.add_addrs(addr.addrs);
         info
     }
 }
