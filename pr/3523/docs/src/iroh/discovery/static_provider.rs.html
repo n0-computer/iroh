@@ -244,7 +244,7 @@
 <a href=#244 id=244 data-nosnippet>244</a>    </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#245 id=245 data-nosnippet>245</a>        <span class="kw">let </span>discovery = StaticProvider::new();
 <a href=#246 id=246 data-nosnippet>246</a>
-<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>_ep = Endpoint::builder()
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>_ep = Endpoint::empty_builder()
 <a href=#248 id=248 data-nosnippet>248</a>            .discovery(discovery.clone())
 <a href=#249 id=249 data-nosnippet>249</a>            .bind()
 <a href=#250 id=250 data-nosnippet>250</a>            .<span class="kw">await</span><span class="question-mark">?</span>;

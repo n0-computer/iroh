@@ -15,7 +15,7 @@ See the <a href="https://crates.io/crates/swarm-discovery"><code>swarm-discovery
 <span class="attr">#[tokio::main]
 </span><span class="kw">async fn </span>main() {
     <span class="kw">let </span>recent = Duration::from_secs(<span class="number">600</span>); <span class="comment">// 10 minutes in seconds
-    </span><span class="kw">let </span>endpoint = Endpoint::bind().<span class="kw">await</span>.unwrap();
+    </span><span class="kw">let </span>endpoint = Endpoint::empty_builder().bind().<span class="kw">await</span>.unwrap();
 
     <span class="comment">// Register the discovery services with the endpoint
     </span><span class="kw">let </span>mdns = MdnsDiscovery::builder().build(endpoint.id()).unwrap();

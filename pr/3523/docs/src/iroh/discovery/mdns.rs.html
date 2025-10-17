@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>//! #[tokio::main]
 <a href=#19 id=19 data-nosnippet>19</a>//! async fn main() {
 <a href=#20 id=20 data-nosnippet>20</a>//!     let recent = Duration::from_secs(600); // 10 minutes in seconds
-<a href=#21 id=21 data-nosnippet>21</a>//!     let endpoint = Endpoint::bind().await.unwrap();
+<a href=#21 id=21 data-nosnippet>21</a>//!     let endpoint = Endpoint::empty_builder().bind().await.unwrap();
 <a href=#22 id=22 data-nosnippet>22</a>//!
 <a href=#23 id=23 data-nosnippet>23</a>//!     // Register the discovery services with the endpoint
 <a href=#24 id=24 data-nosnippet>24</a>//!     let mdns = MdnsDiscovery::builder().build(endpoint.id()).unwrap();
