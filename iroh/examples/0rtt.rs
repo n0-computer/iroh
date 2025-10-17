@@ -1,14 +1,20 @@
-use std::{env, future::Future, str::FromStr, time::Instant};
+use std::{
+    env,
+    future::Future,
+    str::FromStr,
+    time::{Duration, Instant},
+};
 
 use clap::Parser;
 use data_encoding::HEXLOWER;
 use iroh::{
     EndpointId, SecretKey,
-    endpoint::{Connecting, Connection},
+    endpoint::{Connecting, Connection, ZRTTConnection},
 };
 use n0_future::{StreamExt, future};
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
+use quinn::VarInt;
 use tracing::{info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
@@ -49,7 +55,7 @@ pub fn get_or_generate_secret_key() -> n0_snafu::Result<SecretKey> {
 /// read the response immediately. Otherwise, the stream pair is bad and we need
 /// to open a new stream pair.
 async fn pingpong(
-    connection: &Connection,
+    connection: &Conn,
     proceed: impl Future<Output = bool>,
     x: u64,
 ) -> n0_snafu::Result<()> {
@@ -73,16 +79,46 @@ async fn pingpong(
     Ok(())
 }
 
-async fn pingpong_0rtt(connecting: Connecting, i: u64) -> n0_snafu::Result<Connection> {
+enum Conn {
+    ZRTT(ZRTTConnection),
+    Full(Connection),
+}
+
+impl Conn {
+    fn open_bi(&self) -> quinn::OpenBi<'_> {
+        match self {
+            Conn::ZRTT(conn) => conn.open_bi(),
+            Conn::Full(conn) => conn.open_bi(),
+        }
+    }
+
+    fn close(&self, error_code: VarInt, reason: &[u8]) {
+        match self {
+            Conn::ZRTT(conn) => conn.close(error_code, reason),
+            Conn::Full(conn) => conn.close(error_code, reason),
+        }
+    }
+
+    fn rtt(&self) -> Duration {
+        match self {
+            Conn::ZRTT(conn) => conn.rtt(),
+            Conn::Full(conn) => conn.rtt(),
+        }
+    }
+}
+
+async fn pingpong_0rtt(connecting: Connecting, i: u64) -> n0_snafu::Result<Conn> {
     let connection = match connecting.into_0rtt() {
         Ok((connection, accepted)) => {
             trace!("0-RTT possible from our side");
+            let connection = Conn::ZRTT(connection);
             pingpong(&connection, accepted, i).await?;
             connection
         }
         Err(connecting) => {
             trace!("0-RTT not possible from our side");
             let connection = connecting.await.e()?;
+            let connection = Conn::Full(connection);
             pingpong(&connection, future::ready(true), i).await?;
             connection
         }
@@ -105,6 +141,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
             .await?;
         let connection = if args.disable_0rtt {
             let connection = connecting.await.e()?;
+            let connection = Conn::Full(connection);
             trace!("connecting without 0-RTT");
             pingpong(&connection, future::ready(true), i).await?;
             connection

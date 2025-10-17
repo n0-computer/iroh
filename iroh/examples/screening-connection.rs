@@ -125,7 +125,7 @@ impl ProtocolHandler for ScreenedEcho {
     /// the connection lasts.
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // We can get the remote's endpoint id from the connection.
-        let endpoint_id = connection.remote_id()?;
+        let endpoint_id = connection.remote_id();
         println!("accepted connection from {endpoint_id}");
 
         // Our protocol is a simple request-response protocol, so we expect the

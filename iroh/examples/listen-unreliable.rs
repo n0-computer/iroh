@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
         };
         let alpn = connecting.alpn().await?;
         let conn = connecting.await.e()?;
-        let endpoint_id = conn.remote_id()?;
+        let endpoint_id = conn.remote_id();
         info!(
             "new (unreliable) connection from {endpoint_id} with ALPN {}",
             String::from_utf8_lossy(&alpn),
