@@ -132,3 +132,51 @@ impl From<EndpointId> for EndpointAddr {
         EndpointAddr::new(endpoint_id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[non_exhaustive]
+    enum NewAddrType {
+        /// IP based addresses
+        Ip(SocketAddr),
+        /// Relays
+        Relay(RelayUrl),
+        /// New addr type for testing
+        Cool(u16),
+    }
+
+    #[test]
+    fn test_roundtrip_new_addr_type() {
+        let old = vec![
+            AddrType::Ip("127.0.0.1:9".parse().unwrap()),
+            AddrType::Relay("https://example.com".parse().unwrap()),
+        ];
+        let old_ser = postcard::to_stdvec(&old).unwrap();
+        let old_back: Vec<AddrType> = postcard::from_bytes(&old_ser).unwrap();
+        assert_eq!(old, old_back);
+
+        let new = vec![
+            NewAddrType::Ip("127.0.0.1:9".parse().unwrap()),
+            NewAddrType::Relay("https://example.com".parse().unwrap()),
+            NewAddrType::Cool(4),
+        ];
+        let new_ser = postcard::to_stdvec(&new).unwrap();
+        let new_back: Vec<NewAddrType> = postcard::from_bytes(&new_ser).unwrap();
+
+        assert_eq!(new, new_back);
+
+        // serialize old into new
+        let old_new_back: Vec<NewAddrType> = postcard::from_bytes(&old_ser).unwrap();
+
+        assert_eq!(
+            old_new_back,
+            vec![
+                NewAddrType::Ip("127.0.0.1:9".parse().unwrap()),
+                NewAddrType::Relay("https://example.com".parse().unwrap()),
+            ]
+        );
+    }
+}
