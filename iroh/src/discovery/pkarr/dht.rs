@@ -292,7 +292,7 @@ impl Discovery for DhtDiscovery {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
-        if data.relay_url().is_none() && data.direct_addresses().is_empty() {
+        if data.relay_url().is_none() && data.ip_addresses().is_empty() {
             tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
             return;
         }

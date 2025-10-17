@@ -279,7 +279,7 @@ impl MdnsDiscovery {
                         tracing::trace!(?data, "MdnsDiscovery address changed");
                         discovery.remove_all();
                         let addrs =
-                            MdnsDiscovery::socketaddrs_to_addrs(data.direct_addresses());
+                            MdnsDiscovery::socketaddrs_to_addrs(data.ip_addresses());
                         for addr in addrs {
                             discovery.add(addr.0, addr.1)
                         }

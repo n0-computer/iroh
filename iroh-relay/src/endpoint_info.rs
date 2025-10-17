@@ -150,7 +150,7 @@ impl EndpointData {
     }
 
     /// Sets the direct addresses and returns the updated endpoint data.
-    pub fn with_direct_addresses(mut self, addresses: BTreeSet<SocketAddr>) -> Self {
+    pub fn with_ip_addresses(mut self, addresses: BTreeSet<SocketAddr>) -> Self {
         for addr in addresses.into_iter() {
             self.addrs.insert(AddrType::Ip(addr));
         }
@@ -164,14 +164,11 @@ impl EndpointData {
     }
 
     /// Returns the relay URL of the endpoint.
-    pub fn relay_url(&self) -> Option<&RelayUrl> {
-        self.addrs
-            .iter()
-            .filter_map(|addr| match addr {
-                AddrType::Relay(url) => Some(url),
-                _ => None,
-            })
-            .next()
+    pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {
+        self.addrs.iter().filter_map(|addr| match addr {
+            AddrType::Relay(url) => Some(url),
+            _ => None,
+        })
     }
 
     /// Returns the optional user-defined data of the endpoint.
@@ -180,7 +177,7 @@ impl EndpointData {
     }
 
     /// Returns the direct addresses of the endpoint.
-    pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
+    pub fn ip_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.iter().filter_map(|addr| match addr {
             AddrType::Ip(addr) => Some(addr),
             _ => None,
@@ -360,7 +357,7 @@ impl EndpointInfo {
 
     /// Sets the direct addresses and returns the updated endpoint info.
     pub fn with_direct_addresses(mut self, direct_addresses: BTreeSet<SocketAddr>) -> Self {
-        self.data = self.data.with_direct_addresses(direct_addresses);
+        self.data = self.data.with_ip_addresses(direct_addresses);
         self
     }
 

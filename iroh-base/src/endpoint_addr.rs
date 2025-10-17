@@ -94,7 +94,7 @@ impl EndpointAddr {
     }
 
     /// Returns the direct addresses of this peer.
-    pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
+    pub fn ip_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.iter().filter_map(|addr| match addr {
             AddrType::Ip(addr) => Some(addr),
             _ => None,
@@ -102,14 +102,11 @@ impl EndpointAddr {
     }
 
     /// Returns the relay url of this peer.
-    pub fn relay_url(&self) -> Option<&RelayUrl> {
-        self.addrs
-            .iter()
-            .filter_map(|addr| match addr {
-                AddrType::Relay(url) => Some(url),
-                _ => None,
-            })
-            .next()
+    pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {
+        self.addrs.iter().filter_map(|addr| match addr {
+            AddrType::Relay(url) => Some(url),
+            _ => None,
+        })
     }
 }
 

@@ -367,7 +367,7 @@ impl EndpointMapInner {
     }
 
     /// Add the contact information for an endpoint.
-    #[instrument(skip_all, fields(endpoint = %endpoint_addr.endpoint_id.fmt_short()))]
+    #[instrument(skip_all, fields(endpoint = %endpoint_addr.id.fmt_short()))]
     fn add_endpoint_addr(
         &mut self,
         endpoint_addr: EndpointAddr,
@@ -376,8 +376,8 @@ impl EndpointMapInner {
         metrics: &Metrics,
     ) {
         let source0 = source.clone();
-        let endpoint_id = endpoint_addr.endpoint_id;
-        let relay_url = endpoint_addr.relay_url.clone();
+        let endpoint_id = endpoint_addr.id;
+        let relay_url = endpoint_addr.relay_urls().next().cloned();
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
         let endpoint_state =
@@ -391,13 +391,13 @@ impl EndpointMapInner {
             });
         endpoint_state.update_from_endpoint_addr(
             endpoint_addr.relay_url.as_ref(),
-            &endpoint_addr.direct_addresses,
+            &endpoint_addr.ip_addresses,
             source0,
             have_ipv6,
             metrics,
         );
         let id = endpoint_state.id();
-        for addr in endpoint_addr.direct_addresses() {
+        for addr in endpoint_addr.ip_addresses() {
             self.set_endpoint_state_for_ip_port(*addr, id);
         }
     }

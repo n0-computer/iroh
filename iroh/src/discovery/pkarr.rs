@@ -315,7 +315,7 @@ impl PkarrPublisher {
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_endpoint_data(&self, data: &EndpointData) {
         let mut data = data.clone();
-        if data.relay_url().is_some() {
+        if data.relay_urls().next().is_some() {
             // If relay url is set: only publish relay url, and no direct addrs.
             data.clear_direct_addresses();
         }
