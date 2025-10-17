@@ -68,7 +68,7 @@ use crate::endpoint::PathSelection;
 use crate::net_report::{IpMappedAddr, QuicConfig};
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    disco::{self, SendAddr},
+    disco::{self, SendAddr, TransactionId},
     discovery::{
         ConcurrentDiscovery, Discovery, DiscoveryContext, DynIntoDiscovery, EndpointData,
         IntoDiscoveryError, UserData,
@@ -1809,7 +1809,7 @@ impl AsyncUdpSocket for MagicUdpSocket {
 
 #[derive(Debug)]
 enum ActorMessage {
-    EndpointPingExpired(usize, stun_rs::TransactionId),
+    EndpointPingExpired(usize, TransactionId),
     NetworkChange,
     ScheduleDirectAddrUpdate(UpdateReason, Option<(EndpointId, RelayUrl)>),
     RelayMapChange,
