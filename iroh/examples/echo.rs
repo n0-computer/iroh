@@ -21,6 +21,15 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE)
+            .compact()
+            .finish(),
+    )
+    .e()?;
+
     let router = start_accept_side().await?;
 
     // wait for the endpoint to be online
@@ -58,6 +67,8 @@ async fn connect_side(addr: EndpointAddr) -> Result<()> {
 
     // The above call only queues a close message to be sent (see how it's not async!).
     // We need to actually call this to make sure this message is sent out.
+    //
+    // TODO this causes the above close to not get cleaned up gracefully and early exits, check the warn messages in logs...
     endpoint.close().await;
     // If we don't call this, but continue using the endpoint, we then the queued
     // close call will eventually be picked up and sent.
