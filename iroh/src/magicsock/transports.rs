@@ -354,7 +354,12 @@ impl Default for Addr {
 
 impl From<SocketAddr> for Addr {
     fn from(value: SocketAddr) -> Self {
-        Self::Ip(value)
+        match value {
+            SocketAddr::V4(_) => Self::Ip(value),
+            SocketAddr::V6(addr) => {
+                Self::Ip(SocketAddr::new(addr.ip().to_canonical(), addr.port()))
+            }
+        }
     }
 }
 
