@@ -448,7 +448,7 @@ impl ConcurrentDiscovery {
         self.services.read().expect("poisoned").is_empty()
     }
 
-    /// How many services are configured?
+    /// Returns the number of services configured.
     pub fn len(&self) -> usize {
         self.services.read().expect("poisoned").len()
     }
