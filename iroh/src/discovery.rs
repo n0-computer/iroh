@@ -62,12 +62,14 @@
 //! use iroh::{
 //!     Endpoint, SecretKey,
 //!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
+//!     endpoint::RelayMode,
 //! };
 //!
 //! # async fn wrapper() -> n0_snafu::Result<()> {
 //! let ep = Endpoint::empty_builder()
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())
+//!     .relay_mode(RelayMode::Default)
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -81,6 +83,7 @@
 //! # {
 //! # use iroh::{
 //! #    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, mdns::MdnsDiscovery},
+//! #    endpoint::RelayMode,
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
@@ -89,6 +92,7 @@
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())
 //!     .discovery(MdnsDiscovery::builder())
+//!     .relay_mode(RelayMode::Default)
 //!     .bind()
 //!     .await?;
 //! # Ok(())

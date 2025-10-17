@@ -2381,7 +2381,7 @@ mod tests {
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
             .await?;
-        let server = Endpoint::builder()
+        let server = Endpoint::empty_builder()
             .insecure_skip_relay_cert_verify(true)
             .relay_mode(RelayMode::Custom(relay_map))
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2427,12 +2427,12 @@ mod tests {
     #[traced_test]
     async fn endpoint_relay_map_change() -> Result {
         let (relay_map, relay_url, _guard1) = run_relay_server().await?;
-        let client = Endpoint::builder()
+        let client = Endpoint::empty_builder()
             .insecure_skip_relay_cert_verify(true)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
             .await?;
-        let server = Endpoint::builder()
+        let server = Endpoint::empty_builder()
             .insecure_skip_relay_cert_verify(true)
             .relay_mode(RelayMode::Custom(relay_map))
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2539,14 +2539,12 @@ mod tests {
         let ep1 = Endpoint::empty_builder()
             .discovery(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
 
         let ep2 = Endpoint::empty_builder()
             .discovery(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
 
@@ -2741,7 +2739,6 @@ mod tests {
         let server = Endpoint::empty_builder()
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
 
@@ -2882,10 +2879,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder()
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await?;
+        let client = Endpoint::empty_builder().bind().await?;
         let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
@@ -2933,10 +2927,7 @@ mod tests {
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder()
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await?;
+        let client = Endpoint::empty_builder().bind().await?;
         let server_key = SecretKey::generate(&mut rng);
         let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
@@ -2961,7 +2952,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn graceful_close() -> Result {
-        let client = Endpoint::bind().await?;
+        let client = Endpoint::empty_builder().bind().await?;
         let server = Endpoint::empty_builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -3006,13 +2997,11 @@ mod tests {
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
         let client = Endpoint::empty_builder()
             .secret_key(secret_key)
-            .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
         let server = Endpoint::empty_builder()
             .secret_key(secret_key)
-            .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -3068,15 +3057,8 @@ mod tests {
         primary_connect_alpn: &[u8],
         secondary_connect_alpns: Vec<Vec<u8>>,
     ) -> Result<Option<Vec<u8>>> {
-        let client = Endpoint::empty_builder()
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await?;
-        let server = Endpoint::empty_builder()
-            .relay_mode(RelayMode::Disabled)
-            .alpns(accept_alpns)
-            .bind()
-            .await?;
+        let client = Endpoint::empty_builder().bind().await?;
+        let server = Endpoint::empty_builder().alpns(accept_alpns).bind().await?;
         let server_addr = server.addr();
         let server_task = tokio::spawn({
             let server = server.clone();
@@ -3196,11 +3178,7 @@ mod tests {
         }
 
         async fn noop_server() -> Result<(Router, EndpointAddr)> {
-            let endpoint = Endpoint::empty_builder()
-                .relay_mode(RelayMode::Disabled)
-                .bind()
-                .await
-                .e()?;
+            let endpoint = Endpoint::empty_builder().bind().await.e()?;
             let addr = endpoint.addr();
             let router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
             Ok((router, addr))
@@ -3225,7 +3203,6 @@ mod tests {
             .collect::<Vec<_>>();
         let discovery = StaticProvider::from_endpoint_info(addrs);
         let endpoint = Endpoint::empty_builder()
-            .relay_mode(RelayMode::Disabled)
             .discovery(discovery)
             .bind()
             .await

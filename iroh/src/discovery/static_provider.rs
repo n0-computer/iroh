@@ -244,7 +244,7 @@ mod tests {
     async fn test_basic() -> Result {
         let discovery = StaticProvider::new();
 
-        let _ep = Endpoint::builder()
+        let _ep = Endpoint::empty_builder()
             .discovery(discovery.clone())
             .bind()
             .await?;

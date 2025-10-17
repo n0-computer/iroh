@@ -337,14 +337,12 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::Endpoint;
 
     #[tokio::test]
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_discovery_smoke() -> Result {
-        let ep = Endpoint::bind().await?;
-        let secret = ep.secret_key().clone();
+        let secret = SecretKey::generate(&mut rand::rng());
         let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
