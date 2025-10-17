@@ -9,7 +9,7 @@
 //! use std::time::Duration;
 //!
 //! use iroh::{
-//!     SecretKey,
+//!     RelayMode, SecretKey,
 //!     discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
 //!     endpoint::{Endpoint, Source},
 //! };
@@ -18,7 +18,10 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let recent = Duration::from_secs(600); // 10 minutes in seconds
-//!     let endpoint = Endpoint::empty_builder().bind().await.unwrap();
+//!     let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
+//!         .bind()
+//!         .await
+//!         .unwrap();
 //!
 //!     // Register the discovery services with the endpoint
 //!     let mdns = MdnsDiscovery::builder().build(endpoint.id()).unwrap();

@@ -66,10 +66,9 @@
 //! };
 //!
 //! # async fn wrapper() -> n0_snafu::Result<()> {
-//! let ep = Endpoint::empty_builder()
+//! let ep = Endpoint::empty_builder(RelayMode::Default)
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())
-//!     .relay_mode(RelayMode::Default)
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -88,11 +87,10 @@
 //! # };
 //! #
 //! # async fn wrapper() -> n0_snafu::Result<()> {
-//! let ep = Endpoint::empty_builder()
+//! let ep = Endpoint::empty_builder(RelayMode::Default)
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())
 //!     .discovery(MdnsDiscovery::builder())
-//!     .relay_mode(RelayMode::Default)
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -916,9 +914,8 @@ mod tests {
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let secret = SecretKey::generate(rng);
 
-        let ep = Endpoint::empty_builder()
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .secret_key(secret)
-            .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await
@@ -1080,8 +1077,7 @@ mod test_dns_pkarr {
         dns_pkarr_server: &DnsPkarrServer,
     ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate(rng);
-        let ep = Endpoint::empty_builder()
-            .relay_mode(RelayMode::Custom(relay_map.clone()))
+        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])

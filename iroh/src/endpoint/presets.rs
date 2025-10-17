@@ -4,9 +4,12 @@
 //!
 //! ```no_run
 //! # async fn wrapper() -> n0_snafu::Result {
-//! use iroh::{Endpoint, Watcher, endpoint::presets};
+//! use iroh::{Endpoint, RelayMode, Watcher, endpoint::presets};
 //!
-//! let endpoint = Endpoint::empty_builder().preset(presets::N0).bind().await?;
+//! let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
+//!     .preset(presets::N0)
+//!     .bind()
+//!     .await?;
 //! # let _ = endpoint;
 //! # Ok(())
 //! # }

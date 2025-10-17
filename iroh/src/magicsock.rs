@@ -2618,10 +2618,9 @@ mod tests {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-            let endpoint = Endpoint::empty_builder()
+            let endpoint = Endpoint::empty_builder(relay_mode)
                 .secret_key(secret_key.clone())
                 .transport_config(transport_config)
-                .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
                 .bind()
                 .await

@@ -238,13 +238,13 @@ mod tests {
     use n0_snafu::{Result, ResultExt};
 
     use super::*;
-    use crate::Endpoint;
+    use crate::{Endpoint, RelayMode};
 
     #[tokio::test]
     async fn test_basic() -> Result {
         let discovery = StaticProvider::new();
 
-        let _ep = Endpoint::empty_builder()
+        let _ep = Endpoint::empty_builder(RelayMode::Disabled)
             .discovery(discovery.clone())
             .bind()
             .await?;
