@@ -8,7 +8,7 @@
 use std::net::SocketAddr;
 
 use clap::Parser;
-use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey};
+use iroh::{AddrType, Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey};
 use n0_snafu::{Result, ResultExt};
 use tracing::info;
 
@@ -63,11 +63,17 @@ async fn main() -> Result<()> {
     }
 
     let relay_url = endpoint_addr
-        .relay_url
+        .relay_urls()
+        .next()
         .expect("should be connected to a relay server");
     println!("endpoint relay server url: {relay_url}\n");
     // Build a `EndpointAddr` from the endpoint_id, relay url, and UDP addresses.
-    let addr = EndpointAddr::from_parts(args.endpoint_id, Some(args.relay_url), args.addrs);
+    let addrs = args
+        .addrs
+        .into_iter()
+        .map(AddrType::Ip)
+        .chain(std::iter::once(AddrType::Relay(args.relay_url)));
+    let addr = EndpointAddr::from_parts(args.endpoint_id, addrs);
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.

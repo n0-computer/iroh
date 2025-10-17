@@ -88,7 +88,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
                 let Ok(Some(item)) = stream.try_next().await else {
                     continue;
                 };
-                if item.relay_url().is_some() {
+                if item.relay_urls().next().is_some() {
                     break;
                 }
             }

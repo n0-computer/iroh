@@ -2135,7 +2135,7 @@ fn is_cgi() -> bool {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use iroh_base::{EndpointAddr, EndpointId, SecretKey};
+    use iroh_base::{AddrType, EndpointAddr, EndpointId, SecretKey};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
@@ -2460,7 +2460,7 @@ mod tests {
         println!("round1: {:?}", addr);
 
         // remove direct addrs to force relay usage
-        addr.ip_addresses.clear();
+        addr.addrs.retain(|addr| !matches!(addr, AddrType::Ip(_)));
 
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
@@ -2496,7 +2496,7 @@ mod tests {
         let mut addr = tokio::time::timeout(Duration::from_secs(10), async move {
             let mut stream = addr_watcher.stream();
             while let Some(addr) = stream.next().await {
-                if addr.relay_url.as_ref() != Some(&relay_url) {
+                if addr.relay_urls().next() != Some(&relay_url) {
                     return addr;
                 }
             }
@@ -2506,10 +2506,10 @@ mod tests {
         .e()?;
 
         println!("round2: {:?}", addr);
-        assert_eq!(addr.relay_url, Some(new_relay_url));
+        assert_eq!(addr.relay_urls().next(), Some(&new_relay_url));
 
         // remove direct addrs to force relay usage
-        addr.ip_addresses.clear();
+        addr.addrs.retain(|addr| !matches!(addr, AddrType::Ip(_)));
 
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
@@ -2677,7 +2677,7 @@ mod tests {
         let ep1_endpointaddr = ep1.addr();
         tracing::info!(
             "endpoint id 1 {ep1_endpointid}, relay URL {:?}",
-            ep1_endpointaddr.relay_url()
+            ep1_endpointaddr.relay_urls().next()
         );
         tracing::info!("endpoint id 2 {ep2_endpointid}");
 
@@ -2723,7 +2723,7 @@ mod tests {
             .bind()
             .await?;
 
-        assert!(!ep.addr().ip_addresses.is_empty());
+        assert!(ep.addr().ip_addresses().count() > 0);
 
         Ok(())
     }

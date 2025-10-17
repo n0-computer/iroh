@@ -174,12 +174,7 @@ impl StaticProvider {
         match guard.entry(endpoint_id) {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                existing
-                    .data
-                    .add_direct_addresses(data.ip_addresses().copied());
-                existing
-                    .data
-                    .set_relay_url(data.relay_urls().next().cloned());
+                existing.data.add_addrs(data.addrs().cloned());
                 existing.data.set_user_data(data.user_data().cloned());
                 existing.last_updated = last_updated;
             }
@@ -236,7 +231,7 @@ impl Discovery for StaticProvider {
 
 #[cfg(test)]
 mod tests {
-    use iroh_base::{EndpointAddr, SecretKey};
+    use iroh_base::{AddrType, EndpointAddr, SecretKey};
     use n0_snafu::{Result, ResultExt};
 
     use super::*;
@@ -253,9 +248,10 @@ mod tests {
 
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr {
-            endpoint_id: key.public(),
-            relay_url: Some("https://example.com".parse()?),
-            direct_addresses: Default::default(),
+            id: key.public(),
+            addrs: [AddrType::Relay("https://example.com".parse()?)]
+                .into_iter()
+                .collect(),
         };
         let user_data = Some("foobar".parse().unwrap());
         let endpoint_info = EndpointInfo::from(addr.clone()).with_user_data(user_data.clone());
@@ -284,15 +280,19 @@ mod tests {
         let discovery = StaticProvider::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr {
-            endpoint_id: key.public(),
-            relay_url: Some("https://example.com".parse()?),
-            direct_addresses: Default::default(),
+            id: key.public(),
+            addrs: [AddrType::Relay("https://example.com".parse()?)]
+                .into_iter()
+                .collect(),
         };
         discovery.add_endpoint_info(addr);
         let mut stream = discovery.resolve(key.public()).unwrap();
         let item = stream.next().await.unwrap()?;
         assert_eq!(item.provenance(), "foo");
-        assert_eq!(item.relay_url(), Some(&("https://example.com".parse()?)));
+        assert_eq!(
+            item.relay_urls().next(),
+            Some(&("https://example.com".parse()?))
+        );
 
         Ok(())
     }

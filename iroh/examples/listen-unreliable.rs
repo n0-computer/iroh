@@ -41,8 +41,7 @@ async fn main() -> Result<()> {
 
     let endpoint_addr = endpoint.addr();
     let local_addrs = endpoint_addr
-        .ip_addresses
-        .into_iter()
+        .ip_addresses()
         .map(|addr| {
             let addr = addr.to_string();
             println!("\t{addr}");
@@ -51,7 +50,8 @@ async fn main() -> Result<()> {
         .collect::<Vec<_>>()
         .join(" ");
     let relay_url = endpoint_addr
-        .relay_url
+        .relay_urls()
+        .next()
         .expect("Should have a relay URL, assuming a default endpoint setup.");
     println!("endpoint relay server url: {relay_url}");
     println!("\nin a separate terminal run:");

@@ -678,7 +678,7 @@ impl EndpointState {
     pub(super) fn update_from_endpoint_addr(
         &mut self,
         new_relay_url: Option<&RelayUrl>,
-        new_addrs: &BTreeSet<SocketAddr>,
+        new_addrs: impl Iterator<Item = SocketAddr>,
         source: super::Source,
         have_ipv6: bool,
         metrics: &MagicsockMetrics,
@@ -714,7 +714,8 @@ impl EndpointState {
         }
 
         let mut access = self.udp_paths.access_mut(now);
-        for &addr in new_addrs.iter() {
+        let mut new_addrs_list = Vec::new();
+        for addr in new_addrs {
             access
                 .paths()
                 .entry(addr.into())
@@ -724,10 +725,11 @@ impl EndpointState {
                 .or_insert_with(|| {
                     PathState::new(self.endpoint_id, SendAddr::from(addr), source.clone(), now)
                 });
+            new_addrs_list.push(addr);
         }
         drop(access);
         let paths = summarize_endpoint_paths(self.udp_paths.paths());
-        debug!(new = ?new_addrs , %paths, "added new direct paths for endpoint");
+        debug!(new = ?new_addrs_list , %paths, "added new direct paths for endpoint");
     }
 
     /// Handle a received Disco Ping.

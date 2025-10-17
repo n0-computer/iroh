@@ -631,13 +631,13 @@ impl DiscoveryTask {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::{BTreeSet, HashMap},
+        collections::HashMap,
         net::SocketAddr,
         sync::{Arc, Mutex},
         time::SystemTime,
     };
 
-    use iroh_base::{EndpointAddr, SecretKey};
+    use iroh_base::{AddrType, EndpointAddr, SecretKey};
     use n0_snafu::{Error, Result, ResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{CryptoRng, Rng, SeedableRng};
@@ -707,7 +707,7 @@ mod tests {
                 let port: u16 = rand::rng().random_range(10_000..20_000);
                 // "240.0.0.0/4" is reserved and unreachable
                 let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                let data = EndpointData::new(None, BTreeSet::from([addr]));
+                let data = EndpointData::new([AddrType::Ip(addr)]);
                 Some((data, ts))
             } else {
                 self.shared
@@ -889,9 +889,10 @@ mod tests {
             new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
 
         let ep1_wrong_addr = EndpointAddr {
-            endpoint_id: ep1.id(),
-            relay_url: None,
-            direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
+            id: ep1.id(),
+            addrs: [AddrType::Ip("240.0.0.1:1000".parse().unwrap())]
+                .into_iter()
+                .collect(),
         };
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
         Ok(())
@@ -955,7 +956,7 @@ mod tests {
 /// publish to. The DNS and pkarr servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
-    use iroh_base::{EndpointAddr, SecretKey};
+    use iroh_base::{AddrType, EndpointAddr, SecretKey};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
     use n0_future::time::Duration;
     use n0_snafu::{Error, Result, ResultExt};
@@ -1016,14 +1017,13 @@ mod test_dns_pkarr {
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
 
-        let relay_url = Some("https://relay.example".parse().unwrap());
+        let relay_url = Some(AddrType::Relay("https://relay.example".parse().unwrap()));
 
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         let publisher =
             PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone()).build(secret_key);
         let user_data: UserData = "foobar".parse().unwrap();
-        let data = EndpointData::new(relay_url.clone(), Default::default())
-            .with_user_data(Some(user_data.clone()));
+        let data = EndpointData::new(relay_url.clone()).with_user_data(Some(user_data.clone()));
         // does not block, update happens in background task
         publisher.update_endpoint_data(&data);
         // wait until our shared state received the update from pkarr publishing
@@ -1037,9 +1037,8 @@ mod test_dns_pkarr {
         println!("resolved {resolved:?}");
 
         let expected_addr = EndpointAddr {
-            endpoint_id,
-            relay_url,
-            direct_addresses: Default::default(),
+            id: endpoint_id,
+            addrs: relay_url.into_iter().collect(),
         };
 
         assert_eq!(resolved.to_endpoint_addr(), expected_addr);

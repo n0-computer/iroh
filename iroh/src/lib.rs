@@ -272,8 +272,8 @@ pub mod protocol;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
-    EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
-    Signature, SignatureError,
+    AddrType, EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError,
+    SecretKey, Signature, SignatureError,
 };
 pub use iroh_relay::{RelayConfig, RelayMap, endpoint_info};
 pub use n0_watcher::Watcher;

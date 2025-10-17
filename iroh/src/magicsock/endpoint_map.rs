@@ -390,8 +390,8 @@ impl EndpointMapInner {
                 path_selection,
             });
         endpoint_state.update_from_endpoint_addr(
-            endpoint_addr.relay_url.as_ref(),
-            &endpoint_addr.ip_addresses,
+            endpoint_addr.relay_urls().next(),
+            endpoint_addr.ip_addresses().copied(),
             source0,
             have_ipv6,
             metrics,
