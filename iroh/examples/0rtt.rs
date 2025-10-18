@@ -3,10 +3,9 @@ use std::{env, future::Future, str::FromStr, time::Instant};
 use clap::Parser;
 use data_encoding::HEXLOWER;
 use iroh::{
-    SecretKey,
+    EndpointId, SecretKey,
     endpoint::{Connecting, Connection},
 };
-use iroh_tickets::endpoint::EndpointTicket;
 use n0_future::{StreamExt, future};
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
@@ -17,7 +16,7 @@ const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
 #[derive(Parser)]
 struct Args {
     /// The endpoint id to connect to. If not set, the program will start a server.
-    endpoint: Option<EndpointTicket>,
+    endpoint_id: Option<EndpointId>,
     /// Number of rounds to run.
     #[clap(long, default_value = "100")]
     rounds: u64,
@@ -92,7 +91,7 @@ async fn pingpong_0rtt(connecting: Connecting, i: u64) -> n0_snafu::Result<Conne
 }
 
 async fn connect(args: Args) -> n0_snafu::Result<()> {
-    let endpoint_addr = args.endpoint.unwrap().endpoint_addr().clone();
+    let remote_id = args.endpoint_id.unwrap();
     let endpoint = iroh::Endpoint::builder()
         .relay_mode(iroh::RelayMode::Disabled)
         .keylog(true)
@@ -102,7 +101,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
     for i in 0..args.rounds {
         let t0 = Instant::now();
         let connecting = endpoint
-            .connect_with_opts(endpoint_addr.clone(), PINGPONG_ALPN, Default::default())
+            .connect_with_opts(remote_id, PINGPONG_ALPN, Default::default())
             .await?;
         let connection = if args.disable_0rtt {
             let connection = connecting.await.e()?;
@@ -149,8 +148,6 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
         }
     };
     println!("Listening on: {addr:?}");
-    println!("Endpoint ID: {:?}", addr.id);
-    println!("Ticket: {}", EndpointTicket::from(addr));
 
     let accept = async move {
         while let Some(incoming) = endpoint.accept().await {
@@ -185,7 +182,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
 async fn main() -> n0_snafu::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
-    if args.endpoint.is_some() {
+    if args.endpoint_id.is_some() {
         connect(args).await?;
     } else {
         accept(args).await?;
