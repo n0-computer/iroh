@@ -2172,7 +2172,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2632,7 +2632,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#ef19d5339195af6a99196e949d7d0c31ba44290f"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a4597406bf649a8eb38a5f8a1861979b6cee2ef4"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2652,7 +2652,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#ef19d5339195af6a99196e949d7d0c31ba44290f"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a4597406bf649a8eb38a5f8a1861979b6cee2ef4"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2674,14 +2674,14 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.12"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#ef19d5339195af6a99196e949d7d0c31ba44290f"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a4597406bf649a8eb38a5f8a1861979b6cee2ef4"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3211,7 +3211,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.9.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#2d53e93285ebd6be1f53de84443351ea00b6e056"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#62a495bfc48ae85ae4acf69fa0402a34e2828051"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3907,7 +3907,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3944,7 +3944,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -4263,8 +4263,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.29"
-source = "git+https://github.com/n0-computer/rustls?rev=da7b54c6621fdeb2defff38242c5b56ef4c5a920#da7b54c6621fdeb2defff38242c5b56ef4c5a920"
+version = "0.23.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "751e04a496ca00bb97a5e043158d23d66b5aabf2e1d5aa2a0aaebb1aafe6f82c"
 dependencies = [
  "log",
  "once_cell",
@@ -5898,7 +5899,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.1",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
