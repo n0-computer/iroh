@@ -292,14 +292,14 @@ impl Discovery for DhtDiscovery {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
-        if data.relay_url().is_none() && data.ip_addresses().is_empty() {
+        if !data.has_addrs() {
             tracing::debug!("no relay url or direct addresses in endpoint data, not publishing");
             return;
         }
         tracing::debug!("publishing {data:?}");
         let mut info = EndpointInfo::from_parts(keypair.public(), data.clone());
         if !self.0.include_direct_addresses {
-            info.clear_direct_addresses();
+            info.clear_ip_addresses();
         }
         let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
             tracing::warn!("failed to create signed packet");
@@ -369,7 +369,7 @@ mod tests {
                     .collect::<Vec<_>>()
                     .await;
                 for item in items.into_iter().flatten() {
-                    if let Some(url) = item.relay_url() {
+                    for url in item.relay_urls() {
                         found_relay_urls.insert(url.clone());
                     }
                 }

@@ -329,7 +329,7 @@ impl MagicSock {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-    pub(crate) fn direct_addresses(&self) -> n0_watcher::Direct<BTreeSet<DirectAddr>> {
+    pub(crate) fn ip_addresses(&self) -> n0_watcher::Direct<BTreeSet<DirectAddr>> {
         self.direct_addrs.addrs.watch()
     }
 
@@ -3080,12 +3080,12 @@ mod tests {
         let ms = Handle::new(default_options(&mut rng)).await.unwrap();
 
         // See if we can get endpoints.
-        let eps0 = ms.direct_addresses().get();
+        let eps0 = ms.ip_addresses().get();
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let eps1 = ms.direct_addresses().get();
+        let eps1 = ms.ip_addresses().get();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
@@ -3237,7 +3237,7 @@ mod tests {
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
         let addrs = msock_2
-            .direct_addresses()
+            .ip_addresses()
             .get()
             .into_iter()
             .map(|x| TransportAddr::Ip(x.addr))
@@ -3350,7 +3350,7 @@ mod tests {
 
         // Provide correct addressing information
         let addrs = msock_2
-            .direct_addresses()
+            .ip_addresses()
             .get()
             .into_iter()
             .map(|x| TransportAddr::Ip(x.addr))

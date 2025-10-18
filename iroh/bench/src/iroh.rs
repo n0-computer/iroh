@@ -54,7 +54,7 @@ pub fn server_endpoint(
 
         let addr = ep.bound_sockets();
         let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr[0].port());
-        let mut addr = EndpointAddr::new(ep.id()).with_direct_addresses([addr]);
+        let mut addr = EndpointAddr::new(ep.id()).with_ip_addresses([addr]);
         if let Some(relay_url) = relay_url {
             addr = addr.with_relay_url(relay_url.clone());
         }
