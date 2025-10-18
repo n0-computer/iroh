@@ -185,7 +185,7 @@ impl EndpointData {
     }
 
     /// Removes all direct addresses from the endpoint data.
-    pub fn clear_direct_addresses(&mut self) {
+    pub fn clear_ip_addresses(&mut self) {
         self.addrs
             .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
     }
@@ -211,6 +211,11 @@ impl EndpointData {
     /// Returns the full list of all known addresses
     pub fn addrs(&self) -> impl Iterator<Item = &TransportAddr> {
         self.addrs.iter()
+    }
+
+    /// Does this have any addresses?
+    pub fn has_addrs(&self) -> bool {
+        !self.addrs.is_empty()
     }
 }
 
@@ -309,7 +314,7 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
             .flatten()
             .filter_map(|s| Url::parse(s).ok())
             .map(|url| TransportAddr::Relay(url.into()));
-        let direct_addresses = attrs
+        let ip_addrs = attrs
             .get(&IrohAttr::Addr)
             .into_iter()
             .flatten()
@@ -324,7 +329,7 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
             .and_then(|s| UserData::from_str(s).ok());
         let mut data = EndpointData::default();
         data.set_user_data(user_data);
-        data.add_addrs(relay_urls.chain(direct_addresses));
+        data.add_addrs(relay_urls.chain(ip_addrs));
 
         Self { endpoint_id, data }
     }
@@ -362,8 +367,8 @@ impl EndpointInfo {
     }
 
     /// Sets the direct addresses and returns the updated endpoint info.
-    pub fn with_direct_addresses(mut self, direct_addresses: BTreeSet<SocketAddr>) -> Self {
-        self.data = self.data.with_ip_addresses(direct_addresses);
+    pub fn with_ip_addresses(mut self, addrs: BTreeSet<SocketAddr>) -> Self {
+        self.data = self.data.with_ip_addresses(addrs);
         self
     }
 
@@ -780,7 +785,7 @@ mod tests {
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",
         )?)
         .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))
-        .with_direct_addresses(BTreeSet::from([
+        .with_ip_addresses(BTreeSet::from([
             "192.168.96.145:60165".parse().unwrap(),
             "213.208.157.87:60165".parse().unwrap(),
         ]));

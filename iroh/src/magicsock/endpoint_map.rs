@@ -419,7 +419,7 @@ impl EndpointMapInner {
             if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
                 let endpoint = entry.get_mut();
                 endpoint.remove_direct_addr(&ipp, now, why);
-                if endpoint.direct_addresses().count() == 0 {
+                if endpoint.ip_addresses().count() == 0 {
                     let endpoint_id = endpoint.public_key();
                     let mapped_addr = endpoint.quic_mapped_addr();
                     self.by_endpoint_key.remove(endpoint_id);
@@ -707,7 +707,7 @@ impl EndpointMapInner {
                 continue;
             };
 
-            for ip_port in ep.direct_addresses() {
+            for ip_port in ep.ip_addresses() {
                 self.by_ip_port.remove(&ip_port);
             }
 
@@ -797,10 +797,9 @@ mod tests {
 
         let endpoint_addr_a = EndpointAddr::new(endpoint_a)
             .with_relay_url(relay_x)
-            .with_direct_addresses(direct_addresses_a);
+            .with_ip_addresses(direct_addresses_a);
         let endpoint_addr_b = EndpointAddr::new(endpoint_b).with_relay_url(relay_y);
-        let endpoint_addr_c =
-            EndpointAddr::new(endpoint_c).with_direct_addresses(direct_addresses_c);
+        let endpoint_addr_c = EndpointAddr::new(endpoint_c).with_ip_addresses(direct_addresses_c);
         let endpoint_addr_d = EndpointAddr::new(endpoint_d);
 
         endpoint_map.add_test_addr(endpoint_addr_a);
@@ -878,7 +877,7 @@ mod tests {
         info!("Adding active addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
-            let endpoint_addr = EndpointAddr::new(public_key).with_direct_addresses([addr]);
+            let endpoint_addr = EndpointAddr::new(public_key).with_ip_addresses([addr]);
             // add address
             endpoint_map.add_test_addr(endpoint_addr);
             // make it active
@@ -888,7 +887,7 @@ mod tests {
         info!("Adding offline/inactive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
-            let endpoint_addr = EndpointAddr::new(public_key).with_direct_addresses([addr]);
+            let endpoint_addr = EndpointAddr::new(public_key).with_ip_addresses([addr]);
             endpoint_map.add_test_addr(endpoint_addr);
         }
 
@@ -910,14 +909,14 @@ mod tests {
         // Half the offline addresses should have been pruned.  All the active and alive
         // addresses should have been kept.
         assert_eq!(
-            endpoint.direct_addresses().count(),
+            endpoint.ip_addresses().count(),
             MAX_INACTIVE_DIRECT_ADDRESSES * 3
         );
 
         // We should have both offline and alive addresses which are not active.
         assert_eq!(
             endpoint
-                .direct_address_states()
+                .ip_address_states()
                 .filter(|(_addr, state)| !state.is_active())
                 .count(),
             MAX_INACTIVE_DIRECT_ADDRESSES * 2
@@ -932,8 +931,7 @@ mod tests {
         // add one active endpoint and more than MAX_INACTIVE_ENDPOINTS inactive endpoints
         let active_endpoint = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        endpoint_map
-            .add_test_addr(EndpointAddr::new(active_endpoint).with_direct_addresses([addr]));
+        endpoint_map.add_test_addr(EndpointAddr::new(active_endpoint).with_ip_addresses([addr]));
         endpoint_map
             .inner
             .lock()

@@ -857,8 +857,8 @@ impl Endpoint {
     /// that initial call to [`Endpoint::online`], to understand if your
     /// endpoint is no longer able to be connected to by endpoints outside
     /// of the private or local network, watch for changes in it's [`EndpointAddr`].
-    /// If the `relay_url` is `None` or if there are no `direct_addresses` in
-    /// the [`EndpointAddr`], you may not be dialable by other endpoints on the internet.
+    /// If there are no `addrs`in the [`EndpointAddr`], you may not be dialable by other endpoints
+    /// on the internet.
     ///
     ///
     /// The `EndpointAddr` will change as:
@@ -870,7 +870,7 @@ impl Endpoint {
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
-        let watch_addrs = self.msock.direct_addresses();
+        let watch_addrs = self.msock.ip_addresses();
         let watch_relay = self.msock.home_relay();
         let endpoint_id = self.id();
 

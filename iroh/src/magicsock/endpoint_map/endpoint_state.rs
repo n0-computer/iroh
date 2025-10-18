@@ -1205,13 +1205,13 @@ impl EndpointState {
         (udp_addr, relay_url, ping_msgs)
     }
 
-    /// Get the direct addresses for this endpoint.
-    pub(super) fn direct_addresses(&self) -> impl Iterator<Item = IpPort> + '_ {
+    /// Get the IP addresses for this endpoint.
+    pub(super) fn ip_addresses(&self) -> impl Iterator<Item = IpPort> + '_ {
         self.udp_paths.paths().keys().copied()
     }
 
     #[cfg(test)]
-    pub(super) fn direct_address_states(&self) -> impl Iterator<Item = (&IpPort, &PathState)> + '_ {
+    pub(super) fn ip_address_states(&self) -> impl Iterator<Item = (&IpPort, &PathState)> + '_ {
         self.udp_paths.paths().iter()
     }
 

@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
     let pkarr = PkarrRelayClient::new(pkarr_relay_url);
     let endpoint_info = EndpointInfo::new(endpoint_id)
         .with_relay_url(relay_url.map(Into::into))
-        .with_direct_addresses(args.addr.into_iter().collect())
+        .with_ip_addresses(args.addr.into_iter().collect())
         .with_user_data(args.user_data);
     let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
     tracing::debug!("signed packet: {signed_packet:?}");

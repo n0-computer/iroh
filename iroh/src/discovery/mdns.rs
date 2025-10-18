@@ -464,7 +464,7 @@ impl MdnsDiscovery {
             .with_callback(callback)
             .with_ip_class(IpClass::Auto);
         if advertise {
-            let addrs = MdnsDiscovery::socketaddrs_to_addrs(&socketaddrs);
+            let addrs = MdnsDiscovery::socketaddrs_to_addrs(socketaddrs.iter());
             for addr in addrs {
                 discoverer = discoverer.with_addrs(addr.0, addr.1);
             }
@@ -474,7 +474,9 @@ impl MdnsDiscovery {
             .map_err(|e| IntoDiscoveryError::from_err("mdns", e))
     }
 
-    fn socketaddrs_to_addrs(socketaddrs: &BTreeSet<SocketAddr>) -> HashMap<u16, Vec<IpAddr>> {
+    fn socketaddrs_to_addrs<'a>(
+        socketaddrs: impl Iterator<Item = &'a SocketAddr>,
+    ) -> HashMap<u16, Vec<IpAddr>> {
         let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
         for socketaddr in socketaddrs {
             addrs
@@ -487,7 +489,7 @@ impl MdnsDiscovery {
 }
 
 fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryItem {
-    let direct_addresses: BTreeSet<SocketAddr> = peer
+    let ip_addrs: BTreeSet<SocketAddr> = peer
         .addrs()
         .iter()
         .map(|(ip, port)| SocketAddr::new(*ip, *port))
@@ -506,7 +508,7 @@ fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryIte
         None
     };
     let endpoint_info = EndpointInfo::new(*endpoint_id)
-        .with_direct_addresses(direct_addresses)
+        .with_ip_addresses(ip_addrs)
         .with_user_data(user_data);
     DiscoveryItem::new(endpoint_info, NAME, None)
 }
@@ -543,7 +545,7 @@ mod tests {
     /// This module's name signals nextest to run test in a single thread (no other concurrent
     /// tests)
     mod run_in_isolation {
-        use iroh_base::SecretKey;
+        use iroh_base::{SecretKey, TransportAddr};
         use n0_future::StreamExt;
         use n0_snafu::{Error, Result, ResultExt};
         use rand::{CryptoRng, SeedableRng};
@@ -566,7 +568,7 @@ mod tests {
             // make addr info for discoverer b
             let user_data: UserData = "foobar".parse()?;
             let endpoint_data =
-                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
                     .with_user_data(Some(user_data.clone()));
 
             // resolve twice to ensure we can create separate streams for the same endpoint_id
@@ -621,7 +623,7 @@ mod tests {
 
             // publish discovery_b's address
             let endpoint_data =
-                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
                     .with_user_data(Some("".parse()?));
             discovery_b.publish(&endpoint_data);
 
@@ -680,7 +682,7 @@ mod tests {
 
             let (_, discovery) = make_discoverer(&mut rng, false)?;
             let endpoint_data =
-                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
 
             for i in 0..num_endpoints {
                 let (endpoint_id, discovery) = make_discoverer(&mut rng, true)?;
@@ -730,11 +732,11 @@ mod tests {
 
             let (endpoint_id_c, discovery_c) = make_discoverer(&mut rng, true)?;
             let endpoint_data_c =
-                EndpointData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:22222".parse().unwrap())]);
             discovery_c.publish(&endpoint_data_c);
 
             let endpoint_data_b =
-                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
             discovery_b.publish(&endpoint_data_b);
 
             let mut stream_c = discovery_a.resolve(endpoint_id_c).unwrap();
@@ -779,15 +781,15 @@ mod tests {
                 .build(id_c)?;
 
             let endpoint_data_a =
-                EndpointData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
             discovery_a.publish(&endpoint_data_a);
 
             let endpoint_data_b =
-                EndpointData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:22222".parse().unwrap())]);
             discovery_b.publish(&endpoint_data_b);
 
             let endpoint_data_c =
-                EndpointData::new(None, BTreeSet::from(["0.0.0.0:33333".parse().unwrap()]));
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:33333".parse().unwrap())]);
             discovery_c.publish(&endpoint_data_c);
 
             let mut stream_a = discovery_a.resolve(id_b).unwrap();

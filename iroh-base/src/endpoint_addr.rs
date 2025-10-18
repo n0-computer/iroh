@@ -55,7 +55,7 @@ pub enum TransportAddr {
 }
 
 impl EndpointAddr {
-    /// Creates a new [`EndpointAddr`] with no `relay_url` and no `direct_addresses`.
+    /// Creates a new [`EndpointAddr`] with no addresses.
     pub fn new(id: PublicKey) -> Self {
         EndpointAddr {
             id,
@@ -69,11 +69,8 @@ impl EndpointAddr {
         self
     }
 
-    /// Adds the given direct addresses.
-    pub fn with_direct_addresses(
-        mut self,
-        addresses: impl IntoIterator<Item = SocketAddr>,
-    ) -> Self {
+    /// Adds the given IP addresses.
+    pub fn with_ip_addresses(mut self, addresses: impl IntoIterator<Item = SocketAddr>) -> Self {
         for addr in addresses.into_iter() {
             self.addrs.insert(TransportAddr::Ip(addr));
         }
@@ -93,7 +90,7 @@ impl EndpointAddr {
         self.addrs.is_empty()
     }
 
-    /// Returns the direct addresses of this peer.
+    /// Returns the IP addresses of this peer.
     pub fn ip_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.iter().filter_map(|addr| match addr {
             TransportAddr::Ip(addr) => Some(addr),
@@ -112,12 +109,12 @@ impl EndpointAddr {
 
 impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for EndpointAddr {
     fn from(value: (PublicKey, Option<RelayUrl>, &[SocketAddr])) -> Self {
-        let (id, relay_url, direct_addresses_iter) = value;
+        let (id, relay_url, ip_addrs_iter) = value;
         let mut addrs = BTreeSet::new();
         if let Some(url) = relay_url {
             addrs.insert(TransportAddr::Relay(url));
         }
-        for addr in direct_addresses_iter {
+        for addr in ip_addrs_iter {
             addrs.insert(TransportAddr::Ip(*addr));
         }
         EndpointAddr { id, addrs }

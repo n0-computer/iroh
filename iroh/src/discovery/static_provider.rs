@@ -37,7 +37,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// # Examples
 ///
 /// ```rust
-/// use iroh::{Endpoint, EndpointAddr, discovery::static_provider::StaticProvider};
+/// use iroh::{Endpoint, EndpointAddr, TransportAddr, discovery::static_provider::StaticProvider};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
@@ -55,8 +55,9 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
 /// discovery.add_endpoint_info(EndpointAddr {
 ///     endpoint_id,
-///     relay_url: Some("https://example.com".parse()?),
-///     direct_addresses: Default::default(),
+///     addrs: [TransportAddr::Relay("https://example.com".parse()?)]
+///         .into_iter()
+///         .collect(),
 /// });
 ///
 /// # Ok(())
