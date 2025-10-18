@@ -170,7 +170,7 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 
     /// Handle an incoming connection.
     ///
-    /// Can be implemented as `async fn accept(&self, connection: Connection) -> Result<Connection>`.
+    /// Can be implemented as `async fn accept(&self, connection: Connection) -> Result<()>`.
     ///
     /// The returned future runs on a freshly spawned tokio task so it can be long-running.
     ///
