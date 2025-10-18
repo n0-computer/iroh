@@ -46,7 +46,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// let discovery = StaticProvider::new();
 ///
 /// let _ep = Endpoint::builder()
-///     .add_discovery(discovery.clone())
+///     .discovery(discovery.clone())
 ///     .bind()
 ///     .await?;
 ///
@@ -133,7 +133,7 @@ impl StaticProvider {
     /// // create a StaticProvider from the list of addrs.
     /// let discovery = StaticProvider::from_endpoint_info(addrs);
     /// // create an endpoint with the discovery
-    /// let endpoint = Endpoint::builder().add_discovery(discovery).bind().await?;
+    /// let endpoint = Endpoint::builder().discovery(discovery).bind().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -238,14 +238,14 @@ mod tests {
     use n0_snafu::{Result, ResultExt};
 
     use super::*;
-    use crate::Endpoint;
+    use crate::{Endpoint, RelayMode};
 
     #[tokio::test]
     async fn test_basic() -> Result {
         let discovery = StaticProvider::new();
 
-        let _ep = Endpoint::builder()
-            .add_discovery(discovery.clone())
+        let _ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .discovery(discovery.clone())
             .bind()
             .await?;
 

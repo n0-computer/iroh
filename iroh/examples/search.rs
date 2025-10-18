@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
 
     // Build an endpoint
-    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+    let endpoint = Endpoint::bind().await?;
 
     // Build our protocol handler. The `builder` exposes access to various subsystems in the
     // iroh endpoint. In our case, we need a blobs client and the endpoint.

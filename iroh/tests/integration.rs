@@ -38,12 +38,10 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
 
     let client = Endpoint::builder()
         .relay_mode(RelayMode::Staging)
-        .discovery_n0()
         .bind()
         .await?;
     let server = Endpoint::builder()
         .relay_mode(RelayMode::Staging)
-        .discovery_n0()
         .alpns(vec![ECHO_ALPN.to_vec()])
         .bind()
         .await?;

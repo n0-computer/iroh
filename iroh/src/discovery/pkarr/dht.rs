@@ -18,9 +18,9 @@ use pkarr::{Client as PkarrClient, SignedPacket};
 use url::Url;
 
 use crate::{
+    Endpoint,
     discovery::{
-        Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem, EndpointData, IntoDiscovery,
-        IntoDiscoveryError,
+        Discovery, DiscoveryError, DiscoveryItem, EndpointData, IntoDiscovery, IntoDiscoveryError,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
     endpoint_info::EndpointInfo,
@@ -241,11 +241,8 @@ impl Builder {
 }
 
 impl IntoDiscovery for Builder {
-    fn into_discovery(
-        self,
-        context: &DiscoveryContext,
-    ) -> Result<impl Discovery, IntoDiscoveryError> {
-        self.secret_key(context.secret_key().clone()).build()
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+        self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 
@@ -340,14 +337,12 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::Endpoint;
 
     #[tokio::test]
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_discovery_smoke() -> Result {
-        let ep = Endpoint::builder().bind().await?;
-        let secret = ep.secret_key().clone();
+        let secret = SecretKey::generate(&mut rand::rng());
         let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))

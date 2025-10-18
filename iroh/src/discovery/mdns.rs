@@ -9,7 +9,7 @@
 //! use std::time::Duration;
 //!
 //! use iroh::{
-//!     SecretKey,
+//!     RelayMode, SecretKey,
 //!     discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
 //!     endpoint::{Endpoint, Source},
 //! };
@@ -18,7 +18,10 @@
 //! #[tokio::main]
 //! async fn main() {
 //!     let recent = Duration::from_secs(600); // 10 minutes in seconds
-//!     let endpoint = Endpoint::builder().bind().await.unwrap();
+//!     let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
+//!         .bind()
+//!         .await
+//!         .unwrap();
 //!
 //!     // Register the discovery services with the endpoint
 //!     let mdns = MdnsDiscovery::builder().build(endpoint.id()).unwrap();
@@ -57,8 +60,11 @@ use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{Instrument, debug, error, info_span, trace, warn};
 
-use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
-use crate::discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo};
+use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use crate::{
+    Endpoint,
+    discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
+};
 
 /// The n0 local service name
 const N0_SERVICE_NAME: &str = "irohv1";
@@ -195,11 +201,8 @@ impl Default for MdnsDiscoveryBuilder {
 }
 
 impl IntoDiscovery for MdnsDiscoveryBuilder {
-    fn into_discovery(
-        self,
-        context: &DiscoveryContext,
-    ) -> Result<impl Discovery, IntoDiscoveryError> {
-        self.build(context.endpoint_id())
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+        self.build(endpoint.id())
     }
 }
 
