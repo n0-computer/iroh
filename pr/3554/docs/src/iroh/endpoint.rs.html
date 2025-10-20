@@ -698,7 +698,7 @@
 <a href=#698 id=698 data-nosnippet>698</a>            <span class="self">self</span>.add_endpoint_addr(endpoint_addr.clone(), Source::App)<span class="question-mark">?</span>;
 <a href=#699 id=699 data-nosnippet>699</a>        }
 <a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">let </span>endpoint_id = endpoint_addr.id;
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span>ip_addresses: Vec&lt;<span class="kw">_</span>&gt; = endpoint_addr.ip_addresses().cloned().collect();
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span>ip_addresses: Vec&lt;<span class="kw">_</span>&gt; = endpoint_addr.ip_addrs().cloned().collect();
 <a href=#702 id=702 data-nosnippet>702</a>        <span class="kw">let </span>relay_url = endpoint_addr.relay_urls().next().cloned();
 <a href=#703 id=703 data-nosnippet>703</a>
 <a href=#704 id=704 data-nosnippet>704</a>        <span class="comment">// Get the mapped IPv6 address from the magic socket. Quinn will connect to this
@@ -870,7 +870,7 @@
 <a href=#870 id=870 data-nosnippet>870</a>    /// [`RelayUrl`]: crate::RelayUrl
 <a href=#871 id=871 data-nosnippet>871</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#872 id=872 data-nosnippet>872</a>    </span><span class="kw">pub fn </span>watch_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = EndpointAddr&gt; + <span class="kw">use</span>&lt;&gt; {
-<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span>watch_addrs = <span class="self">self</span>.msock.ip_addresses();
+<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span>watch_addrs = <span class="self">self</span>.msock.ip_addrs();
 <a href=#874 id=874 data-nosnippet>874</a>        <span class="kw">let </span>watch_relay = <span class="self">self</span>.msock.home_relay();
 <a href=#875 id=875 data-nosnippet>875</a>        <span class="kw">let </span>endpoint_id = <span class="self">self</span>.id();
 <a href=#876 id=876 data-nosnippet>876</a>
@@ -2723,7 +2723,7 @@
 <a href=#2723 id=2723 data-nosnippet>2723</a>            .bind()
 <a href=#2724 id=2724 data-nosnippet>2724</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2725 id=2725 data-nosnippet>2725</a>
-<a href=#2726 id=2726 data-nosnippet>2726</a>        <span class="macro">assert!</span>(ep.addr().ip_addresses().count() &gt; <span class="number">0</span>);
+<a href=#2726 id=2726 data-nosnippet>2726</a>        <span class="macro">assert!</span>(ep.addr().ip_addrs().count() &gt; <span class="number">0</span>);
 <a href=#2727 id=2727 data-nosnippet>2727</a>
 <a href=#2728 id=2728 data-nosnippet>2728</a>        <span class="prelude-val">Ok</span>(())
 <a href=#2729 id=2729 data-nosnippet>2729</a>    }

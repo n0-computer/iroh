@@ -329,7 +329,7 @@
 <a href=#329 id=329 data-nosnippet>329</a>    ///
 <a href=#330 id=330 data-nosnippet>330</a>    /// [`Watcher`]: n0_watcher::Watcher
 <a href=#331 id=331 data-nosnippet>331</a>    /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-<a href=#332 id=332 data-nosnippet>332</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ip_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; n0_watcher::Direct&lt;BTreeSet&lt;DirectAddr&gt;&gt; {
+<a href=#332 id=332 data-nosnippet>332</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ip_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; n0_watcher::Direct&lt;BTreeSet&lt;DirectAddr&gt;&gt; {
 <a href=#333 id=333 data-nosnippet>333</a>        <span class="self">self</span>.direct_addrs.addrs.watch()
 <a href=#334 id=334 data-nosnippet>334</a>    }
 <a href=#335 id=335 data-nosnippet>335</a>
@@ -2693,8 +2693,8 @@
 <a href=#2693 id=2693 data-nosnippet>2693</a>                <span class="kw">let </span>me = m.endpoint.id().fmt_short();
 <a href=#2694 id=2694 data-nosnippet>2694</a>                <span class="kw">let </span><span class="kw-2">mut </span>stream = m.endpoint.watch_addr().stream();
 <a href=#2695 id=2695 data-nosnippet>2695</a>                <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = stream.next().<span class="kw">await </span>{
-<a href=#2696 id=2696 data-nosnippet>2696</a>                    <span class="macro">info!</span>(%me, <span class="string">"conn{} endpoints update: {:?}"</span>, my_idx + <span class="number">1</span>, addr.ip_addresses().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;());
-<a href=#2697 id=2697 data-nosnippet>2697</a>                    update_direct_addrs(<span class="kw-2">&amp;</span>stacks, my_idx, addr.ip_addresses().copied().collect());
+<a href=#2696 id=2696 data-nosnippet>2696</a>                    <span class="macro">info!</span>(%me, <span class="string">"conn{} endpoints update: {:?}"</span>, my_idx + <span class="number">1</span>, addr.ip_addrs().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;());
+<a href=#2697 id=2697 data-nosnippet>2697</a>                    update_direct_addrs(<span class="kw-2">&amp;</span>stacks, my_idx, addr.ip_addrs().copied().collect());
 <a href=#2698 id=2698 data-nosnippet>2698</a>                }
 <a href=#2699 id=2699 data-nosnippet>2699</a>            });
 <a href=#2700 id=2700 data-nosnippet>2700</a>        }
@@ -3080,12 +3080,12 @@
 <a href=#3080 id=3080 data-nosnippet>3080</a>        <span class="kw">let </span>ms = Handle::new(default_options(<span class="kw-2">&amp;mut </span>rng)).<span class="kw">await</span>.unwrap();
 <a href=#3081 id=3081 data-nosnippet>3081</a>
 <a href=#3082 id=3082 data-nosnippet>3082</a>        <span class="comment">// See if we can get endpoints.
-<a href=#3083 id=3083 data-nosnippet>3083</a>        </span><span class="kw">let </span>eps0 = ms.ip_addresses().get();
+<a href=#3083 id=3083 data-nosnippet>3083</a>        </span><span class="kw">let </span>eps0 = ms.ip_addrs().get();
 <a href=#3084 id=3084 data-nosnippet>3084</a>        <span class="macro">println!</span>(<span class="string">"{eps0:?}"</span>);
 <a href=#3085 id=3085 data-nosnippet>3085</a>        <span class="macro">assert!</span>(!eps0.is_empty());
 <a href=#3086 id=3086 data-nosnippet>3086</a>
 <a href=#3087 id=3087 data-nosnippet>3087</a>        <span class="comment">// Getting the endpoints again immediately should give the same results.
-<a href=#3088 id=3088 data-nosnippet>3088</a>        </span><span class="kw">let </span>eps1 = ms.ip_addresses().get();
+<a href=#3088 id=3088 data-nosnippet>3088</a>        </span><span class="kw">let </span>eps1 = ms.ip_addrs().get();
 <a href=#3089 id=3089 data-nosnippet>3089</a>        <span class="macro">println!</span>(<span class="string">"{eps1:?}"</span>);
 <a href=#3090 id=3090 data-nosnippet>3090</a>        <span class="macro">assert_eq!</span>(eps0, eps1);
 <a href=#3091 id=3091 data-nosnippet>3091</a>    }
@@ -3237,7 +3237,7 @@
 <a href=#3237 id=3237 data-nosnippet>3237</a>        <span class="kw">let </span>_accept_task = AbortOnDropHandle::new(accept_task);
 <a href=#3238 id=3238 data-nosnippet>3238</a>
 <a href=#3239 id=3239 data-nosnippet>3239</a>        <span class="kw">let </span>addrs = msock_2
-<a href=#3240 id=3240 data-nosnippet>3240</a>            .ip_addresses()
+<a href=#3240 id=3240 data-nosnippet>3240</a>            .ip_addrs()
 <a href=#3241 id=3241 data-nosnippet>3241</a>            .get()
 <a href=#3242 id=3242 data-nosnippet>3242</a>            .into_iter()
 <a href=#3243 id=3243 data-nosnippet>3243</a>            .map(|x| TransportAddr::Ip(x.addr))
@@ -3350,7 +3350,7 @@
 <a href=#3350 id=3350 data-nosnippet>3350</a>
 <a href=#3351 id=3351 data-nosnippet>3351</a>        <span class="comment">// Provide correct addressing information
 <a href=#3352 id=3352 data-nosnippet>3352</a>        </span><span class="kw">let </span>addrs = msock_2
-<a href=#3353 id=3353 data-nosnippet>3353</a>            .ip_addresses()
+<a href=#3353 id=3353 data-nosnippet>3353</a>            .ip_addrs()
 <a href=#3354 id=3354 data-nosnippet>3354</a>            .get()
 <a href=#3355 id=3355 data-nosnippet>3355</a>            .into_iter()
 <a href=#3356 id=3356 data-nosnippet>3356</a>            .map(|x| TransportAddr::Ip(x.addr))

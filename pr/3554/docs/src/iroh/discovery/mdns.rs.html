@@ -279,7 +279,7 @@
 <a href=#279 id=279 data-nosnippet>279</a>                        <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>data, <span class="string">"MdnsDiscovery address changed"</span>);
 <a href=#280 id=280 data-nosnippet>280</a>                        discovery.remove_all();
 <a href=#281 id=281 data-nosnippet>281</a>                        <span class="kw">let </span>addrs =
-<a href=#282 id=282 data-nosnippet>282</a>                            MdnsDiscovery::socketaddrs_to_addrs(data.ip_addresses());
+<a href=#282 id=282 data-nosnippet>282</a>                            MdnsDiscovery::socketaddrs_to_addrs(data.ip_addrs());
 <a href=#283 id=283 data-nosnippet>283</a>                        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
 <a href=#284 id=284 data-nosnippet>284</a>                            discovery.add(addr.<span class="number">0</span>, addr.<span class="number">1</span>)
 <a href=#285 id=285 data-nosnippet>285</a>                        }
@@ -508,7 +508,7 @@
 <a href=#508 id=508 data-nosnippet>508</a>        <span class="prelude-val">None
 <a href=#509 id=509 data-nosnippet>509</a>    </span>};
 <a href=#510 id=510 data-nosnippet>510</a>    <span class="kw">let </span>endpoint_info = EndpointInfo::new(<span class="kw-2">*</span>endpoint_id)
-<a href=#511 id=511 data-nosnippet>511</a>        .with_ip_addresses(ip_addrs)
+<a href=#511 id=511 data-nosnippet>511</a>        .with_ip_addrs(ip_addrs)
 <a href=#512 id=512 data-nosnippet>512</a>        .with_user_data(user_data);
 <a href=#513 id=513 data-nosnippet>513</a>    DiscoveryItem::new(endpoint_info, NAME, <span class="prelude-val">None</span>)
 <a href=#514 id=514 data-nosnippet>514</a>}

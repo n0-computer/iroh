@@ -299,7 +299,7 @@
 <a href=#299 id=299 data-nosnippet>299</a>        <span class="macro">tracing::debug!</span>(<span class="string">"publishing {data:?}"</span>);
 <a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span><span class="kw-2">mut </span>info = EndpointInfo::from_parts(keypair.public(), data.clone());
 <a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">if </span>!<span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
-<a href=#302 id=302 data-nosnippet>302</a>            info.clear_ip_addresses();
+<a href=#302 id=302 data-nosnippet>302</a>            info.clear_ip_addrs();
 <a href=#303 id=303 data-nosnippet>303</a>        }
 <a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span><span class="prelude-val">Ok</span>(signed_packet) = info.to_pkarr_signed_packet(keypair, <span class="self">self</span>.<span class="number">0</span>.ttl) <span class="kw">else </span>{
 <a href=#305 id=305 data-nosnippet>305</a>            <span class="macro">tracing::warn!</span>(<span class="string">"failed to create signed packet"</span>);

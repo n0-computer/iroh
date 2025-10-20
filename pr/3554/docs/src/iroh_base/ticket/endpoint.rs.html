@@ -36,7 +36,7 @@
 <a href=#36 id=36 data-nosnippet>36</a><span class="doccomment">/// Wire format for [`EndpointTicket`].
 <a href=#37 id=37 data-nosnippet>37</a></span><span class="attr">#[derive(Serialize, Deserialize)]
 <a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">enum </span>TicketWireFormat {
-<a href=#39 id=39 data-nosnippet>39</a>    Variant0(Variant1EndpointTicket),
+<a href=#39 id=39 data-nosnippet>39</a>    Variant1(Variant1EndpointTicket),
 <a href=#40 id=40 data-nosnippet>40</a>}
 <a href=#41 id=41 data-nosnippet>41</a>
 <a href=#42 id=42 data-nosnippet>42</a><span class="comment">// Legacy
@@ -49,7 +49,7 @@
 <a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">const </span>KIND: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str = <span class="string">"endpoint"</span>;
 <a href=#50 id=50 data-nosnippet>50</a>
 <a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">fn </span>to_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;u8&gt; {
-<a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>data = TicketWireFormat::Variant0(Variant1EndpointTicket {
+<a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>data = TicketWireFormat::Variant1(Variant1EndpointTicket {
 <a href=#53 id=53 data-nosnippet>53</a>            addr: Variant1EndpointAddr {
 <a href=#54 id=54 data-nosnippet>54</a>                id: <span class="self">self</span>.addr.id,
 <a href=#55 id=55 data-nosnippet>55</a>                info: Variant1AddrInfo {
@@ -62,7 +62,7 @@
 <a href=#62 id=62 data-nosnippet>62</a>
 <a href=#63 id=63 data-nosnippet>63</a>    <span class="kw">fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
 <a href=#64 id=64 data-nosnippet>64</a>        <span class="kw">let </span>res: TicketWireFormat = postcard::from_bytes(bytes)<span class="question-mark">?</span>;
-<a href=#65 id=65 data-nosnippet>65</a>        <span class="kw">let </span>TicketWireFormat::Variant0(Variant1EndpointTicket { addr }) = res;
+<a href=#65 id=65 data-nosnippet>65</a>        <span class="kw">let </span>TicketWireFormat::Variant1(Variant1EndpointTicket { addr }) = res;
 <a href=#66 id=66 data-nosnippet>66</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
 <a href=#67 id=67 data-nosnippet>67</a>            addr: EndpointAddr {
 <a href=#68 id=68 data-nosnippet>68</a>                id: addr.id,

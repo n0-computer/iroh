@@ -317,7 +317,7 @@
 <a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">let </span><span class="kw-2">mut </span>data = data.clone();
 <a href=#318 id=318 data-nosnippet>318</a>        <span class="kw">if </span>data.relay_urls().next().is_some() {
 <a href=#319 id=319 data-nosnippet>319</a>            <span class="comment">// If relay url is set: only publish relay url, and no  addrs.
-<a href=#320 id=320 data-nosnippet>320</a>            </span>data.clear_ip_addresses();
+<a href=#320 id=320 data-nosnippet>320</a>            </span>data.clear_ip_addrs();
 <a href=#321 id=321 data-nosnippet>321</a>        }
 <a href=#322 id=322 data-nosnippet>322</a>        <span class="kw">let </span>info = EndpointInfo::from_parts(<span class="self">self</span>.endpoint_id, data);
 <a href=#323 id=323 data-nosnippet>323</a>        <span class="self">self</span>.watchable.set(<span class="prelude-val">Some</span>(info)).ok();

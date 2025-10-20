@@ -150,7 +150,7 @@
 <a href=#150 id=150 data-nosnippet>150</a>    </span>}
 <a href=#151 id=151 data-nosnippet>151</a>
 <a href=#152 id=152 data-nosnippet>152</a>    <span class="doccomment">/// Sets the direct addresses and returns the updated endpoint data.
-<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">pub fn </span>with_ip_addresses(<span class="kw-2">mut </span><span class="self">self</span>, addresses: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
+<a href=#153 id=153 data-nosnippet>153</a>    </span><span class="kw">pub fn </span>with_ip_addrs(<span class="kw-2">mut </span><span class="self">self</span>, addresses: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
 <a href=#154 id=154 data-nosnippet>154</a>        <span class="kw">for </span>addr <span class="kw">in </span>addresses.into_iter() {
 <a href=#155 id=155 data-nosnippet>155</a>            <span class="self">self</span>.addrs.insert(TransportAddr::Ip(addr));
 <a href=#156 id=156 data-nosnippet>156</a>        }
@@ -177,7 +177,7 @@
 <a href=#177 id=177 data-nosnippet>177</a>    }
 <a href=#178 id=178 data-nosnippet>178</a>
 <a href=#179 id=179 data-nosnippet>179</a>    <span class="doccomment">/// Returns the direct addresses of the endpoint.
-<a href=#180 id=180 data-nosnippet>180</a>    </span><span class="kw">pub fn </span>ip_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>SocketAddr&gt; {
+<a href=#180 id=180 data-nosnippet>180</a>    </span><span class="kw">pub fn </span>ip_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>SocketAddr&gt; {
 <a href=#181 id=181 data-nosnippet>181</a>        <span class="self">self</span>.addrs.iter().filter_map(|addr| <span class="kw">match </span>addr {
 <a href=#182 id=182 data-nosnippet>182</a>            TransportAddr::Ip(addr) =&gt; <span class="prelude-val">Some</span>(addr),
 <a href=#183 id=183 data-nosnippet>183</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
@@ -185,7 +185,7 @@
 <a href=#185 id=185 data-nosnippet>185</a>    }
 <a href=#186 id=186 data-nosnippet>186</a>
 <a href=#187 id=187 data-nosnippet>187</a>    <span class="doccomment">/// Removes all direct addresses from the endpoint data.
-<a href=#188 id=188 data-nosnippet>188</a>    </span><span class="kw">pub fn </span>clear_ip_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+<a href=#188 id=188 data-nosnippet>188</a>    </span><span class="kw">pub fn </span>clear_ip_addrs(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
 <a href=#189 id=189 data-nosnippet>189</a>        <span class="self">self</span>.addrs
 <a href=#190 id=190 data-nosnippet>190</a>            .retain(|addr| !<span class="macro">matches!</span>(addr, TransportAddr::Ip(<span class="kw">_</span>)));
 <a href=#191 id=191 data-nosnippet>191</a>    }
@@ -366,9 +366,9 @@
 <a href=#366 id=366 data-nosnippet>366</a>        <span class="self">self
 <a href=#367 id=367 data-nosnippet>367</a>    </span>}
 <a href=#368 id=368 data-nosnippet>368</a>
-<a href=#369 id=369 data-nosnippet>369</a>    <span class="doccomment">/// Sets the direct addresses and returns the updated endpoint info.
-<a href=#370 id=370 data-nosnippet>370</a>    </span><span class="kw">pub fn </span>with_ip_addresses(<span class="kw-2">mut </span><span class="self">self</span>, addrs: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
-<a href=#371 id=371 data-nosnippet>371</a>        <span class="self">self</span>.data = <span class="self">self</span>.data.with_ip_addresses(addrs);
+<a href=#369 id=369 data-nosnippet>369</a>    <span class="doccomment">/// Sets the IP based addresses and returns the updated endpoint info.
+<a href=#370 id=370 data-nosnippet>370</a>    </span><span class="kw">pub fn </span>with_ip_addrs(<span class="kw-2">mut </span><span class="self">self</span>, addrs: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
+<a href=#371 id=371 data-nosnippet>371</a>        <span class="self">self</span>.data = <span class="self">self</span>.data.with_ip_addrs(addrs);
 <a href=#372 id=372 data-nosnippet>372</a>        <span class="self">self
 <a href=#373 id=373 data-nosnippet>373</a>    </span>}
 <a href=#374 id=374 data-nosnippet>374</a>
@@ -785,7 +785,7 @@
 <a href=#785 id=785 data-nosnippet>785</a>            <span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"</span>,
 <a href=#786 id=786 data-nosnippet>786</a>        )<span class="question-mark">?</span>)
 <a href=#787 id=787 data-nosnippet>787</a>        .with_relay_url(<span class="prelude-val">Some</span>(<span class="string">"https://euw1-1.relay.iroh.network./"</span>.parse()<span class="question-mark">?</span>))
-<a href=#788 id=788 data-nosnippet>788</a>        .with_ip_addresses(BTreeSet::from([
+<a href=#788 id=788 data-nosnippet>788</a>        .with_ip_addrs(BTreeSet::from([
 <a href=#789 id=789 data-nosnippet>789</a>            <span class="string">"192.168.96.145:60165"</span>.parse().unwrap(),
 <a href=#790 id=790 data-nosnippet>790</a>            <span class="string">"213.208.157.87:60165"</span>.parse().unwrap(),
 <a href=#791 id=791 data-nosnippet>791</a>        ]));
