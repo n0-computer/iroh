@@ -6,7 +6,7 @@ connectivity using <a href="https://en.wikipedia.org/wiki/Hole_punching_(network
 another endpoint:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>addr: EndpointAddr = <span class="macro">todo!</span>();
-<span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<span class="kw">let </span>ep = Endpoint::bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"my-alpn"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span>.context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
 send_stream
@@ -131,8 +131,8 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
 <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 
 <span class="kw">async fn </span>connect(addr: EndpointAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-    <span class="comment">// The Endpoint is the central object that manages an iroh endpoint.
-    </span><span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="comment">// The Endpoint is the central object that manages an iroh node.
+    </span><span class="kw">let </span>ep = Endpoint::bind().<span class="kw">await</span><span class="question-mark">?</span>;
 
     <span class="comment">// Establish a QUIC connection, open a bi-directional stream, exchange messages.
     </span><span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"hello-world"</span>).<span class="kw">await</span><span class="question-mark">?</span>;

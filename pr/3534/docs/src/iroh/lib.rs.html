@@ -12,7 +12,7 @@
 <a href=#12 id=12 data-nosnippet>12</a>//! # use n0_snafu::ResultExt;
 <a href=#13 id=13 data-nosnippet>13</a>//! # async fn wrapper() -&gt; n0_snafu::Result {
 <a href=#14 id=14 data-nosnippet>14</a>//! let addr: EndpointAddr = todo!();
-<a href=#15 id=15 data-nosnippet>15</a>//! let ep = Endpoint::builder().bind().await?;
+<a href=#15 id=15 data-nosnippet>15</a>//! let ep = Endpoint::bind().await?;
 <a href=#16 id=16 data-nosnippet>16</a>//! let conn = ep.connect(addr, b"my-alpn").await?;
 <a href=#17 id=17 data-nosnippet>17</a>//! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
 <a href=#18 id=18 data-nosnippet>18</a>//! send_stream
@@ -174,8 +174,8 @@
 <a href=#174 id=174 data-nosnippet>174</a>//! use n0_snafu::{Result, ResultExt};
 <a href=#175 id=175 data-nosnippet>175</a>//!
 <a href=#176 id=176 data-nosnippet>176</a>//! async fn connect(addr: EndpointAddr) -&gt; Result&lt;()&gt; {
-<a href=#177 id=177 data-nosnippet>177</a>//!     // The Endpoint is the central object that manages an iroh endpoint.
-<a href=#178 id=178 data-nosnippet>178</a>//!     let ep = Endpoint::builder().bind().await?;
+<a href=#177 id=177 data-nosnippet>177</a>//!     // The Endpoint is the central object that manages an iroh node.
+<a href=#178 id=178 data-nosnippet>178</a>//!     let ep = Endpoint::bind().await?;
 <a href=#179 id=179 data-nosnippet>179</a>//!
 <a href=#180 id=180 data-nosnippet>180</a>//!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 <a href=#181 id=181 data-nosnippet>181</a>//!     let conn = ep.connect(addr, b"hello-world").await?;
