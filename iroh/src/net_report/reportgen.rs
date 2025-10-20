@@ -30,7 +30,7 @@ use iroh_relay::{
 };
 #[cfg(not(wasm_browser))]
 use iroh_relay::{
-    dns::{DnsError, DnsResolver, DnsStaggeredError as StaggeredError},
+    dns::{DnsResolver, DnsStaggeredError as StaggeredError},
     quic::QuicClient,
 };
 use n0_error::{Err, Error, add_meta, e};
@@ -540,9 +540,7 @@ pub(super) fn maybe_to_mapped_addr(
 #[non_exhaustive]
 enum CaptivePortalError {
     #[error(transparent)]
-    DnsLookup {
-        source: iroh_relay::dns::DnsStaggeredError,
-    },
+    DnsLookup { source: StaggeredError },
     #[display("Creating HTTP client failed")]
     CreateReqwestClient {
         #[error(std_err)]
@@ -664,9 +662,7 @@ pub enum GetRelayAddrError {
     #[display("No suitable relay address found")]
     NoAddrFound,
     #[display("DNS lookup failed")]
-    DnsLookup {
-        source: iroh_relay::dns::DnsStaggeredError,
-    },
+    DnsLookup { source: StaggeredError },
     #[display("Relay is not suitable")]
     UnsupportedRelay,
     #[display("HTTPS probes are not implemented")]
@@ -770,9 +766,7 @@ pub enum MeasureHttpsLatencyError {
     },
     #[cfg(not(wasm_browser))]
     #[error(transparent)]
-    DnsLookup {
-        source: iroh_relay::dns::DnsStaggeredError,
-    },
+    DnsLookup { source: StaggeredError },
     #[display("Creating HTTP client failed")]
     CreateReqwestClient {
         #[error(std_err)]
