@@ -5,9 +5,8 @@
 
 use std::{collections::BTreeSet, net::SocketAddr};
 
-use nested_enum_utils::common_fields;
+use n0_error::{Error, add_meta, e};
 use serde::{Deserialize, Serialize};
-use snafu::{Backtrace, Snafu};
 
 use crate::{key::EndpointId, relay_url::RelayUrl};
 
@@ -50,7 +49,7 @@ pub trait Ticket: Sized {
     fn deserialize(str: &str) -> Result<Self, ParseError> {
         let expected = Self::KIND;
         let Some(rest) = str.strip_prefix(expected) else {
-            return Err(KindSnafu { expected }.build());
+            return Err(ParseError::wrong_prefix(expected));
         };
         let bytes = data_encoding::BASE32_NOPAD.decode(rest.to_ascii_uppercase().as_bytes())?;
         let ticket = Self::from_bytes(&bytes)?;
@@ -59,30 +58,23 @@ pub trait Ticket: Sized {
 }
 
 /// An error deserializing an iroh ticket.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources, std_sources)]
 #[allow(missing_docs)]
-#[snafu(visibility(pub(crate)))]
 #[non_exhaustive]
 pub enum ParseError {
     /// Found a ticket with the wrong prefix, indicating the wrong kind.
-    #[snafu(display("wrong prefix, expected {expected}"))]
-    Kind {
-        /// The expected prefix.
-        expected: &'static str,
-    },
+    #[display("wrong prefix, expected {expected}")]
+    Kind { expected: &'static str },
     /// This looks like a ticket, but postcard deserialization failed.
-    #[snafu(transparent)]
+    #[error(transparent)]
     Postcard { source: postcard::Error },
     /// This looks like a ticket, but base32 decoding failed.
-    #[snafu(transparent)]
+    #[error(transparent)]
     Encoding { source: data_encoding::DecodeError },
     /// Verification of the deserialized bytes failed.
-    #[snafu(display("verification failed: {message}"))]
+    #[display("verification failed: {message}")]
     Verify { message: &'static str },
 }
 
@@ -92,13 +84,13 @@ impl ParseError {
     ///
     /// Indicate the expected prefix.
     pub fn wrong_prefix(expected: &'static str) -> Self {
-        KindSnafu { expected }.build()
+        e!(ParseError::Kind { expected })
     }
 
     /// Return a `ParseError` variant that indicates verification of the
     /// deserialized bytes failed.
     pub fn verification_failed(message: &'static str) -> Self {
-        VerifySnafu { message }.build()
+        e!(ParseError::Verify { message })
     }
 }
 
