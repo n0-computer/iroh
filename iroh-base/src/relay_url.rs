@@ -41,12 +41,10 @@ impl From<Url> for RelayUrl {
 /// Can occur when parsing a string into a [`RelayUrl`].
 #[add_meta]
 #[derive(Error)]
-#[error(from_sources, std_sources)]
 #[allow(missing_docs)]
-pub enum RelayUrlParseError {
-    /// Parsing the URL failed.
-    #[display("Failed to parse")]
-    Parse { source: url::ParseError },
+pub struct RelayUrlParseError {
+    #[error(from, std_err)]
+    source: url::ParseError,
 }
 
 /// Support for parsing strings directly.
