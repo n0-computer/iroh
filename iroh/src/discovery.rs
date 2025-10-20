@@ -942,7 +942,7 @@ mod tests {
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     // Just accept incoming connections, but don't do anything with them.
-                    let conn = connecting.await.context("connecting")?;
+                    let conn = connecting.await.std_context("connecting")?;
                     connections.push(conn);
                 }
 
@@ -995,7 +995,7 @@ mod test_dns_pkarr {
         let state = State::new(origin.clone());
         let (nameserver, _dns_drop_guard) = run_dns_server(state.clone())
             .await
-            .context("Running DNS server")?;
+            .std_context("Running DNS server")?;
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_info = EndpointInfo::new(secret_key.public())
@@ -1003,7 +1003,7 @@ mod test_dns_pkarr {
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
             .upsert(signed_packet)
-            .context("update and insert signed packet")?;
+            .std_context("update and insert signed packet")?;
 
         let resolver = DnsResolver::with_nameserver(nameserver);
         let resolved = resolver
@@ -1023,7 +1023,7 @@ mod test_dns_pkarr {
 
         let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
             .await
-            .context("DnsPkarrServer")?;
+            .std_context("DnsPkarrServer")?;
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
@@ -1042,7 +1042,7 @@ mod test_dns_pkarr {
         dns_pkarr_server
             .on_endpoint(&endpoint_id, PUBLISH_TIMEOUT)
             .await
-            .context("wait for on endpoint update")?;
+            .std_context("wait for on endpoint update")?;
         let resolved = resolver
             .lookup_endpoint_by_id(&endpoint_id, &origin)
             .await?;
@@ -1066,7 +1066,7 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover() -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
+        let dns_pkarr_server = DnsPkarrServer::run().await.std_context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
         let (ep1, _guard1) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
@@ -1076,7 +1076,7 @@ mod test_dns_pkarr {
         dns_pkarr_server
             .on_endpoint(&ep1.id(), PUBLISH_TIMEOUT)
             .await
-            .context("wait for on endpoint update")?;
+            .std_context("wait for on endpoint update")?;
 
         // we connect only by endpoint id!
         let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;
@@ -1103,7 +1103,7 @@ mod test_dns_pkarr {
             async move {
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await.context("connecting")?;
+                    let _conn = connecting.await.std_context("connecting")?;
                     // Just accept incoming connections, but don't do anything with them.
                 }
 

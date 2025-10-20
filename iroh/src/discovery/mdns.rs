@@ -591,7 +591,7 @@ mod tests {
                 ..
             } = tokio::time::timeout(Duration::from_secs(5), s1.next())
                 .await
-                .context("timeout")?
+                .std_context("timeout")?
                 .unwrap()
             else {
                 panic!("Received unexpected discovery event");
@@ -601,7 +601,7 @@ mod tests {
                 ..
             } = tokio::time::timeout(Duration::from_secs(5), s2.next())
                 .await
-                .context("timeout")?
+                .std_context("timeout")?
                 .unwrap()
             else {
                 panic!("Received unexpected discovery event");
@@ -632,7 +632,7 @@ mod tests {
             loop {
                 let event = tokio::time::timeout(Duration::from_secs(5), s1.next())
                     .await
-                    .context("timeout")?
+                    .std_context("timeout")?
                     .expect("Stream should not be closed");
 
                 match event {
@@ -653,7 +653,7 @@ mod tests {
             loop {
                 let event = tokio::time::timeout(Duration::from_secs(10), s1.next())
                     .await
-                    .context("timeout waiting for expiration event")?
+                    .std_context("timeout waiting for expiration event")?
                     .expect("Stream should not be closed");
 
                 match event {
@@ -717,7 +717,7 @@ mod tests {
             };
             tokio::time::timeout(Duration::from_secs(5), test)
                 .await
-                .context("timeout")?
+                .std_context("timeout")?
         }
 
         #[tokio::test]

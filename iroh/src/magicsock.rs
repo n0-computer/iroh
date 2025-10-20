@@ -2697,7 +2697,7 @@ mod tests {
             }
         })
         .await
-        .context("timeout")?;
+        .std_context("timeout")?;
         info!("all endpoints meshed");
         Ok(tasks)
     }
@@ -2708,24 +2708,24 @@ mod tests {
         let conn = ep.endpoint.accept().await.expect("no conn");
 
         info!("connecting");
-        let conn = conn.await.context("connecting")?;
+        let conn = conn.await.std_context("connecting")?;
         info!("accepting bi");
-        let (mut send_bi, mut recv_bi) = conn.accept_bi().await.context("accept bi")?;
+        let (mut send_bi, mut recv_bi) = conn.accept_bi().await.std_context("accept bi")?;
 
         info!("reading");
         let val = recv_bi
             .read_to_end(usize::MAX)
             .await
-            .context("read to end")?;
+            .std_context("read to end")?;
 
         info!("replying");
         for chunk in val.chunks(12) {
-            send_bi.write_all(chunk).await.context("write all")?;
+            send_bi.write_all(chunk).await.std_context("write all")?;
         }
 
         info!("finishing");
-        send_bi.finish().context("finish")?;
-        send_bi.stopped().await.context("stopped")?;
+        send_bi.finish().std_context("finish")?;
+        send_bi.stopped().await.std_context("stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -2757,20 +2757,20 @@ mod tests {
         let conn = ep.endpoint.connect(dest, ALPN).await?;
 
         info!("opening bi");
-        let (mut send_bi, mut recv_bi) = conn.open_bi().await.context("open bi")?;
+        let (mut send_bi, mut recv_bi) = conn.open_bi().await.std_context("open bi")?;
 
         info!("writing message");
-        send_bi.write_all(msg).await.context("write all")?;
+        send_bi.write_all(msg).await.std_context("write all")?;
 
         info!("finishing");
-        send_bi.finish().context("finish")?;
-        send_bi.stopped().await.context("stopped")?;
+        send_bi.finish().std_context("finish")?;
+        send_bi.stopped().await.std_context("stopped")?;
 
         info!("reading_to_end");
         let val = recv_bi
             .read_to_end(usize::MAX)
             .await
-            .context("read to end")?;
+            .std_context("read to end")?;
         assert_eq!(
             val,
             msg,
@@ -2921,7 +2921,7 @@ mod tests {
             test_two_devices_roundtrip_network_change_impl(),
         )
         .await
-        .context("timeout")?
+        .std_context("timeout")?
     }
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
@@ -3147,7 +3147,7 @@ mod tests {
                 mapped_addr.private_socket_addr(),
                 &tls::name::encode(endpoint_id),
             )
-            .context("connect")?;
+            .std_context("connect")?;
         let connection = connect.await.e()?;
         Ok(connection)
     }
@@ -3191,12 +3191,12 @@ mod tests {
         // This needs an accept task
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> Result<()> {
-                let incoming = ep.accept().await.context("no incoming")?;
+                let incoming = ep.accept().await.std_context("no incoming")?;
                 let _conn = incoming
                     .accept()
-                    .context("accept")?
+                    .std_context("accept")?
                     .await
-                    .context("connecting")?;
+                    .std_context("connecting")?;
 
                 // Keep this connection alive for a while
                 tokio::time::sleep(Duration::from_secs(10)).await;
@@ -3268,14 +3268,14 @@ mod tests {
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> Result<()> {
-                let incoming = ep.accept().await.context("no incoming")?;
+                let incoming = ep.accept().await.std_context("no incoming")?;
                 let conn = incoming
                     .accept()
-                    .context("accept")?
+                    .std_context("accept")?
                     .await
-                    .context("connecting")?;
-                let mut stream = conn.accept_uni().await.context("accept uni")?;
-                stream.read_to_end(1 << 16).await.context("read to end")?;
+                    .std_context("connecting")?;
+                let mut stream = conn.accept_uni().await.std_context("accept uni")?;
+                stream.read_to_end(1 << 16).await.std_context("read to end")?;
                 info!("accept finished");
                 Ok(())
             }

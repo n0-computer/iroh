@@ -43,7 +43,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result {
-        let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
+        let (server, nameserver, http_url) = Server::spawn_for_tests().await.e()?;
         let pkarr_relay_url = {
             let mut url = http_url.clone();
             url.set_path("/pkarr");
@@ -117,7 +117,7 @@ mod tests {
 
         // resolve root record
         let name = Name::from_utf8(format!("{pubkey}.")).e()?;
-        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await.e()?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
@@ -200,7 +200,7 @@ mod tests {
             max_batch_time: Duration::from_millis(100),
             ..Default::default()
         };
-        let store = ZoneStore::in_memory(options, Default::default())?;
+        let store = ZoneStore::in_memory(options, Default::default()).e()?;
 
         // create a signed packet
         let signed_packet = random_signed_packet(&mut rng)?;
@@ -208,11 +208,12 @@ mod tests {
 
         store
             .insert(signed_packet, PacketSource::PkarrPublish)
-            .await?;
+            .await
+            .e()?;
 
         tokio::time::sleep(Duration::from_secs(1)).await;
         for _ in 0..10 {
-            let entry = store.get_signed_packet(&key).await?;
+            let entry = store.get_signed_packet(&key).await.e()?;
             if entry.is_none() {
                 return Ok(());
             }
@@ -233,7 +234,8 @@ mod tests {
         // spawn our server with mainline support
         let (server, nameserver, _http_url) =
             Server::spawn_for_tests_with_options(Some(BootstrapOption::Custom(bootstrap)), None)
-                .await?;
+                .await
+                .e()?;
 
         let origin = "irohdns.example.";
 
@@ -254,12 +256,12 @@ mod tests {
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
+        let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await.e()?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
         assert_eq!(res.relay_url(), Some(&relay_url));
 
-        server.shutdown().await?;
+        server.shutdown().await.e()?;
         Ok(())
     }
 

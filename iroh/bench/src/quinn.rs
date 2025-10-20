@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt};
 use quinn::{
     Connection, Endpoint, RecvStream, SendStream, TransportConfig, crypto::rustls::QuicClientConfig,
 };
@@ -91,7 +91,7 @@ pub async fn connect_client(
         .connect_with(client_config, server_addr, "localhost")
         .unwrap()
         .await
-        .context("unable to connect")?;
+        .std_context("unable to connect")?;
     trace!("connected");
 
     Ok((endpoint, connection))
@@ -171,21 +171,21 @@ async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Resul
         stream
             .write_chunk(bytes_data.clone())
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
     if remaining != 0 {
         stream
             .write_chunk(bytes_data.slice(0..remaining))
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
-    stream.finish().context("failed finishing stream")?;
+    stream.finish().std_context("failed finishing stream")?;
     stream
         .stopped()
         .await
-        .context("failed to wait for stream to be stopped")?;
+        .std_context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }
@@ -200,7 +200,7 @@ pub async fn handle_client_stream(
     let (mut send_stream, mut recv_stream) = connection
         .open_bi()
         .await
-        .context("failed to open stream")?;
+        .std_context("failed to open stream")?;
 
     send_data_on_stream(&mut send_stream, upload_size).await?;
 
@@ -229,7 +229,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 continue;
             }
         };
-        let connection = connecting.await.context("handshake failed")?;
+        let connection = connecting.await.std_context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {
             loop {
@@ -246,7 +246,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 tokio::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
-                    Ok::<_, n0_snafu::Error>(())
+                    Ok::<_, n0_error::AnyError>(())
                 });
             }
 
