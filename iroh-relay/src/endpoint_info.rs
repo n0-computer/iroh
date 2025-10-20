@@ -42,7 +42,6 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey};
 use n0_error::{add_meta, Error, e};
-use n0_error::StdResultExt;
 use url::Url;
 
 /// The DNS name for the iroh TXT record.

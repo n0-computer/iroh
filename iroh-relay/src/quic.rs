@@ -3,7 +3,7 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use n0_future::time::Duration;
-use n0_error::{add_meta, Error, e};
+use n0_error::{add_meta, Error};
 use quinn::{VarInt, crypto::rustls::QuicClientConfig};
  
 use tokio::sync::watch;
