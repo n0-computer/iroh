@@ -852,15 +852,10 @@ impl EndpointStateActor {
     /// direct paths are closed for all connections.
     #[instrument(skip_all)]
     fn select_path(&mut self) {
-        // TODO: Only consider paths that are actively open: that is we received the open
-        // event and have not closed it yet, or have not received a close.  Otherwise we
-        // might select from paths that doen't work.  Plus we might not have a
-        // representative RTT time yet.
-
         // Find the lowest RTT across all connections for each open path.  The long way, so
         // we get to log *all* RTTs.
         let mut all_path_rtts: FxHashMap<transports::Addr, Vec<Duration>> = FxHashMap::default();
-        for (conn_id, conn_state) in self.connections.iter() {
+        for conn_state in self.connections.values() {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
@@ -871,8 +866,6 @@ impl EndpointStateActor {
                         .entry(addr.clone())
                         .or_default()
                         .push(stats.rtt);
-                } else {
-                    trace!(?conn_id, ?path_id, "unknown PathId in ConnectionStats");
                 }
             }
         }
@@ -894,18 +887,16 @@ impl EndpointStateActor {
                     (*rtt, addr)
                 }
             })
-            .min()
-            .map(|(_rtt, addr)| addr.clone());
+            .min();
         let selected_path = direct_path.or_else(|| {
             // Find the fasted relay path.
             path_rtts
                 .iter()
                 .filter(|(addr, _rtt)| addr.is_relay())
-                .map(|(addr, rtt)| (rtt, addr))
+                .map(|(addr, rtt)| (*rtt, addr))
                 .min()
-                .map(|(_rtt, addr)| addr.clone())
         });
-        if let Some(addr) = selected_path {
+        if let Some((rtt, addr)) = selected_path {
             let prev = self.selected_path.replace(addr.clone());
             if prev.as_ref() != Some(&addr) {
                 debug!(?addr, ?prev, "selected new path");
@@ -926,14 +917,13 @@ impl EndpointStateActor {
         debug_assert_eq!(self.selected_path.as_ref(), Some(selected_path));
 
         for (conn_id, conn_state) in self.connections.iter() {
-            for (path_id, path_remote) in conn_state.paths.iter() {
-                if path_remote.is_relay() {
-                    continue;
-                }
-                if path_remote == selected_path {
-                    continue; // Do not close the selected path.
-                }
-                if conn_state.open_paths.contains_key(path_id) && conn_state.open_paths.len() <= 1 {
+            for (path_id, path_remote) in conn_state
+                .open_paths
+                .iter()
+                .filter(|(_, addr)| addr.is_ip())
+                .filter(|(_, addr)| *addr != selected_path)
+            {
+                if conn_state.open_paths.values().filter(|a| a.is_ip()).count() <= 1 {
                     continue; // Do not close the last direct path.
                 }
                 if let Some(path) = conn_state
