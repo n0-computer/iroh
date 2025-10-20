@@ -25,8 +25,3 @@ ignore = [
   "RUSTSEC-2024-0436", # paste
   "RUSTSEC-2023-0089", # unmainatined: postcard -> heapless -> atomic-polyfill
 ]
-
-[sources]
-allow-git = [
-  "https://github.com/n0-computer/net-tools"
-]
