@@ -16,7 +16,7 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
-    use n0_error::StdResultExt;
+    use n0_error::{StdResultExt, e};
     use quinn::{
         ApplicationClose, ConnectionError,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
@@ -42,7 +42,7 @@ pub(crate) mod server {
     pub enum QuicSpawnError {
         #[error(transparent)]
         NoInitialCipherSuite {
-            #[error(std_err)]
+            #[error(std_err, from)]
             source: NoInitialCipherSuite,
         },
         #[display("Unable to spawn a QUIC endpoint server")]
@@ -108,8 +108,10 @@ pub(crate) mod server {
                 .send_observed_address_reports(true);
 
             let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)
-                .std_context("endpoint server")?;
-            let bind_addr = endpoint.local_addr().std_context("local addr")?;
+                .map_err(|err| e!(QuicSpawnError::EndpointServer, err))?;
+            let bind_addr = endpoint
+                .local_addr()
+                .map_err(|err| e!(QuicSpawnError::LocalAddr, err))?;
 
             info!(?bind_addr, "QUIC server listening on");
 
@@ -420,7 +422,7 @@ mod tests {
         let server_socket =
             tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
                 .await
-                .context("bind")?;
+                .std_context("bind")?;
         let server_addr = server_socket.local_addr().std_context("local addr")?;
 
         // create the client configuration used for the client endpoint when they
@@ -465,22 +467,22 @@ mod tests {
         // need to pop off messages before we attach it to the Quinn Endpoint.
         let socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
             .await
-            .context("bind")?;
+            .std_context("bind")?;
         let server_addr = socket.local_addr().std_context("local addr")?;
         info!(addr = ?server_addr, "server socket bound");
 
         // Create a QAD server with a self-signed cert, all manually.
-        let cert =
-            rcgen::generate_simple_self_signed(vec!["localhost".into()]).context("self signed")?;
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
+            .std_context("self signed")?;
         let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(vec![cert.cert.into()], key.into())
-            .context("tls")?;
+            .std_context("tls")?;
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         server_crypto.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.to_vec()];
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
-            QuicServerConfig::try_from(server_crypto).context("config")?,
+            QuicServerConfig::try_from(server_crypto).std_context("config")?,
         ));
         let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
         transport_config.send_observed_address_reports(true);
@@ -505,14 +507,14 @@ mod tests {
                     socket.into_std().unwrap(),
                     Arc::new(quinn::TokioRuntime),
                 )
-                .context("endpoint new")?;
+                .std_context("endpoint new")?;
                 info!("accepting conn");
                 let incoming = server.accept().await.expect("missing conn");
                 info!("incoming!");
-                let conn = incoming.await.context("incoming")?;
+                let conn = incoming.await.std_context("incoming")?;
                 conn.closed().await;
                 server.wait_idle().await;
-                Ok::<_, Error>(())
+                n0_error::Ok(())
             }
             .instrument(info_span!("server")),
         );
@@ -535,15 +537,15 @@ mod tests {
             quic_client.get_addr_and_latency(server_addr, "localhost"),
         )
         .await
-        .context("timeout")??;
+        .std_context("timeout")??;
         let duration = start.elapsed();
         info!(?duration, ?addr, ?latency, "QAD succeeded");
         assert!(duration >= Duration::from_secs(1));
 
         time::timeout(Duration::from_secs(10), server_task)
             .await
-            .context("timeout")?
-            .context("server task")??;
+            .std_context("timeout")?
+            .std_context("server task")??;
 
         Ok(())
     }

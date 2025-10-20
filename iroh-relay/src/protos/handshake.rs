@@ -409,18 +409,16 @@ pub(crate) async fn serverside(
         let client_auth_bytes = data_encoding::BASE64URL_NOPAD
             .decode(client_auth_header.as_ref())
             .map_err(|_| {
-                ClientAuthHeaderInvalidSnafu {
-                    value: client_auth_header.clone(),
-                }
-                .build()
+                e!(Error::ClientAuthHeaderInvalid {
+                    value: client_auth_header.clone()
+                })
             })?;
 
         let client_auth: KeyMaterialClientAuth =
             postcard::from_bytes(&client_auth_bytes).map_err(|_| {
-                ClientAuthHeaderInvalidSnafu {
-                    value: client_auth_header.clone(),
-                }
-                .build()
+                e!(Error::ClientAuthHeaderInvalid {
+                    value: client_auth_header.clone()
+                })
             })?;
 
         if client_auth.verify(io).is_ok() {

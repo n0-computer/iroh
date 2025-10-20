@@ -266,7 +266,7 @@ pub struct Server {
 /// Server spawn errors
 #[allow(missing_docs)]
 #[add_meta]
-#[derive(Error, Debug)]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum SpawnError {
     #[display("Unable to get local address")]
@@ -301,7 +301,7 @@ pub enum SpawnError {
 /// Server task errors
 #[allow(missing_docs)]
 #[add_meta]
-#[derive(Error, Debug)]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum SupervisorError {
     #[display("Error starting metrics server")]
@@ -313,7 +313,7 @@ pub enum SupervisorError {
     AcmeEventStreamFinished {},
     #[error(transparent)]
     JoinError {
-        #[error(std_err)]
+        #[error(from, std_err)]
         source: JoinError,
     },
     #[display("No relay services are enabled")]

@@ -44,6 +44,7 @@ use iroh_relay::{
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 };
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::{
     FuturesUnorderedBounded, SinkExt, StreamExt,
     task::JoinSet,
@@ -51,7 +52,6 @@ use n0_future::{
 };
 use n0_watcher::Watchable;
 use netwatch::interfaces;
-use n0_error::{add_meta, e, Error, Err};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
@@ -236,9 +236,15 @@ enum RunError {
     #[display("Stream closed by server.")]
     StreamClosedServer,
     #[display("Client stream read failed")]
-    ClientStreamRead { #[error(std_err)] source: RecvError },
+    ClientStreamRead {
+        #[error(std_err)]
+        source: RecvError,
+    },
     #[display("Client stream write failed")]
-    ClientStreamWrite { #[error(std_err)] source: SendError },
+    ClientStreamWrite {
+        #[error(std_err)]
+        source: SendError,
+    },
 }
 
 #[allow(missing_docs)]
@@ -359,8 +365,9 @@ impl ActiveRelayActor {
     /// be retried with a backoff.
     async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
-            Some(client_res) => client_res
-                .map_err(|err| e!(RelayConnectionError::Dial { source: err }))?,
+            Some(client_res) => {
+                client_res.map_err(|err| e!(RelayConnectionError::Dial { source: err }))?
+            }
             None => return Ok(()),
         };
         self.run_connected(client)
@@ -483,7 +490,9 @@ impl ActiveRelayActor {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
                 Ok(Err(err)) => Err!(DialError::Connect { source: err }),
-                Err(_) => Err!(DialError::Timeout { timeout: CONNECT_TIMEOUT }),
+                Err(_) => Err!(DialError::Timeout {
+                    timeout: CONNECT_TIMEOUT
+                }),
             }
         }
     }
@@ -505,7 +514,8 @@ impl ActiveRelayActor {
         );
 
         let (mut client_stream, client_sink) = client.split();
-        let mut client_sink = client_sink.sink_map_err(|e| e!(RunError::ClientStreamWrite { source: e }));
+        let mut client_sink =
+            client_sink.sink_map_err(|e| e!(RunError::ClientStreamWrite { source: e }));
 
         let mut state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),
@@ -1220,7 +1230,7 @@ mod tests {
 
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use iroh_relay::{PingTracker, protos::relay::Datagrams};
-    use n0_error::{Result, StackResultExt, StdResultExt, AnyError as Error};
+    use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, info, info_span};
@@ -1339,7 +1349,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             loop {
                 let res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, async {
-                    tx.send(item.clone()).await.context("send item")?;
+                    tx.send(item.clone()).await.std_context("send item")?;
                     let RelayRecvDatagram {
                         url: _,
                         src: _,
@@ -1403,17 +1413,17 @@ mod tests {
         inbox_tx
             .send(ActiveRelayMessage::GetLocalAddr(tx))
             .await
-            .context("send get local addr msg")?;
+            .std_context("send get local addr msg")?;
 
         let local_addr = rx
             .await
-            .context("wait for local addr msg")?
+            .std_context("wait for local addr msg")?
             .context("no local addr")?;
         info!(?local_addr, "check connection with addr");
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(vec![local_addr.ip()]))
             .await
-            .context("send check connection message")?;
+            .std_context("send check connection message")?;
 
         // Sync the ActiveRelayActor. Ping blocks it and we want to be sure it has handled
         // another inbox message before continuing.
@@ -1421,8 +1431,8 @@ mod tests {
         inbox_tx
             .send(ActiveRelayMessage::GetLocalAddr(tx))
             .await
-            .context("send get local addr msg")?;
-        rx.await.context("recv send local addr msg")?;
+            .std_context("send get local addr msg")?;
+        rx.await.std_context("recv send local addr msg")?;
 
         // Echo should still work.
         info!("second echo");
@@ -1439,7 +1449,7 @@ mod tests {
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(Vec::new()))
             .await
-            .context("send check connection msg")?;
+            .std_context("send check connection msg")?;
 
         // Give some time to reconnect, mostly to sort logs rather than functional.
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1455,7 +1465,7 @@ mod tests {
 
         // Shut down the actor.
         cancel_token.cancel();
-        task.await.context("wait for task to finish")?;
+        task.await.std_context("wait for task to finish")?;
 
         Ok(())
     }
@@ -1497,7 +1507,7 @@ mod tests {
             }
         })
         .await
-        .context("timeout")?;
+        .std_context("timeout")?;
 
         // From now on, we pause time
         tokio::time::pause();

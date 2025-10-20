@@ -3,7 +3,7 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Err, Error, StackResultExt, add_meta, e};
 use n0_future::{SinkExt, StreamExt};
 use rand::Rng;
 use time::{Date, OffsetDateTime};
@@ -209,11 +209,17 @@ pub enum WriteFrameError {
 #[non_exhaustive]
 pub enum RunError {
     #[error(transparent)]
-    ForwardPacket { source: ForwardPacketError },
+    ForwardPacket {
+        #[error(from)]
+        source: ForwardPacketError,
+    },
     #[display("Flush")]
     Flush {},
     #[error(transparent)]
-    HandleFrame { source: HandleFrameError },
+    HandleFrame {
+        #[error(from)]
+        source: HandleFrameError,
+    },
     #[display("Server.disco_send_queue dropped")]
     DiscoSendQueuePacketDrop {},
     #[display("Failed to send disco packet")]
@@ -315,7 +321,7 @@ impl Actor {
                 _ = done.cancelled() => {
                     trace!("actor loop cancelled, exiting");
                     // final flush
-                    self.stream.flush().await.map_err(|_| FlushSnafu.build())?;
+                    self.stream.flush().await.map_err(|_| e!(RunError::Flush))?;
                     break;
                 }
                 maybe_frame = self.stream.next() => {

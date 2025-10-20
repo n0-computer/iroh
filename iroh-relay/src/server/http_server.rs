@@ -15,9 +15,8 @@ use hyper::{
     service::Service,
     upgrade::Upgraded,
 };
-use n0_error::{Err, Error, StdResultExt, add_meta, e};
+use n0_error::{Err, Error, StackResultExt, StdResultExt, add_meta, e};
 use n0_future::time::Elapsed;
-use snafu::OptionExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -37,7 +36,7 @@ use crate::{
         streams::WsBytesFramed,
     },
     server::{
-        BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
+        ClientRateLimit,
         client::Config,
         metrics::Metrics,
         streams::{MaybeTlsStream, RateLimited, RelayedStream},
@@ -200,7 +199,10 @@ pub enum ServeConnectionError {
 #[non_exhaustive]
 pub enum AcceptError {
     #[error(transparent)]
-    Handshake { source: handshake::Error },
+    Handshake {
+        #[error(from)]
+        source: handshake::Error,
+    },
     #[display("rate limiting misconfigured")]
     RateLimitingMisconfigured { source: InvalidBucketConfig },
 }
@@ -212,7 +214,10 @@ pub enum AcceptError {
 #[non_exhaustive]
 pub enum ConnectionHandlerError {
     #[error(transparent)]
-    Accept { source: AcceptError },
+    Accept {
+        #[error(from)]
+        source: AcceptError,
+    },
     #[display("Could not downcast the upgraded connection to MaybeTlsStream")]
     DowncastUpgrade {},
     #[display("Cannot deal with buffered data yet: {buf:?}")]
@@ -337,9 +342,11 @@ impl ServerBuilder {
 
         let listener = TcpListener::bind(&addr)
             .await
-            .map_err(|_| BindTcpListenerSnafu { addr }.build())?;
+            .map_err(|_| e!(super::SpawnError::BindTcpListener { addr }))?;
 
-        let addr = listener.local_addr().std_context("no-local-addr")?;
+        let addr = listener
+            .local_addr()
+            .map_err(|source| e!(super::SpawnError::NoLocalAddr { source }))?;
         let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
 
@@ -411,7 +418,7 @@ struct Inner {
 }
 
 #[add_meta]
-#[derive(Error, Debug)]
+#[derive(Error)]
 enum RelayUpgradeReqError {
     #[display("missing header: {header}")]
     MissingHeader { header: http::HeaderName },
@@ -557,7 +564,7 @@ impl Service<Request<Incoming>> for RelayService {
             let res = match self.handle_relay_ws_upgrade(req) {
                 Ok(response) => Ok(response),
                 // It's convention to send back the version(s) we *do* support
-                Err(e @ RelayUpgradeReqError::UnsupportedWebsocketVersion) => self
+                Err(e @ RelayUpgradeReqError::UnsupportedWebsocketVersion { .. }) => self
                     .build_response()
                     .status(StatusCode::BAD_REQUEST)
                     .header(SEC_WEBSOCKET_VERSION, SUPPORTED_WEBSOCKET_VERSION)
@@ -796,7 +803,7 @@ impl RelayService {
                 debug!("TLS[manual]: accept");
                 let tls_stream = tokio::time::timeout(Duration::from_secs(30), a.accept(stream))
                     .await
-                    .std_context("timeout")?
+                    .map_err(|err| e!(ServeConnectionError::Timeout, err))?
                     .map_err(|err| e!(ServeConnectionError::ManualAccept, err))?;
 
                 self.serve_connection(MaybeTlsStream::Tls(tls_stream))
@@ -1086,7 +1093,7 @@ mod tests {
         client_a.close().await?;
         client_b.close().await?;
         server.shutdown();
-        server.task_handle().await.context("join")?;
+        server.task_handle().await.std_context("join")?;
 
         Ok(())
     }
@@ -1122,7 +1129,7 @@ mod tests {
         let handler_task =
             tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a), None).await });
         let mut client_a = make_test_client(client_a, &key_a).await?;
-        handler_task.await.context("join")??;
+        handler_task.await.std_context("join")??;
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(&mut rng);
@@ -1132,7 +1139,7 @@ mod tests {
         let handler_task =
             tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b), None).await });
         let mut client_b = make_test_client(client_b, &key_b).await?;
-        handler_task.await.context("join")??;
+        handler_task.await.std_context("join")??;
 
         info!("Send message from A to B.");
         let msg = Datagrams::from(b"hello client b!!");
@@ -1222,7 +1229,7 @@ mod tests {
         let handler_task =
             tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a), None).await });
         let mut client_a = make_test_client(client_a, &key_a).await?;
-        handler_task.await.context("join")??;
+        handler_task.await.std_context("join")??;
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(&mut rng);
@@ -1232,7 +1239,7 @@ mod tests {
         let handler_task =
             tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b), None).await });
         let mut client_b = make_test_client(client_b, &key_b).await?;
-        handler_task.await.context("join")??;
+        handler_task.await.std_context("join")??;
 
         info!("Send message from A to B.");
         let msg = Datagrams::from(b"hello client b!!");
@@ -1282,7 +1289,7 @@ mod tests {
         let handler_task =
             tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(new_rw_b), None).await });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
-        handler_task.await.context("join")??;
+        handler_task.await.std_context("join")??;
 
         // assert!(client_b.recv().await.is_err());
 

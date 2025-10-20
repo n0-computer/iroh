@@ -81,7 +81,7 @@ impl RelayedStream {
 pub enum SendError {
     #[error(transparent)]
     StreamError {
-        #[error(std_err)]
+        #[error(from, std_err)]
         source: StreamError,
     },
     #[display("Packet exceeds max packet size")]
@@ -124,6 +124,7 @@ impl Sink<RelayToClientMsg> for RelayedStream {
 /// Relay receive errors
 #[add_meta]
 #[derive(Error)]
+#[error(from_sources)]
 #[non_exhaustive]
 pub enum RecvError {
     #[error(transparent)]
@@ -489,7 +490,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for RateLimited<S> {
 mod tests {
     use std::sync::Arc;
 
-    use n0_error::Result;
+    use n0_error::{Result, StdResultExt};
     use n0_future::time;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tracing_test::traced_test;
