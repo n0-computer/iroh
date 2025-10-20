@@ -41,7 +41,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
-/// # async fn main() -> n0_snafu::Result<()> {
+/// # async fn main() -> n0_error::Result<()> {
 /// // Create the discovery service and endpoint.
 /// let discovery = StaticProvider::new();
 ///
@@ -125,8 +125,8 @@ impl StaticProvider {
     /// # fn get_addrs() -> Vec<EndpointAddr> {
     /// #     Vec::new()
     /// # }
-    /// # #[tokio::main]
-    /// # async fn main() -> n0_snafu::Result<()> {
+/// # #[tokio::main]
+/// # async fn main() -> n0_error::Result<()> {
     /// // get addrs from somewhere
     /// let addrs = get_addrs();
     ///

@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use iroh::{Endpoint, EndpointId};
-use n0_snafu::ResultExt;
+use n0_error::{Result, StdResultExt};
 use tracing::warn;
 use url::Url;
 
@@ -61,7 +61,7 @@ fn build_discovery(args: Args) -> iroh::discovery::pkarr::dht::Builder {
     }
 }
 
-async fn chat_server(args: Args) -> n0_snafu::Result<()> {
+async fn chat_server(args: Args) -> Result<()> {
     let secret_key = iroh::SecretKey::generate(&mut rand::rng());
     let endpoint_id = secret_key.public();
     let discovery = build_discovery(args);
@@ -100,13 +100,13 @@ async fn chat_server(args: Args) -> n0_snafu::Result<()> {
                 tokio::spawn(
                     async move { tokio::io::copy(&mut tokio::io::stdin(), &mut writer).await },
                 );
-            Ok::<_, n0_snafu::Error>(())
+            Ok::<_, n0_error::Error>(())
         });
     }
     Ok(())
 }
 
-async fn chat_client(args: Args) -> n0_snafu::Result<()> {
+async fn chat_client(args: Args) -> Result<()> {
     let remote_endpoint_id = args.endpoint_id.unwrap();
     let secret_key = iroh::SecretKey::generate(&mut rand::rng());
     let endpoint_id = secret_key.public();
@@ -132,7 +132,7 @@ async fn chat_client(args: Args) -> n0_snafu::Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> n0_snafu::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
     if args.endpoint_id.is_some() {

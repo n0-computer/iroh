@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StackResultExt, StdResultExt};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -162,7 +162,10 @@ impl Config {
         );
         let s = tokio::fs::read_to_string(path.as_ref())
             .await
-            .with_context(|| format!("failed to read {}", path.as_ref().to_string_lossy()))?;
+            .std_context(format!(
+                "failed to read {}",
+                path.as_ref().to_string_lossy()
+            ))?;
         let config: Config = toml::from_str(&s).e()?;
         Ok(config)
     }
@@ -172,8 +175,9 @@ impl Config {
         let dir = if let Some(val) = env::var_os("IROH_DNS_DATA_DIR") {
             PathBuf::from(val)
         } else {
-            let path = dirs_next::data_dir()
-                .context("operating environment provides no directory for application data")?;
+            let path = dirs_next::data_dir().std_context(
+                "operating environment provides no directory for application data",
+            )?;
 
             path.join("iroh-dns")
         };

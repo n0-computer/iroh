@@ -37,7 +37,7 @@ use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt};
 use tokio::sync::Mutex;
 use tracing_subscriber::{EnvFilter, prelude::*};
 

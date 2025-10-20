@@ -65,7 +65,7 @@
 //!     endpoint::RelayMode,
 //! };
 //!
-//! # async fn wrapper() -> n0_snafu::Result<()> {
+//! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())
@@ -86,7 +86,7 @@
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
-//! # async fn wrapper() -> n0_snafu::Result<()> {
+//! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())

@@ -14,9 +14,8 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StackResultExt, StdResultExt, whatever};
 use serde::{Deserialize, Serialize};
-use snafu::whatever;
 use tokio::{net::TcpListener, task::JoinSet};
 use tower_http::{
     cors::{self, CorsLayer},
@@ -112,9 +111,9 @@ impl HttpServer {
                     .join(config.cert_mode.to_string());
                 tokio::fs::create_dir_all(&cache_path)
                     .await
-                    .with_context(|| {
-                        format!("failed to create cert cache dir at {cache_path:?}")
-                    })?;
+                    .std_context(format!(
+                        "failed to create cert cache dir at {cache_path:?}"
+                    ))?;
                 config
                     .cert_mode
                     .build(
@@ -173,11 +172,11 @@ impl HttpServer {
                 Err(err) if err.is_cancelled() => {}
                 Ok(Err(err)) => {
                     warn!(?err, "task failed");
-                    final_res = Err(err).context("task");
+                    final_res = Err(err).std_context("task");
                 }
                 Err(err) => {
                     warn!(?err, "task panicked");
-                    final_res = Err(err).context("join");
+                    final_res = Err(err).std_context("join");
                 }
             }
         }

@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 
 use clap::Parser;
 use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey};
-use n0_snafu::ResultExt;
+use n0_error::{Result, StdResultExt};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -29,7 +29,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> n0_snafu::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect (unreliable) example!\n");
     let args = Cli::parse();

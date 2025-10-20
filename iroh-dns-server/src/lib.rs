@@ -25,7 +25,7 @@ mod tests {
         RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
         endpoint_info::EndpointInfo,
     };
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
     use pkarr::{SignedPacket, Timestamp};
     use rand::{CryptoRng, SeedableRng};
     use tracing_test::traced_test;
@@ -117,7 +117,7 @@ mod tests {
 
         // resolve root record
         let name = Name::from_utf8(format!("{pubkey}.")).e()?;
-        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await.e()?;
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
@@ -158,7 +158,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn integration_smoke() -> Result {
-        let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
+        let (server, nameserver, http_url) = Server::spawn_for_tests().await.e()?;
 
         let pkarr_relay = {
             let mut url = http_url.clone();
@@ -256,7 +256,10 @@ mod tests {
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await.e()?;
+        let res = resolver
+            .lookup_endpoint_by_id(&endpoint_id, origin)
+            .await
+            .e()?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
         assert_eq!(res.relay_url(), Some(&relay_url));

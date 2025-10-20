@@ -7,8 +7,8 @@ use iroh::{
     endpoint::{Connecting, Connection},
 };
 use iroh_base::ticket::EndpointTicket;
+use n0_error::{Result, StdResultExt, StackResultExt, whatever};
 use n0_future::{StreamExt, future};
-use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
 use tracing::{info, trace};
 
@@ -28,7 +28,7 @@ struct Args {
 
 /// Gets a secret key from the IROH_SECRET environment variable or generates a new random one.
 /// If the environment variable is set, it must be a valid string representation of a secret key.
-pub fn get_or_generate_secret_key() -> n0_snafu::Result<SecretKey> {
+pub fn get_or_generate_secret_key() -> Result<SecretKey> {
     if let Ok(secret) = env::var("IROH_SECRET") {
         // Parse the secret key from string
         SecretKey::from_str(&secret).context("Invalid secret key format")
@@ -53,7 +53,7 @@ async fn pingpong(
     connection: &Connection,
     proceed: impl Future<Output = bool>,
     x: u64,
-) -> n0_snafu::Result<()> {
+) -> Result<()> {
     let (mut send, recv) = connection.open_bi().await.e()?;
     let data = x.to_be_bytes();
     send.write_all(&data).await.e()?;
@@ -74,7 +74,7 @@ async fn pingpong(
     Ok(())
 }
 
-async fn pingpong_0rtt(connecting: Connecting, i: u64) -> n0_snafu::Result<Connection> {
+async fn pingpong_0rtt(connecting: Connecting, i: u64) -> Result<Connection> {
     let connection = match connecting.into_0rtt() {
         Ok((connection, accepted)) => {
             trace!("0-RTT possible from our side");
@@ -91,7 +91,7 @@ async fn pingpong_0rtt(connecting: Connecting, i: u64) -> n0_snafu::Result<Conne
     Ok(connection)
 }
 
-async fn connect(args: Args) -> n0_snafu::Result<()> {
+async fn connect(args: Args) -> Result<()> {
     let endpoint_addr = args.endpoint.unwrap().endpoint_addr().clone();
     let endpoint = iroh::Endpoint::builder()
         .relay_mode(iroh::RelayMode::Disabled)
@@ -131,7 +131,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
     Ok(())
 }
 
-async fn accept(_args: Args) -> n0_snafu::Result<()> {
+async fn accept(_args: Args) -> Result<()> {
     let secret_key = get_or_generate_secret_key()?;
     let endpoint = iroh::Endpoint::builder()
         .alpns(vec![PINGPONG_ALPN.to_vec()])
@@ -142,7 +142,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
     let mut addrs = endpoint.watch_addr().stream();
     let addr = loop {
         let Some(addr) = addrs.next().await else {
-            snafu::whatever!("Address stream closed");
+            whatever!("Address stream closed");
         };
         if !addr.direct_addresses.is_empty() {
             break addr;
@@ -166,7 +166,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
                 send.write_all(&data).await.e()?;
                 send.finish().e()?;
                 connection.closed().await;
-                Ok::<_, n0_snafu::Error>(())
+                Ok::<_, n0_error::Error>(())
             });
         }
     };
@@ -182,7 +182,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> n0_snafu::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
     if args.endpoint.is_some() {

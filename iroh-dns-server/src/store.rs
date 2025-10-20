@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time:
 
 use hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
 use lru::LruCache;
-use n0_snafu::Result;
+use n0_error::Result;
 use pkarr::{Client as PkarrClient, SignedPacket};
 use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};

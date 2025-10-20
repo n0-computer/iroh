@@ -18,7 +18,7 @@ use iroh::{
 };
 use iroh_base::ticket::EndpointTicket;
 use n0_future::task::AbortOnDropHandle;
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt, StackResultExt, whatever};
 use n0_watcher::Watcher as _;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
@@ -201,7 +201,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                snafu::whatever!(
+                whatever!(
                     "Must have the `test-utils` feature enabled when using the `--env=dev` flag"
                 )
             }
@@ -237,7 +237,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                snafu::whatever!(
+                whatever!(
                     "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
                 );
             }
@@ -268,7 +268,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "discovery-local-network"))]
             {
-                snafu::whatever!(
+                whatever!(
                     "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
                 );
             }
@@ -379,7 +379,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             } else {
                 println!("[{remote}] Disconnected");
             }
-            Ok::<_, n0_snafu::Error>(())
+            Ok::<_, n0_error::Error>(())
         });
     }
 

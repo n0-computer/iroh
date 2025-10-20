@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use iroh::EndpointId;
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt};
 
 #[derive(Debug, Parser)]
 struct Cli {
@@ -26,7 +26,7 @@ fn main() -> Result<()> {
         }
         Command::PkarrToEndpoint { z32_pubkey } => {
             let public_key = pkarr::PublicKey::try_from(z32_pubkey.as_str()).e()?;
-            let endpoint_id = EndpointId::from_bytes(public_key.as_bytes()).e()?;
+            let endpoint_id = EndpointId::from_bytes(public_key.as_bytes())?;
             println!("{endpoint_id}")
         }
     }

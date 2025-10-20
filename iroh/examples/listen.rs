@@ -6,14 +6,14 @@
 use std::time::Duration;
 
 use iroh::{Endpoint, RelayMode, SecretKey, endpoint::ConnectionError};
-use n0_snafu::ResultExt;
+use n0_error::{Result, StdResultExt};
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 
 #[tokio::main]
-async fn main() -> n0_snafu::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nlisten example!\n");
     let secret_key = SecretKey::generate(&mut rand::rng());
@@ -105,7 +105,7 @@ async fn main() -> n0_snafu::Result<()> {
             if res.is_err() {
                 println!("endpoint {endpoint_id} did not disconnect within 3 seconds");
             }
-            Ok::<_, n0_snafu::Error>(())
+            Ok::<_, n0_error::Error>(())
         });
     }
     // stop with SIGINT (ctrl-c)

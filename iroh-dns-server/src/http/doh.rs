@@ -16,7 +16,7 @@ use http::{
     HeaderValue, StatusCode,
     header::{CACHE_CONTROL, CONTENT_TYPE},
 };
-use n0_snafu::ResultExt;
+use n0_error::StdResultExt;
 
 use super::error::AppResult;
 use crate::state::AppState;

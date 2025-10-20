@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use n0_snafu::{Result, ResultExt, format_err};
+use n0_error::{Result, StdResultExt, StackResultExt, format_err};
 use pkarr::{SignedPacket, Timestamp};
 use redb::{
     Database, MultimapTableDefinition, ReadableTable, TableDefinition, backends::InMemoryBackend,
@@ -144,10 +144,10 @@ impl Actor {
                                     },
                                     Err(err) => {
                                         warn!("get {key} failed: {err:#}");
-                                        return Err(err).with_context(|| format!("get packet for {key} failed"))
-                                    }
-                                }
-                            }
+                        return Err(err).std_context(format!("get packet for {key} failed"))
+                    }
+                }
+            }
                             Message::Upsert { packet, res } => {
                                 let key = PublicKeyBytes::from_signed_packet(&packet);
                                 trace!("upsert {}", key);
@@ -265,16 +265,14 @@ impl SignedPacketStore {
         let path = path.as_ref();
         info!("loading packet database from {}", path.to_string_lossy());
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!(
-                    "failed to create database directory at {}",
-                    path.to_string_lossy()
-                )
-            })?;
+            std::fs::create_dir_all(parent).std_context(format!(
+                "failed to create database directory at {}",
+                path.to_string_lossy()
+            ))?;
         }
         let mut db = Database::builder()
             .create(path)
-            .context("failed to open packet database")?;
+            .std_context("failed to open packet database")?;
         match db.upgrade() {
             Ok(true) => info!("Database was upgraded to redb v3 compatible format"),
             Ok(false) => {}
@@ -354,7 +352,10 @@ fn get_packet(
     table: &impl ReadableTable<&'static SignedPacketsKey, &'static [u8]>,
     key: &PublicKeyBytes,
 ) -> Result<Option<SignedPacket>> {
-    let Some(row) = table.get(key.as_ref()).context("database fetch failed")? else {
+    let Some(row) = table
+        .get(key.as_ref())
+        .std_context("database fetch failed")?
+    else {
         return Ok(None);
     };
     match SignedPacket::deserialize(row.value()) {
@@ -399,7 +400,7 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
         let (tx, rx) = oneshot::channel();
         let _ = send.send(Message::Snapshot { res: tx }).await.ok();
         // if we can't get the snapshot we exit the loop, main actor dead
-        let snapshot = rx.await.context("failed to get snapshot")?;
+        let snapshot = rx.await.std_context("failed to get snapshot")?;
 
         let expired = Timestamp::now() - expiry_us;
         trace!("evicting packets older than {}", fmt_time(expired));
@@ -458,11 +459,11 @@ impl IoThread {
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = ()>,
     {
-        let rt = tokio::runtime::Handle::try_current().context("get tokio handle")?;
+        let rt = tokio::runtime::Handle::try_current().std_context("get tokio handle")?;
         let handle = std::thread::Builder::new()
             .name(name.into())
             .spawn(move || rt.block_on(f()))
-            .context("failed to spawn thread")?;
+            .std_context("failed to spawn thread")?;
         Ok(Self {
             handle: Some(handle),
         })

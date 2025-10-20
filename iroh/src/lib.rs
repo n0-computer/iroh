@@ -9,8 +9,8 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, EndpointAddr};
-//! # use n0_snafu::ResultExt;
-//! # async fn wrapper() -> n0_snafu::Result {
+//! # use n0_error::StackResultExt;
+//! # async fn wrapper() -> n0_error::Result<()> {
 //! let addr: EndpointAddr = todo!();
 //! let ep = Endpoint::bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
@@ -27,8 +27,8 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, EndpointAddr};
-//! # use n0_snafu::ResultExt;
-//! # async fn wrapper() -> n0_snafu::Result {
+//! # use n0_error::StackResultExt;
+//! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::builder()
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
@@ -171,7 +171,7 @@
 //!
 //! ```no_run
 //! use iroh::{Endpoint, EndpointAddr};
-//! use n0_snafu::{Result, ResultExt};
+//! use n0_error::{Result, StackResultExt};
 //!
 //! async fn connect(addr: EndpointAddr) -> Result<()> {
 //!     // The Endpoint is the central object that manages an iroh node.
@@ -197,7 +197,7 @@
 //! ```no_run
 //! use iroh::{Endpoint, EndpointAddr};
 //! use n0_future::StreamExt;
-//! use n0_snafu::{Result, ResultExt};
+//! use n0_error::{Result, StackResultExt};
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.
