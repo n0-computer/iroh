@@ -1358,6 +1358,7 @@ enum DiscoBoxError {
 }
 
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 enum ActorMessage {
     NetworkChange,
     RelayMapChange,

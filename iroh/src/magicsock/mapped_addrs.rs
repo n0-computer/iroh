@@ -14,9 +14,12 @@ use std::{
     },
 };
 
+use iroh_base::{EndpointId, RelayUrl};
 use rustc_hash::FxHashMap;
 use snafu::Snafu;
-use tracing::trace;
+use tracing::{error, trace};
+
+use super::transports;
 
 /// The Prefix/L of all Unique Local Addresses.
 const ADDR_PREFIXL: u8 = 0xfd;
@@ -87,6 +90,28 @@ impl From<SocketAddr> for MultipathMappedAddr {
                 #[cfg(not(wasm_browser))]
                 Self::Ip(value)
             }
+        }
+    }
+}
+
+impl MultipathMappedAddr {
+    pub(super) fn to_transport_addr(
+        &self,
+        relay_mapped_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    ) -> Option<transports::Addr> {
+        match self {
+            Self::Mixed(_) => {
+                error!("Mixed addr has not transports::Addr");
+                None
+            }
+            Self::Relay(mapped) => match relay_mapped_addrs.lookup(mapped) {
+                Some(parts) => Some(transports::Addr::from(parts)),
+                None => {
+                    error!("Unknown RelayMappedAddr");
+                    None
+                }
+            },
+            Self::Ip(addr) => Some(transports::Addr::from(*addr)),
         }
     }
 }
