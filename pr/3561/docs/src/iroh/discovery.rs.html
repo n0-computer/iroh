@@ -65,7 +65,7 @@
 <a href=#65 id=65 data-nosnippet>65</a>//!     endpoint::RelayMode,
 <a href=#66 id=66 data-nosnippet>66</a>//! };
 <a href=#67 id=67 data-nosnippet>67</a>//!
-<a href=#68 id=68 data-nosnippet>68</a>//! # async fn wrapper() -&gt; n0_snafu::Result&lt;()&gt; {
+<a href=#68 id=68 data-nosnippet>68</a>//! # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#69 id=69 data-nosnippet>69</a>//! let ep = Endpoint::empty_builder(RelayMode::Default)
 <a href=#70 id=70 data-nosnippet>70</a>//!     .discovery(PkarrPublisher::n0_dns())
 <a href=#71 id=71 data-nosnippet>71</a>//!     .discovery(DnsDiscovery::n0_dns())
@@ -86,7 +86,7 @@
 <a href=#86 id=86 data-nosnippet>86</a>//! #    Endpoint, SecretKey,
 <a href=#87 id=87 data-nosnippet>87</a>//! # };
 <a href=#88 id=88 data-nosnippet>88</a>//! #
-<a href=#89 id=89 data-nosnippet>89</a>//! # async fn wrapper() -&gt; n0_snafu::Result&lt;()&gt; {
+<a href=#89 id=89 data-nosnippet>89</a>//! # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#90 id=90 data-nosnippet>90</a>//! let ep = Endpoint::empty_builder(RelayMode::Default)
 <a href=#91 id=91 data-nosnippet>91</a>//!     .discovery(PkarrPublisher::n0_dns())
 <a href=#92 id=92 data-nosnippet>92</a>//!     .discovery(DnsDiscovery::n0_dns())
@@ -942,7 +942,7 @@
 <a href=#942 id=942 data-nosnippet>942</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
 <a href=#943 id=943 data-nosnippet>943</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
 <a href=#944 id=944 data-nosnippet>944</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
-<a href=#945 id=945 data-nosnippet>945</a>                    </span><span class="kw">let </span>conn = connecting.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#945 id=945 data-nosnippet>945</a>                    </span><span class="kw">let </span>conn = connecting.<span class="kw">await</span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
 <a href=#946 id=946 data-nosnippet>946</a>                    connections.push(conn);
 <a href=#947 id=947 data-nosnippet>947</a>                }
 <a href=#948 id=948 data-nosnippet>948</a>
@@ -995,7 +995,7 @@
 <a href=#995 id=995 data-nosnippet>995</a>        <span class="kw">let </span>state = State::new(origin.clone());
 <a href=#996 id=996 data-nosnippet>996</a>        <span class="kw">let </span>(nameserver, _dns_drop_guard) = run_dns_server(state.clone())
 <a href=#997 id=997 data-nosnippet>997</a>            .<span class="kw">await
-<a href=#998 id=998 data-nosnippet>998</a>            </span>.context(<span class="string">"Running DNS server"</span>)<span class="question-mark">?</span>;
+<a href=#998 id=998 data-nosnippet>998</a>            </span>.std_context(<span class="string">"Running DNS server"</span>)<span class="question-mark">?</span>;
 <a href=#999 id=999 data-nosnippet>999</a>
 <a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#1001 id=1001 data-nosnippet>1001</a>        <span class="kw">let </span>endpoint_info = EndpointInfo::new(secret_key.public())
@@ -1003,7 +1003,7 @@
 <a href=#1003 id=1003 data-nosnippet>1003</a>        <span class="kw">let </span>signed_packet = endpoint_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 <a href=#1004 id=1004 data-nosnippet>1004</a>        state
 <a href=#1005 id=1005 data-nosnippet>1005</a>            .upsert(signed_packet)
-<a href=#1006 id=1006 data-nosnippet>1006</a>            .context(<span class="string">"update and insert signed packet"</span>)<span class="question-mark">?</span>;
+<a href=#1006 id=1006 data-nosnippet>1006</a>            .std_context(<span class="string">"update and insert signed packet"</span>)<span class="question-mark">?</span>;
 <a href=#1007 id=1007 data-nosnippet>1007</a>
 <a href=#1008 id=1008 data-nosnippet>1008</a>        <span class="kw">let </span>resolver = DnsResolver::with_nameserver(nameserver);
 <a href=#1009 id=1009 data-nosnippet>1009</a>        <span class="kw">let </span>resolved = resolver
@@ -1023,7 +1023,7 @@
 <a href=#1023 id=1023 data-nosnippet>1023</a>
 <a href=#1024 id=1024 data-nosnippet>1024</a>        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
 <a href=#1025 id=1025 data-nosnippet>1025</a>            .<span class="kw">await
-<a href=#1026 id=1026 data-nosnippet>1026</a>            </span>.context(<span class="string">"DnsPkarrServer"</span>)<span class="question-mark">?</span>;
+<a href=#1026 id=1026 data-nosnippet>1026</a>            </span>.std_context(<span class="string">"DnsPkarrServer"</span>)<span class="question-mark">?</span>;
 <a href=#1027 id=1027 data-nosnippet>1027</a>
 <a href=#1028 id=1028 data-nosnippet>1028</a>        <span class="kw">let </span>secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#1029 id=1029 data-nosnippet>1029</a>        <span class="kw">let </span>endpoint_id = secret_key.public();
@@ -1042,7 +1042,7 @@
 <a href=#1042 id=1042 data-nosnippet>1042</a>        </span>dns_pkarr_server
 <a href=#1043 id=1043 data-nosnippet>1043</a>            .on_endpoint(<span class="kw-2">&amp;</span>endpoint_id, PUBLISH_TIMEOUT)
 <a href=#1044 id=1044 data-nosnippet>1044</a>            .<span class="kw">await
-<a href=#1045 id=1045 data-nosnippet>1045</a>            </span>.context(<span class="string">"wait for on endpoint update"</span>)<span class="question-mark">?</span>;
+<a href=#1045 id=1045 data-nosnippet>1045</a>            </span>.std_context(<span class="string">"wait for on endpoint update"</span>)<span class="question-mark">?</span>;
 <a href=#1046 id=1046 data-nosnippet>1046</a>        <span class="kw">let </span>resolved = resolver
 <a href=#1047 id=1047 data-nosnippet>1047</a>            .lookup_endpoint_by_id(<span class="kw-2">&amp;</span>endpoint_id, <span class="kw-2">&amp;</span>origin)
 <a href=#1048 id=1048 data-nosnippet>1048</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1066,7 +1066,7 @@
 <a href=#1066 id=1066 data-nosnippet>1066</a>    </span><span class="kw">async fn </span>pkarr_publish_dns_discover() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#1067 id=1067 data-nosnippet>1067</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#1068 id=1068 data-nosnippet>1068</a>
-<a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span>.context(<span class="string">"DnsPkarrServer run"</span>)<span class="question-mark">?</span>;
+<a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span>.std_context(<span class="string">"DnsPkarrServer run"</span>)<span class="question-mark">?</span>;
 <a href=#1070 id=1070 data-nosnippet>1070</a>        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1071 id=1071 data-nosnippet>1071</a>
 <a href=#1072 id=1072 data-nosnippet>1072</a>        <span class="kw">let </span>(ep1, _guard1) = ep_with_discovery(<span class="kw-2">&amp;mut </span>rng, <span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1076,7 +1076,7 @@
 <a href=#1076 id=1076 data-nosnippet>1076</a>        </span>dns_pkarr_server
 <a href=#1077 id=1077 data-nosnippet>1077</a>            .on_endpoint(<span class="kw-2">&amp;</span>ep1.id(), PUBLISH_TIMEOUT)
 <a href=#1078 id=1078 data-nosnippet>1078</a>            .<span class="kw">await
-<a href=#1079 id=1079 data-nosnippet>1079</a>            </span>.context(<span class="string">"wait for on endpoint update"</span>)<span class="question-mark">?</span>;
+<a href=#1079 id=1079 data-nosnippet>1079</a>            </span>.std_context(<span class="string">"wait for on endpoint update"</span>)<span class="question-mark">?</span>;
 <a href=#1080 id=1080 data-nosnippet>1080</a>
 <a href=#1081 id=1081 data-nosnippet>1081</a>        <span class="comment">// we connect only by endpoint id!
 <a href=#1082 id=1082 data-nosnippet>1082</a>        </span><span class="kw">let </span>_conn = ep2.connect(ep1.id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1103,7 +1103,7 @@
 <a href=#1103 id=1103 data-nosnippet>1103</a>            <span class="kw">async move </span>{
 <a href=#1104 id=1104 data-nosnippet>1104</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
 <a href=#1105 id=1105 data-nosnippet>1105</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
-<a href=#1106 id=1106 data-nosnippet>1106</a>                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#1106 id=1106 data-nosnippet>1106</a>                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
 <a href=#1107 id=1107 data-nosnippet>1107</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
 <a href=#1108 id=1108 data-nosnippet>1108</a>                </span>}
 <a href=#1109 id=1109 data-nosnippet>1109</a>

@@ -827,7 +827,7 @@
 <a href=#827 id=827 data-nosnippet>827</a>    /// The observed [`EndpointAddr`] will have the current [`RelayUrl`] and direct addresses.
 <a href=#828 id=828 data-nosnippet>828</a>    ///
 <a href=#829 id=829 data-nosnippet>829</a>    /// ```no_run
-<a href=#830 id=830 data-nosnippet>830</a>    /// # async fn wrapper() -&gt; n0_snafu::Result {
+<a href=#830 id=830 data-nosnippet>830</a>    /// # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#831 id=831 data-nosnippet>831</a>    /// use iroh::{Endpoint, Watcher};
 <a href=#832 id=832 data-nosnippet>832</a>    ///
 <a href=#833 id=833 data-nosnippet>833</a>    /// let endpoint = Endpoint::builder()
@@ -1022,7 +1022,7 @@
 <a href=#1022 id=1022 data-nosnippet>1022</a>    /// ```rust
 <a href=#1023 id=1023 data-nosnippet>1023</a>    /// # use std::collections::BTreeMap;
 <a href=#1024 id=1024 data-nosnippet>1024</a>    /// # use iroh::endpoint::Endpoint;
-<a href=#1025 id=1025 data-nosnippet>1025</a>    /// # async fn wrapper() -&gt; n0_snafu::Result {
+<a href=#1025 id=1025 data-nosnippet>1025</a>    /// # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#1026 id=1026 data-nosnippet>1026</a>    /// let endpoint = Endpoint::bind().await?;
 <a href=#1027 id=1027 data-nosnippet>1027</a>    /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
 <a href=#1028 id=1028 data-nosnippet>1028</a>    /// # Ok(())
@@ -1040,7 +1040,7 @@
 <a href=#1040 id=1040 data-nosnippet>1040</a>    /// # use std::collections::BTreeMap;
 <a href=#1041 id=1041 data-nosnippet>1041</a>    /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
 <a href=#1042 id=1042 data-nosnippet>1042</a>    /// # use iroh::endpoint::Endpoint;
-<a href=#1043 id=1043 data-nosnippet>1043</a>    /// # async fn wrapper() -&gt; n0_snafu::Result {
+<a href=#1043 id=1043 data-nosnippet>1043</a>    /// # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#1044 id=1044 data-nosnippet>1044</a>    /// let endpoint = Endpoint::bind().await?;
 <a href=#1045 id=1045 data-nosnippet>1045</a>    /// let metrics: BTreeMap&lt;String, MetricValue&gt; = endpoint
 <a href=#1046 id=1046 data-nosnippet>1046</a>    ///     .metrics()
@@ -1063,7 +1063,7 @@
 <a href=#1063 id=1063 data-nosnippet>1063</a>    /// ```rust
 <a href=#1064 id=1064 data-nosnippet>1064</a>    /// # use iroh_metrics::{Registry, MetricsSource};
 <a href=#1065 id=1065 data-nosnippet>1065</a>    /// # use iroh::endpoint::Endpoint;
-<a href=#1066 id=1066 data-nosnippet>1066</a>    /// # async fn wrapper() -&gt; n0_snafu::Result {
+<a href=#1066 id=1066 data-nosnippet>1066</a>    /// # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#1067 id=1067 data-nosnippet>1067</a>    /// let endpoint = Endpoint::bind().await?;
 <a href=#1068 id=1068 data-nosnippet>1068</a>    /// let mut registry = Registry::default();
 <a href=#1069 id=1069 data-nosnippet>1069</a>    /// registry.register_all(endpoint.metrics());
@@ -1086,8 +1086,8 @@
 <a href=#1086 id=1086 data-nosnippet>1086</a>    /// # use std::{sync::{Arc, RwLock}, time::Duration};
 <a href=#1087 id=1087 data-nosnippet>1087</a>    /// # use iroh_metrics::{Registry, MetricsSource};
 <a href=#1088 id=1088 data-nosnippet>1088</a>    /// # use iroh::endpoint::Endpoint;
-<a href=#1089 id=1089 data-nosnippet>1089</a>    /// # use n0_snafu::ResultExt;
-<a href=#1090 id=1090 data-nosnippet>1090</a>    /// # async fn wrapper() -&gt; n0_snafu::Result {
+<a href=#1089 id=1089 data-nosnippet>1089</a>    /// # use n0_error::StackResultExt;
+<a href=#1090 id=1090 data-nosnippet>1090</a>    /// # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#1091 id=1091 data-nosnippet>1091</a>    /// // Create a registry, wrapped in a read-write lock so that we can register and serve
 <a href=#1092 id=1092 data-nosnippet>1092</a>    /// // the metrics independently.
 <a href=#1093 id=1093 data-nosnippet>1093</a>    /// let registry = Arc::new(RwLock::new(Registry::default()));
@@ -3019,7 +3019,7 @@
 <a href=#3019 id=3019 data-nosnippet>3019</a>        <span class="kw">let </span><span class="kw-2">mut </span>registry = Registry::default();
 <a href=#3020 id=3020 data-nosnippet>3020</a>        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>client);
 <a href=#3021 id=3021 data-nosnippet>3021</a>        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>server);
-<a href=#3022 id=3022 data-nosnippet>3022</a>        <span class="kw">let </span>s = registry.encode_openmetrics_to_string()<span class="question-mark">?</span>;
+<a href=#3022 id=3022 data-nosnippet>3022</a>        <span class="kw">let </span>s = registry.encode_openmetrics_to_string().e()<span class="question-mark">?</span>;
 <a href=#3023 id=3023 data-nosnippet>3023</a>        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#</span>));
 <a href=#3024 id=3024 data-nosnippet>3024</a>        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#</span>));
 <a href=#3025 id=3025 data-nosnippet>3025</a>        <span class="prelude-val">Ok</span>(())
@@ -3125,7 +3125,7 @@
 <a href=#3125 id=3125 data-nosnippet>3125</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder(RelayMode::Staging).bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3126 id=3126 data-nosnippet>3126</a>
 <a href=#3127 id=3127 data-nosnippet>3127</a>        <span class="comment">// can get a first report
-<a href=#3128 id=3128 data-nosnippet>3128</a>        </span>endpoint.net_report().updated().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3128 id=3128 data-nosnippet>3128</a>        </span>endpoint.net_report().updated().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 <a href=#3129 id=3129 data-nosnippet>3129</a>
 <a href=#3130 id=3130 data-nosnippet>3130</a>        <span class="prelude-val">Ok</span>(())
 <a href=#3131 id=3131 data-nosnippet>3131</a>    }

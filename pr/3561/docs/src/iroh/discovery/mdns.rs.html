@@ -591,7 +591,7 @@
 <a href=#591 id=591 data-nosnippet>591</a>                ..
 <a href=#592 id=592 data-nosnippet>592</a>            } = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
 <a href=#593 id=593 data-nosnippet>593</a>                .<span class="kw">await
-<a href=#594 id=594 data-nosnippet>594</a>                </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#594 id=594 data-nosnippet>594</a>                </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
 <a href=#595 id=595 data-nosnippet>595</a>                </span>.unwrap()
 <a href=#596 id=596 data-nosnippet>596</a>            <span class="kw">else </span>{
 <a href=#597 id=597 data-nosnippet>597</a>                <span class="macro">panic!</span>(<span class="string">"Received unexpected discovery event"</span>);
@@ -601,7 +601,7 @@
 <a href=#601 id=601 data-nosnippet>601</a>                ..
 <a href=#602 id=602 data-nosnippet>602</a>            } = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
 <a href=#603 id=603 data-nosnippet>603</a>                .<span class="kw">await
-<a href=#604 id=604 data-nosnippet>604</a>                </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#604 id=604 data-nosnippet>604</a>                </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
 <a href=#605 id=605 data-nosnippet>605</a>                </span>.unwrap()
 <a href=#606 id=606 data-nosnippet>606</a>            <span class="kw">else </span>{
 <a href=#607 id=607 data-nosnippet>607</a>                <span class="macro">panic!</span>(<span class="string">"Received unexpected discovery event"</span>);
@@ -632,7 +632,7 @@
 <a href=#632 id=632 data-nosnippet>632</a>            </span><span class="kw">loop </span>{
 <a href=#633 id=633 data-nosnippet>633</a>                <span class="kw">let </span>event = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
 <a href=#634 id=634 data-nosnippet>634</a>                    .<span class="kw">await
-<a href=#635 id=635 data-nosnippet>635</a>                    </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#635 id=635 data-nosnippet>635</a>                    </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
 <a href=#636 id=636 data-nosnippet>636</a>                    </span>.expect(<span class="string">"Stream should not be closed"</span>);
 <a href=#637 id=637 data-nosnippet>637</a>
 <a href=#638 id=638 data-nosnippet>638</a>                <span class="kw">match </span>event {
@@ -653,7 +653,7 @@
 <a href=#653 id=653 data-nosnippet>653</a>            </span><span class="kw">loop </span>{
 <a href=#654 id=654 data-nosnippet>654</a>                <span class="kw">let </span>event = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), s1.next())
 <a href=#655 id=655 data-nosnippet>655</a>                    .<span class="kw">await
-<a href=#656 id=656 data-nosnippet>656</a>                    </span>.context(<span class="string">"timeout waiting for expiration event"</span>)<span class="question-mark">?
+<a href=#656 id=656 data-nosnippet>656</a>                    </span>.std_context(<span class="string">"timeout waiting for expiration event"</span>)<span class="question-mark">?
 <a href=#657 id=657 data-nosnippet>657</a>                    </span>.expect(<span class="string">"Stream should not be closed"</span>);
 <a href=#658 id=658 data-nosnippet>658</a>
 <a href=#659 id=659 data-nosnippet>659</a>                <span class="kw">match </span>event {
@@ -717,7 +717,7 @@
 <a href=#717 id=717 data-nosnippet>717</a>            };
 <a href=#718 id=718 data-nosnippet>718</a>            tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), test)
 <a href=#719 id=719 data-nosnippet>719</a>                .<span class="kw">await
-<a href=#720 id=720 data-nosnippet>720</a>                </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#720 id=720 data-nosnippet>720</a>                </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
 <a href=#721 id=721 data-nosnippet>721</a>        </span>}
 <a href=#722 id=722 data-nosnippet>722</a>
 <a href=#723 id=723 data-nosnippet>723</a>        <span class="attr">#[tokio::test]

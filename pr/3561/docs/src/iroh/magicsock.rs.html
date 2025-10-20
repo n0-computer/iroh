@@ -2697,7 +2697,7 @@
 <a href=#2697 id=2697 data-nosnippet>2697</a>            }
 <a href=#2698 id=2698 data-nosnippet>2698</a>        })
 <a href=#2699 id=2699 data-nosnippet>2699</a>        .<span class="kw">await
-<a href=#2700 id=2700 data-nosnippet>2700</a>        </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
+<a href=#2700 id=2700 data-nosnippet>2700</a>        </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
 <a href=#2701 id=2701 data-nosnippet>2701</a>        <span class="macro">info!</span>(<span class="string">"all endpoints meshed"</span>);
 <a href=#2702 id=2702 data-nosnippet>2702</a>        <span class="prelude-val">Ok</span>(tasks)
 <a href=#2703 id=2703 data-nosnippet>2703</a>    }
@@ -2708,24 +2708,24 @@
 <a href=#2708 id=2708 data-nosnippet>2708</a>        <span class="kw">let </span>conn = ep.endpoint.accept().<span class="kw">await</span>.expect(<span class="string">"no conn"</span>);
 <a href=#2709 id=2709 data-nosnippet>2709</a>
 <a href=#2710 id=2710 data-nosnippet>2710</a>        <span class="macro">info!</span>(<span class="string">"connecting"</span>);
-<a href=#2711 id=2711 data-nosnippet>2711</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#2711 id=2711 data-nosnippet>2711</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
 <a href=#2712 id=2712 data-nosnippet>2712</a>        <span class="macro">info!</span>(<span class="string">"accepting bi"</span>);
-<a href=#2713 id=2713 data-nosnippet>2713</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.accept_bi().<span class="kw">await</span>.context(<span class="string">"accept bi"</span>)<span class="question-mark">?</span>;
+<a href=#2713 id=2713 data-nosnippet>2713</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.accept_bi().<span class="kw">await</span>.std_context(<span class="string">"accept bi"</span>)<span class="question-mark">?</span>;
 <a href=#2714 id=2714 data-nosnippet>2714</a>
 <a href=#2715 id=2715 data-nosnippet>2715</a>        <span class="macro">info!</span>(<span class="string">"reading"</span>);
 <a href=#2716 id=2716 data-nosnippet>2716</a>        <span class="kw">let </span>val = recv_bi
 <a href=#2717 id=2717 data-nosnippet>2717</a>            .read_to_end(usize::MAX)
 <a href=#2718 id=2718 data-nosnippet>2718</a>            .<span class="kw">await
-<a href=#2719 id=2719 data-nosnippet>2719</a>            </span>.context(<span class="string">"read to end"</span>)<span class="question-mark">?</span>;
+<a href=#2719 id=2719 data-nosnippet>2719</a>            </span>.std_context(<span class="string">"read to end"</span>)<span class="question-mark">?</span>;
 <a href=#2720 id=2720 data-nosnippet>2720</a>
 <a href=#2721 id=2721 data-nosnippet>2721</a>        <span class="macro">info!</span>(<span class="string">"replying"</span>);
 <a href=#2722 id=2722 data-nosnippet>2722</a>        <span class="kw">for </span>chunk <span class="kw">in </span>val.chunks(<span class="number">12</span>) {
-<a href=#2723 id=2723 data-nosnippet>2723</a>            send_bi.write_all(chunk).<span class="kw">await</span>.context(<span class="string">"write all"</span>)<span class="question-mark">?</span>;
+<a href=#2723 id=2723 data-nosnippet>2723</a>            send_bi.write_all(chunk).<span class="kw">await</span>.std_context(<span class="string">"write all"</span>)<span class="question-mark">?</span>;
 <a href=#2724 id=2724 data-nosnippet>2724</a>        }
 <a href=#2725 id=2725 data-nosnippet>2725</a>
 <a href=#2726 id=2726 data-nosnippet>2726</a>        <span class="macro">info!</span>(<span class="string">"finishing"</span>);
-<a href=#2727 id=2727 data-nosnippet>2727</a>        send_bi.finish().context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
-<a href=#2728 id=2728 data-nosnippet>2728</a>        send_bi.stopped().<span class="kw">await</span>.context(<span class="string">"stopped"</span>)<span class="question-mark">?</span>;
+<a href=#2727 id=2727 data-nosnippet>2727</a>        send_bi.finish().std_context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
+<a href=#2728 id=2728 data-nosnippet>2728</a>        send_bi.stopped().<span class="kw">await</span>.std_context(<span class="string">"stopped"</span>)<span class="question-mark">?</span>;
 <a href=#2729 id=2729 data-nosnippet>2729</a>
 <a href=#2730 id=2730 data-nosnippet>2730</a>        <span class="kw">let </span>stats = conn.stats();
 <a href=#2731 id=2731 data-nosnippet>2731</a>        <span class="macro">info!</span>(<span class="string">"stats: {:#?}"</span>, stats);
@@ -2757,20 +2757,20 @@
 <a href=#2757 id=2757 data-nosnippet>2757</a>        <span class="kw">let </span>conn = ep.endpoint.connect(dest, ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2758 id=2758 data-nosnippet>2758</a>
 <a href=#2759 id=2759 data-nosnippet>2759</a>        <span class="macro">info!</span>(<span class="string">"opening bi"</span>);
-<a href=#2760 id=2760 data-nosnippet>2760</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.open_bi().<span class="kw">await</span>.context(<span class="string">"open bi"</span>)<span class="question-mark">?</span>;
+<a href=#2760 id=2760 data-nosnippet>2760</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.open_bi().<span class="kw">await</span>.std_context(<span class="string">"open bi"</span>)<span class="question-mark">?</span>;
 <a href=#2761 id=2761 data-nosnippet>2761</a>
 <a href=#2762 id=2762 data-nosnippet>2762</a>        <span class="macro">info!</span>(<span class="string">"writing message"</span>);
-<a href=#2763 id=2763 data-nosnippet>2763</a>        send_bi.write_all(msg).<span class="kw">await</span>.context(<span class="string">"write all"</span>)<span class="question-mark">?</span>;
+<a href=#2763 id=2763 data-nosnippet>2763</a>        send_bi.write_all(msg).<span class="kw">await</span>.std_context(<span class="string">"write all"</span>)<span class="question-mark">?</span>;
 <a href=#2764 id=2764 data-nosnippet>2764</a>
 <a href=#2765 id=2765 data-nosnippet>2765</a>        <span class="macro">info!</span>(<span class="string">"finishing"</span>);
-<a href=#2766 id=2766 data-nosnippet>2766</a>        send_bi.finish().context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
-<a href=#2767 id=2767 data-nosnippet>2767</a>        send_bi.stopped().<span class="kw">await</span>.context(<span class="string">"stopped"</span>)<span class="question-mark">?</span>;
+<a href=#2766 id=2766 data-nosnippet>2766</a>        send_bi.finish().std_context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
+<a href=#2767 id=2767 data-nosnippet>2767</a>        send_bi.stopped().<span class="kw">await</span>.std_context(<span class="string">"stopped"</span>)<span class="question-mark">?</span>;
 <a href=#2768 id=2768 data-nosnippet>2768</a>
 <a href=#2769 id=2769 data-nosnippet>2769</a>        <span class="macro">info!</span>(<span class="string">"reading_to_end"</span>);
 <a href=#2770 id=2770 data-nosnippet>2770</a>        <span class="kw">let </span>val = recv_bi
 <a href=#2771 id=2771 data-nosnippet>2771</a>            .read_to_end(usize::MAX)
 <a href=#2772 id=2772 data-nosnippet>2772</a>            .<span class="kw">await
-<a href=#2773 id=2773 data-nosnippet>2773</a>            </span>.context(<span class="string">"read to end"</span>)<span class="question-mark">?</span>;
+<a href=#2773 id=2773 data-nosnippet>2773</a>            </span>.std_context(<span class="string">"read to end"</span>)<span class="question-mark">?</span>;
 <a href=#2774 id=2774 data-nosnippet>2774</a>        <span class="macro">assert_eq!</span>(
 <a href=#2775 id=2775 data-nosnippet>2775</a>            val,
 <a href=#2776 id=2776 data-nosnippet>2776</a>            msg,
@@ -2921,7 +2921,7 @@
 <a href=#2921 id=2921 data-nosnippet>2921</a>            test_two_devices_roundtrip_network_change_impl(),
 <a href=#2922 id=2922 data-nosnippet>2922</a>        )
 <a href=#2923 id=2923 data-nosnippet>2923</a>        .<span class="kw">await
-<a href=#2924 id=2924 data-nosnippet>2924</a>        </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#2924 id=2924 data-nosnippet>2924</a>        </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
 <a href=#2925 id=2925 data-nosnippet>2925</a>    </span>}
 <a href=#2926 id=2926 data-nosnippet>2926</a>
 <a href=#2927 id=2927 data-nosnippet>2927</a>    <span class="doccomment">/// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
@@ -3147,7 +3147,7 @@
 <a href=#3147 id=3147 data-nosnippet>3147</a>                mapped_addr.private_socket_addr(),
 <a href=#3148 id=3148 data-nosnippet>3148</a>                <span class="kw-2">&amp;</span>tls::name::encode(endpoint_id),
 <a href=#3149 id=3149 data-nosnippet>3149</a>            )
-<a href=#3150 id=3150 data-nosnippet>3150</a>            .context(<span class="string">"connect"</span>)<span class="question-mark">?</span>;
+<a href=#3150 id=3150 data-nosnippet>3150</a>            .std_context(<span class="string">"connect"</span>)<span class="question-mark">?</span>;
 <a href=#3151 id=3151 data-nosnippet>3151</a>        <span class="kw">let </span>connection = connect.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 <a href=#3152 id=3152 data-nosnippet>3152</a>        <span class="prelude-val">Ok</span>(connection)
 <a href=#3153 id=3153 data-nosnippet>3153</a>    }
@@ -3191,12 +3191,12 @@
 <a href=#3191 id=3191 data-nosnippet>3191</a>        <span class="comment">// This needs an accept task
 <a href=#3192 id=3192 data-nosnippet>3192</a>        </span><span class="kw">let </span>accept_task = tokio::spawn({
 <a href=#3193 id=3193 data-nosnippet>3193</a>            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#3194 id=3194 data-nosnippet>3194</a>                <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.context(<span class="string">"no incoming"</span>)<span class="question-mark">?</span>;
+<a href=#3194 id=3194 data-nosnippet>3194</a>                <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.std_context(<span class="string">"no incoming"</span>)<span class="question-mark">?</span>;
 <a href=#3195 id=3195 data-nosnippet>3195</a>                <span class="kw">let </span>_conn = incoming
 <a href=#3196 id=3196 data-nosnippet>3196</a>                    .accept()
-<a href=#3197 id=3197 data-nosnippet>3197</a>                    .context(<span class="string">"accept"</span>)<span class="question-mark">?
+<a href=#3197 id=3197 data-nosnippet>3197</a>                    .std_context(<span class="string">"accept"</span>)<span class="question-mark">?
 <a href=#3198 id=3198 data-nosnippet>3198</a>                    </span>.<span class="kw">await
-<a href=#3199 id=3199 data-nosnippet>3199</a>                    </span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#3199 id=3199 data-nosnippet>3199</a>                    </span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
 <a href=#3200 id=3200 data-nosnippet>3200</a>
 <a href=#3201 id=3201 data-nosnippet>3201</a>                <span class="comment">// Keep this connection alive for a while
 <a href=#3202 id=3202 data-nosnippet>3202</a>                </span>tokio::time::sleep(Duration::from_secs(<span class="number">10</span>)).<span class="kw">await</span>;
@@ -3268,14 +3268,14 @@
 <a href=#3268 id=3268 data-nosnippet>3268</a>        <span class="comment">// We need a task to accept the connection.
 <a href=#3269 id=3269 data-nosnippet>3269</a>        </span><span class="kw">let </span>accept_task = tokio::spawn({
 <a href=#3270 id=3270 data-nosnippet>3270</a>            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#3271 id=3271 data-nosnippet>3271</a>                <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.context(<span class="string">"no incoming"</span>)<span class="question-mark">?</span>;
+<a href=#3271 id=3271 data-nosnippet>3271</a>                <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.std_context(<span class="string">"no incoming"</span>)<span class="question-mark">?</span>;
 <a href=#3272 id=3272 data-nosnippet>3272</a>                <span class="kw">let </span>conn = incoming
 <a href=#3273 id=3273 data-nosnippet>3273</a>                    .accept()
-<a href=#3274 id=3274 data-nosnippet>3274</a>                    .context(<span class="string">"accept"</span>)<span class="question-mark">?
+<a href=#3274 id=3274 data-nosnippet>3274</a>                    .std_context(<span class="string">"accept"</span>)<span class="question-mark">?
 <a href=#3275 id=3275 data-nosnippet>3275</a>                    </span>.<span class="kw">await
-<a href=#3276 id=3276 data-nosnippet>3276</a>                    </span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
-<a href=#3277 id=3277 data-nosnippet>3277</a>                <span class="kw">let </span><span class="kw-2">mut </span>stream = conn.accept_uni().<span class="kw">await</span>.context(<span class="string">"accept uni"</span>)<span class="question-mark">?</span>;
-<a href=#3278 id=3278 data-nosnippet>3278</a>                stream.read_to_end(<span class="number">1 </span>&lt;&lt; <span class="number">16</span>).<span class="kw">await</span>.context(<span class="string">"read to end"</span>)<span class="question-mark">?</span>;
+<a href=#3276 id=3276 data-nosnippet>3276</a>                    </span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#3277 id=3277 data-nosnippet>3277</a>                <span class="kw">let </span><span class="kw-2">mut </span>stream = conn.accept_uni().<span class="kw">await</span>.std_context(<span class="string">"accept uni"</span>)<span class="question-mark">?</span>;
+<a href=#3278 id=3278 data-nosnippet>3278</a>                stream.read_to_end(<span class="number">1 </span>&lt;&lt; <span class="number">16</span>).<span class="kw">await</span>.std_context(<span class="string">"read to end"</span>)<span class="question-mark">?</span>;
 <a href=#3279 id=3279 data-nosnippet>3279</a>                <span class="macro">info!</span>(<span class="string">"accept finished"</span>);
 <a href=#3280 id=3280 data-nosnippet>3280</a>                <span class="prelude-val">Ok</span>(())
 <a href=#3281 id=3281 data-nosnippet>3281</a>            }
