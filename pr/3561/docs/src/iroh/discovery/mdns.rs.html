@@ -545,9 +545,9 @@
 <a href=#545 id=545 data-nosnippet>545</a>    </span><span class="kw">mod </span>run_in_isolation {
 <a href=#546 id=546 data-nosnippet>546</a>        <span class="kw">use </span>iroh_base::SecretKey;
 <a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">use </span>n0_future::StreamExt;
-<a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
+<a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt, AnyError <span class="kw">as </span>Error};
 <a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
-<a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">use </span>snafu::whatever;
+<a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">use </span>n0_error::whatever;
 <a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">use </span>tracing_test::traced_test;
 <a href=#552 id=552 data-nosnippet>552</a>
 <a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["N0_DNS_ENDPOINT_ORIGIN_PROD","N0_DNS_ENDPOINT_ORIGIN_STAGING"],"enum":["DnsError","DnsProtocol","LookupError"],"struct":["Builder","DnsResolver","StaggeredError","TxtRecordData"],"trait":["Resolver"],"type":["BoxIter"]};
+window.SIDEBAR_ITEMS = {"constant":["N0_DNS_ENDPOINT_ORIGIN_PROD","N0_DNS_ENDPOINT_ORIGIN_STAGING"],"enum":["DnsError","DnsProtocol","LookupError"],"struct":["Builder","DnsResolver","DnsStaggeredError","LookupStaggeredError","TxtRecordData"],"trait":["Resolver"],"type":["BoxIter"]};
