@@ -9,8 +9,8 @@
 <a href=#9 id=9 data-nosnippet>9</a>    accept::Accept,
 <a href=#10 id=10 data-nosnippet>10</a>    tls_rustls::{RustlsAcceptor, RustlsConfig},
 <a href=#11 id=11 data-nosnippet>11</a>};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_future::{FutureExt, future::Boxed <span class="kw">as </span>BoxFuture};
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, whatever};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, whatever};
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>n0_future::{FutureExt, future::Boxed <span class="kw">as </span>BoxFuture};
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>tokio_rustls_acme::{AcmeConfig, axum::AxumAcceptor, caches::DirCache};
@@ -157,31 +157,33 @@
 <a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">let </span><span class="kw-2">mut </span>reader = std::io::Cursor::new(keyfile);
 <a href=#158 id=158 data-nosnippet>158</a>
 <a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">loop </span>{
-<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">match </span>rustls_pemfile::read_one(<span class="kw-2">&amp;mut </span>reader).std_context(<span class="string">"cannot parse secret key .pem file"</span>)<span class="question-mark">? </span>{
-<a href=#161 id=161 data-nosnippet>161</a>            <span class="prelude-val">Some</span>(rustls_pemfile::Item::Pkcs1Key(key)) =&gt; {
-<a href=#162 id=162 data-nosnippet>162</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
-<a href=#163 id=163 data-nosnippet>163</a>            }
-<a href=#164 id=164 data-nosnippet>164</a>            <span class="prelude-val">Some</span>(rustls_pemfile::Item::Pkcs8Key(key)) =&gt; {
-<a href=#165 id=165 data-nosnippet>165</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::pki_types::PrivateKeyDer::Pkcs8(key));
-<a href=#166 id=166 data-nosnippet>166</a>            }
-<a href=#167 id=167 data-nosnippet>167</a>            <span class="prelude-val">Some</span>(rustls_pemfile::Item::Sec1Key(key)) =&gt; {
-<a href=#168 id=168 data-nosnippet>168</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::pki_types::PrivateKeyDer::Sec1(key));
-<a href=#169 id=169 data-nosnippet>169</a>            }
-<a href=#170 id=170 data-nosnippet>170</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
-<a href=#171 id=171 data-nosnippet>171</a>            <span class="kw">_ </span>=&gt; {}
-<a href=#172 id=172 data-nosnippet>172</a>        }
-<a href=#173 id=173 data-nosnippet>173</a>    }
-<a href=#174 id=174 data-nosnippet>174</a>
-<a href=#175 id=175 data-nosnippet>175</a>    <span class="macro">whatever!</span>(
-<a href=#176 id=176 data-nosnippet>176</a>        <span class="string">"no keys found in {} (encrypted keys not supported)"</span>,
-<a href=#177 id=177 data-nosnippet>177</a>        filename.as_ref().display()
-<a href=#178 id=178 data-nosnippet>178</a>    );
-<a href=#179 id=179 data-nosnippet>179</a>}
-<a href=#180 id=180 data-nosnippet>180</a>
-<a href=#181 id=181 data-nosnippet>181</a><span class="kw">static </span>UNSAFE_HOSTNAME_CHARACTERS: OnceLock&lt;regex::Regex&gt; = OnceLock::new();
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">match </span>rustls_pemfile::read_one(<span class="kw-2">&amp;mut </span>reader)
+<a href=#161 id=161 data-nosnippet>161</a>            .std_context(<span class="string">"cannot parse secret key .pem file"</span>)<span class="question-mark">?
+<a href=#162 id=162 data-nosnippet>162</a>        </span>{
+<a href=#163 id=163 data-nosnippet>163</a>            <span class="prelude-val">Some</span>(rustls_pemfile::Item::Pkcs1Key(key)) =&gt; {
+<a href=#164 id=164 data-nosnippet>164</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
+<a href=#165 id=165 data-nosnippet>165</a>            }
+<a href=#166 id=166 data-nosnippet>166</a>            <span class="prelude-val">Some</span>(rustls_pemfile::Item::Pkcs8Key(key)) =&gt; {
+<a href=#167 id=167 data-nosnippet>167</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::pki_types::PrivateKeyDer::Pkcs8(key));
+<a href=#168 id=168 data-nosnippet>168</a>            }
+<a href=#169 id=169 data-nosnippet>169</a>            <span class="prelude-val">Some</span>(rustls_pemfile::Item::Sec1Key(key)) =&gt; {
+<a href=#170 id=170 data-nosnippet>170</a>                <span class="kw">return </span><span class="prelude-val">Ok</span>(rustls::pki_types::PrivateKeyDer::Sec1(key));
+<a href=#171 id=171 data-nosnippet>171</a>            }
+<a href=#172 id=172 data-nosnippet>172</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
+<a href=#173 id=173 data-nosnippet>173</a>            <span class="kw">_ </span>=&gt; {}
+<a href=#174 id=174 data-nosnippet>174</a>        }
+<a href=#175 id=175 data-nosnippet>175</a>    }
+<a href=#176 id=176 data-nosnippet>176</a>
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="macro">whatever!</span>(
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="string">"no keys found in {} (encrypted keys not supported)"</span>,
+<a href=#179 id=179 data-nosnippet>179</a>        filename.as_ref().display()
+<a href=#180 id=180 data-nosnippet>180</a>    );
+<a href=#181 id=181 data-nosnippet>181</a>}
 <a href=#182 id=182 data-nosnippet>182</a>
-<a href=#183 id=183 data-nosnippet>183</a><span class="kw">fn </span>escape_hostname(hostname: <span class="kw-2">&amp;</span>str) -&gt; Cow&lt;<span class="lifetime">'_</span>, str&gt; {
-<a href=#184 id=184 data-nosnippet>184</a>    <span class="kw">let </span>regex = UNSAFE_HOSTNAME_CHARACTERS
-<a href=#185 id=185 data-nosnippet>185</a>        .get_or_init(|| regex::Regex::new(<span class="string">r"[^a-zA-Z0-9-\.]"</span>).expect(<span class="string">"valid regex"</span>));
-<a href=#186 id=186 data-nosnippet>186</a>    regex.replace_all(hostname, <span class="string">""</span>)
-<a href=#187 id=187 data-nosnippet>187</a>}</code></pre></div></section></main></body></html>
+<a href=#183 id=183 data-nosnippet>183</a><span class="kw">static </span>UNSAFE_HOSTNAME_CHARACTERS: OnceLock&lt;regex::Regex&gt; = OnceLock::new();
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a><span class="kw">fn </span>escape_hostname(hostname: <span class="kw-2">&amp;</span>str) -&gt; Cow&lt;<span class="lifetime">'_</span>, str&gt; {
+<a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">let </span>regex = UNSAFE_HOSTNAME_CHARACTERS
+<a href=#187 id=187 data-nosnippet>187</a>        .get_or_init(|| regex::Regex::new(<span class="string">r"[^a-zA-Z0-9-\.]"</span>).expect(<span class="string">"valid regex"</span>));
+<a href=#188 id=188 data-nosnippet>188</a>    regex.replace_all(hostname, <span class="string">""</span>)
+<a href=#189 id=189 data-nosnippet>189</a>}</code></pre></div></section></main></body></html>
