@@ -333,7 +333,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use iroh_base::RelayUrl;
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use tracing_test::traced_test;
 
     use super::*;

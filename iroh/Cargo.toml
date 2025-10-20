@@ -40,7 +40,6 @@ http = "1"
 iroh-base = { version = "0.93.2", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.93", path = "../iroh-relay", default-features = false }
 n0-future = "0.3.0"
-n0-snafu = "0.2.2"
 n0-error = { git = "https://github.com/n0-computer/n0-error" }
 n0-watcher = "0.3"
 nested_enum_utils = "0.2.1"
@@ -59,7 +58,6 @@ ring = "0.17"
 rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 smallvec = "1.11.1"
-snafu = { version = "0.8.5", features = ["rust_1_81"] }
 strum = { version = "0.27", features = ["derive"] }
 tokio = { version = "1.44.1", features = [
     "io-util",

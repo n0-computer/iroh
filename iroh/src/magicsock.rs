@@ -37,14 +37,13 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{self, Watchable, Watcher};
-use nested_enum_utils::common_fields;
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::Rng;
 use smallvec::SmallVec;
-use snafu::{ResultExt, Snafu};
+use n0_error::{add_meta, e, Error, Err};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{
@@ -214,21 +213,16 @@ pub(crate) struct MagicSock {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
-#[snafu(visibility(pub(crate)))]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum AddEndpointAddrError {
-    #[snafu(display("Empty addressing info"))]
-    Empty {},
-    #[snafu(display("Empty addressing info, {pruned} direct address have been pruned"))]
+    #[display("Empty addressing info")]
+    Empty,
+    #[display("Empty addressing info, {pruned} direct address have been pruned")]
     EmptyPruned { pruned: usize },
-    #[snafu(display("Adding our own address is not supported"))]
-    OwnAddress {},
+    #[display("Adding our own address is not supported")]
+    OwnAddress,
 }
 
 impl MagicSock {
@@ -421,9 +415,9 @@ impl MagicSock {
                 .add_endpoint_addr(addr, source, have_ipv6, &self.metrics.magicsock);
             Ok(())
         } else if pruned != 0 {
-            Err(EmptyPrunedSnafu { pruned }.build())
+            Err!(AddEndpointAddrError::EmptyPruned { pruned })
         } else {
-            Err(EmptySnafu.build())
+            Err!(AddEndpointAddrError::Empty)
         }
     }
 
@@ -1335,24 +1329,20 @@ impl DirectAddrUpdateState {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum CreateHandleError {
-    #[snafu(display("Failed to create bind sockets"))]
-    BindSockets { source: io::Error },
-    #[snafu(display("Failed to create internal quinn endpoint"))]
-    CreateQuinnEndpoint { source: io::Error },
-    #[snafu(display("Failed to create socket state"))]
-    CreateSocketState { source: io::Error },
-    #[snafu(display("Failed to create netmon monitor"))]
-    CreateNetmonMonitor { source: netmon::Error },
-    #[snafu(display("Failed to subscribe netmon monitor"))]
-    SubscribeNetmonMonitor { source: netmon::Error },
+    #[display("Failed to create bind sockets")]
+    BindSockets { #[error(std_err)] source: io::Error },
+    #[display("Failed to create internal quinn endpoint")]
+    CreateQuinnEndpoint { #[error(std_err)] source: io::Error },
+    #[display("Failed to create socket state")]
+    CreateSocketState { #[error(std_err)] source: io::Error },
+    #[display("Failed to create netmon monitor")]
+    CreateNetmonMonitor { #[error(std_err)] source: netmon::Error },
+    #[display("Failed to subscribe netmon monitor")]
+    SubscribeNetmonMonitor { #[error(std_err)] source: netmon::Error },
 }
 
 impl Handle {
@@ -1380,8 +1370,8 @@ impl Handle {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
         #[cfg(not(wasm_browser))]
-        let (ip_transports, port_mapper) =
-            bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
+        let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, &metrics)
+            .map_err(|source| e!(CreateHandleError::BindSockets { source }))?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -1471,11 +1461,11 @@ impl Handle {
             #[cfg(wasm_browser)]
             Arc::new(crate::web_runtime::WebRuntime),
         )
-        .context(CreateQuinnEndpointSnafu)?;
+        .map_err(|source| e!(CreateHandleError::CreateQuinnEndpoint { source }))?;
 
         let network_monitor = netmon::Monitor::new()
             .await
-            .context(CreateNetmonMonitorSnafu)?;
+            .map_err(|source| e!(CreateHandleError::CreateNetmonMonitor { source }))?;
 
         let qad_endpoint = endpoint.clone();
 
@@ -1683,9 +1673,11 @@ impl DiscoState {
         sealed_box: &[u8],
     ) -> Result<disco::Message, DiscoBoxError> {
         let mut sealed_box = sealed_box.to_vec();
-        self.get_secret(endpoint_id, |secret| secret.open(&mut sealed_box))
-            .context(OpenSnafu)?;
-        disco::Message::from_bytes(&sealed_box).context(ParseSnafu)
+        self
+            .get_secret(endpoint_id, |secret| secret.open(&mut sealed_box))
+            .map_err(|source| e!(DiscoBoxError::Open { source }))?;
+        disco::Message::from_bytes(&sealed_box)
+            .map_err(|source| e!(DiscoBoxError::Parse { source }))
     }
 
     fn get_secret<F, T>(&self, endpoint_id: PublicKey, cb: F) -> T
@@ -1702,24 +1694,14 @@ impl DiscoState {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 enum DiscoBoxError {
-    #[snafu(display("Failed to open crypto box"))]
-    Open {
-        #[snafu(source(from(DecryptionError, Box::new)))]
-        source: Box<DecryptionError>,
-    },
-    #[snafu(display("Failed to parse disco message"))]
-    Parse {
-        #[snafu(source(from(disco::ParseError, Box::new)))]
-        source: Box<disco::ParseError>,
-    },
+    #[display("Failed to open crypto box")]
+    Open { source: DecryptionError },
+    #[display("Failed to parse disco message")]
+    Parse { source: disco::ParseError },
 }
 
 #[derive(Debug)]
@@ -2400,8 +2382,9 @@ impl DiscoveredDirectAddrs {
 pub(crate) struct EndpointIdMappedAddr(Ipv6Addr);
 
 /// Can occur when converting a [`SocketAddr`] to an [`EndpointIdMappedAddr`]
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to convert"))]
+#[add_meta]
+#[derive(Error)]
+#[display("Failed to convert")]
 pub struct EndpointIdMappedAddrError;
 
 /// Counter to always generate unique addresses for [`EndpointIdMappedAddr`].
@@ -2456,7 +2439,7 @@ impl TryFrom<Ipv6Addr> for EndpointIdMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err(EndpointIdMappedAddrError)
+        Err!(EndpointIdMappedAddrError)
     }
 }
 
@@ -2540,8 +2523,8 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, PublicKey};
+    use n0_error::{Result, StackResultExt, StdResultExt, AnyError};
     use n0_future::{StreamExt, time};
-    use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
     use rand::{CryptoRng, Rng, RngCore, SeedableRng};
@@ -2896,7 +2879,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_regression_network_change_rebind_wakes_connection_driver() -> n0_snafu::Result {
+    async fn test_regression_network_change_rebind_wakes_connection_driver() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
         let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
@@ -2916,7 +2899,7 @@ mod tests {
                     conn.closed().await;
                 }
 
-                Ok::<_, n0_snafu::Error>(())
+                Ok::<_, n0_error::AnyError>(())
             }
         }));
 

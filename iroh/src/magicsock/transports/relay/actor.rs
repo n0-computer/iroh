@@ -50,9 +50,8 @@ use n0_future::{
     time::{self, Duration, Instant, MissedTickBehavior},
 };
 use n0_watcher::Watchable;
-use nested_enum_utils::common_fields;
 use netwatch::interfaces;
-use snafu::{IntoError, ResultExt, Snafu};
+use n0_error::{add_meta, e, Error, Err};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
@@ -211,60 +210,45 @@ struct RelayConnectionOptions {
 
 /// Possible reasons for a failed relay connection.
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 enum RelayConnectionError {
-    #[snafu(display("Failed to connect to relay server"))]
+    #[display("Failed to connect to relay server")]
     Dial { source: DialError },
-    #[snafu(display("Failed to handshake with relay server"))]
+    #[display("Failed to handshake with relay server")]
     Handshake { source: RunError },
-    #[snafu(display("Lost connection to relay server"))]
+    #[display("Lost connection to relay server")]
     Established { source: RunError },
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 enum RunError {
-    #[snafu(display("Send timeout"))]
-    SendTimeout {},
-    #[snafu(display("Ping timeout"))]
-    PingTimeout {},
-    #[snafu(display("Local IP no longer valid"))]
-    LocalIpInvalid {},
-    #[snafu(display("No local address"))]
-    LocalAddrMissing {},
-    #[snafu(display("Stream closed by server."))]
-    StreamClosedServer {},
-    #[snafu(display("Client stream read failed"))]
-    ClientStreamRead { source: RecvError },
-    #[snafu(display("Client stream write failed"))]
-    ClientStreamWrite { source: SendError },
+    #[display("Send timeout")]
+    SendTimeout,
+    #[display("Ping timeout")]
+    PingTimeout,
+    #[display("Local IP no longer valid")]
+    LocalIpInvalid,
+    #[display("No local address")]
+    LocalAddrMissing,
+    #[display("Stream closed by server.")]
+    StreamClosedServer,
+    #[display("Client stream read failed")]
+    ClientStreamRead { #[error(std_err)] source: RecvError },
+    #[display("Client stream write failed")]
+    ClientStreamWrite { #[error(std_err)] source: SendError },
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 enum DialError {
-    #[snafu(display("timeout (>{timeout:?}) trying to establish a connection"))]
+    #[display("timeout (>{timeout:?}) trying to establish a connection")]
     Timeout { timeout: Duration },
-    #[snafu(display("unable to connect"))]
-    Connect {
-        #[snafu(source(from(ConnectError, Box::new)))]
-        source: Box<ConnectError>,
-    },
+    #[display("unable to connect")]
+    Connect { source: ConnectError },
 }
 
 impl ActiveRelayActor {
@@ -375,7 +359,8 @@ impl ActiveRelayActor {
     /// be retried with a backoff.
     async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
-            Some(client_res) => client_res.context(DialSnafu)?,
+            Some(client_res) => client_res
+                .map_err(|err| e!(RelayConnectionError::Dial { source: err }))?,
             None => return Ok(()),
         };
         self.run_connected(client)
@@ -497,11 +482,8 @@ impl ActiveRelayActor {
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
-                Ok(Err(err)) => Err(ConnectSnafu.into_error(err)),
-                Err(_) => Err(TimeoutSnafu {
-                    timeout: CONNECT_TIMEOUT,
-                }
-                .build()),
+                Ok(Err(err)) => Err!(DialError::Connect { source: err }),
+                Err(_) => Err!(DialError::Timeout { timeout: CONNECT_TIMEOUT }),
             }
         }
     }
@@ -523,7 +505,7 @@ impl ActiveRelayActor {
         );
 
         let (mut client_stream, client_sink) = client.split();
-        let mut client_sink = client_sink.sink_map_err(|e| ClientStreamWriteSnafu.into_error(e));
+        let mut client_sink = client_sink.sink_map_err(|e| e!(RunError::ClientStreamWrite { source: e }));
 
         let mut state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),
@@ -568,7 +550,7 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = state.ping_tracker.timeout() => {
-                    break Err(PingTimeoutSnafu.build());
+                    break Err!(RunError::PingTimeout);
                 }
                 _ = ping_interval.tick() => {
                     let data = state.ping_tracker.new_ping();
@@ -591,8 +573,8 @@ impl ActiveRelayActor {
                                     let fut = client_sink.send(ClientToRelayMsg::Ping(data));
                                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
-                                Some(_) => break Err(LocalIpInvalidSnafu.build()),
-                                None => break Err(LocalAddrMissingSnafu.build()),
+                                Some(_) => break Err!(RunError::LocalIpInvalid),
+                                None => break Err!(RunError::LocalAddrMissing),
                             }
                         }
                         #[cfg(test)]
@@ -633,7 +615,7 @@ impl ActiveRelayActor {
                 }
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(StreamClosedServerSnafu.build());
+                        break Err!(RunError::StreamClosedServer);
                     };
                     match msg {
                         Ok(msg) => {
@@ -641,7 +623,7 @@ impl ActiveRelayActor {
                             // reset the ping timer, we have just received a message
                             ping_interval.reset();
                         },
-                        Err(err) => break Err(ClientStreamReadSnafu.into_error(err)),
+                        Err(err) => break Err!(RunError::ClientStreamRead { source: err }),
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
@@ -743,7 +725,7 @@ impl ActiveRelayActor {
                     break Ok(());
                 }
                 _ = &mut timeout => {
-                    break Err(SendTimeoutSnafu.build());
+                    break Err!(RunError::SendTimeout);
                 }
                 msg = self.prio_inbox.recv() => {
                     let Some(msg) = msg else {
@@ -764,16 +746,16 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = state.ping_tracker.timeout() => {
-                    break Err(PingTimeoutSnafu.build());
+                    break Err!(RunError::PingTimeout);
                 }
                 // No need to read the inbox or datagrams to send.
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(StreamClosedServerSnafu.build());
+                        break Err!(RunError::StreamClosedServer);
                     };
                     match msg {
                         Ok(msg) => self.handle_relay_msg(msg, state),
-                        Err(err) => break Err(ClientStreamReadSnafu.into_error(err)),
+                        Err(err) => break Err!(RunError::ClientStreamRead { source: err }),
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
@@ -814,9 +796,9 @@ struct ConnectedRelayState {
 impl ConnectedRelayState {
     fn map_err(&self, error: RunError) -> RelayConnectionError {
         if self.established {
-            EstablishedSnafu.into_error(error)
+            e!(RelayConnectionError::Established { source: error })
         } else {
-            HandshakeSnafu.into_error(error)
+            e!(RelayConnectionError::Handshake { source: error })
         }
     }
 }
@@ -1238,7 +1220,7 @@ mod tests {
 
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use iroh_relay::{PingTracker, protos::relay::Datagrams};
-    use n0_snafu::{Error, Result, ResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt, AnyError as Error};
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, info, info_span};

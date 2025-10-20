@@ -545,9 +545,9 @@ mod tests {
     mod run_in_isolation {
         use iroh_base::SecretKey;
         use n0_future::StreamExt;
-        use n0_snafu::{Error, Result, ResultExt};
+        use n0_error::{Result, StackResultExt, StdResultExt, AnyError as Error};
         use rand::{CryptoRng, SeedableRng};
-        use snafu::whatever;
+        use n0_error::whatever;
         use tracing_test::traced_test;
 
         use super::super::*;

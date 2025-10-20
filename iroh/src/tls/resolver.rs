@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use ed25519_dalek::pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding};
 use iroh_base::SecretKey;
-use nested_enum_utils::common_fields;
-use snafu::Snafu;
+use n0_error::{add_meta, Error};
 use webpki_types::{CertificateDer, PrivatePkcs8KeyDer, pem::PemObject};
 
 #[derive(Debug)]
@@ -12,16 +11,13 @@ pub(super) struct AlwaysResolvesCert {
 }
 
 /// Error for generating TLS configs.
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources, std_sources)]
 #[non_exhaustive]
 pub(super) enum CreateConfigError {
     /// Rustls configuration error
-    #[snafu(display("rustls error"), context(false))]
+    #[display("rustls error")]
     Rustls { source: rustls::Error },
 }
 

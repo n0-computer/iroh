@@ -8,7 +8,6 @@ use std::{collections::BTreeSet, fmt, sync::Arc};
 
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_future::time::Duration;
-use snafu::Snafu;
 
 use crate::net_report::Report;
 
@@ -52,9 +51,7 @@ pub(super) struct ProbeSet {
     probes: Vec<(Duration, Arc<RelayConfig>)>,
 }
 
-#[derive(Debug, Snafu)]
-#[snafu(display("Mismatching probe"))]
-struct PushError;
+// Removed legacy SNAFU error (unused) during error migration.
 
 impl ProbeSet {
     fn new(proto: Probe) -> Self {

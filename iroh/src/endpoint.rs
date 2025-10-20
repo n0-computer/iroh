@@ -40,7 +40,7 @@ use crate::{
         UserData,
     },
     endpoint::presets::Preset,
-    magicsock::{self, EndpointIdMappedAddr, Handle, OwnAddressSnafu},
+    magicsock::{self, EndpointIdMappedAddr, Handle},
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -488,7 +488,6 @@ pub struct Endpoint {
 pub enum ConnectWithOptsError {
     #[error(transparent)]
     AddEndpointAddr {
-        #[error(std_err)]
         source: AddEndpointAddrError,
     },
     #[display("Connecting to ourself is not supported")]
@@ -505,22 +504,19 @@ pub enum ConnectWithOptsError {
 #[allow(missing_docs)]
 #[add_meta]
 #[derive(Error)]
-#[error(from_sources, std_sources)]
+#[error(from_sources)]
 #[non_exhaustive]
 pub enum ConnectError {
     #[error(transparent)]
     Connect { source: ConnectWithOptsError },
     #[error(transparent)]
-    Connection {
-        #[error(std_err)]
-        source: ConnectionError,
-    },
+    Connection { #[error(std_err)] source: ConnectionError },
 }
 
 #[allow(missing_docs)]
 #[add_meta]
 #[derive(Error)]
-#[error(from_sources, std_sources)]
+#[error(from_sources)]
 #[non_exhaustive]
 pub enum BindError {
     #[error(transparent)]
@@ -790,7 +786,7 @@ impl Endpoint {
         source: Source,
     ) -> Result<(), AddEndpointAddrError> {
         if endpoint_addr.endpoint_id == self.id() {
-            return Err(OwnAddressSnafu.build());
+            return Err!(AddEndpointAddrError::OwnAddress);
         }
         self.msock.add_endpoint_addr(endpoint_addr, source)
     }
@@ -2125,7 +2121,8 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
-    use n0_snafu::{Error, Result, ResultExt};
+    use n0_error::{AnyError as Error, StackResultExt, StdResultExt};
+    type Result<T = (), E = Error> = std::result::Result<T, E>;
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
@@ -2377,9 +2374,9 @@ mod tests {
         let task = tokio::spawn({
             let server = server.clone();
             async move {
-                let Some(conn) = server.accept().await else {
-                    snafu::whatever!("Expected an incoming connection");
-                };
+                    let Some(conn) = server.accept().await else {
+                        n0_error::whatever!("Expected an incoming connection");
+                    };
                 let conn = conn.await.e()?;
                 let (mut send, mut recv) = conn.accept_bi().await.e()?;
                 let data = recv.read_to_end(1000).await.e()?;
@@ -2429,7 +2426,7 @@ mod tests {
                 for i in 0..2 {
                     println!("accept: round {i}");
                     let Some(conn) = server.accept().await else {
-                        snafu::whatever!("Expected an incoming connection");
+                        n0_error::whatever!("Expected an incoming connection");
                     };
                     let conn = conn.await.e()?;
                     let (mut send, mut recv) = conn.accept_bi().await.e()?;
@@ -2648,7 +2645,7 @@ mod tests {
                     return Ok(());
                 }
             }
-            snafu::whatever!("conn_type stream ended before `ConnectionType::Direct`");
+            n0_error::whatever!("conn_type stream ended before `ConnectionType::Direct`");
         }
 
         async fn accept(ep: &Endpoint) -> Result<Connection> {
@@ -3047,7 +3044,7 @@ mod tests {
                 let incoming = server.accept().await.e()?;
                 let conn = incoming.await.e()?;
                 conn.close(0u32.into(), b"bye!");
-                Ok::<_, n0_snafu::Error>(conn.alpn())
+                Ok::<_, n0_error::AnyError>(conn.alpn())
             }
         });
 

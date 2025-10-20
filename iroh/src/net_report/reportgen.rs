@@ -865,7 +865,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use iroh_relay::dns::DnsResolver;
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use tracing_test::traced_test;
 
     use super::{super::test_utils, *};

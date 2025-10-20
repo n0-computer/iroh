@@ -650,7 +650,7 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, SecretKey};
-    use n0_snafu::{Error, Result, ResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt, AnyError as Error};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
@@ -970,7 +970,7 @@ mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
     use n0_future::time::Duration;
-    use n0_snafu::{Error, Result, ResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt, AnyError as Error};
     use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
