@@ -3,9 +3,9 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use n0_future::time::Duration;
-use nested_enum_utils::common_fields;
+use n0_error::{add_meta, Error, e};
 use quinn::{VarInt, crypto::rustls::QuicClientConfig};
-use snafu::{Backtrace, Snafu};
+ 
 use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
@@ -21,7 +21,7 @@ pub(crate) mod server {
         ApplicationClose, ConnectionError,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     };
-    use snafu::ResultExt;
+    use n0_error::StdResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, debug, info, info_span};
@@ -37,30 +37,16 @@ pub(crate) mod server {
 
     /// Server spawn errors
     #[allow(missing_docs)]
-    #[derive(Debug, Snafu)]
+    #[add_meta]
+    #[derive(Error)]
     #[non_exhaustive]
     pub enum QuicSpawnError {
-        #[snafu(transparent)]
-        NoInitialCipherSuite {
-            source: NoInitialCipherSuite,
-            backtrace: Option<Backtrace>,
-            #[snafu(implicit)]
-            span_trace: n0_snafu::SpanTrace,
-        },
-        #[snafu(display("Unable to spawn a QUIC endpoint server"))]
-        EndpointServer {
-            source: std::io::Error,
-            backtrace: Option<Backtrace>,
-            #[snafu(implicit)]
-            span_trace: n0_snafu::SpanTrace,
-        },
-        #[snafu(display("Unable to get the local address from the endpoint"))]
-        LocalAddr {
-            source: std::io::Error,
-            backtrace: Option<Backtrace>,
-            #[snafu(implicit)]
-            span_trace: n0_snafu::SpanTrace,
-        },
+        #[error(transparent)]
+        NoInitialCipherSuite { #[error(std_err)] source: NoInitialCipherSuite },
+        #[display("Unable to spawn a QUIC endpoint server")]
+        EndpointServer { #[error(std_err)] source: std::io::Error },
+        #[display("Unable to get the local address from the endpoint")]
+        LocalAddr { #[error(std_err)] source: std::io::Error },
     }
 
     impl QuicServer {
@@ -114,8 +100,8 @@ pub(crate) mod server {
                 .send_observed_address_reports(true);
 
             let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)
-                .context(EndpointServerSnafu)?;
-            let bind_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
+                .std_context("endpoint server")?;
+            let bind_addr = endpoint.local_addr().std_context("local addr")?;
 
             info!(?bind_addr, "QUIC server listening on");
 
@@ -228,21 +214,18 @@ pub(crate) mod server {
 }
 
 /// Quic client related errors.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources, std_sources)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(transparent)]
-    Connect { source: quinn::ConnectError },
-    #[snafu(transparent)]
-    Connection { source: quinn::ConnectionError },
-    #[snafu(transparent)]
-    WatchRecv { source: watch::error::RecvError },
+    #[error(transparent)]
+    Connect { #[error(std_err)] source: quinn::ConnectError },
+    #[error(transparent)]
+    Connection { #[error(std_err)] source: quinn::ConnectionError },
+    #[error(transparent)]
+    WatchRecv { #[error(std_err)] source: watch::error::RecvError },
 }
 
 /// Handles the client side of QUIC address discovery.
@@ -362,7 +345,7 @@ mod tests {
         task::AbortOnDropHandle,
         time::{self, Instant},
     };
-    use n0_snafu::{Error, Result, ResultExt};
+    use n0_error::{Error, Result, StdResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
     use tracing::{Instrument, debug, info, info_span};
     use tracing_test::traced_test;
@@ -387,8 +370,8 @@ mod tests {
 
         // create a client-side endpoint
         let client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new(host.into(), 0)).context("client")?;
-        let client_addr = client_endpoint.local_addr().context("local addr")?;
+            quinn::Endpoint::client(SocketAddr::new(host.into(), 0)).std_context("client")?;
+        let client_addr = client_endpoint.local_addr().std_context("local addr")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -414,14 +397,14 @@ mod tests {
         // create a client-side endpoint
         let client_endpoint =
             quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
-                .context("client")?;
+                .std_context("client")?;
 
         // create an socket that does not respond.
         let server_socket =
             tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
                 .await
                 .context("bind")?;
-        let server_addr = server_socket.local_addr().context("local addr")?;
+        let server_addr = server_socket.local_addr().std_context("local addr")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -466,7 +449,7 @@ mod tests {
         let socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
             .await
             .context("bind")?;
-        let server_addr = socket.local_addr().context("local addr")?;
+        let server_addr = socket.local_addr().std_context("local addr")?;
         info!(addr = ?server_addr, "server socket bound");
 
         // Create a QAD server with a self-signed cert, all manually.
@@ -521,7 +504,7 @@ mod tests {
         info!("starting client");
         let client_endpoint =
             quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
-                .context("client")?;
+                .std_context("client")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server

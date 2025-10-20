@@ -4,9 +4,8 @@
 //! integers for different frames.
 
 use bytes::{Buf, BufMut};
-use nested_enum_utils::common_fields;
-use quinn_proto::{VarInt, coding::Codec};
-use snafu::{Backtrace, OptionExt, Snafu};
+use quinn_proto::{VarInt, coding::{Codec, UnexpectedEnd}};
+use n0_error::{add_meta, Error, e};
 
 /// Possible frame types during handshaking
 #[repr(u32)]
@@ -53,18 +52,14 @@ pub enum FrameType {
     Restarting = 12,
 }
 
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[add_meta]
+#[derive(Error)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum FrameTypeError {
-    #[snafu(display("not enough bytes to parse frame type"))]
-    UnexpectedEnd {},
-    #[snafu(display("frame type unknown"))]
+    #[display("not enough bytes to parse frame type")] 
+    UnexpectedEnd { #[error(std_err)] source: UnexpectedEnd },
+    #[display("frame type unknown")] 
     UnknownFrameType { tag: VarInt },
 }
 
@@ -93,13 +88,11 @@ impl FrameType {
     /// Parses the frame type (as a QUIC-encoded varint) from the first couple of bytes given
     /// and returns the frame type and the rest.
     pub(crate) fn from_bytes(buf: &mut impl Buf) -> Result<Self, FrameTypeError> {
-        let tag = VarInt::decode(buf).ok().context(UnexpectedEndSnafu)?;
+        let tag = VarInt::decode(buf).map_err(|err| e!(FrameTypeError::UnexpectedEnd, err))?;
         let tag_u32 = u32::try_from(u64::from(tag))
-            .ok()
-            .context(UnknownFrameTypeSnafu { tag })?;
+            .map_err(|_| e!(FrameTypeError::UnknownFrameType { tag }))?;
         let frame_type = FrameType::try_from(tag_u32)
-            .ok()
-            .context(UnknownFrameTypeSnafu { tag })?;
+            .map_err(|_| e!(FrameTypeError::UnknownFrameType { tag }))?;
         Ok(frame_type)
     }
 }

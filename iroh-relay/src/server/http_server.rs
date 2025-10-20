@@ -16,8 +16,8 @@ use hyper::{
     upgrade::Upgraded,
 };
 use n0_future::time::Elapsed;
-use nested_enum_utils::common_fields;
-use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
+use n0_error::{add_meta, Error, e, Err, StdResultExt};
+use snafu::{OptionExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -77,7 +77,7 @@ fn body_full(content: impl Into<hyper::body::Bytes>) -> BytesBody {
 fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes), ConnectionHandlerError> {
     match upgraded.downcast::<hyper_util::rt::TokioIo<MaybeTlsStream>>() {
         Ok(parts) => Ok((parts.io.into_inner(), parts.read_buf)),
-        Err(_) => Err(DowncastUpgradeSnafu.build()),
+        Err(_) => Err!(ConnectionHandlerError::DowncastUpgrade),
     }
 }
 
@@ -151,92 +151,51 @@ pub(super) struct TlsConfig {
 }
 
 /// Errors when attempting to upgrade and
-#[common_fields({
-    backtrace: Option<Backtrace>,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum ServeConnectionError {
-    #[snafu(display("TLS[acme] handshake"))]
-    TlsHandshake {
-        source: std::io::Error,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("TLS[acme] serve connection"))]
-    ServeConnection {
-        source: hyper::Error,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("TLS[manual] timeout"))]
-    Timeout {
-        source: Elapsed,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("TLS[manual] accept"))]
-    ManualAccept {
-        source: std::io::Error,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("TLS[acme] accept"))]
-    LetsEncryptAccept {
-        source: std::io::Error,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("HTTPS connection"))]
-    Https {
-        source: hyper::Error,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("HTTP connection"))]
-    Http {
-        source: hyper::Error,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    #[display("TLS[acme] handshake")]
+    TlsHandshake { #[error(std_err)] source: std::io::Error },
+    #[display("TLS[acme] serve connection")]
+    ServeConnection { #[error(std_err)] source: hyper::Error },
+    #[display("TLS[manual] timeout")]
+    Timeout { #[error(std_err)] source: Elapsed },
+    #[display("TLS[manual] accept")]
+    ManualAccept { #[error(std_err)] source: std::io::Error },
+    #[display("TLS[acme] accept")]
+    LetsEncryptAccept { #[error(std_err)] source: std::io::Error },
+    #[display("HTTPS connection")]
+    Https { #[error(std_err)] source: hyper::Error },
+    #[display("HTTP connection")]
+    Http { #[error(std_err)] source: hyper::Error },
 }
 
 /// Server accept errors.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum AcceptError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Handshake { source: handshake::Error },
-    #[snafu(display("rate limiting misconfigured"))]
+    #[display("rate limiting misconfigured")]
     RateLimitingMisconfigured { source: InvalidBucketConfig },
 }
 
 /// Server connection errors, includes errors that can happen on `accept`.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum ConnectionHandlerError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Accept { source: AcceptError },
-    #[snafu(display("Could not downcast the upgraded connection to MaybeTlsStream"))]
-    DowncastUpgrade {
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Cannot deal with buffered data yet: {buf:?}"))]
-    BufferNotEmpty {
-        buf: Bytes,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    #[display("Could not downcast the upgraded connection to MaybeTlsStream")]
+    DowncastUpgrade {},
+    #[display("Cannot deal with buffered data yet: {buf:?}")]
+    BufferNotEmpty { buf: Bytes },
 }
 
 /// Builder for the Relay HTTP Server.
@@ -339,7 +298,6 @@ impl ServerBuilder {
 
     /// Builds and spawns an HTTP(S) Relay Server.
     pub(super) async fn spawn(self) -> Result<Server, SpawnError> {
-        use snafu::ResultExt;
 
         let cancel_token = CancellationToken::new();
 
@@ -361,7 +319,7 @@ impl ServerBuilder {
             .await
             .map_err(|_| BindTcpListenerSnafu { addr }.build())?;
 
-        let addr = listener.local_addr().context(NoLocalAddrSnafu)?;
+        let addr = listener.local_addr().std_context("no-local-addr")?;
         let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
 
@@ -432,22 +390,23 @@ struct Inner {
     metrics: Arc<Metrics>,
 }
 
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error, Debug)]
 enum RelayUpgradeReqError {
-    #[snafu(display("missing header: {header}"))]
+    #[display("missing header: {header}")]
     MissingHeader { header: http::HeaderName },
-    #[snafu(display("invalid header value for {header}: {details}"))]
+    #[display("invalid header value for {header}: {details}")]
     InvalidHeader {
         header: http::HeaderName,
         details: String,
     },
-    #[snafu(display(
+    #[display(
         "invalid header value for {SEC_WEBSOCKET_VERSION}: unsupported websocket version, only supporting {SUPPORTED_WEBSOCKET_VERSION}"
-    ))]
+    )]
     UnsupportedWebsocketVersion,
-    #[snafu(display(
+    #[display(
         "invalid header value for {SEC_WEBSOCKET_PROTOCOL}: unsupported relay version: we support {we_support} but you only provide {you_support}"
-    ))]
+    )]
     UnsupportedRelayVersion {
         we_support: &'static str,
         you_support: String,
@@ -474,42 +433,33 @@ impl RelayService {
         ) -> Result<&HeaderValue, RelayUpgradeReqError> {
             req.headers()
                 .get(&header)
-                .context(MissingHeaderSnafu { header })
+                .ok_or_else(|| e!(RelayUpgradeReqError::MissingHeader { header }))
         }
 
         let upgrade_header = expect_header(&req, UPGRADE)?;
-        snafu::ensure!(
+        n0_error::ensure!(
             upgrade_header == HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
-            InvalidHeaderSnafu {
-                header: UPGRADE,
-                details: format!("value must be {WEBSOCKET_UPGRADE_PROTOCOL}"),
-            }
+            e!(RelayUpgradeReqError::InvalidHeader { header: UPGRADE, details: format!("value must be {WEBSOCKET_UPGRADE_PROTOCOL}") })
         );
 
         let key = expect_header(&req, SEC_WEBSOCKET_KEY)?.clone();
         let version = expect_header(&req, SEC_WEBSOCKET_VERSION)?.clone();
 
-        snafu::ensure!(
+        n0_error::ensure!(
             version.as_bytes() == SUPPORTED_WEBSOCKET_VERSION.as_bytes(),
-            UnsupportedWebsocketVersionSnafu
+            e!(RelayUpgradeReqError::UnsupportedWebsocketVersion)
         );
 
         let subprotocols = expect_header(&req, SEC_WEBSOCKET_PROTOCOL)?
             .to_str()
             .ok()
-            .context(InvalidHeaderSnafu {
-                header: SEC_WEBSOCKET_PROTOCOL,
-                details: "header value is not ascii".to_string(),
-            })?;
+            .ok_or_else(|| e!(RelayUpgradeReqError::InvalidHeader { header: SEC_WEBSOCKET_PROTOCOL, details: "header value is not ascii".to_string() }))?;
         let supports_our_version = subprotocols
             .split_whitespace()
             .any(|p| p == RELAY_PROTOCOL_VERSION);
-        snafu::ensure!(
+        n0_error::ensure!(
             supports_our_version,
-            UnsupportedRelayVersionSnafu {
-                we_support: RELAY_PROTOCOL_VERSION,
-                you_support: subprotocols.to_string(),
-            }
+            e!(RelayUpgradeReqError::UnsupportedRelayVersion { we_support: RELAY_PROTOCOL_VERSION, you_support: subprotocols.to_string() })
         );
 
         let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
@@ -638,7 +588,7 @@ impl Inner {
         debug!("relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;
         if !read_buf.is_empty() {
-            return Err(BufferNotEmptySnafu { buf: read_buf }.build());
+            return Err!(ConnectionHandlerError::BufferNotEmpty { buf: read_buf });
         }
 
         self.accept(io, client_auth_header).await?;
@@ -663,7 +613,7 @@ impl Inner {
         trace!("accept: start");
 
         let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone())
-            .context(RateLimitingMisconfiguredSnafu)?;
+            .map_err(|err| e!(AcceptError::RateLimitingMisconfigured, err))?;
 
         // Create a server builder with default config
         let websocket = tokio_websockets::ServerBuilder::new()
@@ -755,7 +705,7 @@ impl RelayService {
                 debug!("HTTP: serve connection");
                 self.serve_connection(MaybeTlsStream::Plain(stream))
                     .await
-                    .context(HttpSnafu)
+                    .map_err(|err| e!(ServeConnectionError::Http, err))
             }
         };
         match res {
@@ -791,7 +741,7 @@ impl RelayService {
         let TlsConfig { acceptor, config } = tls_config;
         match acceptor {
             TlsAcceptor::LetsEncrypt(a) => {
-                match a.accept(stream).await.context(LetsEncryptAcceptSnafu)? {
+                match a.accept(stream).await.map_err(|err| e!(ServeConnectionError::LetsEncryptAccept, err))? {
                     None => {
                         info!("TLS[acme]: received TLS-ALPN-01 validation request");
                     }
@@ -800,10 +750,10 @@ impl RelayService {
                         let tls_stream = start_handshake
                             .into_stream(config)
                             .await
-                            .context(TlsHandshakeSnafu)?;
+                            .map_err(|err| e!(ServeConnectionError::TlsHandshake, err))?;
                         self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                             .await
-                            .context(HttpsSnafu)?;
+                            .map_err(|err| e!(ServeConnectionError::Https, err))?;
                     }
                 }
             }
@@ -811,12 +761,12 @@ impl RelayService {
                 debug!("TLS[manual]: accept");
                 let tls_stream = tokio::time::timeout(Duration::from_secs(30), a.accept(stream))
                     .await
-                    .context(TimeoutSnafu)?
-                    .context(ManualAcceptSnafu)?;
+                    .std_context("timeout")?
+                    .map_err(|err| e!(ServeConnectionError::ManualAccept, err))?;
 
                 self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .await
-                    .context(ServeConnectionSnafu)?;
+                    .map_err(|err| e!(ServeConnectionError::ServeConnection, err))?;
             }
         }
         Ok(())
@@ -867,10 +817,9 @@ mod tests {
 
     use iroh_base::{PublicKey, SecretKey};
     use n0_future::{SinkExt, StreamExt};
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt, whatever};
     use rand::SeedableRng;
     use reqwest::Url;
-    use snafu::whatever;
     use tracing::info;
     use tracing_test::traced_test;
 

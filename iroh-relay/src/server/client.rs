@@ -4,9 +4,9 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
 use n0_future::{SinkExt, StreamExt};
-use nested_enum_utils::common_fields;
+use n0_error::{add_meta, Error, e, Err};
 use rand::Rng;
-use snafu::{Backtrace, GenerateImplicitData, Snafu};
+ 
 use time::{Date, OffsetDateTime};
 use tokio::{
     sync::mpsc::{self, error::TrySendError},
@@ -171,98 +171,63 @@ impl Client {
 }
 
 /// Error for [`Actor::handle_frame`]
-#[common_fields({
-    backtrace: Option<Backtrace>,
-})]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum HandleFrameError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     ForwardPacket { source: ForwardPacketError },
-    #[snafu(display("Stream terminated"))]
+    #[display("Stream terminated")]
     StreamTerminated {},
-    #[snafu(transparent)]
+    #[error(transparent)]
     Recv { source: RelayRecvError },
-    #[snafu(transparent)]
+    #[error(transparent)]
     Send { source: WriteFrameError },
 }
 
 /// Error for [`Actor::write_frame`]
-#[common_fields({
-    backtrace: Option<Backtrace>,
-})]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum WriteFrameError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Stream { source: RelaySendError },
-    #[snafu(transparent)]
-    Timeout { source: tokio::time::error::Elapsed },
+    #[error(transparent)]
+    Timeout { #[error(std_err)] source: tokio::time::error::Elapsed },
 }
 
 /// Run error
-#[common_fields({
-    backtrace: Option<Backtrace>,
-})]
+#[add_meta]
+#[derive(Error)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum RunError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     ForwardPacket { source: ForwardPacketError },
-    #[snafu(display("Flush"))]
-    Flush {
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(transparent)]
+    #[display("Flush")]
+    Flush {},
+    #[error(transparent)]
     HandleFrame { source: HandleFrameError },
-    #[snafu(display("Server.disco_send_queue dropped"))]
-    DiscoSendQueuePacketDrop {
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Failed to send disco packet"))]
-    DiscoPacketSend {
-        source: WriteFrameError,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Server.send_queue dropped"))]
-    SendQueuePacketDrop {
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Failed to send packet"))]
-    PacketSend {
-        source: WriteFrameError,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Server.endpoint_gone dropped"))]
-    EndpointGoneDrop {
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("EndpointGone write frame failed"))]
-    EndpointGoneWriteFrame {
-        source: WriteFrameError,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Keep alive write frame failed"))]
-    KeepAliveWriteFrame {
-        source: WriteFrameError,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Tick flush"))]
-    TickFlush {
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    #[display("Server.disco_send_queue dropped")]
+    DiscoSendQueuePacketDrop {},
+    #[display("Failed to send disco packet")]
+    DiscoPacketSend { source: WriteFrameError },
+    #[display("Server.send_queue dropped")]
+    SendQueuePacketDrop {},
+    #[display("Failed to send packet")]
+    PacketSend { source: WriteFrameError },
+    #[display("Server.endpoint_gone dropped")]
+    EndpointGoneDrop {},
+    #[display("EndpointGone write frame failed")]
+    EndpointGoneWriteFrame { source: WriteFrameError },
+    #[display("Keep alive write frame failed")]
+    KeepAliveWriteFrame { source: WriteFrameError },
+    #[display("Tick flush")]
+    TickFlush {},
 }
 
 /// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`
@@ -330,8 +295,7 @@ impl Actor {
     }
 
     async fn run_inner(&mut self, done: CancellationToken) -> Result<(), RunError> {
-        use snafu::ResultExt;
-
+        
         // Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
         let next_interval = || {
             let random_secs = rand::rng().random_range(1..=5);
@@ -360,19 +324,22 @@ impl Actor {
                 }
                 // First priority, disco packets
                 packet = self.disco_send_queue.recv() => {
-                    let packet = packet.ok_or(DiscoSendQueuePacketDropSnafu.build())?;
-                    self.send_disco_packet(packet).await.context(DiscoPacketSendSnafu)?;
+                let packet = packet.ok_or_else(|| e!(RunError::DiscoSendQueuePacketDrop))?;
+                    self.send_disco_packet(packet).await
+                        .map_err(|err| e!(RunError::DiscoPacketSend, err))?;
                 }
                 // Second priority, sending regular packets
                 packet = self.send_queue.recv() => {
-                    let packet = packet.ok_or(SendQueuePacketDropSnafu.build())?;
-                    self.send_packet(packet).await.context(PacketSendSnafu)?;
+                let packet = packet.ok_or_else(|| e!(RunError::SendQueuePacketDrop))?;
+                    self.send_packet(packet).await
+                        .map_err(|err| e!(RunError::PacketSend, err))?;
                 }
                 // Last priority, sending left endpoints
                 endpoint_id = self.endpoint_gone.recv() => {
-                    let endpoint_id = endpoint_id.ok_or(EndpointGoneDropSnafu.build())?;
+                let endpoint_id = endpoint_id.ok_or_else(|| e!(RunError::EndpointGoneDrop))?;
                     trace!("endpoint_id gone: {:?}", endpoint_id);
-                    self.write_frame(RelayToClientMsg::EndpointGone(endpoint_id)).await.context(EndpointGoneWriteFrameSnafu)?;
+                    self.write_frame(RelayToClientMsg::EndpointGone(endpoint_id)).await
+                        .map_err(|err| e!(RunError::EndpointGoneWriteFrame, err))?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -383,14 +350,16 @@ impl Actor {
                     // new interval
                     ping_interval.reset_after(next_interval());
                     let data = self.ping_tracker.new_ping();
-                    self.write_frame(RelayToClientMsg::Ping(data)).await.context(KeepAliveWriteFrameSnafu)?;
+                    self.write_frame(RelayToClientMsg::Ping(data))
+                        .await
+                        .map_err(|err| e!(RunError::KeepAliveWriteFrame, err))?;
                 }
             }
 
             self.stream
                 .flush()
                 .await
-                .map_err(|_| TickFlushSnafu.build())?;
+                .map_err(|_| e!(RunError::TickFlush))?;
         }
         Ok(())
     }
@@ -399,7 +368,8 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn write_frame(&mut self, frame: RelayToClientMsg) -> Result<(), WriteFrameError> {
-        tokio::time::timeout(self.timeout, self.stream.send(frame)).await??;
+        tokio::time::timeout(self.timeout, self.stream.send(frame)).await?
+            .map_err(|err| e!(WriteFrameError::Stream { source: err }))?;
         Ok(())
     }
 
@@ -457,7 +427,7 @@ impl Actor {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
             Some(frame) => frame?,
-            None => return Err(StreamTerminatedSnafu.build()),
+            None => return Err!(HandleFrameError::StreamTerminated),
         };
 
         match frame {
@@ -516,22 +486,12 @@ pub(crate) enum SendError {
     Closed,
 }
 
-#[derive(Debug, Snafu)]
-#[snafu(display("failed to forward {scope:?} packet: {reason:?}"))]
+#[add_meta]
+#[derive(Error)]
+#[display("failed to forward {scope:?} packet: {reason:?}")]
 pub(crate) struct ForwardPacketError {
     scope: PacketScope,
     reason: SendError,
-    backtrace: Option<snafu::Backtrace>,
-}
-
-impl ForwardPacketError {
-    pub(crate) fn new(scope: PacketScope, reason: SendError) -> Self {
-        Self {
-            scope,
-            reason,
-            backtrace: GenerateImplicitData::generate(),
-        }
-    }
 }
 
 /// Tracks how many unique endpoints have been seen during the last day.
@@ -569,8 +529,8 @@ impl ClientCounter {
 #[cfg(test)]
 mod tests {
     use iroh_base::SecretKey;
+    use n0_error::{Result, StdResultExt};
     use n0_future::Stream;
-    use n0_snafu::{Result, ResultExt};
     use rand::SeedableRng;
     use tracing::info;
     use tracing_test::traced_test;
@@ -579,7 +539,7 @@ mod tests {
     use crate::{client::conn::Conn, protos::common::FrameType};
 
     async fn recv_frame<
-        E: snafu::Error + Sync + Send + 'static,
+        E: std::error::Error + Sync + Send + 'static,
         S: Stream<Item = Result<RelayToClientMsg, E>> + Unpin,
     >(
         frame_type: FrameType,
@@ -588,7 +548,7 @@ mod tests {
         match stream.next().await {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
-                    snafu::whatever!(
+                    n0_error::whatever!(
                         "Unexpected frame, got {:?}, but expected {:?}",
                         frame.typ(),
                         frame_type
@@ -597,7 +557,7 @@ mod tests {
                 Ok(frame)
             }
             Some(Err(err)) => Err(err).e(),
-            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type:?}"),
+            None => n0_error::whatever!("Unexpected EOF, expected frame {frame_type:?}"),
         }
     }
 
@@ -645,7 +605,7 @@ mod tests {
             src: endpoint_id,
             data: Datagrams::from(&data[..]),
         };
-        send_queue_s.send(packet.clone()).await.context("send")?;
+        send_queue_s.send(packet.clone()).await.std_context("send")?;
         let frame = recv_frame(FrameType::RelayToClientDatagram, &mut io_rw)
             .await
             .e()?;
@@ -662,7 +622,7 @@ mod tests {
         disco_send_queue_s
             .send(packet.clone())
             .await
-            .context("send")?;
+            .std_context("send")?;
         let frame = recv_frame(FrameType::RelayToClientDatagram, &mut io_rw)
             .await
             .e()?;
@@ -676,7 +636,7 @@ mod tests {
 
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(endpoint_id).await.context("send")?;
+        peer_gone_s.send(endpoint_id).await.std_context("send")?;
         let frame = recv_frame(FrameType::EndpointGone, &mut io_rw).await.e()?;
         assert_eq!(frame, RelayToClientMsg::EndpointGone(endpoint_id));
 
@@ -703,7 +663,7 @@ mod tests {
                 datagrams: Datagrams::from(data),
             })
             .await
-            .context("send")?;
+            .std_context("send")?;
 
         // send disco packet
         println!("  send disco packet");
@@ -717,10 +677,10 @@ mod tests {
                 datagrams: disco_data.clone().into(),
             })
             .await
-            .context("send")?;
+            .std_context("send")?;
 
         done.cancel();
-        handle.await.context("join")?;
+        handle.await.std_context("join")?;
         Ok(())
     }
 

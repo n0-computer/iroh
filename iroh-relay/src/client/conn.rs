@@ -9,8 +9,7 @@ use std::{
 
 use iroh_base::SecretKey;
 use n0_future::{Sink, Stream};
-use nested_enum_utils::common_fields;
-use snafu::{Backtrace, Snafu};
+use n0_error::{add_meta, Error};
 use tracing::debug;
 
 use super::KeyCache;
@@ -26,41 +25,35 @@ use crate::{
 };
 
 /// Error for sending messages to the relay server.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources, std_sources)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum SendError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     StreamError {
         #[cfg(not(wasm_browser))]
         source: tokio_websockets::Error,
         #[cfg(wasm_browser)]
         source: ws_stream_wasm::WsErr,
     },
-    #[snafu(display("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}"))]
+    #[display("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}")]
     ExceedsMaxPacketSize { size: usize },
-    #[snafu(display("Attempted to send empty packet"))]
+    #[display("Attempted to send empty packet")]
     EmptyPacket {},
 }
 
 /// Errors when receiving messages from the relay server.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources, std_sources)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum RecvError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Protocol { source: ProtoError },
-    #[snafu(transparent)]
+    #[error(transparent)]
     StreamError {
         #[cfg(not(wasm_browser))]
         source: tokio_websockets::Error,
@@ -146,9 +139,9 @@ impl Sink<ClientToRelayMsg> for Conn {
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToRelayMsg) -> Result<(), Self::Error> {
         let size = frame.encoded_len();
-        snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
+        n0_error::ensure!(size <= MAX_PACKET_SIZE, n0_error::e!(SendError::ExceedsMaxPacketSize { size }));
         if let ClientToRelayMsg::Datagrams { datagrams, .. } = &frame {
-            snafu::ensure!(!datagrams.contents.is_empty(), EmptyPacketSnafu);
+            n0_error::ensure!(!datagrams.contents.is_empty(), n0_error::e!(SendError::EmptyPacket));
         }
 
         Pin::new(&mut self.conn)
