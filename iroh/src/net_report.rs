@@ -963,7 +963,7 @@ mod tests {
 
     use iroh_base::RelayUrl;
     use iroh_relay::dns::DnsResolver;
-    use n0_error::{Result, StackResultExt, StdResultExt};
+    use n0_error::{Result, StdResultExt};
     use tokio_util::sync::CancellationToken;
     use tracing_test::traced_test;
 

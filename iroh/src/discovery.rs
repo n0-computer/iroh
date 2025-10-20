@@ -650,7 +650,7 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, SecretKey};
-    use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
+    use n0_error::{AnyError as Error, Result, StdResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
@@ -826,7 +826,7 @@ mod tests {
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
-            .context("connecting")?;
+            .std_context("connecting")?;
         Ok(())
     }
 
@@ -969,7 +969,7 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
-    use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
+    use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::time::Duration;
     use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;

@@ -13,7 +13,7 @@ use iroh::{
     Endpoint, RelayMode,
     discovery::{Discovery, pkarr::PkarrResolver},
 };
-use n0_error::{Result, StackResultExt, StdResultExt};
+use n0_error::{Result, StdResultExt};
 use n0_future::{
     StreamExt, task,
     time::{self, Duration},

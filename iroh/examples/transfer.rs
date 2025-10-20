@@ -17,7 +17,7 @@ use iroh::{
     endpoint::ConnectionError,
 };
 use iroh_base::ticket::EndpointTicket;
-use n0_error::{Result, StackResultExt, StdResultExt, whatever};
+use n0_error::{Result, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
 use n0_watcher::Watcher as _;
 use tokio_stream::StreamExt;
@@ -183,8 +183,9 @@ impl EndpointArgs {
         let mut builder = Endpoint::builder();
 
         let secret_key = match std::env::var("IROH_SECRET") {
-            Ok(s) => SecretKey::from_str(&s)
-                .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
+            Ok(s) => SecretKey::from_str(&s).std_context(
+                "Failed to parse IROH_SECRET environment variable as iroh secret key",
+            )?,
             Err(_) => {
                 let s = SecretKey::generate(&mut rand::rng());
                 println!("Generated a new endpoint secret. To reuse, set");
@@ -248,7 +249,7 @@ impl EndpointArgs {
                 .await
                 .std_context("Failed to resolve DNS server address")?
                 .next()
-                .context("Failed to resolve DNS server address")?;
+                .std_context("Failed to resolve DNS server address")?;
             builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
         } else if self.env == Env::Dev {
             let addr = DEV_DNS_SERVER.parse().expect("valid addr");

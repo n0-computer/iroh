@@ -2121,7 +2121,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey};
-    use n0_error::{AnyError as Error, StackResultExt, StdResultExt};
+    use n0_error::{AnyError as Error, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     type Result<T = (), E = Error> = std::result::Result<T, E>;
     use n0_watcher::Watcher;

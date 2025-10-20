@@ -2537,7 +2537,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, PublicKey};
-    use n0_error::{AnyError, Result, StackResultExt, StdResultExt};
+    use n0_error::{Result, StdResultExt};
     use n0_future::{StreamExt, time};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
