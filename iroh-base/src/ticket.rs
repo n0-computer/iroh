@@ -83,12 +83,14 @@ impl ParseError {
     /// prefix.
     ///
     /// Indicate the expected prefix.
+    #[track_caller]
     pub fn wrong_prefix(expected: &'static str) -> Self {
         e!(ParseError::Kind { expected })
     }
 
     /// Return a `ParseError` variant that indicates verification of the
     /// deserialized bytes failed.
+    #[track_caller]
     pub fn verification_failed(message: &'static str) -> Self {
         e!(ParseError::Verify { message })
     }
