@@ -18,20 +18,20 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 /// contact the endpoint.
 ///
 /// To establish a network connection to an endpoint both the [`EndpointId`] and one or more network
-/// paths are needed.  The network paths can come from various sources:
+/// paths are needed.  The network paths can come from various sources, current sources can come from
 ///
 /// - A [discovery] service which can provide routing information for a given [`EndpointId`].
 ///
 /// - A [`RelayUrl`] of the endpoint's [home relay], this allows establishing the connection via
 ///   the Relay server and is very reliable.
 ///
-/// - One or more *direct addresses* on which the endpoint might be reachable.  Depending on the
+/// - One or more *IP based addresses* on which the endpoint might be reachable.  Depending on the
 ///   network location of both endpoints it might not be possible to establish a direct
 ///   connection without the help of a [Relay server].
 ///
 /// This structure will always contain the required [`EndpointId`] and will contain an optional
-/// number of network-level addressing information.  It is a generic addressing type used
-/// whenever a connection to other endpoints needs to be established.
+/// number of other addressing information.  It is a generic addressing type used whenever a connection
+/// to other endpoints needs to be established.
 ///
 /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#endpoint-discovery
 /// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
@@ -55,26 +55,15 @@ pub enum TransportAddr {
 }
 
 impl EndpointAddr {
-    /// Creates a new [`EndpointAddr`] with no addresses.
+    /// Creates a new [`EndpointAddr`] with no network level addresses.
+    ///
+    /// This still is usable with e.g. a discovery service to establish a connection,
+    /// depending on the situation.
     pub fn new(id: PublicKey) -> Self {
         EndpointAddr {
             id,
             addrs: Default::default(),
         }
-    }
-
-    /// Adds a relay url.
-    pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
-        self.addrs.insert(TransportAddr::Relay(relay_url));
-        self
-    }
-
-    /// Adds the given IP addresses.
-    pub fn with_ip_addresses(mut self, addresses: impl IntoIterator<Item = SocketAddr>) -> Self {
-        for addr in addresses.into_iter() {
-            self.addrs.insert(TransportAddr::Ip(addr));
-        }
-        self
     }
 
     /// Creates a new [`EndpointAddr`] from its parts.
@@ -85,39 +74,47 @@ impl EndpointAddr {
         }
     }
 
+    /// Adds a [`RelayUrl`] address.
+    pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
+        self.addrs.insert(TransportAddr::Relay(relay_url));
+        self
+    }
+
+    /// Adds an IP based address.
+    pub fn with_ip_addr(mut self, addr: SocketAddr) -> Self {
+        self.addrs.insert(TransportAddr::Ip(addr));
+        self
+    }
+
+    /// Adds a list of addresses.
+    pub fn with_addrs(mut self, addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
+        for addr in addrs.into_iter() {
+            self.addrs.insert(addr);
+        }
+        self
+    }
+
     /// Returns true, if only a [`EndpointId`] is present.
     pub fn is_empty(&self) -> bool {
         self.addrs.is_empty()
     }
 
-    /// Returns the IP addresses of this peer.
-    pub fn ip_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
+    /// Returns a list of IP addresses of this peer.
+    pub fn ip_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.iter().filter_map(|addr| match addr {
             TransportAddr::Ip(addr) => Some(addr),
             _ => None,
         })
     }
 
-    /// Returns the relay url of this peer.
+    /// Returns a list of relay urls of this peer.
+    ///
+    ///  In practice this is expected to be zero or one home relay for all known cases currently.
     pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {
         self.addrs.iter().filter_map(|addr| match addr {
             TransportAddr::Relay(url) => Some(url),
             _ => None,
         })
-    }
-}
-
-impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for EndpointAddr {
-    fn from(value: (PublicKey, Option<RelayUrl>, &[SocketAddr])) -> Self {
-        let (id, relay_url, ip_addrs_iter) = value;
-        let mut addrs = BTreeSet::new();
-        if let Some(url) = relay_url {
-            addrs.insert(TransportAddr::Relay(url));
-        }
-        for addr in ip_addrs_iter {
-            addrs.insert(TransportAddr::Ip(*addr));
-        }
-        EndpointAddr { id, addrs }
     }
 }
 

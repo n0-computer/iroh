@@ -82,7 +82,7 @@ async fn main() -> Result<()> {
     for url in resolved.relay_urls() {
         println!("    relay={url}")
     }
-    for addr in resolved.ip_addresses() {
+    for addr in resolved.ip_addrs() {
         println!("    addr={addr}")
     }
     if let Some(user_data) = resolved.user_data() {

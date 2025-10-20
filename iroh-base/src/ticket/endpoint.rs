@@ -36,7 +36,7 @@ pub struct EndpointTicket {
 /// Wire format for [`EndpointTicket`].
 #[derive(Serialize, Deserialize)]
 enum TicketWireFormat {
-    Variant0(Variant1EndpointTicket),
+    Variant1(Variant1EndpointTicket),
 }
 
 // Legacy
@@ -49,7 +49,7 @@ impl Ticket for EndpointTicket {
     const KIND: &'static str = "endpoint";
 
     fn to_bytes(&self) -> Vec<u8> {
-        let data = TicketWireFormat::Variant0(Variant1EndpointTicket {
+        let data = TicketWireFormat::Variant1(Variant1EndpointTicket {
             addr: Variant1EndpointAddr {
                 id: self.addr.id,
                 info: Variant1AddrInfo {
@@ -62,7 +62,7 @@ impl Ticket for EndpointTicket {
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, ParseError> {
         let res: TicketWireFormat = postcard::from_bytes(bytes)?;
-        let TicketWireFormat::Variant0(Variant1EndpointTicket { addr }) = res;
+        let TicketWireFormat::Variant1(Variant1EndpointTicket { addr }) = res;
         Ok(Self {
             addr: EndpointAddr {
                 id: addr.id,

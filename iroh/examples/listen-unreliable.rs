@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 
     let endpoint_addr = endpoint.addr();
     let local_addrs = endpoint_addr
-        .ip_addresses()
+        .ip_addrs()
         .map(|addr| {
             let addr = addr.to_string();
             println!("\t{addr}");

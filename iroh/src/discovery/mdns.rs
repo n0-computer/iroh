@@ -279,7 +279,7 @@ impl MdnsDiscovery {
                         tracing::trace!(?data, "MdnsDiscovery address changed");
                         discovery.remove_all();
                         let addrs =
-                            MdnsDiscovery::socketaddrs_to_addrs(data.ip_addresses());
+                            MdnsDiscovery::socketaddrs_to_addrs(data.ip_addrs());
                         for addr in addrs {
                             discovery.add(addr.0, addr.1)
                         }
@@ -508,7 +508,7 @@ fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryIte
         None
     };
     let endpoint_info = EndpointInfo::new(*endpoint_id)
-        .with_ip_addresses(ip_addrs)
+        .with_ip_addrs(ip_addrs)
         .with_user_data(user_data);
     DiscoveryItem::new(endpoint_info, NAME, None)
 }

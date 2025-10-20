@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
     let me = endpoint.id();
     println!("endpoint id: {me}");
     println!("endpoint listening addresses:");
-    for addr in endpoint_addr.ip_addresses() {
+    for addr in endpoint_addr.ip_addrs() {
         println!("\t{addr}")
     }
 

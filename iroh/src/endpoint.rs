@@ -698,7 +698,7 @@ impl Endpoint {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
         }
         let endpoint_id = endpoint_addr.id;
-        let ip_addresses: Vec<_> = endpoint_addr.ip_addresses().cloned().collect();
+        let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
         let relay_url = endpoint_addr.relay_urls().next().cloned();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
@@ -870,7 +870,7 @@ impl Endpoint {
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
-        let watch_addrs = self.msock.ip_addresses();
+        let watch_addrs = self.msock.ip_addrs();
         let watch_relay = self.msock.home_relay();
         let endpoint_id = self.id();
 
@@ -2723,7 +2723,7 @@ mod tests {
             .bind()
             .await?;
 
-        assert!(ep.addr().ip_addresses().count() > 0);
+        assert!(ep.addr().ip_addrs().count() > 0);
 
         Ok(())
     }

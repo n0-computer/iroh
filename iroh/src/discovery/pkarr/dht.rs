@@ -299,7 +299,7 @@ impl Discovery for DhtDiscovery {
         tracing::debug!("publishing {data:?}");
         let mut info = EndpointInfo::from_parts(keypair.public(), data.clone());
         if !self.0.include_direct_addresses {
-            info.clear_ip_addresses();
+            info.clear_ip_addrs();
         }
         let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
             tracing::warn!("failed to create signed packet");

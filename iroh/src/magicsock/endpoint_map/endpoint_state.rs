@@ -1206,12 +1206,12 @@ impl EndpointState {
     }
 
     /// Get the IP addresses for this endpoint.
-    pub(super) fn ip_addresses(&self) -> impl Iterator<Item = IpPort> + '_ {
+    pub(super) fn ip_addrs(&self) -> impl Iterator<Item = IpPort> + '_ {
         self.udp_paths.paths().keys().copied()
     }
 
     #[cfg(test)]
-    pub(super) fn ip_address_states(&self) -> impl Iterator<Item = (&IpPort, &PathState)> + '_ {
+    pub(super) fn ip_addr_states(&self) -> impl Iterator<Item = (&IpPort, &PathState)> + '_ {
         self.udp_paths.paths().iter()
     }
 

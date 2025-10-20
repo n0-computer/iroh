@@ -288,7 +288,7 @@ impl EndpointArgs {
         let endpoint_addr = endpoint.addr();
 
         println!("Our direct addresses:");
-        for addr in endpoint_addr.ip_addresses() {
+        for addr in endpoint_addr.ip_addrs() {
             println!("\t{addr}");
         }
 

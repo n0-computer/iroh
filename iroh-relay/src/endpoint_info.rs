@@ -150,7 +150,7 @@ impl EndpointData {
     }
 
     /// Sets the direct addresses and returns the updated endpoint data.
-    pub fn with_ip_addresses(mut self, addresses: BTreeSet<SocketAddr>) -> Self {
+    pub fn with_ip_addrs(mut self, addresses: BTreeSet<SocketAddr>) -> Self {
         for addr in addresses.into_iter() {
             self.addrs.insert(TransportAddr::Ip(addr));
         }
@@ -177,7 +177,7 @@ impl EndpointData {
     }
 
     /// Returns the direct addresses of the endpoint.
-    pub fn ip_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
+    pub fn ip_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.iter().filter_map(|addr| match addr {
             TransportAddr::Ip(addr) => Some(addr),
             _ => None,
@@ -185,7 +185,7 @@ impl EndpointData {
     }
 
     /// Removes all direct addresses from the endpoint data.
-    pub fn clear_ip_addresses(&mut self) {
+    pub fn clear_ip_addrs(&mut self) {
         self.addrs
             .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
     }
@@ -366,9 +366,9 @@ impl EndpointInfo {
         self
     }
 
-    /// Sets the direct addresses and returns the updated endpoint info.
-    pub fn with_ip_addresses(mut self, addrs: BTreeSet<SocketAddr>) -> Self {
-        self.data = self.data.with_ip_addresses(addrs);
+    /// Sets the IP based addresses and returns the updated endpoint info.
+    pub fn with_ip_addrs(mut self, addrs: BTreeSet<SocketAddr>) -> Self {
+        self.data = self.data.with_ip_addrs(addrs);
         self
     }
 
@@ -785,7 +785,7 @@ mod tests {
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",
         )?)
         .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))
-        .with_ip_addresses(BTreeSet::from([
+        .with_ip_addrs(BTreeSet::from([
             "192.168.96.145:60165".parse().unwrap(),
             "213.208.157.87:60165".parse().unwrap(),
         ]));
