@@ -5,12 +5,12 @@
 <a href=#5 id=5 data-nosnippet>5</a>//!  * client responds to any [`FrameType::Ping`] with a [`FrameType::Pong`]
 <a href=#6 id=6 data-nosnippet>6</a>//!  * clients sends [`FrameType::ClientToRelayDatagram`] or [`FrameType::ClientToRelayDatagramBatch`]
 <a href=#7 id=7 data-nosnippet>7</a>//!  * server then sends [`FrameType::RelayToClientDatagram`] or [`FrameType::RelayToClientDatagramBatch`] to recipient
-<a href=#8 id=8 data-nosnippet>8</a>//!  * server sends [`FrameType::NodeGone`] when the other client disconnects
+<a href=#8 id=8 data-nosnippet>8</a>//!  * server sends [`FrameType::EndpointGone`] when the other client disconnects
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a></span><span class="kw">use </span>std::num::NonZeroU16;
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>bytes::{Buf, BufMut, Bytes, BytesMut};
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>iroh_base::{NodeId, SignatureError};
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>iroh_base::{EndpointId, KeyParsingError};
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>n0_future::time::Duration;
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>nested_enum_utils::common_fields;
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>snafu::{Backtrace, ResultExt, Snafu};
@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>    <span class="attr">#[snafu(transparent)]
 <a href=#60 id=60 data-nosnippet>60</a>    </span>FrameTypeError { source: FrameTypeError },
 <a href=#61 id=61 data-nosnippet>61</a>    <span class="attr">#[snafu(display(<span class="string">"Invalid public key"</span>))]
-<a href=#62 id=62 data-nosnippet>62</a>    </span>InvalidPublicKey { source: SignatureError },
+<a href=#62 id=62 data-nosnippet>62</a>    </span>InvalidPublicKey { source: KeyParsingError },
 <a href=#63 id=63 data-nosnippet>63</a>    <span class="attr">#[snafu(display(<span class="string">"Invalid frame encoding"</span>))]
 <a href=#64 id=64 data-nosnippet>64</a>    </span>InvalidFrame {},
 <a href=#65 id=65 data-nosnippet>65</a>    <span class="attr">#[snafu(display(<span class="string">"Invalid frame type: {frame_type:?}"</span>))]
@@ -75,14 +75,14 @@
 <a href=#75 id=75 data-nosnippet>75</a></span><span class="kw">pub enum </span>RelayToClientMsg {
 <a href=#76 id=76 data-nosnippet>76</a>    <span class="doccomment">/// Represents datagrams sent from relays (originally sent to them by another client).
 <a href=#77 id=77 data-nosnippet>77</a>    </span>Datagrams {
-<a href=#78 id=78 data-nosnippet>78</a>        <span class="doccomment">/// The [`NodeId`] of the original sender.
-<a href=#79 id=79 data-nosnippet>79</a>        </span>remote_node_id: NodeId,
+<a href=#78 id=78 data-nosnippet>78</a>        <span class="doccomment">/// The [`EndpointId`] of the original sender.
+<a href=#79 id=79 data-nosnippet>79</a>        </span>remote_endpoint_id: EndpointId,
 <a href=#80 id=80 data-nosnippet>80</a>        <span class="doccomment">/// The datagrams and related metadata.
 <a href=#81 id=81 data-nosnippet>81</a>        </span>datagrams: Datagrams,
 <a href=#82 id=82 data-nosnippet>82</a>    },
 <a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// Indicates that the client identified by the underlying public key had previously sent you a
 <a href=#84 id=84 data-nosnippet>84</a>    /// packet but has now disconnected from the relay.
-<a href=#85 id=85 data-nosnippet>85</a>    </span>NodeGone(NodeId),
+<a href=#85 id=85 data-nosnippet>85</a>    </span>EndpointGone(EndpointId),
 <a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// A one-way message from relay to client, declaring the connection health state.
 <a href=#87 id=87 data-nosnippet>87</a>    </span>Health {
 <a href=#88 id=88 data-nosnippet>88</a>        <span class="doccomment">/// If set, is a description of why the connection is unhealthy.
@@ -121,10 +121,10 @@
 <a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// Reply to a [`RelayToClientMsg::Ping`] from a server
 <a href=#122 id=122 data-nosnippet>122</a>    /// with the payload sent previously in the ping.
 <a href=#123 id=123 data-nosnippet>123</a>    </span>Pong([u8; <span class="number">8</span>]),
-<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// Request from the client to relay datagrams to given remote node.
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// Request from the client to relay datagrams to given remote endpoint.
 <a href=#125 id=125 data-nosnippet>125</a>    </span>Datagrams {
-<a href=#126 id=126 data-nosnippet>126</a>        <span class="doccomment">/// The remote node to relay to.
-<a href=#127 id=127 data-nosnippet>127</a>        </span>dst_node_id: NodeId,
+<a href=#126 id=126 data-nosnippet>126</a>        <span class="doccomment">/// The remote endpoint to relay to.
+<a href=#127 id=127 data-nosnippet>127</a>        </span>dst_endpoint_id: EndpointId,
 <a href=#128 id=128 data-nosnippet>128</a>        <span class="doccomment">/// The datagrams and related metadata to relay.
 <a href=#129 id=129 data-nosnippet>129</a>        </span>datagrams: Datagrams,
 <a href=#130 id=130 data-nosnippet>130</a>    },
@@ -216,7 +216,7 @@
 <a href=#216 id=216 data-nosnippet>216</a>        </span>+ <span class="self">self</span>.contents.len()
 <a href=#217 id=217 data-nosnippet>217</a>    }
 <a href=#218 id=218 data-nosnippet>218</a>
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="attr">#[allow(clippy::len_zero)]
+<a href=#219 id=219 data-nosnippet>219</a>    <span class="attr">#[allow(clippy::len_zero, clippy::result_large_err)]
 <a href=#220 id=220 data-nosnippet>220</a>    </span><span class="kw">fn </span>from_bytes(<span class="kw-2">mut </span>bytes: Bytes, is_batch: bool) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
 <a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">if </span>is_batch {
 <a href=#222 id=222 data-nosnippet>222</a>            <span class="comment">// 1 bytes ECN, 2 bytes segment size
@@ -254,7 +254,7 @@
 <a href=#254 id=254 data-nosnippet>254</a>                    FrameType::RelayToClientDatagram
 <a href=#255 id=255 data-nosnippet>255</a>                }
 <a href=#256 id=256 data-nosnippet>256</a>            }
-<a href=#257 id=257 data-nosnippet>257</a>            <span class="self">Self</span>::NodeGone { .. } =&gt; FrameType::NodeGone,
+<a href=#257 id=257 data-nosnippet>257</a>            <span class="self">Self</span>::EndpointGone { .. } =&gt; FrameType::EndpointGone,
 <a href=#258 id=258 data-nosnippet>258</a>            <span class="self">Self</span>::Ping { .. } =&gt; FrameType::Ping,
 <a href=#259 id=259 data-nosnippet>259</a>            <span class="self">Self</span>::Pong { .. } =&gt; FrameType::Pong,
 <a href=#260 id=260 data-nosnippet>260</a>            <span class="self">Self</span>::Health { .. } =&gt; FrameType::Health,
@@ -275,14 +275,14 @@
 <a href=#275 id=275 data-nosnippet>275</a>        dst = <span class="self">self</span>.typ().write_to(dst);
 <a href=#276 id=276 data-nosnippet>276</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#277 id=277 data-nosnippet>277</a>            <span class="self">Self</span>::Datagrams {
-<a href=#278 id=278 data-nosnippet>278</a>                remote_node_id,
+<a href=#278 id=278 data-nosnippet>278</a>                remote_endpoint_id,
 <a href=#279 id=279 data-nosnippet>279</a>                datagrams,
 <a href=#280 id=280 data-nosnippet>280</a>            } =&gt; {
-<a href=#281 id=281 data-nosnippet>281</a>                dst.put(remote_node_id.as_ref());
+<a href=#281 id=281 data-nosnippet>281</a>                dst.put(remote_endpoint_id.as_ref());
 <a href=#282 id=282 data-nosnippet>282</a>                dst = datagrams.write_to(dst);
 <a href=#283 id=283 data-nosnippet>283</a>            }
-<a href=#284 id=284 data-nosnippet>284</a>            <span class="self">Self</span>::NodeGone(node_id) =&gt; {
-<a href=#285 id=285 data-nosnippet>285</a>                dst.put(node_id.as_ref());
+<a href=#284 id=284 data-nosnippet>284</a>            <span class="self">Self</span>::EndpointGone(endpoint_id) =&gt; {
+<a href=#285 id=285 data-nosnippet>285</a>                dst.put(endpoint_id.as_ref());
 <a href=#286 id=286 data-nosnippet>286</a>            }
 <a href=#287 id=287 data-nosnippet>287</a>            <span class="self">Self</span>::Ping(data) =&gt; {
 <a href=#288 id=288 data-nosnippet>288</a>                dst.put(<span class="kw-2">&amp;</span>data[..]);
@@ -308,10 +308,10 @@
 <a href=#308 id=308 data-nosnippet>308</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>encoded_len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
 <a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">let </span>payload_len = <span class="kw">match </span><span class="self">self </span>{
 <a href=#310 id=310 data-nosnippet>310</a>            <span class="self">Self</span>::Datagrams { datagrams, .. } =&gt; {
-<a href=#311 id=311 data-nosnippet>311</a>                <span class="number">32 </span><span class="comment">// nodeid
+<a href=#311 id=311 data-nosnippet>311</a>                <span class="number">32 </span><span class="comment">// endpointid
 <a href=#312 id=312 data-nosnippet>312</a>                </span>+ datagrams.encoded_len()
 <a href=#313 id=313 data-nosnippet>313</a>            }
-<a href=#314 id=314 data-nosnippet>314</a>            <span class="self">Self</span>::NodeGone(<span class="kw">_</span>) =&gt; <span class="number">32</span>,
+<a href=#314 id=314 data-nosnippet>314</a>            <span class="self">Self</span>::EndpointGone(<span class="kw">_</span>) =&gt; <span class="number">32</span>,
 <a href=#315 id=315 data-nosnippet>315</a>            <span class="self">Self</span>::Ping(<span class="kw">_</span>) | <span class="self">Self</span>::Pong(<span class="kw">_</span>) =&gt; <span class="number">8</span>,
 <a href=#316 id=316 data-nosnippet>316</a>            <span class="self">Self</span>::Health { problem } =&gt; problem.len(),
 <a href=#317 id=317 data-nosnippet>317</a>            <span class="self">Self</span>::Restarting { .. } =&gt; {
@@ -336,26 +336,26 @@
 <a href=#336 id=336 data-nosnippet>336</a>
 <a href=#337 id=337 data-nosnippet>337</a>        <span class="kw">let </span>res = <span class="kw">match </span>frame_type {
 <a href=#338 id=338 data-nosnippet>338</a>            FrameType::RelayToClientDatagram | FrameType::RelayToClientDatagramBatch =&gt; {
-<a href=#339 id=339 data-nosnippet>339</a>                <span class="macro">snafu::ensure!</span>(content.len() &gt;= NodeId::LENGTH, InvalidFrameSnafu);
+<a href=#339 id=339 data-nosnippet>339</a>                <span class="macro">snafu::ensure!</span>(content.len() &gt;= EndpointId::LENGTH, InvalidFrameSnafu);
 <a href=#340 id=340 data-nosnippet>340</a>
-<a href=#341 id=341 data-nosnippet>341</a>                <span class="kw">let </span>remote_node_id = cache
-<a href=#342 id=342 data-nosnippet>342</a>                    .key_from_slice(<span class="kw-2">&amp;</span>content[..NodeId::LENGTH])
+<a href=#341 id=341 data-nosnippet>341</a>                <span class="kw">let </span>remote_endpoint_id = cache
+<a href=#342 id=342 data-nosnippet>342</a>                    .key_from_slice(<span class="kw-2">&amp;</span>content[..EndpointId::LENGTH])
 <a href=#343 id=343 data-nosnippet>343</a>                    .context(InvalidPublicKeySnafu)<span class="question-mark">?</span>;
 <a href=#344 id=344 data-nosnippet>344</a>                <span class="kw">let </span>datagrams = Datagrams::from_bytes(
-<a href=#345 id=345 data-nosnippet>345</a>                    content.slice(NodeId::LENGTH..),
+<a href=#345 id=345 data-nosnippet>345</a>                    content.slice(EndpointId::LENGTH..),
 <a href=#346 id=346 data-nosnippet>346</a>                    frame_type == FrameType::RelayToClientDatagramBatch,
 <a href=#347 id=347 data-nosnippet>347</a>                )<span class="question-mark">?</span>;
 <a href=#348 id=348 data-nosnippet>348</a>                <span class="self">Self</span>::Datagrams {
-<a href=#349 id=349 data-nosnippet>349</a>                    remote_node_id,
+<a href=#349 id=349 data-nosnippet>349</a>                    remote_endpoint_id,
 <a href=#350 id=350 data-nosnippet>350</a>                    datagrams,
 <a href=#351 id=351 data-nosnippet>351</a>                }
 <a href=#352 id=352 data-nosnippet>352</a>            }
-<a href=#353 id=353 data-nosnippet>353</a>            FrameType::NodeGone =&gt; {
-<a href=#354 id=354 data-nosnippet>354</a>                <span class="macro">snafu::ensure!</span>(content.len() == NodeId::LENGTH, InvalidFrameSnafu);
-<a href=#355 id=355 data-nosnippet>355</a>                <span class="kw">let </span>node_id = cache
+<a href=#353 id=353 data-nosnippet>353</a>            FrameType::EndpointGone =&gt; {
+<a href=#354 id=354 data-nosnippet>354</a>                <span class="macro">snafu::ensure!</span>(content.len() == EndpointId::LENGTH, InvalidFrameSnafu);
+<a href=#355 id=355 data-nosnippet>355</a>                <span class="kw">let </span>endpoint_id = cache
 <a href=#356 id=356 data-nosnippet>356</a>                    .key_from_slice(content.as_ref())
 <a href=#357 id=357 data-nosnippet>357</a>                    .context(InvalidPublicKeySnafu)<span class="question-mark">?</span>;
-<a href=#358 id=358 data-nosnippet>358</a>                <span class="self">Self</span>::NodeGone(node_id)
+<a href=#358 id=358 data-nosnippet>358</a>                <span class="self">Self</span>::EndpointGone(endpoint_id)
 <a href=#359 id=359 data-nosnippet>359</a>            }
 <a href=#360 id=360 data-nosnippet>360</a>            FrameType::Ping =&gt; {
 <a href=#361 id=361 data-nosnippet>361</a>                <span class="macro">snafu::ensure!</span>(content.len() == <span class="number">8</span>, InvalidFrameSnafu);
@@ -428,10 +428,10 @@
 <a href=#428 id=428 data-nosnippet>428</a>        dst = <span class="self">self</span>.typ().write_to(dst);
 <a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#430 id=430 data-nosnippet>430</a>            <span class="self">Self</span>::Datagrams {
-<a href=#431 id=431 data-nosnippet>431</a>                dst_node_id,
+<a href=#431 id=431 data-nosnippet>431</a>                dst_endpoint_id,
 <a href=#432 id=432 data-nosnippet>432</a>                datagrams,
 <a href=#433 id=433 data-nosnippet>433</a>            } =&gt; {
-<a href=#434 id=434 data-nosnippet>434</a>                dst.put(dst_node_id.as_ref());
+<a href=#434 id=434 data-nosnippet>434</a>                dst.put(dst_endpoint_id.as_ref());
 <a href=#435 id=435 data-nosnippet>435</a>                dst = datagrams.write_to(dst);
 <a href=#436 id=436 data-nosnippet>436</a>            }
 <a href=#437 id=437 data-nosnippet>437</a>            <span class="self">Self</span>::Ping(data) =&gt; {
@@ -448,7 +448,7 @@
 <a href=#448 id=448 data-nosnippet>448</a>        <span class="kw">let </span>payload_len = <span class="kw">match </span><span class="self">self </span>{
 <a href=#449 id=449 data-nosnippet>449</a>            <span class="self">Self</span>::Ping(<span class="kw">_</span>) | <span class="self">Self</span>::Pong(<span class="kw">_</span>) =&gt; <span class="number">8</span>,
 <a href=#450 id=450 data-nosnippet>450</a>            <span class="self">Self</span>::Datagrams { datagrams, .. } =&gt; {
-<a href=#451 id=451 data-nosnippet>451</a>                <span class="number">32 </span><span class="comment">// node id
+<a href=#451 id=451 data-nosnippet>451</a>                <span class="number">32 </span><span class="comment">// endpoint id
 <a href=#452 id=452 data-nosnippet>452</a>                </span>+ datagrams.encoded_len()
 <a href=#453 id=453 data-nosnippet>453</a>            }
 <a href=#454 id=454 data-nosnippet>454</a>        };
@@ -470,15 +470,15 @@
 <a href=#470 id=470 data-nosnippet>470</a>
 <a href=#471 id=471 data-nosnippet>471</a>        <span class="kw">let </span>res = <span class="kw">match </span>frame_type {
 <a href=#472 id=472 data-nosnippet>472</a>            FrameType::ClientToRelayDatagram | FrameType::ClientToRelayDatagramBatch =&gt; {
-<a href=#473 id=473 data-nosnippet>473</a>                <span class="kw">let </span>dst_node_id = cache
-<a href=#474 id=474 data-nosnippet>474</a>                    .key_from_slice(<span class="kw-2">&amp;</span>content[..NodeId::LENGTH])
+<a href=#473 id=473 data-nosnippet>473</a>                <span class="kw">let </span>dst_endpoint_id = cache
+<a href=#474 id=474 data-nosnippet>474</a>                    .key_from_slice(<span class="kw-2">&amp;</span>content[..EndpointId::LENGTH])
 <a href=#475 id=475 data-nosnippet>475</a>                    .context(InvalidPublicKeySnafu)<span class="question-mark">?</span>;
 <a href=#476 id=476 data-nosnippet>476</a>                <span class="kw">let </span>datagrams = Datagrams::from_bytes(
-<a href=#477 id=477 data-nosnippet>477</a>                    content.slice(NodeId::LENGTH..),
+<a href=#477 id=477 data-nosnippet>477</a>                    content.slice(EndpointId::LENGTH..),
 <a href=#478 id=478 data-nosnippet>478</a>                    frame_type == FrameType::ClientToRelayDatagramBatch,
 <a href=#479 id=479 data-nosnippet>479</a>                )<span class="question-mark">?</span>;
 <a href=#480 id=480 data-nosnippet>480</a>                <span class="self">Self</span>::Datagrams {
-<a href=#481 id=481 data-nosnippet>481</a>                    dst_node_id,
+<a href=#481 id=481 data-nosnippet>481</a>                    dst_endpoint_id,
 <a href=#482 id=482 data-nosnippet>482</a>                    datagrams,
 <a href=#483 id=483 data-nosnippet>483</a>                }
 <a href=#484 id=484 data-nosnippet>484</a>            }
@@ -542,7 +542,7 @@
 <a href=#542 id=542 data-nosnippet>542</a>                20 69 73 20 64 6f 67 2e"</span>,
 <a href=#543 id=543 data-nosnippet>543</a>            ),
 <a href=#544 id=544 data-nosnippet>544</a>            (
-<a href=#545 id=545 data-nosnippet>545</a>                RelayToClientMsg::NodeGone(client_key.public()).write_to(Vec::new()),
+<a href=#545 id=545 data-nosnippet>545</a>                RelayToClientMsg::EndpointGone(client_key.public()).write_to(Vec::new()),
 <a href=#546 id=546 data-nosnippet>546</a>                <span class="string">"08 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
 <a href=#547 id=547 data-nosnippet>547</a>                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
 <a href=#548 id=548 data-nosnippet>548</a>                61"</span>,
@@ -557,7 +557,7 @@
 <a href=#557 id=557 data-nosnippet>557</a>            ),
 <a href=#558 id=558 data-nosnippet>558</a>            (
 <a href=#559 id=559 data-nosnippet>559</a>                RelayToClientMsg::Datagrams {
-<a href=#560 id=560 data-nosnippet>560</a>                    remote_node_id: client_key.public(),
+<a href=#560 id=560 data-nosnippet>560</a>                    remote_endpoint_id: client_key.public(),
 <a href=#561 id=561 data-nosnippet>561</a>                    datagrams: Datagrams {
 <a href=#562 id=562 data-nosnippet>562</a>                        ecn: <span class="prelude-val">Some</span>(quinn::EcnCodepoint::Ce),
 <a href=#563 id=563 data-nosnippet>563</a>                        segment_size: NonZeroU16::new(<span class="number">6</span>),
@@ -580,7 +580,7 @@
 <a href=#580 id=580 data-nosnippet>580</a>            ),
 <a href=#581 id=581 data-nosnippet>581</a>            (
 <a href=#582 id=582 data-nosnippet>582</a>                RelayToClientMsg::Datagrams {
-<a href=#583 id=583 data-nosnippet>583</a>                    remote_node_id: client_key.public(),
+<a href=#583 id=583 data-nosnippet>583</a>                    remote_endpoint_id: client_key.public(),
 <a href=#584 id=584 data-nosnippet>584</a>                    datagrams: Datagrams {
 <a href=#585 id=585 data-nosnippet>585</a>                        ecn: <span class="prelude-val">Some</span>(quinn::EcnCodepoint::Ce),
 <a href=#586 id=586 data-nosnippet>586</a>                        segment_size: <span class="prelude-val">None</span>,
@@ -627,7 +627,7 @@
 <a href=#627 id=627 data-nosnippet>627</a>            ),
 <a href=#628 id=628 data-nosnippet>628</a>            (
 <a href=#629 id=629 data-nosnippet>629</a>                ClientToRelayMsg::Datagrams {
-<a href=#630 id=630 data-nosnippet>630</a>                    dst_node_id: client_key.public(),
+<a href=#630 id=630 data-nosnippet>630</a>                    dst_endpoint_id: client_key.public(),
 <a href=#631 id=631 data-nosnippet>631</a>                    datagrams: Datagrams {
 <a href=#632 id=632 data-nosnippet>632</a>                        ecn: <span class="prelude-val">Some</span>(quinn::EcnCodepoint::Ce),
 <a href=#633 id=633 data-nosnippet>633</a>                        segment_size: NonZeroU16::new(<span class="number">6</span>),
@@ -650,7 +650,7 @@
 <a href=#650 id=650 data-nosnippet>650</a>            ),
 <a href=#651 id=651 data-nosnippet>651</a>            (
 <a href=#652 id=652 data-nosnippet>652</a>                ClientToRelayMsg::Datagrams {
-<a href=#653 id=653 data-nosnippet>653</a>                    dst_node_id: client_key.public(),
+<a href=#653 id=653 data-nosnippet>653</a>                    dst_endpoint_id: client_key.public(),
 <a href=#654 id=654 data-nosnippet>654</a>                    datagrams: Datagrams {
 <a href=#655 id=655 data-nosnippet>655</a>                        ecn: <span class="prelude-val">Some</span>(quinn::EcnCodepoint::Ce),
 <a href=#656 id=656 data-nosnippet>656</a>                        segment_size: <span class="prelude-val">None</span>,
@@ -686,7 +686,7 @@
 <a href=#686 id=686 data-nosnippet>686</a>        prop::array::uniform32(any::&lt;u8&gt;()).prop_map(SecretKey::from)
 <a href=#687 id=687 data-nosnippet>687</a>    }
 <a href=#688 id=688 data-nosnippet>688</a>
-<a href=#689 id=689 data-nosnippet>689</a>    <span class="kw">fn </span>key() -&gt; <span class="kw">impl </span>Strategy&lt;Value = NodeId&gt; {
+<a href=#689 id=689 data-nosnippet>689</a>    <span class="kw">fn </span>key() -&gt; <span class="kw">impl </span>Strategy&lt;Value = EndpointId&gt; {
 <a href=#690 id=690 data-nosnippet>690</a>        secret_key().prop_map(|key| key.public())
 <a href=#691 id=691 data-nosnippet>691</a>    }
 <a href=#692 id=692 data-nosnippet>692</a>
@@ -701,7 +701,7 @@
 <a href=#701 id=701 data-nosnippet>701</a>
 <a href=#702 id=702 data-nosnippet>702</a>    <span class="kw">fn </span>datagrams() -&gt; <span class="kw">impl </span>Strategy&lt;Value = Datagrams&gt; {
 <a href=#703 id=703 data-nosnippet>703</a>        <span class="comment">// The max payload size (conservatively, since with segment_size = 0 we'd have slightly more space)
-<a href=#704 id=704 data-nosnippet>704</a>        </span><span class="kw">const </span>MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - NodeId::LENGTH - <span class="number">1 </span><span class="comment">/* ECN bytes */ </span>- <span class="number">2 </span><span class="comment">/* segment size */</span>;
+<a href=#704 id=704 data-nosnippet>704</a>        </span><span class="kw">const </span>MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - EndpointId::LENGTH - <span class="number">1 </span><span class="comment">/* ECN bytes */ </span>- <span class="number">2 </span><span class="comment">/* segment size */</span>;
 <a href=#705 id=705 data-nosnippet>705</a>        (
 <a href=#706 id=706 data-nosnippet>706</a>            ecn(),
 <a href=#707 id=707 data-nosnippet>707</a>            prop::option::of(MAX_PAYLOAD_SIZE / <span class="number">20</span>..MAX_PAYLOAD_SIZE),
@@ -718,13 +718,13 @@
 <a href=#718 id=718 data-nosnippet>718</a>
 <a href=#719 id=719 data-nosnippet>719</a>    <span class="doccomment">/// Generates a random valid frame
 <a href=#720 id=720 data-nosnippet>720</a>    </span><span class="kw">fn </span>server_client_frame() -&gt; <span class="kw">impl </span>Strategy&lt;Value = RelayToClientMsg&gt; {
-<a href=#721 id=721 data-nosnippet>721</a>        <span class="kw">let </span>recv_packet = (key(), datagrams()).prop_map(|(remote_node_id, datagrams)| {
+<a href=#721 id=721 data-nosnippet>721</a>        <span class="kw">let </span>recv_packet = (key(), datagrams()).prop_map(|(remote_endpoint_id, datagrams)| {
 <a href=#722 id=722 data-nosnippet>722</a>            RelayToClientMsg::Datagrams {
-<a href=#723 id=723 data-nosnippet>723</a>                remote_node_id,
+<a href=#723 id=723 data-nosnippet>723</a>                remote_endpoint_id,
 <a href=#724 id=724 data-nosnippet>724</a>                datagrams,
 <a href=#725 id=725 data-nosnippet>725</a>            }
 <a href=#726 id=726 data-nosnippet>726</a>        });
-<a href=#727 id=727 data-nosnippet>727</a>        <span class="kw">let </span>node_gone = key().prop_map(RelayToClientMsg::NodeGone);
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="kw">let </span>endpoint_gone = key().prop_map(RelayToClientMsg::EndpointGone);
 <a href=#728 id=728 data-nosnippet>728</a>        <span class="kw">let </span>ping = prop::array::uniform8(any::&lt;u8&gt;()).prop_map(RelayToClientMsg::Ping);
 <a href=#729 id=729 data-nosnippet>729</a>        <span class="kw">let </span>pong = prop::array::uniform8(any::&lt;u8&gt;()).prop_map(RelayToClientMsg::Pong);
 <a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">let </span>health = <span class="string">".{0,65536}"
@@ -738,54 +738,55 @@
 <a href=#738 id=738 data-nosnippet>738</a>                try_for: Duration::from_millis(try_for.into()),
 <a href=#739 id=739 data-nosnippet>739</a>            }
 <a href=#740 id=740 data-nosnippet>740</a>        });
-<a href=#741 id=741 data-nosnippet>741</a>        <span class="macro">prop_oneof!</span>[recv_packet, node_gone, ping, pong, health, restarting]
+<a href=#741 id=741 data-nosnippet>741</a>        <span class="macro">prop_oneof!</span>[recv_packet, endpoint_gone, ping, pong, health, restarting]
 <a href=#742 id=742 data-nosnippet>742</a>    }
 <a href=#743 id=743 data-nosnippet>743</a>
 <a href=#744 id=744 data-nosnippet>744</a>    <span class="kw">fn </span>client_server_frame() -&gt; <span class="kw">impl </span>Strategy&lt;Value = ClientToRelayMsg&gt; {
-<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">let </span>send_packet =
-<a href=#746 id=746 data-nosnippet>746</a>            (key(), datagrams()).prop_map(|(dst_node_id, datagrams)| ClientToRelayMsg::Datagrams {
-<a href=#747 id=747 data-nosnippet>747</a>                dst_node_id,
+<a href=#745 id=745 data-nosnippet>745</a>        <span class="kw">let </span>send_packet = (key(), datagrams()).prop_map(|(dst_endpoint_id, datagrams)| {
+<a href=#746 id=746 data-nosnippet>746</a>            ClientToRelayMsg::Datagrams {
+<a href=#747 id=747 data-nosnippet>747</a>                dst_endpoint_id,
 <a href=#748 id=748 data-nosnippet>748</a>                datagrams,
-<a href=#749 id=749 data-nosnippet>749</a>            });
-<a href=#750 id=750 data-nosnippet>750</a>        <span class="kw">let </span>ping = prop::array::uniform8(any::&lt;u8&gt;()).prop_map(ClientToRelayMsg::Ping);
-<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">let </span>pong = prop::array::uniform8(any::&lt;u8&gt;()).prop_map(ClientToRelayMsg::Pong);
-<a href=#752 id=752 data-nosnippet>752</a>        <span class="macro">prop_oneof!</span>[send_packet, ping, pong]
-<a href=#753 id=753 data-nosnippet>753</a>    }
-<a href=#754 id=754 data-nosnippet>754</a>
-<a href=#755 id=755 data-nosnippet>755</a>    <span class="macro">proptest!</span> {
-<a href=#756 id=756 data-nosnippet>756</a>        <span class="attr">#[test]
-<a href=#757 id=757 data-nosnippet>757</a>        </span><span class="kw">fn </span>server_client_frame_roundtrip(frame <span class="kw">in </span>server_client_frame()) {
-<a href=#758 id=758 data-nosnippet>758</a>            <span class="kw">let </span>encoded = frame.to_bytes().freeze();
-<a href=#759 id=759 data-nosnippet>759</a>            <span class="kw">let </span>decoded = RelayToClientMsg::from_bytes(encoded, <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
-<a href=#760 id=760 data-nosnippet>760</a>            <span class="macro">prop_assert_eq!</span>(frame, decoded);
-<a href=#761 id=761 data-nosnippet>761</a>        }
-<a href=#762 id=762 data-nosnippet>762</a>
-<a href=#763 id=763 data-nosnippet>763</a>        <span class="attr">#[test]
-<a href=#764 id=764 data-nosnippet>764</a>        </span><span class="kw">fn </span>client_server_frame_roundtrip(frame <span class="kw">in </span>client_server_frame()) {
-<a href=#765 id=765 data-nosnippet>765</a>            <span class="kw">let </span>encoded = frame.to_bytes().freeze();
-<a href=#766 id=766 data-nosnippet>766</a>            <span class="kw">let </span>decoded = ClientToRelayMsg::from_bytes(encoded, <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
-<a href=#767 id=767 data-nosnippet>767</a>            <span class="macro">prop_assert_eq!</span>(frame, decoded);
-<a href=#768 id=768 data-nosnippet>768</a>        }
-<a href=#769 id=769 data-nosnippet>769</a>
-<a href=#770 id=770 data-nosnippet>770</a>        <span class="attr">#[test]
-<a href=#771 id=771 data-nosnippet>771</a>        </span><span class="kw">fn </span>server_client_frame_encoded_len(frame <span class="kw">in </span>server_client_frame()) {
-<a href=#772 id=772 data-nosnippet>772</a>            <span class="kw">let </span>claimed_encoded_len = frame.encoded_len();
-<a href=#773 id=773 data-nosnippet>773</a>            <span class="kw">let </span>actual_encoded_len = frame.to_bytes().len();
-<a href=#774 id=774 data-nosnippet>774</a>            <span class="macro">prop_assert_eq!</span>(claimed_encoded_len, actual_encoded_len);
-<a href=#775 id=775 data-nosnippet>775</a>        }
-<a href=#776 id=776 data-nosnippet>776</a>
-<a href=#777 id=777 data-nosnippet>777</a>        <span class="attr">#[test]
-<a href=#778 id=778 data-nosnippet>778</a>        </span><span class="kw">fn </span>client_server_frame_encoded_len(frame <span class="kw">in </span>client_server_frame()) {
-<a href=#779 id=779 data-nosnippet>779</a>            <span class="kw">let </span>claimed_encoded_len = frame.encoded_len();
-<a href=#780 id=780 data-nosnippet>780</a>            <span class="kw">let </span>actual_encoded_len = frame.to_bytes().len();
-<a href=#781 id=781 data-nosnippet>781</a>            <span class="macro">prop_assert_eq!</span>(claimed_encoded_len, actual_encoded_len);
-<a href=#782 id=782 data-nosnippet>782</a>        }
-<a href=#783 id=783 data-nosnippet>783</a>
-<a href=#784 id=784 data-nosnippet>784</a>        <span class="attr">#[test]
-<a href=#785 id=785 data-nosnippet>785</a>        </span><span class="kw">fn </span>datagrams_encoded_len(datagrams <span class="kw">in </span>datagrams()) {
-<a href=#786 id=786 data-nosnippet>786</a>            <span class="kw">let </span>claimed_encoded_len = datagrams.encoded_len();
-<a href=#787 id=787 data-nosnippet>787</a>            <span class="kw">let </span>actual_encoded_len = datagrams.write_to(Vec::new()).len();
-<a href=#788 id=788 data-nosnippet>788</a>            <span class="macro">prop_assert_eq!</span>(claimed_encoded_len, actual_encoded_len);
-<a href=#789 id=789 data-nosnippet>789</a>        }
-<a href=#790 id=790 data-nosnippet>790</a>    }
-<a href=#791 id=791 data-nosnippet>791</a>}</code></pre></div></section></main></body></html>
+<a href=#749 id=749 data-nosnippet>749</a>            }
+<a href=#750 id=750 data-nosnippet>750</a>        });
+<a href=#751 id=751 data-nosnippet>751</a>        <span class="kw">let </span>ping = prop::array::uniform8(any::&lt;u8&gt;()).prop_map(ClientToRelayMsg::Ping);
+<a href=#752 id=752 data-nosnippet>752</a>        <span class="kw">let </span>pong = prop::array::uniform8(any::&lt;u8&gt;()).prop_map(ClientToRelayMsg::Pong);
+<a href=#753 id=753 data-nosnippet>753</a>        <span class="macro">prop_oneof!</span>[send_packet, ping, pong]
+<a href=#754 id=754 data-nosnippet>754</a>    }
+<a href=#755 id=755 data-nosnippet>755</a>
+<a href=#756 id=756 data-nosnippet>756</a>    <span class="macro">proptest!</span> {
+<a href=#757 id=757 data-nosnippet>757</a>        <span class="attr">#[test]
+<a href=#758 id=758 data-nosnippet>758</a>        </span><span class="kw">fn </span>server_client_frame_roundtrip(frame <span class="kw">in </span>server_client_frame()) {
+<a href=#759 id=759 data-nosnippet>759</a>            <span class="kw">let </span>encoded = frame.to_bytes().freeze();
+<a href=#760 id=760 data-nosnippet>760</a>            <span class="kw">let </span>decoded = RelayToClientMsg::from_bytes(encoded, <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
+<a href=#761 id=761 data-nosnippet>761</a>            <span class="macro">prop_assert_eq!</span>(frame, decoded);
+<a href=#762 id=762 data-nosnippet>762</a>        }
+<a href=#763 id=763 data-nosnippet>763</a>
+<a href=#764 id=764 data-nosnippet>764</a>        <span class="attr">#[test]
+<a href=#765 id=765 data-nosnippet>765</a>        </span><span class="kw">fn </span>client_server_frame_roundtrip(frame <span class="kw">in </span>client_server_frame()) {
+<a href=#766 id=766 data-nosnippet>766</a>            <span class="kw">let </span>encoded = frame.to_bytes().freeze();
+<a href=#767 id=767 data-nosnippet>767</a>            <span class="kw">let </span>decoded = ClientToRelayMsg::from_bytes(encoded, <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
+<a href=#768 id=768 data-nosnippet>768</a>            <span class="macro">prop_assert_eq!</span>(frame, decoded);
+<a href=#769 id=769 data-nosnippet>769</a>        }
+<a href=#770 id=770 data-nosnippet>770</a>
+<a href=#771 id=771 data-nosnippet>771</a>        <span class="attr">#[test]
+<a href=#772 id=772 data-nosnippet>772</a>        </span><span class="kw">fn </span>server_client_frame_encoded_len(frame <span class="kw">in </span>server_client_frame()) {
+<a href=#773 id=773 data-nosnippet>773</a>            <span class="kw">let </span>claimed_encoded_len = frame.encoded_len();
+<a href=#774 id=774 data-nosnippet>774</a>            <span class="kw">let </span>actual_encoded_len = frame.to_bytes().len();
+<a href=#775 id=775 data-nosnippet>775</a>            <span class="macro">prop_assert_eq!</span>(claimed_encoded_len, actual_encoded_len);
+<a href=#776 id=776 data-nosnippet>776</a>        }
+<a href=#777 id=777 data-nosnippet>777</a>
+<a href=#778 id=778 data-nosnippet>778</a>        <span class="attr">#[test]
+<a href=#779 id=779 data-nosnippet>779</a>        </span><span class="kw">fn </span>client_server_frame_encoded_len(frame <span class="kw">in </span>client_server_frame()) {
+<a href=#780 id=780 data-nosnippet>780</a>            <span class="kw">let </span>claimed_encoded_len = frame.encoded_len();
+<a href=#781 id=781 data-nosnippet>781</a>            <span class="kw">let </span>actual_encoded_len = frame.to_bytes().len();
+<a href=#782 id=782 data-nosnippet>782</a>            <span class="macro">prop_assert_eq!</span>(claimed_encoded_len, actual_encoded_len);
+<a href=#783 id=783 data-nosnippet>783</a>        }
+<a href=#784 id=784 data-nosnippet>784</a>
+<a href=#785 id=785 data-nosnippet>785</a>        <span class="attr">#[test]
+<a href=#786 id=786 data-nosnippet>786</a>        </span><span class="kw">fn </span>datagrams_encoded_len(datagrams <span class="kw">in </span>datagrams()) {
+<a href=#787 id=787 data-nosnippet>787</a>            <span class="kw">let </span>claimed_encoded_len = datagrams.encoded_len();
+<a href=#788 id=788 data-nosnippet>788</a>            <span class="kw">let </span>actual_encoded_len = datagrams.write_to(Vec::new()).len();
+<a href=#789 id=789 data-nosnippet>789</a>            <span class="macro">prop_assert_eq!</span>(claimed_encoded_len, actual_encoded_len);
+<a href=#790 id=790 data-nosnippet>790</a>        }
+<a href=#791 id=791 data-nosnippet>791</a>    }
+<a href=#792 id=792 data-nosnippet>792</a>}</code></pre></div></section></main></body></html>

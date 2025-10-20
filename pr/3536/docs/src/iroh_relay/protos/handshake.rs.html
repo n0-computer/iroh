@@ -1,8 +1,8 @@
 <!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-relay/src/protos/handshake.rs`."><title>handshake.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh_relay" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_relay/protos/</div>handshake.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Implements the handshake protocol that authenticates and authorizes clients connecting to the relays.
 <a href=#2 id=2 data-nosnippet>2</a>//!
 <a href=#3 id=3 data-nosnippet>3</a>//! The purpose of the handshake is to
-<a href=#4 id=4 data-nosnippet>4</a>//! 1. Inform the relay of the client's NodeId
-<a href=#5 id=5 data-nosnippet>5</a>//! 2. Check that the connecting client owns the secret key for its NodeId ("is authentic"/"authentication")
+<a href=#4 id=4 data-nosnippet>4</a>//! 1. Inform the relay of the client's EndpointId
+<a href=#5 id=5 data-nosnippet>5</a>//! 2. Check that the connecting client owns the secret key for its EndpointId ("is authentic"/"authentication")
 <a href=#6 id=6 data-nosnippet>6</a>//! 3. Possibly check that the client has access to this relay, if the relay requires authorization.
 <a href=#7 id=7 data-nosnippet>7</a>//!
 <a href=#8 id=8 data-nosnippet>8</a>//! Additional complexity comes from the fact that there's two ways that clients can authenticate with
@@ -12,7 +12,7 @@
 <a href=#12 id=12 data-nosnippet>12</a>//!
 <a href=#13 id=13 data-nosnippet>13</a>//! 1. Once a websocket connection is opened, a client receives a challenge (the `ServerChallenge` frame)
 <a href=#14 id=14 data-nosnippet>14</a>//! 2. The client sends back what is essentially a signature of that challenge with their secret key
-<a href=#15 id=15 data-nosnippet>15</a>//!    that matches the NodeId they have, as well as the NodeId (the `ClientAuth` frame)
+<a href=#15 id=15 data-nosnippet>15</a>//!    that matches the EndpointId they have, as well as the EndpointId (the `ClientAuth` frame)
 <a href=#16 id=16 data-nosnippet>16</a>//!
 <a href=#17 id=17 data-nosnippet>17</a>//! The second way is very similar to the [Concealed HTTP Auth RFC], and involves send a header that
 <a href=#18 id=18 data-nosnippet>18</a>//! contains a signature of some shared keying material extracted from TLS ([RFC 5705]).
@@ -68,7 +68,7 @@
 <a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) key_material_suffix: [u8; <span class="number">16</span>],
 <a href=#69 id=69 data-nosnippet>69</a>}
 <a href=#70 id=70 data-nosnippet>70</a>
-<a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// A challenge for the client to sign with their secret key for NodeId authentication.
+<a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// A challenge for the client to sign with their secret key for EndpointId authentication.
 <a href=#72 id=72 data-nosnippet>72</a></span><span class="attr">#[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 <a href=#73 id=73 data-nosnippet>73</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ServerChallenge {
 <a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// The challenge to sign.
@@ -82,7 +82,7 @@
 <a href=#82 id=82 data-nosnippet>82</a>/// Used when authentication via [`KeyMaterialClientAuth`] didn't work.
 <a href=#83 id=83 data-nosnippet>83</a></span><span class="attr">#[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 <a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ClientAuth {
-<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// The client's public key, a.k.a. the `NodeId`
+<a href=#85 id=85 data-nosnippet>85</a>    <span class="doccomment">/// The client's public key, a.k.a. the `EndpointId`
 <a href=#86 id=86 data-nosnippet>86</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) public_key: PublicKey,
 <a href=#87 id=87 data-nosnippet>87</a>    <span class="doccomment">/// A signature of (a hash of) the [`ServerChallenge`].
 <a href=#88 id=88 data-nosnippet>88</a>    ///
