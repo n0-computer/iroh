@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Err, Error, add_meta};
 
 /// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
 #[add_meta]
