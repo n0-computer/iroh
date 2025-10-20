@@ -1,4 +1,5 @@
 use std::{
+    net::SocketAddr,
     str::FromStr,
     time::{Duration, Instant},
 };
@@ -8,7 +9,7 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    Endpoint, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
@@ -146,6 +147,10 @@ enum Commands {
     /// Fetch data.
     Fetch {
         remote_id: EndpointId,
+        #[clap(long)]
+        remote_relay_url: Option<RelayUrl>,
+        #[clap(long)]
+        remote_direct_address: Vec<SocketAddr>,
         #[clap(flatten)]
         endpoint_args: EndpointArgs,
     },
@@ -167,10 +172,14 @@ async fn main() -> Result<()> {
         }
         Commands::Fetch {
             remote_id,
+            remote_relay_url,
+            remote_direct_address,
             endpoint_args,
         } => {
             let endpoint = endpoint_args.bind_endpoint().await?;
-            fetch(endpoint, remote_id).await?
+            let remote_addr =
+                EndpointAddr::from_parts(remote_id, remote_relay_url, remote_direct_address);
+            fetch(endpoint, remote_addr).await?
         }
     }
 
@@ -376,14 +385,15 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     Ok(())
 }
 
-async fn fetch(endpoint: Endpoint, remote_id: EndpointId) -> Result<()> {
+async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let me = endpoint.id().fmt_short();
     let start = Instant::now();
+    let remote_id = remote_addr.endpoint_id;
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
-    let conn = endpoint.connect(remote_id, TRANSFER_ALPN).await?;
-    println!("Connected to {remote_id}");
+    let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
+    println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
     let _guard = watch_conn_type(&endpoint, remote_id);
 
