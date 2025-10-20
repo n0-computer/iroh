@@ -650,7 +650,7 @@
 <a href=#650 id=650 data-nosnippet>650</a>    };
 <a href=#651 id=651 data-nosnippet>651</a>
 <a href=#652 id=652 data-nosnippet>652</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey};
-<a href=#653 id=653 data-nosnippet>653</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
+<a href=#653 id=653 data-nosnippet>653</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#654 id=654 data-nosnippet>654</a>    <span class="kw">use </span>quinn::{IdleTimeout, TransportConfig};
 <a href=#655 id=655 data-nosnippet>655</a>    <span class="kw">use </span>rand::{CryptoRng, Rng, SeedableRng};
 <a href=#656 id=656 data-nosnippet>656</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
@@ -826,7 +826,7 @@
 <a href=#826 id=826 data-nosnippet>826</a>        <span class="kw">let </span>_conn = ep2
 <a href=#827 id=827 data-nosnippet>827</a>            .connect(ep1_addr, TEST_ALPN)
 <a href=#828 id=828 data-nosnippet>828</a>            .<span class="kw">await
-<a href=#829 id=829 data-nosnippet>829</a>            </span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#829 id=829 data-nosnippet>829</a>            </span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
 <a href=#830 id=830 data-nosnippet>830</a>        <span class="prelude-val">Ok</span>(())
 <a href=#831 id=831 data-nosnippet>831</a>    }
 <a href=#832 id=832 data-nosnippet>832</a>
@@ -969,7 +969,7 @@
 <a href=#969 id=969 data-nosnippet>969</a></span><span class="kw">mod </span>test_dns_pkarr {
 <a href=#970 id=970 data-nosnippet>970</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey};
 <a href=#971 id=971 data-nosnippet>971</a>    <span class="kw">use </span>iroh_relay::{RelayMap, endpoint_info::UserData};
-<a href=#972 id=972 data-nosnippet>972</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
+<a href=#972 id=972 data-nosnippet>972</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#973 id=973 data-nosnippet>973</a>    <span class="kw">use </span>n0_future::time::Duration;
 <a href=#974 id=974 data-nosnippet>974</a>    <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
 <a href=#975 id=975 data-nosnippet>975</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;

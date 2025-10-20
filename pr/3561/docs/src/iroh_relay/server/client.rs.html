@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>std::{collections::HashSet, sync::Arc, time::Duration};
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>iroh_base::EndpointId;
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>n0_error::{<span class="prelude-val">Err</span>, Error, StackResultExt, add_meta, e};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>n0_error::{<span class="prelude-val">Err</span>, Error, add_meta, e};
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>n0_future::{SinkExt, StreamExt};
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>rand::Rng;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>time::{Date, OffsetDateTime};
@@ -500,7 +500,7 @@
 <a href=#500 id=500 data-nosnippet>500</a><span class="attr">#[add_meta]
 <a href=#501 id=501 data-nosnippet>501</a>#[derive(Error)]
 <a href=#502 id=502 data-nosnippet>502</a>#[display(<span class="string">"failed to forward {scope:?} packet: {reason:?}"</span>)]
-<a href=#503 id=503 data-nosnippet>503</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ForwardPacketError {
+<a href=#503 id=503 data-nosnippet>503</a></span><span class="kw">pub struct </span>ForwardPacketError {
 <a href=#504 id=504 data-nosnippet>504</a>    scope: PacketScope,
 <a href=#505 id=505 data-nosnippet>505</a>    reason: SendError,
 <a href=#506 id=506 data-nosnippet>506</a>}
@@ -724,8 +724,8 @@
 <a href=#724 id=724 data-nosnippet>724</a>
 <a href=#725 id=725 data-nosnippet>725</a>        <span class="comment">// Send a frame, it should arrive.
 <a href=#726 id=726 data-nosnippet>726</a>        </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
-<a href=#727 id=727 data-nosnippet>727</a>        frame_writer.send(frame.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
-<a href=#728 id=728 data-nosnippet>728</a>        frame_writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
+<a href=#727 id=727 data-nosnippet>727</a>        frame_writer.send(frame.clone()).<span class="kw">await</span>.std_context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+<a href=#728 id=728 data-nosnippet>728</a>        frame_writer.flush().<span class="kw">await</span>.std_context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
 <a href=#729 id=729 data-nosnippet>729</a>        <span class="kw">let </span>recv_frame = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), stream.next())
 <a href=#730 id=730 data-nosnippet>730</a>            .<span class="kw">await
 <a href=#731 id=731 data-nosnippet>731</a>            </span>.expect(<span class="string">"timeout"</span>)
@@ -735,8 +735,8 @@
 <a href=#735 id=735 data-nosnippet>735</a>
 <a href=#736 id=736 data-nosnippet>736</a>        <span class="comment">// Next frame does not arrive.
 <a href=#737 id=737 data-nosnippet>737</a>        </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
-<a href=#738 id=738 data-nosnippet>738</a>        frame_writer.send(frame.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
-<a href=#739 id=739 data-nosnippet>739</a>        frame_writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
+<a href=#738 id=738 data-nosnippet>738</a>        frame_writer.send(frame.clone()).<span class="kw">await</span>.std_context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+<a href=#739 id=739 data-nosnippet>739</a>        frame_writer.flush().<span class="kw">await</span>.std_context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
 <a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), stream.next()).<span class="kw">await</span>;
 <a href=#741 id=741 data-nosnippet>741</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"expecting a timeout"</span>);
 <a href=#742 id=742 data-nosnippet>742</a>        <span class="macro">info!</span>(<span class="string">"-- timeout happened"</span>);

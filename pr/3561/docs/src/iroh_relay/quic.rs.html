@@ -16,7 +16,7 @@
 <a href=#16 id=16 data-nosnippet>16</a>
 <a href=#17 id=17 data-nosnippet>17</a><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 <a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>server {
-<a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">use </span>n0_error::{StdResultExt, e};
+<a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">use </span>n0_error::e;
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">use </span>quinn::{
 <a href=#21 id=21 data-nosnippet>21</a>        ApplicationClose, ConnectionError,
 <a href=#22 id=22 data-nosnippet>22</a>        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
@@ -360,7 +360,7 @@
 <a href=#360 id=360 data-nosnippet>360</a></span><span class="kw">mod </span>tests {
 <a href=#361 id=361 data-nosnippet>361</a>    <span class="kw">use </span>std::net::Ipv4Addr;
 <a href=#362 id=362 data-nosnippet>362</a>
-<a href=#363 id=363 data-nosnippet>363</a>    <span class="kw">use </span>n0_error::{Error, <span class="prelude-ty">Result</span>, StdResultExt};
+<a href=#363 id=363 data-nosnippet>363</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#364 id=364 data-nosnippet>364</a>    <span class="kw">use </span>n0_future::{
 <a href=#365 id=365 data-nosnippet>365</a>        task::AbortOnDropHandle,
 <a href=#366 id=366 data-nosnippet>366</a>        time::{<span class="self">self</span>, Instant},
