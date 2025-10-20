@@ -3,9 +3,8 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
-// TODO: move to own crate
-//#[cfg(feature = "ticket")]
-// b mod ticket;
+#[cfg(feature = "ticket")]
+pub mod ticket;
 
 #[cfg(feature = "key")]
 mod endpoint_addr;

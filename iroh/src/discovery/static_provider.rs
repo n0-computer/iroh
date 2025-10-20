@@ -50,11 +50,11 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 ///     .bind()
 ///     .await?;
 ///
-/// // Sometime later add a RelayUrl for a fake EndpointId.
-/// let endpoint_id = SecretKey::from_bytes(&[0u8; 32]).public(); // Do not use fake secret keys!
+/// // Sometime later add a RelayUrl for our endpoint.
+/// let id = SecretKey::generate(&mut rand::rng()).public();
 /// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
 /// discovery.add_endpoint_info(EndpointAddr {
-///     endpoint_id,
+///     id,
 ///     addrs: [TransportAddr::Relay("https://example.com".parse()?)]
 ///         .into_iter()
 ///         .collect(),

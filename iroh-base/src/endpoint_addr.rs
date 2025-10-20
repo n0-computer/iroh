@@ -48,10 +48,10 @@ pub struct EndpointAddr {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum TransportAddr {
-    /// IP based addresses
-    Ip(SocketAddr),
     /// Relays
     Relay(RelayUrl),
+    /// IP based addresses
+    Ip(SocketAddr),
 }
 
 impl EndpointAddr {
@@ -134,10 +134,10 @@ mod tests {
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
     #[non_exhaustive]
     enum NewAddrType {
-        /// IP based addresses
-        Ip(SocketAddr),
         /// Relays
         Relay(RelayUrl),
+        /// IP based addresses
+        Ip(SocketAddr),
         /// New addr type for testing
         Cool(u16),
     }

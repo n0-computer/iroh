@@ -392,7 +392,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 async fn fetch(endpoint: Endpoint, ticket: &str) -> Result<()> {
     let me = endpoint.id().fmt_short();
     let ticket: EndpointTicket = ticket.parse()?;
-    let remote_endpoint_id = ticket.endpoint_addr().endpoint_id;
+    let remote_endpoint_id = ticket.endpoint_addr().id;
     let start = Instant::now();
 
     // Attempt to connect, over the given ALPN.
