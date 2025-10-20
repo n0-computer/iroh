@@ -26,8 +26,8 @@ use hyper::body::Incoming;
 use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
+use n0_error::{Err, Error, StdResultExt, add_meta, e};
 use n0_future::{StreamExt, future::Boxed};
-use n0_error::{add_meta, Error, e, Err, StdResultExt};
 use tokio::{
     net::TcpListener,
     task::{JoinError, JoinSet},
@@ -270,15 +270,30 @@ pub struct Server {
 #[non_exhaustive]
 pub enum SpawnError {
     #[display("Unable to get local address")]
-    LocalAddr { #[error(std_err)] source: std::io::Error },
+    LocalAddr {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[display("Failed to bind QAD listener")]
-    QuicSpawn { #[error(std_err)] source: QuicSpawnError },
+    QuicSpawn {
+        #[error(std_err)]
+        source: QuicSpawnError,
+    },
     #[display("Failed to parse TLS header")]
-    TlsHeaderParse { #[error(std_err)] source: InvalidHeaderValue },
+    TlsHeaderParse {
+        #[error(std_err)]
+        source: InvalidHeaderValue,
+    },
     #[display("Failed to bind TcpListener")]
-    BindTlsListener { #[error(std_err)] source: std::io::Error },
+    BindTlsListener {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[display("No local address")]
-    NoLocalAddr { #[error(std_err)] source: std::io::Error },
+    NoLocalAddr {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[display("Failed to bind server socket to {addr}")]
     BindTcpListener { addr: SocketAddr },
 }
@@ -290,11 +305,17 @@ pub enum SpawnError {
 #[non_exhaustive]
 pub enum SupervisorError {
     #[display("Error starting metrics server")]
-    Metrics { #[error(std_err)] source: std::io::Error },
+    Metrics {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[display("Acme event stream finished")]
     AcmeEventStreamFinished {},
     #[error(transparent)]
-    JoinError { #[error(std_err)] source: JoinError },
+    JoinError {
+        #[error(std_err)]
+        source: JoinError,
+    },
     #[display("No relay services are enabled")]
     NoRelayServicesEnabled {},
     #[display("Task cancelled")]
@@ -351,7 +372,12 @@ impl Server {
                 debug!("Starting Relay server");
                 let mut headers = HeaderMap::new();
                 for (name, value) in TLS_HEADERS.iter() {
-                    headers.insert(*name, value.parse().map_err(|err| e!(SpawnError::TlsHeaderParse, err))?);
+                    headers.insert(
+                        *name,
+                        value
+                            .parse()
+                            .map_err(|err| e!(SpawnError::TlsHeaderParse, err))?,
+                    );
                 }
                 let relay_bind_addr = match relay_config.tls {
                     Some(ref tls) => tls.https_bind_addr,
@@ -413,7 +439,9 @@ impl Server {
                         let http_listener = TcpListener::bind(&relay_config.http_bind_addr)
                             .await
                             .map_err(|err| e!(SpawnError::BindTlsListener, err))?;
-                        let http_addr = http_listener.local_addr().map_err(|err| e!(SpawnError::NoLocalAddr, err))?;
+                        let http_addr = http_listener
+                            .local_addr()
+                            .map_err(|err| e!(SpawnError::NoLocalAddr, err))?;
                         tasks.spawn(
                             async move {
                                 run_captive_portal_service(http_listener).await;
@@ -741,8 +769,8 @@ mod tests {
 
     use http::StatusCode;
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
-    use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_error::Result;
+    use n0_future::{FutureExt, SinkExt, StreamExt};
     use rand::SeedableRng;
     use tracing::{info, instrument};
     use tracing_test::traced_test;

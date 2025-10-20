@@ -8,8 +8,8 @@ use std::{
 };
 
 use iroh_base::SecretKey;
+use n0_error::{Error, add_meta};
 use n0_future::{Sink, Stream};
-use n0_error::{add_meta, Error};
 use tracing::debug;
 
 use super::KeyCache;
@@ -139,9 +139,15 @@ impl Sink<ClientToRelayMsg> for Conn {
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToRelayMsg) -> Result<(), Self::Error> {
         let size = frame.encoded_len();
-        n0_error::ensure!(size <= MAX_PACKET_SIZE, n0_error::e!(SendError::ExceedsMaxPacketSize { size }));
+        n0_error::ensure!(
+            size <= MAX_PACKET_SIZE,
+            n0_error::e!(SendError::ExceedsMaxPacketSize { size })
+        );
         if let ClientToRelayMsg::Datagrams { datagrams, .. } = &frame {
-            n0_error::ensure!(!datagrams.contents.is_empty(), n0_error::e!(SendError::EmptyPacket));
+            n0_error::ensure!(
+                !datagrams.contents.is_empty(),
+                n0_error::e!(SendError::EmptyPacket)
+            );
         }
 
         Pin::new(&mut self.conn)

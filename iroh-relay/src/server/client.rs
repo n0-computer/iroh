@@ -3,10 +3,9 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::{SinkExt, StreamExt};
-use n0_error::{add_meta, Error, e, Err};
 use rand::Rng;
- 
 use time::{Date, OffsetDateTime};
 use tokio::{
     sync::mpsc::{self, error::TrySendError},
@@ -197,7 +196,10 @@ pub enum WriteFrameError {
     #[error(transparent)]
     Stream { source: RelaySendError },
     #[error(transparent)]
-    Timeout { #[error(std_err)] source: tokio::time::error::Elapsed },
+    Timeout {
+        #[error(std_err)]
+        source: tokio::time::error::Elapsed,
+    },
 }
 
 /// Run error
@@ -295,7 +297,6 @@ impl Actor {
     }
 
     async fn run_inner(&mut self, done: CancellationToken) -> Result<(), RunError> {
-        
         // Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
         let next_interval = || {
             let random_secs = rand::rng().random_range(1..=5);
@@ -368,7 +369,8 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn write_frame(&mut self, frame: RelayToClientMsg) -> Result<(), WriteFrameError> {
-        tokio::time::timeout(self.timeout, self.stream.send(frame)).await?
+        tokio::time::timeout(self.timeout, self.stream.send(frame))
+            .await?
             .map_err(|err| e!(WriteFrameError::Stream { source: err }))?;
         Ok(())
     }
@@ -605,7 +607,10 @@ mod tests {
             src: endpoint_id,
             data: Datagrams::from(&data[..]),
         };
-        send_queue_s.send(packet.clone()).await.std_context("send")?;
+        send_queue_s
+            .send(packet.clone())
+            .await
+            .std_context("send")?;
         let frame = recv_frame(FrameType::RelayToClientDatagram, &mut io_rw)
             .await
             .e()?;

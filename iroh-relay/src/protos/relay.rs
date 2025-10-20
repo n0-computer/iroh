@@ -11,8 +11,8 @@ use std::num::NonZeroU16;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use iroh_base::{EndpointId, KeyParsingError};
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::time::Duration;
-use n0_error::{add_meta, Error, e, Err};
 
 use super::common::{FrameType, FrameTypeError};
 use crate::KeyCache;
@@ -51,7 +51,10 @@ pub enum Error {
     #[display("Frame is too large, has {frame_len} bytes")]
     FrameTooLarge { frame_len: usize },
     #[error(transparent)]
-    SerDe { #[error(std_err)] source: postcard::Error },
+    SerDe {
+        #[error(std_err)]
+        source: postcard::Error,
+    },
     #[error(transparent)]
     FrameTypeError { source: FrameTypeError },
     #[display("Invalid public key")]
@@ -61,7 +64,10 @@ pub enum Error {
     #[display("Invalid frame type: {frame_type:?}")]
     InvalidFrameType { frame_type: FrameType },
     #[display("Invalid protocol message encoding")]
-    InvalidProtocolMessageEncoding { #[error(std_err)] source: std::str::Utf8Error },
+    InvalidProtocolMessageEncoding {
+        #[error(std_err)]
+        source: std::str::Utf8Error,
+    },
     #[display("Too few bytes")]
     TooSmall {},
 }

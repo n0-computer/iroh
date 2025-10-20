@@ -74,12 +74,16 @@ fn load_secret_key(
     filename: impl AsRef<Path>,
 ) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
     let filename = filename.as_ref();
-    let keyfile = std::fs::File::open(filename)
-        .std_context(format!("cannot open secret key file {}", filename.display()))?;
+    let keyfile = std::fs::File::open(filename).std_context(format!(
+        "cannot open secret key file {}",
+        filename.display()
+    ))?;
     let mut reader = std::io::BufReader::new(keyfile);
 
     loop {
-        match rustls_pemfile::read_one(&mut reader).std_context("cannot parse secret key .pem file")? {
+        match rustls_pemfile::read_one(&mut reader)
+            .std_context("cannot parse secret key .pem file")?
+        {
             Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
                 return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
             }

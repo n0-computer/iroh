@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use n0_error::{add_meta, Error, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::{FutureExt, Sink, Stream, ready, time};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::instrument;
@@ -80,7 +80,10 @@ impl RelayedStream {
 #[non_exhaustive]
 pub enum SendError {
     #[error(transparent)]
-    StreamError { #[error(std_err)] source: StreamError },
+    StreamError {
+        #[error(std_err)]
+        source: StreamError,
+    },
     #[display("Packet exceeds max packet size")]
     ExceedsMaxPacketSize { size: usize },
     #[display("Attempted to send empty packet")]
@@ -96,7 +99,10 @@ impl Sink<RelayToClientMsg> for RelayedStream {
 
     fn start_send(mut self: Pin<&mut Self>, item: RelayToClientMsg) -> Result<(), Self::Error> {
         let size = item.encoded_len();
-        n0_error::ensure!(size <= MAX_PACKET_SIZE, e!(SendError::ExceedsMaxPacketSize { size }));
+        n0_error::ensure!(
+            size <= MAX_PACKET_SIZE,
+            e!(SendError::ExceedsMaxPacketSize { size })
+        );
         if let RelayToClientMsg::Datagrams { datagrams, .. } = &item {
             n0_error::ensure!(!datagrams.contents.is_empty(), e!(SendError::EmptyPacket));
         }
@@ -123,7 +129,10 @@ pub enum RecvError {
     #[error(transparent)]
     Proto { source: ProtoError },
     #[error(transparent)]
-    StreamError { #[error(std_err)] source: StreamError },
+    StreamError {
+        #[error(std_err)]
+        source: StreamError,
+    },
 }
 
 impl Stream for RelayedStream {
@@ -298,7 +307,11 @@ impl Bucket {
         let refill = bytes_per_second.saturating_mul(refill_period.as_millis() as i64) / 1000;
         n0_error::ensure!(
             max > 0 && bytes_per_second > 0 && refill_period.as_millis() as u32 > 0 && refill > 0,
-            e!(InvalidBucketConfig { max, bytes_per_second, refill_period }),
+            e!(InvalidBucketConfig {
+                max,
+                bytes_per_second,
+                refill_period
+            }),
         );
         Ok(Self {
             fill: max,
@@ -476,8 +489,8 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for RateLimited<S> {
 mod tests {
     use std::sync::Arc;
 
-    use n0_future::time;
     use n0_error::Result;
+    use n0_future::time;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tracing_test::traced_test;
 

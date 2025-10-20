@@ -25,7 +25,7 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
-use n0_error::{add_meta, Error, e, Err};
+use n0_error::{Err, Error, add_meta, e};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 // use n0_error ensure macro path-qualified
@@ -314,7 +314,9 @@ fn socket_addr_as_bytes(addr: &SocketAddr) -> [u8; EP_LENGTH] {
 
 impl Pong {
     fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
-        let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().map_err(|_| e!(ParseError::TooShort))?;
+        let tx_id: [u8; TX_LEN] = p[..TX_LEN]
+            .try_into()
+            .map_err(|_| e!(ParseError::TooShort))?;
 
         let tx_id = TransactionId::from(tx_id);
         let src = send_addr_from_bytes(&p[TX_LEN..])?;
@@ -346,8 +348,9 @@ impl CallMeMaybe {
         };
 
         for chunk in p.chunks_exact(EP_LENGTH) {
-            let bytes: [u8; EP_LENGTH] =
-                chunk.try_into().map_err(|_| e!(ParseError::InvalidEncoding))?;
+            let bytes: [u8; EP_LENGTH] = chunk
+                .try_into()
+                .map_err(|_| e!(ParseError::InvalidEncoding))?;
             let src = socket_addr_from_bytes(bytes);
             m.my_numbers.push(src);
         }

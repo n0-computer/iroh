@@ -33,6 +33,7 @@ use iroh_relay::{
     dns::{DnsError, DnsResolver, DnsStaggeredError as StaggeredError},
     quic::QuicClient,
 };
+use n0_error::{Err, Error, add_meta, e};
 #[cfg(wasm_browser)]
 use n0_future::future::Pending;
 use n0_future::{
@@ -40,9 +41,7 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration, Instant},
 };
-use n0_error::Err;
 use rand::seq::IteratorRandom;
-use n0_error::{add_meta, Error, e};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, trace, warn, warn_span};
@@ -541,11 +540,19 @@ pub(super) fn maybe_to_mapped_addr(
 #[non_exhaustive]
 enum CaptivePortalError {
     #[error(transparent)]
-    DnsLookup { source: iroh_relay::dns::DnsStaggeredError },
+    DnsLookup {
+        source: iroh_relay::dns::DnsStaggeredError,
+    },
     #[display("Creating HTTP client failed")]
-    CreateReqwestClient { #[error(std_err)] source: reqwest::Error },
+    CreateReqwestClient {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
     #[display("HTTP request failed")]
-    HttpRequest { #[error(std_err)] source: reqwest::Error },
+    HttpRequest {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
 }
 
 /// Reports whether or not we think the system is behind a
@@ -657,7 +664,9 @@ pub enum GetRelayAddrError {
     #[display("No suitable relay address found")]
     NoAddrFound,
     #[display("DNS lookup failed")]
-    DnsLookup { source: iroh_relay::dns::DnsStaggeredError },
+    DnsLookup {
+        source: iroh_relay::dns::DnsStaggeredError,
+    },
     #[display("Relay is not suitable")]
     UnsupportedRelay,
     #[display("HTTPS probes are not implemented")]
@@ -755,14 +764,25 @@ async fn relay_lookup_ipv6_staggered(
 #[non_exhaustive]
 pub enum MeasureHttpsLatencyError {
     #[error(transparent)]
-    InvalidUrl { #[error(std_err)] source: url::ParseError },
+    InvalidUrl {
+        #[error(std_err)]
+        source: url::ParseError,
+    },
     #[cfg(not(wasm_browser))]
     #[error(transparent)]
-    DnsLookup { source: iroh_relay::dns::DnsStaggeredError },
+    DnsLookup {
+        source: iroh_relay::dns::DnsStaggeredError,
+    },
     #[display("Creating HTTP client failed")]
-    CreateReqwestClient { #[error(std_err)] source: reqwest::Error },
+    CreateReqwestClient {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
     #[display("HTTP request failed")]
-    HttpRequest { #[error(std_err)] source: reqwest::Error },
+    HttpRequest {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
     #[display("Error response from server {status}: {:?}", status.canonical_reason())]
     InvalidResponse { status: StatusCode },
 }
@@ -840,7 +860,9 @@ async fn run_https_probe(
 
         Ok(HttpsProbeReport { relay, latency })
     } else {
-        Err!(MeasureHttpsLatencyError::InvalidResponse { status: response.status() })
+        Err!(MeasureHttpsLatencyError::InvalidResponse {
+            status: response.status()
+        })
     }
 }
 

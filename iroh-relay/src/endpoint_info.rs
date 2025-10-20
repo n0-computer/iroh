@@ -41,7 +41,7 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey};
-use n0_error::{add_meta, Error, e};
+use n0_error::{Error, add_meta, e};
 use url::Url;
 
 /// The DNS name for the iroh TXT record.
@@ -53,9 +53,15 @@ pub const IROH_TXT_NAME: &str = "_iroh";
 #[non_exhaustive]
 pub enum EncodingError {
     #[error(transparent)]
-    FailedBuildingPacket { #[error(std_err)] source: pkarr::errors::SignedPacketBuildError },
+    FailedBuildingPacket {
+        #[error(std_err)]
+        source: pkarr::errors::SignedPacketBuildError,
+    },
     #[display("invalid TXT entry")]
-    InvalidTxtEntry { #[error(std_err)] source: pkarr::dns::SimpleDnsError },
+    InvalidTxtEntry {
+        #[error(std_err)]
+        source: pkarr::dns::SimpleDnsError,
+    },
 }
 
 #[allow(missing_docs)]
@@ -64,7 +70,10 @@ pub enum EncodingError {
 #[non_exhaustive]
 pub enum DecodingError {
     #[display("endpoint id was not encoded in valid z32")]
-    InvalidEncodingZ32 { #[error(std_err)] source: z32::Z32Error },
+    InvalidEncodingZ32 {
+        #[error(std_err)]
+        source: z32::Z32Error,
+    },
     #[display("length must be 32 bytes, but got {len} byte(s)")]
     InvalidLength { len: usize },
     #[display("endpoint id is not a valid public key")]
@@ -91,7 +100,8 @@ impl EndpointIdExt for EndpointId {
     }
 
     fn from_z32(s: &str) -> Result<EndpointId, DecodingError> {
-        let bytes = z32::decode(s.as_bytes()).map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
+        let bytes =
+            z32::decode(s.as_bytes()).map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
         let bytes: &[u8; 32] = &bytes
             .try_into()
             .map_err(|_| e!(DecodingError::InvalidLength { len: s.len() }))?;
@@ -409,7 +419,10 @@ pub enum ParseError {
     #[display("Expected 2 labels, received {num_labels}")]
     NumLabels { num_labels: usize },
     #[display("Could not parse labels")]
-    Utf8 { #[error(std_err)] source: Utf8Error },
+    Utf8 {
+        #[error(std_err)]
+        source: Utf8Error,
+    },
     #[display("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
     NotAnIrohRecord { label: String },
     #[error(transparent)]
@@ -443,7 +456,9 @@ fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
     let mut labels = name.split(".");
     let label = labels.next().expect("checked above");
     if label != IROH_TXT_NAME {
-        return Err(e!(ParseError::NotAnIrohRecord { label: label.to_string() }));
+        return Err(e!(ParseError::NotAnIrohRecord {
+            label: label.to_string()
+        }));
     }
     let label = labels.next().expect("checked above");
     let endpoint_id = EndpointId::from_z32(label)?;
@@ -517,7 +532,11 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
                 return Err(e!(ParseError::UnexpectedFormat { s }));
             };
-            let attr = T::from_str(key).map_err(|_| e!(ParseError::AttrFromString { key: key.to_string() }))?;
+            let attr = T::from_str(key).map_err(|_| {
+                e!(ParseError::AttrFromString {
+                    key: key.to_string()
+                })
+            })?;
             attrs.entry(attr).or_default().push(value.to_string());
         }
         Ok(Self { attrs, endpoint_id })
@@ -593,10 +612,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let mut builder = pkarr::SignedPacket::builder();
         for s in self.to_txt_strings() {
             let mut txt = rdata::TXT::new();
-            txt.add_string(&s).map_err(|err| e!(EncodingError::InvalidTxtEntry, err))?;
+            txt.add_string(&s)
+                .map_err(|err| e!(EncodingError::InvalidTxtEntry, err))?;
             builder = builder.txt(name.clone(), txt.into_owned(), ttl);
         }
-        let signed_packet = builder.build(&keypair).map_err(|err| e!(EncodingError::FailedBuildingPacket, err))?;
+        let signed_packet = builder
+            .build(&keypair)
+            .map_err(|err| e!(EncodingError::FailedBuildingPacket, err))?;
         Ok(signed_packet)
     }
 }

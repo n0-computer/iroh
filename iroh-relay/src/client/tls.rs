@@ -10,9 +10,9 @@ use bytes::Bytes;
 use data_encoding::BASE64URL;
 use http_body_util::Empty;
 use hyper::{Request, upgrade::Parts};
+use n0_error::{Err, e};
 use n0_future::{task, time};
 use rustls::client::Resumption;
-use n0_error::{e, Err};
 use tracing::error;
 
 use super::{
@@ -151,7 +151,8 @@ impl MaybeTlsStreamBuilder {
         let tcp_stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, async move {
             TcpStream::connect(addr).await
         })
-        .await.map_err(|err| e!(DialError::Timeout, err))??;
+        .await
+        .map_err(|err| e!(DialError::Timeout, err))??;
 
         tcp_stream.set_nodelay(true)?;
 
@@ -174,7 +175,8 @@ impl MaybeTlsStreamBuilder {
             .resolve_host(&proxy_url, self.prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
-        let proxy_port = url_port(&proxy_url).ok_or_else(|| e!(DialError::ProxyInvalidTargetPort))?;
+        let proxy_port =
+            url_port(&proxy_url).ok_or_else(|| e!(DialError::ProxyInvalidTargetPort))?;
         let proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
 
         debug!(%proxy_addr, "connecting to proxy");
@@ -190,15 +192,27 @@ impl MaybeTlsStreamBuilder {
         let io = if proxy_url.scheme() == "http" {
             MaybeTlsStream::Raw(tcp_stream)
         } else {
-            let hostname = proxy_url.host_str().ok_or_else(|| e!(DialError::ProxyInvalidUrl { proxy_url: proxy_url.clone() }))?;
+            let hostname = proxy_url.host_str().ok_or_else(|| {
+                e!(DialError::ProxyInvalidUrl {
+                    proxy_url: proxy_url.clone()
+                })
+            })?;
             let hostname =
-                rustls::pki_types::ServerName::try_from(hostname.to_string()).map_err(|_| e!(DialError::ProxyInvalidTlsServername { proxy_hostname: hostname.to_string() }))?;
+                rustls::pki_types::ServerName::try_from(hostname.to_string()).map_err(|_| {
+                    e!(DialError::ProxyInvalidTlsServername {
+                        proxy_hostname: hostname.to_string()
+                    })
+                })?;
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
             MaybeTlsStream::Tls(tls_stream)
         };
         let io = TokioIo::new(io);
 
-        let target_host = self.url.host_str().ok_or_else(|| e!(DialError::InvalidUrl { url: self.url.clone() }))?;
+        let target_host = self.url.host_str().ok_or_else(|| {
+            e!(DialError::InvalidUrl {
+                url: self.url.clone()
+            })
+        })?;
 
         let port = url_port(&self.url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
 
@@ -238,12 +252,19 @@ impl MaybeTlsStreamBuilder {
             }
         });
 
-        let res = sender.send_request(req).await.map_err(|err| e!(DialError::ProxyConnect, err))?;
+        let res = sender
+            .send_request(req)
+            .await
+            .map_err(|err| e!(DialError::ProxyConnect, err))?;
         if !res.status().is_success() {
-            return Err!(DialError::ProxyConnectInvalidStatus { status: res.status() });
+            return Err!(DialError::ProxyConnectInvalidStatus {
+                status: res.status()
+            });
         }
 
-        let upgraded = hyper::upgrade::on(res).await.map_err(|err| e!(DialError::ProxyConnect, err))?;
+        let upgraded = hyper::upgrade::on(res)
+            .await
+            .map_err(|err| e!(DialError::ProxyConnect, err))?;
         let Parts { io, read_buf, .. } = upgraded
             .downcast::<TokioIo<MaybeTlsStream<tokio::net::TcpStream>>>()
             .expect("only this upgrade used");

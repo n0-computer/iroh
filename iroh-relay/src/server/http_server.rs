@@ -15,9 +15,9 @@ use hyper::{
     service::Service,
     upgrade::Upgraded,
 };
+use n0_error::{Err, Error, StdResultExt, add_meta, e};
 use n0_future::time::Elapsed;
-use n0_error::{add_meta, Error, e, Err, StdResultExt};
-use snafu::{OptionExt};
+use snafu::OptionExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -157,19 +157,40 @@ pub(super) struct TlsConfig {
 #[non_exhaustive]
 pub enum ServeConnectionError {
     #[display("TLS[acme] handshake")]
-    TlsHandshake { #[error(std_err)] source: std::io::Error },
+    TlsHandshake {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[display("TLS[acme] serve connection")]
-    ServeConnection { #[error(std_err)] source: hyper::Error },
+    ServeConnection {
+        #[error(std_err)]
+        source: hyper::Error,
+    },
     #[display("TLS[manual] timeout")]
-    Timeout { #[error(std_err)] source: Elapsed },
+    Timeout {
+        #[error(std_err)]
+        source: Elapsed,
+    },
     #[display("TLS[manual] accept")]
-    ManualAccept { #[error(std_err)] source: std::io::Error },
+    ManualAccept {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[display("TLS[acme] accept")]
-    LetsEncryptAccept { #[error(std_err)] source: std::io::Error },
+    LetsEncryptAccept {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[display("HTTPS connection")]
-    Https { #[error(std_err)] source: hyper::Error },
+    Https {
+        #[error(std_err)]
+        source: hyper::Error,
+    },
     #[display("HTTP connection")]
-    Http { #[error(std_err)] source: hyper::Error },
+    Http {
+        #[error(std_err)]
+        source: hyper::Error,
+    },
 }
 
 /// Server accept errors.
@@ -298,7 +319,6 @@ impl ServerBuilder {
 
     /// Builds and spawns an HTTP(S) Relay Server.
     pub(super) async fn spawn(self) -> Result<Server, SpawnError> {
-
         let cancel_token = CancellationToken::new();
 
         let service = RelayService::new(
@@ -439,7 +459,10 @@ impl RelayService {
         let upgrade_header = expect_header(&req, UPGRADE)?;
         n0_error::ensure!(
             upgrade_header == HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
-            e!(RelayUpgradeReqError::InvalidHeader { header: UPGRADE, details: format!("value must be {WEBSOCKET_UPGRADE_PROTOCOL}") })
+            e!(RelayUpgradeReqError::InvalidHeader {
+                header: UPGRADE,
+                details: format!("value must be {WEBSOCKET_UPGRADE_PROTOCOL}")
+            })
         );
 
         let key = expect_header(&req, SEC_WEBSOCKET_KEY)?.clone();
@@ -453,13 +476,21 @@ impl RelayService {
         let subprotocols = expect_header(&req, SEC_WEBSOCKET_PROTOCOL)?
             .to_str()
             .ok()
-            .ok_or_else(|| e!(RelayUpgradeReqError::InvalidHeader { header: SEC_WEBSOCKET_PROTOCOL, details: "header value is not ascii".to_string() }))?;
+            .ok_or_else(|| {
+                e!(RelayUpgradeReqError::InvalidHeader {
+                    header: SEC_WEBSOCKET_PROTOCOL,
+                    details: "header value is not ascii".to_string()
+                })
+            })?;
         let supports_our_version = subprotocols
             .split_whitespace()
             .any(|p| p == RELAY_PROTOCOL_VERSION);
         n0_error::ensure!(
             supports_our_version,
-            e!(RelayUpgradeReqError::UnsupportedRelayVersion { we_support: RELAY_PROTOCOL_VERSION, you_support: subprotocols.to_string() })
+            e!(RelayUpgradeReqError::UnsupportedRelayVersion {
+                we_support: RELAY_PROTOCOL_VERSION,
+                you_support: subprotocols.to_string()
+            })
         );
 
         let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
@@ -741,7 +772,11 @@ impl RelayService {
         let TlsConfig { acceptor, config } = tls_config;
         match acceptor {
             TlsAcceptor::LetsEncrypt(a) => {
-                match a.accept(stream).await.map_err(|err| e!(ServeConnectionError::LetsEncryptAccept, err))? {
+                match a
+                    .accept(stream)
+                    .await
+                    .map_err(|err| e!(ServeConnectionError::LetsEncryptAccept, err))?
+                {
                     None => {
                         info!("TLS[acme]: received TLS-ALPN-01 validation request");
                     }
@@ -816,8 +851,8 @@ mod tests {
     use std::sync::Arc;
 
     use iroh_base::{PublicKey, SecretKey};
-    use n0_future::{SinkExt, StreamExt};
     use n0_error::{Result, StdResultExt, whatever};
+    use n0_future::{SinkExt, StreamExt};
     use rand::SeedableRng;
     use reqwest::Url;
     use tracing::info;

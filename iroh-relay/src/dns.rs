@@ -13,12 +13,12 @@ use hickory_resolver::{
     name_server::TokioConnectionProvider,
 };
 use iroh_base::EndpointId;
+use n0_error::{Error, add_meta, e};
 use n0_future::{
     StreamExt,
     boxed::BoxFuture,
     time::{self, Duration},
 };
-use n0_error::{add_meta, Error, e};
 use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
@@ -68,15 +68,24 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 #[non_exhaustive]
 pub enum DnsError {
     #[error(transparent)]
-    Timeout { #[error(std_err)] source: tokio::time::error::Elapsed },
+    Timeout {
+        #[error(std_err)]
+        source: tokio::time::error::Elapsed,
+    },
     #[display("No response")]
     NoResponse {},
     #[display("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
-    ResolveBoth { ipv4: Box<DnsError>, ipv6: Box<DnsError> },
+    ResolveBoth {
+        ipv4: Box<DnsError>,
+        ipv6: Box<DnsError>,
+    },
     #[display("missing host")]
     MissingHost {},
     #[error(transparent)]
-    Resolve { #[error(std_err)] source: hickory_resolver::ResolveError },
+    Resolve {
+        #[error(std_err)]
+        source: hickory_resolver::ResolveError,
+    },
     #[display("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
 }
@@ -88,7 +97,10 @@ pub enum DnsError {
 #[non_exhaustive]
 pub enum LookupError {
     #[display("Malformed txt from lookup")]
-    ParseError { #[error(std_err)] source: Box<ParseError> },
+    ParseError {
+        #[error(std_err)]
+        source: Box<ParseError>,
+    },
     #[display("Failed to resolve TXT record")]
     LookupFailed { source: DnsError },
 }
@@ -294,7 +306,10 @@ impl DnsResolver {
             (Ok(ipv4), Ok(ipv6)) => Ok(LookupIter::Both(ipv4.chain(ipv6))),
             (Ok(ipv4), Err(_)) => Ok(LookupIter::Ipv4(ipv4)),
             (Err(_), Ok(ipv6)) => Ok(LookupIter::Ipv6(ipv6)),
-            (Err(ipv4_err), Err(ipv6_err)) => Err(e!(DnsError::ResolveBoth { ipv4: Box::new(ipv4_err), ipv6: Box::new(ipv6_err) })),
+            (Err(ipv4_err), Err(ipv6_err)) => Err(e!(DnsError::ResolveBoth {
+                ipv4: Box::new(ipv4_err),
+                ipv6: Box::new(ipv6_err)
+            })),
         }
     }
 
@@ -315,7 +330,10 @@ impl DnsResolver {
                 );
                 let (v4, v6) = match lookup {
                     (Err(ipv4_err), Err(ipv6_err)) => {
-                        return Err(e!(DnsError::ResolveBoth { ipv4: Box::new(ipv4_err), ipv6: Box::new(ipv6_err) }));
+                        return Err(e!(DnsError::ResolveBoth {
+                            ipv4: Box::new(ipv4_err),
+                            ipv6: Box::new(ipv6_err)
+                        }));
                     }
                     (Err(_), Ok(mut v6)) => (None, v6.next()),
                     (Ok(mut v4), Err(_)) => (v4.next(), None),
@@ -346,7 +364,9 @@ impl DnsResolver {
     ) -> Result<impl Iterator<Item = IpAddr>, DnsStaggeredError> {
         let host = host.to_string();
         let f = || self.lookup_ipv4(host.clone(), timeout);
-        stagger_call(f, delays_ms).await.map_err(|errors| e!(DnsStaggeredError { errors }))
+        stagger_call(f, delays_ms)
+            .await
+            .map_err(|errors| e!(DnsStaggeredError { errors }))
     }
 
     /// Performs an IPv6 lookup with a timeout in a staggered fashion.
@@ -363,7 +383,9 @@ impl DnsResolver {
     ) -> Result<impl Iterator<Item = IpAddr>, DnsStaggeredError> {
         let host = host.to_string();
         let f = || self.lookup_ipv6(host.clone(), timeout);
-        stagger_call(f, delays_ms).await.map_err(|errors| e!(DnsStaggeredError { errors }))
+        stagger_call(f, delays_ms)
+            .await
+            .map_err(|errors| e!(DnsStaggeredError { errors }))
     }
 
     /// Races an IPv4 and IPv6 lookup with a timeout in a staggered fashion.
@@ -381,7 +403,9 @@ impl DnsResolver {
     ) -> Result<impl Iterator<Item = IpAddr>, DnsStaggeredError> {
         let host = host.to_string();
         let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
-        stagger_call(f, delays_ms).await.map_err(|errors| e!(DnsStaggeredError { errors }))
+        stagger_call(f, delays_ms)
+            .await
+            .map_err(|errors| e!(DnsStaggeredError { errors }))
     }
 
     /// Looks up endpoint info by [`EndpointId`] and origin domain name.
@@ -399,8 +423,11 @@ impl DnsResolver {
             .lookup_txt(name.clone(), DNS_TIMEOUT)
             .await
             .map_err(|err| e!(LookupError::LookupFailed { source: err }))?;
-        let info = EndpointInfo::from_txt_lookup(name, lookup)
-            .map_err(|err| e!(LookupError::ParseError { source: Box::new(err) }))?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup).map_err(|err| {
+            e!(LookupError::ParseError {
+                source: Box::new(err)
+            })
+        })?;
         Ok(info)
     }
 
@@ -414,8 +441,11 @@ impl DnsResolver {
             .lookup_txt(name.clone(), DNS_TIMEOUT)
             .await
             .map_err(|err| e!(LookupError::LookupFailed { source: err }))?;
-        let info = EndpointInfo::from_txt_lookup(name, lookup)
-            .map_err(|err| e!(LookupError::ParseError { source: Box::new(err) }))?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup).map_err(|err| {
+            e!(LookupError::ParseError {
+                source: Box::new(err)
+            })
+        })?;
         Ok(info)
     }
 
@@ -431,7 +461,9 @@ impl DnsResolver {
         delays_ms: &[u64],
     ) -> Result<EndpointInfo, LookupStaggeredError> {
         let f = || self.lookup_endpoint_by_domain_name(name);
-        stagger_call(f, delays_ms).await.map_err(|errors| e!(LookupStaggeredError { errors }))
+        stagger_call(f, delays_ms)
+            .await
+            .map_err(|errors| e!(LookupStaggeredError { errors }))
     }
 
     /// Looks up endpoint info by [`EndpointId`] and origin domain name.
@@ -447,7 +479,9 @@ impl DnsResolver {
         delays_ms: &[u64],
     ) -> Result<EndpointInfo, LookupStaggeredError> {
         let f = || self.lookup_endpoint_by_id(endpoint_id, origin);
-        stagger_call(f, delays_ms).await.map_err(|errors| e!(LookupStaggeredError { errors }))
+        stagger_call(f, delays_ms)
+            .await
+            .map_err(|errors| e!(LookupStaggeredError { errors }))
     }
 }
 

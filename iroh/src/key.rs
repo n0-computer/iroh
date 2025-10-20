@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use aead::{AeadCore, AeadInOut, Buffer};
 use iroh_base::{PublicKey, SecretKey};
-use n0_error::{add_meta, Error, e};
+use n0_error::{Error, add_meta, e};
 
 pub(crate) const NONCE_LEN: usize = 24;
 
@@ -34,7 +34,10 @@ pub enum DecryptionError {
     InvalidNonce,
     /// AEAD decryption failed.
     #[display("Aead error")]
-    Aead { #[error(std_err)] source: aead::Error },
+    Aead {
+        #[error(std_err)]
+        source: aead::Error,
+    },
 }
 
 impl Debug for SharedSecret {
@@ -70,8 +73,7 @@ impl SharedSecret {
             .map_err(|_| e!(DecryptionError::InvalidNonce))?;
 
         buffer.truncate(offset);
-        self.0
-            .decrypt_in_place(&nonce.into(), AEAD_DATA, buffer)?;
+        self.0.decrypt_in_place(&nonce.into(), AEAD_DATA, buffer)?;
 
         Ok(())
     }

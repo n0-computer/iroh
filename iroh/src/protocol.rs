@@ -43,11 +43,11 @@ use std::{
 };
 
 use iroh_base::EndpointId;
+use n0_error::{AnyError, Err, Error, add_meta, e};
 use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
 };
-use n0_error::{add_meta, Error, e, AnyError, Err};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
@@ -108,7 +108,9 @@ pub struct RouterBuilder {
 #[non_exhaustive]
 pub enum AcceptError {
     #[error(transparent)]
-    Connection { source: crate::endpoint::ConnectionError },
+    Connection {
+        source: crate::endpoint::ConnectionError,
+    },
     #[error(transparent)]
     MissingRemoteEndpointId { source: RemoteEndpointIdError },
     #[display("Not allowed.")]
@@ -120,7 +122,9 @@ pub enum AcceptError {
 impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
-        e!(AcceptError::User { source: AnyError::from_std(value) })
+        e!(AcceptError::User {
+            source: AnyError::from_std(value)
+        })
     }
 }
 

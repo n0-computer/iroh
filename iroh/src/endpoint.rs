@@ -23,10 +23,10 @@ use std::{
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{RelayConfig, RelayMap};
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use pin_project::pin_project;
-use n0_error::{add_meta, Error, e, Err};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -487,13 +487,19 @@ pub struct Endpoint {
 #[non_exhaustive]
 pub enum ConnectWithOptsError {
     #[error(transparent)]
-    AddEndpointAddr { #[error(std_err)] source: AddEndpointAddrError },
+    AddEndpointAddr {
+        #[error(std_err)]
+        source: AddEndpointAddrError,
+    },
     #[display("Connecting to ourself is not supported")]
     SelfConnect,
     #[display("No addressing information available")]
     NoAddress { source: GetMappingAddressError },
     #[display("Unable to connect to remote")]
-    Quinn { #[error(std_err)] source: quinn_proto::ConnectError },
+    Quinn {
+        #[error(std_err)]
+        source: quinn_proto::ConnectError,
+    },
 }
 
 #[allow(missing_docs)]
@@ -505,7 +511,10 @@ pub enum ConnectError {
     #[error(transparent)]
     Connect { source: ConnectWithOptsError },
     #[error(transparent)]
-    Connection { #[error(std_err)] source: ConnectionError },
+    Connection {
+        #[error(std_err)]
+        source: ConnectionError,
+    },
 }
 
 #[allow(missing_docs)]
@@ -515,9 +524,13 @@ pub enum ConnectError {
 #[non_exhaustive]
 pub enum BindError {
     #[error(transparent)]
-    MagicSpawn { source: magicsock::CreateHandleError },
+    MagicSpawn {
+        source: magicsock::CreateHandleError,
+    },
     #[error(transparent)]
-    Discovery { source: crate::discovery::IntoDiscoveryError },
+    Discovery {
+        source: crate::discovery::IntoDiscoveryError,
+    },
 }
 
 #[allow(missing_docs)]
@@ -666,11 +679,13 @@ impl Endpoint {
         );
 
         // Connecting to ourselves is not supported.
-        n0_error::ensure!(endpoint_addr.endpoint_id != self.id(), e!(ConnectWithOptsError::SelfConnect));
+        n0_error::ensure!(
+            endpoint_addr.endpoint_id != self.id(),
+            e!(ConnectWithOptsError::SelfConnect)
+        );
 
         if !endpoint_addr.is_empty() {
-            self
-                .add_endpoint_addr(endpoint_addr.clone(), Source::App)
+            self.add_endpoint_addr(endpoint_addr.clone(), Source::App)
                 .map_err(|err| e!(ConnectWithOptsError::AddEndpointAddr { source: err }))?;
         }
         let endpoint_id = endpoint_addr.endpoint_id;
@@ -1271,8 +1286,8 @@ impl Endpoint {
                 // only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
                 let res = DiscoveryTask::start(self.clone(), endpoint_id);
-                let mut discovery = res
-                    .map_err(|source| e!(GetMappingAddressError::DiscoveryStart { source }))?;
+                let mut discovery =
+                    res.map_err(|source| e!(GetMappingAddressError::DiscoveryStart { source }))?;
                 discovery
                     .first_arrived()
                     .await
@@ -1514,7 +1529,10 @@ pub struct Connecting {
 #[non_exhaustive]
 pub enum AlpnError {
     #[error(transparent)]
-    ConnectionError { #[error(std_err)] source: ConnectionError },
+    ConnectionError {
+        #[error(std_err)]
+        source: ConnectionError,
+    },
     #[display("No ALPN available")]
     Unavailable,
     #[display("Unknown handshake type")]

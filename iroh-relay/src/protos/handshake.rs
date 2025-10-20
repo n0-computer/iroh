@@ -31,11 +31,10 @@ use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::{SinkExt, TryStreamExt};
-use n0_error::{add_meta, Error, e, Err};
 #[cfg(feature = "server")]
 use rand::CryptoRng;
- 
 use tracing::trace;
 
 use super::{
@@ -231,7 +230,14 @@ impl ClientAuth {
         let message = challenge.message_to_sign();
         self.public_key
             .verify(&message, &Signature::from_bytes(&self.signature))
-            .map_err(|err| e!(VerificationError::SignatureInvalid { source: err, message: message.to_vec(), signature: self.signature, public_key: self.public_key }))
+            .map_err(|err| {
+                e!(VerificationError::SignatureInvalid {
+                    source: err,
+                    message: message.to_vec(),
+                    signature: self.signature,
+                    public_key: self.public_key
+                })
+            })
             .map_err(Box::new)
     }
 }
@@ -297,14 +303,24 @@ impl KeyMaterialClientAuth {
         let suffix: [u8; 16] = suffix.try_into().expect("hardcoded length");
         n0_error::ensure!(
             suffix == self.key_material_suffix,
-            e!(VerificationError::MismatchedSuffix { expected: self.key_material_suffix, actual: suffix })
+            e!(VerificationError::MismatchedSuffix {
+                expected: self.key_material_suffix,
+                actual: suffix
+            })
         );
         // NOTE: We don't blake3-hash here as we do it in [`ServerChallenge::message_to_sign`],
         // because we already have a domain separation string and keyed hashing step in
         // the TLS export keying material above.
         self.public_key
             .verify(message, &Signature::from_bytes(&self.signature))
-            .map_err(|err| e!(VerificationError::SignatureInvalid { source: err, message: message.to_vec(), public_key: self.public_key, signature: self.signature }))
+            .map_err(|err| {
+                e!(VerificationError::SignatureInvalid {
+                    source: err,
+                    message: message.to_vec(),
+                    public_key: self.public_key,
+                    signature: self.signature
+                })
+            })
             .map_err(Box::new)
     }
 }
@@ -340,7 +356,9 @@ pub(crate) async fn clientside(
         }
         FrameType::ServerDeniesAuth => {
             let denial: ServerDeniesAuth = deserialize_frame(frame)?;
-            Err!(Error::ServerDeniedAuth { reason: denial.reason })
+            Err!(Error::ServerDeniedAuth {
+                reason: denial.reason
+            })
         }
         _ => unreachable!(),
     }
@@ -428,7 +446,9 @@ pub(crate) async fn serverside(
             reason: "signature invalid".into(),
         };
         write_frame(io, denial.clone()).await?;
-        Err!(Error::ServerDeniedAuth { reason: denial.reason })
+        Err!(Error::ServerDeniedAuth {
+            reason: denial.reason
+        })
     } else {
         trace!(?client_auth.public_key, "authentication succeeded via challenge");
         Ok(SuccessfulAuthentication {
@@ -455,7 +475,9 @@ impl SuccessfulAuthentication {
                 reason: "not authorized".into(),
             };
             write_frame(io, denial.clone()).await?;
-            Err!(Error::ServerDeniedAuth { reason: denial.reason })
+            Err!(Error::ServerDeniedAuth {
+                reason: denial.reason
+            })
         }
     }
 }
@@ -471,7 +493,9 @@ async fn write_frame<F: serde::Serialize + Frame>(
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
         .into_inner()
         .freeze();
-    io.send(bytes).await.map_err(|err| e!(Error::Websocket, err))?;
+    io.send(bytes)
+        .await
+        .map_err(|err| e!(Error::Websocket, err))?;
     io.flush().await.map_err(|err| e!(Error::Websocket, err))?;
     Ok(())
 }
@@ -486,19 +510,27 @@ async fn read_frame(
         .map_err(|err| e!(Error::Websocket, err))?
         .ok_or_else(|| e!(Error::UnexpectedEnd))?;
 
-    let frame_type = FrameType::from_bytes(&mut payload)
-        .map_err(|err| e!(Error::FrameTypeError, err))?;
+    let frame_type =
+        FrameType::from_bytes(&mut payload).map_err(|err| e!(Error::FrameTypeError, err))?;
     trace!(?frame_type, "Reading frame");
     n0_error::ensure!(
         expected_types.contains(&frame_type),
-        e!(Error::UnexpectedFrameType { frame_type, expected_types: expected_types.to_vec() })
+        e!(Error::UnexpectedFrameType {
+            frame_type,
+            expected_types: expected_types.to_vec()
+        })
     );
 
     Ok((frame_type, payload))
 }
 
 fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Result<F, Error> {
-    postcard::from_bytes(&frame).map_err(|err| e!(Error::DeserializationError { frame_type: F::TAG, source: err }))
+    postcard::from_bytes(&frame).map_err(|err| {
+        e!(Error::DeserializationError {
+            frame_type: F::TAG,
+            source: err
+        })
+    })
 }
 
 #[cfg(all(test, feature = "server"))]

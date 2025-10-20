@@ -4,8 +4,11 @@
 //! integers for different frames.
 
 use bytes::{Buf, BufMut};
-use quinn_proto::{VarInt, coding::{Codec, UnexpectedEnd}};
-use n0_error::{add_meta, Error, e};
+use n0_error::{Error, add_meta, e};
+use quinn_proto::{
+    VarInt,
+    coding::{Codec, UnexpectedEnd},
+};
 
 /// Possible frame types during handshaking
 #[repr(u32)]
@@ -57,9 +60,12 @@ pub enum FrameType {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum FrameTypeError {
-    #[display("not enough bytes to parse frame type")] 
-    UnexpectedEnd { #[error(std_err)] source: UnexpectedEnd },
-    #[display("frame type unknown")] 
+    #[display("not enough bytes to parse frame type")]
+    UnexpectedEnd {
+        #[error(std_err)]
+        source: UnexpectedEnd,
+    },
+    #[display("frame type unknown")]
     UnknownFrameType { tag: VarInt },
 }
 

@@ -113,13 +113,13 @@
 use std::sync::{Arc, RwLock};
 
 use iroh_base::{EndpointAddr, EndpointId};
+use n0_error::{AnyError, Err, Error, add_meta, e};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
 };
-use n0_error::{add_meta, Error, e, AnyError, Err};
 use tokio::sync::oneshot;
 use tracing::{Instrument, debug, error_span, warn};
 
@@ -198,7 +198,10 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: T,
     ) -> Self {
-        e!(IntoDiscoveryError::User { provenance, source: AnyError::from_std(source) })
+        e!(IntoDiscoveryError::User {
+            provenance,
+            source: AnyError::from_std(source)
+        })
     }
 
     /// Creates a new user error from an arbitrary boxed error type.
@@ -206,7 +209,10 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        e!(IntoDiscoveryError::User { provenance, source: AnyError::from_std_box(source) })
+        e!(IntoDiscoveryError::User {
+            provenance,
+            source: AnyError::from_std_box(source)
+        })
     }
 }
 
@@ -233,7 +239,10 @@ impl DiscoveryError {
         provenance: &'static str,
         source: T,
     ) -> Self {
-        e!(DiscoveryError::User { provenance, source: AnyError::from_std(source) })
+        e!(DiscoveryError::User {
+            provenance,
+            source: AnyError::from_std(source)
+        })
     }
 
     /// Creates a new user error from an arbitrary boxed error type.
@@ -241,7 +250,10 @@ impl DiscoveryError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        e!(DiscoveryError::User { provenance, source: AnyError::from_std_box(source) })
+        e!(DiscoveryError::User {
+            provenance,
+            source: AnyError::from_std_box(source)
+        })
     }
 }
 
@@ -495,7 +507,10 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Starts a discovery task.
     pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
-        n0_error::ensure!(!ep.discovery().is_empty(), e!(DiscoveryError::NoServiceConfigured));
+        n0_error::ensure!(
+            !ep.discovery().is_empty(),
+            e!(DiscoveryError::NoServiceConfigured)
+        );
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.id();
         let task = task::spawn(
@@ -526,7 +541,10 @@ impl DiscoveryTask {
         if !ep.needs_discovery(endpoint_id, MAX_AGE) {
             return Ok(None);
         }
-        n0_error::ensure!(!ep.discovery().is_empty(), e!(DiscoveryError::NoServiceConfigured));
+        n0_error::ensure!(
+            !ep.discovery().is_empty(),
+            e!(DiscoveryError::NoServiceConfigured)
+        );
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.id();
@@ -564,7 +582,10 @@ impl DiscoveryTask {
         ep: &Endpoint,
         endpoint_id: EndpointId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
-        n0_error::ensure!(!ep.discovery().is_empty(), e!(DiscoveryError::NoServiceConfigured));
+        n0_error::ensure!(
+            !ep.discovery().is_empty(),
+            e!(DiscoveryError::NoServiceConfigured)
+        );
         let stream = ep
             .discovery()
             .resolve(endpoint_id)
@@ -613,7 +634,8 @@ impl DiscoveryTask {
             }
         }
         if let Some(tx) = on_first_tx.take() {
-            tx.send(Err!(DiscoveryError::NoResults { endpoint_id })).ok();
+            tx.send(Err!(DiscoveryError::NoResults { endpoint_id }))
+                .ok();
         }
     }
 }

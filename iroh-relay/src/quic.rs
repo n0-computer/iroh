@@ -2,10 +2,9 @@
 //! for QUIC address discovery.
 use std::{net::SocketAddr, sync::Arc};
 
+use n0_error::{Error, add_meta};
 use n0_future::time::Duration;
-use n0_error::{add_meta, Error};
 use quinn::{VarInt, crypto::rustls::QuicClientConfig};
- 
 use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
@@ -17,11 +16,11 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
+    use n0_error::StdResultExt;
     use quinn::{
         ApplicationClose, ConnectionError,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     };
-    use n0_error::StdResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, debug, info, info_span};
@@ -42,11 +41,20 @@ pub(crate) mod server {
     #[non_exhaustive]
     pub enum QuicSpawnError {
         #[error(transparent)]
-        NoInitialCipherSuite { #[error(std_err)] source: NoInitialCipherSuite },
+        NoInitialCipherSuite {
+            #[error(std_err)]
+            source: NoInitialCipherSuite,
+        },
         #[display("Unable to spawn a QUIC endpoint server")]
-        EndpointServer { #[error(std_err)] source: std::io::Error },
+        EndpointServer {
+            #[error(std_err)]
+            source: std::io::Error,
+        },
         #[display("Unable to get the local address from the endpoint")]
-        LocalAddr { #[error(std_err)] source: std::io::Error },
+        LocalAddr {
+            #[error(std_err)]
+            source: std::io::Error,
+        },
     }
 
     impl QuicServer {
@@ -221,11 +229,20 @@ pub(crate) mod server {
 #[non_exhaustive]
 pub enum Error {
     #[error(transparent)]
-    Connect { #[error(std_err)] source: quinn::ConnectError },
+    Connect {
+        #[error(std_err)]
+        source: quinn::ConnectError,
+    },
     #[error(transparent)]
-    Connection { #[error(std_err)] source: quinn::ConnectionError },
+    Connection {
+        #[error(std_err)]
+        source: quinn::ConnectionError,
+    },
     #[error(transparent)]
-    WatchRecv { #[error(std_err)] source: watch::error::RecvError },
+    WatchRecv {
+        #[error(std_err)]
+        source: watch::error::RecvError,
+    },
 }
 
 /// Handles the client side of QUIC address discovery.
@@ -341,11 +358,11 @@ impl QuicClient {
 mod tests {
     use std::net::Ipv4Addr;
 
+    use n0_error::{Error, Result, StdResultExt};
     use n0_future::{
         task::AbortOnDropHandle,
         time::{self, Instant},
     };
-    use n0_error::{Error, Result, StdResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
     use tracing::{Instrument, debug, info, info_span};
     use tracing_test::traced_test;

@@ -11,12 +11,12 @@ use std::{
 
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::{
     Sink, Stream,
     split::{SplitSink, SplitStream, split},
     time,
 };
-use n0_error::{add_meta, Error, e, Err};
 #[cfg(any(test, feature = "test-utils"))]
 use tracing::warn;
 use tracing::{Level, debug, event, trace};
@@ -66,19 +66,28 @@ pub enum ConnectError {
         source: ws_stream_wasm::WsErr,
     },
     #[error(transparent)]
-    Handshake { #[error(std_err)] source: handshake::Error },
+    Handshake {
+        #[error(std_err)]
+        source: handshake::Error,
+    },
     #[error(transparent)]
     Dial { source: DialError },
     #[display("Unexpected status during upgrade: {code}")]
     UnexpectedUpgradeStatus { code: hyper::StatusCode },
     #[display("Failed to upgrade response")]
-    Upgrade { #[error(std_err)] source: hyper::Error },
+    Upgrade {
+        #[error(std_err)]
+        source: hyper::Error,
+    },
     #[display("Invalid TLS servername")]
     InvalidTlsServername {},
     #[display("No local address available")]
     NoLocalAddr {},
     #[display("tls connection failed")]
-    Tls { #[error(std_err)] source: std::io::Error },
+    Tls {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[cfg(wasm_browser)]
     #[display("The relay protocol is not available in browsers")]
     RelayProtoNotAvailable {},
@@ -95,11 +104,20 @@ pub enum DialError {
     InvalidTargetPort {},
     #[error(transparent)]
     #[cfg(not(wasm_browser))]
-    Dns { #[error(std_err)] source: DnsError },
+    Dns {
+        #[error(std_err)]
+        source: DnsError,
+    },
     #[error(transparent)]
-    Timeout { #[error(std_err)] source: time::Elapsed },
+    Timeout {
+        #[error(std_err)]
+        source: time::Elapsed,
+    },
     #[error(transparent)]
-    Io { #[error(std_err)] source: std::io::Error },
+    Io {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[display("Invalid URL: {url}")]
     InvalidUrl { url: Url },
     #[display("Failed proxy connection: {status}")]
@@ -107,7 +125,10 @@ pub enum DialError {
     #[display("Invalid Proxy URL {proxy_url}")]
     ProxyInvalidUrl { proxy_url: Url },
     #[display("failed to establish proxy connection")]
-    ProxyConnect { #[error(std_err)] source: hyper::Error },
+    ProxyConnect {
+        #[error(std_err)]
+        source: hyper::Error,
+    },
     #[display("Invalid proxy TLS servername: {proxy_hostname}")]
     ProxyInvalidTlsServername { proxy_hostname: String },
     #[display("Invalid proxy target port")]
@@ -214,7 +235,11 @@ impl ClientBuilder {
                 "ws" => "ws",
                 _ => "wss",
             })
-            .map_err(|_| e!(ConnectError::InvalidWebsocketUrl { url: dial_url.clone() }))?;
+            .map_err(|_| {
+                e!(ConnectError::InvalidWebsocketUrl {
+                    url: dial_url.clone()
+                })
+            })?;
 
         debug!(%dial_url, "Dialing relay by websocket");
 
@@ -235,7 +260,11 @@ impl ClientBuilder {
             .map_err(|_| e!(ConnectError::NoLocalAddr))?;
         let mut builder = tokio_websockets::ClientBuilder::new()
             .uri(dial_url.as_str())
-            .map_err(|_| e!(ConnectError::InvalidRelayUrl { url: dial_url.clone() }))?
+            .map_err(|_| {
+                e!(ConnectError::InvalidRelayUrl {
+                    url: dial_url.clone()
+                })
+            })?
             .add_header(
                 SEC_WEBSOCKET_PROTOCOL,
                 http::HeaderValue::from_static(RELAY_PROTOCOL_VERSION),
@@ -257,7 +286,9 @@ impl ClientBuilder {
         let (conn, response) = builder.connect_on(stream).await?;
 
         if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            return Err!(ConnectError::UnexpectedUpgradeStatus { code: response.status() });
+            return Err!(ConnectError::UnexpectedUpgradeStatus {
+                code: response.status()
+            });
         }
 
         let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;
@@ -304,7 +335,11 @@ impl ClientBuilder {
                 "ws" => "ws",
                 _ => "wss",
             })
-            .map_err(|_| e!(ConnectError::InvalidWebsocketUrl { url: dial_url.clone() }))?;
+            .map_err(|_| {
+                e!(ConnectError::InvalidWebsocketUrl {
+                    url: dial_url.clone()
+                })
+            })?;
 
         debug!(%dial_url, "Dialing relay by websocket");
 

@@ -31,6 +31,7 @@ use iroh_relay::{
     RelayMap,
     quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
 };
+use n0_error::e;
 #[cfg(not(wasm_browser))]
 use n0_future::task;
 use n0_future::{
@@ -39,7 +40,6 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use n0_error::e;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace, warn};
@@ -86,7 +86,9 @@ pub(crate) use self::reportgen::IfStateDetails;
 #[non_exhaustive]
 enum QadProbeError {
     #[display("Failed to resolve relay address")]
-    GetRelayAddr { source: self::reportgen::GetRelayAddrError },
+    GetRelayAddr {
+        source: self::reportgen::GetRelayAddrError,
+    },
     #[display("Missing host in relay URL")]
     MissingHost,
     #[display("QUIC connection failed")]
@@ -776,8 +778,7 @@ async fn run_probe_v4(
     relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
-	) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
-
+) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
     let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay)
         .await
         .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
