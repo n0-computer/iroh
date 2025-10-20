@@ -21,7 +21,7 @@ use std::{
 };
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
@@ -877,8 +877,6 @@ impl Endpoint {
         watch_addrs
             .or(watch_relay)
             .map(move |(addrs, relays)| {
-                use iroh_base::TransportAddr;
-
                 debug_assert!(!addrs.is_empty(), "direct addresses must never be empty");
 
                 EndpointAddr::from_parts(
@@ -906,7 +904,7 @@ impl Endpoint {
         let endpoint_id = self.id();
         watch_relay
             .map(move |mut relays| {
-                EndpointAddr::from_parts(endpoint_id, relays.pop(), std::iter::empty())
+                EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
             })
             .expect("watchable is alive - cannot be disconnected yet")
     }
