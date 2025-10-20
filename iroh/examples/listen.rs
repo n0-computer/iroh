@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
             if res.is_err() {
                 println!("endpoint {endpoint_id} did not disconnect within 3 seconds");
             }
-            Ok::<_, n0_error::Error>(())
+            Ok::<_, n0_error::AnyError>(())
         });
     }
     // stop with SIGINT (ctrl-c)

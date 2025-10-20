@@ -246,7 +246,7 @@ impl EndpointArgs {
         if let Some(host) = self.dns_server {
             let addr = tokio::net::lookup_host(host)
                 .await
-                .context("Failed to resolve DNS server address")?
+                .std_context("Failed to resolve DNS server address")?
                 .next()
                 .context("Failed to resolve DNS server address")?;
             builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
@@ -379,7 +379,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             } else {
                 println!("[{remote}] Disconnected");
             }
-            Ok::<_, n0_error::Error>(())
+            Ok::<_, n0_error::AnyError>(())
         });
     }
 
@@ -493,21 +493,21 @@ async fn send_data_on_stream(
         stream
             .write_chunk(bytes_data.clone())
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
     if remaining != 0 {
         stream
             .write_chunk(bytes_data.slice(0..remaining))
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
-    stream.finish().context("failed finishing stream")?;
+    stream.finish().std_context("failed finishing stream")?;
     stream
         .stopped()
         .await
-        .context("failed to wait for stream to be stopped")?;
+        .std_context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }

@@ -166,7 +166,7 @@ async fn accept(_args: Args) -> Result<()> {
                 send.write_all(&data).await.e()?;
                 send.finish().e()?;
                 connection.closed().await;
-                Ok::<_, n0_error::Error>(())
+                Ok::<_, n0_error::AnyError>(())
             });
         }
     };

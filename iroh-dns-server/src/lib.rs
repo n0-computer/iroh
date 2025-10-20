@@ -43,7 +43,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result {
-        let (server, nameserver, http_url) = Server::spawn_for_tests().await.e()?;
+        let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
         let pkarr_relay_url = {
             let mut url = http_url.clone();
             url.set_path("/pkarr");
@@ -158,7 +158,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn integration_smoke() -> Result {
-        let (server, nameserver, http_url) = Server::spawn_for_tests().await.e()?;
+        let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
 
         let pkarr_relay = {
             let mut url = http_url.clone();
@@ -213,7 +213,7 @@ mod tests {
 
         tokio::time::sleep(Duration::from_secs(1)).await;
         for _ in 0..10 {
-            let entry = store.get_signed_packet(&key).await.e()?;
+            let entry = store.get_signed_packet(&key).await?;
             if entry.is_none() {
                 return Ok(());
             }
@@ -264,7 +264,7 @@ mod tests {
         assert_eq!(res.endpoint_id, endpoint_id);
         assert_eq!(res.relay_url(), Some(&relay_url));
 
-        server.shutdown().await.e()?;
+        server.shutdown().await?;
         Ok(())
     }
 

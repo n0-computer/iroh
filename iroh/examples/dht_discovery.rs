@@ -100,7 +100,7 @@ async fn chat_server(args: Args) -> Result<()> {
                 tokio::spawn(
                     async move { tokio::io::copy(&mut tokio::io::stdin(), &mut writer).await },
                 );
-            Ok::<_, n0_error::Error>(())
+            Ok::<_, n0_error::AnyError>(())
         });
     }
     Ok(())

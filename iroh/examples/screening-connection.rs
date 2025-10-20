@@ -110,7 +110,9 @@ impl ProtocolHandler for ScreenedEcho {
         // reject every other connection
         if count % 2 == 0 {
             println!("rejecting connection");
-            return Err(AcceptError::NotAllowed {});
+            return Err(AcceptError::NotAllowed {
+                meta: n0_error::Meta::new(),
+            });
         }
 
         // To allow normal connection construction, await the connecting future & return

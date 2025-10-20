@@ -14,7 +14,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use n0_error::{Result, StackResultExt, StdResultExt, whatever};
+use n0_error::{Result, StdResultExt, whatever};
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, task::JoinSet};
 use tower_http::{
