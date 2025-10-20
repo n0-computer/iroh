@@ -26,7 +26,7 @@ use hyper::body::Incoming;
 use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use n0_error::{Err, Error, StdResultExt, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::{StreamExt, future::Boxed};
 use tokio::{
     net::TcpListener,

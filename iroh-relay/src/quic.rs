@@ -16,7 +16,7 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
-    use n0_error::{StdResultExt, e};
+    use n0_error::e;
     use quinn::{
         ApplicationClose, ConnectionError,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
@@ -360,7 +360,7 @@ impl QuicClient {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use n0_error::{Error, Result, StdResultExt};
+    use n0_error::{Result, StdResultExt};
     use n0_future::{
         task::AbortOnDropHandle,
         time::{self, Instant},

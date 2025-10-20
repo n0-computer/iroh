@@ -2805,7 +2805,7 @@ dependencies = [
 [[package]]
 name = "n0-error"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-error#a51431dba41021f1dd0bfbcb1115fc3c5ec75116"
+source = "git+https://github.com/n0-computer/n0-error#0070b103873f285627240e3c772fecec3f0b4528"
 dependencies = [
  "anyhow",
  "derive_more 2.0.1",
@@ -2816,7 +2816,7 @@ dependencies = [
 [[package]]
 name = "n0-error-macros"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-error#a51431dba41021f1dd0bfbcb1115fc3c5ec75116"
+source = "git+https://github.com/n0-computer/n0-error#0070b103873f285627240e3c772fecec3f0b4528"
 dependencies = [
  "darling",
  "heck",

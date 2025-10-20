@@ -3,7 +3,7 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
-use n0_error::{Err, Error, StackResultExt, add_meta, e};
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::{SinkExt, StreamExt};
 use rand::Rng;
 use time::{Date, OffsetDateTime};
@@ -500,7 +500,7 @@ pub(crate) enum SendError {
 #[add_meta]
 #[derive(Error)]
 #[display("failed to forward {scope:?} packet: {reason:?}")]
-pub(crate) struct ForwardPacketError {
+pub struct ForwardPacketError {
     scope: PacketScope,
     reason: SendError,
 }
@@ -724,8 +724,8 @@ mod tests {
 
         // Send a frame, it should arrive.
         info!("-- send packet");
-        frame_writer.send(frame.clone()).await.context("send")?;
-        frame_writer.flush().await.context("flush")?;
+        frame_writer.send(frame.clone()).await.std_context("send")?;
+        frame_writer.flush().await.std_context("flush")?;
         let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
             .await
             .expect("timeout")
@@ -735,8 +735,8 @@ mod tests {
 
         // Next frame does not arrive.
         info!("-- send packet");
-        frame_writer.send(frame.clone()).await.context("send")?;
-        frame_writer.flush().await.context("flush")?;
+        frame_writer.send(frame.clone()).await.std_context("send")?;
+        frame_writer.flush().await.std_context("flush")?;
         let res = tokio::time::timeout(Duration::from_millis(100), stream.next()).await;
         assert!(res.is_err(), "expecting a timeout");
         info!("-- timeout happened");
