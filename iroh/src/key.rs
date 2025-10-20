@@ -4,8 +4,7 @@ use std::fmt::Debug;
 
 use aead::{AeadCore, AeadInOut, Buffer};
 use iroh_base::{PublicKey, SecretKey};
-use nested_enum_utils::common_fields;
-use snafu::{ResultExt, Snafu, ensure};
+use n0_error::{add_meta, Error, e};
 
 pub(crate) const NONCE_LEN: usize = 24;
 
@@ -25,20 +24,17 @@ pub(super) fn secret_ed_box(key: &SecretKey) -> crypto_box::SecretKey {
 pub struct SharedSecret(crypto_box::ChaChaBox);
 
 /// Errors that can occur during [`SharedSecret::open`].
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources, std_sources)]
 #[non_exhaustive]
 pub enum DecryptionError {
     /// The nonce had the wrong size.
-    #[snafu(display("Invalid nonce"))]
-    InvalidNonce {},
+    #[display("Invalid nonce")]
+    InvalidNonce,
     /// AEAD decryption failed.
-    #[snafu(display("Aead error"))]
-    Aead { source: aead::Error },
+    #[display("Aead error")]
+    Aead { #[error(std_err)] source: aead::Error },
 }
 
 impl Debug for SharedSecret {
@@ -66,17 +62,16 @@ impl SharedSecret {
 
     /// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
     pub fn open(&self, buffer: &mut dyn Buffer) -> Result<(), DecryptionError> {
-        ensure!(buffer.len() >= NONCE_LEN, InvalidNonceSnafu);
+        n0_error::ensure!(buffer.len() >= NONCE_LEN, e!(DecryptionError::InvalidNonce));
 
         let offset = buffer.len() - NONCE_LEN;
         let nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..]
             .try_into()
-            .map_err(|_| InvalidNonceSnafu.build())?;
+            .map_err(|_| e!(DecryptionError::InvalidNonce))?;
 
         buffer.truncate(offset);
         self.0
-            .decrypt_in_place(&nonce.into(), AEAD_DATA, buffer)
-            .context(AeadSnafu)?;
+            .decrypt_in_place(&nonce.into(), AEAD_DATA, buffer)?;
 
         Ok(())
     }

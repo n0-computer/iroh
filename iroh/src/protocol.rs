@@ -47,7 +47,7 @@ use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
 };
-use snafu::{Backtrace, Snafu};
+use n0_error::{add_meta, Error, e, AnyError, Err};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
@@ -70,10 +70,10 @@ use crate::{
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use n0_snafu::ResultExt;
+/// # use n0_error::StdResultExt;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, EndpointAddr};
 /// #
-/// # async fn test_compile() -> n0_snafu::Result<()> {
+/// # async fn test_compile() -> n0_error::Result<()> {
 /// let endpoint = Endpoint::bind().await?;
 ///
 /// let router = Router::builder(endpoint)
@@ -81,8 +81,8 @@ use crate::{
 ///     .spawn();
 ///
 /// // wait until the user wants to
-/// tokio::signal::ctrl_c().await.context("ctrl+c")?;
-/// router.shutdown().await.context("shutdown")?;
+/// tokio::signal::ctrl_c().await.std_context("ctrl+c")?;
+/// router.shutdown().await.std_context("shutdown")?;
 /// # Ok(())
 /// # }
 /// ```
@@ -102,33 +102,25 @@ pub struct RouterBuilder {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources, std_sources)]
 #[non_exhaustive]
 pub enum AcceptError {
-    #[snafu(transparent)]
-    Connection {
-        source: crate::endpoint::ConnectionError,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(transparent)]
+    #[error(transparent)]
+    Connection { source: crate::endpoint::ConnectionError },
+    #[error(transparent)]
     MissingRemoteEndpointId { source: RemoteEndpointIdError },
-    #[snafu(display("Not allowed."))]
+    #[display("Not allowed.")]
     NotAllowed {},
-
-    #[snafu(transparent)]
-    User {
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
-    },
+    #[error(transparent)]
+    User { source: AnyError },
 }
 
 impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
-        Self::User {
-            source: Box::new(value),
-        }
+        e!(AcceptError::User { source: AnyError::from_std(value) })
     }
 }
 
@@ -562,7 +554,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
         let is_allowed = (self.limiter)(remote);
         if !is_allowed {
             conn.close(0u32.into(), b"not allowed");
-            return Err(NotAllowedSnafu.build());
+            return Err!(AcceptError::NotAllowed);
         }
         self.proto.accept(conn).await?;
         Ok(())
@@ -577,7 +569,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 mod tests {
     use std::{sync::Mutex, time::Duration};
 
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
     use quinn::ApplicationClose;
 
     use super::*;

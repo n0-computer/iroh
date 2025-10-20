@@ -119,8 +119,7 @@ use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
 };
-use nested_enum_utils::common_fields;
-use snafu::{IntoError, Snafu, ensure};
+use n0_error::{add_meta, Error, e, AnyError, Err};
 use tokio::sync::oneshot;
 use tracing::{Instrument, debug, error_span, warn};
 
@@ -181,20 +180,15 @@ impl<T: IntoDiscovery> DynIntoDiscovery for T {
 }
 
 /// IntoDiscovery errors
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
-#[snafu(module)]
 pub enum IntoDiscoveryError {
-    #[snafu(display("Service '{provenance}' error"))]
+    #[display("Service '{provenance}' error")]
     User {
         provenance: &'static str,
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+        source: AnyError,
     },
 }
 
@@ -204,7 +198,7 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: T,
     ) -> Self {
-        into_discovery_error::UserSnafu { provenance }.into_error(Box::new(source))
+        e!(IntoDiscoveryError::User { provenance, source: AnyError::from_std(source) })
     }
 
     /// Creates a new user error from an arbitrary boxed error type.
@@ -212,28 +206,24 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        into_discovery_error::UserSnafu { provenance }.into_error(source)
+        e!(IntoDiscoveryError::User { provenance, source: AnyError::from_std_box(source) })
     }
 }
 
 /// Discovery errors
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum DiscoveryError {
-    #[snafu(display("No discovery service configured"))]
-    NoServiceConfigured {},
-    #[snafu(display("Discovery produced no results for {}", endpoint_id.fmt_short()))]
+    #[display("No discovery service configured")]
+    NoServiceConfigured,
+    #[display("Discovery produced no results for {}", endpoint_id.fmt_short())]
     NoResults { endpoint_id: EndpointId },
-    #[snafu(display("Service '{provenance}' error"))]
+    #[display("Service '{provenance}' error")]
     User {
         provenance: &'static str,
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+        source: AnyError,
     },
 }
 
@@ -243,7 +233,7 @@ impl DiscoveryError {
         provenance: &'static str,
         source: T,
     ) -> Self {
-        UserSnafu { provenance }.into_error(Box::new(source))
+        e!(DiscoveryError::User { provenance, source: AnyError::from_std(source) })
     }
 
     /// Creates a new user error from an arbitrary boxed error type.
@@ -251,7 +241,7 @@ impl DiscoveryError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        UserSnafu { provenance }.into_error(source)
+        e!(DiscoveryError::User { provenance, source: AnyError::from_std_box(source) })
     }
 }
 
@@ -505,7 +495,7 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Starts a discovery task.
     pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
-        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
+        n0_error::ensure!(!ep.discovery().is_empty(), e!(DiscoveryError::NoServiceConfigured));
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.id();
         let task = task::spawn(
@@ -536,7 +526,7 @@ impl DiscoveryTask {
         if !ep.needs_discovery(endpoint_id, MAX_AGE) {
             return Ok(None);
         }
-        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
+        n0_error::ensure!(!ep.discovery().is_empty(), e!(DiscoveryError::NoServiceConfigured));
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.id();
@@ -574,11 +564,11 @@ impl DiscoveryTask {
         ep: &Endpoint,
         endpoint_id: EndpointId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
-        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
+        n0_error::ensure!(!ep.discovery().is_empty(), e!(DiscoveryError::NoServiceConfigured));
         let stream = ep
             .discovery()
             .resolve(endpoint_id)
-            .ok_or(NoResultsSnafu { endpoint_id }.build())?;
+            .ok_or_else(|| e!(DiscoveryError::NoResults { endpoint_id }))?;
         Ok(stream)
     }
 
@@ -623,7 +613,7 @@ impl DiscoveryTask {
             }
         }
         if let Some(tx) = on_first_tx.take() {
-            tx.send(Err(NoResultsSnafu { endpoint_id }.build())).ok();
+            tx.send(Err!(DiscoveryError::NoResults { endpoint_id })).ok();
         }
     }
 }
