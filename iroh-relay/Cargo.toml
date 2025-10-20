@@ -33,7 +33,7 @@ hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 iroh-base = { version = "0.93.2", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.36", default-features = false }
-n0-future = "0.2.0"
+n0-future = "0.3.0"
 num_enum = "0.7"
 pin-project = "1"
 pkarr = { version = "5", default-features = false, features = ["signed_packet"] }
