@@ -8,7 +8,7 @@ use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
 };
-use n0_error::{Result, StackResultExt, StdResultExt};
+use n0_error::{Result, StdResultExt};
 use tracing::{trace, warn};
 
 use crate::{

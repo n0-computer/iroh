@@ -32,6 +32,7 @@ use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{RelayConfig, RelayMap};
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -43,7 +44,6 @@ use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::Rng;
 use smallvec::SmallVec;
-use n0_error::{add_meta, e, Error, Err};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{
@@ -1334,15 +1334,30 @@ impl DirectAddrUpdateState {
 #[non_exhaustive]
 pub enum CreateHandleError {
     #[display("Failed to create bind sockets")]
-    BindSockets { #[error(std_err)] source: io::Error },
+    BindSockets {
+        #[error(std_err)]
+        source: io::Error,
+    },
     #[display("Failed to create internal quinn endpoint")]
-    CreateQuinnEndpoint { #[error(std_err)] source: io::Error },
+    CreateQuinnEndpoint {
+        #[error(std_err)]
+        source: io::Error,
+    },
     #[display("Failed to create socket state")]
-    CreateSocketState { #[error(std_err)] source: io::Error },
+    CreateSocketState {
+        #[error(std_err)]
+        source: io::Error,
+    },
     #[display("Failed to create netmon monitor")]
-    CreateNetmonMonitor { #[error(std_err)] source: netmon::Error },
+    CreateNetmonMonitor {
+        #[error(std_err)]
+        source: netmon::Error,
+    },
     #[display("Failed to subscribe netmon monitor")]
-    SubscribeNetmonMonitor { #[error(std_err)] source: netmon::Error },
+    SubscribeNetmonMonitor {
+        #[error(std_err)]
+        source: netmon::Error,
+    },
 }
 
 impl Handle {
@@ -1673,8 +1688,7 @@ impl DiscoState {
         sealed_box: &[u8],
     ) -> Result<disco::Message, DiscoBoxError> {
         let mut sealed_box = sealed_box.to_vec();
-        self
-            .get_secret(endpoint_id, |secret| secret.open(&mut sealed_box))
+        self.get_secret(endpoint_id, |secret| secret.open(&mut sealed_box))
             .map_err(|source| e!(DiscoBoxError::Open { source }))?;
         disco::Message::from_bytes(&sealed_box)
             .map_err(|source| e!(DiscoBoxError::Parse { source }))
@@ -2523,7 +2537,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, PublicKey};
-    use n0_error::{Result, StackResultExt, StdResultExt, AnyError};
+    use n0_error::{AnyError, Result, StackResultExt, StdResultExt};
     use n0_future::{StreamExt, time};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
@@ -3275,7 +3289,10 @@ mod tests {
                     .await
                     .std_context("connecting")?;
                 let mut stream = conn.accept_uni().await.std_context("accept uni")?;
-                stream.read_to_end(1 << 16).await.std_context("read to end")?;
+                stream
+                    .read_to_end(1 << 16)
+                    .await
+                    .std_context("read to end")?;
                 info!("accept finished");
                 Ok(())
             }

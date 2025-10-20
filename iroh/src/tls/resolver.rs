@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ed25519_dalek::pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding};
 use iroh_base::SecretKey;
-use n0_error::{add_meta, Error};
+use n0_error::{Error, add_meta};
 use webpki_types::{CertificateDer, PrivatePkcs8KeyDer, pem::PemObject};
 
 #[derive(Debug)]

@@ -544,10 +544,9 @@ mod tests {
     /// tests)
     mod run_in_isolation {
         use iroh_base::SecretKey;
+        use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt, whatever};
         use n0_future::StreamExt;
-        use n0_error::{Result, StackResultExt, StdResultExt, AnyError as Error};
         use rand::{CryptoRng, SeedableRng};
-        use n0_error::whatever;
         use tracing_test::traced_test;
 
         use super::super::*;

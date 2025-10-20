@@ -10,8 +10,8 @@ use iroh::{
     discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
     endpoint_info::UserData,
 };
-use n0_future::StreamExt;
 use n0_error::Result;
+use n0_future::StreamExt;
 use tokio::task::JoinSet;
 
 #[tokio::main]

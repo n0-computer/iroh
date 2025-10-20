@@ -111,9 +111,7 @@ impl HttpServer {
                     .join(config.cert_mode.to_string());
                 tokio::fs::create_dir_all(&cache_path)
                     .await
-                    .std_context(format!(
-                        "failed to create cert cache dir at {cache_path:?}"
-                    ))?;
+                    .std_context(format!("failed to create cert cache dir at {cache_path:?}"))?;
                 config
                     .cert_mode
                     .build(

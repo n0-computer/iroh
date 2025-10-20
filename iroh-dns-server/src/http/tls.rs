@@ -9,8 +9,8 @@ use axum_server::{
     accept::Accept,
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
-use n0_future::{FutureExt, future::Boxed as BoxFuture};
 use n0_error::{Result, StdResultExt, whatever};
+use n0_future::{FutureExt, future::Boxed as BoxFuture};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls_acme::{AcmeConfig, axum::AxumAcceptor, caches::DirCache};
@@ -157,7 +157,9 @@ async fn load_secret_key(
     let mut reader = std::io::Cursor::new(keyfile);
 
     loop {
-        match rustls_pemfile::read_one(&mut reader).std_context("cannot parse secret key .pem file")? {
+        match rustls_pemfile::read_one(&mut reader)
+            .std_context("cannot parse secret key .pem file")?
+        {
             Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
                 return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
             }

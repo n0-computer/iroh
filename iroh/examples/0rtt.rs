@@ -7,7 +7,7 @@ use iroh::{
     endpoint::{Connecting, Connection},
 };
 use iroh_base::ticket::EndpointTicket;
-use n0_error::{Result, StdResultExt, StackResultExt, whatever};
+use n0_error::{Result, StackResultExt, StdResultExt, whatever};
 use n0_future::{StreamExt, future};
 use n0_watcher::Watcher;
 use tracing::{info, trace};

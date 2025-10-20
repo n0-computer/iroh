@@ -650,7 +650,7 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, SecretKey};
-    use n0_error::{Result, StackResultExt, StdResultExt, AnyError as Error};
+    use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
@@ -969,8 +969,8 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
+    use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use n0_future::time::Duration;
-    use n0_error::{Result, StackResultExt, StdResultExt, AnyError as Error};
     use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
@@ -1066,7 +1066,9 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover() -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let dns_pkarr_server = DnsPkarrServer::run().await.std_context("DnsPkarrServer run")?;
+        let dns_pkarr_server = DnsPkarrServer::run()
+            .await
+            .std_context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
         let (ep1, _guard1) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;

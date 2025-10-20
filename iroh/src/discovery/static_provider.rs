@@ -125,8 +125,8 @@ impl StaticProvider {
     /// # fn get_addrs() -> Vec<EndpointAddr> {
     /// #     Vec::new()
     /// # }
-/// # #[tokio::main]
-/// # async fn main() -> n0_error::Result<()> {
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
     /// // get addrs from somewhere
     /// let addrs = get_addrs();
     ///

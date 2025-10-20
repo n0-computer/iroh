@@ -196,8 +196,8 @@
 //!
 //! ```no_run
 //! use iroh::{Endpoint, EndpointAddr};
-//! use n0_future::StreamExt;
 //! use n0_error::{Result, StackResultExt};
+//! use n0_future::StreamExt;
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.

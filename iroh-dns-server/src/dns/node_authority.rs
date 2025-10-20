@@ -13,7 +13,7 @@ use hickory_server::{
     server::RequestInfo,
     store::in_memory::InMemoryAuthority,
 };
-use n0_error::{Result, StackResultExt, StdResultExt, whatever};
+use n0_error::{Result, StdResultExt, whatever};
 use tracing::{debug, trace};
 
 use crate::{

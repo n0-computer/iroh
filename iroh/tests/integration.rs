@@ -13,11 +13,11 @@ use iroh::{
     Endpoint, RelayMode,
     discovery::{Discovery, pkarr::PkarrResolver},
 };
+use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::{
     StreamExt, task,
     time::{self, Duration},
 };
-use n0_error::{Result, StackResultExt, StdResultExt};
 #[cfg(not(wasm_browser))]
 use tokio::test;
 use tracing::{Instrument, info_span};

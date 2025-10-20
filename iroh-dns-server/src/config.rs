@@ -175,9 +175,8 @@ impl Config {
         let dir = if let Some(val) = env::var_os("IROH_DNS_DATA_DIR") {
             PathBuf::from(val)
         } else {
-            let path = dirs_next::data_dir().std_context(
-                "operating environment provides no directory for application data",
-            )?;
+            let path = dirs_next::data_dir()
+                .std_context("operating environment provides no directory for application data")?;
 
             path.join("iroh-dns")
         };

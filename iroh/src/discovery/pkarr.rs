@@ -48,7 +48,7 @@ use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
-use n0_error::{add_meta, e, Error, Err};
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
@@ -81,17 +81,29 @@ pub mod dht;
 #[non_exhaustive]
 pub enum PkarrError {
     #[display("Invalid public key")]
-    PublicKey { #[error(std_err)] source: PublicKeyError },
+    PublicKey {
+        #[error(std_err)]
+        source: PublicKeyError,
+    },
     #[display("Packet failed to verify")]
-    Verify { #[error(std_err)] source: SignedPacketVerifyError },
+    Verify {
+        #[error(std_err)]
+        source: SignedPacketVerifyError,
+    },
     #[display("Invalid relay URL")]
     InvalidRelayUrl { url: RelayUrl },
     #[display("Error sending http request")]
-    HttpSend { #[error(std_err)] source: reqwest::Error },
+    HttpSend {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
     #[display("Error resolving http request")]
     HttpRequest { status: reqwest::StatusCode },
     #[display("Http payload error")]
-    HttpPayload { #[error(std_err)] source: reqwest::Error },
+    HttpPayload {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
     #[display("EncodingError")]
     Encoding { source: EncodingError },
 }
@@ -555,7 +567,11 @@ impl PkarrRelayClient {
 
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
-            .map_err(|_| e!(PkarrError::InvalidRelayUrl { url: self.pkarr_relay_url.clone().into() }))?
+            .map_err(|_| {
+                e!(PkarrError::InvalidRelayUrl {
+                    url: self.pkarr_relay_url.clone().into()
+                })
+            })?
             .push(&public_key.to_z32());
 
         let response = self
@@ -566,7 +582,10 @@ impl PkarrRelayClient {
             .map_err(|source| e!(PkarrError::HttpSend { source }))?;
 
         if !response.status().is_success() {
-            return Err(e!(PkarrError::HttpRequest { status: response.status() }).into());
+            return Err(e!(PkarrError::HttpRequest {
+                status: response.status()
+            })
+            .into());
         }
 
         let payload = response
@@ -583,7 +602,11 @@ impl PkarrRelayClient {
     pub async fn publish(&self, signed_packet: &SignedPacket) -> Result<(), PkarrError> {
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
-            .map_err(|_| e!(PkarrError::InvalidRelayUrl { url: self.pkarr_relay_url.clone().into() }))?
+            .map_err(|_| {
+                e!(PkarrError::InvalidRelayUrl {
+                    url: self.pkarr_relay_url.clone().into()
+                })
+            })?
             .push(&signed_packet.public_key().to_z32());
 
         let response = self
@@ -595,7 +618,9 @@ impl PkarrRelayClient {
             .map_err(|source| e!(PkarrError::HttpSend { source }))?;
 
         if !response.status().is_success() {
-            return Err!(PkarrError::HttpRequest { status: response.status() });
+            return Err!(PkarrError::HttpRequest {
+                status: response.status()
+            });
         }
 
         Ok(())

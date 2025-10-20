@@ -487,9 +487,7 @@ pub struct Endpoint {
 #[non_exhaustive]
 pub enum ConnectWithOptsError {
     #[error(transparent)]
-    AddEndpointAddr {
-        source: AddEndpointAddrError,
-    },
+    AddEndpointAddr { source: AddEndpointAddrError },
     #[display("Connecting to ourself is not supported")]
     SelfConnect,
     #[display("No addressing information available")]
@@ -510,7 +508,10 @@ pub enum ConnectError {
     #[error(transparent)]
     Connect { source: ConnectWithOptsError },
     #[error(transparent)]
-    Connection { #[error(std_err)] source: ConnectionError },
+    Connection {
+        #[error(std_err)]
+        source: ConnectionError,
+    },
 }
 
 #[allow(missing_docs)]
@@ -2120,8 +2121,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     use n0_error::{AnyError as Error, StackResultExt, StdResultExt};
+    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     type Result<T = (), E = Error> = std::result::Result<T, E>;
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
@@ -2374,9 +2375,9 @@ mod tests {
         let task = tokio::spawn({
             let server = server.clone();
             async move {
-                    let Some(conn) = server.accept().await else {
-                        n0_error::whatever!("Expected an incoming connection");
-                    };
+                let Some(conn) = server.accept().await else {
+                    n0_error::whatever!("Expected an incoming connection");
+                };
                 let conn = conn.await.e()?;
                 let (mut send, mut recv) = conn.accept_bi().await.e()?;
                 let data = recv.read_to_end(1000).await.e()?;

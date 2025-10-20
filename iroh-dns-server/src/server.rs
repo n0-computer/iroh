@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 use iroh_metrics::service::start_metrics_server;
-use n0_error::{Result, StdResultExt, StackResultExt};
+use n0_error::{Result, StdResultExt};
 use tracing::info;
 
 use crate::{
