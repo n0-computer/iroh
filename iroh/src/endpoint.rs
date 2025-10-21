@@ -899,11 +899,9 @@ impl Endpoint {
         // of connecting to us.
         let watch_relay = self.msock.home_relay();
         let endpoint_id = self.id();
-        watch_relay
-            .map(move |mut relays| {
-                EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
-            })
-            .expect("watchable is alive - cannot be disconnected yet")
+        watch_relay.map(move |mut relays| {
+            EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
+        })
     }
 
     /// A convenience method that waits for the endpoint to be considered "online".
