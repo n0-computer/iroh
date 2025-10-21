@@ -83,7 +83,7 @@ impl RelayMap {
     }
 
     /// Returns `true` if a relay with `url` is contained in this this relay map.
-    pub fn contains_relay(&self, url: &RelayUrl) -> bool {
+    pub fn contains(&self, url: &RelayUrl) -> bool {
         self.relays.read().expect("poisoned").contains_key(url)
     }
 
