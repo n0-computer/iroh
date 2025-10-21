@@ -942,7 +942,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9d8dd2f26c86b27a2a8ea2767ec7f9df7a89516e4794e54ac01ee618dda3aa4"
 dependencies = [
  "const-oid",
- "der_derive",
  "pem-rfc7468",
  "zeroize",
 ]
@@ -959,17 +958,6 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "rusticata-macros",
-]
-
-[[package]]
-name = "der_derive"
-version = "0.8.0-rc.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be645fee2afe89d293b96c19e4456e6ac69520fc9c6b8a58298550138e361ffe"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.107",
 ]
 
 [[package]]
@@ -2217,7 +2205,6 @@ dependencies = [
  "console_error_panic_hook",
  "crypto_box",
  "data-encoding",
- "der",
  "derive_more 2.0.1",
  "ed25519-dalek",
  "futures-util",
@@ -2249,7 +2236,6 @@ dependencies = [
  "rand 0.9.2",
  "rand_chacha 0.9.0",
  "reqwest",
- "ring",
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",

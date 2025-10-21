@@ -26,7 +26,6 @@ backon = { version = "1.4" }
 bytes = "1.7"
 crypto_box = { version = "0.10.0-pre.0", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
-der = { version = "0.8.0-rc.9", features = ["alloc", "derive"] }
 derive_more = { version = "2.0.1", features = [
     "debug",
     "display",
@@ -54,7 +53,6 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "stream",
 ] }
-ring = "0.17"
 rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 smallvec = "1.11.1"
