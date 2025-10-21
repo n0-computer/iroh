@@ -24,7 +24,7 @@ send_stream
     .<span class="kw">await
     </span>.context(<span class="string">"accept error"</span>)<span class="question-mark">?
     </span>.<span class="kw">await
-    </span>.context(<span class="string">"connecting error"</span>)<span class="question-mark">?</span>;
+    </span>.std_context(<span class="string">"connecting error"</span>)<span class="question-mark">?</span>;
 <span class="kw">let </span><span class="kw-2">mut </span>recv_stream = conn.accept_uni().<span class="kw">await</span>.std_context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
 <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">3</span>];
 recv_stream
@@ -136,10 +136,10 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
 
     <span class="comment">// Establish a QUIC connection, open a bi-directional stream, exchange messages.
     </span><span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"hello-world"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) = conn.open_bi().<span class="kw">await</span>.context(<span class="string">"open bi"</span>)<span class="question-mark">?</span>;
-    send_stream.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.context(<span class="string">"write"</span>)<span class="question-mark">?</span>;
-    send_stream.finish().context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
-    <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.context(<span class="string">"read"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) = conn.open_bi().<span class="kw">await</span>.std_context(<span class="string">"open bi"</span>)<span class="question-mark">?</span>;
+    send_stream.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.std_context(<span class="string">"write"</span>)<span class="question-mark">?</span>;
+    send_stream.finish().std_context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.std_context(<span class="string">"read"</span>)<span class="question-mark">?</span>;
 
     <span class="comment">// Gracefully close the connection and endpoint.
     </span>conn.close(<span class="number">1u8</span>.into(), <span class="string">b"done"</span>);
@@ -166,7 +166,7 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
         .<span class="kw">await
         </span>.context(<span class="string">"no incoming connection"</span>)<span class="question-mark">?
         </span>.<span class="kw">await
-        </span>.context(<span class="string">"accept conn"</span>)<span class="question-mark">?</span>;
+        </span>.std_context(<span class="string">"accept conn"</span>)<span class="question-mark">?</span>;
     <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) =
         conn.accept_bi().<span class="kw">await</span>.std_context(<span class="string">"accept stream"</span>)<span class="question-mark">?</span>;
     <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.std_context(<span class="string">"read"</span>)<span class="question-mark">?</span>;

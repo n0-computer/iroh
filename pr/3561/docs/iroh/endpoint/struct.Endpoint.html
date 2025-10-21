@@ -226,7 +226,7 @@ registry.write().unwrap().register_all(endpoint.metrics());
     </span>.std_context(<span class="string">"get"</span>)<span class="question-mark">?
     </span>.text()
     .<span class="kw">await
-    </span>.context(<span class="string">"text"</span>)<span class="question-mark">?</span>;
+    </span>.std_context(<span class="string">"text"</span>)<span class="question-mark">?</span>;
 
 <span class="macro">assert!</span>(res.contains(<span class="string">r#"TYPE magicsock_recv_datagrams counter"#</span>));
 <span class="macro">assert!</span>(res.contains(<span class="string">r#"magicsock_recv_datagrams_total 0"#</span>));</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.network_change" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1148-1150">Source</a><h4 class="code-header">pub async fn <a href="#method.network_change" class="fn">network_change</a>(&amp;self)</h4></section></summary><div class="docblock"><p>Notifies the system of potential network changes.</p>

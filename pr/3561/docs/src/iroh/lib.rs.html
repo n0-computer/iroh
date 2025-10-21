@@ -38,7 +38,7 @@
 <a href=#38 id=38 data-nosnippet>38</a>//!     .await
 <a href=#39 id=39 data-nosnippet>39</a>//!     .context("accept error")?
 <a href=#40 id=40 data-nosnippet>40</a>//!     .await
-<a href=#41 id=41 data-nosnippet>41</a>//!     .context("connecting error")?;
+<a href=#41 id=41 data-nosnippet>41</a>//!     .std_context("connecting error")?;
 <a href=#42 id=42 data-nosnippet>42</a>//! let mut recv_stream = conn.accept_uni().await.std_context("unable to open uni")?;
 <a href=#43 id=43 data-nosnippet>43</a>//! let mut buf = [0u8; 3];
 <a href=#44 id=44 data-nosnippet>44</a>//! recv_stream
@@ -179,10 +179,10 @@
 <a href=#179 id=179 data-nosnippet>179</a>//!
 <a href=#180 id=180 data-nosnippet>180</a>//!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 <a href=#181 id=181 data-nosnippet>181</a>//!     let conn = ep.connect(addr, b"hello-world").await?;
-<a href=#182 id=182 data-nosnippet>182</a>//!     let (mut send_stream, mut recv_stream) = conn.open_bi().await.context("open bi")?;
-<a href=#183 id=183 data-nosnippet>183</a>//!     send_stream.write_all(b"hello").await.context("write")?;
-<a href=#184 id=184 data-nosnippet>184</a>//!     send_stream.finish().context("finish")?;
-<a href=#185 id=185 data-nosnippet>185</a>//!     let _msg = recv_stream.read_to_end(10).await.context("read")?;
+<a href=#182 id=182 data-nosnippet>182</a>//!     let (mut send_stream, mut recv_stream) = conn.open_bi().await.std_context("open bi")?;
+<a href=#183 id=183 data-nosnippet>183</a>//!     send_stream.write_all(b"hello").await.std_context("write")?;
+<a href=#184 id=184 data-nosnippet>184</a>//!     send_stream.finish().std_context("finish")?;
+<a href=#185 id=185 data-nosnippet>185</a>//!     let _msg = recv_stream.read_to_end(10).await.std_context("read")?;
 <a href=#186 id=186 data-nosnippet>186</a>//!
 <a href=#187 id=187 data-nosnippet>187</a>//!     // Gracefully close the connection and endpoint.
 <a href=#188 id=188 data-nosnippet>188</a>//!     conn.close(1u8.into(), b"done");
@@ -212,7 +212,7 @@
 <a href=#212 id=212 data-nosnippet>212</a>//!         .await
 <a href=#213 id=213 data-nosnippet>213</a>//!         .context("no incoming connection")?
 <a href=#214 id=214 data-nosnippet>214</a>//!         .await
-<a href=#215 id=215 data-nosnippet>215</a>//!         .context("accept conn")?;
+<a href=#215 id=215 data-nosnippet>215</a>//!         .std_context("accept conn")?;
 <a href=#216 id=216 data-nosnippet>216</a>//!     let (mut send_stream, mut recv_stream) =
 <a href=#217 id=217 data-nosnippet>217</a>//!         conn.accept_bi().await.std_context("accept stream")?;
 <a href=#218 id=218 data-nosnippet>218</a>//!     let _msg = recv_stream.read_to_end(10).await.std_context("read")?;
