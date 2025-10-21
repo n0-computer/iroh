@@ -161,7 +161,7 @@ jobs:
         include:
           - name: windows-latest
             os: windows
-            runner: [self-hosted, windows, x64]
+            runner: [self-hosted, windows, x64, batch-3]
     env:
       # Using self-hosted runners so use local cache for sccache and
       # not SCCACHE_GHA_ENABLED.
@@ -276,7 +276,7 @@ jobs:
         include:
           - name: windows-latest
             os: windows
-            runner: [self-hosted, windows, x64]
+            runner: [self-hosted, windows, x64, batch-3]
     env:
       # Using self-hosted runners so use local cache for sccache and
       # not SCCACHE_GHA_ENABLED.
