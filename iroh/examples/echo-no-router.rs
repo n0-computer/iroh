@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_side(addr: EndpointAddr) -> Result<()> {
-    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+    let endpoint = Endpoint::bind().await?;
 
     // Open a connection to the accepting endpoint
     let conn = endpoint.connect(addr, ALPN).await?;
@@ -68,7 +68,6 @@ async fn connect_side(addr: EndpointAddr) -> Result<()> {
 
 async fn start_accept_side() -> Result<Endpoint> {
     let endpoint = Endpoint::builder()
-        .discovery_n0()
         // The accept side needs to opt-in to the protocols it accepts,
         // as any connection attempts that can't be found with a matching ALPN
         // will be rejected.

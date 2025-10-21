@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("Discovering Local Endpoints Example!");
 
-    let ep = Endpoint::builder().bind().await?;
+    let ep = Endpoint::bind().await?;
     let endpoint_id = ep.id();
 
     let mdns = MdnsDiscovery::builder().build(endpoint_id)?;
@@ -68,7 +68,8 @@ async fn main() -> Result<()> {
     for _ in 0..endpoint_count {
         let ud = user_data.clone();
         set.spawn(async move {
-            let ep = Endpoint::builder().discovery_local_network().bind().await?;
+            let ep = Endpoint::bind().await?;
+            ep.discovery().add(MdnsDiscovery::builder().build(ep.id())?);
             ep.set_user_data_for_discovery(Some(ud));
             tokio::time::sleep(Duration::from_secs(3)).await;
             ep.close().await;

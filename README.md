@@ -60,7 +60,7 @@ Install it using `cargo add iroh`, then on the connecting side:
 ```rs
 const ALPN: &[u8] = b"iroh-example/echo/0";
 
-let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+let endpoint = Endpoint::bind().await?;
 
 // Open a connection to the accepting endpoint
 let conn = endpoint.connect(addr, ALPN).await?;
@@ -85,7 +85,7 @@ endpoint.close().await;
 
 And on the accepting side:
 ```rs
-let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+let endpoint = Endpoint::bind().await?;
 
 let router = Router::builder(endpoint)
     .accept(ALPN.to_vec(), Arc::new(Echo))
@@ -137,7 +137,7 @@ This repository contains a workspace of crates:
 
 ## License
 
-Copyright 2024 N0, INC.
+Copyright 2025 N0, INC.
 
 This project is licensed under either of
 

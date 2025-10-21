@@ -56,10 +56,7 @@ pub use self::{
     resolver::{DEFAULT_CERT_RELOAD_INTERVAL, ReloadingResolver},
 };
 
-// TODO: remove before 1.0
-const NO_CONTENT_CHALLENGE_HEADER_LEGACY: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Iroh-Challenge";
-const NO_CONTENT_RESPONSE_HEADER_LEGACY: &str = "X-Tailscale-Response";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Iroh-Response";
 const NOTFOUND: &[u8] = b"Not Found";
 const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
@@ -651,15 +648,6 @@ fn serve_no_content_handler<B: hyper::body::Body>(
         if check(challenge) {
             response = response.header(
                 NO_CONTENT_RESPONSE_HEADER,
-                format!("response {}", challenge.to_str()?),
-            );
-        }
-    }
-
-    if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER_LEGACY) {
-        if check(challenge) {
-            response = response.header(
-                NO_CONTENT_RESPONSE_HEADER_LEGACY,
                 format!("response {}", challenge.to_str()?),
             );
         }

@@ -354,7 +354,7 @@ impl EndpointStateActor {
 
     /// Handles [`EndpointStateMessage::AddEndpointAddr`].
     fn handle_msg_add_endpoint_addr(&mut self, addr: EndpointAddr, source: Source) {
-        for sockaddr in addr.direct_addresses {
+        for sockaddr in addr.ip_addrs() {
             let addr = transports::Addr::from(sockaddr);
             self.paths
                 .entry(addr)
@@ -362,13 +362,13 @@ impl EndpointStateActor {
                 .sources
                 .insert(source.clone(), Instant::now());
         }
-        if let Some(relay_url) = addr.relay_url {
-            let addr = transports::Addr::from((relay_url, self.endpoint_id));
+        for relay_url in addr.relay_urls() {
+            let addr = transports::Addr::from((relay_url.clone(), self.endpoint_id));
             self.paths
                 .entry(addr)
                 .or_default()
                 .sources
-                .insert(source, Instant::now());
+                .insert(source.clone(), Instant::now());
         }
         trace!("added addressing information");
     }

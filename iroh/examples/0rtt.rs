@@ -144,12 +144,12 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
         let Some(addr) = addrs.next().await else {
             snafu::whatever!("Address stream closed");
         };
-        if !addr.direct_addresses.is_empty() {
+        if !addr.ip_addrs().count() == 0 {
             break addr;
         }
     };
     println!("Listening on: {addr:?}");
-    println!("Endpoint ID: {:?}", addr.endpoint_id);
+    println!("Endpoint ID: {:?}", addr.id);
     println!("Ticket: {}", EndpointTicket::from(addr));
 
     let accept = async move {

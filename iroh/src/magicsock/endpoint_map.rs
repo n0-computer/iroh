@@ -139,16 +139,16 @@ impl EndpointMap {
 
     /// Adds addresses where a node might be contactable.
     pub(super) async fn add_endpoint_addr(&self, endpoint_addr: EndpointAddr, source: Source) {
-        if let Some(ref relay_url) = endpoint_addr.relay_url {
-            // Ensure we have a RelayMappedAddress for this.
+        for url in endpoint_addr.relay_urls() {
+            // Ensure we have a RelayMappedAddress.
             self.relay_mapped_addrs
-                .get(&(relay_url.clone(), endpoint_addr.endpoint_id));
+                .get(&(url.clone(), endpoint_addr.id));
         }
-        let node_state = self.endpoint_state_actor(endpoint_addr.endpoint_id);
+        let actor = self.endpoint_state_actor(endpoint_addr.id);
 
         // This only fails if the sender is closed.  That means the NodeStateActor has
         // stopped, which only happens during shutdown.
-        node_state
+        actor
             .send(EndpointStateMessage::AddEndpointAddr(endpoint_addr, source))
             .await
             .ok();

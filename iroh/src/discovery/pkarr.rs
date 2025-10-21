@@ -62,10 +62,11 @@ use snafu::{ResultExt, Snafu};
 use tracing::{Instrument, debug, error_span, warn};
 use url::Url;
 
-use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
+    Endpoint,
     discovery::{Discovery, DiscoveryItem, EndpointData},
     endpoint::force_staging_infra,
     util::reqwest_client_builder,
@@ -203,16 +204,13 @@ impl PkarrPublisherBuilder {
 }
 
 impl IntoDiscovery for PkarrPublisherBuilder {
-    fn into_discovery(
-        mut self,
-        context: &DiscoveryContext,
-    ) -> Result<impl Discovery, IntoDiscoveryError> {
+    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
-            self.dns_resolver = Some(context.dns_resolver().clone());
+            self.dns_resolver = Some(endpoint.dns_resolver().clone());
         }
 
-        Ok(self.build(context.secret_key().clone()))
+        Ok(self.build(endpoint.secret_key().clone()))
     }
 }
 
@@ -245,10 +243,10 @@ impl PkarrPublisher {
     /// time-to-live value for the published packets, and it will republish discovery information
     /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
     ///
-    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`add_discovery`].
+    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`discovery`].
     /// It will then use the endpoint's secret key to sign published packets.
     ///
-    /// [`add_discovery`]:  crate::endpoint::Builder::add_discovery
+    /// [`discovery`]:  crate::endpoint::Builder::discovery
     /// [pkarr]: https://pkarr.org
     pub fn builder(pkarr_relay: Url) -> PkarrPublisherBuilder {
         PkarrPublisherBuilder::new(pkarr_relay)
@@ -317,9 +315,9 @@ impl PkarrPublisher {
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_endpoint_data(&self, data: &EndpointData) {
         let mut data = data.clone();
-        if data.relay_url().is_some() {
-            // If relay url is set: only publish relay url, and no direct addrs.
-            data.clear_direct_addresses();
+        if data.relay_urls().next().is_some() {
+            // If relay url is set: only publish relay url, and no  addrs.
+            data.clear_ip_addrs();
         }
         let info = EndpointInfo::from_parts(self.endpoint_id, data);
         self.watchable.set(Some(info)).ok();
@@ -437,13 +435,10 @@ impl PkarrResolverBuilder {
 }
 
 impl IntoDiscovery for PkarrResolverBuilder {
-    fn into_discovery(
-        mut self,
-        context: &DiscoveryContext,
-    ) -> Result<impl Discovery, IntoDiscoveryError> {
+    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
-            self.dns_resolver = Some(context.dns_resolver().clone());
+            self.dns_resolver = Some(endpoint.dns_resolver().clone());
         }
 
         Ok(self.build())

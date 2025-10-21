@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use n0_future::time::Instant;
 
 use super::Source;
+use crate::disco::TransactionId;
 
 /// The state of a single path to the remote endpoint.
 ///
@@ -20,5 +21,5 @@ pub(super) struct PathState {
     /// of the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
     /// The last ping sent on this path.
-    pub(super) ping_sent: Option<stun_rs::TransactionId>,
+    pub(super) ping_sent: Option<TransactionId>,
 }

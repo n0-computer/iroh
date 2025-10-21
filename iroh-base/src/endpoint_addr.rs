@@ -18,20 +18,20 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 /// contact the endpoint.
 ///
 /// To establish a network connection to an endpoint both the [`EndpointId`] and one or more network
-/// paths are needed.  The network paths can come from various sources:
+/// paths are needed.  The network paths can come from various sources, current sources can come from
 ///
 /// - A [discovery] service which can provide routing information for a given [`EndpointId`].
 ///
 /// - A [`RelayUrl`] of the endpoint's [home relay], this allows establishing the connection via
 ///   the Relay server and is very reliable.
 ///
-/// - One or more *direct addresses* on which the endpoint might be reachable.  Depending on the
+/// - One or more *IP based addresses* on which the endpoint might be reachable.  Depending on the
 ///   network location of both endpoints it might not be possible to establish a direct
 ///   connection without the help of a [Relay server].
 ///
 /// This structure will always contain the required [`EndpointId`] and will contain an optional
-/// number of network-level addressing information.  It is a generic addressing type used
-/// whenever a connection to other endpoints needs to be established.
+/// number of other addressing information.  It is a generic addressing type used whenever a connection
+/// to other endpoints needs to be established.
 ///
 /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#endpoint-discovery
 /// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
@@ -41,81 +41,147 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 )]
 pub struct EndpointAddr {
     /// The endpoint's identifier.
-    #[debug("{}", endpoint_id.fmt_short())]
-    pub endpoint_id: EndpointId,
-    /// The endpoint's home relay url.
-    pub relay_url: Option<RelayUrl>,
-    /// Socket addresses where the peer might be reached directly.
-    pub direct_addresses: BTreeSet<SocketAddr>,
+    pub id: EndpointId,
+    /// The endpoint's addresses
+    pub addrs: BTreeSet<TransportAddr>,
+}
+
+/// Available address types.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum TransportAddr {
+    /// Relays
+    Relay(RelayUrl),
+    /// IP based addresses
+    Ip(SocketAddr),
+}
+
+impl TransportAddr {
+    /// Whether this is a transport address via a relay server.
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::Relay(_))
+    }
+
+    /// Whether this is an IP transport address.
+    pub fn is_ip(&self) -> bool {
+        matches!(self, Self::Ip(_))
+    }
 }
 
 impl EndpointAddr {
-    /// Creates a new [`EndpointAddr`] with no `relay_url` and no `direct_addresses`.
-    pub fn new(endpoint_id: EndpointId) -> Self {
+    /// Creates a new [`EndpointAddr`] with no network level addresses.
+    ///
+    /// This still is usable with e.g. a discovery service to establish a connection,
+    /// depending on the situation.
+    pub fn new(id: PublicKey) -> Self {
         EndpointAddr {
-            endpoint_id,
-            relay_url: None,
-            direct_addresses: Default::default(),
+            id,
+            addrs: Default::default(),
         }
-    }
-
-    /// Adds a relay url.
-    pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
-        self.relay_url = Some(relay_url);
-        self
-    }
-
-    /// Adds the given direct addresses.
-    pub fn with_direct_addresses(
-        mut self,
-        addresses: impl IntoIterator<Item = SocketAddr>,
-    ) -> Self {
-        self.direct_addresses = addresses.into_iter().collect();
-        self
     }
 
     /// Creates a new [`EndpointAddr`] from its parts.
-    pub fn from_parts(
-        endpoint_id: EndpointId,
-        relay_url: Option<RelayUrl>,
-        direct_addresses: impl IntoIterator<Item = SocketAddr>,
-    ) -> Self {
+    pub fn from_parts(id: PublicKey, addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
         Self {
-            endpoint_id,
-            relay_url,
-            direct_addresses: direct_addresses.into_iter().collect(),
+            id,
+            addrs: addrs.into_iter().collect(),
         }
+    }
+
+    /// Adds a [`RelayUrl`] address.
+    pub fn with_relay_url(mut self, relay_url: RelayUrl) -> Self {
+        self.addrs.insert(TransportAddr::Relay(relay_url));
+        self
+    }
+
+    /// Adds an IP based address.
+    pub fn with_ip_addr(mut self, addr: SocketAddr) -> Self {
+        self.addrs.insert(TransportAddr::Ip(addr));
+        self
+    }
+
+    /// Adds a list of addresses.
+    pub fn with_addrs(mut self, addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
+        for addr in addrs.into_iter() {
+            self.addrs.insert(addr);
+        }
+        self
     }
 
     /// Returns true, if only a [`EndpointId`] is present.
     pub fn is_empty(&self) -> bool {
-        self.relay_url.is_none() && self.direct_addresses.is_empty()
+        self.addrs.is_empty()
     }
 
-    /// Returns the direct addresses of this peer.
-    pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
-        self.direct_addresses.iter()
+    /// Returns a list of IP addresses of this peer.
+    pub fn ip_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.addrs.iter().filter_map(|addr| match addr {
+            TransportAddr::Ip(addr) => Some(addr),
+            _ => None,
+        })
     }
 
-    /// Returns the relay url of this peer.
-    pub fn relay_url(&self) -> Option<&RelayUrl> {
-        self.relay_url.as_ref()
-    }
-}
-
-impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for EndpointAddr {
-    fn from(value: (PublicKey, Option<RelayUrl>, &[SocketAddr])) -> Self {
-        let (endpoint_id, relay_url, direct_addresses_iter) = value;
-        EndpointAddr {
-            endpoint_id,
-            relay_url,
-            direct_addresses: direct_addresses_iter.iter().copied().collect(),
-        }
+    /// Returns a list of relay urls of this peer.
+    ///
+    ///  In practice this is expected to be zero or one home relay for all known cases currently.
+    pub fn relay_urls(&self) -> impl Iterator<Item = &RelayUrl> {
+        self.addrs.iter().filter_map(|addr| match addr {
+            TransportAddr::Relay(url) => Some(url),
+            _ => None,
+        })
     }
 }
 
 impl From<EndpointId> for EndpointAddr {
     fn from(endpoint_id: EndpointId) -> Self {
         EndpointAddr::new(endpoint_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[non_exhaustive]
+    enum NewAddrType {
+        /// Relays
+        Relay(RelayUrl),
+        /// IP based addresses
+        Ip(SocketAddr),
+        /// New addr type for testing
+        Cool(u16),
+    }
+
+    #[test]
+    fn test_roundtrip_new_addr_type() {
+        let old = vec![
+            TransportAddr::Ip("127.0.0.1:9".parse().unwrap()),
+            TransportAddr::Relay("https://example.com".parse().unwrap()),
+        ];
+        let old_ser = postcard::to_stdvec(&old).unwrap();
+        let old_back: Vec<TransportAddr> = postcard::from_bytes(&old_ser).unwrap();
+        assert_eq!(old, old_back);
+
+        let new = vec![
+            NewAddrType::Ip("127.0.0.1:9".parse().unwrap()),
+            NewAddrType::Relay("https://example.com".parse().unwrap()),
+            NewAddrType::Cool(4),
+        ];
+        let new_ser = postcard::to_stdvec(&new).unwrap();
+        let new_back: Vec<NewAddrType> = postcard::from_bytes(&new_ser).unwrap();
+
+        assert_eq!(new, new_back);
+
+        // serialize old into new
+        let old_new_back: Vec<NewAddrType> = postcard::from_bytes(&old_ser).unwrap();
+
+        assert_eq!(
+            old_new_back,
+            vec![
+                NewAddrType::Ip("127.0.0.1:9".parse().unwrap()),
+                NewAddrType::Relay("https://example.com".parse().unwrap()),
+            ]
+        );
     }
 }

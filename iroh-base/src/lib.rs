@@ -3,7 +3,6 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
-// TODO: move to own crate
 #[cfg(feature = "ticket")]
 pub mod ticket;
 
@@ -15,7 +14,7 @@ mod key;
 mod relay_url;
 
 #[cfg(feature = "key")]
-pub use self::endpoint_addr::EndpointAddr;
+pub use self::endpoint_addr::{EndpointAddr, TransportAddr};
 #[cfg(feature = "key")]
 pub use self::key::{EndpointId, KeyParsingError, PublicKey, SecretKey, Signature, SignatureError};
 #[cfg(feature = "relay")]

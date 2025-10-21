@@ -3,14 +3,17 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use iroh::{endpoint::{Connection, BindError}, protocol::{AcceptError, ProtocolHandler, Router}, Endpoint, EndpointAddr};
+//! # use iroh::{
+//! #     endpoint::{Connection, BindError},
+//! #     protocol::{AcceptError, ProtocolHandler, Router},
+//! #     Endpoint,
+//! #     EndpointAddr
+//! # };
 //! #
 //! # async fn test_compile() -> Result<(), BindError> {
-//! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+//! let endpoint = Endpoint::bind().await?;
 //!
-//! let router = Router::builder(endpoint)
-//!     .accept(b"/my/alpn", Echo)
-//!     .spawn();
+//! let router = Router::builder(endpoint).accept(b"/my/alpn", Echo).spawn();
 //! # Ok(())
 //! # }
 //!
@@ -71,7 +74,7 @@ use crate::{
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, EndpointAddr};
 /// #
 /// # async fn test_compile() -> n0_snafu::Result<()> {
-/// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+/// let endpoint = Endpoint::bind().await?;
 ///
 /// let router = Router::builder(endpoint)
 ///     // .accept(&ALPN, <something>)
@@ -170,7 +173,7 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 
     /// Handle an incoming connection.
     ///
-    /// Can be implemented as `async fn accept(&self, connection: Connection) -> Result<Connection>`.
+    /// Can be implemented as `async fn accept(&self, connection: Connection) -> Result<()>`.
     ///
     /// The returned future runs on a freshly spawned tokio task so it can be long-running.
     ///
@@ -582,7 +585,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
-        let endpoint = Endpoint::builder().bind().await?;
+        let endpoint = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
         let router = Router::builder(endpoint.clone()).spawn();
 
         assert!(!router.is_shutdown());
@@ -620,20 +623,14 @@ mod tests {
     #[tokio::test]
     async fn test_limiter() -> Result {
         // tracing_subscriber::fmt::try_init().ok();
-        let e1 = Endpoint::builder()
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await?;
+        let e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
         // deny all access
         let proto = AccessLimit::new(Echo, |_endpoint_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
         let addr1 = r1.endpoint().addr();
         dbg!(&addr1);
-        let e2 = Endpoint::builder()
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await?;
+        let e2 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
 
         println!("connecting");
         let conn = e2.connect(addr1, ECHO_ALPN).await?;
@@ -673,10 +670,7 @@ mod tests {
         }
 
         eprintln!("creating ep1");
-        let endpoint = Endpoint::builder()
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await?;
+        let endpoint = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
         let router = Router::builder(endpoint)
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
@@ -684,10 +678,7 @@ mod tests {
         let addr = router.endpoint().addr();
 
         eprintln!("creating ep2");
-        let endpoint2 = Endpoint::builder()
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await?;
+        let endpoint2 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
         eprintln!("connecting to {addr:?}");
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 

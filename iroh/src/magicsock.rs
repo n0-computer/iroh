@@ -27,7 +27,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey};
+use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_future::{
     task::{self, AbortOnDropHandle},
@@ -63,10 +63,7 @@ use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
-    discovery::{
-        ConcurrentDiscovery, Discovery, DiscoveryContext, DynIntoDiscovery, EndpointData,
-        IntoDiscoveryError, UserData,
-    },
+    discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
@@ -124,9 +121,6 @@ pub(crate) struct Options {
 
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
     pub(crate) relay_map: RelayMap,
-
-    /// Optional endpoint discovery mechanisms.
-    pub(crate) discovery: Vec<Box<dyn DynIntoDiscovery>>,
 
     /// Optional user-defined discovery data.
     pub(crate) discovery_user_data: Option<UserData>,
@@ -372,7 +366,7 @@ impl MagicSock {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-    pub(crate) fn direct_addresses(&self) -> n0_watcher::Direct<BTreeSet<DirectAddr>> {
+    pub(crate) fn ip_addrs(&self) -> n0_watcher::Direct<BTreeSet<DirectAddr>> {
         self.direct_addrs.addrs.watch()
     }
 
@@ -461,13 +455,8 @@ impl MagicSock {
     ) -> Result<(), AddEndpointAddrError> {
         let mut pruned: usize = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.direct_addresses.remove(&my_addr) {
-                warn!(
-                    node_id = %addr.endpoint_id.fmt_short(),
-                    %my_addr,
-                    %source,
-                    "not adding our addr for node",
-                );
+            if addr.addrs.remove(&TransportAddr::Ip(my_addr)) {
+                warn!( endpoint_id=%addr.id.fmt_short(), %my_addr, %source, "not adding our addr for endpoint");
                 pruned += 1;
             }
         }
@@ -803,19 +792,26 @@ impl MagicSock {
     /// Called whenever our addresses or home relay endpoint changes.
     fn publish_my_addr(&self) {
         let relay_url = self.my_relay();
-        let direct_addrs = self.direct_addrs.sockaddrs();
+        let mut addrs: BTreeSet<_> = self
+            .direct_addrs
+            .sockaddrs()
+            .map(TransportAddr::Ip)
+            .collect();
 
         let user_data = self
             .discovery_user_data
             .read()
             .expect("lock poisened")
             .clone();
-        if relay_url.is_none() && direct_addrs.is_empty() && user_data.is_none() {
+        if relay_url.is_none() && addrs.is_empty() && user_data.is_none() {
             // do not bother publishing if we don't have any information
             return;
         }
+        if let Some(url) = relay_url {
+            addrs.insert(TransportAddr::Relay(url));
+        }
 
-        let data = EndpointData::new(relay_url, direct_addrs).with_user_data(user_data);
+        let data = EndpointData::new(addrs).with_user_data(user_data);
         self.discovery.publish(&data);
     }
 }
@@ -972,10 +968,6 @@ pub enum CreateHandleError {
     CreateNetmonMonitor { source: netmon::Error },
     #[snafu(display("Failed to subscribe netmon monitor"))]
     SubscribeNetmonMonitor { source: netmon::Error },
-    #[snafu(transparent)]
-    Discovery {
-        source: crate::discovery::IntoDiscoveryError,
-    },
 }
 
 impl Handle {
@@ -986,7 +978,6 @@ impl Handle {
             addr_v6,
             secret_key,
             relay_map,
-            discovery,
             discovery_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -999,21 +990,7 @@ impl Handle {
             metrics,
         } = opts;
 
-        let discovery = {
-            let context = DiscoveryContext {
-                secret_key: &secret_key,
-                #[cfg(not(wasm_browser))]
-                dns_resolver: &dns_resolver,
-            };
-            let discovery = discovery
-                .into_iter()
-                .map(|builder| builder.into_discovery(&context))
-                .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
-            match discovery.len() {
-                0 => ConcurrentDiscovery::default(),
-                _ => ConcurrentDiscovery::from_services(discovery),
-            }
-        };
+        let discovery = ConcurrentDiscovery::default();
 
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
@@ -1869,8 +1846,8 @@ impl DiscoveredDirectAddrs {
         updated
     }
 
-    fn sockaddrs(&self) -> BTreeSet<SocketAddr> {
-        self.addrs.get().into_iter().map(|da| da.addr).collect()
+    fn sockaddrs(&self) -> impl Iterator<Item = SocketAddr> {
+        self.addrs.get().into_iter().map(|da| da.addr)
     }
 
     fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
@@ -1955,7 +1932,7 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
-    use iroh_base::{EndpointAddr, EndpointId};
+    use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
@@ -1985,7 +1962,6 @@ mod tests {
             addr_v6: None,
             secret_key,
             relay_map: RelayMap::empty(),
-            discovery: Default::default(),
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
@@ -2391,12 +2367,12 @@ mod tests {
         let ms = Handle::new(default_options(&mut rng)).await.unwrap();
 
         // See if we can get endpoints.
-        let eps0 = ms.direct_addresses().get();
+        let eps0 = ms.ip_addrs().get();
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let eps1 = ms.direct_addresses().get();
+        let eps1 = ms.ip_addrs().get();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
@@ -2420,7 +2396,6 @@ mod tests {
             addr_v6: None,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
-            discovery: Default::default(),
             discovery_user_data: None,
             dns_resolver,
             proxy_url: None,
@@ -2548,15 +2523,15 @@ mod tests {
         });
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
+        let addrs = msock_2
+            .ip_addrs()
+            .get()
+            .into_iter()
+            .map(|x| TransportAddr::Ip(x.addr))
+            .collect();
         let endpoint_addr_2 = EndpointAddr {
-            endpoint_id: endpoint_id_2,
-            relay_url: None,
-            direct_addresses: msock_2
-                .direct_addresses()
-                .get()
-                .into_iter()
-                .map(|x| x.addr)
-                .collect(),
+            id: endpoint_id_2,
+            addrs,
         };
         msock_1
             .add_endpoint_addr(
@@ -2629,9 +2604,8 @@ mod tests {
             .endpoint_map
             .add_endpoint_addr(
                 EndpointAddr {
-                    endpoint_id: endpoint_id_2,
-                    relay_url: None,
-                    direct_addresses: Default::default(),
+                    id: endpoint_id_2,
+                    addrs: Default::default(),
                 },
                 Source::NamedApp {
                     name: "test".into(),
@@ -2668,13 +2642,12 @@ mod tests {
             .endpoint_map
             .add_endpoint_addr(
                 EndpointAddr {
-                    endpoint_id: endpoint_id_2,
-                    relay_url: None,
-                    direct_addresses: msock_2
-                        .direct_addresses()
+                    id: endpoint_id_2,
+                    addrs: msock_2
+                        .ip_addrs()
                         .get()
                         .into_iter()
-                        .map(|x| x.addr)
+                        .map(|x| TransportAddr::Ip(x.addr))
                         .collect(),
                 },
                 Source::NamedApp {

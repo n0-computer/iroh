@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
@@ -220,27 +220,14 @@ impl EndpointArgs {
             let url = self
                 .pkarr_relay_url
                 .unwrap_or_else(|| self.env.pkarr_relay_url());
-            builder = builder.add_discovery(PkarrPublisher::builder(url));
+            builder = builder.discovery(PkarrPublisher::builder(url));
         }
 
         if !self.no_dns_resolve {
             let domain = self
                 .dns_origin_domain
                 .unwrap_or_else(|| self.env.dns_origin_domain());
-            builder = builder.add_discovery(DnsDiscovery::builder(domain));
-        }
-
-        if self.mdns {
-            #[cfg(feature = "discovery-local-network")]
-            {
-                builder = builder.discovery_local_network();
-            }
-            #[cfg(not(feature = "discovery-local-network"))]
-            {
-                snafu::whatever!(
-                    "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
-                );
-            }
+            builder = builder.discovery(DnsDiscovery::builder(domain));
         }
 
         if self.relay_only {
@@ -270,6 +257,23 @@ impl EndpointArgs {
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
+        if self.mdns {
+            #[cfg(feature = "discovery-local-network")]
+            {
+                use iroh::discovery::mdns::MdnsDiscovery;
+
+                endpoint
+                    .discovery()
+                    .add(MdnsDiscovery::builder().build(endpoint.id())?);
+            }
+            #[cfg(not(feature = "discovery-local-network"))]
+            {
+                snafu::whatever!(
+                    "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
+                );
+            }
+        }
+
         let endpoint_id = endpoint.id();
         println!("Our endpoint id:\n\t{endpoint_id}");
 
@@ -284,11 +288,11 @@ impl EndpointArgs {
         let endpoint_addr = endpoint.addr();
 
         println!("Our direct addresses:");
-        for addr in &endpoint_addr.direct_addresses {
+        for addr in endpoint_addr.ip_addrs() {
             println!("\t{addr}");
         }
 
-        if let Some(url) = endpoint_addr.relay_url {
+        if let Some(url) = endpoint_addr.relay_urls().next() {
             println!("Our home relay server:\t{url}");
         } else {
             println!("No home relay server found");
@@ -307,7 +311,9 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
     let mut endpoint_addr = endpoint.addr();
-    endpoint_addr.direct_addresses = Default::default();
+    endpoint_addr
+        .addrs
+        .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
     let ticket = EndpointTicket::new(endpoint_addr);
     println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);
 
@@ -386,7 +392,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 async fn fetch(endpoint: Endpoint, ticket: &str) -> Result<()> {
     let me = endpoint.id().fmt_short();
     let ticket: EndpointTicket = ticket.parse()?;
-    let remote_endpoint_id = ticket.endpoint_addr().endpoint_id;
+    let remote_endpoint_id = ticket.endpoint_addr().id;
     let start = Instant::now();
 
     // Attempt to connect, over the given ALPN.

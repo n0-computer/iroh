@@ -363,6 +363,17 @@ impl From<SocketAddr> for Addr {
     }
 }
 
+impl From<&SocketAddr> for Addr {
+    fn from(value: &SocketAddr) -> Self {
+        match value {
+            SocketAddr::V4(_) => Self::Ip(*value),
+            SocketAddr::V6(addr) => {
+                Self::Ip(SocketAddr::new(addr.ip().to_canonical(), addr.port()))
+            }
+        }
+    }
+}
+
 impl From<(RelayUrl, EndpointId)> for Addr {
     fn from(value: (RelayUrl, EndpointId)) -> Self {
         Self::Relay(value.0, value.1)

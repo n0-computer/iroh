@@ -183,7 +183,7 @@ mod tests {
         let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
-        assert_eq!(res.relay_url(), Some(&relay_url));
+        assert_eq!(res.relay_urls().next(), Some(&relay_url));
 
         server.shutdown().await?;
         Ok(())
@@ -257,7 +257,7 @@ mod tests {
         let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
-        assert_eq!(res.relay_url(), Some(&relay_url));
+        assert_eq!(res.relay_urls().next(), Some(&relay_url));
 
         server.shutdown().await?;
         Ok(())

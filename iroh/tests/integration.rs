@@ -35,24 +35,32 @@ const ECHO_ALPN: &[u8] = b"echo";
 async fn simple_endpoint_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
-
     let client = Endpoint::builder()
         .relay_mode(RelayMode::Staging)
-        .discovery_n0()
         .bind()
         .await?;
+    tracing::info!("started client, id {}", client.id().fmt_short());
     let server = Endpoint::builder()
         .relay_mode(RelayMode::Staging)
-        .discovery_n0()
         .alpns(vec![ECHO_ALPN.to_vec()])
         .bind()
         .await?;
+    tracing::info!("started server, id {}", server.id().fmt_short());
+
+    // ensure the server has connected to a relay
+    // and therefore has enough information to publish
+    tracing::info!("waiting for server to go online");
+    time::timeout(Duration::from_secs(12), server.online())
+        .await
+        .context("server endpoint took too long to get online")?;
 
     // Make the server respond to requests with an echo
     task::spawn({
+        tracing::info!("waiting for incoming connections on the server");
         let server = server.clone();
         async move {
             while let Some(incoming) = server.accept().await {
+                tracing::info!("accepting connection");
                 let conn = incoming.await.e()?;
                 let endpoint_id = conn.remote_id()?;
                 tracing::info!(endpoint_id = %endpoint_id.fmt_short(), "Accepted connection");
@@ -76,8 +84,11 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     });
 
     // Wait for pkarr records to be published
-    time::timeout(Duration::from_secs(10), {
+    time::timeout(Duration::from_secs(20), {
         let endpoint_id = server.id();
+        tracing::info!(
+            "start timeout waiting for records to be published, waiting for {endpoint_id} resolution"
+        );
         async move {
             let resolver = PkarrResolver::n0_dns().build();
             loop {
@@ -85,12 +96,15 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
                 time::sleep(Duration::from_secs(1)).await;
 
                 let Some(mut stream) = resolver.resolve(endpoint_id) else {
+                    tracing::info!("unable to get resolver stream, looping");
                     continue;
                 };
                 let Ok(Some(item)) = stream.try_next().await else {
+                    tracing::info!("no items on stream when resolving, looping");
                     continue;
                 };
-                if item.relay_url().is_some() {
+                if item.relay_urls().next().is_some() {
+                    tracing::info!("home relay found");
                     break;
                 }
             }

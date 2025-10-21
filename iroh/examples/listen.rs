@@ -43,8 +43,7 @@ async fn main() -> n0_snafu::Result<()> {
     let endpoint_addr = endpoint.addr();
 
     let local_addrs = endpoint_addr
-        .direct_addresses
-        .iter()
+        .ip_addrs()
         .map(|addr| {
             let addr = addr.to_string();
             println!("\t{addr}");
@@ -52,7 +51,7 @@ async fn main() -> n0_snafu::Result<()> {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    let relay_url = endpoint_addr.relay_url.expect("missing relay");
+    let relay_url = endpoint_addr.relay_urls().next().expect("missing relay");
     println!("endpoint relay server url: {relay_url}");
     println!("\nin a separate terminal run:");
 
