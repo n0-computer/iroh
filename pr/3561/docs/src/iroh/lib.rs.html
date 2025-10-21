@@ -9,16 +9,16 @@
 <a href=#9 id=9 data-nosnippet>9</a>//!
 <a href=#10 id=10 data-nosnippet>10</a>//! ```no_run
 <a href=#11 id=11 data-nosnippet>11</a>//! # use iroh::{Endpoint, EndpointAddr};
-<a href=#12 id=12 data-nosnippet>12</a>//! # use n0_error::StackResultExt;
+<a href=#12 id=12 data-nosnippet>12</a>//! # use n0_error::{StackResultExt, StdResultExt};
 <a href=#13 id=13 data-nosnippet>13</a>//! # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#14 id=14 data-nosnippet>14</a>//! let addr: EndpointAddr = todo!();
 <a href=#15 id=15 data-nosnippet>15</a>//! let ep = Endpoint::bind().await?;
 <a href=#16 id=16 data-nosnippet>16</a>//! let conn = ep.connect(addr, b"my-alpn").await?;
-<a href=#17 id=17 data-nosnippet>17</a>//! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
+<a href=#17 id=17 data-nosnippet>17</a>//! let mut send_stream = conn.open_uni().await.std_context("unable to open uni")?;
 <a href=#18 id=18 data-nosnippet>18</a>//! send_stream
 <a href=#19 id=19 data-nosnippet>19</a>//!     .write_all(b"msg")
 <a href=#20 id=20 data-nosnippet>20</a>//!     .await
-<a href=#21 id=21 data-nosnippet>21</a>//!     .context("unable to write all")?;
+<a href=#21 id=21 data-nosnippet>21</a>//!     .std_context("unable to write all")?;
 <a href=#22 id=22 data-nosnippet>22</a>//! # Ok(())
 <a href=#23 id=23 data-nosnippet>23</a>//! # }
 <a href=#24 id=24 data-nosnippet>24</a>//! ```
@@ -27,7 +27,7 @@
 <a href=#27 id=27 data-nosnippet>27</a>//!
 <a href=#28 id=28 data-nosnippet>28</a>//! ```no_run
 <a href=#29 id=29 data-nosnippet>29</a>//! # use iroh::{Endpoint, EndpointAddr};
-<a href=#30 id=30 data-nosnippet>30</a>//! # use n0_error::StackResultExt;
+<a href=#30 id=30 data-nosnippet>30</a>//! # use n0_error::{StackResultExt, StdResultExt};
 <a href=#31 id=31 data-nosnippet>31</a>//! # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#32 id=32 data-nosnippet>32</a>//! let ep = Endpoint::builder()
 <a href=#33 id=33 data-nosnippet>33</a>//!     .alpns(vec![b"my-alpn".to_vec()])
@@ -39,7 +39,7 @@
 <a href=#39 id=39 data-nosnippet>39</a>//!     .context("accept error")?
 <a href=#40 id=40 data-nosnippet>40</a>//!     .await
 <a href=#41 id=41 data-nosnippet>41</a>//!     .context("connecting error")?;
-<a href=#42 id=42 data-nosnippet>42</a>//! let mut recv_stream = conn.accept_uni().await.context("unable to open uni")?;
+<a href=#42 id=42 data-nosnippet>42</a>//! let mut recv_stream = conn.accept_uni().await.std_context("unable to open uni")?;
 <a href=#43 id=43 data-nosnippet>43</a>//! let mut buf = [0u8; 3];
 <a href=#44 id=44 data-nosnippet>44</a>//! recv_stream
 <a href=#45 id=45 data-nosnippet>45</a>//!     .read_exact(&amp;mut buf)
@@ -213,10 +213,10 @@
 <a href=#213 id=213 data-nosnippet>213</a>//!         .context("no incoming connection")?
 <a href=#214 id=214 data-nosnippet>214</a>//!         .await
 <a href=#215 id=215 data-nosnippet>215</a>//!         .context("accept conn")?;
-<a href=#216 id=216 data-nosnippet>216</a>//!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await.context("accept stream")?;
-<a href=#217 id=217 data-nosnippet>217</a>//!     let _msg = recv_stream.read_to_end(10).await.context("read")?;
-<a href=#218 id=218 data-nosnippet>218</a>//!     send_stream.write_all(b"world").await.context("write")?;
-<a href=#219 id=219 data-nosnippet>219</a>//!     send_stream.finish().context("finish")?;
+<a href=#216 id=216 data-nosnippet>216</a>//!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await.std_context("accept stream")?;
+<a href=#217 id=217 data-nosnippet>217</a>//!     let _msg = recv_stream.read_to_end(10).await.std_context("read")?;
+<a href=#218 id=218 data-nosnippet>218</a>//!     send_stream.write_all(b"world").await.std_context("write")?;
+<a href=#219 id=219 data-nosnippet>219</a>//!     send_stream.finish().std_context("finish")?;
 <a href=#220 id=220 data-nosnippet>220</a>//!
 <a href=#221 id=221 data-nosnippet>221</a>//!     // Wait for the client to close the connection and gracefully close the endpoint.
 <a href=#222 id=222 data-nosnippet>222</a>//!     conn.closed().await;
