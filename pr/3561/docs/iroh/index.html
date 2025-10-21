@@ -30,7 +30,7 @@ send_stream
 recv_stream
     .read_exact(<span class="kw-2">&amp;mut </span>buf)
     .<span class="kw">await
-    </span>.context(<span class="string">"unable to read"</span>)<span class="question-mark">?</span>;</code></pre></div>
+    </span>.std_context(<span class="string">"unable to read"</span>)<span class="question-mark">?</span>;</code></pre></div>
 <p>Of course you can also use <a href="endpoint/struct.Connection.html#method.open_bi" title="method iroh::endpoint::Connection::open_bi">bi-directional streams</a> or any other features from QUIC.</p>
 <p>For more elaborate examples, see <a href="#examples">below</a> or the examples directory in
 the source repository.</p>
@@ -128,7 +128,7 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
 <p>The central struct is the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>, which allows you to connect to other endpoints:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, EndpointAddr};
-<span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt};
+<span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 
 <span class="kw">async fn </span>connect(addr: EndpointAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="comment">// The Endpoint is the central object that manages an iroh node.
@@ -150,7 +150,7 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
 <p>Every <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> can also accept connections:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, EndpointAddr};
-<span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt};
+<span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <span class="kw">use </span>n0_future::StreamExt;
 
 <span class="kw">async fn </span>accept() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
