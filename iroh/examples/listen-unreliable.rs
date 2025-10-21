@@ -4,7 +4,7 @@
 //! run this example from the project root:
 //!     $ cargo run --example listen-unreliable
 use iroh::{Endpoint, RelayMode, SecretKey};
-use n0_snafu::{Error, Result, ResultExt};
+use n0_error::{AnyError as Error, Result, StdResultExt};
 use tracing::{info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`

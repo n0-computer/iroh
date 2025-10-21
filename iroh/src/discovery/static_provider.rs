@@ -41,7 +41,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
-/// # async fn main() -> n0_snafu::Result<()> {
+/// # async fn main() -> n0_error::Result<()> {
 /// // Create the discovery service and endpoint.
 /// let discovery = StaticProvider::new();
 ///
@@ -126,7 +126,7 @@ impl StaticProvider {
     /// #     Vec::new()
     /// # }
     /// # #[tokio::main]
-    /// # async fn main() -> n0_snafu::Result<()> {
+    /// # async fn main() -> n0_error::Result<()> {
     /// // get addrs from somewhere
     /// let addrs = get_addrs();
     ///
@@ -235,7 +235,7 @@ impl Discovery for StaticProvider {
 #[cfg(test)]
 mod tests {
     use iroh_base::{EndpointAddr, SecretKey};
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StackResultExt};
 
     use super::*;
     use crate::{Endpoint, RelayMode};

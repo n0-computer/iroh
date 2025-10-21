@@ -544,10 +544,9 @@ mod tests {
     /// tests)
     mod run_in_isolation {
         use iroh_base::SecretKey;
+        use n0_error::{AnyError as Error, Result, StdResultExt, whatever};
         use n0_future::StreamExt;
-        use n0_snafu::{Error, Result, ResultExt};
         use rand::{CryptoRng, SeedableRng};
-        use snafu::whatever;
         use tracing_test::traced_test;
 
         use super::super::*;
@@ -591,7 +590,7 @@ mod tests {
                 ..
             } = tokio::time::timeout(Duration::from_secs(5), s1.next())
                 .await
-                .context("timeout")?
+                .std_context("timeout")?
                 .unwrap()
             else {
                 panic!("Received unexpected discovery event");
@@ -601,7 +600,7 @@ mod tests {
                 ..
             } = tokio::time::timeout(Duration::from_secs(5), s2.next())
                 .await
-                .context("timeout")?
+                .std_context("timeout")?
                 .unwrap()
             else {
                 panic!("Received unexpected discovery event");
@@ -632,7 +631,7 @@ mod tests {
             loop {
                 let event = tokio::time::timeout(Duration::from_secs(5), s1.next())
                     .await
-                    .context("timeout")?
+                    .std_context("timeout")?
                     .expect("Stream should not be closed");
 
                 match event {
@@ -653,7 +652,7 @@ mod tests {
             loop {
                 let event = tokio::time::timeout(Duration::from_secs(10), s1.next())
                     .await
-                    .context("timeout waiting for expiration event")?
+                    .std_context("timeout waiting for expiration event")?
                     .expect("Stream should not be closed");
 
                 match event {
@@ -717,7 +716,7 @@ mod tests {
             };
             tokio::time::timeout(Duration::from_secs(5), test)
                 .await
-                .context("timeout")?
+                .std_context("timeout")?
         }
 
         #[tokio::test]

@@ -11,7 +11,7 @@ use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt};
 
 /// Each protocol is identified by its ALPN string.
 ///

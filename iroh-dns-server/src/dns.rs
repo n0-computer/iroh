@@ -25,7 +25,7 @@ use hickory_server::{
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
 };
-use n0_snafu::{Result, ResultExt, format_err};
+use n0_error::{Result, StdResultExt, format_err};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, UdpSocket},

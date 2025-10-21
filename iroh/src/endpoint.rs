@@ -23,11 +23,10 @@ use std::{
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{RelayConfig, RelayMap};
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
-use nested_enum_utils::common_fields;
 use pin_project::pin_project;
-use snafu::{ResultExt, Snafu, ensure};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -41,7 +40,7 @@ use crate::{
         UserData,
     },
     endpoint::presets::Preset,
-    magicsock::{self, EndpointIdMappedAddr, Handle, OwnAddressSnafu},
+    magicsock::{self, EndpointIdMappedAddr, Handle},
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -483,80 +482,65 @@ pub struct Endpoint {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum ConnectWithOptsError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     AddEndpointAddr { source: AddEndpointAddrError },
-    #[snafu(display("Connecting to ourself is not supported"))]
-    SelfConnect {},
-    #[snafu(display("No addressing information available"))]
+    #[display("Connecting to ourself is not supported")]
+    SelfConnect,
+    #[display("No addressing information available")]
     NoAddress { source: GetMappingAddressError },
-    #[snafu(display("Unable to connect to remote"))]
-    Quinn { source: quinn::ConnectError },
+    #[display("Unable to connect to remote")]
+    Quinn {
+        #[error(std_err)]
+        source: quinn_proto::ConnectError,
+    },
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources)]
 #[non_exhaustive]
 pub enum ConnectError {
-    #[snafu(transparent)]
-    Connect {
-        #[snafu(source(from(ConnectWithOptsError, Box::new)))]
-        source: Box<ConnectWithOptsError>,
-    },
-    #[snafu(transparent)]
+    #[error(transparent)]
+    Connect { source: ConnectWithOptsError },
+    #[error(transparent)]
     Connection {
-        #[snafu(source(from(ConnectionError, Box::new)))]
-        source: Box<ConnectionError>,
+        #[error(std_err)]
+        source: ConnectionError,
     },
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources)]
 #[non_exhaustive]
 pub enum BindError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     MagicSpawn {
         source: magicsock::CreateHandleError,
     },
-    #[snafu(transparent)]
+    #[error(transparent)]
     Discovery {
         source: crate::discovery::IntoDiscoveryError,
     },
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
-#[snafu(module)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum GetMappingAddressError {
-    #[snafu(display("Discovery service required due to missing addressing information"))]
+    #[display("Discovery service required due to missing addressing information")]
     DiscoveryStart { source: DiscoveryError },
-    #[snafu(display("Discovery service failed"))]
+    #[display("Discovery service failed")]
     Discover { source: DiscoveryError },
-    #[snafu(display("No addressing information found"))]
-    NoAddress {},
+    #[display("No addressing information found")]
+    NoAddress,
 }
 
 impl Endpoint {
@@ -692,10 +676,14 @@ impl Endpoint {
         );
 
         // Connecting to ourselves is not supported.
-        ensure!(endpoint_addr.endpoint_id != self.id(), SelfConnectSnafu);
+        n0_error::ensure!(
+            endpoint_addr.endpoint_id != self.id(),
+            e!(ConnectWithOptsError::SelfConnect)
+        );
 
         if !endpoint_addr.is_empty() {
-            self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
+            self.add_endpoint_addr(endpoint_addr.clone(), Source::App)
+                .map_err(|err| e!(ConnectWithOptsError::AddEndpointAddr { source: err }))?;
         }
         let endpoint_id = endpoint_addr.endpoint_id;
         let direct_addresses = endpoint_addr.direct_addresses.clone();
@@ -708,7 +696,7 @@ impl Endpoint {
         let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(endpoint_addr)
             .await
-            .context(NoAddressSnafu)?;
+            .map_err(|err| e!(ConnectWithOptsError::NoAddress { source: err }))?;
 
         let transport_config = options
             .transport_config
@@ -744,7 +732,7 @@ impl Endpoint {
                 mapped_addr.private_socket_addr(),
                 server_name,
             )
-            .context(QuinnSnafu)?;
+            .map_err(|err| e!(ConnectWithOptsError::Quinn { source: err }))?;
 
         Ok(Connecting {
             inner: connect,
@@ -798,8 +786,9 @@ impl Endpoint {
         endpoint_addr: EndpointAddr,
         source: Source,
     ) -> Result<(), AddEndpointAddrError> {
-        // Connecting to ourselves is not supported.
-        snafu::ensure!(endpoint_addr.endpoint_id != self.id(), OwnAddressSnafu);
+        if endpoint_addr.endpoint_id == self.id() {
+            return Err!(AddEndpointAddrError::OwnAddress);
+        }
         self.msock.add_endpoint_addr(endpoint_addr, source)
     }
 
@@ -839,7 +828,7 @@ impl Endpoint {
     /// The observed [`EndpointAddr`] will have the current [`RelayUrl`] and direct addresses.
     ///
     /// ```no_run
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// use iroh::{Endpoint, Watcher};
     ///
     /// let endpoint = Endpoint::builder()
@@ -1034,7 +1023,7 @@ impl Endpoint {
     /// ```rust
     /// # use std::collections::BTreeMap;
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// let endpoint = Endpoint::bind().await?;
     /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
@@ -1052,7 +1041,7 @@ impl Endpoint {
     /// # use std::collections::BTreeMap;
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// let endpoint = Endpoint::bind().await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
@@ -1075,7 +1064,7 @@ impl Endpoint {
     /// ```rust
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// let endpoint = Endpoint::bind().await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
@@ -1098,8 +1087,8 @@ impl Endpoint {
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # use n0_snafu::ResultExt;
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # use n0_error::{StackResultExt, StdResultExt};
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
@@ -1120,10 +1109,10 @@ impl Endpoint {
     /// tokio::time::sleep(Duration::from_millis(500));
     /// let res = reqwest::get("http://localhost:9100/metrics")
     ///     .await
-    ///     .context("get")?
+    ///     .std_context("get")?
     ///     .text()
     ///     .await
-    ///     .context("text")?;
+    ///     .std_context("text")?;
     ///
     /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
     /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
@@ -1294,15 +1283,16 @@ impl Endpoint {
                 // only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
                 let res = DiscoveryTask::start(self.clone(), endpoint_id);
-                let mut discovery = res.context(get_mapping_address_error::DiscoveryStartSnafu)?;
+                let mut discovery =
+                    res.map_err(|source| e!(GetMappingAddressError::DiscoveryStart { source }))?;
                 discovery
                     .first_arrived()
                     .await
-                    .context(get_mapping_address_error::DiscoverSnafu)?;
+                    .map_err(|source| e!(GetMappingAddressError::Discover { source }))?;
                 if let Some(addr) = self.msock.get_mapping_addr(endpoint_id) {
                     Ok((addr, Some(discovery)))
                 } else {
-                    Err(get_mapping_address_error::NoAddressSnafu.build())
+                    Err!(GetMappingAddressError::NoAddress)
                 }
             }
         }
@@ -1530,20 +1520,20 @@ pub struct Connecting {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
+#[error(from_sources, std_sources)]
 #[non_exhaustive]
 pub enum AlpnError {
-    #[snafu(transparent)]
-    ConnectionError { source: ConnectionError },
-    #[snafu(display("No ALPN available"))]
-    Unavailable {},
-    #[snafu(display("Unknown handshake type"))]
-    UnknownHandshake {},
+    #[error(transparent)]
+    ConnectionError {
+        #[error(std_err)]
+        source: ConnectionError,
+    },
+    #[display("No ALPN available")]
+    Unavailable,
+    #[display("Unknown handshake type")]
+    UnknownHandshake,
 }
 
 impl Connecting {
@@ -1630,9 +1620,9 @@ impl Connecting {
         match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
             Ok(data) => match data.protocol {
                 Some(protocol) => Ok(protocol),
-                None => Err(UnavailableSnafu.build()),
+                None => Err!(AlpnError::Unavailable),
             },
-            Err(_) => Err(UnknownHandshakeSnafu.build()),
+            Err(_) => Err!(AlpnError::UnknownHandshake),
         }
     }
 }
@@ -1698,11 +1688,10 @@ pub struct Connection {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[snafu(display("Protocol error: no remote id available"))]
-pub struct RemoteEndpointIdError {
-    backtrace: Option<snafu::Backtrace>,
-}
+#[add_meta]
+#[derive(Error)]
+#[display("Protocol error: no remote id available")]
+pub struct RemoteEndpointIdError;
 
 impl Connection {
     /// Initiates a new outgoing unidirectional stream.
@@ -1924,7 +1913,7 @@ impl Connection {
         match data {
             None => {
                 warn!("no peer certificate found");
-                Err(RemoteEndpointIdSnafu.build())
+                Err!(RemoteEndpointIdError)
             }
             Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
                 Ok(certs) => {
@@ -1933,19 +1922,19 @@ impl Connection {
                             "expected a single peer certificate, but {} found",
                             certs.len()
                         );
-                        return Err(RemoteEndpointIdSnafu.build());
+                        return Err!(RemoteEndpointIdError);
                     }
 
                     let peer_id = EndpointId::from_verifying_key(
                         VerifyingKey::from_public_key_der(&certs[0])
-                            .map_err(|_| RemoteEndpointIdSnafu.build())?,
+                            .map_err(|_| e!(RemoteEndpointIdError))?,
                     );
 
                     Ok(peer_id)
                 }
                 Err(err) => {
                     warn!("invalid peer certificate: {:?}", err);
-                    Err(RemoteEndpointIdSnafu.build())
+                    Err!(RemoteEndpointIdError)
                 }
             },
         }
@@ -2132,8 +2121,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey};
+    use n0_error::{AnyError as Error, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
-    use n0_snafu::{Error, Result, ResultExt};
+    type Result<T = (), E = Error> = std::result::Result<T, E>;
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
@@ -2386,7 +2376,7 @@ mod tests {
             let server = server.clone();
             async move {
                 let Some(conn) = server.accept().await else {
-                    snafu::whatever!("Expected an incoming connection");
+                    n0_error::whatever!("Expected an incoming connection");
                 };
                 let conn = conn.await.e()?;
                 let (mut send, mut recv) = conn.accept_bi().await.e()?;
@@ -2437,7 +2427,7 @@ mod tests {
                 for i in 0..2 {
                     println!("accept: round {i}");
                     let Some(conn) = server.accept().await else {
-                        snafu::whatever!("Expected an incoming connection");
+                        n0_error::whatever!("Expected an incoming connection");
                     };
                     let conn = conn.await.e()?;
                     let (mut send, mut recv) = conn.accept_bi().await.e()?;
@@ -2656,7 +2646,7 @@ mod tests {
                     return Ok(());
                 }
             }
-            snafu::whatever!("conn_type stream ended before `ConnectionType::Direct`");
+            n0_error::whatever!("conn_type stream ended before `ConnectionType::Direct`");
         }
 
         async fn accept(ep: &Endpoint) -> Result<Connection> {
@@ -3030,7 +3020,7 @@ mod tests {
         let mut registry = Registry::default();
         register_endpoint(&mut registry, &client);
         register_endpoint(&mut registry, &server);
-        let s = registry.encode_openmetrics_to_string()?;
+        let s = registry.encode_openmetrics_to_string().e()?;
         assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#));
         assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#));
         Ok(())
@@ -3055,7 +3045,7 @@ mod tests {
                 let incoming = server.accept().await.e()?;
                 let conn = incoming.await.e()?;
                 conn.close(0u32.into(), b"bye!");
-                Ok::<_, n0_snafu::Error>(conn.alpn())
+                Ok::<_, n0_error::AnyError>(conn.alpn())
             }
         });
 
@@ -3136,7 +3126,7 @@ mod tests {
         let endpoint = Endpoint::empty_builder(RelayMode::Staging).bind().await?;
 
         // can get a first report
-        endpoint.net_report().updated().await?;
+        endpoint.net_report().updated().await.e()?;
 
         Ok(())
     }

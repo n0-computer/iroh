@@ -1,7 +1,7 @@
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
+use n0_error::{Error, add_meta};
 use serde::{Deserialize, Serialize};
-use snafu::{Backtrace, ResultExt, Snafu};
 use url::Url;
 
 /// A URL identifying a relay server.
@@ -39,11 +39,11 @@ impl From<Url> for RelayUrl {
 }
 
 /// Can occur when parsing a string into a [`RelayUrl`].
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to parse"))]
+#[add_meta]
+#[derive(Error)]
 pub struct RelayUrlParseError {
+    #[error(from, std_err)]
     source: url::ParseError,
-    backtrace: Option<Backtrace>,
 }
 
 /// Support for parsing strings directly.
@@ -54,7 +54,7 @@ impl FromStr for RelayUrl {
     type Err = RelayUrlParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let inner = Url::from_str(s).context(RelayUrlParseSnafu)?;
+        let inner = Url::from_str(s)?;
         Ok(RelayUrl::from(inner))
     }
 }

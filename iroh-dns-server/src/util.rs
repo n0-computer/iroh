@@ -13,7 +13,7 @@ use hickory_server::proto::{
     },
     serialize::binary::BinDecodable,
 };
-use n0_snafu::{Error, Result, ResultExt};
+use n0_error::{AnyError, Result, StdResultExt};
 use pkarr::SignedPacket;
 
 #[derive(
@@ -28,7 +28,7 @@ impl PublicKeyBytes {
 
     pub fn from_z32(s: &str) -> Result<Self> {
         let bytes = z32::decode(s.as_bytes()).e()?;
-        let bytes = TryInto::<[u8; 32]>::try_into(&bytes[..]).context("invalid length")?;
+        let bytes = TryInto::<[u8; 32]>::try_into(&bytes[..]).std_context("invalid length")?;
         Ok(Self(bytes))
     }
 
@@ -68,14 +68,14 @@ impl From<pkarr::PublicKey> for PublicKeyBytes {
 }
 
 impl TryFrom<PublicKeyBytes> for pkarr::PublicKey {
-    type Error = Error;
+    type Error = AnyError;
     fn try_from(value: PublicKeyBytes) -> Result<Self, Self::Error> {
         pkarr::PublicKey::try_from(&value.0).e()
     }
 }
 
 impl FromStr for PublicKeyBytes {
-    type Err = Error;
+    type Err = AnyError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::from_z32(s)
     }

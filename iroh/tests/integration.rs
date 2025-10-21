@@ -13,11 +13,11 @@ use iroh::{
     Endpoint, RelayMode,
     discovery::{Discovery, pkarr::PkarrResolver},
 };
+use n0_error::{Result, StdResultExt};
 use n0_future::{
     StreamExt, task,
     time::{self, Duration},
 };
-use n0_snafu::{Result, ResultExt};
 #[cfg(not(wasm_browser))]
 use tokio::test;
 use tracing::{Instrument, info_span};
@@ -52,7 +52,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     tracing::info!("waiting for server to go online");
     time::timeout(Duration::from_secs(12), server.online())
         .await
-        .context("server endpoint took too long to get online")?;
+        .std_context("server endpoint took too long to get online")?;
 
     // Make the server respond to requests with an echo
     task::spawn({
@@ -78,7 +78,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
                 tracing::info!("Closed with code: {code:?}");
             }
 
-            Ok::<_, n0_snafu::Error>(())
+            Ok::<_, n0_error::AnyError>(())
         }
         .instrument(info_span!("server"))
     });

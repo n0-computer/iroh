@@ -17,7 +17,7 @@ use iroh::{
     endpoint::{Connecting, Connection},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Err, Result, StdResultExt};
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -110,7 +110,7 @@ impl ProtocolHandler for ScreenedEcho {
         // reject every other connection
         if count % 2 == 0 {
             println!("rejecting connection");
-            return Err(AcceptError::NotAllowed {});
+            return Err!(AcceptError::NotAllowed);
         }
 
         // To allow normal connection construction, await the connecting future & return

@@ -25,7 +25,7 @@ mod tests {
         RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
         endpoint_info::EndpointInfo,
     };
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
     use pkarr::{SignedPacket, Timestamp};
     use rand::{CryptoRng, SeedableRng};
     use tracing_test::traced_test;

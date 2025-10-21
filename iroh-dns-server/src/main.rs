@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use iroh_dns_server::{config::Config, server::run_with_config_until_ctrl_c};
-use n0_snafu::Result;
+use n0_error::Result;
 use tracing::debug;
 
 #[derive(Parser, Debug)]

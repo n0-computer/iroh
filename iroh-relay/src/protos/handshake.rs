@@ -31,11 +31,10 @@ use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
+use n0_error::{Err, Error, add_meta, e};
 use n0_future::{SinkExt, TryStreamExt};
-use nested_enum_utils::common_fields;
 #[cfg(feature = "server")]
 use rand::CryptoRng;
-use snafu::{Backtrace, ResultExt, Snafu};
 use tracing::trace;
 
 use super::{
@@ -133,36 +132,35 @@ impl Frame for ServerDeniesAuth {
     const TAG: FrameType = FrameType::ServerDeniesAuth;
 }
 
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[add_meta]
+#[derive(Error)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Websocket {
         #[cfg(not(wasm_browser))]
+        #[error(std_err)]
         source: tokio_websockets::Error,
         #[cfg(wasm_browser)]
+        #[error(std_err)]
         source: ws_stream_wasm::WsErr,
     },
-    #[snafu(display("Handshake stream ended prematurely"))]
+    #[display("Handshake stream ended prematurely")]
     UnexpectedEnd {},
-    #[snafu(transparent)]
+    #[error(transparent)]
     FrameTypeError { source: FrameTypeError },
-    #[snafu(display("The relay denied our authentication ({reason})"))]
+    #[display("The relay denied our authentication ({reason})")]
     ServerDeniedAuth { reason: String },
-    #[snafu(display("Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}"))]
+    #[display("Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}")]
     UnexpectedFrameType {
         frame_type: FrameType,
         expected_types: Vec<FrameType>,
     },
-    #[snafu(display("Handshake failed while deserializing {frame_type:?} frame"))]
+    #[display("Handshake failed while deserializing {frame_type:?} frame")]
     DeserializationError {
         frame_type: FrameType,
+        #[error(std_err)]
         source: postcard::Error,
     },
     #[cfg(feature = "server")]
@@ -171,20 +169,21 @@ pub enum Error {
 }
 
 #[cfg(feature = "server")]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 pub(crate) enum VerificationError {
-    #[snafu(display("Couldn't export TLS keying material on our end"))]
+    #[display("Couldn't export TLS keying material on our end")]
     NoKeyingMaterial,
-    #[snafu(display(
+    #[display(
         "Client didn't extract the same keying material, the suffix mismatched: expected {expected:X?} but got {actual:X?}"
-    ))]
+    )]
     MismatchedSuffix {
         expected: [u8; 16],
         actual: [u8; 16],
     },
-    #[snafu(display(
+    #[display(
         "Client signature {signature:X?} for message {message:X?} invalid for public key {public_key}"
-    ))]
+    )]
     SignatureInvalid {
         source: iroh_base::SignatureError,
         message: Vec<u8>,
@@ -231,10 +230,13 @@ impl ClientAuth {
         let message = challenge.message_to_sign();
         self.public_key
             .verify(&message, &Signature::from_bytes(&self.signature))
-            .with_context(|_| SignatureInvalidSnafu {
-                message: message.to_vec(),
-                signature: self.signature,
-                public_key: self.public_key,
+            .map_err(|err| {
+                e!(VerificationError::SignatureInvalid {
+                    source: err,
+                    message: message.to_vec(),
+                    signature: self.signature,
+                    public_key: self.public_key
+                })
             })
             .map_err(Box::new)
     }
@@ -282,15 +284,13 @@ impl KeyMaterialClientAuth {
         &self,
         io: &impl ExportKeyingMaterial,
     ) -> Result<(), Box<VerificationError>> {
-        use snafu::OptionExt;
-
         let key_material = io
             .export_keying_material(
                 [0u8; 32],
                 DOMAIN_SEP_TLS_EXPORT_LABEL,
                 Some(self.public_key.as_bytes()),
             )
-            .context(NoKeyingMaterialSnafu)?;
+            .ok_or_else(|| e!(VerificationError::NoKeyingMaterial))?;
         // We split the export and only sign the first 16 bytes, and
         // pass through the last 16 bytes.
         // Passing on the suffix helps the verifying end figure out what
@@ -301,22 +301,25 @@ impl KeyMaterialClientAuth {
         // there must be something wrong with the client's secret key or signature.
         let (message, suffix) = key_material.split_at(16);
         let suffix: [u8; 16] = suffix.try_into().expect("hardcoded length");
-        snafu::ensure!(
+        n0_error::ensure!(
             suffix == self.key_material_suffix,
-            MismatchedSuffixSnafu {
+            e!(VerificationError::MismatchedSuffix {
                 expected: self.key_material_suffix,
                 actual: suffix
-            }
+            })
         );
         // NOTE: We don't blake3-hash here as we do it in [`ServerChallenge::message_to_sign`],
         // because we already have a domain separation string and keyed hashing step in
         // the TLS export keying material above.
         self.public_key
             .verify(message, &Signature::from_bytes(&self.signature))
-            .with_context(|_| SignatureInvalidSnafu {
-                message: message.to_vec(),
-                public_key: self.public_key,
-                signature: self.signature,
+            .map_err(|err| {
+                e!(VerificationError::SignatureInvalid {
+                    source: err,
+                    message: message.to_vec(),
+                    public_key: self.public_key,
+                    signature: self.signature
+                })
             })
             .map_err(Box::new)
     }
@@ -353,10 +356,9 @@ pub(crate) async fn clientside(
         }
         FrameType::ServerDeniesAuth => {
             let denial: ServerDeniesAuth = deserialize_frame(frame)?;
-            Err(ServerDeniedAuthSnafu {
-                reason: denial.reason,
-            }
-            .build())
+            Err!(Error::ServerDeniedAuth {
+                reason: denial.reason
+            })
         }
         _ => unreachable!(),
     }
@@ -407,18 +409,16 @@ pub(crate) async fn serverside(
         let client_auth_bytes = data_encoding::BASE64URL_NOPAD
             .decode(client_auth_header.as_ref())
             .map_err(|_| {
-                ClientAuthHeaderInvalidSnafu {
-                    value: client_auth_header.clone(),
-                }
-                .build()
+                e!(Error::ClientAuthHeaderInvalid {
+                    value: client_auth_header.clone()
+                })
             })?;
 
         let client_auth: KeyMaterialClientAuth =
             postcard::from_bytes(&client_auth_bytes).map_err(|_| {
-                ClientAuthHeaderInvalidSnafu {
-                    value: client_auth_header.clone(),
-                }
-                .build()
+                e!(Error::ClientAuthHeaderInvalid {
+                    value: client_auth_header.clone()
+                })
             })?;
 
         if client_auth.verify(io).is_ok() {
@@ -444,10 +444,9 @@ pub(crate) async fn serverside(
             reason: "signature invalid".into(),
         };
         write_frame(io, denial.clone()).await?;
-        ServerDeniedAuthSnafu {
-            reason: denial.reason,
-        }
-        .fail()
+        Err!(Error::ServerDeniedAuth {
+            reason: denial.reason
+        })
     } else {
         trace!(?client_auth.public_key, "authentication succeeded via challenge");
         Ok(SuccessfulAuthentication {
@@ -474,10 +473,9 @@ impl SuccessfulAuthentication {
                 reason: "not authorized".into(),
             };
             write_frame(io, denial.clone()).await?;
-            ServerDeniedAuthSnafu {
-                reason: denial.reason,
-            }
-            .fail()
+            Err!(Error::ServerDeniedAuth {
+                reason: denial.reason
+            })
         }
     }
 }
@@ -493,8 +491,10 @@ async fn write_frame<F: serde::Serialize + Frame>(
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
         .into_inner()
         .freeze();
-    io.send(bytes).await?;
-    io.flush().await?;
+    io.send(bytes)
+        .await
+        .map_err(|err| e!(Error::Websocket, err))?;
+    io.flush().await.map_err(|err| e!(Error::Websocket, err))?;
     Ok(())
 }
 
@@ -504,32 +504,39 @@ async fn read_frame(
 ) -> Result<(FrameType, Bytes), Error> {
     let mut payload = io
         .try_next()
-        .await?
-        .ok_or_else(|| UnexpectedEndSnafu.build())?;
+        .await
+        .map_err(|err| e!(Error::Websocket, err))?
+        .ok_or_else(|| e!(Error::UnexpectedEnd))?;
 
-    let frame_type = FrameType::from_bytes(&mut payload)?;
+    let frame_type =
+        FrameType::from_bytes(&mut payload).map_err(|err| e!(Error::FrameTypeError, err))?;
     trace!(?frame_type, "Reading frame");
-    snafu::ensure!(
+    n0_error::ensure!(
         expected_types.contains(&frame_type),
-        UnexpectedFrameTypeSnafu {
+        e!(Error::UnexpectedFrameType {
             frame_type,
             expected_types: expected_types.to_vec()
-        }
+        })
     );
 
     Ok((frame_type, payload))
 }
 
 fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Result<F, Error> {
-    postcard::from_bytes(&frame).context(DeserializationSnafu { frame_type: F::TAG })
+    postcard::from_bytes(&frame).map_err(|err| {
+        e!(Error::DeserializationError {
+            frame_type: F::TAG,
+            source: err
+        })
+    })
 }
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use bytes::BytesMut;
     use iroh_base::{PublicKey, SecretKey};
+    use n0_error::{Result, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
-    use n0_snafu::{Result, ResultExt};
     use rand::SeedableRng;
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use tracing::{Instrument, info_span};
@@ -643,13 +650,13 @@ mod tests {
             async {
                 super::clientside(&mut client_io, secret_key)
                     .await
-                    .context("clientside")
+                    .std_context("clientside")
             }
             .instrument(info_span!("clientside")),
             async {
                 let auth_n = super::serverside(&mut server_io, client_auth_header)
                     .await
-                    .context("serverside")?;
+                    .std_context("serverside")?;
                 let mechanism = auth_n.mechanism;
                 let is_authorized = restricted_to.is_none_or(|key| key == auth_n.client_key);
                 let key = auth_n.authorize_if(is_authorized, &mut server_io).await?;

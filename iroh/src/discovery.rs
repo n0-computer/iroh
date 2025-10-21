@@ -65,7 +65,7 @@
 //!     endpoint::RelayMode,
 //! };
 //!
-//! # async fn wrapper() -> n0_snafu::Result<()> {
+//! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())
@@ -86,7 +86,7 @@
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
-//! # async fn wrapper() -> n0_snafu::Result<()> {
+//! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())
@@ -113,14 +113,13 @@
 use std::sync::{Arc, RwLock};
 
 use iroh_base::{EndpointAddr, EndpointId};
+use n0_error::{AnyError, Err, Error, add_meta, e};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
 };
-use nested_enum_utils::common_fields;
-use snafu::{IntoError, Snafu, ensure};
 use tokio::sync::oneshot;
 use tracing::{Instrument, debug, error_span, warn};
 
@@ -181,20 +180,15 @@ impl<T: IntoDiscovery> DynIntoDiscovery for T {
 }
 
 /// IntoDiscovery errors
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
-#[snafu(module)]
 pub enum IntoDiscoveryError {
-    #[snafu(display("Service '{provenance}' error"))]
+    #[display("Service '{provenance}' error")]
     User {
         provenance: &'static str,
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+        source: AnyError,
     },
 }
 
@@ -204,7 +198,10 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: T,
     ) -> Self {
-        into_discovery_error::UserSnafu { provenance }.into_error(Box::new(source))
+        e!(IntoDiscoveryError::User {
+            provenance,
+            source: AnyError::from_std(source)
+        })
     }
 
     /// Creates a new user error from an arbitrary boxed error type.
@@ -212,28 +209,27 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        into_discovery_error::UserSnafu { provenance }.into_error(source)
+        e!(IntoDiscoveryError::User {
+            provenance,
+            source: AnyError::from_std_box(source)
+        })
     }
 }
 
 /// Discovery errors
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[add_meta]
+#[derive(Error)]
 #[non_exhaustive]
 pub enum DiscoveryError {
-    #[snafu(display("No discovery service configured"))]
-    NoServiceConfigured {},
-    #[snafu(display("Discovery produced no results for {}", endpoint_id.fmt_short()))]
+    #[display("No discovery service configured")]
+    NoServiceConfigured,
+    #[display("Discovery produced no results for {}", endpoint_id.fmt_short())]
     NoResults { endpoint_id: EndpointId },
-    #[snafu(display("Service '{provenance}' error"))]
+    #[display("Service '{provenance}' error")]
     User {
         provenance: &'static str,
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+        source: AnyError,
     },
 }
 
@@ -243,7 +239,10 @@ impl DiscoveryError {
         provenance: &'static str,
         source: T,
     ) -> Self {
-        UserSnafu { provenance }.into_error(Box::new(source))
+        e!(DiscoveryError::User {
+            provenance,
+            source: AnyError::from_std(source)
+        })
     }
 
     /// Creates a new user error from an arbitrary boxed error type.
@@ -251,7 +250,10 @@ impl DiscoveryError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        UserSnafu { provenance }.into_error(source)
+        e!(DiscoveryError::User {
+            provenance,
+            source: AnyError::from_std_box(source)
+        })
     }
 }
 
@@ -505,7 +507,10 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Starts a discovery task.
     pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
-        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
+        n0_error::ensure!(
+            !ep.discovery().is_empty(),
+            e!(DiscoveryError::NoServiceConfigured)
+        );
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.id();
         let task = task::spawn(
@@ -536,7 +541,10 @@ impl DiscoveryTask {
         if !ep.needs_discovery(endpoint_id, MAX_AGE) {
             return Ok(None);
         }
-        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
+        n0_error::ensure!(
+            !ep.discovery().is_empty(),
+            e!(DiscoveryError::NoServiceConfigured)
+        );
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.id();
@@ -574,11 +582,14 @@ impl DiscoveryTask {
         ep: &Endpoint,
         endpoint_id: EndpointId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
-        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
+        n0_error::ensure!(
+            !ep.discovery().is_empty(),
+            e!(DiscoveryError::NoServiceConfigured)
+        );
         let stream = ep
             .discovery()
             .resolve(endpoint_id)
-            .ok_or(NoResultsSnafu { endpoint_id }.build())?;
+            .ok_or_else(|| e!(DiscoveryError::NoResults { endpoint_id }))?;
         Ok(stream)
     }
 
@@ -623,7 +634,8 @@ impl DiscoveryTask {
             }
         }
         if let Some(tx) = on_first_tx.take() {
-            tx.send(Err(NoResultsSnafu { endpoint_id }.build())).ok();
+            tx.send(Err!(DiscoveryError::NoResults { endpoint_id }))
+                .ok();
         }
     }
 }
@@ -638,7 +650,7 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, SecretKey};
-    use n0_snafu::{Error, Result, ResultExt};
+    use n0_error::{AnyError as Error, Result, StdResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
@@ -814,7 +826,7 @@ mod tests {
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
-            .context("connecting")?;
+            .std_context("connecting")?;
         Ok(())
     }
 
@@ -930,7 +942,7 @@ mod tests {
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     // Just accept incoming connections, but don't do anything with them.
-                    let conn = connecting.await.context("connecting")?;
+                    let conn = connecting.await.std_context("connecting")?;
                     connections.push(conn);
                 }
 
@@ -957,8 +969,8 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
+    use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::time::Duration;
-    use n0_snafu::{Error, Result, ResultExt};
     use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
@@ -983,7 +995,7 @@ mod test_dns_pkarr {
         let state = State::new(origin.clone());
         let (nameserver, _dns_drop_guard) = run_dns_server(state.clone())
             .await
-            .context("Running DNS server")?;
+            .std_context("Running DNS server")?;
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_info = EndpointInfo::new(secret_key.public())
@@ -991,7 +1003,7 @@ mod test_dns_pkarr {
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
             .upsert(signed_packet)
-            .context("update and insert signed packet")?;
+            .std_context("update and insert signed packet")?;
 
         let resolver = DnsResolver::with_nameserver(nameserver);
         let resolved = resolver
@@ -1011,7 +1023,7 @@ mod test_dns_pkarr {
 
         let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
             .await
-            .context("DnsPkarrServer")?;
+            .std_context("DnsPkarrServer")?;
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
@@ -1030,7 +1042,7 @@ mod test_dns_pkarr {
         dns_pkarr_server
             .on_endpoint(&endpoint_id, PUBLISH_TIMEOUT)
             .await
-            .context("wait for on endpoint update")?;
+            .std_context("wait for on endpoint update")?;
         let resolved = resolver
             .lookup_endpoint_by_id(&endpoint_id, &origin)
             .await?;
@@ -1054,7 +1066,9 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover() -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
+        let dns_pkarr_server = DnsPkarrServer::run()
+            .await
+            .std_context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
         let (ep1, _guard1) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
@@ -1064,7 +1078,7 @@ mod test_dns_pkarr {
         dns_pkarr_server
             .on_endpoint(&ep1.id(), PUBLISH_TIMEOUT)
             .await
-            .context("wait for on endpoint update")?;
+            .std_context("wait for on endpoint update")?;
 
         // we connect only by endpoint id!
         let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;
@@ -1091,7 +1105,7 @@ mod test_dns_pkarr {
             async move {
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await.context("connecting")?;
+                    let _conn = connecting.await.std_context("connecting")?;
                     // Just accept incoming connections, but don't do anything with them.
                 }
 

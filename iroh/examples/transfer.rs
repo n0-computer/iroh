@@ -17,8 +17,8 @@ use iroh::{
     endpoint::ConnectionError,
 };
 use iroh_base::ticket::EndpointTicket;
+use n0_error::{Result, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
-use n0_snafu::{Result, ResultExt};
 use n0_watcher::Watcher as _;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
@@ -183,8 +183,9 @@ impl EndpointArgs {
         let mut builder = Endpoint::builder();
 
         let secret_key = match std::env::var("IROH_SECRET") {
-            Ok(s) => SecretKey::from_str(&s)
-                .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
+            Ok(s) => SecretKey::from_str(&s).std_context(
+                "Failed to parse IROH_SECRET environment variable as iroh secret key",
+            )?,
             Err(_) => {
                 let s = SecretKey::generate(&mut rand::rng());
                 println!("Generated a new endpoint secret. To reuse, set");
@@ -201,7 +202,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                snafu::whatever!(
+                n0_error::whatever!(
                     "Must have the `test-utils` feature enabled when using the `--env=dev` flag"
                 )
             }
@@ -237,7 +238,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                snafu::whatever!(
+                n0_error::whatever!(
                     "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
                 );
             }
@@ -246,9 +247,9 @@ impl EndpointArgs {
         if let Some(host) = self.dns_server {
             let addr = tokio::net::lookup_host(host)
                 .await
-                .context("Failed to resolve DNS server address")?
+                .std_context("Failed to resolve DNS server address")?
                 .next()
-                .context("Failed to resolve DNS server address")?;
+                .std_context("Failed to resolve DNS server address")?;
             builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
         } else if self.env == Env::Dev {
             let addr = DEV_DNS_SERVER.parse().expect("valid addr");
@@ -268,7 +269,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "discovery-local-network"))]
             {
-                snafu::whatever!(
+                n0_error::whatever!(
                     "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
                 );
             }
@@ -379,7 +380,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             } else {
                 println!("[{remote}] Disconnected");
             }
-            Ok::<_, n0_snafu::Error>(())
+            Ok::<_, n0_error::AnyError>(())
         });
     }
 
@@ -493,21 +494,21 @@ async fn send_data_on_stream(
         stream
             .write_chunk(bytes_data.clone())
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
     if remaining != 0 {
         stream
             .write_chunk(bytes_data.slice(0..remaining))
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
-    stream.finish().context("failed finishing stream")?;
+    stream.finish().std_context("failed finishing stream")?;
     stream
         .stopped()
         .await
-        .context("failed to wait for stream to be stopped")?;
+        .std_context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }
