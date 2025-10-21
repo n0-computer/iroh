@@ -619,7 +619,7 @@ impl Endpoint {
     /// Connects to a remote [`Endpoint`].
     ///
     /// A value that can be converted into a [`EndpointAddr`] is required. This can be either a
-    /// [`EndpointAddr`], a [`EndpointId`] or a [`iroh_base::ticket::EndpointTicket`].
+    /// [`EndpointAddr`] or a [`EndpointId`].
     ///
     /// The [`EndpointAddr`] must contain the [`EndpointId`] to dial and may also contain a [`RelayUrl`]
     /// and direct addresses. If direct addresses are provided, they will be used to try and
