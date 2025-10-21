@@ -38,7 +38,7 @@
 //!     .await
 //!     .context("accept error")?
 //!     .await
-//!     .context("connecting error")?;
+//!     .std_context("connecting error")?;
 //! let mut recv_stream = conn.accept_uni().await.std_context("unable to open uni")?;
 //! let mut buf = [0u8; 3];
 //! recv_stream
@@ -179,10 +179,10 @@
 //!
 //!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 //!     let conn = ep.connect(addr, b"hello-world").await?;
-//!     let (mut send_stream, mut recv_stream) = conn.open_bi().await.context("open bi")?;
-//!     send_stream.write_all(b"hello").await.context("write")?;
-//!     send_stream.finish().context("finish")?;
-//!     let _msg = recv_stream.read_to_end(10).await.context("read")?;
+//!     let (mut send_stream, mut recv_stream) = conn.open_bi().await.std_context("open bi")?;
+//!     send_stream.write_all(b"hello").await.std_context("write")?;
+//!     send_stream.finish().std_context("finish")?;
+//!     let _msg = recv_stream.read_to_end(10).await.std_context("read")?;
 //!
 //!     // Gracefully close the connection and endpoint.
 //!     conn.close(1u8.into(), b"done");
@@ -212,7 +212,7 @@
 //!         .await
 //!         .context("no incoming connection")?
 //!         .await
-//!         .context("accept conn")?;
+//!         .std_context("accept conn")?;
 //!     let (mut send_stream, mut recv_stream) =
 //!         conn.accept_bi().await.std_context("accept stream")?;
 //!     let _msg = recv_stream.read_to_end(10).await.std_context("read")?;

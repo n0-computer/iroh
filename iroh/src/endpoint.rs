@@ -1112,7 +1112,7 @@ impl Endpoint {
     ///     .std_context("get")?
     ///     .text()
     ///     .await
-    ///     .context("text")?;
+    ///     .std_context("text")?;
     ///
     /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
     /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
