@@ -5,11 +5,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_future::task::AbortOnDropHandle;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{Instrument, info_span, trace, warn};
+use tracing::{Instrument, error, info_span, trace, warn};
 
 #[cfg(any(test, feature = "test-utils"))]
 use super::transports::TransportsSender;
@@ -17,7 +17,7 @@ use super::transports::TransportsSender;
 use super::transports::TransportsSender;
 use super::{
     DirectAddr, DiscoState, MagicsockMetrics,
-    mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
+    mapped_addrs::{AddrMap, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr},
     transports::{self, OwnedTransmit},
 };
 use crate::disco::{self};
@@ -28,7 +28,7 @@ mod endpoint_state;
 mod path_state;
 
 pub(super) use endpoint_state::EndpointStateMessage;
-pub use endpoint_state::{ConnectionType, PathInfo, TransportType};
+pub use endpoint_state::{ConnectionType, PathInfo};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
 
 // TODO: use this
@@ -38,7 +38,7 @@ use endpoint_state::{EndpointStateActor, EndpointStateHandle};
 
 /// Map of the [`EndpointState`] information for all the known endpoints.
 #[derive(Debug)]
-pub(super) struct EndpointMap {
+pub(crate) struct EndpointMap {
     /// The endpoint ID of the local endpoint.
     local_endpoint_id: EndpointId,
     inner: Mutex<EndpointMapInner>,
@@ -156,6 +156,21 @@ impl EndpointMap {
 
     pub(super) fn endpoint_mapped_addr(&self, eid: EndpointId) -> EndpointIdMappedAddr {
         self.endpoint_mapped_addrs.get(&eid)
+    }
+
+    /// Converts a mapped address as we use them inside Quinn.
+    pub(crate) fn transport_addr_from_mapped(&self, mapped: SocketAddr) -> Option<TransportAddr> {
+        match MultipathMappedAddr::from(mapped) {
+            MultipathMappedAddr::Mixed(_) => None,
+            MultipathMappedAddr::Relay(addr) => match self.relay_mapped_addrs.lookup(&addr) {
+                Some((url, _)) => Some(TransportAddr::Relay(url)),
+                None => {
+                    error!("Unknown RelayMappedAddr");
+                    None
+                }
+            },
+            MultipathMappedAddr::Ip(addr) => Some(TransportAddr::Ip(addr)),
+        }
     }
 
     /// Returns a [`n0_watcher::Direct`] for given endpoint's [`ConnectionType`].

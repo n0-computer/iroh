@@ -13,6 +13,7 @@
 
 use std::{
     any::Any,
+    collections::HashMap,
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
@@ -61,8 +62,8 @@ use crate::{
     magicsock::{
         self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, OwnAddressSnafu,
         PATH_MAX_IDLE_TIMEOUT, PathInfo,
-        endpoint_map::{Source, TransportType},
-        mapped_addrs::{EndpointIdMappedAddr, MappedAddr, MultipathMappedAddr},
+        endpoint_map::Source,
+        mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
     },
     metrics::EndpointMetrics,
     net_report::Report,
@@ -484,7 +485,7 @@ impl StaticConfig {
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     /// Handle to the magicsocket/actor
-    msock: Handle,
+    pub(crate) msock: Handle,
     /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     static_config: Arc<StaticConfig>,
 }
@@ -1670,7 +1671,7 @@ impl Future for ZeroRttAccepted {
 #[derive(Debug, Clone)]
 pub struct Connection {
     inner: quinn::Connection,
-    paths_info: n0_watcher::Direct<Vec<PathInfo>>,
+    paths_info: n0_watcher::Direct<HashMap<TransportAddr, PathInfo>>,
 }
 
 #[allow(missing_docs)]
@@ -1682,13 +1683,19 @@ pub struct RemoteEndpointIdError {
 
 impl Connection {
     fn new(inner: quinn::Connection, remote_id: Option<EndpointId>, ep: &Endpoint) -> Self {
-        let mut paths_info = Vec::with_capacity(1);
+        let mut paths_info = HashMap::with_capacity(5);
         if let Some(path0) = inner.path(PathId::ZERO) {
             // This all is supposed to be infallible, but anyway.
             if let Ok(remote) = path0.remote_address() {
-                let mapped = MultipathMappedAddr::from(remote);
-                let transport = TransportType::from(mapped);
-                paths_info.push(PathInfo { transport });
+                if let Some(remote) = ep.msock.endpoint_map.transport_addr_from_mapped(remote) {
+                    paths_info.insert(
+                        remote.clone(),
+                        PathInfo {
+                            remote,
+                            path_id: PathId::ZERO,
+                        },
+                    );
+                }
             }
         }
         let paths_info_watcher = n0_watcher::Watchable::new(paths_info);
@@ -1971,7 +1978,7 @@ impl Connection {
     /// A connection can have several network paths to the remote endpoint, commonly there
     /// will be a path via the relay server and a holepunched path.  This returns all the
     /// paths in use by this connection.
-    pub fn paths_info(&self) -> impl Watcher<Value = Vec<PathInfo>> {
+    pub fn paths_info(&self) -> impl Watcher<Value = HashMap<TransportAddr, PathInfo>> {
         self.paths_info.clone()
     }
 
@@ -2133,7 +2140,6 @@ mod tests {
         RelayMap, RelayMode,
         discovery::static_provider::StaticProvider,
         endpoint::{ConnectOptions, Connection, ConnectionType},
-        magicsock::endpoint_map::TransportType,
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{run_relay_server, run_relay_server_with},
     };
@@ -2610,7 +2616,7 @@ mod tests {
             info!("Waiting for direct connection");
             while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
-                if infos.iter().any(|info| info.transport == TransportType::Ip) {
+                if infos.keys().any(|addr| addr.is_ip()) {
                     break;
                 }
             }

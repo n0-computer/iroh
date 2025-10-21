@@ -101,7 +101,7 @@ impl MultipathMappedAddr {
     ) -> Option<transports::Addr> {
         match self {
             Self::Mixed(_) => {
-                error!("Mixed addr has not transports::Addr");
+                error!("Mixed addr has no transports::Addr");
                 None
             }
             Self::Relay(mapped) => match relay_mapped_addrs.lookup(mapped) {

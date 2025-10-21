@@ -197,7 +197,7 @@ pub(crate) struct MagicSock {
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
-    endpoint_map: EndpointMap,
+    pub(crate) endpoint_map: EndpointMap,
 
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
@@ -282,7 +282,7 @@ impl MagicSock {
         &self,
         remote: EndpointId,
         conn: &quinn::Connection,
-        paths_info: n0_watcher::Watchable<Vec<PathInfo>>,
+        paths_info: n0_watcher::Watchable<HashMap<TransportAddr, PathInfo>>,
     ) {
         // TODO: Spawning tasks like this is obviously bad.  But it is solvable:
         //   - This is only called from inside Connection::new.

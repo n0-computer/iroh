@@ -1,6 +1,11 @@
-use std::{collections::BTreeSet, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{
+    collections::{BTreeSet, HashMap},
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+};
 
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_future::{
     MergeUnbounded, Stream, StreamExt,
     task::AbortOnDropHandle,
@@ -294,7 +299,7 @@ impl EndpointStateActor {
     async fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        paths_info: Watchable<Vec<PathInfo>>,
+        paths_info: Watchable<HashMap<TransportAddr, PathInfo>>,
     ) {
         if let Some(conn) = handle.upgrade() {
             // Remove any conflicting stable_ids from the local state.
@@ -767,11 +772,6 @@ impl EndpointStateActor {
                         .or_default()
                         .sources
                         .insert(Source::Connection, Instant::now());
-                    let mut paths = conn_state.pub_path_info.get();
-                    paths.push(PathInfo {
-                        transport: path_remote.into(),
-                    });
-                    conn_state.pub_path_info.set(paths).ok();
                 }
 
                 self.select_path();
@@ -795,21 +795,6 @@ impl EndpointStateActor {
                     path_id = ?id,
                 );
                 conn_state.remove_open_path(&id);
-                // Remove this from the public PathInfo.
-                if let Some(state) = self.connections.get(&conn_id) {
-                    let mut path_info = state.pub_path_info.get();
-                    let transport = TransportType::from(&path_remote);
-                    let mut done = false;
-                    path_info.retain(|info| {
-                        if !done && info.transport == transport {
-                            done = true;
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                    state.pub_path_info.set(path_info).ok();
-                }
 
                 // If one connection closes this path, close it on all connections.
                 for (conn_id, conn_state) in self.connections.iter_mut() {
@@ -969,7 +954,10 @@ pub(crate) enum EndpointStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, Watchable<Vec<PathInfo>>),
+    AddConnection(
+        WeakConnectionHandle,
+        Watchable<HashMap<TransportAddr, PathInfo>>,
+    ),
     /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
     AddEndpointAddr(EndpointAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
@@ -1054,9 +1042,7 @@ struct ConnectionState {
     /// Weak handle to the connection.
     handle: WeakConnectionHandle,
     /// The information we publish to users about the paths used in this connection.
-    // TODO: Improve this.  Use a map of TransportAddr once that's merged.  Handle the logic
-    //    in a method on this struct.
-    pub_path_info: Watchable<Vec<PathInfo>>,
+    pub_path_info: Watchable<HashMap<TransportAddr, PathInfo>>,
     /// The paths that exist on this connection.
     ///
     /// This could be in any state, e.g. while still validating the path or already closed
@@ -1081,6 +1067,8 @@ impl ConnectionState {
         self.paths.insert(path_id, remote.clone());
         self.open_paths.insert(path_id, remote.clone());
         self.path_ids.insert(remote, path_id);
+
+        self.update_pub_path_info();
     }
 
     /// Completely removes a path from this connection.
@@ -1094,54 +1082,50 @@ impl ConnectionState {
     /// Removes the path from the open paths.
     fn remove_open_path(&mut self, path_id: &PathId) {
         self.open_paths.remove(path_id);
+
+        self.update_pub_path_info();
+    }
+
+    /// Sets the new [`PathInfo`] structs for the public [`Connection`].
+    fn update_pub_path_info(&self) {
+        let new = self
+            .open_paths
+            .iter()
+            .map(|(path_id, remote)| {
+                let remote = TransportAddr::from(remote.clone());
+                (
+                    remote.clone(),
+                    PathInfo {
+                        remote: remote.clone(),
+                        path_id: *path_id,
+                    },
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        self.pub_path_info.set(new).ok();
     }
 }
 
 /// Information about a network path used by a [`Connection`].
+///
+/// [`Connection`]: crate::endpoint::Connection
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathInfo {
-    /// The kind of transport this network path is using.
-    pub transport: TransportType,
-}
-
-/// Different kinds of transports a [`Connection`] can use.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TransportType {
-    /// A transport via a relay server.
-    Relay,
-    /// A transport via an IP connection.
-    Ip,
-}
-
-impl From<MultipathMappedAddr> for TransportType {
-    fn from(source: MultipathMappedAddr) -> Self {
-        match source {
-            MultipathMappedAddr::Mixed(_) => {
-                error!("paths should not use mixed addrs");
-                TransportType::Relay
-            }
-            MultipathMappedAddr::Relay(_) => TransportType::Relay,
-            MultipathMappedAddr::Ip(_) => TransportType::Ip,
-        }
-    }
-}
-
-impl From<transports::Addr> for TransportType {
-    fn from(source: transports::Addr) -> Self {
-        match source {
-            transports::Addr::Ip(_) => Self::Ip,
-            transports::Addr::Relay(_, _) => Self::Relay,
-        }
-    }
-}
-
-impl From<&transports::Addr> for TransportType {
-    fn from(source: &transports::Addr) -> Self {
-        match source {
-            transports::Addr::Ip(_) => Self::Ip,
-            transports::Addr::Relay(_, _) => Self::Relay,
-        }
-    }
+    /// The remote transport address used by this network path.
+    pub remote: TransportAddr,
+    /// The internal path identifier for the [`Connection`]
+    ///
+    /// This is unique for the lifetime of the connection.  Can be used to look up the path
+    /// statistics in the [`ConnectionStats::paths`], returned by [`Connection::stats`].
+    ///
+    /// [`Connection`]: crate::endpoint::Connection
+    /// [`Connection::stats`]: crate::endpoint::Connection::stats
+    /// [`ConnectionStats::paths`]: crate::endpoint::ConnectionStats::paths
+    // TODO: Decide if exposing this is a good idea.  Maybe we should just hide this
+    //    entirely try to provide Self::stats().  But that would mean this needs to have a
+    //    WeakConnectionHandle.
+    pub path_id: PathId,
 }
 
 /// Poll a future once, like n0_future::future::poll_once but sync.

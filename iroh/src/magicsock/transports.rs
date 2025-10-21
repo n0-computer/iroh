@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use iroh_base::{EndpointId, RelayUrl};
+use iroh_base::{EndpointId, RelayUrl, TransportAddr};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use tracing::{debug, error, instrument, trace, warn};
@@ -377,6 +377,15 @@ impl From<&SocketAddr> for Addr {
 impl From<(RelayUrl, EndpointId)> for Addr {
     fn from(value: (RelayUrl, EndpointId)) -> Self {
         Self::Relay(value.0, value.1)
+    }
+}
+
+impl From<Addr> for TransportAddr {
+    fn from(value: Addr) -> Self {
+        match value {
+            Addr::Ip(addr) => TransportAddr::Ip(addr),
+            Addr::Relay(url, _) => TransportAddr::Relay(url),
+        }
     }
 }
 
