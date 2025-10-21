@@ -9,7 +9,8 @@ use std::{
 use n0_snafu::{Result, ResultExt, format_err};
 use pkarr::{SignedPacket, Timestamp};
 use redb::{
-    Database, MultimapTableDefinition, ReadableTable, TableDefinition, backends::InMemoryBackend,
+    Database, MultimapTableDefinition, ReadableDatabase, ReadableTable, TableDefinition,
+    backends::InMemoryBackend,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -272,14 +273,9 @@ impl SignedPacketStore {
                 )
             })?;
         }
-        let mut db = Database::builder()
+        let db = Database::builder()
             .create(path)
             .context("failed to open packet database")?;
-        match db.upgrade() {
-            Ok(true) => info!("Database was upgraded to redb v3 compatible format"),
-            Ok(false) => {}
-            Err(err) => warn!("Database upgrade to redb v3 compatible format failed: {err:#}"),
-        }
         Self::open(db, options, metrics)
     }
 
