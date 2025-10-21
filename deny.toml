@@ -27,6 +27,4 @@ ignore = [
 ]
 
 [sources]
-allow-git = [
-    "https://github.com/n0-computer/iroh-tickets.git",
-]
+allow-git = []
