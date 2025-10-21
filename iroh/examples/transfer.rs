@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
@@ -177,8 +177,11 @@ async fn main() -> Result<()> {
             endpoint_args,
         } => {
             let endpoint = endpoint_args.bind_endpoint().await?;
-            let remote_addr =
-                EndpointAddr::from_parts(remote_id, remote_relay_url, remote_direct_address);
+            let addrs = remote_relay_url
+                .into_iter()
+                .map(TransportAddr::Relay)
+                .chain(remote_direct_address.into_iter().map(TransportAddr::Ip));
+            let remote_addr = EndpointAddr::from_parts(remote_id, addrs);
             fetch(endpoint, remote_addr).await?
         }
     }
@@ -317,7 +320,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 
     println!("Endpoint id:\n{endpoint_id}");
     println!("Direct addresses:");
-    for addr in &endpoint_addr.direct_addresses {
+    for addr in endpoint_addr.ip_addrs() {
         println!("\t{addr}");
     }
     println!();
@@ -394,7 +397,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let me = endpoint.id().fmt_short();
     let start = Instant::now();
-    let remote_id = remote_addr.endpoint_id;
+    let remote_id = remote_addr.id;
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
