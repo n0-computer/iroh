@@ -154,19 +154,17 @@ impl Transports {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
 
-        (ips, relays)
-            .map(|(ips, relays)| {
-                ips.into_iter()
-                    .map(Addr::from)
-                    .chain(
-                        relays
-                            .into_iter()
-                            .flatten()
-                            .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id)),
-                    )
-                    .collect()
-            })
-            .expect("disconnected")
+        (ips, relays).map(|(ips, relays)| {
+            ips.into_iter()
+                .map(Addr::from)
+                .chain(
+                    relays
+                        .into_iter()
+                        .flatten()
+                        .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id)),
+                )
+                .collect()
+        })
     }
 
     #[cfg(wasm_browser)]
@@ -174,7 +172,6 @@ impl Transports {
         let relays = self.relay.iter().map(|t| t.local_addr_watch());
         n0_watcher::Join::new(relays)
             .map(|relays| relays.into_iter().flatten().map(Addr::from).collect())
-            .expect("disconnected")
     }
 
     /// Returns the bound addresses for IP based transports

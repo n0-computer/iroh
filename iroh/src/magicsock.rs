@@ -348,10 +348,7 @@ impl MagicSock {
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
     pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
-        self.net_report
-            .watch()
-            .map(|(r, _)| r)
-            .expect("disconnected")
+        self.net_report.watch().map(|(r, _)| r)
     }
 
     /// Watch for changes to the home relay.
@@ -359,7 +356,7 @@ impl MagicSock {
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
     pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> + use<> {
-        let res = self.local_addrs_watch.clone().map(|addrs| {
+        self.local_addrs_watch.clone().map(|addrs| {
             addrs
                 .into_iter()
                 .filter_map(|addr| {
@@ -370,8 +367,7 @@ impl MagicSock {
                     }
                 })
                 .collect()
-        });
-        res.expect("disconnected")
+        })
     }
 
     /// Returns a [`n0_watcher::Direct`] that reports the [`ConnectionType`] we have to the
