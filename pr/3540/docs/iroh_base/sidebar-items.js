@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["KeyParsingError"],"mod":["ticket"],"struct":["NodeAddr","PublicKey","RelayUrl","RelayUrlParseError","SecretKey","Signature","SignatureError"],"type":["NodeId"]};
+window.SIDEBAR_ITEMS = {"enum":["KeyParsingError","TransportAddr"],"struct":["EndpointAddr","PublicKey","RelayUrl","RelayUrlParseError","SecretKey","Signature","SignatureError"],"type":["EndpointId"]};

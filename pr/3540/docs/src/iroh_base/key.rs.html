@@ -50,19 +50,19 @@
 <a href=#50 id=50 data-nosnippet>50</a>    }
 <a href=#51 id=51 data-nosnippet>51</a>}
 <a href=#52 id=52 data-nosnippet>52</a>
-<a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// The identifier for a node in the (iroh) network.
+<a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// The identifier for an endpoint in the (iroh) network.
 <a href=#54 id=54 data-nosnippet>54</a>///
-<a href=#55 id=55 data-nosnippet>55</a>/// Each node in iroh has a unique identifier created as a cryptographic key.  This can be
-<a href=#56 id=56 data-nosnippet>56</a>/// used to globally identify a node.  Since it is also a cryptographic key it is also the
-<a href=#57 id=57 data-nosnippet>57</a>/// mechanism by which all traffic is always encrypted for a specific node only.
+<a href=#55 id=55 data-nosnippet>55</a>/// Each endpoint in iroh has a unique identifier created as a cryptographic key.  This can be
+<a href=#56 id=56 data-nosnippet>56</a>/// used to globally identify an endpoint.  Since it is also a cryptographic key it is also the
+<a href=#57 id=57 data-nosnippet>57</a>/// mechanism by which all traffic is always encrypted for a specific endpoint only.
 <a href=#58 id=58 data-nosnippet>58</a>///
 <a href=#59 id=59 data-nosnippet>59</a>/// This is equivalent to [`PublicKey`].  By convention we will (or should) use `PublicKey`
-<a href=#60 id=60 data-nosnippet>60</a>/// as type name when performing cryptographic operations, but use `NodeId` when referencing
-<a href=#61 id=61 data-nosnippet>61</a>/// a node.  E.g.:
+<a href=#60 id=60 data-nosnippet>60</a>/// as type name when performing cryptographic operations, but use `EndpointId` when referencing
+<a href=#61 id=61 data-nosnippet>61</a>/// an endpoint.  E.g.:
 <a href=#62 id=62 data-nosnippet>62</a>///
 <a href=#63 id=63 data-nosnippet>63</a>/// - `encrypt(key: PublicKey)`
-<a href=#64 id=64 data-nosnippet>64</a>/// - `send_to(node: NodeId)`
-<a href=#65 id=65 data-nosnippet>65</a></span><span class="kw">pub type </span>NodeId = PublicKey;
+<a href=#64 id=64 data-nosnippet>64</a>/// - `send_to(endpoint: EndpointId)`
+<a href=#65 id=65 data-nosnippet>65</a></span><span class="kw">pub type </span>EndpointId = PublicKey;
 <a href=#66 id=66 data-nosnippet>66</a>
 <a href=#67 id=67 data-nosnippet>67</a><span class="kw">impl </span>Hash <span class="kw">for </span>PublicKey {
 <a href=#68 id=68 data-nosnippet>68</a>    <span class="kw">fn </span>hash&lt;H: std::hash::Hasher&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, state: <span class="kw-2">&amp;mut </span>H) {
@@ -452,8 +452,8 @@
 <a href=#452 id=452 data-nosnippet>452</a>    }
 <a href=#453 id=453 data-nosnippet>453</a>
 <a href=#454 id=454 data-nosnippet>454</a>    <span class="attr">#[test]
-<a href=#455 id=455 data-nosnippet>455</a>    </span><span class="kw">fn </span>test_regression_parse_node_id_panic() {
-<a href=#456 id=456 data-nosnippet>456</a>        <span class="kw">let </span>not_a_node_id = <span class="string">"foobarbaz"</span>;
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">assert!</span>(PublicKey::from_str(not_a_node_id).is_err());
+<a href=#455 id=455 data-nosnippet>455</a>    </span><span class="kw">fn </span>test_regression_parse_endpoint_id_panic() {
+<a href=#456 id=456 data-nosnippet>456</a>        <span class="kw">let </span>not_a_endpoint_id = <span class="string">"foobarbaz"</span>;
+<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">assert!</span>(PublicKey::from_str(not_a_endpoint_id).is_err());
 <a href=#458 id=458 data-nosnippet>458</a>    }
 <a href=#459 id=459 data-nosnippet>459</a>}</code></pre></div></section></main></body></html>
