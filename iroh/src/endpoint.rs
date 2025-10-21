@@ -2473,7 +2473,7 @@ mod tests {
         // setup a second relay server
         let (new_relay_map, new_relay_url, _guard2) = run_relay_server().await?;
         let new_endpoint = new_relay_map
-            .get_endpoint(&new_relay_url)
+            .get(&new_relay_url)
             .expect("missing endpoint")
             .clone();
         dbg!(&new_relay_map);
