@@ -435,36 +435,36 @@ impl Client {
         let mut v6_buf = JoinSet::new();
         let cancel_v6 = CancellationToken::new();
 
-        let endpoints = self.relay_map.endpoints::<Vec<_>>();
-        for relay_endpoint in endpoints.into_iter().take(MAX_RELAYS) {
+        let relays = self.relay_map.relays::<Vec<_>>();
+        for relay in relays.into_iter().take(MAX_RELAYS) {
             if if_state.have_v4 && needs_v4_probe {
-                debug!(?relay_endpoint.url, "v4 QAD probe");
-                let relay_endpoint = relay_endpoint.clone();
+                debug!(?relay.url, "v4 QAD probe");
+                let relay = relay.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
-                let relay_url = relay_endpoint.url.clone();
+                let relay_url = relay.url.clone();
                 v4_buf.spawn(
                     cancel_v4
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v4(relay_endpoint, quic_client, dns_resolver),
+                            run_probe_v4(relay, quic_client, dns_resolver),
                         ))
                         .instrument(warn_span!("QADv4", %relay_url)),
                 );
             }
             if if_state.have_v6 && needs_v6_probe {
-                debug!(?relay_endpoint.url, "v6 QAD probe");
-                let relay_endpoint = relay_endpoint.clone();
+                debug!(?relay.url, "v6 QAD probe");
+                let relay = relay.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
-                let relay_url = relay_endpoint.url.clone();
+                let relay_url = relay.url.clone();
                 v6_buf.spawn(
                     cancel_v6
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v6(relay_endpoint, quic_client, dns_resolver),
+                            run_probe_v6(relay, quic_client, dns_resolver),
                         ))
                         .instrument(warn_span!("QADv6", %relay_url)),
                 );

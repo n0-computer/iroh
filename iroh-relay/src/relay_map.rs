@@ -11,7 +11,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::defaults::DEFAULT_RELAY_QUIC_PORT;
 
-/// Configuration of all the relay servers that can be used.
+/// List of relay server configurations to be used in an iroh endpoint.
+///
+/// A [`RelayMap`] can be constructed from an iterator of [`RelayConfig`] or [`RelayUrl]`,
+/// or by creating an empty relay map with [`RelayMap::empty`] and then adding entries with
+/// [`RelayMap::insert`].
+///
+/// Example:
+/// ```
+/// # use std::str::FromStr;
+/// # use iroh_base::RelayUrl;
+/// # use iroh_relay::RelayMap;
+/// let relay1 = RelayUrl::from_str("https://relay1.example.org").unwrap();
+/// let relay2 = RelayUrl::from_str("https://relay2.example.org").unwrap();
+/// let map = RelayMap::from_iter(vec![relay1, relay2]);
+/// ```
 #[derive(Debug, Clone)]
 pub struct RelayMap {
     /// A map of the different relay IDs to the [`RelayConfig`] information
@@ -29,7 +43,10 @@ impl PartialEq for RelayMap {
 impl Eq for RelayMap {}
 
 impl RelayMap {
-    /// Returns the sorted relay URLs.
+    /// Returns the URLs of all servers in this relay map.
+    ///
+    /// This function is generic over the container to collect into. If you simply want a list
+    /// of URLs, call this with `map.urls::<Vec<_>>()` to get a `Vec<RelayUrl>`.
     pub fn urls<T>(&self) -> T
     where
         T: FromIterator<RelayUrl>,
@@ -42,15 +59,18 @@ impl RelayMap {
             .collect::<T>()
     }
 
-    /// Create an empty relay map.
+    /// Creates an empty relay map.
     pub fn empty() -> Self {
         Self {
             relays: Default::default(),
         }
     }
 
-    /// Returns an `Iterator` over all known endpoints.
-    pub fn endpoints<T>(&self) -> T
+    /// Returns a list with the [`RelayConfig`] for each relay in this relay map.
+    ///
+    /// This function is generic over the container to collect into. If you simply want a list
+    /// of URLs, call this with `map.relays::<Vec<_>>()` to get a `Vec<RelayConfig>`.
+    pub fn relays<T>(&self) -> T
     where
         T: FromIterator<Arc<RelayConfig>>,
     {
@@ -62,32 +82,32 @@ impl RelayMap {
             .collect::<T>()
     }
 
-    /// Is this a known endpoint?
-    pub fn contains_endpoint(&self, url: &RelayUrl) -> bool {
+    /// Returns `true` if a relay with `url` is contained in this this relay map.
+    pub fn contains(&self, url: &RelayUrl) -> bool {
         self.relays.read().expect("poisoned").contains_key(url)
     }
 
-    /// Get the given endpoint.
-    pub fn get_endpoint(&self, url: &RelayUrl) -> Option<Arc<RelayConfig>> {
+    /// Returns the config for a relay.
+    pub fn get(&self, url: &RelayUrl) -> Option<Arc<RelayConfig>> {
         self.relays.read().expect("poisoned").get(url).cloned()
     }
 
-    /// How many endpoints are known?
+    /// Returns the number of relays in this relay map.
     pub fn len(&self) -> usize {
         self.relays.read().expect("poisoned").len()
     }
 
-    /// Are there any endpoints in this map?
+    /// Returns `true` if this relay map is empty.
     pub fn is_empty(&self) -> bool {
         self.relays.read().expect("poisoned").is_empty()
     }
 
-    /// Insert a new relay.
+    /// Inserts a new relay into the relay map.
     pub fn insert(&self, url: RelayUrl, endpoint: Arc<RelayConfig>) -> Option<Arc<RelayConfig>> {
         self.relays.write().expect("poisoned").insert(url, endpoint)
     }
 
-    /// Removes an existing relay by `RelayUrl`.
+    /// Removes an existing relay by its URL.
     pub fn remove(&self, url: &RelayUrl) -> Option<Arc<RelayConfig>> {
         self.relays.write().expect("poisoned").remove(url)
     }

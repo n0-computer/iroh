@@ -626,7 +626,7 @@ impl Endpoint {
     /// Connects to a remote [`Endpoint`].
     ///
     /// A value that can be converted into a [`EndpointAddr`] is required. This can be either a
-    /// [`EndpointAddr`], a [`EndpointId`] or a [`iroh_base::ticket::EndpointTicket`].
+    /// [`EndpointAddr`] or a [`EndpointId`].
     ///
     /// The [`EndpointAddr`] must contain the [`EndpointId`] to dial and may also contain a [`RelayUrl`]
     /// and direct addresses. If direct addresses are provided, they will be used to try and
@@ -2522,7 +2522,7 @@ mod tests {
         // setup a second relay server
         let (new_relay_map, new_relay_url, _guard2) = run_relay_server().await?;
         let new_endpoint = new_relay_map
-            .get_endpoint(&new_relay_url)
+            .get(&new_relay_url)
             .expect("missing endpoint")
             .clone();
         dbg!(&new_relay_map);
