@@ -52,7 +52,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     tracing::info!("waiting for server to go online");
     time::timeout(Duration::from_secs(12), server.online())
         .await
-        .context("server endpoint took too long to get online")?;
+        .std_context("server endpoint took too long to get online")?;
 
     // Make the server respond to requests with an echo
     task::spawn({
