@@ -313,8 +313,14 @@ impl EndpointArgs {
 
 async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     let endpoint_id = endpoint.id();
+    let endpoint_addr = endpoint.addr();
 
-    println!("Endpoint id:\n{endpoint_id}\n");
+    println!("Endpoint id:\n{endpoint_id}");
+    println!("Direct addresses:");
+    for addr in &endpoint_addr.direct_addresses {
+        println!("\t{addr}");
+    }
+    println!();
 
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
