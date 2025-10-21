@@ -41,9 +41,9 @@ iroh-base = { version = "0.93.2", default-features = false, features = ["key", "
 iroh-relay = { version = "0.93", path = "../iroh-relay", default-features = false }
 n0-future = "0.3.0"
 n0-snafu = "0.2.2"
-n0-watcher = "0.3"
+n0-watcher = "0.4"
 nested_enum_utils = "0.2.1"
-netwatch = { version = "0.10" }
+netwatch = { version = "0.11" }
 pin-project = "1"
 pkarr = { version = "5", default-features = false, features = ["relays"] }
 quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["rustls-ring"] }
@@ -96,7 +96,7 @@ axum = { version = "0.8", optional = true }
 hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.38.1" }
-portmapper = { version = "0.10", default-features = false }
+portmapper = { version = "0.11", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",

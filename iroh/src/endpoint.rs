@@ -874,20 +874,17 @@ impl Endpoint {
         let watch_relay = self.msock.home_relay();
         let endpoint_id = self.id();
 
-        watch_addrs
-            .or(watch_relay)
-            .map(move |(addrs, relays)| {
-                debug_assert!(!addrs.is_empty(), "direct addresses must never be empty");
+        watch_addrs.or(watch_relay).map(move |(addrs, relays)| {
+            debug_assert!(!addrs.is_empty(), "direct addresses must never be empty");
 
-                EndpointAddr::from_parts(
-                    endpoint_id,
-                    relays
-                        .into_iter()
-                        .map(TransportAddr::Relay)
-                        .chain(addrs.into_iter().map(|x| TransportAddr::Ip(x.addr))),
-                )
-            })
-            .expect("watchable is alive - cannot be disconnected yet")
+            EndpointAddr::from_parts(
+                endpoint_id,
+                relays
+                    .into_iter()
+                    .map(TransportAddr::Relay)
+                    .chain(addrs.into_iter().map(|x| TransportAddr::Ip(x.addr))),
+            )
+        })
     }
 
     /// Returns a [`Watcher`] for the current [`EndpointAddr`] for this endpoint.
