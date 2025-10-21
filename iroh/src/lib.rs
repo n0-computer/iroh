@@ -213,7 +213,8 @@
 //!         .context("no incoming connection")?
 //!         .await
 //!         .context("accept conn")?;
-//!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await.std_context("accept stream")?;
+//!     let (mut send_stream, mut recv_stream) =
+//!         conn.accept_bi().await.std_context("accept stream")?;
 //!     let _msg = recv_stream.read_to_end(10).await.std_context("read")?;
 //!     send_stream.write_all(b"world").await.std_context("write")?;
 //!     send_stream.finish().std_context("finish")?;
