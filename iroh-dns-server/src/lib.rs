@@ -200,7 +200,7 @@ mod tests {
             max_batch_time: Duration::from_millis(100),
             ..Default::default()
         };
-        let store = ZoneStore::in_memory(options, Default::default()).e()?;
+        let store = ZoneStore::in_memory(options, Default::default())?;
 
         // create a signed packet
         let signed_packet = random_signed_packet(&mut rng)?;
@@ -208,8 +208,7 @@ mod tests {
 
         store
             .insert(signed_packet, PacketSource::PkarrPublish)
-            .await
-            .e()?;
+            .await?;
 
         tokio::time::sleep(Duration::from_secs(1)).await;
         for _ in 0..10 {
@@ -234,8 +233,7 @@ mod tests {
         // spawn our server with mainline support
         let (server, nameserver, _http_url) =
             Server::spawn_for_tests_with_options(Some(BootstrapOption::Custom(bootstrap)), None)
-                .await
-                .e()?;
+                .await?;
 
         let origin = "irohdns.example.";
 
@@ -256,10 +254,7 @@ mod tests {
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
-        let res = resolver
-            .lookup_endpoint_by_id(&endpoint_id, origin)
-            .await
-            .e()?;
+        let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
         assert_eq!(res.relay_url(), Some(&relay_url));

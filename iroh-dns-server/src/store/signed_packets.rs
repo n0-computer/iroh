@@ -128,30 +128,31 @@ impl Actor {
             tokio::pin!(timeout);
             for _ in 0..self.options.max_batch_size {
                 tokio::select! {
-                        _ = self.cancel.cancelled() => {
-                            drop(tables);
-                            transaction.commit().e()?;
-                            return Ok(());
-                        }
-                        _ = &mut timeout => break,
-                        Some(msg) = self.recv.recv() => {
-                            match msg {
-                                Message::Get { key, res } => {
-                                    match get_packet(&tables.signed_packets, &key) {
-                                        Ok(packet) => {
-                                            trace!("get {key}: {}", packet.is_some());
-                                            res.send(packet).ok();
-                                        },
-                                        Err(err) => {
-                                            warn!("get {key} failed: {err:#}");
-                            return Err(err).std_context(format!("get packet for {key} failed"))
-                        }
+                    _ = self.cancel.cancelled() => {
+                        drop(tables);
+                        transaction.commit().e()?;
+                        return Ok(());
                     }
-                }
-                                Message::Upsert { packet, res } => {
-                                    let key = PublicKeyBytes::from_signed_packet(&packet);
-                                    trace!("upsert {}", key);
-                                    let replaced = match get_packet(&tables.signed_packets, &key)? { Some(existing) => {
+                    _ = &mut timeout => break,
+                    Some(msg) = self.recv.recv() => {
+                        match msg {
+                            Message::Get { key, res } => {
+                                match get_packet(&tables.signed_packets, &key) {
+                                    Ok(packet) => {
+                                        trace!("get {key}: {}", packet.is_some());
+                                        res.send(packet).ok();
+                                    },
+                                    Err(err) => {
+                                        warn!("get {key} failed: {err:#}");
+                                        return Err(err).std_context(format!("get packet for {key} failed"))
+                                    }
+                                }
+                            }
+                            Message::Upsert { packet, res } => {
+                                let key = PublicKeyBytes::from_signed_packet(&packet);
+                                trace!("upsert {}", key);
+                                let replaced = match get_packet(&tables.signed_packets, &key)? {
+                                    Some(existing) => {
                                         if existing.more_recent_than(&packet) {
                                             res.send(false).ok();
                                             continue;
@@ -162,56 +163,57 @@ impl Actor {
                                         }
                                     } _ => {
                                         false
-                                    }};
-                                    let value = packet.serialize();
-                                    tables.signed_packets
-                                        .insert(key.as_bytes(), &value[..]).e()?;
-                                    tables.update_time
-                                         .insert(&packet.timestamp().to_bytes(), key.as_bytes()).e()?;
-                                    if replaced {
-                                        self.metrics.store_packets_updated.inc();
-                                    } else {
-                                        self.metrics.store_packets_inserted.inc();
                                     }
-                                    res.send(true).ok();
+                                };
+                                let value = packet.serialize();
+                                tables.signed_packets
+                                    .insert(key.as_bytes(), &value[..]).e()?;
+                                tables.update_time
+                                        .insert(&packet.timestamp().to_bytes(), key.as_bytes()).e()?;
+                                if replaced {
+                                    self.metrics.store_packets_updated.inc();
+                                } else {
+                                    self.metrics.store_packets_inserted.inc();
                                 }
-                                Message::Remove { key, res } => {
-                                    trace!("remove {}", key);
-                                    let updated = match tables.signed_packets.remove(key.as_bytes()).e()? { Some(row) => {
-                                        let packet = SignedPacket::deserialize(row.value()).e()?;
-                                        tables.update_time.remove(&packet.timestamp().to_bytes(), key.as_bytes()).e()?;
-                                        self.metrics.store_packets_removed.inc();
-                                        true
-                                    } _ => {
-                                        false
-                                    }};
-                                    res.send(updated).ok();
-                                }
-                                Message::Snapshot { res } => {
-                                    trace!("snapshot");
-                                    res.send(Snapshot::new(&self.db)?).ok();
-                                }
-                                Message::CheckExpired { key, time } => {
-                                    trace!("check expired {} at {}", key, fmt_time(time));
-                                    match get_packet(&tables.signed_packets, &key)? { Some(packet) => {
-                                        let expired = Timestamp::now() - expiry_us;
-                                        if packet.timestamp() < expired {
-                                            tables.update_time.remove(&time.to_bytes(), key.as_bytes()).e()?;
-                                            let _ = tables.signed_packets.remove(key.as_bytes()).e()?;
-                                            self.metrics.store_packets_expired.inc();
-                                            debug!("removed expired packet {key}");
-                                        } else {
-                                            debug!("packet {key} is no longer expired, removing obsolete expiry entry");
-                                            tables.update_time.remove(&time.to_bytes(), key.as_bytes()).e()?;
-                                        }
-                                    } _ => {
-                                        debug!("expired packet {key} not found, remove from expiry table");
+                                res.send(true).ok();
+                            }
+                            Message::Remove { key, res } => {
+                                trace!("remove {}", key);
+                                let updated = match tables.signed_packets.remove(key.as_bytes()).e()? { Some(row) => {
+                                    let packet = SignedPacket::deserialize(row.value()).e()?;
+                                    tables.update_time.remove(&packet.timestamp().to_bytes(), key.as_bytes()).e()?;
+                                    self.metrics.store_packets_removed.inc();
+                                    true
+                                } _ => {
+                                    false
+                                }};
+                                res.send(updated).ok();
+                            }
+                            Message::Snapshot { res } => {
+                                trace!("snapshot");
+                                res.send(Snapshot::new(&self.db)?).ok();
+                            }
+                            Message::CheckExpired { key, time } => {
+                                trace!("check expired {} at {}", key, fmt_time(time));
+                                match get_packet(&tables.signed_packets, &key)? { Some(packet) => {
+                                    let expired = Timestamp::now() - expiry_us;
+                                    if packet.timestamp() < expired {
                                         tables.update_time.remove(&time.to_bytes(), key.as_bytes()).e()?;
-                                    }}
-                                }
+                                        let _ = tables.signed_packets.remove(key.as_bytes()).e()?;
+                                        self.metrics.store_packets_expired.inc();
+                                        debug!("removed expired packet {key}");
+                                    } else {
+                                        debug!("packet {key} is no longer expired, removing obsolete expiry entry");
+                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes()).e()?;
+                                    }
+                                } _ => {
+                                    debug!("expired packet {key} not found, remove from expiry table");
+                                    tables.update_time.remove(&time.to_bytes(), key.as_bytes()).e()?;
+                                }}
                             }
                         }
                     }
+                }
             }
             drop(tables);
             transaction.commit().e()?;
@@ -265,10 +267,12 @@ impl SignedPacketStore {
         let path = path.as_ref();
         info!("loading packet database from {}", path.to_string_lossy());
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).std_context(format!(
-                "failed to create database directory at {}",
-                path.to_string_lossy()
-            ))?;
+            std::fs::create_dir_all(parent).with_std_context(|_| {
+                format!(
+                    "failed to create database directory at {}",
+                    path.to_string_lossy()
+                )
+            })?;
         }
         let mut db = Database::builder()
             .create(path)

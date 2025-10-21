@@ -1087,7 +1087,7 @@ impl Endpoint {
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # use n0_error::StackResultExt;
+    /// # use n0_error::{StackResultExt, StdResultExt};
     /// # async fn wrapper() -> n0_error::Result<()> {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
@@ -1109,7 +1109,7 @@ impl Endpoint {
     /// tokio::time::sleep(Duration::from_millis(500));
     /// let res = reqwest::get("http://localhost:9100/metrics")
     ///     .await
-    ///     .context("get")?
+    ///     .std_context("get")?
     ///     .text()
     ///     .await
     ///     .context("text")?;

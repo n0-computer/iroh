@@ -1980,7 +1980,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2399,29 +2399,27 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.36.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "090161e84532a0cb78ab13e70abb882b769ec67cf5a2d2dcea39bd002e1f7172"
+version = "0.36.2"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#5242e5cde624bb37758d85cf0d11f5cf16fb5b4f"
 dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
  "iroh-metrics-derive",
  "itoa",
+ "n0-error",
  "postcard",
  "reqwest",
  "ryu",
  "serde",
- "snafu",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "iroh-metrics-derive"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a39de3779d200dadde3a27b9fbdb34389a2af1b85ea445afca47bf4d7672573"
+version = "0.3.1"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#5242e5cde624bb37758d85cf0d11f5cf16fb5b4f"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -3701,7 +3699,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3738,7 +3736,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]

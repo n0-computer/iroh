@@ -162,10 +162,7 @@ impl Config {
         );
         let s = tokio::fs::read_to_string(path.as_ref())
             .await
-            .std_context(format!(
-                "failed to read {}",
-                path.as_ref().to_string_lossy()
-            ))?;
+            .with_std_context(|_| format!("failed to read {}", path.as_ref().to_string_lossy()))?;
         let config: Config = toml::from_str(&s).e()?;
         Ok(config)
     }
