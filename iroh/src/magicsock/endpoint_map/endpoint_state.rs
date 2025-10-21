@@ -61,6 +61,16 @@ use crate::{
 // TODO: Quinn should just do this.  Also, I made this value up.
 const APPLICATION_ABANDON_PATH: u8 = 30;
 
+/// A stream of events from all paths for all connections.
+///
+/// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
+/// actor has lagged processing the events, which is rather critical for us.
+type PathEvents = MergeUnbounded<
+    Pin<
+        Box<dyn Stream<Item = (ConnId, Result<PathEvent, BroadcastStreamRecvError>)> + Send + Sync>,
+    >,
+>;
+
 /// The state we need to know about a single remote endpoint.
 ///
 /// This actor manages all connections to the remote endpoint.  It will trigger holepunching
@@ -92,17 +102,8 @@ pub(super) struct EndpointStateActor {
     //
     /// All connections we have to this remote endpoint.
     connections: FxHashMap<ConnId, ConnectionState>,
-    /// Events emitted by Quinn about path changes.
-    #[allow(clippy::type_complexity)]
-    path_events: MergeUnbounded<
-        Pin<
-            Box<
-                dyn Stream<Item = (ConnId, Result<PathEvent, BroadcastStreamRecvError>)>
-                    + Send
-                    + Sync,
-            >,
-        >,
-    >,
+    /// Events emitted by Quinn about path changes, for all paths, all connections.
+    path_events: PathEvents,
 
     // Internal state - Holepunching and path state.
     //
@@ -898,11 +899,11 @@ impl EndpointStateActor {
         });
         if let Some((rtt, addr)) = selected_path {
             let prev = self.selected_path.replace(addr.clone());
-            if prev.as_ref() != Some(&addr) {
-                debug!(?addr, ?prev, "selected new path");
+            if prev.as_ref() != Some(addr) {
+                debug!(?addr, ?rtt, ?prev, "selected new path");
             }
-            self.open_path(&addr);
-            self.close_redundant_paths(&addr);
+            self.open_path(addr);
+            self.close_redundant_paths(addr);
         }
     }
 

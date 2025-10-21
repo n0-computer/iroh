@@ -602,18 +602,7 @@ impl MagicSender {
     /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
     /// transmit's destination.
     fn mapped_addr(&self, transmit: &quinn_udp::Transmit) -> io::Result<MultipathMappedAddr> {
-        self.msock
-            .metrics
-            .magicsock
-            .send_data
-            .inc_by(transmit.contents.len() as _);
-
         if self.msock.is_closed() {
-            self.msock
-                .metrics
-                .magicsock
-                .send_data_network_down
-                .inc_by(transmit.contents.len() as _);
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
