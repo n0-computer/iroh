@@ -14,7 +14,7 @@ use crate::defaults::DEFAULT_RELAY_QUIC_PORT;
 /// List of relay server configurations to be used in an iroh endpoint.
 ///
 /// A [`RelayMap`] can be constructed from an iterator of [`RelayConfig`] or [`RelayUrl]`,
-/// or by creating an empty relay map with [`RelayMap::new`] and then adding entries with
+/// or by creating an empty relay map with [`RelayMap::empty`] and then adding entries with
 /// [`RelayMap::insert`].
 ///
 /// Example:
