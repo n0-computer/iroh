@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
@@ -288,11 +288,11 @@ impl EndpointArgs {
         let endpoint_addr = endpoint.addr();
 
         println!("Our direct addresses:");
-        for addr in &endpoint_addr.direct_addresses {
+        for addr in endpoint_addr.ip_addrs() {
             println!("\t{addr}");
         }
 
-        if let Some(url) = endpoint_addr.relay_url {
+        if let Some(url) = endpoint_addr.relay_urls().next() {
             println!("Our home relay server:\t{url}");
         } else {
             println!("No home relay server found");
@@ -311,7 +311,9 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
     let mut endpoint_addr = endpoint.addr();
-    endpoint_addr.direct_addresses = Default::default();
+    endpoint_addr
+        .addrs
+        .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
     let ticket = EndpointTicket::new(endpoint_addr);
     println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);
 
@@ -390,7 +392,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 async fn fetch(endpoint: Endpoint, ticket: &str) -> Result<()> {
     let me = endpoint.id().fmt_short();
     let ticket: EndpointTicket = ticket.parse()?;
-    let remote_endpoint_id = ticket.endpoint_addr().endpoint_id;
+    let remote_endpoint_id = ticket.endpoint_addr().id;
     let start = Instant::now();
 
     // Attempt to connect, over the given ALPN.

@@ -3,13 +3,13 @@
 //! ticket would contain the hash of the data as well as information about how to reach the
 //! provider.
 
-use std::{collections::BTreeSet, net::SocketAddr};
+use std::collections::BTreeSet;
 
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
-use crate::{key::EndpointId, relay_url::RelayUrl};
+use crate::{TransportAddr, key::EndpointId};
 
 mod endpoint;
 
@@ -103,13 +103,12 @@ impl ParseError {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Variant0NodeAddr {
-    node_id: EndpointId,
-    info: Variant0AddrInfo,
+struct Variant1EndpointAddr {
+    id: EndpointId,
+    info: Variant1AddrInfo,
 }
 
 #[derive(Serialize, Deserialize)]
-struct Variant0AddrInfo {
-    relay_url: Option<RelayUrl>,
-    direct_addresses: BTreeSet<SocketAddr>,
+struct Variant1AddrInfo {
+    addrs: BTreeSet<TransportAddr>,
 }
