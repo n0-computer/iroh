@@ -44,7 +44,7 @@
 //! recv_stream
 //!     .read_exact(&mut buf)
 //!     .await
-//!     .context("unable to read")?;
+//!     .std_context("unable to read")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -171,7 +171,7 @@
 //!
 //! ```no_run
 //! use iroh::{Endpoint, EndpointAddr};
-//! use n0_error::{Result, StackResultExt};
+//! use n0_error::{Result, StackResultExt, StdResultExt};
 //!
 //! async fn connect(addr: EndpointAddr) -> Result<()> {
 //!     // The Endpoint is the central object that manages an iroh node.
@@ -196,7 +196,7 @@
 //!
 //! ```no_run
 //! use iroh::{Endpoint, EndpointAddr};
-//! use n0_error::{Result, StackResultExt};
+//! use n0_error::{Result, StackResultExt, StdResultExt};
 //! use n0_future::StreamExt;
 //!
 //! async fn accept() -> Result<()> {
