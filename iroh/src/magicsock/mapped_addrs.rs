@@ -62,9 +62,12 @@ pub(crate) trait MappedAddr {
 
 /// An enum encompassing all the mapped and unmapped addresses.
 ///
-/// This can consistently convert a socket address as we use them in Quinn and return a real
-/// socket address or a mapped address.  Note that this does not mean that the mapped
-/// address exists, only that it is semantically a valid mapped address.
+/// This is essentially a slightly-stronger typed version of the IPv6 mapped addresses that
+/// we use on the Quinn side.  It categorises the addressed in what kind of mapped or
+/// unmapped addresses they are.
+///
+/// It does not guarantee that a mapped address exists in the mapping.  Or that a particular
+/// address is even supported on this platform.  Hence no wasm exceptions here.
 #[derive(Clone, Debug)]
 pub(crate) enum MultipathMappedAddr {
     /// An address for a [`EndpointId`], via one or more paths.
@@ -72,7 +75,6 @@ pub(crate) enum MultipathMappedAddr {
     /// An address for a particular [`EndpointId`] via a particular relay.
     Relay(RelayMappedAddr),
     /// An IP based transport address.
-    #[cfg(not(wasm_browser))]
     Ip(SocketAddr),
 }
 
@@ -87,7 +89,6 @@ impl From<SocketAddr> for MultipathMappedAddr {
                 if let Ok(addr) = RelayMappedAddr::try_from(addr) {
                     return Self::Relay(addr);
                 }
-                #[cfg(not(wasm_browser))]
                 Self::Ip(value)
             }
         }

@@ -1115,7 +1115,6 @@ impl Handle {
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
             dns_resolver,
-            #[cfg(not(wasm_browser))]
             relay_map.clone(),
             net_report_config,
             metrics.net_report.clone(),

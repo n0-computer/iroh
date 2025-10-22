@@ -8,8 +8,8 @@ use std::{
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_future::{
     MergeUnbounded, Stream, StreamExt,
-    task::AbortOnDropHandle,
-    time::{Duration, Instant},
+    task::{self, AbortOnDropHandle},
+    time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
@@ -169,7 +169,7 @@ impl EndpointStateActor {
         // we don't explicitly set a span we get the spans from whatever call happens to
         // first create the actor, which is often very confusing as it then keeps those
         // spans for all logging of the actor.
-        let task = tokio::spawn(
+        let task = task::spawn(
             async move {
                 if let Err(err) = self.run(rx).await {
                     error!("actor failed: {err:#}");
@@ -200,7 +200,7 @@ impl EndpointStateActor {
         trace!("actor started");
         loop {
             let scheduled_hp = match self.scheduled_holepunch {
-                Some(when) => MaybeFuture::Some(tokio::time::sleep_until(when)),
+                Some(when) => MaybeFuture::Some(time::sleep_until(when)),
                 None => MaybeFuture::None,
             };
             let mut scheduled_hp = std::pin::pin!(scheduled_hp);

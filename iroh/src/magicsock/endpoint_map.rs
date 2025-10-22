@@ -6,7 +6,7 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
-use n0_future::task::AbortOnDropHandle;
+use n0_future::task::{self, AbortOnDropHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{Instrument, error, info_span, trace, warn};
@@ -363,7 +363,7 @@ impl TransportsSenderActor {
         // can.  No need to introduce extra buffering.
         let (tx, rx) = mpsc::channel(1);
 
-        let task = tokio::spawn(
+        let task = task::spawn(
             async move {
                 self.run(rx).await;
             }
