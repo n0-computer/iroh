@@ -2251,7 +2251,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.94.0"
+version = "0.94.1"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
