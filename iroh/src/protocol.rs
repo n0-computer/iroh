@@ -175,7 +175,13 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     ///
     /// Can be implemented as `async fn accept(&self, connection: Connection) -> Result<()>`.
     ///
-    /// The returned future runs on a freshly spawned tokio task so it can be long-running.
+    /// The returned future runs on a freshly spawned tokio task so it can be long-running. Once
+    /// `accept()` returns, the connection is dropped. This means that it will be closed
+    /// if there are no other clones of the connection.  If there is a protocol error, you
+    /// can use [`Connection::close`] to send an error code to the remote peer. Returning
+    /// an `Err<AcceptError>` will also drop the connection and log a warning, but no
+    /// dedicated error code will be sent to the peer, so it's recommended to explicitly
+    /// close the connection within your accept handler.
     ///
     /// When [`Router::shutdown`] is called, no further connections will be accepted, and
     /// the futures returned by [`Self::accept`] will be aborted after the future returned
