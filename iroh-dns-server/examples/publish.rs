@@ -2,13 +2,9 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::{Parser, ValueEnum};
 use iroh::{
-    EndpointId, SecretKey,
     discovery::{
-        UserData,
-        dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-        pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrRelayClient},
-    },
-    endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME},
+        dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING}, pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING}, UserData
+    }, endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME}, PublicKey, SecretKey
 };
 use n0_snafu::{Result, ResultExt};
 use url::Url;
@@ -103,7 +99,7 @@ async fn main() -> Result<()> {
     println!("publish to {pkarr_relay_url} ...");
 
     let pkarr = PkarrRelayClient::new(pkarr_relay_url);
-    let endpoint_info = EndpointInfo::new(endpoint_id)
+    let endpoint_info = EndpointInfo::new(endpoint_id.into())
         .with_relay_url(relay_url.map(Into::into))
         .with_ip_addrs(args.addr.into_iter().collect())
         .with_user_data(args.user_data);
@@ -140,6 +136,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn fmt_domain(endpoint_id: &EndpointId, origin: &str) -> String {
+fn fmt_domain(endpoint_id: &PublicKey, origin: &str) -> String {
     format!("{IROH_TXT_NAME}.{}.{origin}", endpoint_id.to_z32())
 }

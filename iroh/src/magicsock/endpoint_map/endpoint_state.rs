@@ -1449,7 +1449,7 @@ pub enum ConnectionType {
 mod tests {
     use std::{collections::BTreeMap, net::Ipv4Addr};
 
-    use iroh_base::SecretKey;
+    use iroh_base::{EndpointId, SecretKey};
     use rand::SeedableRng;
 
     use super::*;
@@ -1464,7 +1464,7 @@ mod tests {
         let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
         let latency = Duration::from_millis(50);
 
-        let relay_and_state = |endpoint_id: EndpointId, url: RelayUrl| {
+        let relay_and_state = |endpoint_id: RelayEndpointId, url: RelayUrl| {
             let relay_state = PathState::with_pong_reply(
                 endpoint_id,
                 PongReply {

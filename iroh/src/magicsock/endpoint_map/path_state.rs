@@ -142,7 +142,7 @@ impl PathState {
     }
 
     #[cfg(test)]
-    pub(super) fn with_pong_reply(endpoint_id: EndpointId, r: PongReply) -> Self {
+    pub(super) fn with_pong_reply(endpoint_id: RelayEndpointId, r: PongReply) -> Self {
         PathState {
             endpoint_id,
             path: r.from.clone(),

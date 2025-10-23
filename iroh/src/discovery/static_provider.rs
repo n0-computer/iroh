@@ -51,7 +51,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 ///     .await?;
 ///
 /// // Sometime later add a RelayUrl for our endpoint.
-/// let id = SecretKey::generate(&mut rand::rng()).public();
+/// let id = SecretKey::generate(&mut rand::rng()).public().into();
 /// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
 /// discovery.add_endpoint_info(EndpointAddr {
 ///     id,

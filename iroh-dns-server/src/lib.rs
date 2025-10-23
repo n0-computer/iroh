@@ -22,8 +22,7 @@ mod tests {
     };
 
     use iroh::{
-        RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
-        endpoint_info::EndpointInfo,
+        discovery::pkarr::PkarrRelayClient, dns::DnsResolver, endpoint_info::EndpointInfo, EndpointId, RelayUrl, SecretKey
     };
     use n0_snafu::{Result, ResultExt};
     use pkarr::{SignedPacket, Timestamp};
@@ -171,7 +170,7 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let secret_key = SecretKey::generate(&mut rng);
-        let endpoint_id = secret_key.public();
+        let endpoint_id = secret_key.public().into();
         let pkarr = PkarrRelayClient::new(pkarr_relay);
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
@@ -180,7 +179,7 @@ mod tests {
         pkarr.publish(&signed_packet).await?;
 
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
+        let res = resolver.lookup_endpoint_by_id(endpoint_id.ed25519().unwrap(), origin).await?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
         assert_eq!(res.relay_urls().next(), Some(&relay_url));
@@ -239,7 +238,7 @@ mod tests {
 
         // create a signed packet
         let secret_key = SecretKey::generate(&mut rng);
-        let endpoint_id = secret_key.public();
+        let endpoint_id: EndpointId = secret_key.public().into();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
         let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
@@ -254,7 +253,7 @@ mod tests {
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
+        let res = resolver.lookup_endpoint_by_id(endpoint_id.ed25519().unwrap(), origin).await?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
         assert_eq!(res.relay_urls().next(), Some(&relay_url));
@@ -271,7 +270,7 @@ mod tests {
         let secret_key = SecretKey::generate(rng);
         let endpoint_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;
-        let endpoint_info = EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+        let endpoint_info = EndpointInfo::new(endpoint_id.into()).with_relay_url(Some(relay_url.clone()));
         let packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         Ok(packet)
     }

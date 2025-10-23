@@ -388,7 +388,7 @@ fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
 mod tests {
     use std::{collections::BTreeSet, time::Duration};
 
-    use iroh_base::EndpointId;
+    use iroh_base::{EndpointId, PublicKey};
     use tokio::task::JoinSet;
     use tracing::debug;
 
@@ -427,7 +427,7 @@ mod tests {
                     sender
                         .try_send(RelayRecvDatagram {
                             url,
-                            src: EndpointId::from_bytes(&[0u8; 32]).unwrap(),
+                            src: PublicKey::from_bytes(&[0u8; 32]).unwrap().into(),
                             datagrams: Datagrams::from(&i.to_le_bytes()),
                         })
                         .unwrap();

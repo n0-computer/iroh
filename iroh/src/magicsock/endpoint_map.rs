@@ -879,7 +879,7 @@ mod tests {
         info!("Adding active addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
-            let endpoint_addr = EndpointAddr::new(public_key).with_ip_addr(addr);
+            let endpoint_addr = EndpointAddr::new(public_key.into()).with_ip_addr(addr);
             // add address
             endpoint_map.add_test_addr(endpoint_addr);
             // make it active
@@ -889,7 +889,7 @@ mod tests {
         info!("Adding offline/inactive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
-            let endpoint_addr = EndpointAddr::new(public_key).with_ip_addr(addr);
+            let endpoint_addr = EndpointAddr::new(public_key.into()).with_ip_addr(addr);
             endpoint_map.add_test_addr(endpoint_addr);
         }
 
@@ -942,7 +942,7 @@ mod tests {
             .expect("registered");
 
         for _ in 0..MAX_INACTIVE_ENDPOINTS + 1 {
-            let endpoint = SecretKey::generate(&mut rng).public();
+            let endpoint = SecretKey::generate(&mut rng).public().into();
             endpoint_map.add_test_addr(EndpointAddr::new(endpoint));
         }
 

@@ -1035,12 +1035,12 @@ mod test_dns_pkarr {
             .await
             .context("wait for on endpoint update")?;
         let resolved = resolver
-            .lookup_endpoint_by_id(&endpoint_id.ed25519().unwrap(), &origin)
+            .lookup_endpoint_by_id(&endpoint_id, &origin)
             .await?;
         println!("resolved {resolved:?}");
 
         let expected_addr = EndpointAddr {
-            id: endpoint_id,
+            id: endpoint_id.into(),
             addrs: relay_url.into_iter().collect(),
         };
 
@@ -1064,7 +1064,7 @@ mod test_dns_pkarr {
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
-            .on_endpoint(&ep1.id(), PUBLISH_TIMEOUT)
+            .on_endpoint(&ep1.id().ed25519().unwrap(), PUBLISH_TIMEOUT)
             .await
             .context("wait for on endpoint update")?;
 

@@ -2636,12 +2636,12 @@ mod tests {
             }
         }
 
-        fn tracked_endpoints(&self) -> Vec<PublicKey> {
+        fn tracked_endpoints(&self) -> Vec<EndpointId> {
             self.endpoint
                 .magic_sock()
                 .list_remote_infos()
                 .into_iter()
-                .map(|ep| ep.endpoint_id)
+                .map(|ep| ep.endpoint_id.into())
                 .collect()
         }
 
@@ -3412,7 +3412,7 @@ mod tests {
 
         // relay url only
         let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
+            id: SecretKey::generate(&mut rng).public().into(),
             addrs: [TransportAddr::Relay("http://my-relay.com".parse().unwrap())]
                 .into_iter()
                 .collect(),
@@ -3425,7 +3425,7 @@ mod tests {
 
         // addrs only
         let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
+            id: SecretKey::generate(&mut rng).public().into(),
             addrs: [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())]
                 .into_iter()
                 .collect(),
@@ -3438,7 +3438,7 @@ mod tests {
 
         // both
         let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
+            id: SecretKey::generate(&mut rng).public().into(),
             addrs: [
                 TransportAddr::Relay("http://my-relay.com".parse().unwrap()),
                 TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),

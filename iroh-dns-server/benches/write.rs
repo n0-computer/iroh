@@ -33,7 +33,7 @@ fn benchmark_dns_server(c: &mut Criterion) {
 
                     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
                     let secret_key = SecretKey::generate(&mut rng);
-                    let endpoint_id = secret_key.public();
+                    let endpoint_id = secret_key.public().into();
 
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
                     let pkarr = PkarrRelayClient::new(pkarr_relay);
