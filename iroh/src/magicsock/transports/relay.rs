@@ -241,7 +241,7 @@ pub(crate) struct RelaySender {
 }
 
 impl RelaySender {
-    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _endpoint_id: &EndpointId) -> bool {
+    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _endpoint_id: &RelayEndpointId) -> bool {
         true
     }
 
@@ -285,7 +285,7 @@ impl RelaySender {
         &mut self,
         cx: &mut Context,
         dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
+        dest_endpoint: RelayEndpointId,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         match ready!(self.sender.poll_reserve(cx)) {

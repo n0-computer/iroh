@@ -31,7 +31,7 @@ use std::{
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
-use iroh_relay::{RelayConfig, RelayMap};
+use iroh_relay::{RelayConfig, RelayEndpointId, RelayMap};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -288,7 +288,7 @@ impl MagicSock {
     }
 
     /// Return the [`RemoteInfo`] for a single endpoint in the endpoint map.
-    pub(crate) fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+    pub(crate) fn remote_info(&self, endpoint_id: RelayEndpointId) -> Option<RemoteInfo> {
         self.endpoint_map.remote_info(endpoint_id)
     }
 
@@ -382,17 +382,17 @@ impl MagicSock {
     /// given `endpoint_id`.
     pub(crate) fn conn_type(
         &self,
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
     ) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.endpoint_map.conn_type(endpoint_id)
     }
 
-    pub(crate) fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+    pub(crate) fn latency(&self, endpoint_id: RelayEndpointId) -> Option<Duration> {
         self.endpoint_map.latency(endpoint_id)
     }
 
     /// Returns the socket address which can be used by the QUIC layer to dial this endpoint.
-    pub(crate) fn get_mapping_addr(&self, endpoint_id: EndpointId) -> Option<EndpointIdMappedAddr> {
+    pub(crate) fn get_mapping_addr(&self, endpoint_id: RelayEndpointId) -> Option<EndpointIdMappedAddr> {
         self.endpoint_map
             .get_quic_mapped_addr_for_endpoint_key(endpoint_id)
     }
@@ -849,7 +849,7 @@ impl MagicSock {
     }
 
     /// Handle a ping message.
-    fn handle_ping(&self, dm: disco::Ping, sender: EndpointId, src: &transports::Addr) {
+    fn handle_ping(&self, dm: disco::Ping, sender: RelayEndpointId, src: &transports::Addr) {
         // Insert the ping into the endpoint map, and return whether a ping with this tx_id was already
         // received.
         let addr: SendAddr = src.clone().into();
@@ -1671,8 +1671,8 @@ impl DiscoState {
 
     fn encode_and_seal(
         &self,
-        this_endpoint_id: EndpointId,
-        other_endpoint_id: EndpointId,
+        this_endpoint_id: RelayEndpointId,
+        other_endpoint_id: RelayEndpointId,
         msg: &disco::Message,
     ) -> Bytes {
         let mut seal = msg.as_bytes();
@@ -1789,7 +1789,7 @@ impl AsyncUdpSocket for MagicUdpSocket {
 enum ActorMessage {
     EndpointPingExpired(usize, TransactionId),
     NetworkChange,
-    ScheduleDirectAddrUpdate(UpdateReason, Option<(EndpointId, RelayUrl)>),
+    ScheduleDirectAddrUpdate(UpdateReason, Option<(RelayEndpointId, RelayUrl)>),
     RelayMapChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -2543,6 +2543,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, PublicKey, TransportAddr};
+    use iroh_relay::RelayEndpointId;
     use n0_future::{StreamExt, time};
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
@@ -2640,7 +2641,7 @@ mod tests {
                 .magic_sock()
                 .list_remote_infos()
                 .into_iter()
-                .map(|ep| ep.endpoint_id)
+                .filter_map(|ep| ep.endpoint_id.to_ed25519())
                 .collect()
         }
 
@@ -2672,7 +2673,7 @@ mod tests {
                 }
 
                 let addr = EndpointAddr {
-                    id: me.public(),
+                    id: me.public().into(),
                     addrs: new_addrs.iter().copied().map(TransportAddr::Ip).collect(),
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
@@ -2772,7 +2773,7 @@ mod tests {
         loss: ExpectedLoss,
     ) -> Result {
         info!("connecting to {}", dest_id.fmt_short());
-        let dest = EndpointAddr::new(dest_id);
+        let dest = EndpointAddr::new(dest_id.into());
         let conn = ep.endpoint.connect(dest, ALPN).await?;
 
         info!("opening bi");
@@ -2827,8 +2828,8 @@ mod tests {
         payload: &[u8],
         loss: ExpectedLoss,
     ) {
-        let send_endpoint_id = sender.endpoint.id();
-        let recv_endpoint_id = receiver.endpoint.id();
+        let send_endpoint_id = sender.endpoint.id().to_ed25519().unwrap();
+        let recv_endpoint_id = receiver.endpoint.id().to_ed25519().unwrap();
         info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
 
         let receiver_task = tokio::spawn(echo_receiver(receiver, loss));
@@ -3125,7 +3126,7 @@ mod tests {
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
         addr: EndpointIdMappedAddr,
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
     ) -> Result<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
@@ -3151,7 +3152,7 @@ mod tests {
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
         mapped_addr: EndpointIdMappedAddr,
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
         transport_config: Arc<quinn::TransportConfig>,
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
@@ -3181,7 +3182,7 @@ mod tests {
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
         let endpoint_id_2 = secret_key_2.public();
         let secret_key_missing_endpoint = SecretKey::from_bytes(&[255u8; 32]);
-        let endpoint_id_missing_endpoint = secret_key_missing_endpoint.public();
+        let endpoint_id_missing_endpoint = secret_key_missing_endpoint.public().into();
 
         let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
 
@@ -3239,7 +3240,7 @@ mod tests {
             .map(|x| TransportAddr::Ip(x.addr))
             .collect();
         let endpoint_addr_2 = EndpointAddr {
-            id: endpoint_id_2,
+            id: endpoint_id_2.into(),
             addrs,
         };
         msock_1
@@ -3310,7 +3311,7 @@ mod tests {
         // Add an empty entry in the EndpointMap of ep_1
         msock_1.endpoint_map.add_endpoint_addr(
             EndpointAddr {
-                id: endpoint_id_2,
+                id: endpoint_id_2.into(),
                 addrs: Default::default(),
             },
             Source::NamedApp {
@@ -3353,7 +3354,7 @@ mod tests {
             .collect();
         msock_1.endpoint_map.add_endpoint_addr(
             EndpointAddr {
-                id: endpoint_id_2,
+                id: endpoint_id_2.into(),
                 addrs,
             },
             Source::NamedApp {

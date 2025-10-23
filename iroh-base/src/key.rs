@@ -70,6 +70,24 @@ pub enum EndpointId {
     Secp256k1(u128),
 }
 
+impl EndpointId {
+    /// If this endpoint id is an ed25519 key, return it.
+    pub fn ed25519(&self) -> Option<&PublicKey> {
+        match self {
+            EndpointId::Ed25519(pk) => Some(pk),
+            EndpointId::Secp256k1(_) => None,
+        }
+    }
+
+    /// If this endpoint id is an ed25519 key, return it.
+    pub fn to_ed25519(self) -> Option<PublicKey> {
+        match self {
+            EndpointId::Ed25519(pk) => Some(pk),
+            EndpointId::Secp256k1(_) => None,
+        }
+    }
+}
+
 impl FromStr for EndpointId {
     type Err = KeyParsingError;
 

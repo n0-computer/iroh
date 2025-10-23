@@ -7,6 +7,7 @@ use std::{
 };
 
 use iroh_base::{EndpointId, RelayUrl};
+use iroh_relay::RelayEndpointId;
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use smallvec::SmallVec;
@@ -304,7 +305,7 @@ pub(crate) struct Transmit<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Addr {
     Ip(SocketAddr),
-    Relay(RelayUrl, EndpointId),
+    Relay(RelayUrl, RelayEndpointId),
 }
 
 impl Default for Addr {

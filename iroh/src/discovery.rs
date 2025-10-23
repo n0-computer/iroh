@@ -113,6 +113,7 @@
 use std::sync::{Arc, RwLock};
 
 use iroh_base::{EndpointAddr, EndpointId};
+use iroh_relay::RelayEndpointId;
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -504,7 +505,7 @@ pub(super) struct DiscoveryTask {
 
 impl DiscoveryTask {
     /// Starts a discovery task.
-    pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
+    pub(super) fn start(ep: Endpoint, endpoint_id: RelayEndpointId) -> Result<Self, DiscoveryError> {
         ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.id();
@@ -529,7 +530,7 @@ impl DiscoveryTask {
     /// Otherwise, or if no `delay` is set, the discovery will be started.
     pub(super) fn maybe_start_after_delay(
         ep: &Endpoint,
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
         delay: Option<Duration>,
     ) -> Result<Option<Self>, DiscoveryError> {
         // If discovery is not needed, don't even spawn a task.
@@ -572,19 +573,19 @@ impl DiscoveryTask {
 
     fn create_stream(
         ep: &Endpoint,
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
         ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let stream = ep
             .discovery()
-            .resolve(endpoint_id)
+            .resolve(endpoint_id.into())
             .ok_or(NoResultsSnafu { endpoint_id }.build())?;
         Ok(stream)
     }
 
     async fn run(
         ep: Endpoint,
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
         on_first_tx: oneshot::Sender<Result<(), DiscoveryError>>,
     ) {
         let mut stream = match Self::create_stream(&ep, endpoint_id) {
@@ -996,7 +997,7 @@ mod test_dns_pkarr {
 
         let resolver = DnsResolver::with_nameserver(nameserver);
         let resolved = resolver
-            .lookup_endpoint_by_id(&endpoint_info.endpoint_id, &origin)
+            .lookup_endpoint_by_id(&endpoint_info.endpoint_id.ed25519().unwrap(), &origin)
             .await?;
 
         assert_eq!(resolved, endpoint_info);
@@ -1034,7 +1035,7 @@ mod test_dns_pkarr {
             .await
             .context("wait for on endpoint update")?;
         let resolved = resolver
-            .lookup_endpoint_by_id(&endpoint_id, &origin)
+            .lookup_endpoint_by_id(&endpoint_id.ed25519().unwrap(), &origin)
             .await?;
         println!("resolved {resolved:?}");
 

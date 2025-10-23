@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use iroh_base::EndpointId;
+use iroh_relay::RelayEndpointId;
 use n0_future::time::{Duration, Instant};
 use tracing::{Level, debug, event};
 
@@ -32,7 +33,7 @@ const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
 #[derive(Debug, Clone)]
 pub(super) struct PathState {
     /// The endpoint for which this path exists.
-    endpoint_id: EndpointId,
+    endpoint_id: RelayEndpointId,
     /// The path this applies for.
     path: SendAddr,
     /// The last (outgoing) ping time.
@@ -66,7 +67,7 @@ pub(super) struct PathState {
 
 impl PathState {
     pub(super) fn new(
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
         path: SendAddr,
         source: Source,
         now: Instant,
@@ -106,7 +107,7 @@ impl PathState {
     }
 
     pub(super) fn with_ping(
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
         path: SendAddr,
         tx_id: TransactionId,
         source: Source,

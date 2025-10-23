@@ -107,6 +107,7 @@ impl Discovery for DnsDiscovery {
         &self,
         endpoint_id: EndpointId,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        let endpoint_id = *endpoint_id.ed25519()?;
         let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {

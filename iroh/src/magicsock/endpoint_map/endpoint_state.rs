@@ -7,6 +7,7 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, TransportAddr};
+use iroh_relay::RelayEndpointId;
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -59,7 +60,7 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
         relay_url: RelayUrl,
-        dst_endpoint: EndpointId,
+        dst_endpoint: RelayEndpointId,
     },
     SendPing(SendPing),
 }
@@ -68,7 +69,7 @@ pub(in crate::magicsock) enum PingAction {
 pub(in crate::magicsock) struct SendPing {
     pub id: usize,
     pub dst: SendAddr,
-    pub dst_endpoint: EndpointId,
+    pub dst_endpoint: RelayEndpointId,
     pub tx_id: TransactionId,
     pub purpose: DiscoPingPurpose,
 }
@@ -108,7 +109,7 @@ pub(super) struct EndpointState {
     /// The UDP address used on the QUIC-layer to address this endpoint.
     quic_mapped_addr: EndpointIdMappedAddr,
     /// The global identifier for this endpoint.
-    endpoint_id: EndpointId,
+    endpoint_id: RelayEndpointId,
     /// The last time we pinged all endpoints.
     last_full_ping: Option<Instant>,
     /// The url of relay endpoint that we can relay over to communicate.
@@ -148,7 +149,7 @@ pub(super) struct EndpointState {
 /// Options for creating a new [`EndpointState`].
 #[derive(Debug)]
 pub(super) struct Options {
-    pub(super) endpoint_id: EndpointId,
+    pub(super) endpoint_id: RelayEndpointId,
     pub(super) relay_url: Option<RelayUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
