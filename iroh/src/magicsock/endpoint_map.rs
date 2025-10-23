@@ -639,7 +639,7 @@ impl EndpointMapInner {
         self.by_quic_mapped_addr
             .insert(*endpoint_state.quic_mapped_addr(), id);
         self.by_endpoint_key
-            .insert(*endpoint_state.public_key(), id);
+            .insert((*endpoint_state.public_key()).into(), id);
 
         self.by_id.insert(id, endpoint_state);
         self.by_id.get_mut(&id).expect("just inserted")

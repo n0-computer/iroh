@@ -987,7 +987,7 @@ mod test_dns_pkarr {
             .context("Running DNS server")?;
 
         let secret_key = SecretKey::generate(&mut rng);
-        let endpoint_info = EndpointInfo::new(secret_key.public())
+        let endpoint_info = EndpointInfo::new(secret_key.public().into())
             .with_relay_url(Some("https://relay.example".parse().unwrap()));
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
@@ -1015,7 +1015,7 @@ mod test_dns_pkarr {
             .context("DnsPkarrServer")?;
 
         let secret_key = SecretKey::generate(&mut rng);
-        let endpoint_id = secret_key.public();
+        let endpoint_id = secret_key.public().into();
 
         let relay_url = Some(TransportAddr::Relay(
             "https://relay.example".parse().unwrap(),

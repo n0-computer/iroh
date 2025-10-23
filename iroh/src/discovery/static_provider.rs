@@ -249,7 +249,7 @@ mod tests {
 
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr {
-            id: key.public(),
+            id: key.public().into(),
             addrs: [TransportAddr::Relay("https://example.com".parse()?)]
                 .into_iter()
                 .collect(),
@@ -259,7 +259,7 @@ mod tests {
         discovery.add_endpoint_info(endpoint_info.clone());
 
         let back = discovery
-            .get_endpoint_info(key.public())
+            .get_endpoint_info(key.public().into())
             .context("no addr")?;
 
         assert_eq!(back, endpoint_info);
@@ -267,10 +267,10 @@ mod tests {
         assert_eq!(back.into_endpoint_addr(), addr);
 
         let removed = discovery
-            .remove_endpoint_info(key.public())
+            .remove_endpoint_info(key.public().into())
             .context("nothing removed")?;
         assert_eq!(removed, endpoint_info);
-        let res = discovery.get_endpoint_info(key.public());
+        let res = discovery.get_endpoint_info(key.public().into());
         assert!(res.is_none());
 
         Ok(())
@@ -281,13 +281,13 @@ mod tests {
         let discovery = StaticProvider::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr {
-            id: key.public(),
+            id: key.public().into(),
             addrs: [TransportAddr::Relay("https://example.com".parse()?)]
                 .into_iter()
                 .collect(),
         };
         discovery.add_endpoint_info(addr);
-        let mut stream = discovery.resolve(key.public()).unwrap();
+        let mut stream = discovery.resolve(key.public().into()).unwrap();
         let item = stream.next().await.unwrap()?;
         assert_eq!(item.provenance(), "foo");
         assert_eq!(

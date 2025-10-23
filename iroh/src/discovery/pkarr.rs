@@ -46,7 +46,7 @@
 
 use std::sync::Arc;
 
-use iroh_base::{EndpointId, RelayUrl, SecretKey};
+use iroh_base::{EndpointId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
 use n0_future::{
     boxed::BoxStream,
@@ -67,7 +67,7 @@ use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 use crate::dns::DnsResolver;
 use crate::{
     Endpoint,
-    discovery::{Discovery, DiscoveryItem, EndpointData},
+    discovery::{Discovery, DiscoveryItem, EndpointData, NoResultsSnafu},
     endpoint::force_staging_infra,
     util::reqwest_client_builder,
 };
@@ -231,7 +231,7 @@ impl IntoDiscovery for PkarrPublisherBuilder {
 /// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
-    endpoint_id: EndpointId,
+    endpoint_id: PublicKey,
     watchable: Watchable<Option<EndpointInfo>>,
     _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
@@ -548,6 +548,9 @@ impl PkarrRelayClient {
 
     /// Resolves a [`SignedPacket`] for the given [`EndpointId`].
     pub async fn resolve(&self, endpoint_id: EndpointId) -> Result<SignedPacket, DiscoveryError> {
+        let EndpointId::Ed25519(endpoint_id) = endpoint_id else {
+            return Err(NoResultsSnafu { endpoint_id }.build());
+        };
         // We map the error to string, as in browsers the error is !Send
         let public_key =
             pkarr::PublicKey::try_from(endpoint_id.as_bytes()).context(PublicKeySnafu)?;

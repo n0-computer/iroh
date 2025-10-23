@@ -5,8 +5,9 @@ use std::{
 };
 
 use bytes::Bytes;
+use crypto_box::PublicKey;
 use iroh_base::{EndpointId, RelayUrl};
-use iroh_relay::protos::relay::Datagrams;
+use iroh_relay::{RelayEndpointId, protos::relay::Datagrams};
 use n0_future::{
     ready,
     task::{self, AbortOnDropHandle},
@@ -34,7 +35,7 @@ pub(crate) struct RelayTransport {
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: Watchable<Option<RelayUrl>>,
-    my_endpoint_id: EndpointId,
+    my_endpoint_id: RelayEndpointId,
 }
 
 impl RelayTransport {
