@@ -1977,7 +1977,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2428,7 +2428,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a4597406bf649a8eb38a5f8a1861979b6cee2ef4"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2437,7 +2436,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2448,7 +2447,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a4597406bf649a8eb38a5f8a1861979b6cee2ef4"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2470,14 +2468,13 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.12"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a4597406bf649a8eb38a5f8a1861979b6cee2ef4"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2973,7 +2970,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.10.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#18e022817e2a45552b8acbce581f9b50a5374e6c"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando%2Fon_closed#82ae3aa5c60f8bbe657ffa83375e3668fd4dc2f7"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3575,7 +3572,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3612,7 +3609,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]

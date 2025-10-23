@@ -24,7 +24,7 @@ use std::{
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_future::time::Duration;
+use n0_future::{StreamExt, time::Duration};
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
@@ -46,6 +46,7 @@ pub use quinn_proto::{
     },
 };
 use snafu::{ResultExt, Snafu, ensure};
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -216,9 +217,11 @@ impl Builder {
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 
+        let (watch_conns_tx, _) = tokio::sync::broadcast::channel(16);
         let ep = Endpoint {
             msock,
             static_config: Arc::new(static_config),
+            watch_conns_tx,
         };
 
         // Add discovery mechanisms
@@ -488,6 +491,7 @@ pub struct Endpoint {
     pub(crate) msock: Handle,
     /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     static_config: Arc<StaticConfig>,
+    watch_conns_tx: tokio::sync::broadcast::Sender<ConnectionInfo>,
 }
 
 #[allow(missing_docs)]
@@ -1017,6 +1021,21 @@ impl Endpoint {
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
     pub async fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
         self.msock.latency(endpoint_id).await
+    }
+
+    /// Watch all connections accepted by or initiated from this endpoint.
+    ///
+    /// This returns a stream of [`ConnectionInfo`]. A [`ConnectionInfo`] is a weak handle to a connection
+    /// that exposes some information about the connection, but does not keep the connection alive.
+    pub fn watch_connections(
+        &self,
+    ) -> impl n0_future::Stream<Item = Result<ConnectionInfo, Lagged>> + 'static {
+        let rx = self.watch_conns_tx.subscribe();
+        let stream = tokio_stream::wrappers::BroadcastStream::new(rx);
+        stream.map(|item| match item {
+            Ok(item) => Ok(item),
+            Err(BroadcastStreamRecvError::Lagged(_)) => Err(Lagged),
+        })
     }
 
     /// Returns the DNS resolver used in this [`Endpoint`].
@@ -1704,6 +1723,8 @@ impl Connection {
             paths_info: paths_info_watcher.watch(),
         };
 
+        ep.watch_conns_tx.send(conn.to_weak_info()).ok();
+
         // Grab the remote identity and register this connection
         if let Some(remote) = remote_id {
             ep.msock
@@ -1716,6 +1737,20 @@ impl Connection {
         }
 
         conn
+    }
+
+    /// Returns a [`ConnectionInfo`], which is a weak handle to the connection
+    /// that does not keep the connection alive, but does allow to access some information
+    /// about the connection, and allows to wait for the connection to be closed.
+    pub fn to_weak_info(&self) -> ConnectionInfo {
+        // TODO: unwraps are no good of course but they will go away soon
+        // with the change to make these accessors infallible
+        ConnectionInfo {
+            alpn: self.alpn().unwrap(),
+            remote_endpoint_id: self.remote_id().unwrap(),
+            inner: self.inner.weak_handle(),
+            paths_info: self.paths_info.clone(),
+        }
     }
 
     /// Initiates a new outgoing unidirectional stream.
@@ -2064,6 +2099,55 @@ fn proxy_url_from_env() -> Option<Url> {
     None
 }
 
+/// Error when the stream from [`Endpoint::watch_connections`] was not consumed fast enough.
+#[derive(Debug, Clone)]
+pub struct Lagged;
+
+/// A [`ConnectionInfo`] is a weak handle to a connection that exposes some information about the connection,
+/// but does not keep the connection alive.
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    alpn: Vec<u8>,
+    remote_endpoint_id: EndpointId,
+    inner: WeakConnectionHandle,
+    paths_info: n0_watcher::Direct<HashMap<TransportAddr, PathInfo>>,
+}
+
+#[allow(missing_docs)]
+impl ConnectionInfo {
+    pub fn alpn(&self) -> &[u8] {
+        &self.alpn
+    }
+
+    pub fn remote_endpoint_id(&self) -> &EndpointId {
+        &self.remote_endpoint_id
+    }
+
+    pub fn paths_info(&self) -> impl Watcher<Value = HashMap<TransportAddr, PathInfo>> {
+        self.paths_info.clone()
+    }
+
+    pub fn has_direct_path(&mut self) -> bool {
+        self.paths_info.get().keys().any(|addr| addr.is_ip())
+    }
+
+    pub fn latency(&self) -> Option<Duration> {
+        self.inner.upgrade().map(|conn| conn.rtt())
+    }
+
+    pub fn stats(&self) -> Option<ConnectionStats> {
+        self.inner.upgrade().map(|conn| conn.stats())
+    }
+
+    pub async fn closed(&self) -> Option<(ConnectionError, ConnectionStats)> {
+        let fut = {
+            let conn = self.inner.upgrade()?;
+            conn.on_closed()
+        };
+        Some(fut.await)
+    }
+}
+
 /// Configuration of the relay servers for an [`Endpoint`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayMode {
@@ -2131,7 +2215,7 @@ mod tests {
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
-    use tokio::sync::oneshot;
+    use tokio::{sync::oneshot, task::JoinSet};
     use tracing::{Instrument, error_span, info, info_span, instrument};
     use tracing_test::traced_test;
 
@@ -3361,6 +3445,78 @@ mod tests {
         let dt1 = t1.elapsed().as_secs_f64();
 
         assert!(dt0 / dt1 < 20.0, "First round: {dt0}s, second round {dt1}s");
+        Ok(())
+    }
+
+    #[tokio::test]
+    // #[traced_test]
+    async fn watch_connections() -> Result {
+        tracing_subscriber::fmt::init();
+        let endpoint = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let alpn = b"asdf";
+
+        let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
+            .alpns(vec![alpn.to_vec()])
+            .bind()
+            .await?;
+        let ep2_addr = ep2.addr();
+        let ep2_task = tokio::spawn(async move {
+            let mut tasks = Vec::new();
+            while let Some(conn) = ep2.accept().await {
+                let conn = conn.accept().e()?.await.e()?;
+                let handle = tokio::spawn(async move {
+                    conn.closed().await;
+                    println!("conn closed on remote")
+                });
+                tasks.push(AbortOnDropHandle::new(handle));
+            }
+            Result::<_, n0_snafu::Error>::Ok(())
+        });
+
+        let mut conns = endpoint.watch_connections();
+
+        let watch_task = tokio::spawn(async move {
+            let mut tasks = JoinSet::new();
+            loop {
+                tokio::select! {
+                    conn = conns.next() => {
+                        let Some(conn) = conn else {
+                            println!("W: watch stream closed, break");
+                            break;
+                        };
+                        let conn = conn.expect("lagged");
+                        println!(
+                            "W: got conn to {} rtt {:?}",
+                            conn.remote_endpoint_id(),
+                            conn.latency()
+                        );
+                        tasks.spawn(async move {
+                            let (cause, stats) = conn.closed().await.unwrap();
+                            println!("W: conn closed: {cause:?} udp tx {}", stats.udp_tx.bytes);
+                        });
+                    }
+                    Some(res) = tasks.join_next(), if !tasks.is_empty() => {
+                        res.expect("conn close task panicked");
+                    },
+                }
+                while let Some(res) = tasks.join_next().await {
+                    res.expect("conn close task panicked");
+                }
+            }
+        });
+
+        let conn1 = endpoint.connect(ep2_addr.clone(), alpn).await?;
+        println!("conn1 established");
+        let conn2 = endpoint.connect(ep2_addr.clone(), alpn).await?;
+        println!("conn2 established");
+        drop(conn1);
+        drop(conn2);
+        drop(endpoint);
+        println!("conns and endpoint dropped");
+
+        watch_task.await.expect("watch task panicked");
+        ep2_task.abort();
+
         Ok(())
     }
 }
