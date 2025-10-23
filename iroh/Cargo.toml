@@ -53,7 +53,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "stream",
 ] }
-rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
+rustls = { version = "0.23.34", default-features = false, features = ["ring"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 smallvec = "1.11.1"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
