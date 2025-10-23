@@ -12,8 +12,8 @@ use std::{
 
 use clap::Parser;
 use http::StatusCode;
-use iroh_base::EndpointId;
 use iroh_relay::{
+    RelayEndpointId,
     defaults::{
         DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
     },
@@ -178,9 +178,9 @@ enum AccessConfig {
     #[default]
     Everyone,
     /// Allows only these endpoints.
-    Allowlist(Vec<EndpointId>),
+    Allowlist(Vec<RelayEndpointId>),
     /// Allows everyone, except these endpoints.
-    Denylist(Vec<EndpointId>),
+    Denylist(Vec<RelayEndpointId>),
     /// Performs a HTTP POST request to determine access for each endpoint that connects to the relay.
     ///
     /// The request will have a header `X-Iroh-Endpoint-Id` set to the hex-encoded endpoint id attempting
@@ -260,7 +260,7 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
 async fn http_access_check(
     client: &reqwest::Client,
     config: &HttpAccessConfig,
-    endpoint_id: EndpointId,
+    endpoint_id: RelayEndpointId,
 ) -> iroh_relay::server::Access {
     use iroh_relay::server::Access;
     debug!(url=%config.url, "Check relay access via HTTP POST");
@@ -280,7 +280,7 @@ async fn http_access_check(
 async fn http_access_check_inner(
     client: &reqwest::Client,
     config: &HttpAccessConfig,
-    endpoint_id: EndpointId,
+    endpoint_id: RelayEndpointId,
 ) -> Result<()> {
     let mut request = client
         .post(config.url.clone())

@@ -10,12 +10,12 @@ use std::{
 };
 
 use dashmap::DashMap;
-use iroh_base::EndpointId;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
 use crate::{
+    RelayEndpointId,
     protos::relay::Datagrams,
     server::{
         client::{PacketScope, SendError},
@@ -30,9 +30,9 @@ pub(super) struct Clients(Arc<Inner>);
 #[derive(Debug, Default)]
 struct Inner {
     /// The list of all currently connected clients.
-    clients: DashMap<EndpointId, Client>,
+    clients: DashMap<RelayEndpointId, Client>,
     /// Map of which client has sent where
-    sent_to: DashMap<EndpointId, HashSet<EndpointId>>,
+    sent_to: DashMap<RelayEndpointId, HashSet<RelayEndpointId>>,
     /// Connection ID Counter
     next_connection_id: AtomicU64,
 }
@@ -72,7 +72,7 @@ impl Clients {
     /// peer is gone from the network.
     ///
     /// Must be passed a matching connection_id.
-    pub(super) fn unregister(&self, connection_id: u64, endpoint_id: EndpointId) {
+    pub(super) fn unregister(&self, connection_id: u64, endpoint_id: RelayEndpointId) {
         trace!(
             endpoint_id = %endpoint_id.fmt_short(),
             connection_id, "unregistering client"
@@ -108,9 +108,9 @@ impl Clients {
     /// Attempt to send a packet to client with [`EndpointId`] `dst`.
     pub(super) fn send_packet(
         &self,
-        dst: EndpointId,
+        dst: RelayEndpointId,
         data: Datagrams,
-        src: EndpointId,
+        src: RelayEndpointId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
@@ -148,9 +148,9 @@ impl Clients {
     /// Attempt to send a disco packet to client with [`EndpointId`] `dst`.
     pub(super) fn send_disco_packet(
         &self,
-        dst: EndpointId,
+        dst: RelayEndpointId,
         data: Datagrams,
-        src: EndpointId,
+        src: RelayEndpointId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
@@ -228,7 +228,7 @@ mod tests {
         }
     }
 
-    fn test_client_builder(key: EndpointId) -> (Config, Conn) {
+    fn test_client_builder(key: RelayEndpointId) -> (Config, Conn) {
         let (server, client) = tokio::io::duplex(1024);
         (
             Config {

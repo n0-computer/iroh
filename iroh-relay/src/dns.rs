@@ -12,7 +12,6 @@ use hickory_resolver::{
     config::{ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
 };
-use iroh_base::EndpointId;
 use n0_future::{
     StreamExt,
     boxed::BoxFuture,
@@ -25,6 +24,7 @@ use tracing::debug;
 use url::Url;
 
 use crate::{
+    RelayEndpointId,
     defaults::timeouts::DNS_TIMEOUT,
     endpoint_info::{self, EndpointInfo, ParseError},
 };
@@ -417,7 +417,7 @@ impl DnsResolver {
     /// pass [`N0_DNS_ENDPOINT_ORIGIN_PROD`] as `origin`.
     pub async fn lookup_endpoint_by_id(
         &self,
-        endpoint_id: &EndpointId,
+        endpoint_id: &RelayEndpointId,
         origin: &str,
     ) -> Result<EndpointInfo, LookupError> {
         let name = endpoint_info::endpoint_domain(endpoint_id, origin);
@@ -467,7 +467,7 @@ impl DnsResolver {
     /// summary of all errors otherwise.
     pub async fn lookup_endpoint_by_id_staggered(
         &self,
-        endpoint_id: &EndpointId,
+        endpoint_id: &RelayEndpointId,
         origin: &str,
         delays_ms: &[u64],
     ) -> Result<EndpointInfo, StaggeredError<LookupError>> {
