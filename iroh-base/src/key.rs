@@ -62,7 +62,47 @@ impl Ord for PublicKey {
 ///
 /// - `encrypt(key: PublicKey)`
 /// - `send_to(endpoint: EndpointId)`
-pub type EndpointId = PublicKey;
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EndpointId {
+    /// An Ed25519 public key.
+    Ed25519(PublicKey),
+    /// A Secp256k1 public key.
+    Secp256k1(u128),
+}
+
+impl FromStr for EndpointId {
+    type Err = KeyParsingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let pk = PublicKey::from_str(s)?;
+        Ok(EndpointId::Ed25519(pk))
+    }
+}
+
+impl Display for EndpointId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EndpointId::Ed25519(pk) => write!(f, "{}", pk),
+            EndpointId::Secp256k1(s) => write!(f, "secp256k1:{}", s),
+        }
+    }
+}
+
+impl EndpointId {
+    /// Format a short version of the endpoint id for logging purposes.
+    pub fn fmt_short(&self) -> String {
+        match self {
+            EndpointId::Ed25519(pk) => pk.fmt_short().to_string(),
+            EndpointId::Secp256k1(s) => format!("secp256k1:{s:05x}"),
+        }
+    }
+}
+
+impl From<PublicKey> for EndpointId {
+    fn from(pk: PublicKey) -> Self {
+        EndpointId::Ed25519(pk)
+    }
+}
 
 impl Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
