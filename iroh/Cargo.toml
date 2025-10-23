@@ -73,7 +73,7 @@ webpki_types = { package = "rustls-pki-types", version = "1.12" }
 webpki-roots = "1.0.3"
 z32 = "1.0.3"
 pkcs8 = "0.11.0-rc.7"
-rustls-platform-verifier = "0.5.3"
+rustls-platform-verifier = "0.6.2"
 
 # metrics
 iroh-metrics = { version = "0.36", default-features = false }
