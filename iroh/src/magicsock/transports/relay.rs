@@ -5,8 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use crypto_box::PublicKey;
-use iroh_base::{EndpointId, RelayUrl};
+use iroh_base::RelayUrl;
 use iroh_relay::{RelayEndpointId, protos::relay::Datagrams};
 use n0_future::{
     ready,
@@ -150,7 +149,7 @@ impl RelayTransport {
             meta_out.ecn = None;
             meta_out.dst_ip = None; // TODO: insert the relay url for this relay
 
-            *addr = (dm.url, dm.src).into();
+            *addr = (dm.url, dm.src.into()).into();
             num_msgs += 1;
         }
 
@@ -165,7 +164,7 @@ impl RelayTransport {
 
     pub(super) fn local_addr_watch(
         &self,
-    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>> {
+    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, RelayEndpointId)>> {
         let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
             .watch()
@@ -248,7 +247,7 @@ impl RelaySender {
     pub(super) async fn send(
         &self,
         dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
+        dest_endpoint: RelayEndpointId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
         let contents = datagrams_from_transmit(transmit);

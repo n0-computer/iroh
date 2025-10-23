@@ -698,7 +698,9 @@ impl Endpoint {
         if !endpoint_addr.is_empty() {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
         }
-        let endpoint_id = endpoint_addr.id;
+        let Some(endpoint_id) = endpoint_addr.id.to_ed25519() else {
+            panic!();
+        };
         let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
         let relay_url = endpoint_addr.relay_urls().next().cloned();
 
@@ -750,7 +752,7 @@ impl Endpoint {
         Ok(Connecting {
             inner: connect,
             ep: self.clone(),
-            remote_endpoint_id: Some(endpoint_id),
+            remote_endpoint_id: Some(endpoint_id.into()),
             _discovery_drop_guard,
         })
     }

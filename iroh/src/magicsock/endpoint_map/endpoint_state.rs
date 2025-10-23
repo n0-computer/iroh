@@ -6,7 +6,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, TransportAddr};
+use iroh_base::{EndpointAddr, PublicKey, RelayUrl, TransportAddr};
 use iroh_relay::RelayEndpointId;
 use n0_future::{
     task::{self, AbortOnDropHandle},
@@ -1083,7 +1083,7 @@ impl EndpointState {
         self.last_used = Some(now);
     }
 
-    pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: EndpointId, now: Instant) {
+    pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: RelayEndpointId, now: Instant) {
         match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
@@ -1234,7 +1234,7 @@ impl From<RemoteInfo> for EndpointAddr {
         }
 
         EndpointAddr {
-            id: info.endpoint_id,
+            id: info.endpoint_id.into(),
             addrs,
         }
     }

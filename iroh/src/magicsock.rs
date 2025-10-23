@@ -30,7 +30,7 @@ use std::{
 
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayEndpointId, RelayMap};
 use n0_future::{
     task::{self, AbortOnDropHandle},
@@ -3397,7 +3397,7 @@ mod tests {
         assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 0);
 
         // Empty
-        let empty_addr = EndpointAddr::new(SecretKey::generate(&mut rng).public());
+        let empty_addr = EndpointAddr::new(SecretKey::generate(&mut rng).public().into());
 
         let err = stack
             .endpoint

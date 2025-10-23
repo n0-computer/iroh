@@ -41,8 +41,8 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     (
         n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
         n0_watcher::Join<
-            Option<(RelayUrl, EndpointId)>,
-            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
+            Option<(RelayUrl, RelayEndpointId)>,
+            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, RelayEndpointId)>>,
         >,
     ),
     Vec<Addr>,
@@ -327,7 +327,7 @@ impl From<SocketAddr> for Addr {
 
 impl From<(RelayUrl, EndpointId)> for Addr {
     fn from(value: (RelayUrl, EndpointId)) -> Self {
-        Self::Relay(value.0, value.1)
+        Self::Relay(value.0, value.1.to_ed25519().unwrap())
     }
 }
 

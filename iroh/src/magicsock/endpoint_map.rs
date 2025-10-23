@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl};
+use iroh_base::{EndpointAddr, PublicKey, RelayUrl};
 use iroh_relay::RelayEndpointId;
 use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
@@ -377,7 +377,9 @@ impl EndpointMapInner {
         metrics: &Metrics,
     ) {
         let source0 = source.clone();
-        let endpoint_id = endpoint_addr.id;
+        let Some(endpoint_id) = endpoint_addr.id.to_ed25519() else {
+            panic!();
+        };
         let relay_url = endpoint_addr.relay_urls().next().cloned();
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;

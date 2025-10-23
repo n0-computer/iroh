@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use iroh_base::EndpointId;
 use iroh_relay::RelayEndpointId;
 use n0_future::time::{Duration, Instant};
 use tracing::{Level, debug, event};
@@ -87,7 +86,7 @@ impl PathState {
     }
 
     pub(super) fn with_last_payload(
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
         path: SendAddr,
         source: Source,
         now: Instant,
