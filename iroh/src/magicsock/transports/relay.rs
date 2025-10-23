@@ -328,7 +328,7 @@ impl RelaySender {
     pub(super) fn try_send(
         &self,
         dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
+        dest_endpoint: RelayEndpointId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
         let contents = datagrams_from_transmit(transmit);

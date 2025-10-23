@@ -2641,7 +2641,7 @@ mod tests {
                 .magic_sock()
                 .list_remote_infos()
                 .into_iter()
-                .filter_map(|ep| ep.endpoint_id.to_ed25519())
+                .map(|ep| ep.endpoint_id)
                 .collect()
         }
 

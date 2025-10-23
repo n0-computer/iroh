@@ -1031,7 +1031,7 @@ impl RelayActor {
     async fn active_relay_handle_for_endpoint(
         &mut self,
         url: &RelayUrl,
-        remote_endpoint: &EndpointId,
+        remote_endpoint: &RelayEndpointId,
     ) -> ActiveRelayHandle {
         if let Some(handle) = self.active_relays.get(url) {
             return handle.clone();
@@ -1223,7 +1223,7 @@ struct ActiveRelayHandle {
 #[derive(Debug)]
 pub(crate) struct RelayRecvDatagram {
     pub(crate) url: RelayUrl,
-    pub(crate) src: EndpointId,
+    pub(crate) src: RelayEndpointId,
     pub(crate) datagrams: Datagrams,
 }
 
@@ -1339,7 +1339,7 @@ mod tests {
             };
         });
         let supervisor_task = AbortOnDropHandle::new(supervisor_task);
-        (secret_key.public(), supervisor_task)
+        (secret_key.public().into(), supervisor_task)
     }
 
     /// Sends a message to the echo endpoint, receives the response.

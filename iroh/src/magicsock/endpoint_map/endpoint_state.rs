@@ -1385,7 +1385,7 @@ impl From<RelayUrlInfo> for RelayUrl {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RemoteInfo {
     /// The globally unique identifier for this endpoint.
-    pub endpoint_id: EndpointId,
+    pub endpoint_id: RelayEndpointId,
     /// Relay server information, if available.
     pub relay_url: Option<RelayUrlInfo>,
     /// The addresses at which this endpoint might be reachable.
@@ -1616,7 +1616,7 @@ mod tests {
 
         let mut expect = Vec::from([
             RemoteInfo {
-                endpoint_id: a_endpoint.endpoint_id,
+                endpoint_id: a_endpoint.endpoint_id.into(),
                 relay_url: None,
                 addrs: Vec::from([DirectAddrInfo {
                     addr: a_socket_addr,
@@ -1631,7 +1631,7 @@ mod tests {
                 last_used: Some(elapsed),
             },
             RemoteInfo {
-                endpoint_id: b_endpoint.endpoint_id,
+                endpoint_id: b_endpoint.endpoint_id.into(),
                 relay_url: Some(RelayUrlInfo {
                     relay_url: b_endpoint.relay_url.as_ref().unwrap().0.clone(),
                     last_alive: None,
@@ -1643,7 +1643,7 @@ mod tests {
                 last_used: Some(elapsed),
             },
             RemoteInfo {
-                endpoint_id: c_endpoint.endpoint_id,
+                endpoint_id: c_endpoint.endpoint_id.into(),
                 relay_url: Some(RelayUrlInfo {
                     relay_url: c_endpoint.relay_url.as_ref().unwrap().0.clone(),
                     last_alive: None,
@@ -1655,7 +1655,7 @@ mod tests {
                 last_used: Some(elapsed),
             },
             RemoteInfo {
-                endpoint_id: d_endpoint.endpoint_id,
+                endpoint_id: d_endpoint.endpoint_id.into(),
                 relay_url: Some(RelayUrlInfo {
                     relay_url: d_endpoint.relay_url.as_ref().unwrap().0.clone(),
                     last_alive: None,

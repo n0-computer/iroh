@@ -797,10 +797,10 @@ mod tests {
         let ip_addresses_c = [TransportAddr::Ip(addr(5000))];
 
         let addrs_a = std::iter::once(TransportAddr::Relay(relay_x)).chain(ip_addresses_a);
-        let endpoint_addr_a = EndpointAddr::new(endpoint_a).with_addrs(addrs_a);
-        let endpoint_addr_b = EndpointAddr::new(endpoint_b).with_relay_url(relay_y);
-        let endpoint_addr_c = EndpointAddr::new(endpoint_c).with_addrs(ip_addresses_c);
-        let endpoint_addr_d = EndpointAddr::new(endpoint_d);
+        let endpoint_addr_a = EndpointAddr::new(endpoint_a.into()).with_addrs(addrs_a);
+        let endpoint_addr_b = EndpointAddr::new(endpoint_b.into()).with_relay_url(relay_y);
+        let endpoint_addr_c = EndpointAddr::new(endpoint_c.into()).with_addrs(ip_addresses_c);
+        let endpoint_addr_d = EndpointAddr::new(endpoint_d.into());
 
         endpoint_map.add_test_addr(endpoint_addr_a);
         endpoint_map.add_test_addr(endpoint_addr_b);
@@ -931,7 +931,7 @@ mod tests {
         // add one active endpoint and more than MAX_INACTIVE_ENDPOINTS inactive endpoints
         let active_endpoint = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        endpoint_map.add_test_addr(EndpointAddr::new(active_endpoint).with_ip_addr(addr));
+        endpoint_map.add_test_addr(EndpointAddr::new(active_endpoint.into()).with_ip_addr(addr));
         endpoint_map
             .inner
             .lock()
