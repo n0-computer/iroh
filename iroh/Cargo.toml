@@ -41,7 +41,7 @@ iroh-relay = { version = "0.94", path = "../iroh-relay", default-features = fals
 n0-future = "0.3.0"
 n0-snafu = "0.2.2"
 n0-watcher = "0.4"
-nested_enum_utils = "0.2.1"
+nested_enum_utils = "0.2.3"
 netwatch = { version = "0.11" }
 pin-project = "1"
 pkarr = { version = "5", default-features = false, features = ["relays"] }

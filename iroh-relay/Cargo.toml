@@ -72,7 +72,7 @@ lru = "0.16"
 z32 = "1.0.3"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
 n0-snafu = "0.2.2"
-nested_enum_utils = "0.2.0"
+nested_enum_utils = "0.2.3"
 
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }
