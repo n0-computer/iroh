@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, VecDeque},
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -13,7 +13,7 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
-use quinn_proto::{PathEvent, PathId, PathStatus};
+use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Whatever};
@@ -130,6 +130,12 @@ pub(super) struct EndpointStateActor {
     selected_path: Option<transports::Addr>,
     /// Time at which we should schedule the next holepunch attempt.
     scheduled_holepunch: Option<Instant>,
+    /// When to next attempt opening paths in [`Self::pending_open_paths`].
+    scheduled_open_path: Option<Instant>,
+    /// Paths which we still need to open.
+    ///
+    /// They failed to open because we did not have enough CIDs issued by the remote.
+    pending_open_paths: VecDeque<transports::Addr>,
 }
 
 impl EndpointStateActor {
@@ -156,6 +162,8 @@ impl EndpointStateActor {
             last_holepunch: None,
             selected_path: None,
             scheduled_holepunch: None,
+            scheduled_open_path: None,
+            pending_open_paths: VecDeque::new(),
         }
     }
 
@@ -199,11 +207,22 @@ impl EndpointStateActor {
     ) -> Result<(), Whatever> {
         trace!("actor started");
         loop {
+            let scheduled_path_open = match self.scheduled_open_path {
+                Some(when) => {
+                    warn!(now = ?Instant::now(), ?when, "scheduling op");
+                    MaybeFuture::Some(time::sleep_until(when))
+                }
+                None => {
+                    warn!("not scheduling op");
+                    MaybeFuture::None
+                }
+            };
+            n0_future::pin!(scheduled_path_open);
             let scheduled_hp = match self.scheduled_holepunch {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
                 None => MaybeFuture::None,
             };
-            let mut scheduled_hp = std::pin::pin!(scheduled_hp);
+            n0_future::pin!(scheduled_hp);
             tokio::select! {
                 biased;
                 msg = inbox.recv() => {
@@ -218,6 +237,15 @@ impl EndpointStateActor {
                 _ = self.local_addrs.updated() => {
                     trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching().await;
+                }
+                _ = &mut scheduled_path_open => {
+                    trace!("triggering scheduled path_open");
+                    self.scheduled_holepunch = None;
+                    let mut addrs = std::mem::take(&mut self.pending_open_paths);
+                    while let Some(addr) = addrs.pop_front() {
+                        warn!(?addr, "trying an addr");
+                        self.open_path(&addr);
+                    }
                 }
                 _ = &mut scheduled_hp => {
                     trace!("triggering scheduled holepunching");
@@ -334,6 +362,7 @@ impl EndpointStateActor {
                         .and_then(|mmaddr| mmaddr.to_transport_addr(&self.relay_mapped_addrs))
                     {
                         trace!(?path_remote, "added new connection");
+                        let path_remote_is_ip = path_remote.is_ip();
                         let status = match path_remote {
                             transports::Addr::Ip(_) => PathStatus::Available,
                             transports::Addr::Relay(_, _) => PathStatus::Backup,
@@ -348,10 +377,22 @@ impl EndpointStateActor {
                             .sources
                             .insert(Source::Connection, Instant::now());
                         self.select_path();
+
+                        if path_remote_is_ip {
+                            // We may have raced this with a relay address.  Try and add any
+                            // relay addresses we have back.
+                            let relays = self
+                                .paths
+                                .keys()
+                                .filter(|a| a.is_relay())
+                                .cloned()
+                                .collect::<Vec<_>>();
+                            for remote in relays {
+                                self.open_path(&remote);
+                            }
+                        }
                     }
                 }
-                // TODO: Make sure we are adding the relay path if we're on a direct
-                // path.
                 self.trigger_holepunching().await;
             }
         }
@@ -715,7 +756,16 @@ impl EndpointStateActor {
                 }
                 None => {
                     let ret = now_or_never(fut);
-                    warn!(?ret, "Opening path failed");
+                    match ret {
+                        Some(Err(PathError::RemoteCidsExhausted)) => {
+                            // What about MaxPathIdReached?
+                            self.scheduled_open_path =
+                                Some(Instant::now() + Duration::from_millis(333));
+                            self.pending_open_paths.push_back(open_addr.clone());
+                            warn!(?open_addr, "scheduling open path");
+                        }
+                        _ => warn!(?ret, "Opening path failed"),
+                    }
                 }
             }
         }
