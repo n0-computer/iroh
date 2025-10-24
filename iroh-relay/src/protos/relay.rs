@@ -10,13 +10,13 @@
 use std::num::NonZeroU16;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use iroh_base::{EndpointId, KeyParsingError};
+use iroh_base::KeyParsingError;
 use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 
 use super::common::{FrameType, FrameTypeError};
-use crate::KeyCache;
+use crate::{KeyCache, RelayEndpointId};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -76,13 +76,13 @@ pub enum RelayToClientMsg {
     /// Represents datagrams sent from relays (originally sent to them by another client).
     Datagrams {
         /// The [`EndpointId`] of the original sender.
-        remote_endpoint_id: EndpointId,
+        remote_endpoint_id: RelayEndpointId,
         /// The datagrams and related metadata.
         datagrams: Datagrams,
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the relay.
-    EndpointGone(EndpointId),
+    EndpointGone(RelayEndpointId),
     /// A one-way message from relay to client, declaring the connection health state.
     Health {
         /// If set, is a description of why the connection is unhealthy.
@@ -124,7 +124,7 @@ pub enum ClientToRelayMsg {
     /// Request from the client to relay datagrams to given remote endpoint.
     Datagrams {
         /// The remote endpoint to relay to.
-        dst_endpoint_id: EndpointId,
+        dst_endpoint_id: RelayEndpointId,
         /// The datagrams and related metadata to relay.
         datagrams: Datagrams,
     },
@@ -336,13 +336,13 @@ impl RelayToClientMsg {
 
         let res = match frame_type {
             FrameType::RelayToClientDatagram | FrameType::RelayToClientDatagramBatch => {
-                snafu::ensure!(content.len() >= EndpointId::LENGTH, InvalidFrameSnafu);
+                snafu::ensure!(content.len() >= RelayEndpointId::LENGTH, InvalidFrameSnafu);
 
                 let remote_endpoint_id = cache
-                    .key_from_slice(&content[..EndpointId::LENGTH])
+                    .key_from_slice(&content[..RelayEndpointId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(
-                    content.slice(EndpointId::LENGTH..),
+                    content.slice(RelayEndpointId::LENGTH..),
                     frame_type == FrameType::RelayToClientDatagramBatch,
                 )?;
                 Self::Datagrams {
@@ -351,7 +351,7 @@ impl RelayToClientMsg {
                 }
             }
             FrameType::EndpointGone => {
-                snafu::ensure!(content.len() == EndpointId::LENGTH, InvalidFrameSnafu);
+                snafu::ensure!(content.len() == RelayEndpointId::LENGTH, InvalidFrameSnafu);
                 let endpoint_id = cache
                     .key_from_slice(content.as_ref())
                     .context(InvalidPublicKeySnafu)?;
@@ -471,10 +471,10 @@ impl ClientToRelayMsg {
         let res = match frame_type {
             FrameType::ClientToRelayDatagram | FrameType::ClientToRelayDatagramBatch => {
                 let dst_endpoint_id = cache
-                    .key_from_slice(&content[..EndpointId::LENGTH])
+                    .key_from_slice(&content[..RelayEndpointId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(
-                    content.slice(EndpointId::LENGTH..),
+                    content.slice(RelayEndpointId::LENGTH..),
                     frame_type == FrameType::ClientToRelayDatagramBatch,
                 )?;
                 Self::Datagrams {
@@ -686,7 +686,7 @@ mod proptests {
         prop::array::uniform32(any::<u8>()).prop_map(SecretKey::from)
     }
 
-    fn key() -> impl Strategy<Value = EndpointId> {
+    fn key() -> impl Strategy<Value = RelayEndpointId> {
         secret_key().prop_map(|key| key.public())
     }
 
@@ -701,7 +701,7 @@ mod proptests {
 
     fn datagrams() -> impl Strategy<Value = Datagrams> {
         // The max payload size (conservatively, since with segment_size = 0 we'd have slightly more space)
-        const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - EndpointId::LENGTH - 1 /* ECN bytes */ - 2 /* segment size */;
+        const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - RelayEndpointId::LENGTH - 1 /* ECN bytes */ - 2 /* segment size */;
         (
             ecn(),
             prop::option::of(MAX_PAYLOAD_SIZE / 20..MAX_PAYLOAD_SIZE),

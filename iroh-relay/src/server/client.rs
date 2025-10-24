@@ -2,7 +2,6 @@
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use iroh_base::EndpointId;
 use n0_future::{SinkExt, StreamExt};
 use nested_enum_utils::common_fields;
 use rand::Rng;
@@ -16,7 +15,7 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{Instrument, debug, trace, warn};
 
 use crate::{
-    PingTracker,
+    PingTracker, RelayEndpointId,
     protos::{
         disco,
         relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
@@ -32,7 +31,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub(super) struct Packet {
     /// The sender of the packet
-    src: EndpointId,
+    src: RelayEndpointId,
     /// The data packet bytes.
     data: Datagrams,
 }
@@ -40,7 +39,7 @@ pub(super) struct Packet {
 /// Configuration for a [`Client`].
 #[derive(Debug)]
 pub(super) struct Config {
-    pub(super) endpoint_id: EndpointId,
+    pub(super) endpoint_id: RelayEndpointId,
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
@@ -53,7 +52,7 @@ pub(super) struct Config {
 #[derive(Debug)]
 pub(super) struct Client {
     /// Identity of the connected peer.
-    endpoint_id: EndpointId,
+    endpoint_id: RelayEndpointId,
     /// Connection identifier.
     connection_id: u64,
     /// Used to close the connection loop.
@@ -65,7 +64,7 @@ pub(super) struct Client {
     /// Queue of disco packets intended for the client.
     disco_send_queue: mpsc::Sender<Packet>,
     /// Channel to notify the client that a previous sender has disconnected.
-    peer_gone: mpsc::Sender<EndpointId>,
+    peer_gone: mpsc::Sender<RelayEndpointId>,
 }
 
 impl Client {
@@ -148,7 +147,7 @@ impl Client {
 
     pub(super) fn try_send_packet(
         &self,
-        src: EndpointId,
+        src: RelayEndpointId,
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
         self.send_queue.try_send(Packet { src, data })
@@ -156,7 +155,7 @@ impl Client {
 
     pub(super) fn try_send_disco_packet(
         &self,
-        src: EndpointId,
+        src: RelayEndpointId,
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
         self.disco_send_queue.try_send(Packet { src, data })
@@ -164,8 +163,8 @@ impl Client {
 
     pub(super) fn try_send_peer_gone(
         &self,
-        key: EndpointId,
-    ) -> Result<(), TrySendError<EndpointId>> {
+        key: RelayEndpointId,
+    ) -> Result<(), TrySendError<RelayEndpointId>> {
         self.peer_gone.try_send(key)
     }
 }
@@ -293,9 +292,9 @@ struct Actor {
     /// Important packets queued to send to the client
     disco_send_queue: mpsc::Receiver<Packet>,
     /// Notify the client that a previous sender has disconnected
-    endpoint_gone: mpsc::Receiver<EndpointId>,
+    endpoint_gone: mpsc::Receiver<RelayEndpointId>,
     /// [`EndpointId`] of this client
-    endpoint_id: EndpointId,
+    endpoint_id: RelayEndpointId,
     /// Connection identifier.
     connection_id: u64,
     /// Reference to the other connected clients.
@@ -488,7 +487,7 @@ impl Actor {
 
     fn handle_frame_send_packet(
         &self,
-        dst: EndpointId,
+        dst: RelayEndpointId,
         data: Datagrams,
     ) -> Result<(), ForwardPacketError> {
         if disco::looks_like_disco_wrapper(&data.contents) {
@@ -537,7 +536,7 @@ impl ForwardPacketError {
 /// Tracks how many unique endpoints have been seen during the last day.
 #[derive(Debug)]
 struct ClientCounter {
-    clients: HashSet<EndpointId>,
+    clients: HashSet<RelayEndpointId>,
     last_clear_date: Date,
 }
 
@@ -560,7 +559,7 @@ impl ClientCounter {
     }
 
     /// Marks this endpoint as seen, returns whether it is new today or not.
-    fn update(&mut self, client: EndpointId) -> bool {
+    fn update(&mut self, client: RelayEndpointId) -> bool {
         self.check_and_clear();
         self.clients.insert(client)
     }

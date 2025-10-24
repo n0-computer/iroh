@@ -6,7 +6,8 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, TransportAddr};
+use iroh_base::{EndpointAddr, PublicKey, RelayUrl, TransportAddr};
+use iroh_relay::RelayEndpointId;
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -59,7 +60,7 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
         relay_url: RelayUrl,
-        dst_endpoint: EndpointId,
+        dst_endpoint: RelayEndpointId,
     },
     SendPing(SendPing),
 }
@@ -68,7 +69,7 @@ pub(in crate::magicsock) enum PingAction {
 pub(in crate::magicsock) struct SendPing {
     pub id: usize,
     pub dst: SendAddr,
-    pub dst_endpoint: EndpointId,
+    pub dst_endpoint: RelayEndpointId,
     pub tx_id: TransactionId,
     pub purpose: DiscoPingPurpose,
 }
@@ -108,7 +109,7 @@ pub(super) struct EndpointState {
     /// The UDP address used on the QUIC-layer to address this endpoint.
     quic_mapped_addr: EndpointIdMappedAddr,
     /// The global identifier for this endpoint.
-    endpoint_id: EndpointId,
+    endpoint_id: RelayEndpointId,
     /// The last time we pinged all endpoints.
     last_full_ping: Option<Instant>,
     /// The url of relay endpoint that we can relay over to communicate.
@@ -148,7 +149,7 @@ pub(super) struct EndpointState {
 /// Options for creating a new [`EndpointState`].
 #[derive(Debug)]
 pub(super) struct Options {
-    pub(super) endpoint_id: EndpointId,
+    pub(super) endpoint_id: RelayEndpointId,
     pub(super) relay_url: Option<RelayUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
@@ -1082,7 +1083,7 @@ impl EndpointState {
         self.last_used = Some(now);
     }
 
-    pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: EndpointId, now: Instant) {
+    pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: RelayEndpointId, now: Instant) {
         match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
@@ -1233,7 +1234,7 @@ impl From<RemoteInfo> for EndpointAddr {
         }
 
         EndpointAddr {
-            id: info.endpoint_id,
+            id: info.endpoint_id.into(),
             addrs,
         }
     }
@@ -1384,7 +1385,7 @@ impl From<RelayUrlInfo> for RelayUrl {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RemoteInfo {
     /// The globally unique identifier for this endpoint.
-    pub endpoint_id: EndpointId,
+    pub endpoint_id: RelayEndpointId,
     /// Relay server information, if available.
     pub relay_url: Option<RelayUrlInfo>,
     /// The addresses at which this endpoint might be reachable.
@@ -1448,7 +1449,7 @@ pub enum ConnectionType {
 mod tests {
     use std::{collections::BTreeMap, net::Ipv4Addr};
 
-    use iroh_base::SecretKey;
+    use iroh_base::{EndpointId, SecretKey};
     use rand::SeedableRng;
 
     use super::*;
@@ -1463,7 +1464,7 @@ mod tests {
         let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
         let latency = Duration::from_millis(50);
 
-        let relay_and_state = |endpoint_id: EndpointId, url: RelayUrl| {
+        let relay_and_state = |endpoint_id: RelayEndpointId, url: RelayUrl| {
             let relay_state = PathState::with_pong_reply(
                 endpoint_id,
                 PongReply {
@@ -1615,7 +1616,7 @@ mod tests {
 
         let mut expect = Vec::from([
             RemoteInfo {
-                endpoint_id: a_endpoint.endpoint_id,
+                endpoint_id: a_endpoint.endpoint_id.into(),
                 relay_url: None,
                 addrs: Vec::from([DirectAddrInfo {
                     addr: a_socket_addr,
@@ -1630,7 +1631,7 @@ mod tests {
                 last_used: Some(elapsed),
             },
             RemoteInfo {
-                endpoint_id: b_endpoint.endpoint_id,
+                endpoint_id: b_endpoint.endpoint_id.into(),
                 relay_url: Some(RelayUrlInfo {
                     relay_url: b_endpoint.relay_url.as_ref().unwrap().0.clone(),
                     last_alive: None,
@@ -1642,7 +1643,7 @@ mod tests {
                 last_used: Some(elapsed),
             },
             RemoteInfo {
-                endpoint_id: c_endpoint.endpoint_id,
+                endpoint_id: c_endpoint.endpoint_id.into(),
                 relay_url: Some(RelayUrlInfo {
                     relay_url: c_endpoint.relay_url.as_ref().unwrap().0.clone(),
                     last_alive: None,
@@ -1654,7 +1655,7 @@ mod tests {
                 last_used: Some(elapsed),
             },
             RemoteInfo {
-                endpoint_id: d_endpoint.endpoint_id,
+                endpoint_id: d_endpoint.endpoint_id.into(),
                 relay_url: Some(RelayUrlInfo {
                     relay_url: d_endpoint.relay_url.as_ref().unwrap().0.clone(),
                     last_alive: None,

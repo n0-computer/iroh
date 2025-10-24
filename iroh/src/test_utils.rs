@@ -84,6 +84,7 @@ pub(crate) mod dns_and_pkarr_servers {
     use std::{net::SocketAddr, time::Duration};
 
     use iroh_base::{EndpointId, SecretKey};
+    use iroh_relay::RelayEndpointId;
     use url::Url;
 
     use super::CleanupDropGuard;
@@ -158,7 +159,7 @@ pub(crate) mod dns_and_pkarr_servers {
         /// If `timeout` elapses an error is returned.
         pub async fn on_endpoint(
             &self,
-            endpoint_id: &EndpointId,
+            endpoint_id: &RelayEndpointId,
             timeout: Duration,
         ) -> std::io::Result<()> {
             self.state.on_endpoint(endpoint_id, timeout).await
@@ -346,8 +347,8 @@ pub(crate) mod pkarr_dns_state {
         time::Duration,
     };
 
-    use iroh_base::EndpointId;
-    use iroh_relay::endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME};
+    use iroh_base::{EndpointId, PublicKey};
+    use iroh_relay::{endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME}, RelayEndpointId};
     use pkarr::SignedPacket;
     use tracing::debug;
 
@@ -355,7 +356,7 @@ pub(crate) mod pkarr_dns_state {
 
     #[derive(Debug, Clone)]
     pub struct State {
-        packets: Arc<Mutex<HashMap<EndpointId, SignedPacket>>>,
+        packets: Arc<Mutex<HashMap<RelayEndpointId, SignedPacket>>>,
         origin: String,
         notify: Arc<tokio::sync::Notify>,
     }
@@ -375,7 +376,7 @@ pub(crate) mod pkarr_dns_state {
 
         pub async fn on_endpoint(
             &self,
-            endpoint: &EndpointId,
+            endpoint: &RelayEndpointId,
             timeout: Duration,
         ) -> std::io::Result<()> {
             let timeout = tokio::time::sleep(timeout);
@@ -396,8 +397,8 @@ pub(crate) mod pkarr_dns_state {
         }
 
         pub fn upsert(&self, signed_packet: SignedPacket) -> std::io::Result<bool> {
-            let endpoint_id = EndpointId::from_bytes(&signed_packet.public_key().to_bytes())
-                .map_err(std::io::Error::other)?;
+            let endpoint_id = PublicKey::from_bytes(&signed_packet.public_key().to_bytes())
+                .map_err(std::io::Error::other)?.into();
             let mut map = self.packets.lock().expect("poisoned");
             let updated = match map.entry(endpoint_id) {
                 hash_map::Entry::Vacant(e) => {
@@ -420,7 +421,7 @@ pub(crate) mod pkarr_dns_state {
         }
 
         /// Returns a mutex guard, do not hold over await points
-        pub fn get<F, T>(&self, endpoint_id: &EndpointId, cb: F) -> T
+        pub fn get<F, T>(&self, endpoint_id: &RelayEndpointId, cb: F) -> T
         where
             F: FnOnce(Option<&mut SignedPacket>) -> T,
         {
@@ -441,7 +442,7 @@ pub(crate) mod pkarr_dns_state {
                     continue;
                 };
 
-                self.get(&endpoint_id, |packet| {
+                self.get(&endpoint_id.into(), |packet| {
                     if let Some(packet) = packet {
                         let endpoint_info = EndpointInfo::from_pkarr_signed_packet(packet)
                             .map_err(std::io::Error::other)?;
@@ -477,14 +478,14 @@ pub(crate) mod pkarr_dns_state {
     /// subsequent labels.
     ///
     /// Returns a [`EndpointId`] if parsed successfully, otherwise `None`.
-    fn endpoint_id_from_domain_name(name: &str) -> Option<EndpointId> {
+    fn endpoint_id_from_domain_name(name: &str) -> Option<PublicKey> {
         let mut labels = name.split(".");
         let label = labels.next()?;
         if label != IROH_TXT_NAME {
             return None;
         }
         let label = labels.next()?;
-        let endpoint_id = EndpointId::from_z32(label).ok()?;
+        let endpoint_id = PublicKey::from_z32(label).ok()?;
         Some(endpoint_id)
     }
 
@@ -495,14 +496,14 @@ pub(crate) mod pkarr_dns_state {
         ttl: u32,
     ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static {
         let txt_strings = endpoint_info.to_txt_strings();
-        let records = to_hickory_records(txt_strings, endpoint_info.endpoint_id, origin, ttl);
+        let records = to_hickory_records(txt_strings, endpoint_info.endpoint_id.to_ed25519().unwrap(), origin, ttl);
         records.collect::<Vec<_>>().into_iter()
     }
 
     /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
     fn to_hickory_records(
         txt_strings: Vec<String>,
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
         origin: &str,
         ttl: u32,
     ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
@@ -524,7 +525,7 @@ pub(crate) mod pkarr_dns_state {
         #[test]
         fn test_endpoint_id_from_domain_name() -> Result {
             let name = "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.";
-            let endpoint_id = super::endpoint_id_from_domain_name(name);
+            let endpoint_id = super::endpoint_id_from_domain_name(name).map(EndpointId::from);
             let expected: EndpointId =
                 "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18".parse()?;
             assert_eq!(endpoint_id, Some(expected));

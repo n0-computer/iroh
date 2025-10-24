@@ -82,3 +82,6 @@ pub(crate) trait ExportKeyingMaterial {
         context: Option<&[u8]>,
     ) -> Option<T>;
 }
+
+/// The endpoint id for iroh-relay is always an ed25519 public key.
+pub type RelayEndpointId = iroh_base::PublicKey;

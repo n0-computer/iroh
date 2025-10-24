@@ -20,9 +20,10 @@ use std::{
     task::Poll,
 };
 
+use iroh_base::PublicKey;
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
-use iroh_relay::{RelayConfig, RelayMap};
+use iroh_relay::{RelayConfig, RelayEndpointId, RelayMap};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
@@ -697,7 +698,9 @@ impl Endpoint {
         if !endpoint_addr.is_empty() {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
         }
-        let endpoint_id = endpoint_addr.id;
+        let Some(endpoint_id) = endpoint_addr.id.to_ed25519() else {
+            panic!();
+        };
         let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
         let relay_url = endpoint_addr.relay_urls().next().cloned();
 
@@ -749,7 +752,7 @@ impl Endpoint {
         Ok(Connecting {
             inner: connect,
             ep: self.clone(),
-            remote_endpoint_id: Some(endpoint_id),
+            remote_endpoint_id: Some(endpoint_id.into()),
             _discovery_drop_guard,
         })
     }
@@ -815,7 +818,7 @@ impl Endpoint {
     /// This ID is the unique addressing information of this endpoint and other peers must know
     /// it to be able to connect to this endpoint.
     pub fn id(&self) -> EndpointId {
-        self.static_config.tls_config.secret_key.public()
+        self.static_config.tls_config.secret_key.public().into()
     }
 
     /// Returns the current [`EndpointAddr`].
@@ -997,14 +1000,14 @@ impl Endpoint {
     ///
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
     pub fn conn_type(&self, endpoint_id: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.msock.conn_type(endpoint_id)
+        self.msock.conn_type(endpoint_id.to_ed25519()?)
     }
 
     /// Returns the currently lowest latency for this endpoint.
     ///
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
     pub fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
-        self.msock.latency(endpoint_id)
+        self.msock.latency(endpoint_id.to_ed25519()?)
     }
 
     /// Returns the DNS resolver used in this [`Endpoint`].
@@ -1221,7 +1224,7 @@ impl Endpoint {
     // # Remaining private methods
 
     /// Checks if the given `EndpointId` needs discovery.
-    pub(crate) fn needs_discovery(&self, endpoint_id: EndpointId, max_age: Duration) -> bool {
+    pub(crate) fn needs_discovery(&self, endpoint_id: RelayEndpointId, max_age: Duration) -> bool {
         match self.msock.remote_info(endpoint_id) {
             // No info means no path to endpoint -> start discovery.
             None => true,
@@ -1260,7 +1263,7 @@ impl Endpoint {
         &self,
         endpoint_addr: EndpointAddr,
     ) -> Result<(EndpointIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
-        let endpoint_id = endpoint_addr.id;
+        let endpoint_id = *endpoint_addr.id.ed25519().unwrap();
 
         // Only return a mapped addr if we have some way of dialing this endpoint, in other
         // words, we have either a relay URL or at least one direct address.
@@ -1933,12 +1936,12 @@ impl Connection {
                         return Err(RemoteEndpointIdSnafu.build());
                     }
 
-                    let peer_id = EndpointId::from_verifying_key(
+                    let peer_id = PublicKey::from_verifying_key(
                         VerifyingKey::from_public_key_der(&certs[0])
                             .map_err(|_| RemoteEndpointIdSnafu.build())?,
                     );
 
-                    Ok(peer_id)
+                    Ok(peer_id.into())
                 }
                 Err(err) => {
                     warn!("invalid peer certificate: {:?}", err);
@@ -2218,7 +2221,7 @@ mod tests {
                     .bind()
                     .await?;
                 info!("client connecting");
-                let endpoint_addr = EndpointAddr::new(server_peer_id).with_relay_url(relay_url);
+                let endpoint_addr = EndpointAddr::new(server_peer_id.into()).with_relay_url(relay_url);
                 let conn = ep.connect(endpoint_addr, TEST_ALPN).await?;
                 let mut stream = conn.open_uni().await.e()?;
 
@@ -2329,7 +2332,7 @@ mod tests {
 
                 info!(me = %ep.id().fmt_short(), eps=?eps, "client bound");
                 let endpoint_addr =
-                    EndpointAddr::new(server_endpoint_id).with_relay_url(relay_url.clone());
+                    EndpointAddr::new(server_endpoint_id.into()).with_relay_url(relay_url.clone());
                 info!(to = ?endpoint_addr, "client connecting");
                 let conn = ep.connect(endpoint_addr, TEST_ALPN).await.e()?;
                 info!("client connected");

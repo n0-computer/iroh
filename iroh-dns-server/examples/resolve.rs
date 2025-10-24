@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
                 (None, Env::Dev) => DEV_DNS_ORIGIN_DOMAIN,
             };
             resolver
-                .lookup_endpoint_by_id(&endpoint_id, origin_domain)
+                .lookup_endpoint_by_id(&endpoint_id.ed25519().unwrap(), origin_domain)
                 .await?
         }
         Command::Domain { domain } => resolver.lookup_endpoint_by_domain_name(&domain).await?,
