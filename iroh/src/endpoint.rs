@@ -1505,8 +1505,7 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = FallibleConnection(inner);
-                let conn: Connection = conn.try_into()?;
+                let conn: Connection = inner.try_into()?;
 
                 try_send_rtt_msg(&conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
@@ -1515,312 +1514,57 @@ impl Future for IncomingFuture {
     }
 }
 
-/// A `Connection` that has possibly not yet done a full handshake
-#[derive(Debug, Clone)]
-struct FallibleConnection(quinn::Connection);
-
-/// copy-pasted from `Connection`
-impl FallibleConnection {
-    fn quinn_connection(&self) -> &quinn::Connection {
-        &self.0
-    }
-
-    /// Initiates a new outgoing unidirectional stream.
-    ///
-    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
-    /// consequence, the peer won’t be notified that a stream has been opened until the
-    /// stream is actually used.
-    #[inline]
-    pub fn open_uni(&self) -> OpenUni<'_> {
-        self.0.open_uni()
-    }
-
-    /// Initiates a new outgoing bidirectional stream.
-    ///
-    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
-    /// consequence, the peer won't be notified that a stream has been opened until the
-    /// stream is actually used. Calling [`open_bi`] then waiting on the [`RecvStream`]
-    /// without writing anything to [`SendStream`] will never succeed.
-    ///
-    /// [`open_bi`]: Connection::open_bi
-    #[inline]
-    pub fn open_bi(&self) -> OpenBi<'_> {
-        self.0.open_bi()
-    }
-
-    /// Accepts the next incoming uni-directional stream.
-    #[inline]
-    pub fn accept_uni(&self) -> AcceptUni<'_> {
-        self.0.accept_uni()
-    }
-
-    /// Accept the next incoming bidirectional stream.
-    ///
-    /// **Important Note**: The peer that calls [`open_bi`] must write to its [`SendStream`]
-    /// before the peer `Connection` is able to accept the stream using
-    /// `accept_bi()`. Calling [`open_bi`] then waiting on the [`RecvStream`] without
-    /// writing anything to the connected [`SendStream`] will never succeed.
-    ///
-    /// [`open_bi`]: Connection::open_bi
-    #[inline]
-    pub fn accept_bi(&self) -> AcceptBi<'_> {
-        self.0.accept_bi()
-    }
-
-    /// Receives an application datagram.
-    #[inline]
-    pub fn read_datagram(&self) -> ReadDatagram<'_> {
-        self.0.read_datagram()
-    }
-
-    /// Wait for the connection to be closed for any reason.
-    ///
-    /// Despite the return type's name, closed connections are often not an error condition
-    /// at the application layer. Cases that might be routine include
-    /// [`ConnectionError::LocallyClosed`] and [`ConnectionError::ApplicationClosed`].
-    #[inline]
-    pub async fn closed(&self) -> ConnectionError {
-        self.0.closed().await
-    }
-
-    /// If the connection is closed, the reason why.
-    ///
-    /// Returns `None` if the connection is still open.
-    #[inline]
-    pub fn close_reason(&self) -> Option<ConnectionError> {
-        self.0.close_reason()
-    }
-
-    /// Closes the connection immediately.
-    ///
-    /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. No
-    /// more data is sent to the peer and the peer may drop buffered data upon receiving the
-    /// CONNECTION_CLOSE frame.
-    ///
-    /// `error_code` and `reason` are not interpreted, and are provided directly to the
-    /// peer.
-    ///
-    /// `reason` will be truncated to fit in a single packet with overhead; to improve odds
-    /// that it is preserved in full, it should be kept under 1KiB.
-    ///
-    /// # Gracefully closing a connection
-    ///
-    /// Only the peer last receiving application data can be certain that all data is
-    /// delivered. The only reliable action it can then take is to close the connection,
-    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
-    /// frame is very likely if both endpoints stay online long enough, calling
-    /// [`Endpoint::close`] will wait to provide sufficient time. Otherwise, the remote peer
-    /// will time out the connection, provided that the idle timeout is not disabled.
-    ///
-    /// The sending side can not guarantee all stream data is delivered to the remote
-    /// application. It only knows the data is delivered to the QUIC stack of the remote
-    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
-    /// [`close`] the remote endpoint may drop any data it received but is as yet
-    /// undelivered to the application, including data that was acknowledged as received to
-    /// the local endpoint.
-    ///
-    /// [`close`]: Connection::close
-    #[inline]
-    pub fn close(&self, error_code: VarInt, reason: &[u8]) {
-        self.0.close(error_code, reason)
-    }
-
-    /// Transmits `data` as an unreliable, unordered application datagram.
-    ///
-    /// Application datagrams are a low-level primitive. They may be lost or delivered out
-    /// of order, and `data` must both fit inside a single QUIC packet and be smaller than
-    /// the maximum dictated by the peer.
-    #[inline]
-    pub fn send_datagram(&self, data: bytes::Bytes) -> Result<(), SendDatagramError> {
-        self.0.send_datagram(data)
-    }
-
-    // TODO: It seems `SendDatagram` is not yet exposed by quinn.  This has been fixed
-    //       upstream and will be in the next release.
-    // /// Transmits `data` as an unreliable, unordered application datagram
-    // ///
-    // /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
-    // /// conditions, which effectively prioritizes old datagrams over new datagrams.
-    // ///
-    // /// See [`send_datagram()`] for details.
-    // ///
-    // /// [`send_datagram()`]: Connection::send_datagram
-    // #[inline]
-    // pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
-    //     self.inner.send_datagram_wait(data)
-    // }
-
-    /// Computes the maximum size of datagrams that may be passed to [`send_datagram`].
-    ///
-    /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
-    ///
-    /// This may change over the lifetime of a connection according to variation in the path
-    /// MTU estimate. The peer can also enforce an arbitrarily small fixed limit, but if the
-    /// peer's limit is large this is guaranteed to be a little over a kilobyte at minimum.
-    ///
-    /// Not necessarily the maximum size of received datagrams.
-    ///
-    /// [`send_datagram`]: Self::send_datagram
-    #[inline]
-    pub fn max_datagram_size(&self) -> Option<usize> {
-        self.0.max_datagram_size()
-    }
-
-    /// Bytes available in the outgoing datagram buffer.
-    ///
-    /// When greater than zero, calling [`send_datagram`] with a
-    /// datagram of at most this size is guaranteed not to cause older datagrams to be
-    /// dropped.
-    ///
-    /// [`send_datagram`]: Self::send_datagram
-    #[inline]
-    pub fn datagram_send_buffer_space(&self) -> usize {
-        self.0.datagram_send_buffer_space()
-    }
-
-    /// Current best estimate of this connection's latency (round-trip-time).
-    #[inline]
-    pub fn rtt(&self) -> Duration {
-        self.0.rtt()
-    }
-
-    /// Returns connection statistics.
-    #[inline]
-    pub fn stats(&self) -> ConnectionStats {
-        self.0.stats()
-    }
-
-    /// Current state of the congestion control algorithm, for debugging purposes.
-    #[inline]
-    pub fn congestion_state(&self) -> Box<dyn quinn_proto::congestion::Controller> {
-        self.0.congestion_state()
-    }
-
-    /// Parameters negotiated during the handshake.
-    ///
-    /// Guaranteed to return `Some` on fully established connections or after
-    /// [`Connecting::handshake_data()`] succeeds. See that method's documentations for
-    /// details on the returned value.
-    ///
-    /// [`Connection::handshake_data()`]: crate::endpoint::Connecting::handshake_data
-    #[inline]
-    pub fn handshake_data(&self) -> Option<Box<dyn Any>> {
-        self.0.handshake_data()
-    }
-
-    /// Extracts the ALPN protocol from the peer's handshake data.
-    pub fn alpn(&self) -> Option<Vec<u8>> {
-        let data = self.0.handshake_data()?;
-        match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
-            Ok(data) => data.protocol,
-            Err(_) => None,
-        }
-    }
-
-    /// Cryptographic identity of the peer.
-    ///
-    /// The dynamic type returned is determined by the configured [`Session`]. For the
-    /// default `rustls` session, the return value can be [`downcast`] to a
-    /// <code>Vec<[rustls::pki_types::CertificateDer]></code>
-    ///
-    /// [`Session`]: quinn_proto::crypto::Session
-    /// [`downcast`]: Box::downcast
-    #[inline]
-    pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
-        self.0.peer_identity()
-    }
-
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
-    ///
-    /// The [`PublicKey`] of an endpoint is also known as a [`EndpointId`].  This [`PublicKey`] is
-    /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
-    /// connection.
-    ///
-    /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        let data = self.0.peer_identity();
-        match data {
-            None => {
-                warn!("no peer certificate found");
-                Err(RemoteEndpointIdSnafu.build())
-            }
-            Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
-                Ok(certs) => {
-                    if certs.len() != 1 {
-                        warn!(
-                            "expected a single peer certificate, but {} found",
-                            certs.len()
-                        );
-                        return Err(RemoteEndpointIdSnafu.build());
-                    }
-
-                    let peer_id = EndpointId::from_verifying_key(
-                        VerifyingKey::from_public_key_der(&certs[0])
-                            .map_err(|_| RemoteEndpointIdSnafu.build())?,
-                    );
-
-                    Ok(peer_id)
-                }
-                Err(err) => {
-                    warn!("invalid peer certificate: {:?}", err);
-                    Err(RemoteEndpointIdSnafu.build())
-                }
-            },
-        }
-    }
-
-    /// A stable identifier for this connection.
-    ///
-    /// Peer addresses and connection IDs can change, but this value will remain fixed for
-    /// the lifetime of the connection.
-    #[inline]
-    pub fn stable_id(&self) -> usize {
-        self.0.stable_id()
-    }
-
-    /// Derives keying material from this connection's TLS session secrets.
-    ///
-    /// When both peers call this method with the same `label` and `context`
-    /// arguments and `output` buffers of equal length, they will get the
-    /// same sequence of bytes in `output`. These bytes are cryptographically
-    /// strong and pseudorandom, and are suitable for use as keying material.
-    ///
-    /// See [RFC5705](https://tools.ietf.org/html/rfc5705) for more information.
-    #[inline]
-    pub fn export_keying_material(
-        &self,
-        output: &mut [u8],
-        label: &[u8],
-        context: &[u8],
-    ) -> Result<(), quinn_proto::crypto::ExportKeyingMaterialError> {
-        self.0.export_keying_material(output, label, context)
-    }
-
-    /// Modifies the number of unidirectional streams that may be concurrently opened.
-    ///
-    /// No streams may be opened by the peer unless fewer than `count` are already
-    /// open. Large `count`s increase both minimum and worst-case memory consumption.
-    #[inline]
-    pub fn set_max_concurrent_uni_streams(&self, count: VarInt) {
-        self.0.set_max_concurrent_uni_streams(count)
-    }
-
-    /// See [`quinn_proto::TransportConfig::receive_window`].
-    #[inline]
-    pub fn set_receive_window(&self, receive_window: VarInt) {
-        self.0.set_receive_window(receive_window)
-    }
-
-    /// Modifies the number of bidirectional streams that may be concurrently opened.
-    ///
-    /// No streams may be opened by the peer unless fewer than `count` are already
-    /// open. Large `count`s increase both minimum and worst-case memory consumption.
-    #[inline]
-    pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
-        self.0.set_max_concurrent_bi_streams(count)
+/// Extracts the ALPN protocol from the peer's handshake data.
+fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
+    let data = conn.handshake_data()?;
+    match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
+        Ok(data) => data.protocol,
+        Err(_) => None,
     }
 }
+
+/// Returns the [`EndpointId`] from the peer's TLS certificate.
+///
+/// The [`PublicKey`] of an endpoint is also known as a [`EndpointId`].  This [`PublicKey`] is
+/// included in the TLS certificate presented during the handshake when connecting.
+/// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+/// connection.
+///
+/// [`PublicKey`]: iroh_base::PublicKey
+pub fn remote_id_from_quinn_conn(
+    conn: &quinn::Connection,
+) -> Result<EndpointId, RemoteEndpointIdError> {
+    let data = conn.peer_identity();
+    match data {
+        None => {
+            warn!("no peer certificate found");
+            Err(RemoteEndpointIdSnafu.build())
+        }
+        Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
+            Ok(certs) => {
+                if certs.len() != 1 {
+                    warn!(
+                        "expected a single peer certificate, but {} found",
+                        certs.len()
+                    );
+                    return Err(RemoteEndpointIdSnafu.build());
+                }
+
+                let peer_id = EndpointId::from_verifying_key(
+                    VerifyingKey::from_public_key_der(&certs[0])
+                        .map_err(|_| RemoteEndpointIdSnafu.build())?,
+                );
+
+                Ok(peer_id)
+            }
+            Err(err) => {
+                warn!("invalid peer certificate: {:?}", err);
+                Err(RemoteEndpointIdSnafu.build())
+            }
+        },
+    }
+}
+
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
 #[pin_project]
@@ -1902,9 +1646,7 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(ZRTTConnection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
-                let conn = ZRTTConnection {
-                    inner: FallibleConnection(inner),
-                };
+                let conn = ZRTTConnection { inner };
                 let zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
@@ -1915,7 +1657,7 @@ impl Connecting {
                 // `Connection::remote_endpoint_id`.
                 // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
                 // after all.
-                try_send_rtt_msg(&conn.inner.0, &self.ep, self.remote_endpoint_id);
+                try_send_rtt_msg(&conn.inner, &self.ep, self.remote_endpoint_id);
                 Ok((conn, zrtt_accepted))
             }
             Err(inner) => Err(Self {
@@ -1954,24 +1696,12 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = FallibleConnection(inner);
-                let conn: Connection = conn.try_into()?;
+                let conn: Connection = inner.try_into()?;
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
             }
         }
     }
-}
-
-fn remote_id_and_alpn_from_conn(
-    conn: &FallibleConnection,
-) -> Result<(EndpointId, Vec<u8>), ConnectionError> {
-    // todo: fix error
-    let remote_id = conn
-        .remote_id()
-        .map_err(|_| ConnectionError::LocallyClosed)?;
-    let alpn = conn.alpn().ok_or(ConnectionError::LocallyClosed)?;
-    Ok((remote_id, alpn))
 }
 
 /// Future that completes when a connection is fully established.
@@ -2002,15 +1732,21 @@ impl Future for ZeroRttAccepted {
 /// A QUIC connection that can possible be 0-RTT
 #[derive(Debug, Clone)]
 pub struct ZRTTConnection {
-    inner: FallibleConnection,
+    inner: quinn::Connection,
 }
 
-/// copy-pasted from `Connection`
+/// `ZRTTConnection` is a connection that does not have an infallible
+/// alpn or remote_id.
+///
+/// Otherwise, a `ZRTTConnection` has the same methods as a [`Connection`].
+///
+/// `ZRTTConnection`s have not necessarily completed the entire handshake.
+///
+/// Use the [`ZRTTConnection::into_connection`] method to get a [`Connection`] from a
+/// `ZRTTConnection`. This waits until 0-rtt connection has completed
+/// the handshake and can now confidently derive the ALPN and the
+/// [`EndpointId`] to the remote endpoint.
 impl ZRTTConnection {
-    fn quinn_connection(&self) -> &quinn::Connection {
-        self.inner.quinn_connection()
-    }
-
     /// Initiates a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
@@ -2196,7 +1932,7 @@ impl ZRTTConnection {
 
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> Option<Vec<u8>> {
-        self.inner.alpn()
+        alpn_from_quinn_conn(&self.inner)
     }
 
     /// Cryptographic identity of the peer.
@@ -2220,9 +1956,8 @@ impl ZRTTConnection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    // TODO: Would be nice if this could be infallible.
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        self.inner.remote_id()
+        remote_id_from_quinn_conn(&self.inner)
     }
 
     /// A stable identifier for this connection.
@@ -2292,50 +2027,22 @@ impl ZRTTConnection {
 /// May be cloned to obtain another handle to the same connection.
 #[derive(derive_more::Debug, Clone)]
 pub struct Connection {
-    inner: FallibleConnection,
+    inner: quinn::Connection,
     remote_id: EndpointId,
     alpn: Vec<u8>,
-    #[debug(skip)]
-    crypto: Arc<InnerCrypto>,
 }
 
-struct InnerCrypto {
-    peer_identity: Vec<rustls::pki_types::CertificateDer>,
-    handshake_data: quinn::crypto::rustls::HandshakeData,
-}
-
-impl TryFrom<FallibleConnection> for Connection {
+impl TryFrom<quinn::Connection> for Connection {
     type Error = ConnectionError;
 
-    fn try_from(value: FallibleConnection) -> Result<Self, Self::Error> {
-        let peer_identity = certs_from_peer_identity(&value.0)?;
-        let handshake_data = get_handshake_data(&value.0)?;
-        let crypto = InnerCrypto {
-            peer_identity,
-            handshake_data,
-        };
-
+    fn try_from(value: quinn::Connection) -> Result<Self, Self::Error> {
         Ok(Self {
-            remote_id: value
-                .remote_id()
+            remote_id: remote_id_from_quinn_conn(&value)
                 .map_err(|_| ConnectionError::LocallyClosed)?,
-            alpn: value.alpn().ok_or(ConnectionError::LocallyClosed)?,
-            crypto: Arc::new(crypto),
+            alpn: alpn_from_quinn_conn(&value).ok_or(ConnectionError::LocallyClosed)?,
             inner: value,
         })
     }
-}
-
-fn certs_from_peer_identity(
-    conn: &quinn::Connection,
-) -> Result<Vec<rustls::pki_types::CertificateDer>, ConnectionError> {
-    todo!();
-}
-
-fn get_handshake_data(
-    conn: &quinn::Connection,
-) -> Result<quinn::crypto::rustls::HandshakeData, ConnectionError> {
-    todo!();
 }
 
 #[allow(missing_docs)]
@@ -2347,7 +2054,7 @@ pub struct RemoteEndpointIdError {
 
 impl Connection {
     fn quinn_connection(&self) -> &quinn::Connection {
-        self.inner.quinn_connection()
+        &self.inner
     }
 
     /// Initiates a new outgoing unidirectional stream.
@@ -2559,7 +2266,6 @@ impl Connection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    // TODO: Would be nice if this could be infallible.
     pub fn remote_id(&self) -> EndpointId {
         self.remote_id
     }
