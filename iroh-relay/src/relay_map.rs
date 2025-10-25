@@ -112,11 +112,31 @@ impl RelayMap {
         self.relays.write().expect("poisoned").remove(url)
     }
 
-    /// Extends this `RelayMap` with another one.
-    pub fn extend(&self, other: &RelayMap) {
+    /// Joins this `RelayMap` with another one into a new one
+    pub fn join(self, other: RelayMap) -> RelayMap {
         let mut a = self.relays.write().expect("poisoned");
         let b = other.relays.read().expect("poisoned");
         a.extend(b.iter().map(|(a, b)| (a.clone(), b.clone())));
+    }
+}
+
+impl Extend<(RelayUrl, Arc<RelayConfig>)> for RelayMap {
+    /// Extends this `RelayMap` with another one.
+    ///
+    /// You can use this like this:
+    ///
+    /// ```rust
+    /// # let relay_map_a: RelayMap = { unimplemented!() };
+    /// # let relay_map_b: RelayMap = { unimplemented!() };
+    ///
+    /// relay_map_a.extend(relay_map_b.relays::<Vec<_>>());
+    /// ```
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = (RelayUrl, Arc<RelayConfig>)>,
+    {
+        let mut a = self.relays.write().expect("poisoned");
+        a.extend(iter);
     }
 }
 
