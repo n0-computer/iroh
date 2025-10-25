@@ -754,7 +754,7 @@ impl EndpointStateActor {
                             self.scheduled_open_path =
                                 Some(Instant::now() + Duration::from_millis(333));
                             self.pending_open_paths.push_back(open_addr.clone());
-                            warn!(?open_addr, "scheduling open path");
+                            trace!(?open_addr, "scheduling open_path");
                         }
                         _ => warn!(?ret, "Opening path failed"),
                     }
