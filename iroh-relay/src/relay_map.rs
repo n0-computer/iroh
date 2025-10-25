@@ -112,9 +112,12 @@ impl RelayMap {
         self.relays.write().expect("poisoned").remove(url)
     }
 
-    /// Extends this `RelayMap` with another one.
-    pub fn extend(&self, other: &RelayMap) {
+    /// Joins this `RelayMap` with another one into a new one
+    pub fn join(self, other: RelayMap) -> RelayMap {
+        // SAFETY: We have exclusive access to this object
         let mut a = self.relays.write().expect("poisoned");
+
+        // SAFETY: We have exclusive access to this object
         let b = other.relays.read().expect("poisoned");
         a.extend(b.iter().map(|(a, b)| (a.clone(), b.clone())));
     }
