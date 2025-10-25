@@ -120,6 +120,26 @@ impl RelayMap {
     }
 }
 
+impl Extend<(RelayUrl, Arc<RelayConfig>)> for RelayMap {
+    /// Extends this `RelayMap` with another one.
+    ///
+    /// You can use this like this:
+    ///
+    /// ```rust
+    /// # let relay_map_a: RelayMap = { unimplemented!() };
+    /// # let relay_map_b: RelayMap = { unimplemented!() };
+    ///
+    /// relay_map_a.extend(relay_map_b.relays::<Vec<_>>());
+    /// ```
+    fn extend<I>(&mut self, iter: I)
+    where
+        I: IntoIterator<Item = (RelayUrl, Arc<RelayConfig>)>,
+    {
+        let mut a = self.relays.write().expect("poisoned");
+        a.extend(iter);
+    }
+}
+
 impl FromIterator<RelayConfig> for RelayMap {
     fn from_iter<T: IntoIterator<Item = RelayConfig>>(iter: T) -> Self {
         Self::from_iter(iter.into_iter().map(Arc::new))
