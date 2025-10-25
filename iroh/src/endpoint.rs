@@ -2126,7 +2126,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
+    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle, time};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
@@ -2476,6 +2476,184 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    async fn endpoint_two_relay_only() -> Result {
+        // Connect two endpoints on the same network, via a relay server, without
+        // discovery.
+        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
+        let (node_addr_tx, node_addr_rx) = oneshot::channel();
+
+        #[instrument(name = "client", skip_all)]
+        async fn connect(
+            relay_map: RelayMap,
+            node_addr_rx: oneshot::Receiver<EndpointAddr>,
+        ) -> Result<quinn::ConnectionError> {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+            let secret = SecretKey::generate(&mut rng);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            info!(me = %ep.id().fmt_short(), "client starting");
+            let dst = node_addr_rx.await.e()?;
+
+            info!(me = %ep.id().fmt_short(), "client connecting");
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+            let mut send = conn.open_uni().await.e()?;
+            send.write_all(b"hello").await.e()?;
+            let mut paths = conn.paths_info().stream();
+            info!("Waiting for direct connection");
+            while let Some(infos) = paths.next().await {
+                info!(?infos, "new PathInfos");
+                if infos.keys().any(|addr| addr.is_ip()) {
+                    break;
+                }
+            }
+            info!("Have direct connection");
+            send.write_all(b"close please").await.e()?;
+            send.finish().e()?;
+            Ok(conn.closed().await)
+        }
+
+        #[instrument(name = "server", skip_all)]
+        async fn accept(
+            relay_map: RelayMap,
+            node_addr_tx: oneshot::Sender<EndpointAddr>,
+        ) -> Result {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
+            let secret = SecretKey::generate(&mut rng);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            ep.online().await;
+            let mut node_addr = ep.addr();
+            node_addr.addrs.retain(|addr| addr.is_relay());
+            node_addr_tx.send(node_addr).unwrap();
+
+            info!(me = %ep.id().fmt_short(), "server starting");
+            let conn = ep.accept().await.e()?.await.e()?;
+            // let node_id = conn.remote_node_id()?;
+            // assert_eq!(node_id, src);
+            let mut recv = conn.accept_uni().await.e()?;
+            let mut msg = [0u8; 5];
+            recv.read_exact(&mut msg).await.e()?;
+            assert_eq!(&msg, b"hello");
+            info!("received hello");
+            let msg = recv.read_to_end(100).await.e()?;
+            assert_eq!(msg, b"close please");
+            info!("received 'close please'");
+            // Dropping the connection closes it just fine.
+            Ok(())
+        }
+
+        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
+        let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
+
+        server_task.await.e()??;
+        let conn_closed = dbg!(client_task.await.e()??);
+        assert!(matches!(
+            conn_closed,
+            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_two_direct_add_relay() -> Result {
+        // Connect two endpoints on the same network, without relay server and without
+        // discovery.  Add a relay connection later.
+        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
+        let (node_addr_tx, node_addr_rx) = oneshot::channel();
+
+        #[instrument(name = "client", skip_all)]
+        async fn connect(
+            relay_map: RelayMap,
+            node_addr_rx: oneshot::Receiver<EndpointAddr>,
+        ) -> Result<()> {
+            let secret = SecretKey::from([0u8; 32]);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            info!(me = %ep.id().fmt_short(), "client starting");
+            let dst = node_addr_rx.await.e()?;
+
+            info!(me = %ep.id().fmt_short(), "client connecting");
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+
+            // We should be connected via IP, because it is faster than the relay server.
+            // TODO: Maybe not panic if this is not true?
+            let path_info = conn.paths_info().get();
+            assert_eq!(path_info.len(), 1);
+            assert!(path_info.keys().next().unwrap().is_ip());
+
+            let mut paths = conn.paths_info().stream();
+            time::timeout(Duration::from_secs(5), async move {
+                let mut have_relay = false;
+                while let Some(infos) = paths.next().await {
+                    info!(?infos, "new PathInfos");
+                    have_relay = infos.keys().any(|a| a.is_relay());
+                    if have_relay {
+                        break;
+                    }
+                }
+                have_relay
+            })
+            .await
+            .e()?;
+            conn.close(0u8.into(), b"");
+            ep.close().await;
+            Ok(())
+        }
+
+        #[instrument(name = "server", skip_all)]
+        async fn accept(
+            relay_map: RelayMap,
+            node_addr_tx: oneshot::Sender<EndpointAddr>,
+        ) -> Result<quinn::ConnectionError> {
+            let secret = SecretKey::from([1u8; 32]);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            ep.online().await;
+            let node_addr = ep.addr();
+            node_addr_tx.send(node_addr).unwrap();
+
+            info!(me = %ep.id().fmt_short(), "server starting");
+            let conn = ep.accept().await.e()?.await.e()?;
+            Ok(conn.closed().await)
+        }
+
+        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
+        let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
+
+        client_task.await.e()??;
+        let conn_closed = dbg!(server_task.await.e()??);
+        assert!(matches!(
+            conn_closed,
+            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn endpoint_relay_map_change() -> Result {
         let (relay_map, relay_url, _guard1) = run_relay_server().await?;
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
@@ -2579,97 +2757,6 @@ mod tests {
         server.close().await;
 
         assert_eq!(&data, b"Hello, world!");
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn endpoint_two_relay_only() -> Result {
-        // Connect two endpoints on the same network, via a relay server, without
-        // discovery.
-        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
-        let (node_addr_tx, node_addr_rx) = oneshot::channel();
-
-        #[instrument(name = "client", skip_all)]
-        async fn connect(
-            relay_map: RelayMap,
-            node_addr_rx: oneshot::Receiver<EndpointAddr>,
-        ) -> Result<quinn::ConnectionError> {
-            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
-                .secret_key(secret)
-                .alpns(vec![TEST_ALPN.to_vec()])
-                .insecure_skip_relay_cert_verify(true)
-                .relay_mode(RelayMode::Custom(relay_map))
-                .bind()
-                .await?;
-            info!(me = %ep.id().fmt_short(), "client starting");
-            let dst = node_addr_rx.await.e()?;
-
-            info!(me = %ep.id().fmt_short(), "client connecting");
-            let conn = ep.connect(dst, TEST_ALPN).await?;
-            let mut send = conn.open_uni().await.e()?;
-            send.write_all(b"hello").await.e()?;
-            let mut paths = conn.paths_info().stream();
-            info!("Waiting for direct connection");
-            while let Some(infos) = paths.next().await {
-                info!(?infos, "new PathInfos");
-                if infos.keys().any(|addr| addr.is_ip()) {
-                    break;
-                }
-            }
-            info!("Have direct connection");
-            send.write_all(b"close please").await.e()?;
-            send.finish().e()?;
-            Ok(conn.closed().await)
-        }
-
-        #[instrument(name = "server", skip_all)]
-        async fn accept(
-            relay_map: RelayMap,
-            node_addr_tx: oneshot::Sender<EndpointAddr>,
-        ) -> Result {
-            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
-            let secret = SecretKey::generate(&mut rng);
-            let ep = Endpoint::builder()
-                .secret_key(secret)
-                .alpns(vec![TEST_ALPN.to_vec()])
-                .insecure_skip_relay_cert_verify(true)
-                .relay_mode(RelayMode::Custom(relay_map))
-                .bind()
-                .await?;
-            ep.online().await;
-            let mut node_addr = ep.addr();
-            node_addr.addrs.retain(|addr| addr.is_relay());
-            node_addr_tx.send(node_addr).unwrap();
-
-            info!(me = %ep.id().fmt_short(), "server starting");
-            let conn = ep.accept().await.e()?.await.e()?;
-            // let node_id = conn.remote_node_id()?;
-            // assert_eq!(node_id, src);
-            let mut recv = conn.accept_uni().await.e()?;
-            let mut msg = [0u8; 5];
-            recv.read_exact(&mut msg).await.e()?;
-            assert_eq!(&msg, b"hello");
-            info!("received hello");
-            let msg = recv.read_to_end(100).await.e()?;
-            assert_eq!(msg, b"close please");
-            info!("received 'close please'");
-            // Dropping the connection closes it just fine.
-            Ok(())
-        }
-
-        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
-        let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
-
-        server_task.await.e()??;
-        let conn_closed = dbg!(client_task.await.e()??);
-        assert!(matches!(
-            conn_closed,
-            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
-        ));
 
         Ok(())
     }
