@@ -208,14 +208,8 @@ impl EndpointStateActor {
         trace!("actor started");
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
-                Some(when) => {
-                    warn!(now = ?Instant::now(), ?when, "scheduling op");
-                    MaybeFuture::Some(time::sleep_until(when))
-                }
-                None => {
-                    warn!("not scheduling op");
-                    MaybeFuture::None
-                }
+                Some(when) => MaybeFuture::Some(time::sleep_until(when)),
+                None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_path_open);
             let scheduled_hp = match self.scheduled_holepunch {
@@ -240,10 +234,9 @@ impl EndpointStateActor {
                 }
                 _ = &mut scheduled_path_open => {
                     trace!("triggering scheduled path_open");
-                    self.scheduled_holepunch = None;
+                    self.scheduled_open_path = None;
                     let mut addrs = std::mem::take(&mut self.pending_open_paths);
                     while let Some(addr) = addrs.pop_front() {
-                        warn!(?addr, "trying an addr");
                         self.open_path(&addr);
                     }
                 }
@@ -758,7 +751,6 @@ impl EndpointStateActor {
                     let ret = now_or_never(fut);
                     match ret {
                         Some(Err(PathError::RemoteCidsExhausted)) => {
-                            // What about MaxPathIdReached?
                             self.scheduled_open_path =
                                 Some(Instant::now() + Duration::from_millis(333));
                             self.pending_open_paths.push_back(open_addr.clone());
