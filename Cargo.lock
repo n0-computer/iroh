@@ -1977,7 +1977,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2428,7 +2428,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a4597406bf649a8eb38a5f8a1861979b6cee2ef4"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#e74c803219cb83f1780f59dcc6823f422f244703"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2437,7 +2437,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2448,7 +2448,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a4597406bf649a8eb38a5f8a1861979b6cee2ef4"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#e74c803219cb83f1780f59dcc6823f422f244703"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2470,12 +2470,12 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.12"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a4597406bf649a8eb38a5f8a1861979b6cee2ef4"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#e74c803219cb83f1780f59dcc6823f422f244703"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -3575,7 +3575,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3612,7 +3612,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.0",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -5484,7 +5484,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.1",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
