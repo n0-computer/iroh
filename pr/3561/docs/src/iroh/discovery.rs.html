@@ -113,7 +113,7 @@
 <a href=#113 id=113 data-nosnippet>113</a></span><span class="kw">use </span>std::sync::{Arc, RwLock};
 <a href=#114 id=114 data-nosnippet>114</a>
 <a href=#115 id=115 data-nosnippet>115</a><span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId};
-<a href=#116 id=116 data-nosnippet>116</a><span class="kw">use </span>n0_error::{AnyError, Error, add_meta, e, ensure_e};
+<a href=#116 id=116 data-nosnippet>116</a><span class="kw">use </span>n0_error::{AnyError, Error, add_meta, e, ensure};
 <a href=#117 id=117 data-nosnippet>117</a><span class="kw">use </span>n0_future::{
 <a href=#118 id=118 data-nosnippet>118</a>    boxed::BoxStream,
 <a href=#119 id=119 data-nosnippet>119</a>    stream::StreamExt,
@@ -518,7 +518,7 @@
 <a href=#518 id=518 data-nosnippet>518</a><span class="kw">impl </span>DiscoveryTask {
 <a href=#519 id=519 data-nosnippet>519</a>    <span class="doccomment">/// Starts a discovery task.
 <a href=#520 id=520 data-nosnippet>520</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start(ep: Endpoint, endpoint_id: EndpointId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, DiscoveryError&gt; {
-<a href=#521 id=521 data-nosnippet>521</a>        <span class="macro">ensure_e!</span>(
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="macro">ensure!</span>(
 <a href=#522 id=522 data-nosnippet>522</a>            !ep.discovery().is_empty(),
 <a href=#523 id=523 data-nosnippet>523</a>            DiscoveryError::NoServiceConfigured
 <a href=#524 id=524 data-nosnippet>524</a>        );
@@ -552,7 +552,7 @@
 <a href=#552 id=552 data-nosnippet>552</a>        </span><span class="kw">if </span>!ep.needs_discovery(endpoint_id, MAX_AGE) {
 <a href=#553 id=553 data-nosnippet>553</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
 <a href=#554 id=554 data-nosnippet>554</a>        }
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="macro">ensure_e!</span>(
+<a href=#555 id=555 data-nosnippet>555</a>        <span class="macro">ensure!</span>(
 <a href=#556 id=556 data-nosnippet>556</a>            !ep.discovery().is_empty(),
 <a href=#557 id=557 data-nosnippet>557</a>            DiscoveryError::NoServiceConfigured
 <a href=#558 id=558 data-nosnippet>558</a>        );
@@ -593,7 +593,7 @@
 <a href=#593 id=593 data-nosnippet>593</a>        ep: <span class="kw-2">&amp;</span>Endpoint,
 <a href=#594 id=594 data-nosnippet>594</a>        endpoint_id: EndpointId,
 <a href=#595 id=595 data-nosnippet>595</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;, DiscoveryError&gt; {
-<a href=#596 id=596 data-nosnippet>596</a>        <span class="macro">ensure_e!</span>(
+<a href=#596 id=596 data-nosnippet>596</a>        <span class="macro">ensure!</span>(
 <a href=#597 id=597 data-nosnippet>597</a>            !ep.discovery().is_empty(),
 <a href=#598 id=598 data-nosnippet>598</a>            DiscoveryError::NoServiceConfigured
 <a href=#599 id=599 data-nosnippet>599</a>        );

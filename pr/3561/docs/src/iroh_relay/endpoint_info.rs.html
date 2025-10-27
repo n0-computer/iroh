@@ -254,7 +254,7 @@
 <a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">type </span>Error = MaxLengthExceededError;
 <a href=#255 id=255 data-nosnippet>255</a>
 <a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">fn </span>try_from(value: String) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-<a href=#257 id=257 data-nosnippet>257</a>        <span class="macro">n0_error::ensure_e!</span>(value.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededError);
+<a href=#257 id=257 data-nosnippet>257</a>        <span class="macro">n0_error::ensure!</span>(value.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededError);
 <a href=#258 id=258 data-nosnippet>258</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(value))
 <a href=#259 id=259 data-nosnippet>259</a>    }
 <a href=#260 id=260 data-nosnippet>260</a>}
@@ -263,7 +263,7 @@
 <a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= MaxLengthExceededError;
 <a href=#264 id=264 data-nosnippet>264</a>
 <a href=#265 id=265 data-nosnippet>265</a>    <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="macro">n0_error::ensure_e!</span>(s.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededError);
+<a href=#266 id=266 data-nosnippet>266</a>        <span class="macro">n0_error::ensure!</span>(s.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededError);
 <a href=#267 id=267 data-nosnippet>267</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(s.to_string()))
 <a href=#268 id=268 data-nosnippet>268</a>    }
 <a href=#269 id=269 data-nosnippet>269</a>}

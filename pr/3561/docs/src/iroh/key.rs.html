@@ -65,7 +65,7 @@
 <a href=#65 id=65 data-nosnippet>65</a>
 <a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
 <a href=#67 id=67 data-nosnippet>67</a>    </span><span class="kw">pub fn </span>open(<span class="kw-2">&amp;</span><span class="self">self</span>, buffer: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>Buffer) -&gt; <span class="prelude-ty">Result</span>&lt;(), DecryptionError&gt; {
-<a href=#68 id=68 data-nosnippet>68</a>        <span class="macro">n0_error::ensure_e!</span>(buffer.len() &gt;= NONCE_LEN, DecryptionError::InvalidNonce);
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="macro">n0_error::ensure!</span>(buffer.len() &gt;= NONCE_LEN, DecryptionError::InvalidNonce);
 <a href=#69 id=69 data-nosnippet>69</a>
 <a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">let </span>offset = buffer.len() - NONCE_LEN;
 <a href=#71 id=71 data-nosnippet>71</a>        <span class="kw">let </span>nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..]

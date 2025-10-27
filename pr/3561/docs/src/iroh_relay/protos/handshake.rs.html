@@ -304,7 +304,7 @@
 <a href=#304 id=304 data-nosnippet>304</a>        // there must be something wrong with the client's secret key or signature.
 <a href=#305 id=305 data-nosnippet>305</a>        </span><span class="kw">let </span>(message, suffix) = key_material.split_at(<span class="number">16</span>);
 <a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">let </span>suffix: [u8; <span class="number">16</span>] = suffix.try_into().expect(<span class="string">"hardcoded length"</span>);
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="macro">n0_error::ensure_e!</span>(
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="macro">n0_error::ensure!</span>(
 <a href=#308 id=308 data-nosnippet>308</a>            suffix == <span class="self">self</span>.key_material_suffix,
 <a href=#309 id=309 data-nosnippet>309</a>            VerificationError::MismatchedSuffix {
 <a href=#310 id=310 data-nosnippet>310</a>                expected: <span class="self">self</span>.key_material_suffix,
@@ -510,7 +510,7 @@
 <a href=#510 id=510 data-nosnippet>510</a>
 <a href=#511 id=511 data-nosnippet>511</a>    <span class="kw">let </span>frame_type = FrameType::from_bytes(<span class="kw-2">&amp;mut </span>payload)<span class="question-mark">?</span>;
 <a href=#512 id=512 data-nosnippet>512</a>    <span class="macro">trace!</span>(<span class="question-mark">?</span>frame_type, <span class="string">"Reading frame"</span>);
-<a href=#513 id=513 data-nosnippet>513</a>    <span class="macro">n0_error::ensure_e!</span>(
+<a href=#513 id=513 data-nosnippet>513</a>    <span class="macro">n0_error::ensure!</span>(
 <a href=#514 id=514 data-nosnippet>514</a>        expected_types.contains(<span class="kw-2">&amp;</span>frame_type),
 <a href=#515 id=515 data-nosnippet>515</a>        Error::UnexpectedFrameType {
 <a href=#516 id=516 data-nosnippet>516</a>            frame_type,

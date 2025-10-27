@@ -23,7 +23,7 @@
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">use </span>ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 <a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 <a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>iroh_relay::{RelayConfig, RelayMap};
-<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>n0_error::{Error, add_meta, e, ensure_e};
+<a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>n0_error::{Error, add_meta, e, ensure};
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>n0_future::time::Duration;
 <a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>n0_watcher::Watcher;
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>pin_project::pin_project;
@@ -677,7 +677,7 @@
 <a href=#677 id=677 data-nosnippet>677</a>        );
 <a href=#678 id=678 data-nosnippet>678</a>
 <a href=#679 id=679 data-nosnippet>679</a>        <span class="comment">// Connecting to ourselves is not supported.
-<a href=#680 id=680 data-nosnippet>680</a>        </span><span class="macro">ensure_e!</span>(
+<a href=#680 id=680 data-nosnippet>680</a>        </span><span class="macro">ensure!</span>(
 <a href=#681 id=681 data-nosnippet>681</a>            endpoint_addr.id != <span class="self">self</span>.id(),
 <a href=#682 id=682 data-nosnippet>682</a>            ConnectWithOptsError::SelfConnect
 <a href=#683 id=683 data-nosnippet>683</a>        );
@@ -782,7 +782,7 @@
 <a href=#782 id=782 data-nosnippet>782</a>        source: Source,
 <a href=#783 id=783 data-nosnippet>783</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), AddEndpointAddrError&gt; {
 <a href=#784 id=784 data-nosnippet>784</a>        <span class="comment">// Connecting to ourselves is not supported.
-<a href=#785 id=785 data-nosnippet>785</a>        </span><span class="macro">ensure_e!</span>(
+<a href=#785 id=785 data-nosnippet>785</a>        </span><span class="macro">ensure!</span>(
 <a href=#786 id=786 data-nosnippet>786</a>            endpoint_addr.id != <span class="self">self</span>.id(),
 <a href=#787 id=787 data-nosnippet>787</a>            AddEndpointAddrError::OwnAddress
 <a href=#788 id=788 data-nosnippet>788</a>        );

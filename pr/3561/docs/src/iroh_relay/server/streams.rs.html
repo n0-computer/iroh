@@ -99,12 +99,12 @@
 <a href=#99 id=99 data-nosnippet>99</a>
 <a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, item: RelayToClientMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
 <a href=#101 id=101 data-nosnippet>101</a>        <span class="kw">let </span>size = item.encoded_len();
-<a href=#102 id=102 data-nosnippet>102</a>        <span class="macro">n0_error::ensure_e!</span>(
+<a href=#102 id=102 data-nosnippet>102</a>        <span class="macro">n0_error::ensure!</span>(
 <a href=#103 id=103 data-nosnippet>103</a>            size &lt;= MAX_PACKET_SIZE,
 <a href=#104 id=104 data-nosnippet>104</a>            SendError::ExceedsMaxPacketSize { size }
 <a href=#105 id=105 data-nosnippet>105</a>        );
 <a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">if let </span>RelayToClientMsg::Datagrams { datagrams, .. } = <span class="kw-2">&amp;</span>item {
-<a href=#107 id=107 data-nosnippet>107</a>            <span class="macro">n0_error::ensure_e!</span>(!datagrams.contents.is_empty(), SendError::EmptyPacket);
+<a href=#107 id=107 data-nosnippet>107</a>            <span class="macro">n0_error::ensure!</span>(!datagrams.contents.is_empty(), SendError::EmptyPacket);
 <a href=#108 id=108 data-nosnippet>108</a>        }
 <a href=#109 id=109 data-nosnippet>109</a>
 <a href=#110 id=110 data-nosnippet>110</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner)
@@ -306,7 +306,7 @@
 <a href=#306 id=306 data-nosnippet>306</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, InvalidBucketConfig&gt; {
 <a href=#307 id=307 data-nosnippet>307</a>        <span class="comment">// milliseconds is the tokio timer resolution
 <a href=#308 id=308 data-nosnippet>308</a>        </span><span class="kw">let </span>refill = bytes_per_second.saturating_mul(refill_period.as_millis() <span class="kw">as </span>i64) / <span class="number">1000</span>;
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">n0_error::ensure_e!</span>(
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="macro">n0_error::ensure!</span>(
 <a href=#310 id=310 data-nosnippet>310</a>            max &gt; <span class="number">0 </span>&amp;&amp; bytes_per_second &gt; <span class="number">0 </span>&amp;&amp; refill_period.as_millis() <span class="kw">as </span>u32 &gt; <span class="number">0 </span>&amp;&amp; refill &gt; <span class="number">0</span>,
 <a href=#311 id=311 data-nosnippet>311</a>            InvalidBucketConfig {
 <a href=#312 id=312 data-nosnippet>312</a>                max,
