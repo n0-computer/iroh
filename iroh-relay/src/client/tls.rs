@@ -10,7 +10,7 @@ use bytes::Bytes;
 use data_encoding::BASE64URL;
 use http_body_util::Empty;
 use hyper::{Request, upgrade::Parts};
-use n0_error::{Err, e};
+use n0_error::e;
 use n0_future::{task, time};
 use rustls::client::Resumption;
 use tracing::error;
@@ -257,9 +257,9 @@ impl MaybeTlsStreamBuilder {
             .await
             .map_err(|err| e!(DialError::ProxyConnect, err))?;
         if !res.status().is_success() {
-            return Err!(DialError::ProxyConnectInvalidStatus {
+            return Err(e!(DialError::ProxyConnectInvalidStatus {
                 status: res.status()
-            });
+            }));
         }
 
         let upgraded = hyper::upgrade::on(res)

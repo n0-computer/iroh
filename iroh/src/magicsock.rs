@@ -32,7 +32,7 @@ use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -415,9 +415,9 @@ impl MagicSock {
                 .add_endpoint_addr(addr, source, have_ipv6, &self.metrics.magicsock);
             Ok(())
         } else if pruned != 0 {
-            Err!(AddEndpointAddrError::EmptyPruned { pruned })
+            Err(e!(AddEndpointAddrError::EmptyPruned { pruned }))
         } else {
-            Err!(AddEndpointAddrError::Empty)
+            Err(e!(AddEndpointAddrError::Empty))
         }
     }
 
@@ -2453,7 +2453,7 @@ impl TryFrom<Ipv6Addr> for EndpointIdMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err!(EndpointIdMappedAddrError)
+        Err(e!(EndpointIdMappedAddrError))
     }
 }
 

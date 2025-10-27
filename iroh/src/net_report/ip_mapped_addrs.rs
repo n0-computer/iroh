@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use n0_error::{Err, Error, add_meta};
+use n0_error::{Error, add_meta, e};
 
 /// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
 #[add_meta]
@@ -74,7 +74,7 @@ impl TryFrom<Ipv6Addr> for IpMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err!(IpMappedAddrError)
+        Err(e!(IpMappedAddrError))
     }
 }
 

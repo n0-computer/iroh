@@ -44,7 +44,7 @@ use iroh_relay::{
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 };
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::{
     FuturesUnorderedBounded, SinkExt, StreamExt,
     task::JoinSet,
@@ -489,10 +489,10 @@ impl ActiveRelayActor {
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
-                Ok(Err(err)) => Err!(DialError::Connect { source: err }),
-                Err(_) => Err!(DialError::Timeout {
+                Ok(Err(err)) => Err(e!(DialError::Connect { source: err })),
+                Err(_) => Err(e!(DialError::Timeout {
                     timeout: CONNECT_TIMEOUT
-                }),
+                })),
             }
         }
     }
@@ -560,7 +560,7 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = state.ping_tracker.timeout() => {
-                    break Err!(RunError::PingTimeout);
+                    break Err(e!(RunError::PingTimeout));
                 }
                 _ = ping_interval.tick() => {
                     let data = state.ping_tracker.new_ping();
@@ -583,8 +583,8 @@ impl ActiveRelayActor {
                                     let fut = client_sink.send(ClientToRelayMsg::Ping(data));
                                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
-                                Some(_) => break Err!(RunError::LocalIpInvalid),
-                                None => break Err!(RunError::LocalAddrMissing),
+                                Some(_) => break Err(e!(RunError::LocalIpInvalid)),
+                                None => break Err(e!(RunError::LocalAddrMissing)),
                             }
                         }
                         #[cfg(test)]
@@ -625,7 +625,7 @@ impl ActiveRelayActor {
                 }
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err!(RunError::StreamClosedServer);
+                        break Err(e!(RunError::StreamClosedServer));
                     };
                     match msg {
                         Ok(msg) => {
@@ -633,7 +633,7 @@ impl ActiveRelayActor {
                             // reset the ping timer, we have just received a message
                             ping_interval.reset();
                         },
-                        Err(err) => break Err!(RunError::ClientStreamRead { source: err }),
+                        Err(err) => break Err(e!(RunError::ClientStreamRead, err)),
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
@@ -735,7 +735,7 @@ impl ActiveRelayActor {
                     break Ok(());
                 }
                 _ = &mut timeout => {
-                    break Err!(RunError::SendTimeout);
+                    break Err(e!(RunError::SendTimeout));
                 }
                 msg = self.prio_inbox.recv() => {
                     let Some(msg) = msg else {
@@ -756,16 +756,16 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = state.ping_tracker.timeout() => {
-                    break Err!(RunError::PingTimeout);
+                    break Err(e!(RunError::PingTimeout));
                 }
                 // No need to read the inbox or datagrams to send.
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err!(RunError::StreamClosedServer);
+                        break Err(e!(RunError::StreamClosedServer));
                     };
                     match msg {
                         Ok(msg) => self.handle_relay_msg(msg, state),
-                        Err(err) => break Err!(RunError::ClientStreamRead { source: err }),
+                        Err(err) => break Err(e!(RunError::ClientStreamRead, err)),
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {

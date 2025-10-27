@@ -15,7 +15,7 @@ use hyper::{
     service::Service,
     upgrade::Upgraded,
 };
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::time::Elapsed;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
@@ -76,7 +76,7 @@ fn body_full(content: impl Into<hyper::body::Bytes>) -> BytesBody {
 fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes), ConnectionHandlerError> {
     match upgraded.downcast::<hyper_util::rt::TokioIo<MaybeTlsStream>>() {
         Ok(parts) => Ok((parts.io.into_inner(), parts.read_buf)),
-        Err(_) => Err!(ConnectionHandlerError::DowncastUpgrade),
+        Err(_) => Err(e!(ConnectionHandlerError::DowncastUpgrade)),
     }
 }
 
@@ -626,7 +626,7 @@ impl Inner {
         debug!("relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;
         if !read_buf.is_empty() {
-            return Err!(ConnectionHandlerError::BufferNotEmpty { buf: read_buf });
+            return Err(e!(ConnectionHandlerError::BufferNotEmpty { buf: read_buf }));
         }
 
         self.accept(io, client_auth_header).await?;

@@ -3,7 +3,7 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::{SinkExt, StreamExt};
 use rand::Rng;
 use time::{Date, OffsetDateTime};
@@ -438,7 +438,7 @@ impl Actor {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
             Some(frame) => frame?,
-            None => return Err!(HandleFrameError::StreamTerminated),
+            None => return Err(e!(HandleFrameError::StreamTerminated)),
         };
 
         match frame {

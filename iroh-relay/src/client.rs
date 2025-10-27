@@ -11,7 +11,7 @@ use std::{
 
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::{
     Sink, Stream,
     split::{SplitSink, SplitStream, split},
@@ -286,9 +286,9 @@ impl ClientBuilder {
         let (conn, response) = builder.connect_on(stream).await?;
 
         if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            return Err!(ConnectError::UnexpectedUpgradeStatus {
+            return Err(e!(ConnectError::UnexpectedUpgradeStatus {
                 code: response.status()
-            });
+            }));
         }
 
         let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;

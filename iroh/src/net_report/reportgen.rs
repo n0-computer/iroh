@@ -33,7 +33,7 @@ use iroh_relay::{
     dns::{DnsResolver, DnsStaggeredError as StaggeredError},
     quic::QuicClient,
 };
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 #[cfg(wasm_browser)]
 use n0_future::future::Pending;
 use n0_future::{
@@ -385,12 +385,10 @@ impl Actor {
                             Some(Ok(Ok(report))) => Ok(report),
                             Some(Ok(Err(err))) => {
                                 warn!("probe failed: {:#}", err);
-                                Err!(ProbesError::ProbeFailure { source: err })
+                                Err(e!(ProbesError::ProbeFailure { source: err }))
                             }
-                            Some(Err(time::Elapsed { .. })) => {
-                                Err!(ProbesError::Timeout)
-                            }
-                            None => Err!(ProbesError::Cancelled),
+                            Some(Err(time::Elapsed { .. })) => Err(e!(ProbesError::Timeout)),
+                            None => Err(e!(ProbesError::Cancelled)),
                         };
                         ProbeFinished::Regular(res)
                     }
@@ -514,7 +512,7 @@ impl Probe {
                 .await
                 {
                     Ok(report) => Ok(ProbeReport::Https(report)),
-                    Err(err) => Err!(ProbeError::Https { source: err }),
+                    Err(err) => Err(e!(ProbeError::Https { source: err })),
                 }
             }
             #[cfg(not(wasm_browser))]
@@ -714,12 +712,12 @@ async fn relay_lookup_ipv4_staggered(
                         IpAddr::V6(_) => unreachable!("bad DNS lookup: {:?}", addr),
                     })
                     .ok_or_else(|| e!(GetRelayAddrError::NoAddrFound)),
-                Err(err) => Err!(GetRelayAddrError::DnsLookup { source: err }),
+                Err(err) => Err(e!(GetRelayAddrError::DnsLookup { source: err })),
             }
         }
         Some(url::Host::Ipv4(addr)) => Ok(SocketAddrV4::new(addr, port)),
-        Some(url::Host::Ipv6(_addr)) => Err!(GetRelayAddrError::NoAddrFound),
-        None => Err!(GetRelayAddrError::InvalidHostname),
+        Some(url::Host::Ipv6(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound)),
+        None => Err(e!(GetRelayAddrError::InvalidHostname)),
     }
 }
 
@@ -746,12 +744,12 @@ async fn relay_lookup_ipv6_staggered(
                         IpAddr::V6(ip) => SocketAddrV6::new(ip, port, 0, 0),
                     })
                     .ok_or_else(|| e!(GetRelayAddrError::NoAddrFound)),
-                Err(err) => Err!(GetRelayAddrError::DnsLookup { source: err }),
+                Err(err) => Err(e!(GetRelayAddrError::DnsLookup { source: err })),
             }
         }
-        Some(url::Host::Ipv4(_addr)) => Err!(GetRelayAddrError::NoAddrFound),
+        Some(url::Host::Ipv4(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound)),
         Some(url::Host::Ipv6(addr)) => Ok(SocketAddrV6::new(addr, port, 0, 0)),
-        None => Err!(GetRelayAddrError::InvalidHostname),
+        None => Err(e!(GetRelayAddrError::InvalidHostname)),
     }
 }
 
@@ -854,9 +852,9 @@ async fn run_https_probe(
 
         Ok(HttpsProbeReport { relay, latency })
     } else {
-        Err!(MeasureHttpsLatencyError::InvalidResponse {
+        Err(e!(MeasureHttpsLatencyError::InvalidResponse {
             status: response.status()
-        })
+        }))
     }
 }
 

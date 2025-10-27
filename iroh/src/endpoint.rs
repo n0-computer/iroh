@@ -23,7 +23,7 @@ use std::{
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use pin_project::pin_project;
@@ -787,7 +787,7 @@ impl Endpoint {
         source: Source,
     ) -> Result<(), AddEndpointAddrError> {
         if endpoint_addr.endpoint_id == self.id() {
-            return Err!(AddEndpointAddrError::OwnAddress);
+            return Err(e!(AddEndpointAddrError::OwnAddress));
         }
         self.msock.add_endpoint_addr(endpoint_addr, source)
     }
@@ -1292,7 +1292,7 @@ impl Endpoint {
                 if let Some(addr) = self.msock.get_mapping_addr(endpoint_id) {
                     Ok((addr, Some(discovery)))
                 } else {
-                    Err!(GetMappingAddressError::NoAddress)
+                    Err(e!(GetMappingAddressError::NoAddress))
                 }
             }
         }
@@ -1620,9 +1620,9 @@ impl Connecting {
         match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
             Ok(data) => match data.protocol {
                 Some(protocol) => Ok(protocol),
-                None => Err!(AlpnError::Unavailable),
+                None => Err(e!(AlpnError::Unavailable)),
             },
-            Err(_) => Err!(AlpnError::UnknownHandshake),
+            Err(_) => Err(e!(AlpnError::UnknownHandshake)),
         }
     }
 }
@@ -1913,7 +1913,7 @@ impl Connection {
         match data {
             None => {
                 warn!("no peer certificate found");
-                Err!(RemoteEndpointIdError)
+                Err(e!(RemoteEndpointIdError))
             }
             Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
                 Ok(certs) => {
@@ -1922,7 +1922,7 @@ impl Connection {
                             "expected a single peer certificate, but {} found",
                             certs.len()
                         );
-                        return Err!(RemoteEndpointIdError);
+                        return Err(e!(RemoteEndpointIdError));
                     }
 
                     let peer_id = EndpointId::from_verifying_key(
@@ -1934,7 +1934,7 @@ impl Connection {
                 }
                 Err(err) => {
                     warn!("invalid peer certificate: {:?}", err);
-                    Err!(RemoteEndpointIdError)
+                    Err(e!(RemoteEndpointIdError))
                 }
             },
         }

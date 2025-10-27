@@ -31,7 +31,7 @@ use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::{SinkExt, TryStreamExt};
 #[cfg(feature = "server")]
 use rand::CryptoRng;
@@ -356,9 +356,9 @@ pub(crate) async fn clientside(
         }
         FrameType::ServerDeniesAuth => {
             let denial: ServerDeniesAuth = deserialize_frame(frame)?;
-            Err!(Error::ServerDeniedAuth {
+            Err(e!(Error::ServerDeniedAuth {
                 reason: denial.reason
-            })
+            }))
         }
         _ => unreachable!(),
     }
@@ -444,9 +444,9 @@ pub(crate) async fn serverside(
             reason: "signature invalid".into(),
         };
         write_frame(io, denial.clone()).await?;
-        Err!(Error::ServerDeniedAuth {
+        Err(e!(Error::ServerDeniedAuth {
             reason: denial.reason
-        })
+        }))
     } else {
         trace!(?client_auth.public_key, "authentication succeeded via challenge");
         Ok(SuccessfulAuthentication {
@@ -473,9 +473,9 @@ impl SuccessfulAuthentication {
                 reason: "not authorized".into(),
             };
             write_frame(io, denial.clone()).await?;
-            Err!(Error::ServerDeniedAuth {
+            Err(e!(Error::ServerDeniedAuth {
                 reason: denial.reason
-            })
+            }))
         }
     }
 }

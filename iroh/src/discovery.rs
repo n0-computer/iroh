@@ -113,7 +113,7 @@
 use std::sync::{Arc, RwLock};
 
 use iroh_base::{EndpointAddr, EndpointId};
-use n0_error::{AnyError, Err, Error, add_meta, e};
+use n0_error::{AnyError, Error, add_meta, e};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -634,7 +634,7 @@ impl DiscoveryTask {
             }
         }
         if let Some(tx) = on_first_tx.take() {
-            tx.send(Err!(DiscoveryError::NoResults { endpoint_id }))
+            tx.send(Err(e!(DiscoveryError::NoResults { endpoint_id })))
                 .ok();
         }
     }

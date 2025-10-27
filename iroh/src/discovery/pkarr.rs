@@ -48,7 +48,7 @@ use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
@@ -618,9 +618,9 @@ impl PkarrRelayClient {
             .map_err(|source| e!(PkarrError::HttpSend { source }))?;
 
         if !response.status().is_success() {
-            return Err!(PkarrError::HttpRequest {
+            return Err(e!(PkarrError::HttpRequest {
                 status: response.status()
-            });
+            }));
         }
 
         Ok(())

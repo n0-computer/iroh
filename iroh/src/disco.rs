@@ -25,7 +25,7 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 // use n0_error ensure macro path-qualified
@@ -268,7 +268,7 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr, ParseError> {
             let u: Url = s.parse().map_err(|_| e!(ParseError::InvalidEncoding))?;
             Ok(SendAddr::Relay(u.into()))
         }
-        _ => Err!(ParseError::UnknownFormat),
+        _ => Err(e!(ParseError::UnknownFormat)),
     }
 }
 

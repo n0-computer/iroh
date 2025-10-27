@@ -43,7 +43,7 @@ use std::{
 };
 
 use iroh_base::EndpointId;
-use n0_error::{AnyError, Err, Error, add_meta, e};
+use n0_error::{AnyError, Error, add_meta, e};
 use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
@@ -558,7 +558,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
         let is_allowed = (self.limiter)(remote);
         if !is_allowed {
             conn.close(0u32.into(), b"not allowed");
-            return Err!(AcceptError::NotAllowed);
+            return Err(e!(AcceptError::NotAllowed));
         }
         self.proto.accept(conn).await?;
         Ok(())

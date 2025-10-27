@@ -11,7 +11,7 @@ use std::num::NonZeroU16;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use iroh_base::{EndpointId, KeyParsingError};
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use n0_future::time::Duration;
 
 use super::common::{FrameType, FrameTypeError};
@@ -391,7 +391,7 @@ impl RelayToClientMsg {
                 }
             }
             _ => {
-                return Err!(Error::InvalidFrameType { frame_type });
+                return Err(e!(Error::InvalidFrameType { frame_type }));
             }
         };
         Ok(res)
@@ -489,7 +489,7 @@ impl ClientToRelayMsg {
                 Self::Pong(data)
             }
             _ => {
-                return Err!(Error::InvalidFrameType { frame_type });
+                return Err(e!(Error::InvalidFrameType { frame_type }));
             }
         };
         Ok(res)
