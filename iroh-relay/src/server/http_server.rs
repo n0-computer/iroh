@@ -197,12 +197,10 @@ pub enum ServeConnectionError {
 #[add_meta]
 #[derive(Error)]
 #[non_exhaustive]
+#[error(from_sources)]
 pub enum AcceptError {
     #[error(transparent)]
-    Handshake {
-        #[error(from)]
-        source: handshake::Error,
-    },
+    Handshake { source: handshake::Error },
     #[display("rate limiting misconfigured")]
     RateLimitingMisconfigured { source: InvalidBucketConfig },
 }
@@ -212,12 +210,10 @@ pub enum AcceptError {
 #[add_meta]
 #[derive(Error)]
 #[non_exhaustive]
+#[error(from_sources)]
 pub enum ConnectionHandlerError {
     #[error(transparent)]
-    Accept {
-        #[error(from)]
-        source: AcceptError,
-    },
+    Accept { source: AcceptError },
     #[display("Could not downcast the upgraded connection to MaybeTlsStream")]
     DowncastUpgrade {},
     #[display("Cannot deal with buffered data yet: {buf:?}")]
@@ -342,11 +338,11 @@ impl ServerBuilder {
 
         let listener = TcpListener::bind(&addr)
             .await
-            .map_err(|_| e!(super::SpawnError::BindTcpListener { addr }))?;
+            .map_err(|err| e!(super::SpawnError::BindTcpListener { addr }, err))?;
 
         let addr = listener
             .local_addr()
-            .map_err(|source| e!(super::SpawnError::NoLocalAddr { source }))?;
+            .map_err(|err| e!(super::SpawnError::NoLocalAddr, err))?;
         let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
 

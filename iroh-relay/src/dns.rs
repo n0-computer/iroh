@@ -68,10 +68,7 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 #[non_exhaustive]
 pub enum DnsError {
     #[error(transparent)]
-    Timeout {
-        #[error(std_err)]
-        source: tokio::time::error::Elapsed,
-    },
+    Timeout { source: tokio::time::error::Elapsed },
     #[display("No response")]
     NoResponse {},
     #[display("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
@@ -83,7 +80,6 @@ pub enum DnsError {
     MissingHost {},
     #[error(transparent)]
     Resolve {
-        #[error(std_err)]
         source: hickory_resolver::ResolveError,
     },
     #[display("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
@@ -97,12 +93,17 @@ pub enum DnsError {
 #[non_exhaustive]
 pub enum LookupError {
     #[display("Malformed txt from lookup")]
-    ParseError {
-        #[error(std_err)]
-        source: Box<ParseError>,
-    },
+    ParseError { source: ParseError },
     #[display("Failed to resolve TXT record")]
     LookupFailed { source: DnsError },
+}
+
+/// Error returned when an input value is too long for [`crate::endpoint_info::UserData`].
+#[add_meta]
+#[derive(Error)]
+pub struct StaggeredError<E: n0_error::StackError> {
+    #[display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
+    errors: Vec<E>,
 }
 
 /// Error returned when an input value is too long for [`crate::endpoint_info::UserData`].

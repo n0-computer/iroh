@@ -4,7 +4,7 @@
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
 
 use hickory_server::proto;
-use n0_error::{Result, bail, ensure_any};
+use n0_error::{Result, ensure_any};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

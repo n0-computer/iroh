@@ -104,10 +104,7 @@ pub enum DialError {
     InvalidTargetPort {},
     #[error(transparent)]
     #[cfg(not(wasm_browser))]
-    Dns {
-        #[error(std_err)]
-        source: DnsError,
-    },
+    Dns { source: DnsError },
     #[error(transparent)]
     Timeout {
         #[error(std_err)]

@@ -295,7 +295,11 @@ pub enum SpawnError {
         source: std::io::Error,
     },
     #[display("Failed to bind server socket to {addr}")]
-    BindTcpListener { addr: SocketAddr },
+    BindTcpListener {
+        #[error(std_err)]
+        source: std::io::Error,
+        addr: SocketAddr,
+    },
 }
 
 /// Server task errors
