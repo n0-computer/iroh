@@ -139,15 +139,12 @@ impl Sink<ClientToRelayMsg> for Conn {
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToRelayMsg) -> Result<(), Self::Error> {
         let size = frame.encoded_len();
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             size <= MAX_PACKET_SIZE,
-            n0_error::e!(SendError::ExceedsMaxPacketSize { size })
+            SendError::ExceedsMaxPacketSize { size }
         );
         if let ClientToRelayMsg::Datagrams { datagrams, .. } = &frame {
-            n0_error::ensure!(
-                !datagrams.contents.is_empty(),
-                n0_error::e!(SendError::EmptyPacket)
-            );
+            n0_error::ensure_e!(!datagrams.contents.is_empty(), SendError::EmptyPacket);
         }
 
         Pin::new(&mut self.conn)

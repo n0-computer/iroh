@@ -121,8 +121,6 @@ pub struct LookupStaggeredError {
     errors: Vec<LookupError>,
 }
 
-// no manual new; use e!(Type { errors })
-
 /// Builder for [`DnsResolver`].
 #[derive(Debug, Clone, Default)]
 pub struct Builder {
