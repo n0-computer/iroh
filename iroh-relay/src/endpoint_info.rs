@@ -106,7 +106,7 @@ impl EndpointIdExt for EndpointId {
             .try_into()
             .map_err(|_| e!(DecodingError::InvalidLength { len: s.len() }))?;
         let endpoint_id = EndpointId::from_bytes(bytes)
-            .map_err(|err| e!(DecodingError::InvalidKey { source: err }))?;
+            .map_err(|err| e!(DecodingError::InvalidKey, err))?;
         Ok(endpoint_id)
     }
 }

@@ -385,7 +385,7 @@ impl Actor {
                             Some(Ok(Ok(report))) => Ok(report),
                             Some(Ok(Err(err))) => {
                                 warn!("probe failed: {:#}", err);
-                                Err(e!(ProbesError::ProbeFailure { source: err }))
+                                Err(e!(ProbesError::ProbeFailure, err))
                             }
                             Some(Err(time::Elapsed { .. })) => Err(e!(ProbesError::Timeout)),
                             None => Err(e!(ProbesError::Cancelled)),
@@ -512,7 +512,7 @@ impl Probe {
                 .await
                 {
                     Ok(report) => Ok(ProbeReport::Https(report)),
-                    Err(err) => Err(e!(ProbeError::Https { source: err })),
+                    Err(err) => Err(e!(ProbeError::Https, err)),
                 }
             }
             #[cfg(not(wasm_browser))]
@@ -712,7 +712,7 @@ async fn relay_lookup_ipv4_staggered(
                         IpAddr::V6(_) => unreachable!("bad DNS lookup: {:?}", addr),
                     })
                     .ok_or_else(|| e!(GetRelayAddrError::NoAddrFound)),
-                Err(err) => Err(e!(GetRelayAddrError::DnsLookup { source: err })),
+                Err(err) => Err(e!(GetRelayAddrError::DnsLookup, err)),
             }
         }
         Some(url::Host::Ipv4(addr)) => Ok(SocketAddrV4::new(addr, port)),
@@ -744,7 +744,7 @@ async fn relay_lookup_ipv6_staggered(
                         IpAddr::V6(ip) => SocketAddrV6::new(ip, port, 0, 0),
                     })
                     .ok_or_else(|| e!(GetRelayAddrError::NoAddrFound)),
-                Err(err) => Err(e!(GetRelayAddrError::DnsLookup { source: err })),
+                Err(err) => Err(e!(GetRelayAddrError::DnsLookup, err)),
             }
         }
         Some(url::Host::Ipv4(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound)),

@@ -380,7 +380,7 @@ impl Actor {
     async fn write_frame(&mut self, frame: RelayToClientMsg) -> Result<(), WriteFrameError> {
         tokio::time::timeout(self.timeout, self.stream.send(frame))
             .await?
-            .map_err(|err| e!(WriteFrameError::Stream { source: err }))?;
+            .map_err(|err| e!(WriteFrameError::Stream, err))?;
         Ok(())
     }
 

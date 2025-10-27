@@ -422,7 +422,7 @@ impl DnsResolver {
         let lookup = self
             .lookup_txt(name.clone(), DNS_TIMEOUT)
             .await
-            .map_err(|err| e!(LookupError::LookupFailed { source: err }))?;
+            .map_err(|err| e!(LookupError::LookupFailed, err))?;
         let info = EndpointInfo::from_txt_lookup(name, lookup).map_err(|err| {
             e!(LookupError::ParseError {
                 source: Box::new(err)
@@ -440,7 +440,7 @@ impl DnsResolver {
         let lookup = self
             .lookup_txt(name.clone(), DNS_TIMEOUT)
             .await
-            .map_err(|err| e!(LookupError::LookupFailed { source: err }))?;
+            .map_err(|err| e!(LookupError::LookupFailed, err))?;
         let info = EndpointInfo::from_txt_lookup(name, lookup).map_err(|err| {
             e!(LookupError::ParseError {
                 source: Box::new(err)

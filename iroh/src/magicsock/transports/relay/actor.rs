@@ -366,7 +366,7 @@ impl ActiveRelayActor {
     async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
             Some(client_res) => {
-                client_res.map_err(|err| e!(RelayConnectionError::Dial { source: err }))?
+                client_res.map_err(|err| e!(RelayConnectionError::Dial, err))?
             }
             None => return Ok(()),
         };
@@ -489,7 +489,7 @@ impl ActiveRelayActor {
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
-                Ok(Err(err)) => Err(e!(DialError::Connect { source: err })),
+                Ok(Err(err)) => Err(e!(DialError::Connect, err)),
                 Err(_) => Err(e!(DialError::Timeout {
                     timeout: CONNECT_TIMEOUT
                 })),
@@ -515,7 +515,7 @@ impl ActiveRelayActor {
 
         let (mut client_stream, client_sink) = client.split();
         let mut client_sink =
-            client_sink.sink_map_err(|e| e!(RunError::ClientStreamWrite { source: e }));
+            client_sink.sink_map_err(|e| e!(RunError::ClientStreamWrite, e));
 
         let mut state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),
@@ -806,9 +806,9 @@ struct ConnectedRelayState {
 impl ConnectedRelayState {
     fn map_err(&self, error: RunError) -> RelayConnectionError {
         if self.established {
-            e!(RelayConnectionError::Established { source: error })
+            e!(RelayConnectionError::Established, error)
         } else {
-            e!(RelayConnectionError::Handshake { source: error })
+            e!(RelayConnectionError::Handshake, error)
         }
     }
 }

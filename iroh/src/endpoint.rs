@@ -683,7 +683,7 @@ impl Endpoint {
 
         if !endpoint_addr.is_empty() {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)
-                .map_err(|err| e!(ConnectWithOptsError::AddEndpointAddr { source: err }))?;
+                .map_err(|err| e!(ConnectWithOptsError::AddEndpointAddr, err))?;
         }
         let endpoint_id = endpoint_addr.endpoint_id;
         let direct_addresses = endpoint_addr.direct_addresses.clone();
@@ -696,7 +696,7 @@ impl Endpoint {
         let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(endpoint_addr)
             .await
-            .map_err(|err| e!(ConnectWithOptsError::NoAddress { source: err }))?;
+            .map_err(|err| e!(ConnectWithOptsError::NoAddress, err))?;
 
         let transport_config = options
             .transport_config
@@ -732,7 +732,7 @@ impl Endpoint {
                 mapped_addr.private_socket_addr(),
                 server_name,
             )
-            .map_err(|err| e!(ConnectWithOptsError::Quinn { source: err }))?;
+            .map_err(|err| e!(ConnectWithOptsError::Quinn, err))?;
 
         Ok(Connecting {
             inner: connect,
