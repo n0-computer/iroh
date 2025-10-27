@@ -110,7 +110,7 @@
 <a href=#110 id=110 data-nosnippet>110</a>
 <a href=#111 id=111 data-nosnippet>111</a><span class="kw">impl </span>From&lt;PkarrError&gt; <span class="kw">for </span>DiscoveryError {
 <a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">fn </span>from(err: PkarrError) -&gt; <span class="self">Self </span>{
-<a href=#113 id=113 data-nosnippet>113</a>        DiscoveryError::from_err(<span class="string">"pkarr"</span>, err)
+<a href=#113 id=113 data-nosnippet>113</a>        DiscoveryError::from_err_any(<span class="string">"pkarr"</span>, err)
 <a href=#114 id=114 data-nosnippet>114</a>    }
 <a href=#115 id=115 data-nosnippet>115</a>}
 <a href=#116 id=116 data-nosnippet>116</a>
@@ -407,7 +407,7 @@
 <a href=#407 id=407 data-nosnippet>407</a>        </span>);
 <a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>signed_packet = info
 <a href=#409 id=409 data-nosnippet>409</a>            .to_pkarr_signed_packet(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, <span class="self">self</span>.ttl)
-<a href=#410 id=410 data-nosnippet>410</a>            .map_err(|source| <span class="macro">e!</span>(PkarrError::Encoding { source }))<span class="question-mark">?</span>;
+<a href=#410 id=410 data-nosnippet>410</a>            .map_err(|err| <span class="macro">e!</span>(PkarrError::Encoding, err))<span class="question-mark">?</span>;
 <a href=#411 id=411 data-nosnippet>411</a>        <span class="self">self</span>.pkarr_client.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#412 id=412 data-nosnippet>412</a>        <span class="prelude-val">Ok</span>(())
 <a href=#413 id=413 data-nosnippet>413</a>    }
@@ -517,7 +517,7 @@
 <a href=#517 id=517 data-nosnippet>517</a>        <span class="kw">let </span>fut = <span class="kw">async move </span>{
 <a href=#518 id=518 data-nosnippet>518</a>            <span class="kw">let </span>signed_packet = pkarr_client.resolve(endpoint_id).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#519 id=519 data-nosnippet>519</a>            <span class="kw">let </span>info = EndpointInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet)
-<a href=#520 id=520 data-nosnippet>520</a>                .map_err(|err| DiscoveryError::from_err(<span class="string">"pkarr"</span>, err))<span class="question-mark">?</span>;
+<a href=#520 id=520 data-nosnippet>520</a>                .map_err(|err| DiscoveryError::from_err_any(<span class="string">"pkarr"</span>, err))<span class="question-mark">?</span>;
 <a href=#521 id=521 data-nosnippet>521</a>            <span class="kw">let </span>item = DiscoveryItem::new(info, <span class="string">"pkarr"</span>, <span class="prelude-val">None</span>);
 <a href=#522 id=522 data-nosnippet>522</a>            <span class="prelude-val">Ok</span>(item)
 <a href=#523 id=523 data-nosnippet>523</a>        };
@@ -563,7 +563,7 @@
 <a href=#563 id=563 data-nosnippet>563</a>    </span><span class="kw">pub async fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, endpoint_id: EndpointId) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket, DiscoveryError&gt; {
 <a href=#564 id=564 data-nosnippet>564</a>        <span class="comment">// We map the error to string, as in browsers the error is !Send
 <a href=#565 id=565 data-nosnippet>565</a>        </span><span class="kw">let </span>public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
-<a href=#566 id=566 data-nosnippet>566</a>            .map_err(|source| <span class="macro">e!</span>(PkarrError::PublicKey { source }))<span class="question-mark">?</span>;
+<a href=#566 id=566 data-nosnippet>566</a>            .map_err(|err| <span class="macro">e!</span>(PkarrError::PublicKey, err))<span class="question-mark">?</span>;
 <a href=#567 id=567 data-nosnippet>567</a>
 <a href=#568 id=568 data-nosnippet>568</a>        <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.pkarr_relay_url.clone();
 <a href=#569 id=569 data-nosnippet>569</a>        url.path_segments_mut()
@@ -579,7 +579,7 @@
 <a href=#579 id=579 data-nosnippet>579</a>            .get(url)
 <a href=#580 id=580 data-nosnippet>580</a>            .send()
 <a href=#581 id=581 data-nosnippet>581</a>            .<span class="kw">await
-<a href=#582 id=582 data-nosnippet>582</a>            </span>.map_err(|source| <span class="macro">e!</span>(PkarrError::HttpSend { source }))<span class="question-mark">?</span>;
+<a href=#582 id=582 data-nosnippet>582</a>            </span>.map_err(|err| <span class="macro">e!</span>(PkarrError::HttpSend, err))<span class="question-mark">?</span>;
 <a href=#583 id=583 data-nosnippet>583</a>
 <a href=#584 id=584 data-nosnippet>584</a>        <span class="kw">if </span>!response.status().is_success() {
 <a href=#585 id=585 data-nosnippet>585</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(PkarrError::HttpRequest {
@@ -594,7 +594,7 @@
 <a href=#594 id=594 data-nosnippet>594</a>            </span>.map_err(|source| <span class="macro">e!</span>(PkarrError::HttpPayload { source }))<span class="question-mark">?</span>;
 <a href=#595 id=595 data-nosnippet>595</a>        <span class="comment">// We map the error to string, as in browsers the error is !Send
 <a href=#596 id=596 data-nosnippet>596</a>        </span><span class="kw">let </span>packet = SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>payload)
-<a href=#597 id=597 data-nosnippet>597</a>            .map_err(|source| <span class="macro">e!</span>(PkarrError::Verify { source }))<span class="question-mark">?</span>;
+<a href=#597 id=597 data-nosnippet>597</a>            .map_err(|err| <span class="macro">e!</span>(PkarrError::Verify, err))<span class="question-mark">?</span>;
 <a href=#598 id=598 data-nosnippet>598</a>        <span class="prelude-val">Ok</span>(packet)
 <a href=#599 id=599 data-nosnippet>599</a>    }
 <a href=#600 id=600 data-nosnippet>600</a>

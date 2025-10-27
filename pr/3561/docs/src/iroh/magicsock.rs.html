@@ -1389,7 +1389,7 @@
 <a href=#1389 id=1389 data-nosnippet>1389</a>
 <a href=#1390 id=1390 data-nosnippet>1390</a>        <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#1391 id=1391 data-nosnippet>1391</a>        </span><span class="kw">let </span>(ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, <span class="kw-2">&amp;</span>metrics)
-<a href=#1392 id=1392 data-nosnippet>1392</a>            .map_err(|source| <span class="macro">e!</span>(CreateHandleError::BindSockets { source }))<span class="question-mark">?</span>;
+<a href=#1392 id=1392 data-nosnippet>1392</a>            .map_err(|err| <span class="macro">e!</span>(CreateHandleError::BindSockets, err))<span class="question-mark">?</span>;
 <a href=#1393 id=1393 data-nosnippet>1393</a>
 <a href=#1394 id=1394 data-nosnippet>1394</a>        <span class="kw">let </span>ip_mapped_addrs = IpMappedAddresses::default();
 <a href=#1395 id=1395 data-nosnippet>1395</a>
@@ -1479,11 +1479,11 @@
 <a href=#1479 id=1479 data-nosnippet>1479</a>            <span class="attr">#[cfg(wasm_browser)]
 <a href=#1480 id=1480 data-nosnippet>1480</a>            </span>Arc::new(<span class="kw">crate</span>::web_runtime::WebRuntime),
 <a href=#1481 id=1481 data-nosnippet>1481</a>        )
-<a href=#1482 id=1482 data-nosnippet>1482</a>        .map_err(|source| <span class="macro">e!</span>(CreateHandleError::CreateQuinnEndpoint { source }))<span class="question-mark">?</span>;
+<a href=#1482 id=1482 data-nosnippet>1482</a>        .map_err(|err| <span class="macro">e!</span>(CreateHandleError::CreateQuinnEndpoint, err))<span class="question-mark">?</span>;
 <a href=#1483 id=1483 data-nosnippet>1483</a>
 <a href=#1484 id=1484 data-nosnippet>1484</a>        <span class="kw">let </span>network_monitor = netmon::Monitor::new()
 <a href=#1485 id=1485 data-nosnippet>1485</a>            .<span class="kw">await
-<a href=#1486 id=1486 data-nosnippet>1486</a>            </span>.map_err(|source| <span class="macro">e!</span>(CreateHandleError::CreateNetmonMonitor { source }))<span class="question-mark">?</span>;
+<a href=#1486 id=1486 data-nosnippet>1486</a>            </span>.map_err(|err| <span class="macro">e!</span>(CreateHandleError::CreateNetmonMonitor, err))<span class="question-mark">?</span>;
 <a href=#1487 id=1487 data-nosnippet>1487</a>
 <a href=#1488 id=1488 data-nosnippet>1488</a>        <span class="kw">let </span>qad_endpoint = endpoint.clone();
 <a href=#1489 id=1489 data-nosnippet>1489</a>
@@ -2915,7 +2915,7 @@
 <a href=#2915 id=2915 data-nosnippet>2915</a>                    conn.closed().<span class="kw">await</span>;
 <a href=#2916 id=2916 data-nosnippet>2916</a>                }
 <a href=#2917 id=2917 data-nosnippet>2917</a>
-<a href=#2918 id=2918 data-nosnippet>2918</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_error::AnyError&gt;(())
+<a href=#2918 id=2918 data-nosnippet>2918</a>                n0_error::Ok(())
 <a href=#2919 id=2919 data-nosnippet>2919</a>            }
 <a href=#2920 id=2920 data-nosnippet>2920</a>        }));
 <a href=#2921 id=2921 data-nosnippet>2921</a>

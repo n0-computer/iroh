@@ -8,7 +8,7 @@
 <a href=#8 id=8 data-nosnippet>8</a>    Endpoint, EndpointAddr, RelayMode, RelayUrl,
 <a href=#9 id=9 data-nosnippet>9</a>    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
 <a href=#10 id=10 data-nosnippet>10</a>};
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tracing::{trace, warn};
 <a href=#13 id=13 data-nosnippet>13</a>
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use crate</span>::{
@@ -120,7 +120,7 @@
 <a href=#120 id=120 data-nosnippet>120</a>    </span><span class="kw">let </span>connection = endpoint
 <a href=#121 id=121 data-nosnippet>121</a>        .connect(server_addr, ALPN)
 <a href=#122 id=122 data-nosnippet>122</a>        .<span class="kw">await
-<a href=#123 id=123 data-nosnippet>123</a>        </span>.std_context(<span class="string">"unable to connect"</span>)<span class="question-mark">?</span>;
+<a href=#123 id=123 data-nosnippet>123</a>        </span>.context(<span class="string">"unable to connect"</span>)<span class="question-mark">?</span>;
 <a href=#124 id=124 data-nosnippet>124</a>    <span class="macro">trace!</span>(<span class="string">"connected"</span>);
 <a href=#125 id=125 data-nosnippet>125</a>
 <a href=#126 id=126 data-nosnippet>126</a>    <span class="prelude-val">Ok</span>((endpoint, connection))
@@ -275,7 +275,7 @@
 <a href=#275 id=275 data-nosnippet>275</a>                tokio::spawn(<span class="kw">async move </span>{
 <a href=#276 id=276 data-nosnippet>276</a>                    drain_stream(<span class="kw-2">&amp;mut </span>recv_stream, opt.read_unordered).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#277 id=277 data-nosnippet>277</a>                    send_data_on_stream(<span class="kw-2">&amp;mut </span>send_stream, opt.download_size).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#278 id=278 data-nosnippet>278</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_error::AnyError&gt;(())
+<a href=#278 id=278 data-nosnippet>278</a>                    n0_error::Ok(())
 <a href=#279 id=279 data-nosnippet>279</a>                });
 <a href=#280 id=280 data-nosnippet>280</a>            }
 <a href=#281 id=281 data-nosnippet>281</a>

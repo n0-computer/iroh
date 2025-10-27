@@ -246,7 +246,7 @@
 <a href=#246 id=246 data-nosnippet>246</a>                tokio::spawn(<span class="kw">async move </span>{
 <a href=#247 id=247 data-nosnippet>247</a>                    drain_stream(<span class="kw-2">&amp;mut </span>recv_stream, opt.read_unordered).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#248 id=248 data-nosnippet>248</a>                    send_data_on_stream(<span class="kw-2">&amp;mut </span>send_stream, opt.download_size).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#249 id=249 data-nosnippet>249</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_error::AnyError&gt;(())
+<a href=#249 id=249 data-nosnippet>249</a>                    n0_error::Ok(())
 <a href=#250 id=250 data-nosnippet>250</a>                });
 <a href=#251 id=251 data-nosnippet>251</a>            }
 <a href=#252 id=252 data-nosnippet>252</a>
