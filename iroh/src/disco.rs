@@ -25,10 +25,9 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
-use n0_error::{Error, add_meta, e};
+use n0_error::{Error, add_meta, e, ensure_e};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-// use n0_error ensure macro path-qualified
 use url::Url;
 
 use crate::magicsock::transports;
@@ -217,7 +216,7 @@ pub struct CallMeMaybe {
 impl Ping {
     fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
         // Deliberately lax on longer-than-expected messages, for future compatibility.
-        n0_error::ensure_e!(p.len() >= PING_LEN, ParseError::TooShort);
+        ensure_e!(p.len() >= PING_LEN, ParseError::TooShort);
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
         let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
         let endpoint_key =
@@ -256,7 +255,7 @@ pub enum ParseError {
 }
 
 fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr, ParseError> {
-    n0_error::ensure_e!(p.len() > 2, ParseError::TooShort);
+    ensure_e!(p.len() > 2, ParseError::TooShort);
     match p[0] {
         0u8 => {
             let bytes: [u8; EP_LENGTH] = p[1..].try_into().map_err(|_| e!(ParseError::TooShort))?;
@@ -340,7 +339,7 @@ impl Pong {
 
 impl CallMeMaybe {
     fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
-        n0_error::ensure_e!(p.len() % EP_LENGTH == 0, ParseError::InvalidEncoding);
+        ensure_e!(p.len() % EP_LENGTH == 0, ParseError::InvalidEncoding);
 
         let num_entries = p.len() / EP_LENGTH;
         let mut m = CallMeMaybe {
@@ -379,11 +378,11 @@ impl CallMeMaybe {
 impl Message {
     /// Parses the encrypted part of the message from inside the nacl secretbox.
     pub fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
-        n0_error::ensure_e!(p.len() >= 2, ParseError::TooShort);
+        ensure_e!(p.len() >= 2, ParseError::TooShort);
 
         let t = MessageType::try_from(p[0]).map_err(|_| e!(ParseError::UnknownFormat))?;
         let version = p[1];
-        n0_error::ensure_e!(version == V0, ParseError::UnknownFormat);
+        ensure_e!(version == V0, ParseError::UnknownFormat);
 
         let p = &p[2..];
         match t {

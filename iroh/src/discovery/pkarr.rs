@@ -110,7 +110,7 @@ pub enum PkarrError {
 
 impl From<PkarrError> for DiscoveryError {
     fn from(err: PkarrError) -> Self {
-        DiscoveryError::from_err("pkarr", err)
+        DiscoveryError::from_err_any("pkarr", err)
     }
 }
 
@@ -407,7 +407,7 @@ impl PublisherService {
         );
         let signed_packet = info
             .to_pkarr_signed_packet(&self.secret_key, self.ttl)
-            .map_err(|source| e!(PkarrError::Encoding { source }))?;
+            .map_err(|err| e!(PkarrError::Encoding, err))?;
         self.pkarr_client.publish(&signed_packet).await?;
         Ok(())
     }
@@ -517,7 +517,7 @@ impl Discovery for PkarrResolver {
         let fut = async move {
             let signed_packet = pkarr_client.resolve(endpoint_id).await?;
             let info = EndpointInfo::from_pkarr_signed_packet(&signed_packet)
-                .map_err(|err| DiscoveryError::from_err("pkarr", err))?;
+                .map_err(|err| DiscoveryError::from_err_any("pkarr", err))?;
             let item = DiscoveryItem::new(info, "pkarr", None);
             Ok(item)
         };
@@ -563,7 +563,7 @@ impl PkarrRelayClient {
     pub async fn resolve(&self, endpoint_id: EndpointId) -> Result<SignedPacket, DiscoveryError> {
         // We map the error to string, as in browsers the error is !Send
         let public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
-            .map_err(|source| e!(PkarrError::PublicKey { source }))?;
+            .map_err(|err| e!(PkarrError::PublicKey, err))?;
 
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
@@ -579,7 +579,7 @@ impl PkarrRelayClient {
             .get(url)
             .send()
             .await
-            .map_err(|source| e!(PkarrError::HttpSend { source }))?;
+            .map_err(|err| e!(PkarrError::HttpSend, err))?;
 
         if !response.status().is_success() {
             return Err(e!(PkarrError::HttpRequest {
@@ -594,7 +594,7 @@ impl PkarrRelayClient {
             .map_err(|source| e!(PkarrError::HttpPayload { source }))?;
         // We map the error to string, as in browsers the error is !Send
         let packet = SignedPacket::from_relay_payload(&public_key, &payload)
-            .map_err(|source| e!(PkarrError::Verify { source }))?;
+            .map_err(|err| e!(PkarrError::Verify, err))?;
         Ok(packet)
     }
 

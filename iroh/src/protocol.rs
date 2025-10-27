@@ -121,6 +121,7 @@ pub enum AcceptError {
 
 impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
+    #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
         e!(AcceptError::User {
             source: AnyError::from_std(value)

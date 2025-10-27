@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
             ep.set_user_data_for_discovery(Some(ud));
             tokio::time::sleep(Duration::from_secs(3)).await;
             ep.close().await;
-            Ok::<_, n0_error::AnyError>(())
+            n0_error::Ok(())
         });
     }
 

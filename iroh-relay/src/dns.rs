@@ -13,7 +13,7 @@ use hickory_resolver::{
     name_server::TokioConnectionProvider,
 };
 use iroh_base::EndpointId;
-use n0_error::{Error, add_meta, e};
+use n0_error::{Error, StackError, add_meta, e};
 use n0_future::{
     StreamExt,
     boxed::BoxFuture,
@@ -91,6 +91,7 @@ pub enum DnsError {
 #[add_meta]
 #[derive(Error)]
 #[non_exhaustive]
+#[error(from_sources)]
 pub enum LookupError {
     #[display("Malformed txt from lookup")]
     ParseError { source: ParseError },
@@ -98,28 +99,19 @@ pub enum LookupError {
     LookupFailed { source: DnsError },
 }
 
-/// Error returned when an input value is too long for [`crate::endpoint_info::UserData`].
+/// Error returned when a staggered call fails.
 #[add_meta]
 #[derive(Error)]
-pub struct StaggeredError<E: n0_error::StackError> {
-    #[display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
+#[display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
+pub struct StaggeredError<E: n0_error::StackError + 'static> {
     errors: Vec<E>,
 }
 
-/// Error returned when an input value is too long for [`crate::endpoint_info::UserData`].
-#[add_meta]
-#[derive(Error)]
-pub struct DnsStaggeredError {
-    #[display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
-    errors: Vec<DnsError>,
-}
-
-/// Aggregates all the lookup errors when all staggered attempts fail.
-#[add_meta]
-#[derive(Error)]
-pub struct LookupStaggeredError {
-    #[display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
-    errors: Vec<LookupError>,
+impl<E: StackError + 'static> StaggeredError<E> {
+    /// Returns an iterator over all encountered errors.
+    pub fn iter(&self) -> impl Iterator<Item = &E> {
+        self.errors.iter()
+    }
 }
 
 /// Builder for [`DnsResolver`].
@@ -253,9 +245,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = TxtRecordData>, DnsError> {
         let host = host.to_string();
-        let res = time::timeout(timeout, self.0.lookup_txt(host))
-            .await
-            .map_err(|err| e!(DnsError::Timeout, err))??;
+        let res = time::timeout(timeout, self.0.lookup_txt(host)).await??;
         Ok(res)
     }
 
@@ -266,9 +256,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let addrs = time::timeout(timeout, self.0.lookup_ipv4(host))
-            .await
-            .map_err(|err| e!(DnsError::Timeout, err))??;
+        let addrs = time::timeout(timeout, self.0.lookup_ipv4(host)).await??;
         Ok(addrs.into_iter().map(IpAddr::V4))
     }
 
@@ -279,9 +267,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
-        let addrs = time::timeout(timeout, self.0.lookup_ipv6(host))
-            .await
-            .map_err(|err| e!(DnsError::Timeout, err))??;
+        let addrs = time::timeout(timeout, self.0.lookup_ipv6(host)).await??;
         Ok(addrs.into_iter().map(IpAddr::V6))
     }
 
@@ -360,12 +346,10 @@ impl DnsResolver {
         host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
-    ) -> Result<impl Iterator<Item = IpAddr>, DnsStaggeredError> {
+    ) -> Result<impl Iterator<Item = IpAddr>, StaggeredError<DnsError>> {
         let host = host.to_string();
         let f = || self.lookup_ipv4(host.clone(), timeout);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(|errors| e!(DnsStaggeredError { errors }))
+        stagger_call(f, delays_ms).await
     }
 
     /// Performs an IPv6 lookup with a timeout in a staggered fashion.
@@ -379,12 +363,10 @@ impl DnsResolver {
         host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
-    ) -> Result<impl Iterator<Item = IpAddr>, DnsStaggeredError> {
+    ) -> Result<impl Iterator<Item = IpAddr>, StaggeredError<DnsError>> {
         let host = host.to_string();
         let f = || self.lookup_ipv6(host.clone(), timeout);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(|errors| e!(DnsStaggeredError { errors }))
+        stagger_call(f, delays_ms).await
     }
 
     /// Races an IPv4 and IPv6 lookup with a timeout in a staggered fashion.
@@ -399,12 +381,10 @@ impl DnsResolver {
         host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
-    ) -> Result<impl Iterator<Item = IpAddr>, DnsStaggeredError> {
+    ) -> Result<impl Iterator<Item = IpAddr>, StaggeredError<DnsError>> {
         let host = host.to_string();
         let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(|errors| e!(DnsStaggeredError { errors }))
+        stagger_call(f, delays_ms).await
     }
 
     /// Looks up endpoint info by [`EndpointId`] and origin domain name.
@@ -418,15 +398,8 @@ impl DnsResolver {
     ) -> Result<EndpointInfo, LookupError> {
         let name = endpoint_info::endpoint_domain(endpoint_id, origin);
         let name = endpoint_info::ensure_iroh_txt_label(name);
-        let lookup = self
-            .lookup_txt(name.clone(), DNS_TIMEOUT)
-            .await
-            .map_err(|err| e!(LookupError::LookupFailed, err))?;
-        let info = EndpointInfo::from_txt_lookup(name, lookup).map_err(|err| {
-            e!(LookupError::ParseError {
-                source: Box::new(err)
-            })
-        })?;
+        let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
     }
 
@@ -436,15 +409,8 @@ impl DnsResolver {
         name: &str,
     ) -> Result<EndpointInfo, LookupError> {
         let name = endpoint_info::ensure_iroh_txt_label(name.to_string());
-        let lookup = self
-            .lookup_txt(name.clone(), DNS_TIMEOUT)
-            .await
-            .map_err(|err| e!(LookupError::LookupFailed, err))?;
-        let info = EndpointInfo::from_txt_lookup(name, lookup).map_err(|err| {
-            e!(LookupError::ParseError {
-                source: Box::new(err)
-            })
-        })?;
+        let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
     }
 
@@ -458,11 +424,9 @@ impl DnsResolver {
         &self,
         name: &str,
         delays_ms: &[u64],
-    ) -> Result<EndpointInfo, LookupStaggeredError> {
+    ) -> Result<EndpointInfo, StaggeredError<LookupError>> {
         let f = || self.lookup_endpoint_by_domain_name(name);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(|errors| e!(LookupStaggeredError { errors }))
+        stagger_call(f, delays_ms).await
     }
 
     /// Looks up endpoint info by [`EndpointId`] and origin domain name.
@@ -476,11 +440,9 @@ impl DnsResolver {
         endpoint_id: &EndpointId,
         origin: &str,
         delays_ms: &[u64],
-    ) -> Result<EndpointInfo, LookupStaggeredError> {
+    ) -> Result<EndpointInfo, StaggeredError<LookupError>> {
         let f = || self.lookup_endpoint_by_id(endpoint_id, origin);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(|errors| e!(LookupStaggeredError { errors }))
+        stagger_call(f, delays_ms).await
     }
 }
 
@@ -773,13 +735,13 @@ impl<A: Iterator<Item = IpAddr>, B: Iterator<Item = IpAddr>> Iterator for Lookup
 /// ignoring any previous error. If all calls fail, an error summarizing all errors is returned.
 async fn stagger_call<
     T,
-    E: std::fmt::Debug + std::fmt::Display,
+    E: StackError + 'static,
     F: Fn() -> Fut,
     Fut: Future<Output = Result<T, E>>,
 >(
     f: F,
     delays_ms: &[u64],
-) -> Result<T, Vec<E>> {
+) -> Result<T, StaggeredError<E>> {
     let mut calls = n0_future::FuturesUnorderedBounded::new(delays_ms.len() + 1);
     // NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
     // using alternatives that allow futures of different types.
@@ -801,7 +763,7 @@ async fn stagger_call<
         }
     }
 
-    Err(errors)
+    Err(e!(StaggeredError { errors }))
 }
 
 fn add_jitter(delay: &u64) -> Duration {

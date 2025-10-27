@@ -268,35 +268,20 @@ pub struct Server {
 #[add_meta]
 #[derive(Error)]
 #[non_exhaustive]
+#[error(std_sources)]
 pub enum SpawnError {
     #[display("Unable to get local address")]
-    LocalAddr {
-        #[error(std_err)]
-        source: std::io::Error,
-    },
+    LocalAddr { source: std::io::Error },
     #[display("Failed to bind QAD listener")]
-    QuicSpawn {
-        #[error(std_err)]
-        source: QuicSpawnError,
-    },
+    QuicSpawn { source: QuicSpawnError },
     #[display("Failed to parse TLS header")]
-    TlsHeaderParse {
-        #[error(std_err)]
-        source: InvalidHeaderValue,
-    },
+    TlsHeaderParse { source: InvalidHeaderValue },
     #[display("Failed to bind TcpListener")]
-    BindTlsListener {
-        #[error(std_err)]
-        source: std::io::Error,
-    },
+    BindTlsListener { source: std::io::Error },
     #[display("No local address")]
-    NoLocalAddr {
-        #[error(std_err)]
-        source: std::io::Error,
-    },
+    NoLocalAddr { source: std::io::Error },
     #[display("Failed to bind server socket to {addr}")]
     BindTcpListener {
-        #[error(std_err)]
         source: std::io::Error,
         addr: SocketAddr,
     },

@@ -1389,7 +1389,7 @@ impl Handle {
 
         #[cfg(not(wasm_browser))]
         let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, &metrics)
-            .map_err(|source| e!(CreateHandleError::BindSockets { source }))?;
+            .map_err(|err| e!(CreateHandleError::BindSockets, err))?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -1479,11 +1479,11 @@ impl Handle {
             #[cfg(wasm_browser)]
             Arc::new(crate::web_runtime::WebRuntime),
         )
-        .map_err(|source| e!(CreateHandleError::CreateQuinnEndpoint { source }))?;
+        .map_err(|err| e!(CreateHandleError::CreateQuinnEndpoint, err))?;
 
         let network_monitor = netmon::Monitor::new()
             .await
-            .map_err(|source| e!(CreateHandleError::CreateNetmonMonitor { source }))?;
+            .map_err(|err| e!(CreateHandleError::CreateNetmonMonitor, err))?;
 
         let qad_endpoint = endpoint.clone();
 
@@ -2915,7 +2915,7 @@ mod tests {
                     conn.closed().await;
                 }
 
-                Ok::<_, n0_error::AnyError>(())
+                n0_error::Ok(())
             }
         }));
 

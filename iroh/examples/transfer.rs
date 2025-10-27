@@ -17,7 +17,7 @@ use iroh::{
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::ConnectionError,
 };
-use n0_error::{Result, StdResultExt};
+use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
 use n0_watcher::Watcher as _;
 use tokio_stream::StreamExt;
@@ -194,9 +194,8 @@ impl EndpointArgs {
         let mut builder = Endpoint::builder();
 
         let secret_key = match std::env::var("IROH_SECRET") {
-            Ok(s) => SecretKey::from_str(&s).std_context(
-                "Failed to parse IROH_SECRET environment variable as iroh secret key",
-            )?,
+            Ok(s) => SecretKey::from_str(&s)
+                .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
             Err(_) => {
                 let s = SecretKey::generate(&mut rand::rng());
                 println!("Generated a new endpoint secret. To reuse, set");
@@ -387,7 +386,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             } else {
                 println!("[{remote}] Disconnected");
             }
-            Ok::<_, n0_error::AnyError>(())
+            n0_error::Ok(())
         });
     }
 

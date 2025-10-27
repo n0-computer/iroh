@@ -30,7 +30,7 @@ use iroh_relay::{
 };
 #[cfg(not(wasm_browser))]
 use iroh_relay::{
-    dns::{DnsResolver, DnsStaggeredError as StaggeredError},
+    dns::{DnsError, DnsResolver, StaggeredError},
     quic::QuicClient,
 };
 use n0_error::{Error, add_meta, e};
@@ -538,7 +538,10 @@ pub(super) fn maybe_to_mapped_addr(
 #[non_exhaustive]
 enum CaptivePortalError {
     #[error(transparent)]
-    DnsLookup { source: StaggeredError },
+    DnsLookup {
+        #[error(from)]
+        source: StaggeredError<DnsError>,
+    },
     #[display("Creating HTTP client failed")]
     CreateReqwestClient {
         #[error(std_err)]
@@ -594,15 +597,14 @@ async fn check_captive_portal(
         // them.  But our resolver doesn't support that yet.
         let addrs: Vec<_> = dns_resolver
             .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
-            .await
-            .map_err(|source| e!(CaptivePortalError::DnsLookup { source }))?
+            .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
         builder = builder.resolve_to_addrs(domain, &addrs);
     }
     let client = builder
         .build()
-        .map_err(|source| e!(CaptivePortalError::CreateReqwestClient { source }))?;
+        .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?;
 
     // Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/iroh-relay for more
@@ -616,7 +618,7 @@ async fn check_captive_portal(
         .header("X-Iroh-Challenge", &challenge)
         .send()
         .await
-        .map_err(|source| e!(CaptivePortalError::HttpRequest { source }))?;
+        .map_err(|err| e!(CaptivePortalError::HttpRequest, err))?;
 
     let expected_response = format!("response {challenge}");
     let is_valid_response = res
@@ -660,7 +662,7 @@ pub enum GetRelayAddrError {
     #[display("No suitable relay address found")]
     NoAddrFound,
     #[display("DNS lookup failed")]
-    DnsLookup { source: StaggeredError },
+    DnsLookup { source: StaggeredError<DnsError> },
     #[display("Relay is not suitable")]
     UnsupportedRelay,
     #[display("HTTPS probes are not implemented")]
@@ -759,12 +761,15 @@ async fn relay_lookup_ipv6_staggered(
 pub enum MeasureHttpsLatencyError {
     #[error(transparent)]
     InvalidUrl {
-        #[error(std_err)]
+        #[error(std_err, from)]
         source: url::ParseError,
     },
     #[cfg(not(wasm_browser))]
     #[error(transparent)]
-    DnsLookup { source: StaggeredError },
+    DnsLookup {
+        #[error(from)]
+        source: StaggeredError<DnsError>,
+    },
     #[display("Creating HTTP client failed")]
     CreateReqwestClient {
         #[error(std_err)]
@@ -790,9 +795,7 @@ async fn run_https_probe(
     #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
-    let url = relay
-        .join(RELAY_PROBE_PATH)
-        .map_err(|source| e!(MeasureHttpsLatencyError::InvalidUrl { source }))?;
+    let url = relay.join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
@@ -815,8 +818,7 @@ async fn run_https_probe(
         // IPv6 though.  But our resolver does not have a function for that yet.
         let addrs: Vec<_> = dns_resolver
             .lookup_ipv4_ipv6_staggered(domain, DNS_TIMEOUT, DNS_STAGGERING_MS)
-            .await
-            .map_err(|source| e!(MeasureHttpsLatencyError::DnsLookup { source }))?
+            .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
         trace!(?addrs, "resolved addrs");
@@ -828,14 +830,14 @@ async fn run_https_probe(
 
     let client = builder
         .build()
-        .map_err(|source| e!(MeasureHttpsLatencyError::CreateReqwestClient { source }))?;
+        .map_err(|err| e!(MeasureHttpsLatencyError::CreateReqwestClient, err))?;
 
     let start = Instant::now();
     let response = client
         .request(reqwest::Method::GET, url)
         .send()
         .await
-        .map_err(|source| e!(MeasureHttpsLatencyError::HttpRequest { source }))?;
+        .map_err(|err| e!(MeasureHttpsLatencyError::HttpRequest, err))?;
     let latency = start.elapsed();
     if response.status().is_success() {
         // Drain the response body to be nice to the server, up to a limit.

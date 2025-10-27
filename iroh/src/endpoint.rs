@@ -485,6 +485,7 @@ pub struct Endpoint {
 #[add_meta]
 #[derive(Error)]
 #[non_exhaustive]
+#[error(from_sources)]
 pub enum ConnectWithOptsError {
     #[error(transparent)]
     AddEndpointAddr { source: AddEndpointAddrError },
@@ -682,8 +683,7 @@ impl Endpoint {
         );
 
         if !endpoint_addr.is_empty() {
-            self.add_endpoint_addr(endpoint_addr.clone(), Source::App)
-                .map_err(|err| e!(ConnectWithOptsError::AddEndpointAddr, err))?;
+            self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
         }
         let endpoint_id = endpoint_addr.id;
         let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
@@ -695,8 +695,7 @@ impl Endpoint {
         // still running task.
         let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(endpoint_addr)
-            .await
-            .map_err(|err| e!(ConnectWithOptsError::NoAddress, err))?;
+            .await?;
 
         let transport_config = options
             .transport_config
@@ -724,15 +723,11 @@ impl Endpoint {
         };
 
         let server_name = &tls::name::encode(endpoint_id);
-        let connect = self
-            .msock
-            .endpoint()
-            .connect_with(
-                client_config,
-                mapped_addr.private_socket_addr(),
-                server_name,
-            )
-            .map_err(|err| e!(ConnectWithOptsError::Quinn, err))?;
+        let connect = self.msock.endpoint().connect_with(
+            client_config,
+            mapped_addr.private_socket_addr(),
+            server_name,
+        )?;
 
         Ok(Connecting {
             inner: connect,
@@ -1283,11 +1278,11 @@ impl Endpoint {
                 // path to the remote endpoint.
                 let res = DiscoveryTask::start(self.clone(), endpoint_id);
                 let mut discovery =
-                    res.map_err(|source| e!(GetMappingAddressError::DiscoveryStart { source }))?;
+                    res.map_err(|err| e!(GetMappingAddressError::DiscoveryStart, err))?;
                 discovery
                     .first_arrived()
                     .await
-                    .map_err(|source| e!(GetMappingAddressError::Discover { source }))?;
+                    .map_err(|err| e!(GetMappingAddressError::Discover, err))?;
                 if let Some(addr) = self.msock.get_mapping_addr(endpoint_id) {
                     Ok((addr, Some(discovery)))
                 } else {
@@ -3045,7 +3040,7 @@ mod tests {
                 let incoming = server.accept().await.e()?;
                 let conn = incoming.await.e()?;
                 conn.close(0u32.into(), b"bye!");
-                Ok::<_, n0_error::AnyError>(conn.alpn())
+                n0_error::Ok(conn.alpn())
             }
         });
 

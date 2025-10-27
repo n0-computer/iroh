@@ -78,7 +78,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
                 tracing::info!("Closed with code: {code:?}");
             }
 
-            Ok::<_, n0_error::AnyError>(())
+            n0_error::Ok(())
         }
         .instrument(info_span!("server"))
     });

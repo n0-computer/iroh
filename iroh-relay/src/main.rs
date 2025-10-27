@@ -74,10 +74,8 @@ fn load_secret_key(
     filename: impl AsRef<Path>,
 ) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
     let filename = filename.as_ref();
-    let keyfile = std::fs::File::open(filename).std_context(format!(
-        "cannot open secret key file {}",
-        filename.display()
-    ))?;
+    let keyfile = std::fs::File::open(filename)
+        .with_std_context(|_| format!("cannot open secret key file {}", filename.display()))?;
     let mut reader = std::io::BufReader::new(keyfile);
 
     loop {

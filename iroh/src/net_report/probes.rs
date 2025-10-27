@@ -51,8 +51,6 @@ pub(super) struct ProbeSet {
     probes: Vec<(Duration, Arc<RelayConfig>)>,
 }
 
-// Removed legacy SNAFU error (unused) during error migration.
-
 impl ProbeSet {
     fn new(proto: Probe) -> Self {
         Self {

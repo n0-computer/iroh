@@ -113,7 +113,7 @@
 use std::sync::{Arc, RwLock};
 
 use iroh_base::{EndpointAddr, EndpointId};
-use n0_error::{AnyError, Error, add_meta, e};
+use n0_error::{AnyError, Error, add_meta, e, ensure_e};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -235,6 +235,7 @@ pub enum DiscoveryError {
 
 impl DiscoveryError {
     /// Creates a new user error from an arbitrary error type.
+    #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
         provenance: &'static str,
         source: T,
@@ -246,6 +247,7 @@ impl DiscoveryError {
     }
 
     /// Creates a new user error from an arbitrary boxed error type.
+    #[track_caller]
     pub fn from_err_box(
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
@@ -253,6 +255,15 @@ impl DiscoveryError {
         e!(DiscoveryError::User {
             provenance,
             source: AnyError::from_std_box(source)
+        })
+    }
+
+    /// Creates a new user error from an arbitrary error type that can be converted into [`AnyError`].
+    #[track_caller]
+    pub fn from_err_any(provenance: &'static str, source: impl Into<AnyError>) -> Self {
+        e!(DiscoveryError::User {
+            provenance,
+            source: source.into()
         })
     }
 }
@@ -507,7 +518,7 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Starts a discovery task.
     pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
-        n0_error::ensure_e!(
+        ensure_e!(
             !ep.discovery().is_empty(),
             DiscoveryError::NoServiceConfigured
         );
@@ -541,7 +552,7 @@ impl DiscoveryTask {
         if !ep.needs_discovery(endpoint_id, MAX_AGE) {
             return Ok(None);
         }
-        n0_error::ensure_e!(
+        ensure_e!(
             !ep.discovery().is_empty(),
             DiscoveryError::NoServiceConfigured
         );
@@ -582,7 +593,7 @@ impl DiscoveryTask {
         ep: &Endpoint,
         endpoint_id: EndpointId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
-        n0_error::ensure_e!(
+        ensure_e!(
             !ep.discovery().is_empty(),
             DiscoveryError::NoServiceConfigured
         );
@@ -970,7 +981,7 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
-    use n0_error::{AnyError as Error, Result, StdResultExt};
+    use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use n0_future::time::Duration;
     use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
@@ -996,7 +1007,7 @@ mod test_dns_pkarr {
         let state = State::new(origin.clone());
         let (nameserver, _dns_drop_guard) = run_dns_server(state.clone())
             .await
-            .std_context("Running DNS server")?;
+            .context("Running DNS server")?;
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_info = EndpointInfo::new(secret_key.public())
@@ -1004,7 +1015,7 @@ mod test_dns_pkarr {
         let signed_packet = endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state
             .upsert(signed_packet)
-            .std_context("update and insert signed packet")?;
+            .context("update and insert signed packet")?;
 
         let resolver = DnsResolver::with_nameserver(nameserver);
         let resolved = resolver
@@ -1024,7 +1035,7 @@ mod test_dns_pkarr {
 
         let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
             .await
-            .std_context("DnsPkarrServer")?;
+            .context("DnsPkarrServer")?;
 
         let secret_key = SecretKey::generate(&mut rng);
         let endpoint_id = secret_key.public();
@@ -1044,7 +1055,7 @@ mod test_dns_pkarr {
         dns_pkarr_server
             .on_endpoint(&endpoint_id, PUBLISH_TIMEOUT)
             .await
-            .std_context("wait for on endpoint update")?;
+            .context("wait for on endpoint update")?;
         let resolved = resolver
             .lookup_endpoint_by_id(&endpoint_id, &origin)
             .await?;
@@ -1067,9 +1078,7 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover() -> Result<()> {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let dns_pkarr_server = DnsPkarrServer::run()
-            .await
-            .std_context("DnsPkarrServer run")?;
+        let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
         let (ep1, _guard1) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
@@ -1079,7 +1088,7 @@ mod test_dns_pkarr {
         dns_pkarr_server
             .on_endpoint(&ep1.id(), PUBLISH_TIMEOUT)
             .await
-            .std_context("wait for on endpoint update")?;
+            .context("wait for on endpoint update")?;
 
         // we connect only by endpoint id!
         let _conn = ep2.connect(ep1.id(), TEST_ALPN).await?;

@@ -8,7 +8,7 @@ use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
 };
-use n0_error::{Result, StdResultExt};
+use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
 
 use crate::{
@@ -120,7 +120,7 @@ pub async fn connect_client(
     let connection = endpoint
         .connect(server_addr, ALPN)
         .await
-        .std_context("unable to connect")?;
+        .context("unable to connect")?;
     trace!("connected");
 
     Ok((endpoint, connection))
@@ -275,7 +275,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 tokio::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
-                    Ok::<_, n0_error::AnyError>(())
+                    n0_error::Ok(())
                 });
             }
 
