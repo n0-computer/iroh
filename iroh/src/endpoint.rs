@@ -1913,7 +1913,7 @@ impl Connection {
         match data {
             None => {
                 warn!("no peer certificate found");
-                Err(e!(RemoteEndpointIdError))
+                Err(RemoteEndpointIdError::new())
             }
             Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
                 Ok(certs) => {
@@ -1922,19 +1922,19 @@ impl Connection {
                             "expected a single peer certificate, but {} found",
                             certs.len()
                         );
-                        return Err(e!(RemoteEndpointIdError));
+                        return Err(RemoteEndpointIdError::new());
                     }
 
                     let peer_id = EndpointId::from_verifying_key(
                         VerifyingKey::from_public_key_der(&certs[0])
-                            .map_err(|_| e!(RemoteEndpointIdError))?,
+                            .map_err(|_| RemoteEndpointIdError::new())?,
                     );
 
                     Ok(peer_id)
                 }
                 Err(err) => {
                     warn!("invalid peer certificate: {:?}", err);
-                    Err(e!(RemoteEndpointIdError))
+                    Err(RemoteEndpointIdError::new())
                 }
             },
         }
