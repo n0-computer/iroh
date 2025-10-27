@@ -507,9 +507,9 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Starts a discovery task.
     pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             !ep.discovery().is_empty(),
-            e!(DiscoveryError::NoServiceConfigured)
+            DiscoveryError::NoServiceConfigured
         );
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.id();
@@ -541,9 +541,9 @@ impl DiscoveryTask {
         if !ep.needs_discovery(endpoint_id, MAX_AGE) {
             return Ok(None);
         }
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             !ep.discovery().is_empty(),
-            e!(DiscoveryError::NoServiceConfigured)
+            DiscoveryError::NoServiceConfigured
         );
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
@@ -582,9 +582,9 @@ impl DiscoveryTask {
         ep: &Endpoint,
         endpoint_id: EndpointId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             !ep.discovery().is_empty(),
-            e!(DiscoveryError::NoServiceConfigured)
+            DiscoveryError::NoServiceConfigured
         );
         let stream = ep
             .discovery()

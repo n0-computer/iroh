@@ -365,9 +365,7 @@ impl ActiveRelayActor {
     /// be retried with a backoff.
     async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
-            Some(client_res) => {
-                client_res.map_err(|err| e!(RelayConnectionError::Dial, err))?
-            }
+            Some(client_res) => client_res.map_err(|err| e!(RelayConnectionError::Dial, err))?,
             None => return Ok(()),
         };
         self.run_connected(client)
@@ -514,8 +512,7 @@ impl ActiveRelayActor {
         );
 
         let (mut client_stream, client_sink) = client.split();
-        let mut client_sink =
-            client_sink.sink_map_err(|e| e!(RunError::ClientStreamWrite, e));
+        let mut client_sink = client_sink.sink_map_err(|e| e!(RunError::ClientStreamWrite, e));
 
         let mut state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),

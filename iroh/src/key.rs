@@ -65,7 +65,7 @@ impl SharedSecret {
 
     /// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
     pub fn open(&self, buffer: &mut dyn Buffer) -> Result<(), DecryptionError> {
-        n0_error::ensure!(buffer.len() >= NONCE_LEN, e!(DecryptionError::InvalidNonce));
+        n0_error::ensure_e!(buffer.len() >= NONCE_LEN, DecryptionError::InvalidNonce);
 
         let offset = buffer.len() - NONCE_LEN;
         let nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..]

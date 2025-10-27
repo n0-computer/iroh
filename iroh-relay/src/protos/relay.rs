@@ -222,9 +222,9 @@ impl Datagrams {
     fn from_bytes(mut bytes: Bytes, is_batch: bool) -> Result<Self, Error> {
         if is_batch {
             // 1 bytes ECN, 2 bytes segment size
-            n0_error::ensure!(bytes.len() >= 3, e!(Error::InvalidFrame));
+            n0_error::ensure_e!(bytes.len() >= 3, Error::InvalidFrame);
         } else {
-            n0_error::ensure!(bytes.len() >= 1, e!(Error::InvalidFrame));
+            n0_error::ensure_e!(bytes.len() >= 1, Error::InvalidFrame);
         }
 
         let ecn_byte = bytes.get_u8();
@@ -331,14 +331,14 @@ impl RelayToClientMsg {
     pub(crate) fn from_bytes(mut content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         let frame_type = FrameType::from_bytes(&mut content)?;
         let frame_len = content.len();
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             frame_len <= MAX_PACKET_SIZE,
-            e!(Error::FrameTooLarge { frame_len })
+            Error::FrameTooLarge { frame_len }
         );
 
         let res = match frame_type {
             FrameType::RelayToClientDatagram | FrameType::RelayToClientDatagramBatch => {
-                n0_error::ensure!(content.len() >= EndpointId::LENGTH, e!(Error::InvalidFrame));
+                n0_error::ensure_e!(content.len() >= EndpointId::LENGTH, Error::InvalidFrame);
 
                 let remote_endpoint_id = cache.key_from_slice(&content[..EndpointId::LENGTH])?;
                 let datagrams = Datagrams::from_bytes(
@@ -351,18 +351,18 @@ impl RelayToClientMsg {
                 }
             }
             FrameType::EndpointGone => {
-                n0_error::ensure!(content.len() == EndpointId::LENGTH, e!(Error::InvalidFrame));
+                n0_error::ensure_e!(content.len() == EndpointId::LENGTH, Error::InvalidFrame);
                 let endpoint_id = cache.key_from_slice(content.as_ref())?;
                 Self::EndpointGone(endpoint_id)
             }
             FrameType::Ping => {
-                n0_error::ensure!(content.len() == 8, e!(Error::InvalidFrame));
+                n0_error::ensure_e!(content.len() == 8, Error::InvalidFrame);
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Ping(data)
             }
             FrameType::Pong => {
-                n0_error::ensure!(content.len() == 8, e!(Error::InvalidFrame));
+                n0_error::ensure_e!(content.len() == 8, Error::InvalidFrame);
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)
@@ -372,7 +372,7 @@ impl RelayToClientMsg {
                 Self::Health { problem }
             }
             FrameType::Restarting => {
-                n0_error::ensure!(content.len() == 4 + 4, e!(Error::InvalidFrame));
+                n0_error::ensure_e!(content.len() == 4 + 4, Error::InvalidFrame);
                 let reconnect_in = u32::from_be_bytes(
                     content[..4]
                         .try_into()
@@ -459,9 +459,9 @@ impl ClientToRelayMsg {
     pub(crate) fn from_bytes(mut content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         let frame_type = FrameType::from_bytes(&mut content)?;
         let frame_len = content.len();
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             frame_len <= MAX_PACKET_SIZE,
-            e!(Error::FrameTooLarge { frame_len })
+            Error::FrameTooLarge { frame_len }
         );
 
         let res = match frame_type {
@@ -477,13 +477,13 @@ impl ClientToRelayMsg {
                 }
             }
             FrameType::Ping => {
-                n0_error::ensure!(content.len() == 8, e!(Error::InvalidFrame));
+                n0_error::ensure_e!(content.len() == 8, Error::InvalidFrame);
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Ping(data)
             }
             FrameType::Pong => {
-                n0_error::ensure!(content.len() == 8, e!(Error::InvalidFrame));
+                n0_error::ensure_e!(content.len() == 8, Error::InvalidFrame);
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)

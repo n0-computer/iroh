@@ -464,20 +464,20 @@ impl RelayService {
         }
 
         let upgrade_header = expect_header(&req, UPGRADE)?;
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             upgrade_header == HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
-            e!(RelayUpgradeReqError::InvalidHeader {
+            RelayUpgradeReqError::InvalidHeader {
                 header: UPGRADE,
                 details: format!("value must be {WEBSOCKET_UPGRADE_PROTOCOL}")
-            })
+            }
         );
 
         let key = expect_header(&req, SEC_WEBSOCKET_KEY)?.clone();
         let version = expect_header(&req, SEC_WEBSOCKET_VERSION)?.clone();
 
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             version.as_bytes() == SUPPORTED_WEBSOCKET_VERSION.as_bytes(),
-            e!(RelayUpgradeReqError::UnsupportedWebsocketVersion)
+            RelayUpgradeReqError::UnsupportedWebsocketVersion
         );
 
         let subprotocols = expect_header(&req, SEC_WEBSOCKET_PROTOCOL)?
@@ -492,12 +492,12 @@ impl RelayService {
         let supports_our_version = subprotocols
             .split_whitespace()
             .any(|p| p == RELAY_PROTOCOL_VERSION);
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             supports_our_version,
-            e!(RelayUpgradeReqError::UnsupportedRelayVersion {
+            RelayUpgradeReqError::UnsupportedRelayVersion {
                 we_support: RELAY_PROTOCOL_VERSION,
                 you_support: subprotocols.to_string()
-            })
+            }
         );
 
         let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();

@@ -676,9 +676,9 @@ impl Endpoint {
         );
 
         // Connecting to ourselves is not supported.
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             endpoint_addr.endpoint_id != self.id(),
-            e!(ConnectWithOptsError::SelfConnect)
+            ConnectWithOptsError::SelfConnect
         );
 
         if !endpoint_addr.is_empty() {

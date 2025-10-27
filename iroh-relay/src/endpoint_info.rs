@@ -105,8 +105,8 @@ impl EndpointIdExt for EndpointId {
         let bytes: &[u8; 32] = &bytes
             .try_into()
             .map_err(|_| e!(DecodingError::InvalidLength { len: s.len() }))?;
-        let endpoint_id = EndpointId::from_bytes(bytes)
-            .map_err(|err| e!(DecodingError::InvalidKey, err))?;
+        let endpoint_id =
+            EndpointId::from_bytes(bytes).map_err(|err| e!(DecodingError::InvalidKey, err))?;
         Ok(endpoint_id)
     }
 }
@@ -234,7 +234,7 @@ impl TryFrom<String> for UserData {
     type Error = MaxLengthExceededError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        n0_error::ensure!(value.len() <= Self::MAX_LENGTH, e!(MaxLengthExceededError));
+        n0_error::ensure_e!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededError);
         Ok(Self(value))
     }
 }
@@ -243,7 +243,7 @@ impl FromStr for UserData {
     type Err = MaxLengthExceededError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        n0_error::ensure!(s.len() <= Self::MAX_LENGTH, e!(MaxLengthExceededError));
+        n0_error::ensure_e!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededError);
         Ok(Self(s.to_string()))
     }
 }

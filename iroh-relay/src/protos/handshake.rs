@@ -301,12 +301,12 @@ impl KeyMaterialClientAuth {
         // there must be something wrong with the client's secret key or signature.
         let (message, suffix) = key_material.split_at(16);
         let suffix: [u8; 16] = suffix.try_into().expect("hardcoded length");
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             suffix == self.key_material_suffix,
-            e!(VerificationError::MismatchedSuffix {
+            VerificationError::MismatchedSuffix {
                 expected: self.key_material_suffix,
                 actual: suffix
-            })
+            }
         );
         // NOTE: We don't blake3-hash here as we do it in [`ServerChallenge::message_to_sign`],
         // because we already have a domain separation string and keyed hashing step in
@@ -511,12 +511,12 @@ async fn read_frame(
     let frame_type =
         FrameType::from_bytes(&mut payload).map_err(|err| e!(Error::FrameTypeError, err))?;
     trace!(?frame_type, "Reading frame");
-    n0_error::ensure!(
+    n0_error::ensure_e!(
         expected_types.contains(&frame_type),
-        e!(Error::UnexpectedFrameType {
+        Error::UnexpectedFrameType {
             frame_type,
             expected_types: expected_types.to_vec()
-        })
+        }
     );
 
     Ok((frame_type, payload))

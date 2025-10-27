@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use n0_error::{Error, add_meta, e};
+use n0_error::{Error, add_meta};
 use n0_future::{FutureExt, Sink, Stream, ready, time};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::instrument;
@@ -99,12 +99,12 @@ impl Sink<RelayToClientMsg> for RelayedStream {
 
     fn start_send(mut self: Pin<&mut Self>, item: RelayToClientMsg) -> Result<(), Self::Error> {
         let size = item.encoded_len();
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             size <= MAX_PACKET_SIZE,
-            e!(SendError::ExceedsMaxPacketSize { size })
+            SendError::ExceedsMaxPacketSize { size }
         );
         if let RelayToClientMsg::Datagrams { datagrams, .. } = &item {
-            n0_error::ensure!(!datagrams.contents.is_empty(), e!(SendError::EmptyPacket));
+            n0_error::ensure_e!(!datagrams.contents.is_empty(), SendError::EmptyPacket);
         }
 
         Pin::new(&mut self.inner)
@@ -306,13 +306,13 @@ impl Bucket {
     ) -> Result<Self, InvalidBucketConfig> {
         // milliseconds is the tokio timer resolution
         let refill = bytes_per_second.saturating_mul(refill_period.as_millis() as i64) / 1000;
-        n0_error::ensure!(
+        n0_error::ensure_e!(
             max > 0 && bytes_per_second > 0 && refill_period.as_millis() as u32 > 0 && refill > 0,
-            e!(InvalidBucketConfig {
+            InvalidBucketConfig {
                 max,
                 bytes_per_second,
                 refill_period
-            }),
+            }
         );
         Ok(Self {
             fill: max,
