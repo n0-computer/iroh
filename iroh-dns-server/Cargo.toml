@@ -1,6 +1,6 @@
 [package]
 name = "iroh-dns-server"
-version = "0.93.2"
+version = "0.94.0"
 edition = "2024"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
@@ -46,12 +46,12 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
     "ring",
 ] }
-tokio-rustls-acme = { version = "0.7.1", features = ["axum"] }
+tokio-rustls-acme = { version = "0.8", features = ["axum"] }
 tokio-stream = "0.1.14"
 tokio-util = "0.7"
 toml = "0.9.2"
 tower-http = { version = "0.6.1", features = ["cors", "trace"] }
-tower_governor = "0.8"
+tower_governor = { version = "0.8", default-features = false, features = ["axum"] }
 tracing = "0.1"
 tracing-subscriber = "0.3.18"
 ttl_cache = "0.5.1"

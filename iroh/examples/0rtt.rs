@@ -3,10 +3,9 @@ use std::{env, future::Future, str::FromStr, time::Instant};
 use clap::Parser;
 use data_encoding::HEXLOWER;
 use iroh::{
-    SecretKey,
+    EndpointId, SecretKey,
     endpoint::{Connecting, Connection},
 };
-use iroh_base::ticket::EndpointTicket;
 use n0_error::{Result, StackResultExt, StdResultExt, bail};
 use n0_future::{StreamExt, future};
 use n0_watcher::Watcher;
@@ -17,7 +16,7 @@ const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
 #[derive(Parser)]
 struct Args {
     /// The endpoint id to connect to. If not set, the program will start a server.
-    endpoint: Option<EndpointTicket>,
+    endpoint_id: Option<EndpointId>,
     /// Number of rounds to run.
     #[clap(long, default_value = "100")]
     rounds: u64,
@@ -92,7 +91,7 @@ async fn pingpong_0rtt(connecting: Connecting, i: u64) -> Result<Connection> {
 }
 
 async fn connect(args: Args) -> Result<()> {
-    let endpoint_addr = args.endpoint.unwrap().endpoint_addr().clone();
+    let remote_id = args.endpoint_id.context("Missing endpoint id")?;
     let endpoint = iroh::Endpoint::builder()
         .relay_mode(iroh::RelayMode::Disabled)
         .keylog(true)
@@ -102,7 +101,7 @@ async fn connect(args: Args) -> Result<()> {
     for i in 0..args.rounds {
         let t0 = Instant::now();
         let connecting = endpoint
-            .connect_with_opts(endpoint_addr.clone(), PINGPONG_ALPN, Default::default())
+            .connect_with_opts(remote_id, PINGPONG_ALPN, Default::default())
             .await?;
         let connection = if args.disable_0rtt {
             let connection = connecting.await.e()?;
@@ -144,13 +143,11 @@ async fn accept(_args: Args) -> Result<()> {
         let Some(addr) = addrs.next().await else {
             bail!("Address stream closed");
         };
-        if !addr.direct_addresses.is_empty() {
+        if !addr.ip_addrs().count() == 0 {
             break addr;
         }
     };
     println!("Listening on: {addr:?}");
-    println!("Endpoint ID: {:?}", addr.endpoint_id);
-    println!("Ticket: {}", EndpointTicket::from(addr));
 
     let accept = async move {
         while let Some(incoming) = endpoint.accept().await {
@@ -185,7 +182,7 @@ async fn accept(_args: Args) -> Result<()> {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
-    if args.endpoint.is_some() {
+    if args.endpoint_id.is_some() {
         connect(args).await?;
     } else {
         accept(args).await?;

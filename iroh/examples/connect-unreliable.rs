@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 
 use clap::Parser;
 use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey};
+use iroh_base::TransportAddr;
 use n0_error::{Result, StdResultExt};
 use tracing::info;
 
@@ -55,19 +56,25 @@ async fn main() -> Result<()> {
     endpoint.online().await;
 
     let endpoint_addr = endpoint.addr();
-    let me = endpoint_addr.endpoint_id;
+    let me = endpoint_addr.id;
     println!("endpoint id: {me}");
     println!("endpoint listening addresses:");
     endpoint_addr
-        .direct_addresses
-        .iter()
+        .ip_addrs()
         .for_each(|addr| println!("\t{addr}"));
     let relay_url = endpoint_addr
-        .relay_url
+        .relay_urls()
+        .next()
         .expect("Should have a relay URL, assuming a default endpoint setup.");
     println!("endpoint relay server url: {relay_url}\n");
     // Build a `EndpointAddr` from the endpoint_id, relay url, and UDP addresses.
-    let addr = EndpointAddr::from_parts(args.endpoint_id, Some(args.relay_url), args.addrs);
+    let addrs = args
+        .addrs
+        .into_iter()
+        .map(TransportAddr::Ip)
+        .chain(std::iter::once(TransportAddr::Relay(args.relay_url)));
+
+    let addr = EndpointAddr::from_parts(args.endpoint_id, addrs);
 
     // Attempt to connect, over the given ALPN.
     // Returns a QUIC connection.

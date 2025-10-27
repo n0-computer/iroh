@@ -79,10 +79,10 @@ async fn main() -> Result<()> {
         Command::Domain { domain } => resolver.lookup_endpoint_by_domain_name(&domain).await?,
     };
     println!("resolved endpoint {}", resolved.endpoint_id);
-    if let Some(url) = resolved.relay_url() {
+    for url in resolved.relay_urls() {
         println!("    relay={url}")
     }
-    for addr in resolved.direct_addresses() {
+    for addr in resolved.ip_addrs() {
         println!("    addr={addr}")
     }
     if let Some(user_data) = resolved.user_data() {

@@ -98,12 +98,12 @@ impl ProbePlan {
     pub(super) fn initial(relay_map: &RelayMap, protocols: &BTreeSet<Probe>) -> Self {
         let mut plan = Self::default();
 
-        for relay_endpoint in relay_map.endpoints::<Vec<_>>() {
+        for relay in relay_map.relays::<Vec<_>>() {
             let mut https_probes = ProbeSet::new(Probe::Https);
 
             for attempt in 0u32..3 {
                 let delay = HTTPS_OFFSET + DEFAULT_INITIAL_RETRANSMIT * attempt;
-                https_probes.push(delay, relay_endpoint.clone());
+                https_probes.push(delay, relay.clone());
             }
 
             plan.add_if_enabled(protocols, https_probes);
@@ -191,14 +191,14 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan() {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let relay_endpoint_1 = &relay_map.endpoints::<Vec<_>>()[0];
-        let relay_endpoint_2 = &relay_map.endpoints::<Vec<_>>()[1];
+        let relay_1 = &relay_map.relays::<Vec<_>>()[0];
+        let relay_2 = &relay_map.relays::<Vec<_>>()[1];
         let plan = ProbePlan::initial(&relay_map, &default_protocols());
 
         let expected_plan: ProbePlan = [
             probeset! {
                 proto: Probe::Https,
-                relay: relay_endpoint_1.clone(),
+                relay: relay_1.clone(),
                 delays: [
                     Duration::from_millis(200),
                     Duration::from_millis(300),
@@ -207,7 +207,7 @@ mod tests {
             },
             probeset! {
                 proto: Probe::Https,
-                relay: relay_endpoint_2.clone(),
+                relay: relay_2.clone(),
                 delays: [
                     Duration::from_millis(200),
                     Duration::from_millis(300),
@@ -231,21 +231,21 @@ mod tests {
     #[tokio::test]
     async fn test_initial_probeplan_some_protocols() {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let relay_endpoint_1 = &relay_map.endpoints::<Vec<_>>()[0];
-        let relay_endpoint_2 = &relay_map.endpoints::<Vec<_>>()[1];
+        let relay_1 = &relay_map.relays::<Vec<_>>()[0];
+        let relay_2 = &relay_map.relays::<Vec<_>>()[1];
         let plan = ProbePlan::initial(&relay_map, &BTreeSet::from([Probe::Https]));
 
         let expected_plan: ProbePlan = [
             probeset! {
                 proto: Probe::Https,
-                relay: relay_endpoint_1.clone(),
+                relay: relay_1.clone(),
                 delays: [Duration::from_millis(200),
                          Duration::from_millis(300),
                          Duration::from_millis(400)],
             },
             probeset! {
                 proto: Probe::Https,
-                relay: relay_endpoint_2.clone(),
+                relay: relay_2.clone(),
                 delays: [Duration::from_millis(200),
                          Duration::from_millis(300),
                          Duration::from_millis(400)],

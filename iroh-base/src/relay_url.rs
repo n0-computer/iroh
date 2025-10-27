@@ -41,10 +41,8 @@ impl From<Url> for RelayUrl {
 /// Can occur when parsing a string into a [`RelayUrl`].
 #[add_meta]
 #[derive(Error)]
-pub struct RelayUrlParseError {
-    #[error(from, std_err)]
-    source: url::ParseError,
-}
+#[display("Failed to parse relay URL")]
+pub struct RelayUrlParseError(#[error(std_err)] url::ParseError);
 
 /// Support for parsing strings directly.
 ///
@@ -54,7 +52,7 @@ impl FromStr for RelayUrl {
     type Err = RelayUrlParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let inner = Url::from_str(s)?;
+        let inner = Url::from_str(s).map_err(|err| RelayUrlParseError::new(err))?;
         Ok(RelayUrl::from(inner))
     }
 }

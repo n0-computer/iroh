@@ -567,7 +567,7 @@ async fn check_captive_portal(
 
     use crate::util::reqwest_client_builder;
 
-    let preferred_relay = preferred_relay.and_then(|url| dm.get_endpoint(&url).map(|_| url));
+    let preferred_relay = preferred_relay.and_then(|url| dm.get(&url).map(|_| url));
 
     let url = match preferred_relay {
         Some(url) => url,

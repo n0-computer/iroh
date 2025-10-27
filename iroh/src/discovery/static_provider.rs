@@ -37,7 +37,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// # Examples
 ///
 /// ```rust
-/// use iroh::{Endpoint, EndpointAddr, discovery::static_provider::StaticProvider};
+/// use iroh::{Endpoint, EndpointAddr, TransportAddr, discovery::static_provider::StaticProvider};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
@@ -50,13 +50,14 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 ///     .bind()
 ///     .await?;
 ///
-/// // Sometime later add a RelayUrl for a fake EndpointId.
-/// let endpoint_id = SecretKey::from_bytes(&[0u8; 32]).public(); // Do not use fake secret keys!
+/// // Sometime later add a RelayUrl for our endpoint.
+/// let id = SecretKey::generate(&mut rand::rng()).public();
 /// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
 /// discovery.add_endpoint_info(EndpointAddr {
-///     endpoint_id,
-///     relay_url: Some("https://example.com".parse()?),
-///     direct_addresses: Default::default(),
+///     id,
+///     addrs: [TransportAddr::Relay("https://example.com".parse()?)]
+///         .into_iter()
+///         .collect(),
 /// });
 ///
 /// # Ok(())
@@ -174,10 +175,7 @@ impl StaticProvider {
         match guard.entry(endpoint_id) {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                existing
-                    .data
-                    .add_direct_addresses(data.direct_addresses().iter().copied());
-                existing.data.set_relay_url(data.relay_url().cloned());
+                existing.data.add_addrs(data.addrs().cloned());
                 existing.data.set_user_data(data.user_data().cloned());
                 existing.last_updated = last_updated;
             }
@@ -234,7 +232,7 @@ impl Discovery for StaticProvider {
 
 #[cfg(test)]
 mod tests {
-    use iroh_base::{EndpointAddr, SecretKey};
+    use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use n0_error::{Result, StackResultExt};
 
     use super::*;
@@ -251,9 +249,10 @@ mod tests {
 
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr {
-            endpoint_id: key.public(),
-            relay_url: Some("https://example.com".parse()?),
-            direct_addresses: Default::default(),
+            id: key.public(),
+            addrs: [TransportAddr::Relay("https://example.com".parse()?)]
+                .into_iter()
+                .collect(),
         };
         let user_data = Some("foobar".parse().unwrap());
         let endpoint_info = EndpointInfo::from(addr.clone()).with_user_data(user_data.clone());
@@ -282,15 +281,19 @@ mod tests {
         let discovery = StaticProvider::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr {
-            endpoint_id: key.public(),
-            relay_url: Some("https://example.com".parse()?),
-            direct_addresses: Default::default(),
+            id: key.public(),
+            addrs: [TransportAddr::Relay("https://example.com".parse()?)]
+                .into_iter()
+                .collect(),
         };
         discovery.add_endpoint_info(addr);
         let mut stream = discovery.resolve(key.public()).unwrap();
         let item = stream.next().await.unwrap()?;
         assert_eq!(item.provenance(), "foo");
-        assert_eq!(item.relay_url(), Some(&("https://example.com".parse()?)));
+        assert_eq!(
+            item.relay_urls().next(),
+            Some(&("https://example.com".parse()?))
+        );
 
         Ok(())
     }

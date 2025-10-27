@@ -30,7 +30,7 @@ use std::{
 
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey};
+use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{Error, add_meta, e};
 use n0_future::{
@@ -323,7 +323,7 @@ impl MagicSock {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-    pub(crate) fn direct_addresses(&self) -> n0_watcher::Direct<BTreeSet<DirectAddr>> {
+    pub(crate) fn ip_addrs(&self) -> n0_watcher::Direct<BTreeSet<DirectAddr>> {
         self.direct_addrs.addrs.watch()
     }
 
@@ -342,10 +342,7 @@ impl MagicSock {
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
     pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
-        self.net_report
-            .watch()
-            .map(|(r, _)| r)
-            .expect("disconnected")
+        self.net_report.watch().map(|(r, _)| r)
     }
 
     /// Watch for changes to the home relay.
@@ -353,7 +350,7 @@ impl MagicSock {
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
     pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> + use<> {
-        let res = self.local_addrs_watch.clone().map(|addrs| {
+        self.local_addrs_watch.clone().map(|addrs| {
             addrs
                 .into_iter()
                 .filter_map(|addr| {
@@ -364,8 +361,7 @@ impl MagicSock {
                     }
                 })
                 .collect()
-        });
-        res.expect("disconnected")
+        })
     }
 
     /// Returns a [`n0_watcher::Direct`] that reports the [`ConnectionType`] we have to the
@@ -404,8 +400,8 @@ impl MagicSock {
     ) -> Result<(), AddEndpointAddrError> {
         let mut pruned: usize = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.direct_addresses.remove(&my_addr) {
-                warn!( endpoint_id=%addr.endpoint_id.fmt_short(), %my_addr, %source, "not adding our addr for endpoint");
+            if addr.addrs.remove(&TransportAddr::Ip(my_addr)) {
+                warn!( endpoint_id=%addr.id.fmt_short(), %my_addr, %source, "not adding our addr for endpoint");
                 pruned += 1;
             }
         }
@@ -429,7 +425,7 @@ impl MagicSock {
         let updated = self.direct_addrs.update(addrs);
         if updated {
             self.endpoint_map
-                .on_direct_addr_discovered(self.direct_addrs.sockaddrs());
+                .on_direct_addr_discovered(self.direct_addrs.sockaddrs().collect());
             self.publish_my_addr();
         }
     }
@@ -1151,19 +1147,26 @@ impl MagicSock {
     /// Called whenever our addresses or home relay endpoint changes.
     fn publish_my_addr(&self) {
         let relay_url = self.my_relay();
-        let direct_addrs = self.direct_addrs.sockaddrs();
+        let mut addrs: BTreeSet<_> = self
+            .direct_addrs
+            .sockaddrs()
+            .map(TransportAddr::Ip)
+            .collect();
 
         let user_data = self
             .discovery_user_data
             .read()
             .expect("lock poisened")
             .clone();
-        if relay_url.is_none() && direct_addrs.is_empty() && user_data.is_none() {
+        if relay_url.is_none() && addrs.is_empty() && user_data.is_none() {
             // do not bother publishing if we don't have any information
             return;
         }
+        if let Some(url) = relay_url {
+            addrs.insert(TransportAddr::Relay(url));
+        }
 
-        let data = EndpointData::new(relay_url, direct_addrs).with_user_data(user_data);
+        let data = EndpointData::new(addrs).with_user_data(user_data);
         self.discovery.publish(&data);
     }
 }
@@ -2347,8 +2350,8 @@ impl DiscoveredDirectAddrs {
         updated
     }
 
-    fn sockaddrs(&self) -> BTreeSet<SocketAddr> {
-        self.addrs.get().into_iter().map(|da| da.addr).collect()
+    fn sockaddrs(&self) -> impl Iterator<Item = SocketAddr> {
+        self.addrs.get().into_iter().map(|da| da.addr)
     }
 
     /// Whether the direct addr information is considered "fresh".
@@ -2536,7 +2539,7 @@ mod tests {
     use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
-    use iroh_base::{EndpointAddr, EndpointId, PublicKey};
+    use iroh_base::{EndpointAddr, EndpointId, PublicKey, TransportAddr};
     use n0_error::{Result, StdResultExt};
     use n0_future::{StreamExt, time};
     use n0_watcher::Watcher;
@@ -2666,9 +2669,8 @@ mod tests {
                 }
 
                 let addr = EndpointAddr {
-                    endpoint_id: me.public(),
-                    relay_url: None,
-                    direct_addresses: new_addrs.clone(),
+                    id: me.public(),
+                    addrs: new_addrs.iter().copied().map(TransportAddr::Ip).collect(),
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -2684,8 +2686,8 @@ mod tests {
                 let me = m.endpoint.id().fmt_short();
                 let mut stream = m.endpoint.watch_addr().stream();
                 while let Some(addr) = stream.next().await {
-                    info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, addr.direct_addresses);
-                    update_direct_addrs(&stacks, my_idx, addr.direct_addresses);
+                    info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, addr.ip_addrs().collect::<Vec<_>>());
+                    update_direct_addrs(&stacks, my_idx, addr.ip_addrs().copied().collect());
                 }
             });
         }
@@ -3071,12 +3073,12 @@ mod tests {
         let ms = Handle::new(default_options(&mut rng)).await.unwrap();
 
         // See if we can get endpoints.
-        let eps0 = ms.direct_addresses().get();
+        let eps0 = ms.ip_addrs().get();
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let eps1 = ms.direct_addresses().get();
+        let eps1 = ms.ip_addrs().get();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
@@ -3227,15 +3229,15 @@ mod tests {
         });
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
+        let addrs = msock_2
+            .ip_addrs()
+            .get()
+            .into_iter()
+            .map(|x| TransportAddr::Ip(x.addr))
+            .collect();
         let endpoint_addr_2 = EndpointAddr {
-            endpoint_id: endpoint_id_2,
-            relay_url: None,
-            direct_addresses: msock_2
-                .direct_addresses()
-                .get()
-                .into_iter()
-                .map(|x| x.addr)
-                .collect(),
+            id: endpoint_id_2,
+            addrs,
         };
         msock_1
             .add_endpoint_addr(
@@ -3308,9 +3310,8 @@ mod tests {
         // Add an empty entry in the EndpointMap of ep_1
         msock_1.endpoint_map.add_endpoint_addr(
             EndpointAddr {
-                endpoint_id: endpoint_id_2,
-                relay_url: None,
-                direct_addresses: Default::default(),
+                id: endpoint_id_2,
+                addrs: Default::default(),
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -3344,16 +3345,16 @@ mod tests {
         info!("first connect timed out as expected");
 
         // Provide correct addressing information
+        let addrs = msock_2
+            .ip_addrs()
+            .get()
+            .into_iter()
+            .map(|x| TransportAddr::Ip(x.addr))
+            .collect();
         msock_1.endpoint_map.add_endpoint_addr(
             EndpointAddr {
-                endpoint_id: endpoint_id_2,
-                relay_url: None,
-                direct_addresses: msock_2
-                    .direct_addresses()
-                    .get()
-                    .into_iter()
-                    .map(|x| x.addr)
-                    .collect(),
+                id: endpoint_id_2,
+                addrs,
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -3395,11 +3396,8 @@ mod tests {
         assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 0);
 
         // Empty
-        let empty_addr = EndpointAddr {
-            endpoint_id: SecretKey::generate(&mut rng).public(),
-            relay_url: None,
-            direct_addresses: Default::default(),
-        };
+        let empty_addr = EndpointAddr::new(SecretKey::generate(&mut rng).public());
+
         let err = stack
             .endpoint
             .magic_sock()
@@ -3413,9 +3411,10 @@ mod tests {
 
         // relay url only
         let addr = EndpointAddr {
-            endpoint_id: SecretKey::generate(&mut rng).public(),
-            relay_url: Some("http://my-relay.com".parse().unwrap()),
-            direct_addresses: Default::default(),
+            id: SecretKey::generate(&mut rng).public(),
+            addrs: [TransportAddr::Relay("http://my-relay.com".parse().unwrap())]
+                .into_iter()
+                .collect(),
         };
         stack
             .endpoint
@@ -3425,9 +3424,10 @@ mod tests {
 
         // addrs only
         let addr = EndpointAddr {
-            endpoint_id: SecretKey::generate(&mut rng).public(),
-            relay_url: None,
-            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+            id: SecretKey::generate(&mut rng).public(),
+            addrs: [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())]
+                .into_iter()
+                .collect(),
         };
         stack
             .endpoint
@@ -3437,9 +3437,13 @@ mod tests {
 
         // both
         let addr = EndpointAddr {
-            endpoint_id: SecretKey::generate(&mut rng).public(),
-            relay_url: Some("http://my-relay.com".parse().unwrap()),
-            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+            id: SecretKey::generate(&mut rng).public(),
+            addrs: [
+                TransportAddr::Relay("http://my-relay.com".parse().unwrap()),
+                TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
+            ]
+            .into_iter()
+            .collect(),
         };
         stack
             .endpoint

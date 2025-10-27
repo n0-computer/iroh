@@ -367,7 +367,7 @@ impl EndpointMapInner {
     }
 
     /// Add the contact information for an endpoint.
-    #[instrument(skip_all, fields(endpoint = %endpoint_addr.endpoint_id.fmt_short()))]
+    #[instrument(skip_all, fields(endpoint = %endpoint_addr.id.fmt_short()))]
     fn add_endpoint_addr(
         &mut self,
         endpoint_addr: EndpointAddr,
@@ -376,8 +376,8 @@ impl EndpointMapInner {
         metrics: &Metrics,
     ) {
         let source0 = source.clone();
-        let endpoint_id = endpoint_addr.endpoint_id;
-        let relay_url = endpoint_addr.relay_url.clone();
+        let endpoint_id = endpoint_addr.id;
+        let relay_url = endpoint_addr.relay_urls().next().cloned();
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
         let endpoint_state =
@@ -390,14 +390,14 @@ impl EndpointMapInner {
                 path_selection,
             });
         endpoint_state.update_from_endpoint_addr(
-            endpoint_addr.relay_url.as_ref(),
-            &endpoint_addr.direct_addresses,
+            endpoint_addr.relay_urls().next(),
+            endpoint_addr.ip_addrs().copied(),
             source0,
             have_ipv6,
             metrics,
         );
         let id = endpoint_state.id();
-        for addr in endpoint_addr.direct_addresses() {
+        for addr in endpoint_addr.ip_addrs() {
             self.set_endpoint_state_for_ip_port(*addr, id);
         }
     }
@@ -419,7 +419,7 @@ impl EndpointMapInner {
             if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
                 let endpoint = entry.get_mut();
                 endpoint.remove_direct_addr(&ipp, now, why);
-                if endpoint.direct_addresses().count() == 0 {
+                if endpoint.ip_addrs().count() == 0 {
                     let endpoint_id = endpoint.public_key();
                     let mapped_addr = endpoint.quic_mapped_addr();
                     self.by_endpoint_key.remove(endpoint_id);
@@ -707,7 +707,7 @@ impl EndpointMapInner {
                 continue;
             };
 
-            for ip_port in ep.direct_addresses() {
+            for ip_port in ep.ip_addrs() {
                 self.by_ip_port.remove(&ip_port);
             }
 
@@ -757,7 +757,7 @@ impl IpPort {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use iroh_base::SecretKey;
+    use iroh_base::{SecretKey, TransportAddr};
     use rand::SeedableRng;
     use tracing_test::traced_test;
 
@@ -792,15 +792,13 @@ mod tests {
         let relay_x: RelayUrl = "https://my-relay-1.com".parse().unwrap();
         let relay_y: RelayUrl = "https://my-relay-2.com".parse().unwrap();
 
-        let direct_addresses_a = [addr(4000), addr(4001)];
-        let direct_addresses_c = [addr(5000)];
+        let ip_addresses_a = [TransportAddr::Ip(addr(4000)), TransportAddr::Ip(addr(4001))];
+        let ip_addresses_c = [TransportAddr::Ip(addr(5000))];
 
-        let endpoint_addr_a = EndpointAddr::new(endpoint_a)
-            .with_relay_url(relay_x)
-            .with_direct_addresses(direct_addresses_a);
+        let addrs_a = std::iter::once(TransportAddr::Relay(relay_x)).chain(ip_addresses_a);
+        let endpoint_addr_a = EndpointAddr::new(endpoint_a).with_addrs(addrs_a);
         let endpoint_addr_b = EndpointAddr::new(endpoint_b).with_relay_url(relay_y);
-        let endpoint_addr_c =
-            EndpointAddr::new(endpoint_c).with_direct_addresses(direct_addresses_c);
+        let endpoint_addr_c = EndpointAddr::new(endpoint_c).with_addrs(ip_addresses_c);
         let endpoint_addr_d = EndpointAddr::new(endpoint_d);
 
         endpoint_map.add_test_addr(endpoint_addr_a);
@@ -878,7 +876,7 @@ mod tests {
         info!("Adding active addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
-            let endpoint_addr = EndpointAddr::new(public_key).with_direct_addresses([addr]);
+            let endpoint_addr = EndpointAddr::new(public_key).with_ip_addr(addr);
             // add address
             endpoint_map.add_test_addr(endpoint_addr);
             // make it active
@@ -888,7 +886,7 @@ mod tests {
         info!("Adding offline/inactive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
-            let endpoint_addr = EndpointAddr::new(public_key).with_direct_addresses([addr]);
+            let endpoint_addr = EndpointAddr::new(public_key).with_ip_addr(addr);
             endpoint_map.add_test_addr(endpoint_addr);
         }
 
@@ -910,14 +908,14 @@ mod tests {
         // Half the offline addresses should have been pruned.  All the active and alive
         // addresses should have been kept.
         assert_eq!(
-            endpoint.direct_addresses().count(),
+            endpoint.ip_addrs().count(),
             MAX_INACTIVE_DIRECT_ADDRESSES * 3
         );
 
         // We should have both offline and alive addresses which are not active.
         assert_eq!(
             endpoint
-                .direct_address_states()
+                .ip_addr_states()
                 .filter(|(_addr, state)| !state.is_active())
                 .count(),
             MAX_INACTIVE_DIRECT_ADDRESSES * 2
@@ -932,8 +930,7 @@ mod tests {
         // add one active endpoint and more than MAX_INACTIVE_ENDPOINTS inactive endpoints
         let active_endpoint = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        endpoint_map
-            .add_test_addr(EndpointAddr::new(active_endpoint).with_direct_addresses([addr]));
+        endpoint_map.add_test_addr(EndpointAddr::new(active_endpoint).with_ip_addr(addr));
         endpoint_map
             .inner
             .lock()
