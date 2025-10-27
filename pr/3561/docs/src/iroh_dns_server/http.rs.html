@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a>    response::IntoResponse,
 <a href=#15 id=15 data-nosnippet>15</a>    routing::get,
 <a href=#16 id=16 data-nosnippet>16</a>};
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, bail};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, anyerr, bail};
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>tokio::{net::TcpListener, task::JoinSet};
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>tower_http::{
@@ -172,11 +172,11 @@
 <a href=#172 id=172 data-nosnippet>172</a>                <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.is_cancelled() =&gt; {}
 <a href=#173 id=173 data-nosnippet>173</a>                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
 <a href=#174 id=174 data-nosnippet>174</a>                    <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"task failed"</span>);
-<a href=#175 id=175 data-nosnippet>175</a>                    final_res = <span class="prelude-val">Err</span>(err).std_context(<span class="string">"task"</span>);
+<a href=#175 id=175 data-nosnippet>175</a>                    final_res = <span class="prelude-val">Err</span>(<span class="macro">anyerr!</span>(err, <span class="string">"task"</span>));
 <a href=#176 id=176 data-nosnippet>176</a>                }
 <a href=#177 id=177 data-nosnippet>177</a>                <span class="prelude-val">Err</span>(err) =&gt; {
 <a href=#178 id=178 data-nosnippet>178</a>                    <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"task panicked"</span>);
-<a href=#179 id=179 data-nosnippet>179</a>                    final_res = <span class="prelude-val">Err</span>(err).std_context(<span class="string">"join"</span>);
+<a href=#179 id=179 data-nosnippet>179</a>                    final_res = <span class="prelude-val">Err</span>(<span class="macro">anyerr!</span>(err, <span class="string">"join"</span>));
 <a href=#180 id=180 data-nosnippet>180</a>                }
 <a href=#181 id=181 data-nosnippet>181</a>            }
 <a href=#182 id=182 data-nosnippet>182</a>        }

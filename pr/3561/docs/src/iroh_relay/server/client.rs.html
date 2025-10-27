@@ -327,60 +327,60 @@
 <a href=#327 id=327 data-nosnippet>327</a>                maybe_frame = <span class="self">self</span>.stream.next() =&gt; {
 <a href=#328 id=328 data-nosnippet>328</a>                    <span class="self">self
 <a href=#329 id=329 data-nosnippet>329</a>                        </span>.handle_frame(maybe_frame)
-<a href=#330 id=330 data-nosnippet>330</a>                        .<span class="kw">await
-<a href=#331 id=331 data-nosnippet>331</a>                        </span>.map_err(|source| <span class="macro">e!</span>(RunError::HandleFrame { source }))<span class="question-mark">?</span>;
-<a href=#332 id=332 data-nosnippet>332</a>                    <span class="comment">// reset the ping interval, we just received a message
-<a href=#333 id=333 data-nosnippet>333</a>                    </span>ping_interval.reset();
-<a href=#334 id=334 data-nosnippet>334</a>                }
-<a href=#335 id=335 data-nosnippet>335</a>                <span class="comment">// First priority, disco packets
-<a href=#336 id=336 data-nosnippet>336</a>                </span>packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
-<a href=#337 id=337 data-nosnippet>337</a>                <span class="kw">let </span>packet = packet.ok_or_else(|| <span class="macro">e!</span>(RunError::DiscoSendQueuePacketDrop))<span class="question-mark">?</span>;
-<a href=#338 id=338 data-nosnippet>338</a>                    <span class="self">self</span>.send_disco_packet(packet).<span class="kw">await
+<a href=#330 id=330 data-nosnippet>330</a>                        .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#331 id=331 data-nosnippet>331</a>                    <span class="comment">// reset the ping interval, we just received a message
+<a href=#332 id=332 data-nosnippet>332</a>                    </span>ping_interval.reset();
+<a href=#333 id=333 data-nosnippet>333</a>                }
+<a href=#334 id=334 data-nosnippet>334</a>                <span class="comment">// First priority, disco packets
+<a href=#335 id=335 data-nosnippet>335</a>                </span>packet = <span class="self">self</span>.disco_send_queue.recv() =&gt; {
+<a href=#336 id=336 data-nosnippet>336</a>                    <span class="kw">let </span>packet = packet.ok_or_else(|| <span class="macro">e!</span>(RunError::DiscoSendQueuePacketDrop))<span class="question-mark">?</span>;
+<a href=#337 id=337 data-nosnippet>337</a>                    <span class="self">self</span>.send_disco_packet(packet)
+<a href=#338 id=338 data-nosnippet>338</a>                        .<span class="kw">await
 <a href=#339 id=339 data-nosnippet>339</a>                        </span>.map_err(|err| <span class="macro">e!</span>(RunError::DiscoPacketSend, err))<span class="question-mark">?</span>;
 <a href=#340 id=340 data-nosnippet>340</a>                }
 <a href=#341 id=341 data-nosnippet>341</a>                <span class="comment">// Second priority, sending regular packets
 <a href=#342 id=342 data-nosnippet>342</a>                </span>packet = <span class="self">self</span>.send_queue.recv() =&gt; {
-<a href=#343 id=343 data-nosnippet>343</a>                <span class="kw">let </span>packet = packet.ok_or_else(|| <span class="macro">e!</span>(RunError::SendQueuePacketDrop))<span class="question-mark">?</span>;
-<a href=#344 id=344 data-nosnippet>344</a>                    <span class="self">self</span>.send_packet(packet).<span class="kw">await
-<a href=#345 id=345 data-nosnippet>345</a>                        </span>.map_err(|err| <span class="macro">e!</span>(RunError::PacketSend, err))<span class="question-mark">?</span>;
-<a href=#346 id=346 data-nosnippet>346</a>                }
-<a href=#347 id=347 data-nosnippet>347</a>                <span class="comment">// Last priority, sending left endpoints
-<a href=#348 id=348 data-nosnippet>348</a>                </span>endpoint_id = <span class="self">self</span>.endpoint_gone.recv() =&gt; {
-<a href=#349 id=349 data-nosnippet>349</a>                <span class="kw">let </span>endpoint_id = endpoint_id.ok_or_else(|| <span class="macro">e!</span>(RunError::EndpointGoneDrop))<span class="question-mark">?</span>;
-<a href=#350 id=350 data-nosnippet>350</a>                    <span class="macro">trace!</span>(<span class="string">"endpoint_id gone: {:?}"</span>, endpoint_id);
-<a href=#351 id=351 data-nosnippet>351</a>                    <span class="self">self</span>.write_frame(RelayToClientMsg::EndpointGone(endpoint_id)).<span class="kw">await
-<a href=#352 id=352 data-nosnippet>352</a>                        </span>.map_err(|err| <span class="macro">e!</span>(RunError::EndpointGoneWriteFrame, err))<span class="question-mark">?</span>;
-<a href=#353 id=353 data-nosnippet>353</a>                }
-<a href=#354 id=354 data-nosnippet>354</a>                <span class="kw">_ </span>= <span class="self">self</span>.ping_tracker.timeout() =&gt; {
-<a href=#355 id=355 data-nosnippet>355</a>                    <span class="macro">trace!</span>(<span class="string">"pong timed out"</span>);
-<a href=#356 id=356 data-nosnippet>356</a>                    <span class="kw">break</span>;
-<a href=#357 id=357 data-nosnippet>357</a>                }
-<a href=#358 id=358 data-nosnippet>358</a>                <span class="kw">_ </span>= ping_interval.tick() =&gt; {
-<a href=#359 id=359 data-nosnippet>359</a>                    <span class="macro">trace!</span>(<span class="string">"keep alive ping"</span>);
-<a href=#360 id=360 data-nosnippet>360</a>                    <span class="comment">// new interval
-<a href=#361 id=361 data-nosnippet>361</a>                    </span>ping_interval.reset_after(next_interval());
-<a href=#362 id=362 data-nosnippet>362</a>                    <span class="kw">let </span>data = <span class="self">self</span>.ping_tracker.new_ping();
-<a href=#363 id=363 data-nosnippet>363</a>                    <span class="self">self</span>.write_frame(RelayToClientMsg::Ping(data))
-<a href=#364 id=364 data-nosnippet>364</a>                        .<span class="kw">await
-<a href=#365 id=365 data-nosnippet>365</a>                        </span>.map_err(|err| <span class="macro">e!</span>(RunError::KeepAliveWriteFrame, err))<span class="question-mark">?</span>;
-<a href=#366 id=366 data-nosnippet>366</a>                }
-<a href=#367 id=367 data-nosnippet>367</a>            }
-<a href=#368 id=368 data-nosnippet>368</a>
-<a href=#369 id=369 data-nosnippet>369</a>            <span class="self">self</span>.stream
-<a href=#370 id=370 data-nosnippet>370</a>                .flush()
-<a href=#371 id=371 data-nosnippet>371</a>                .<span class="kw">await
-<a href=#372 id=372 data-nosnippet>372</a>                </span>.map_err(|<span class="kw">_</span>| <span class="macro">e!</span>(RunError::TickFlush))<span class="question-mark">?</span>;
-<a href=#373 id=373 data-nosnippet>373</a>        }
-<a href=#374 id=374 data-nosnippet>374</a>        <span class="prelude-val">Ok</span>(())
-<a href=#375 id=375 data-nosnippet>375</a>    }
-<a href=#376 id=376 data-nosnippet>376</a>
-<a href=#377 id=377 data-nosnippet>377</a>    <span class="doccomment">/// Writes the given frame to the connection.
-<a href=#378 id=378 data-nosnippet>378</a>    ///
-<a href=#379 id=379 data-nosnippet>379</a>    /// Errors if the send does not happen within the `timeout` duration
-<a href=#380 id=380 data-nosnippet>380</a>    </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: RelayToClientMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), WriteFrameError&gt; {
-<a href=#381 id=381 data-nosnippet>381</a>        tokio::time::timeout(<span class="self">self</span>.timeout, <span class="self">self</span>.stream.send(frame))
-<a href=#382 id=382 data-nosnippet>382</a>            .<span class="kw">await</span><span class="question-mark">?
-<a href=#383 id=383 data-nosnippet>383</a>            </span>.map_err(|err| <span class="macro">e!</span>(WriteFrameError::Stream, err))<span class="question-mark">?</span>;
+<a href=#343 id=343 data-nosnippet>343</a>                    <span class="kw">let </span>packet = packet.ok_or_else(|| <span class="macro">e!</span>(RunError::SendQueuePacketDrop))<span class="question-mark">?</span>;
+<a href=#344 id=344 data-nosnippet>344</a>                    <span class="self">self</span>.send_packet(packet)
+<a href=#345 id=345 data-nosnippet>345</a>                        .<span class="kw">await
+<a href=#346 id=346 data-nosnippet>346</a>                        </span>.map_err(|err| <span class="macro">e!</span>(RunError::PacketSend, err))<span class="question-mark">?</span>;
+<a href=#347 id=347 data-nosnippet>347</a>                }
+<a href=#348 id=348 data-nosnippet>348</a>                <span class="comment">// Last priority, sending left endpoints
+<a href=#349 id=349 data-nosnippet>349</a>                </span>endpoint_id = <span class="self">self</span>.endpoint_gone.recv() =&gt; {
+<a href=#350 id=350 data-nosnippet>350</a>                    <span class="kw">let </span>endpoint_id = endpoint_id.ok_or_else(|| <span class="macro">e!</span>(RunError::EndpointGoneDrop))<span class="question-mark">?</span>;
+<a href=#351 id=351 data-nosnippet>351</a>                    <span class="macro">trace!</span>(<span class="string">"endpoint_id gone: {:?}"</span>, endpoint_id);
+<a href=#352 id=352 data-nosnippet>352</a>                    <span class="self">self</span>.write_frame(RelayToClientMsg::EndpointGone(endpoint_id))
+<a href=#353 id=353 data-nosnippet>353</a>                        .<span class="kw">await
+<a href=#354 id=354 data-nosnippet>354</a>                        </span>.map_err(|err| <span class="macro">e!</span>(RunError::EndpointGoneWriteFrame, err))<span class="question-mark">?</span>;
+<a href=#355 id=355 data-nosnippet>355</a>                }
+<a href=#356 id=356 data-nosnippet>356</a>                <span class="kw">_ </span>= <span class="self">self</span>.ping_tracker.timeout() =&gt; {
+<a href=#357 id=357 data-nosnippet>357</a>                    <span class="macro">trace!</span>(<span class="string">"pong timed out"</span>);
+<a href=#358 id=358 data-nosnippet>358</a>                    <span class="kw">break</span>;
+<a href=#359 id=359 data-nosnippet>359</a>                }
+<a href=#360 id=360 data-nosnippet>360</a>                <span class="kw">_ </span>= ping_interval.tick() =&gt; {
+<a href=#361 id=361 data-nosnippet>361</a>                    <span class="macro">trace!</span>(<span class="string">"keep alive ping"</span>);
+<a href=#362 id=362 data-nosnippet>362</a>                    <span class="comment">// new interval
+<a href=#363 id=363 data-nosnippet>363</a>                    </span>ping_interval.reset_after(next_interval());
+<a href=#364 id=364 data-nosnippet>364</a>                    <span class="kw">let </span>data = <span class="self">self</span>.ping_tracker.new_ping();
+<a href=#365 id=365 data-nosnippet>365</a>                    <span class="self">self</span>.write_frame(RelayToClientMsg::Ping(data))
+<a href=#366 id=366 data-nosnippet>366</a>                        .<span class="kw">await
+<a href=#367 id=367 data-nosnippet>367</a>                        </span>.map_err(|err| <span class="macro">e!</span>(RunError::KeepAliveWriteFrame, err))<span class="question-mark">?</span>;
+<a href=#368 id=368 data-nosnippet>368</a>                }
+<a href=#369 id=369 data-nosnippet>369</a>            }
+<a href=#370 id=370 data-nosnippet>370</a>
+<a href=#371 id=371 data-nosnippet>371</a>            <span class="self">self</span>.stream
+<a href=#372 id=372 data-nosnippet>372</a>                .flush()
+<a href=#373 id=373 data-nosnippet>373</a>                .<span class="kw">await
+<a href=#374 id=374 data-nosnippet>374</a>                </span>.map_err(|<span class="kw">_</span>| <span class="macro">e!</span>(RunError::TickFlush))<span class="question-mark">?</span>;
+<a href=#375 id=375 data-nosnippet>375</a>        }
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="prelude-val">Ok</span>(())
+<a href=#377 id=377 data-nosnippet>377</a>    }
+<a href=#378 id=378 data-nosnippet>378</a>
+<a href=#379 id=379 data-nosnippet>379</a>    <span class="doccomment">/// Writes the given frame to the connection.
+<a href=#380 id=380 data-nosnippet>380</a>    ///
+<a href=#381 id=381 data-nosnippet>381</a>    /// Errors if the send does not happen within the `timeout` duration
+<a href=#382 id=382 data-nosnippet>382</a>    </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: RelayToClientMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), WriteFrameError&gt; {
+<a href=#383 id=383 data-nosnippet>383</a>        tokio::time::timeout(<span class="self">self</span>.timeout, <span class="self">self</span>.stream.send(frame)).<span class="kw">await</span><span class="question-mark">??</span>;
 <a href=#384 id=384 data-nosnippet>384</a>        <span class="prelude-val">Ok</span>(())
 <a href=#385 id=385 data-nosnippet>385</a>    }
 <a href=#386 id=386 data-nosnippet>386</a>

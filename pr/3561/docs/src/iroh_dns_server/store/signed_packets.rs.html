@@ -391,7 +391,7 @@
 <a href=#391 id=391 data-nosnippet>391</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(cause) = evict_task_inner(send, options).<span class="kw">await </span>{
 <a href=#392 id=392 data-nosnippet>392</a>                <span class="macro">error!</span>(<span class="string">"evict task failed: {:?}"</span>, cause);
 <a href=#393 id=393 data-nosnippet>393</a>            }
-<a href=#394 id=394 data-nosnippet>394</a>            <span class="comment">// when we are done for bail reason we want to shut down the actor
+<a href=#394 id=394 data-nosnippet>394</a>            <span class="comment">// when we are done for whatever reason we want to shut down the actor
 <a href=#395 id=395 data-nosnippet>395</a>            </span>cancel.cancel();
 <a href=#396 id=396 data-nosnippet>396</a>        })
 <a href=#397 id=397 data-nosnippet>397</a>        .<span class="kw">await</span>;
