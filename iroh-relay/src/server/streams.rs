@@ -99,12 +99,12 @@ impl Sink<RelayToClientMsg> for RelayedStream {
 
     fn start_send(mut self: Pin<&mut Self>, item: RelayToClientMsg) -> Result<(), Self::Error> {
         let size = item.encoded_len();
-        n0_error::ensure_e!(
+        n0_error::ensure!(
             size <= MAX_PACKET_SIZE,
             SendError::ExceedsMaxPacketSize { size }
         );
         if let RelayToClientMsg::Datagrams { datagrams, .. } = &item {
-            n0_error::ensure_e!(!datagrams.contents.is_empty(), SendError::EmptyPacket);
+            n0_error::ensure!(!datagrams.contents.is_empty(), SendError::EmptyPacket);
         }
 
         Pin::new(&mut self.inner)
@@ -306,7 +306,7 @@ impl Bucket {
     ) -> Result<Self, InvalidBucketConfig> {
         // milliseconds is the tokio timer resolution
         let refill = bytes_per_second.saturating_mul(refill_period.as_millis() as i64) / 1000;
-        n0_error::ensure_e!(
+        n0_error::ensure!(
             max > 0 && bytes_per_second > 0 && refill_period.as_millis() as u32 > 0 && refill > 0,
             InvalidBucketConfig {
                 max,

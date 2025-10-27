@@ -23,7 +23,7 @@ use std::{
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{Error, add_meta, e, ensure_e};
+use n0_error::{Error, add_meta, e, ensure};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use pin_project::pin_project;
@@ -677,7 +677,7 @@ impl Endpoint {
         );
 
         // Connecting to ourselves is not supported.
-        ensure_e!(
+        ensure!(
             endpoint_addr.id != self.id(),
             ConnectWithOptsError::SelfConnect
         );
@@ -782,7 +782,7 @@ impl Endpoint {
         source: Source,
     ) -> Result<(), AddEndpointAddrError> {
         // Connecting to ourselves is not supported.
-        ensure_e!(
+        ensure!(
             endpoint_addr.id != self.id(),
             AddEndpointAddrError::OwnAddress
         );

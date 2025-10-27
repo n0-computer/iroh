@@ -460,7 +460,7 @@ impl RelayService {
         }
 
         let upgrade_header = expect_header(&req, UPGRADE)?;
-        n0_error::ensure_e!(
+        n0_error::ensure!(
             upgrade_header == HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
             RelayUpgradeReqError::InvalidHeader {
                 header: UPGRADE,
@@ -471,7 +471,7 @@ impl RelayService {
         let key = expect_header(&req, SEC_WEBSOCKET_KEY)?.clone();
         let version = expect_header(&req, SEC_WEBSOCKET_VERSION)?.clone();
 
-        n0_error::ensure_e!(
+        n0_error::ensure!(
             version.as_bytes() == SUPPORTED_WEBSOCKET_VERSION.as_bytes(),
             RelayUpgradeReqError::UnsupportedWebsocketVersion
         );
@@ -488,7 +488,7 @@ impl RelayService {
         let supports_our_version = subprotocols
             .split_whitespace()
             .any(|p| p == RELAY_PROTOCOL_VERSION);
-        n0_error::ensure_e!(
+        n0_error::ensure!(
             supports_our_version,
             RelayUpgradeReqError::UnsupportedRelayVersion {
                 we_support: RELAY_PROTOCOL_VERSION,

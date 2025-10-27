@@ -113,7 +113,7 @@
 use std::sync::{Arc, RwLock};
 
 use iroh_base::{EndpointAddr, EndpointId};
-use n0_error::{AnyError, Error, add_meta, e, ensure_e};
+use n0_error::{AnyError, Error, add_meta, e, ensure};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -518,7 +518,7 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Starts a discovery task.
     pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
-        ensure_e!(
+        ensure!(
             !ep.discovery().is_empty(),
             DiscoveryError::NoServiceConfigured
         );
@@ -552,7 +552,7 @@ impl DiscoveryTask {
         if !ep.needs_discovery(endpoint_id, MAX_AGE) {
             return Ok(None);
         }
-        ensure_e!(
+        ensure!(
             !ep.discovery().is_empty(),
             DiscoveryError::NoServiceConfigured
         );
@@ -593,7 +593,7 @@ impl DiscoveryTask {
         ep: &Endpoint,
         endpoint_id: EndpointId,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
-        ensure_e!(
+        ensure!(
             !ep.discovery().is_empty(),
             DiscoveryError::NoServiceConfigured
         );

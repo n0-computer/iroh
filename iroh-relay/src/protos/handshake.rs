@@ -304,7 +304,7 @@ impl KeyMaterialClientAuth {
         // there must be something wrong with the client's secret key or signature.
         let (message, suffix) = key_material.split_at(16);
         let suffix: [u8; 16] = suffix.try_into().expect("hardcoded length");
-        n0_error::ensure_e!(
+        n0_error::ensure!(
             suffix == self.key_material_suffix,
             VerificationError::MismatchedSuffix {
                 expected: self.key_material_suffix,
@@ -510,7 +510,7 @@ async fn read_frame(
 
     let frame_type = FrameType::from_bytes(&mut payload)?;
     trace!(?frame_type, "Reading frame");
-    n0_error::ensure_e!(
+    n0_error::ensure!(
         expected_types.contains(&frame_type),
         Error::UnexpectedFrameType {
             frame_type,

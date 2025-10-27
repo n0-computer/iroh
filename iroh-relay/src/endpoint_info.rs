@@ -254,7 +254,7 @@ impl TryFrom<String> for UserData {
     type Error = MaxLengthExceededError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        n0_error::ensure_e!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededError);
+        n0_error::ensure!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededError);
         Ok(Self(value))
     }
 }
@@ -263,7 +263,7 @@ impl FromStr for UserData {
     type Err = MaxLengthExceededError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        n0_error::ensure_e!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededError);
+        n0_error::ensure!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededError);
         Ok(Self(s.to_string()))
     }
 }
