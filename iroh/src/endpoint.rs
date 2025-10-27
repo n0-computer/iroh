@@ -489,11 +489,11 @@ pub struct Endpoint {
 pub enum ConnectWithOptsError {
     #[error(transparent)]
     AddEndpointAddr { source: AddEndpointAddrError },
-    #[display("Connecting to ourself is not supported")]
+    #[error("Connecting to ourself is not supported")]
     SelfConnect,
-    #[display("No addressing information available")]
+    #[error("No addressing information available")]
     NoAddress { source: GetMappingAddressError },
-    #[display("Unable to connect to remote")]
+    #[error("Unable to connect to remote")]
     Quinn {
         #[error(std_err)]
         source: quinn_proto::ConnectError,
@@ -536,11 +536,11 @@ pub enum BindError {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum GetMappingAddressError {
-    #[display("Discovery service required due to missing addressing information")]
+    #[error("Discovery service required due to missing addressing information")]
     DiscoveryStart { source: DiscoveryError },
-    #[display("Discovery service failed")]
+    #[error("Discovery service failed")]
     Discover { source: DiscoveryError },
-    #[display("No addressing information found")]
+    #[error("No addressing information found")]
     NoAddress,
 }
 
@@ -1524,9 +1524,9 @@ pub enum AlpnError {
         #[error(std_err)]
         source: ConnectionError,
     },
-    #[display("No ALPN available")]
+    #[error("No ALPN available")]
     Unavailable,
-    #[display("Unknown handshake type")]
+    #[error("Unknown handshake type")]
     UnknownHandshake,
 }
 
@@ -1684,7 +1684,7 @@ pub struct Connection {
 #[allow(missing_docs)]
 #[add_meta]
 #[derive(Error)]
-#[display("Protocol error: no remote id available")]
+#[error("Protocol error: no remote id available")]
 pub struct RemoteEndpointIdError;
 
 impl Connection {

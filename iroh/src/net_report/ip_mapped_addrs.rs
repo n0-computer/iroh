@@ -12,7 +12,7 @@ use n0_error::{Error, add_meta, e};
 /// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
 #[add_meta]
 #[derive(Error)]
-#[display("Failed to convert")]
+#[error("Failed to convert")]
 pub struct IpMappedAddrError;
 
 /// A map fake Ipv6 address with an actual IP address.

@@ -180,13 +180,13 @@ struct Actor {
 #[derive(Error)]
 #[non_exhaustive]
 pub(super) enum ProbesError {
-    #[display("Probe failed")]
+    #[error("Probe failed")]
     ProbeFailure { source: ProbeError },
-    #[display("All probes failed")]
+    #[error("All probes failed")]
     AllProbesFailed,
-    #[display("Probe cancelled")]
+    #[error("Probe cancelled")]
     Cancelled,
-    #[display("Probe timed out")]
+    #[error("Probe timed out")]
     Timeout,
 }
 
@@ -452,11 +452,11 @@ pub(super) struct HttpsProbeReport {
 #[derive(Error)]
 #[non_exhaustive]
 pub(super) enum ProbeError {
-    #[display("Client is gone")]
+    #[error("Client is gone")]
     ClientGone,
-    #[display("Probe is no longer useful")]
+    #[error("Probe is no longer useful")]
     NotUseful,
-    #[display("Failed to run HTTPS probe")]
+    #[error("Failed to run HTTPS probe")]
     Https { source: MeasureHttpsLatencyError },
 }
 
@@ -465,9 +465,9 @@ pub(super) enum ProbeError {
 #[derive(Error)]
 #[non_exhaustive]
 pub(super) enum QuicError {
-    #[display("No relay available")]
+    #[error("No relay available")]
     NoRelay,
-    #[display("URL must have 'host' to use QUIC address discovery probes")]
+    #[error("URL must have 'host' to use QUIC address discovery probes")]
     InvalidUrl,
 }
 
@@ -542,12 +542,12 @@ enum CaptivePortalError {
         #[error(from)]
         source: StaggeredError<DnsError>,
     },
-    #[display("Creating HTTP client failed")]
+    #[error("Creating HTTP client failed")]
     CreateReqwestClient {
         #[error(std_err)]
         source: reqwest::Error,
     },
-    #[display("HTTP request failed")]
+    #[error("HTTP request failed")]
     HttpRequest {
         #[error(std_err)]
         source: reqwest::Error,
@@ -657,17 +657,17 @@ fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum GetRelayAddrError {
-    #[display("No valid hostname in the relay URL")]
+    #[error("No valid hostname in the relay URL")]
     InvalidHostname,
-    #[display("No suitable relay address found")]
+    #[error("No suitable relay address found")]
     NoAddrFound,
-    #[display("DNS lookup failed")]
+    #[error("DNS lookup failed")]
     DnsLookup { source: StaggeredError<DnsError> },
-    #[display("Relay is not suitable")]
+    #[error("Relay is not suitable")]
     UnsupportedRelay,
-    #[display("HTTPS probes are not implemented")]
+    #[error("HTTPS probes are not implemented")]
     UnsupportedHttps,
-    #[display("No port available for this protocol")]
+    #[error("No port available for this protocol")]
     MissingPort,
 }
 
@@ -770,17 +770,17 @@ pub enum MeasureHttpsLatencyError {
         #[error(from)]
         source: StaggeredError<DnsError>,
     },
-    #[display("Creating HTTP client failed")]
+    #[error("Creating HTTP client failed")]
     CreateReqwestClient {
         #[error(std_err)]
         source: reqwest::Error,
     },
-    #[display("HTTP request failed")]
+    #[error("HTTP request failed")]
     HttpRequest {
         #[error(std_err)]
         source: reqwest::Error,
     },
-    #[display("Error response from server {status}: {:?}", status.canonical_reason())]
+    #[error("Error response from server {status}: {:?}", status.canonical_reason())]
     InvalidResponse { status: StatusCode },
 }
 

@@ -185,7 +185,7 @@ impl<T: IntoDiscovery> DynIntoDiscovery for T {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum IntoDiscoveryError {
-    #[display("Service '{provenance}' error")]
+    #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
         source: AnyError,
@@ -222,11 +222,11 @@ impl IntoDiscoveryError {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum DiscoveryError {
-    #[display("No discovery service configured")]
+    #[error("No discovery service configured")]
     NoServiceConfigured,
-    #[display("Discovery produced no results for {}", endpoint_id.fmt_short())]
+    #[error("Discovery produced no results for {}", endpoint_id.fmt_short())]
     NoResults { endpoint_id: EndpointId },
-    #[display("Service '{provenance}' error")]
+    #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
         source: AnyError,

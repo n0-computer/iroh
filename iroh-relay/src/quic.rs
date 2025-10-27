@@ -45,12 +45,12 @@ pub(crate) mod server {
             #[error(std_err, from)]
             source: NoInitialCipherSuite,
         },
-        #[display("Unable to spawn a QUIC endpoint server")]
+        #[error("Unable to spawn a QUIC endpoint server")]
         EndpointServer {
             #[error(std_err)]
             source: std::io::Error,
         },
-        #[display("Unable to get the local address from the endpoint")]
+        #[error("Unable to get the local address from the endpoint")]
         LocalAddr {
             #[error(std_err)]
             source: std::io::Error,

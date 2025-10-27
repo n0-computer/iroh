@@ -65,7 +65,7 @@ mod options;
 pub(crate) mod portmapper {
     /// Output of a port mapping probe.
     #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-    #[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
+    #[error("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
     pub struct ProbeOutput {
         /// If UPnP can be considered available.
         pub upnp: bool,
@@ -85,15 +85,15 @@ pub(crate) use self::reportgen::IfStateDetails;
 #[derive(n0_error::Error)]
 #[non_exhaustive]
 enum QadProbeError {
-    #[display("Failed to resolve relay address")]
+    #[error("Failed to resolve relay address")]
     GetRelayAddr {
         source: self::reportgen::GetRelayAddrError,
     },
-    #[display("Missing host in relay URL")]
+    #[error("Missing host in relay URL")]
     MissingHost,
-    #[display("QUIC connection failed")]
+    #[error("QUIC connection failed")]
     Quic { source: iroh_relay::quic::Error },
-    #[display("Receiver dropped")]
+    #[error("Receiver dropped")]
     ReceiverDropped,
 }
 

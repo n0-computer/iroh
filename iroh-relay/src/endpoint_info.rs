@@ -57,7 +57,7 @@ pub enum EncodingError {
         #[error(std_err)]
         source: pkarr::errors::SignedPacketBuildError,
     },
-    #[display("invalid TXT entry")]
+    #[error("invalid TXT entry")]
     InvalidTxtEntry {
         #[error(std_err)]
         source: pkarr::dns::SimpleDnsError,
@@ -69,14 +69,14 @@ pub enum EncodingError {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum DecodingError {
-    #[display("endpoint id was not encoded in valid z32")]
+    #[error("endpoint id was not encoded in valid z32")]
     InvalidEncodingZ32 {
         #[error(std_err)]
         source: z32::Z32Error,
     },
-    #[display("length must be 32 bytes, but got {len} byte(s)")]
+    #[error("length must be 32 bytes, but got {len} byte(s)")]
     InvalidLength { len: usize },
-    #[display("endpoint id is not a valid public key")]
+    #[error("endpoint id is not a valid public key")]
     InvalidKey { source: KeyParsingError },
 }
 
@@ -247,7 +247,7 @@ impl UserData {
 #[allow(missing_docs)]
 #[add_meta]
 #[derive(Error)]
-#[display("max length exceeded")]
+#[error("max length exceeded")]
 pub struct MaxLengthExceededError {}
 
 impl TryFrom<String> for UserData {
@@ -431,18 +431,18 @@ impl EndpointInfo {
 #[error(from_sources)]
 #[non_exhaustive]
 pub enum ParseError {
-    #[display("Expected format `key=value`, received `{s}`")]
+    #[error("Expected format `key=value`, received `{s}`")]
     UnexpectedFormat { s: String },
-    #[display("Could not convert key to Attr")]
+    #[error("Could not convert key to Attr")]
     AttrFromString { key: String },
-    #[display("Expected 2 labels, received {num_labels}")]
+    #[error("Expected 2 labels, received {num_labels}")]
     NumLabels { num_labels: usize },
-    #[display("Could not parse labels")]
+    #[error("Could not parse labels")]
     Utf8 {
         #[error(std_err)]
         source: Utf8Error,
     },
-    #[display("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
+    #[error("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
     NotAnIrohRecord { label: String },
     #[error(transparent)]
     DecodingError { source: DecodingError },

@@ -30,10 +30,10 @@ pub struct SharedSecret(crypto_box::ChaChaBox);
 #[non_exhaustive]
 pub enum DecryptionError {
     /// The nonce had the wrong size.
-    #[display("Invalid nonce")]
+    #[error("Invalid nonce")]
     InvalidNonce,
     /// AEAD decryption failed.
-    #[display("Aead error")]
+    #[error("Aead error")]
     Aead {
         #[error(std_err)]
         source: aead::Error,

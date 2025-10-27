@@ -60,12 +60,12 @@ pub enum FrameType {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum FrameTypeError {
-    #[display("not enough bytes to parse frame type")]
+    #[error("not enough bytes to parse frame type")]
     UnexpectedEnd {
         #[error(std_err)]
         source: UnexpectedEnd,
     },
-    #[display("frame type unknown")]
+    #[error("frame type unknown")]
     UnknownFrameType { tag: VarInt },
 }
 

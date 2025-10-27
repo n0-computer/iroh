@@ -215,7 +215,7 @@ pub enum KeyParsingError {
     #[error(transparent)]
     Key(ed25519_dalek::SignatureError),
     /// The encoded information had the wrong length.
-    #[display("invalid length")]
+    #[error("invalid length")]
     DecodeInvalidLength,
 }
 
@@ -415,7 +415,7 @@ impl Signature {
 /// Verification of a signature failed.
 #[add_meta]
 #[derive(Error)]
-#[display("Invalid signature")]
+#[error("Invalid signature")]
 pub struct SignatureError {}
 
 fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {

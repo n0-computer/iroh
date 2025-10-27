@@ -270,17 +270,17 @@ pub struct Server {
 #[non_exhaustive]
 #[error(std_sources)]
 pub enum SpawnError {
-    #[display("Unable to get local address")]
+    #[error("Unable to get local address")]
     LocalAddr { source: std::io::Error },
-    #[display("Failed to bind QAD listener")]
+    #[error("Failed to bind QAD listener")]
     QuicSpawn { source: QuicSpawnError },
-    #[display("Failed to parse TLS header")]
+    #[error("Failed to parse TLS header")]
     TlsHeaderParse { source: InvalidHeaderValue },
-    #[display("Failed to bind TcpListener")]
+    #[error("Failed to bind TcpListener")]
     BindTlsListener { source: std::io::Error },
-    #[display("No local address")]
+    #[error("No local address")]
     NoLocalAddr { source: std::io::Error },
-    #[display("Failed to bind server socket to {addr}")]
+    #[error("Failed to bind server socket to {addr}")]
     BindTcpListener {
         source: std::io::Error,
         addr: SocketAddr,
@@ -293,21 +293,21 @@ pub enum SpawnError {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum SupervisorError {
-    #[display("Error starting metrics server")]
+    #[error("Error starting metrics server")]
     Metrics {
         #[error(std_err)]
         source: std::io::Error,
     },
-    #[display("Acme event stream finished")]
+    #[error("Acme event stream finished")]
     AcmeEventStreamFinished {},
     #[error(transparent)]
     JoinError {
         #[error(from, std_err)]
         source: JoinError,
     },
-    #[display("No relay services are enabled")]
+    #[error("No relay services are enabled")]
     NoRelayServicesEnabled {},
-    #[display("Task cancelled")]
+    #[error("Task cancelled")]
     TaskCancelled {},
 }
 

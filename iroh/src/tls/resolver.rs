@@ -17,7 +17,7 @@ pub(super) struct AlwaysResolvesCert {
 #[non_exhaustive]
 pub(super) enum CreateConfigError {
     /// Rustls configuration error
-    #[display("rustls error")]
+    #[error("rustls error")]
     Rustls { source: rustls::Error },
 }
 

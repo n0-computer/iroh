@@ -178,7 +178,7 @@ impl Client {
 pub enum HandleFrameError {
     #[error(transparent)]
     ForwardPacket { source: ForwardPacketError },
-    #[display("Stream terminated")]
+    #[error("Stream terminated")]
     StreamTerminated {},
     #[error(transparent)]
     Recv { source: RelayRecvError },
@@ -213,28 +213,28 @@ pub enum RunError {
         #[error(from)]
         source: ForwardPacketError,
     },
-    #[display("Flush")]
+    #[error("Flush")]
     Flush {},
     #[error(transparent)]
     HandleFrame {
         #[error(from)]
         source: HandleFrameError,
     },
-    #[display("Server.disco_send_queue dropped")]
+    #[error("Server.disco_send_queue dropped")]
     DiscoSendQueuePacketDrop {},
-    #[display("Failed to send disco packet")]
+    #[error("Failed to send disco packet")]
     DiscoPacketSend { source: WriteFrameError },
-    #[display("Server.send_queue dropped")]
+    #[error("Server.send_queue dropped")]
     SendQueuePacketDrop {},
-    #[display("Failed to send packet")]
+    #[error("Failed to send packet")]
     PacketSend { source: WriteFrameError },
-    #[display("Server.endpoint_gone dropped")]
+    #[error("Server.endpoint_gone dropped")]
     EndpointGoneDrop {},
-    #[display("EndpointGone write frame failed")]
+    #[error("EndpointGone write frame failed")]
     EndpointGoneWriteFrame { source: WriteFrameError },
-    #[display("Keep alive write frame failed")]
+    #[error("Keep alive write frame failed")]
     KeepAliveWriteFrame { source: WriteFrameError },
-    #[display("Tick flush")]
+    #[error("Tick flush")]
     TickFlush {},
 }
 
@@ -499,7 +499,7 @@ pub(crate) enum SendError {
 
 #[add_meta]
 #[derive(Error)]
-#[display("failed to forward {scope:?} packet: {reason:?}")]
+#[error("failed to forward {scope:?} packet: {reason:?}")]
 pub struct ForwardPacketError {
     scope: PacketScope,
     reason: SendError,

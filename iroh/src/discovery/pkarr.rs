@@ -80,31 +80,31 @@ pub mod dht;
 #[derive(Error)]
 #[non_exhaustive]
 pub enum PkarrError {
-    #[display("Invalid public key")]
+    #[error("Invalid public key")]
     PublicKey {
         #[error(std_err)]
         source: PublicKeyError,
     },
-    #[display("Packet failed to verify")]
+    #[error("Packet failed to verify")]
     Verify {
         #[error(std_err)]
         source: SignedPacketVerifyError,
     },
-    #[display("Invalid relay URL")]
+    #[error("Invalid relay URL")]
     InvalidRelayUrl { url: RelayUrl },
-    #[display("Error sending http request")]
+    #[error("Error sending http request")]
     HttpSend {
         #[error(std_err)]
         source: reqwest::Error,
     },
-    #[display("Error resolving http request")]
+    #[error("Error resolving http request")]
     HttpRequest { status: reqwest::StatusCode },
-    #[display("Http payload error")]
+    #[error("Http payload error")]
     HttpPayload {
         #[error(std_err)]
         source: reqwest::Error,
     },
-    #[display("EncodingError")]
+    #[error("EncodingError")]
     Encoding { source: EncodingError },
 }
 

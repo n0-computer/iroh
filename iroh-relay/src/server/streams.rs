@@ -84,9 +84,9 @@ pub enum SendError {
         #[error(from, std_err)]
         source: StreamError,
     },
-    #[display("Packet exceeds max packet size")]
+    #[error("Packet exceeds max packet size")]
     ExceedsMaxPacketSize { size: usize },
-    #[display("Attempted to send empty packet")]
+    #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
 

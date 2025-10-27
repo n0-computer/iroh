@@ -69,20 +69,20 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 pub enum DnsError {
     #[error(transparent)]
     Timeout { source: tokio::time::error::Elapsed },
-    #[display("No response")]
+    #[error("No response")]
     NoResponse {},
-    #[display("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
+    #[error("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
     ResolveBoth {
         ipv4: Box<DnsError>,
         ipv6: Box<DnsError>,
     },
-    #[display("missing host")]
+    #[error("missing host")]
     MissingHost {},
     #[error(transparent)]
     Resolve {
         source: hickory_resolver::ResolveError,
     },
-    #[display("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
+    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
 }
 
@@ -93,16 +93,16 @@ pub enum DnsError {
 #[non_exhaustive]
 #[error(from_sources)]
 pub enum LookupError {
-    #[display("Malformed txt from lookup")]
+    #[error("Malformed txt from lookup")]
     ParseError { source: ParseError },
-    #[display("Failed to resolve TXT record")]
+    #[error("Failed to resolve TXT record")]
     LookupFailed { source: DnsError },
 }
 
 /// Error returned when a staggered call fails.
 #[add_meta]
 #[derive(Error)]
-#[display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
+#[error("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
 pub struct StaggeredError<E: n0_error::StackError + 'static> {
     errors: Vec<E>,
 }

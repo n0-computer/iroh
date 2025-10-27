@@ -721,7 +721,7 @@ impl EndpointMapInner {
 /// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
 /// addresses include fields that can't be assumed consistent even within a single connection.
 #[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[display("{}", SocketAddr::from(*self))]
+#[error("{}", SocketAddr::from(*self))]
 pub struct IpPort {
     ip: IpAddr,
     port: u16,

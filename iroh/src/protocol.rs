@@ -113,7 +113,7 @@ pub enum AcceptError {
     },
     #[error(transparent)]
     MissingRemoteEndpointId { source: RemoteEndpointIdError },
-    #[display("Not allowed.")]
+    #[error("Not allowed.")]
     NotAllowed {},
     #[error(transparent)]
     User { source: AnyError },

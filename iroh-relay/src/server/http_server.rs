@@ -155,37 +155,37 @@ pub(super) struct TlsConfig {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum ServeConnectionError {
-    #[display("TLS[acme] handshake")]
+    #[error("TLS[acme] handshake")]
     TlsHandshake {
         #[error(std_err)]
         source: std::io::Error,
     },
-    #[display("TLS[acme] serve connection")]
+    #[error("TLS[acme] serve connection")]
     ServeConnection {
         #[error(std_err)]
         source: hyper::Error,
     },
-    #[display("TLS[manual] timeout")]
+    #[error("TLS[manual] timeout")]
     Timeout {
         #[error(std_err)]
         source: Elapsed,
     },
-    #[display("TLS[manual] accept")]
+    #[error("TLS[manual] accept")]
     ManualAccept {
         #[error(std_err)]
         source: std::io::Error,
     },
-    #[display("TLS[acme] accept")]
+    #[error("TLS[acme] accept")]
     LetsEncryptAccept {
         #[error(std_err)]
         source: std::io::Error,
     },
-    #[display("HTTPS connection")]
+    #[error("HTTPS connection")]
     Https {
         #[error(std_err)]
         source: hyper::Error,
     },
-    #[display("HTTP connection")]
+    #[error("HTTP connection")]
     Http {
         #[error(std_err)]
         source: hyper::Error,
@@ -201,7 +201,7 @@ pub enum ServeConnectionError {
 pub enum AcceptError {
     #[error(transparent)]
     Handshake { source: handshake::Error },
-    #[display("rate limiting misconfigured")]
+    #[error("rate limiting misconfigured")]
     RateLimitingMisconfigured { source: InvalidBucketConfig },
 }
 
@@ -214,9 +214,9 @@ pub enum AcceptError {
 pub enum ConnectionHandlerError {
     #[error(transparent)]
     Accept { source: AcceptError },
-    #[display("Could not downcast the upgraded connection to MaybeTlsStream")]
+    #[error("Could not downcast the upgraded connection to MaybeTlsStream")]
     DowncastUpgrade {},
-    #[display("Cannot deal with buffered data yet: {buf:?}")]
+    #[error("Cannot deal with buffered data yet: {buf:?}")]
     BufferNotEmpty { buf: Bytes },
 }
 
@@ -416,18 +416,18 @@ struct Inner {
 #[add_meta]
 #[derive(Error)]
 enum RelayUpgradeReqError {
-    #[display("missing header: {header}")]
+    #[error("missing header: {header}")]
     MissingHeader { header: http::HeaderName },
-    #[display("invalid header value for {header}: {details}")]
+    #[error("invalid header value for {header}: {details}")]
     InvalidHeader {
         header: http::HeaderName,
         details: String,
     },
-    #[display(
+    #[error(
         "invalid header value for {SEC_WEBSOCKET_VERSION}: unsupported websocket version, only supporting {SUPPORTED_WEBSOCKET_VERSION}"
     )]
     UnsupportedWebsocketVersion,
-    #[display(
+    #[error(
         "invalid header value for {SEC_WEBSOCKET_PROTOCOL}: unsupported relay version: we support {we_support} but you only provide {you_support}"
     )]
     UnsupportedRelayVersion {

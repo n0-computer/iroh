@@ -41,7 +41,7 @@ impl From<Url> for RelayUrl {
 /// Can occur when parsing a string into a [`RelayUrl`].
 #[add_meta]
 #[derive(Error)]
-#[display("Failed to parse relay URL")]
+#[error("Failed to parse relay URL")]
 pub struct RelayUrlParseError(#[error(std_err)] url::ParseError);
 
 /// Support for parsing strings directly.

@@ -213,11 +213,11 @@ struct RelayConnectionOptions {
 #[add_meta]
 #[derive(Error)]
 enum RelayConnectionError {
-    #[display("Failed to connect to relay server")]
+    #[error("Failed to connect to relay server")]
     Dial { source: DialError },
-    #[display("Failed to handshake with relay server")]
+    #[error("Failed to handshake with relay server")]
     Handshake { source: RunError },
-    #[display("Lost connection to relay server")]
+    #[error("Lost connection to relay server")]
     Established { source: RunError },
 }
 
@@ -225,22 +225,22 @@ enum RelayConnectionError {
 #[add_meta]
 #[derive(Error)]
 enum RunError {
-    #[display("Send timeout")]
+    #[error("Send timeout")]
     SendTimeout,
-    #[display("Ping timeout")]
+    #[error("Ping timeout")]
     PingTimeout,
-    #[display("Local IP no longer valid")]
+    #[error("Local IP no longer valid")]
     LocalIpInvalid,
-    #[display("No local address")]
+    #[error("No local address")]
     LocalAddrMissing,
-    #[display("Stream closed by server.")]
+    #[error("Stream closed by server.")]
     StreamClosedServer,
-    #[display("Client stream read failed")]
+    #[error("Client stream read failed")]
     ClientStreamRead {
         #[error(std_err)]
         source: RecvError,
     },
-    #[display("Client stream write failed")]
+    #[error("Client stream write failed")]
     ClientStreamWrite {
         #[error(std_err)]
         source: SendError,
@@ -251,9 +251,9 @@ enum RunError {
 #[add_meta]
 #[derive(Error)]
 enum DialError {
-    #[display("timeout (>{timeout:?}) trying to establish a connection")]
+    #[error("timeout (>{timeout:?}) trying to establish a connection")]
     Timeout { timeout: Duration },
-    #[display("unable to connect")]
+    #[error("unable to connect")]
     Connect { source: ConnectError },
 }
 

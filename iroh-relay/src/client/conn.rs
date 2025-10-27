@@ -38,9 +38,9 @@ pub enum SendError {
         #[cfg(wasm_browser)]
         source: ws_stream_wasm::WsErr,
     },
-    #[display("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}")]
+    #[error("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}")]
     ExceedsMaxPacketSize { size: usize },
-    #[display("Attempted to send empty packet")]
+    #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
 

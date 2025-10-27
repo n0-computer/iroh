@@ -146,21 +146,21 @@ pub enum Error {
         #[error(from, std_err)]
         source: ws_stream_wasm::WsErr,
     },
-    #[display("Handshake stream ended prematurely")]
+    #[error("Handshake stream ended prematurely")]
     UnexpectedEnd {},
     #[error(transparent)]
     FrameTypeError {
         #[error(from)]
         source: FrameTypeError,
     },
-    #[display("The relay denied our authentication ({reason})")]
+    #[error("The relay denied our authentication ({reason})")]
     ServerDeniedAuth { reason: String },
-    #[display("Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}")]
+    #[error("Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}")]
     UnexpectedFrameType {
         frame_type: FrameType,
         expected_types: Vec<FrameType>,
     },
-    #[display("Handshake failed while deserializing {frame_type:?} frame")]
+    #[error("Handshake failed while deserializing {frame_type:?} frame")]
     DeserializationError {
         frame_type: FrameType,
         #[error(std_err)]
@@ -175,16 +175,16 @@ pub enum Error {
 #[add_meta]
 #[derive(Error)]
 pub(crate) enum VerificationError {
-    #[display("Couldn't export TLS keying material on our end")]
+    #[error("Couldn't export TLS keying material on our end")]
     NoKeyingMaterial,
-    #[display(
+    #[error(
         "Client didn't extract the same keying material, the suffix mismatched: expected {expected:X?} but got {actual:X?}"
     )]
     MismatchedSuffix {
         expected: [u8; 16],
         actual: [u8; 16],
     },
-    #[display(
+    #[error(
         "Client signature {signature:X?} for message {message:X?} invalid for public key {public_key}"
     )]
     SignatureInvalid {

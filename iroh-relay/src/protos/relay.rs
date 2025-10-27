@@ -46,9 +46,9 @@ pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {
-    #[display("unexpected frame: got {got:?}, expected {expected:?}")]
+    #[error("unexpected frame: got {got:?}, expected {expected:?}")]
     UnexpectedFrame { got: FrameType, expected: FrameType },
-    #[display("Frame is too large, has {frame_len} bytes")]
+    #[error("Frame is too large, has {frame_len} bytes")]
     FrameTooLarge { frame_len: usize },
     #[error(transparent)]
     SerDe {
@@ -57,18 +57,18 @@ pub enum Error {
     },
     #[error(transparent)]
     FrameTypeError { source: FrameTypeError },
-    #[display("Invalid public key")]
+    #[error("Invalid public key")]
     InvalidPublicKey { source: KeyParsingError },
-    #[display("Invalid frame encoding")]
+    #[error("Invalid frame encoding")]
     InvalidFrame {},
-    #[display("Invalid frame type: {frame_type:?}")]
+    #[error("Invalid frame type: {frame_type:?}")]
     InvalidFrameType { frame_type: FrameType },
-    #[display("Invalid protocol message encoding")]
+    #[error("Invalid protocol message encoding")]
     InvalidProtocolMessageEncoding {
         #[error(std_err)]
         source: std::str::Utf8Error,
     },
-    #[display("Too few bytes")]
+    #[error("Too few bytes")]
     TooSmall {},
 }
 

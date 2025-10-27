@@ -52,9 +52,9 @@ mod util;
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum ConnectError {
-    #[display("Invalid URL for websocket: {url}")]
+    #[error("Invalid URL for websocket: {url}")]
     InvalidWebsocketUrl { url: Url },
-    #[display("Invalid relay URL: {url}")]
+    #[error("Invalid relay URL: {url}")]
     InvalidRelayUrl { url: Url },
     #[error(transparent)]
     Websocket {
@@ -72,24 +72,24 @@ pub enum ConnectError {
     },
     #[error(transparent)]
     Dial { source: DialError },
-    #[display("Unexpected status during upgrade: {code}")]
+    #[error("Unexpected status during upgrade: {code}")]
     UnexpectedUpgradeStatus { code: hyper::StatusCode },
-    #[display("Failed to upgrade response")]
+    #[error("Failed to upgrade response")]
     Upgrade {
         #[error(std_err)]
         source: hyper::Error,
     },
-    #[display("Invalid TLS servername")]
+    #[error("Invalid TLS servername")]
     InvalidTlsServername {},
-    #[display("No local address available")]
+    #[error("No local address available")]
     NoLocalAddr {},
-    #[display("tls connection failed")]
+    #[error("tls connection failed")]
     Tls {
         #[error(std_err)]
         source: std::io::Error,
     },
     #[cfg(wasm_browser)]
-    #[display("The relay protocol is not available in browsers")]
+    #[error("The relay protocol is not available in browsers")]
     RelayProtoNotAvailable {},
 }
 
@@ -100,7 +100,7 @@ pub enum ConnectError {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum DialError {
-    #[display("Invliad target port")]
+    #[error("Invliad target port")]
     InvalidTargetPort {},
     #[error(transparent)]
     #[cfg(not(wasm_browser))]
@@ -115,20 +115,20 @@ pub enum DialError {
         #[error(std_err)]
         source: std::io::Error,
     },
-    #[display("Invalid URL: {url}")]
+    #[error("Invalid URL: {url}")]
     InvalidUrl { url: Url },
-    #[display("Failed proxy connection: {status}")]
+    #[error("Failed proxy connection: {status}")]
     ProxyConnectInvalidStatus { status: hyper::StatusCode },
-    #[display("Invalid Proxy URL {proxy_url}")]
+    #[error("Invalid Proxy URL {proxy_url}")]
     ProxyInvalidUrl { proxy_url: Url },
-    #[display("failed to establish proxy connection")]
+    #[error("failed to establish proxy connection")]
     ProxyConnect {
         #[error(std_err)]
         source: hyper::Error,
     },
-    #[display("Invalid proxy TLS servername: {proxy_hostname}")]
+    #[error("Invalid proxy TLS servername: {proxy_hostname}")]
     ProxyInvalidTlsServername { proxy_hostname: String },
-    #[display("Invalid proxy target port")]
+    #[error("Invalid proxy target port")]
     ProxyInvalidTargetPort {},
 }
 

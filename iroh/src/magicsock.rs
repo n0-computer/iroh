@@ -217,11 +217,11 @@ pub(crate) struct MagicSock {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum AddEndpointAddrError {
-    #[display("Empty addressing info")]
+    #[error("Empty addressing info")]
     Empty,
-    #[display("Empty addressing info, {pruned} direct address have been pruned")]
+    #[error("Empty addressing info, {pruned} direct address have been pruned")]
     EmptyPruned { pruned: usize },
-    #[display("Adding our own address is not supported")]
+    #[error("Adding our own address is not supported")]
     OwnAddress,
 }
 
@@ -1336,27 +1336,27 @@ impl DirectAddrUpdateState {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum CreateHandleError {
-    #[display("Failed to create bind sockets")]
+    #[error("Failed to create bind sockets")]
     BindSockets {
         #[error(std_err)]
         source: io::Error,
     },
-    #[display("Failed to create internal quinn endpoint")]
+    #[error("Failed to create internal quinn endpoint")]
     CreateQuinnEndpoint {
         #[error(std_err)]
         source: io::Error,
     },
-    #[display("Failed to create socket state")]
+    #[error("Failed to create socket state")]
     CreateSocketState {
         #[error(std_err)]
         source: io::Error,
     },
-    #[display("Failed to create netmon monitor")]
+    #[error("Failed to create netmon monitor")]
     CreateNetmonMonitor {
         #[error(std_err)]
         source: netmon::Error,
     },
-    #[display("Failed to subscribe netmon monitor")]
+    #[error("Failed to subscribe netmon monitor")]
     SubscribeNetmonMonitor {
         #[error(std_err)]
         source: netmon::Error,
@@ -1715,9 +1715,9 @@ impl DiscoState {
 #[derive(Error)]
 #[non_exhaustive]
 enum DiscoBoxError {
-    #[display("Failed to open crypto box")]
+    #[error("Failed to open crypto box")]
     Open { source: DecryptionError },
-    #[display("Failed to parse disco message")]
+    #[error("Failed to parse disco message")]
     Parse { source: disco::ParseError },
 }
 
@@ -2401,7 +2401,7 @@ pub(crate) struct EndpointIdMappedAddr(Ipv6Addr);
 /// Can occur when converting a [`SocketAddr`] to an [`EndpointIdMappedAddr`]
 #[add_meta]
 #[derive(Error)]
-#[display("Failed to convert")]
+#[error("Failed to convert")]
 pub struct EndpointIdMappedAddrError;
 
 /// Counter to always generate unique addresses for [`EndpointIdMappedAddr`].

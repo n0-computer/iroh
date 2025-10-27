@@ -246,11 +246,11 @@ impl Ping {
 #[derive(Error)]
 #[non_exhaustive]
 pub enum ParseError {
-    #[display("message is too short")]
+    #[error("message is too short")]
     TooShort,
-    #[display("invalid encoding")]
+    #[error("invalid encoding")]
     InvalidEncoding,
-    #[display("unknown format")]
+    #[error("unknown format")]
     UnknownFormat,
 }
 
