@@ -10,7 +10,7 @@
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>data_encoding::BASE64URL;
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>http_body_util::Empty;
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>hyper::{Request, upgrade::Parts};
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>n0_error::{<span class="prelude-val">Err</span>, e};
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>n0_error::e;
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>n0_future::{task, time};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>rustls::client::Resumption;
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>tracing::error;
@@ -257,9 +257,9 @@
 <a href=#257 id=257 data-nosnippet>257</a>            .<span class="kw">await
 <a href=#258 id=258 data-nosnippet>258</a>            </span>.map_err(|err| <span class="macro">e!</span>(DialError::ProxyConnect, err))<span class="question-mark">?</span>;
 <a href=#259 id=259 data-nosnippet>259</a>        <span class="kw">if </span>!res.status().is_success() {
-<a href=#260 id=260 data-nosnippet>260</a>            <span class="kw">return </span><span class="macro">Err!</span>(DialError::ProxyConnectInvalidStatus {
+<a href=#260 id=260 data-nosnippet>260</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(DialError::ProxyConnectInvalidStatus {
 <a href=#261 id=261 data-nosnippet>261</a>                status: res.status()
-<a href=#262 id=262 data-nosnippet>262</a>            });
+<a href=#262 id=262 data-nosnippet>262</a>            }));
 <a href=#263 id=263 data-nosnippet>263</a>        }
 <a href=#264 id=264 data-nosnippet>264</a>
 <a href=#265 id=265 data-nosnippet>265</a>        <span class="kw">let </span>upgraded = hyper::upgrade::on(res)

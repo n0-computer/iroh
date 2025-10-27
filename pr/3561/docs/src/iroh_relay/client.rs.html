@@ -11,7 +11,7 @@
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>conn::Conn;
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>iroh_base::{RelayUrl, SecretKey};
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>n0_error::{<span class="prelude-val">Err</span>, Error, add_meta, e};
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>n0_error::{Error, add_meta, e};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>n0_future::{
 <a href=#16 id=16 data-nosnippet>16</a>    Sink, Stream,
 <a href=#17 id=17 data-nosnippet>17</a>    split::{SplitSink, SplitStream, split},
@@ -286,9 +286,9 @@
 <a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span>(conn, response) = builder.connect_on(stream).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#287 id=287 data-nosnippet>287</a>
 <a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">if </span>response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-<a href=#289 id=289 data-nosnippet>289</a>            <span class="kw">return </span><span class="macro">Err!</span>(ConnectError::UnexpectedUpgradeStatus {
+<a href=#289 id=289 data-nosnippet>289</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(ConnectError::UnexpectedUpgradeStatus {
 <a href=#290 id=290 data-nosnippet>290</a>                code: response.status()
-<a href=#291 id=291 data-nosnippet>291</a>            });
+<a href=#291 id=291 data-nosnippet>291</a>            }));
 <a href=#292 id=292 data-nosnippet>292</a>        }
 <a href=#293 id=293 data-nosnippet>293</a>
 <a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">let </span>conn = Conn::new(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;

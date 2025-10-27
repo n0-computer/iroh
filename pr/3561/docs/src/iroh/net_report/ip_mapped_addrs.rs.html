@@ -7,7 +7,7 @@
 <a href=#7 id=7 data-nosnippet>7</a>    },
 <a href=#8 id=8 data-nosnippet>8</a>};
 <a href=#9 id=9 data-nosnippet>9</a>
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>n0_error::{<span class="prelude-val">Err</span>, Error, add_meta};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>n0_error::{Error, add_meta, e};
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
 <a href=#13 id=13 data-nosnippet>13</a></span><span class="attr">#[add_meta]
@@ -74,7 +74,7 @@
 <a href=#74 id=74 data-nosnippet>74</a>        {
 <a href=#75 id=75 data-nosnippet>75</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">Self</span>(value));
 <a href=#76 id=76 data-nosnippet>76</a>        }
-<a href=#77 id=77 data-nosnippet>77</a>        <span class="macro">Err!</span>(IpMappedAddrError)
+<a href=#77 id=77 data-nosnippet>77</a>        <span class="prelude-val">Err</span>(<span class="macro">e!</span>(IpMappedAddrError))
 <a href=#78 id=78 data-nosnippet>78</a>    }
 <a href=#79 id=79 data-nosnippet>79</a>}
 <a href=#80 id=80 data-nosnippet>80</a>

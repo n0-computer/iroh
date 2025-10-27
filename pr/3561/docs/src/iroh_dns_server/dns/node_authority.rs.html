@@ -13,7 +13,7 @@
 <a href=#13 id=13 data-nosnippet>13</a>    server::RequestInfo,
 <a href=#14 id=14 data-nosnippet>14</a>    store::in_memory::InMemoryAuthority,
 <a href=#15 id=15 data-nosnippet>15</a>};
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt, whatever};
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt, bail};
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>tracing::{debug, trace};
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use crate</span>::{
@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>        serial: u32,
 <a href=#42 id=42 data-nosnippet>42</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
 <a href=#43 id=43 data-nosnippet>43</a>        <span class="kw">if </span>origins.is_empty() {
-<a href=#44 id=44 data-nosnippet>44</a>            <span class="macro">whatever!</span>(<span class="string">"at least one origin is required"</span>);
+<a href=#44 id=44 data-nosnippet>44</a>            <span class="macro">bail!</span>(<span class="string">"at least one origin is required"</span>);
 <a href=#45 id=45 data-nosnippet>45</a>        }
 <a href=#46 id=46 data-nosnippet>46</a>        <span class="kw">let </span>first_origin = LowerName::from(<span class="kw-2">&amp;</span>origins[<span class="number">0</span>]);
 <a href=#47 id=47 data-nosnippet>47</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -183,7 +183,7 @@
 <a href=#183 id=183 data-nosnippet>183</a>            <span class="kw">continue</span>;
 <a href=#184 id=184 data-nosnippet>184</a>        }
 <a href=#185 id=185 data-nosnippet>185</a>        <span class="kw">if </span>name.num_labels() &lt; origin.num_labels() + <span class="number">1 </span>{
-<a href=#186 id=186 data-nosnippet>186</a>            <span class="macro">whatever!</span>(<span class="string">"not a valid pkarr name: missing pubkey"</span>);
+<a href=#186 id=186 data-nosnippet>186</a>            <span class="macro">bail!</span>(<span class="string">"not a valid pkarr name: missing pubkey"</span>);
 <a href=#187 id=187 data-nosnippet>187</a>        }
 <a href=#188 id=188 data-nosnippet>188</a>        <span class="macro">trace!</span>(<span class="string">"parse {origin}"</span>);
 <a href=#189 id=189 data-nosnippet>189</a>        <span class="kw">let </span>labels = name.iter().rev();
@@ -195,7 +195,7 @@
 <a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">let </span>remaining_name = Name::from_labels(labels_without_origin.rev()).e()<span class="question-mark">?</span>;
 <a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((remaining_name, pkey, origin.clone()));
 <a href=#197 id=197 data-nosnippet>197</a>    }
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="macro">whatever!</span>(<span class="string">"name does not match any allowed origin"</span>);
+<a href=#198 id=198 data-nosnippet>198</a>    <span class="macro">bail!</span>(<span class="string">"name does not match any allowed origin"</span>);
 <a href=#199 id=199 data-nosnippet>199</a>}
 <a href=#200 id=200 data-nosnippet>200</a>
 <a href=#201 id=201 data-nosnippet>201</a><span class="kw">fn </span>err_refused(e: <span class="kw">impl </span>fmt::Debug) -&gt; LookupError {

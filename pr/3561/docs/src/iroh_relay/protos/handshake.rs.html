@@ -31,7 +31,7 @@
 <a href=#31 id=31 data-nosnippet>31</a><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 <a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">use </span>iroh_base::Signature;
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
-<a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>n0_error::{<span class="prelude-val">Err</span>, Error, add_meta, e};
+<a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>n0_error::{Error, add_meta, e};
 <a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>n0_future::{SinkExt, TryStreamExt};
 <a href=#36 id=36 data-nosnippet>36</a><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 <a href=#37 id=37 data-nosnippet>37</a></span><span class="kw">use </span>rand::CryptoRng;
@@ -301,12 +301,12 @@
 <a href=#301 id=301 data-nosnippet>301</a>        // there must be something wrong with the client's secret key or signature.
 <a href=#302 id=302 data-nosnippet>302</a>        </span><span class="kw">let </span>(message, suffix) = key_material.split_at(<span class="number">16</span>);
 <a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>suffix: [u8; <span class="number">16</span>] = suffix.try_into().expect(<span class="string">"hardcoded length"</span>);
-<a href=#304 id=304 data-nosnippet>304</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#304 id=304 data-nosnippet>304</a>        <span class="macro">n0_error::ensure_e!</span>(
 <a href=#305 id=305 data-nosnippet>305</a>            suffix == <span class="self">self</span>.key_material_suffix,
-<a href=#306 id=306 data-nosnippet>306</a>            <span class="macro">e!</span>(VerificationError::MismatchedSuffix {
+<a href=#306 id=306 data-nosnippet>306</a>            VerificationError::MismatchedSuffix {
 <a href=#307 id=307 data-nosnippet>307</a>                expected: <span class="self">self</span>.key_material_suffix,
 <a href=#308 id=308 data-nosnippet>308</a>                actual: suffix
-<a href=#309 id=309 data-nosnippet>309</a>            })
+<a href=#309 id=309 data-nosnippet>309</a>            }
 <a href=#310 id=310 data-nosnippet>310</a>        );
 <a href=#311 id=311 data-nosnippet>311</a>        <span class="comment">// NOTE: We don't blake3-hash here as we do it in [`ServerChallenge::message_to_sign`],
 <a href=#312 id=312 data-nosnippet>312</a>        // because we already have a domain separation string and keyed hashing step in
@@ -356,9 +356,9 @@
 <a href=#356 id=356 data-nosnippet>356</a>        }
 <a href=#357 id=357 data-nosnippet>357</a>        FrameType::ServerDeniesAuth =&gt; {
 <a href=#358 id=358 data-nosnippet>358</a>            <span class="kw">let </span>denial: ServerDeniesAuth = deserialize_frame(frame)<span class="question-mark">?</span>;
-<a href=#359 id=359 data-nosnippet>359</a>            <span class="macro">Err!</span>(Error::ServerDeniedAuth {
+<a href=#359 id=359 data-nosnippet>359</a>            <span class="prelude-val">Err</span>(<span class="macro">e!</span>(Error::ServerDeniedAuth {
 <a href=#360 id=360 data-nosnippet>360</a>                reason: denial.reason
-<a href=#361 id=361 data-nosnippet>361</a>            })
+<a href=#361 id=361 data-nosnippet>361</a>            }))
 <a href=#362 id=362 data-nosnippet>362</a>        }
 <a href=#363 id=363 data-nosnippet>363</a>        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(),
 <a href=#364 id=364 data-nosnippet>364</a>    }
@@ -444,9 +444,9 @@
 <a href=#444 id=444 data-nosnippet>444</a>            reason: <span class="string">"signature invalid"</span>.into(),
 <a href=#445 id=445 data-nosnippet>445</a>        };
 <a href=#446 id=446 data-nosnippet>446</a>        write_frame(io, denial.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#447 id=447 data-nosnippet>447</a>        <span class="macro">Err!</span>(Error::ServerDeniedAuth {
+<a href=#447 id=447 data-nosnippet>447</a>        <span class="prelude-val">Err</span>(<span class="macro">e!</span>(Error::ServerDeniedAuth {
 <a href=#448 id=448 data-nosnippet>448</a>            reason: denial.reason
-<a href=#449 id=449 data-nosnippet>449</a>        })
+<a href=#449 id=449 data-nosnippet>449</a>        }))
 <a href=#450 id=450 data-nosnippet>450</a>    } <span class="kw">else </span>{
 <a href=#451 id=451 data-nosnippet>451</a>        <span class="macro">trace!</span>(<span class="question-mark">?</span>client_auth.public_key, <span class="string">"authentication succeeded via challenge"</span>);
 <a href=#452 id=452 data-nosnippet>452</a>        <span class="prelude-val">Ok</span>(SuccessfulAuthentication {
@@ -473,9 +473,9 @@
 <a href=#473 id=473 data-nosnippet>473</a>                reason: <span class="string">"not authorized"</span>.into(),
 <a href=#474 id=474 data-nosnippet>474</a>            };
 <a href=#475 id=475 data-nosnippet>475</a>            write_frame(io, denial.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#476 id=476 data-nosnippet>476</a>            <span class="macro">Err!</span>(Error::ServerDeniedAuth {
+<a href=#476 id=476 data-nosnippet>476</a>            <span class="prelude-val">Err</span>(<span class="macro">e!</span>(Error::ServerDeniedAuth {
 <a href=#477 id=477 data-nosnippet>477</a>                reason: denial.reason
-<a href=#478 id=478 data-nosnippet>478</a>            })
+<a href=#478 id=478 data-nosnippet>478</a>            }))
 <a href=#479 id=479 data-nosnippet>479</a>        }
 <a href=#480 id=480 data-nosnippet>480</a>    }
 <a href=#481 id=481 data-nosnippet>481</a>}
@@ -511,12 +511,12 @@
 <a href=#511 id=511 data-nosnippet>511</a>    <span class="kw">let </span>frame_type =
 <a href=#512 id=512 data-nosnippet>512</a>        FrameType::from_bytes(<span class="kw-2">&amp;mut </span>payload).map_err(|err| <span class="macro">e!</span>(Error::FrameTypeError, err))<span class="question-mark">?</span>;
 <a href=#513 id=513 data-nosnippet>513</a>    <span class="macro">trace!</span>(<span class="question-mark">?</span>frame_type, <span class="string">"Reading frame"</span>);
-<a href=#514 id=514 data-nosnippet>514</a>    <span class="macro">n0_error::ensure!</span>(
+<a href=#514 id=514 data-nosnippet>514</a>    <span class="macro">n0_error::ensure_e!</span>(
 <a href=#515 id=515 data-nosnippet>515</a>        expected_types.contains(<span class="kw-2">&amp;</span>frame_type),
-<a href=#516 id=516 data-nosnippet>516</a>        <span class="macro">e!</span>(Error::UnexpectedFrameType {
+<a href=#516 id=516 data-nosnippet>516</a>        Error::UnexpectedFrameType {
 <a href=#517 id=517 data-nosnippet>517</a>            frame_type,
 <a href=#518 id=518 data-nosnippet>518</a>            expected_types: expected_types.to_vec()
-<a href=#519 id=519 data-nosnippet>519</a>        })
+<a href=#519 id=519 data-nosnippet>519</a>        }
 <a href=#520 id=520 data-nosnippet>520</a>    );
 <a href=#521 id=521 data-nosnippet>521</a>
 <a href=#522 id=522 data-nosnippet>522</a>    <span class="prelude-val">Ok</span>((frame_type, payload))

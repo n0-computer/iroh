@@ -292,14 +292,14 @@
 <a href=#292 id=292 data-nosnippet>292</a>            <span class="macro">tracing::debug!</span>(<span class="string">"no keypair set, not publishing"</span>);
 <a href=#293 id=293 data-nosnippet>293</a>            <span class="kw">return</span>;
 <a href=#294 id=294 data-nosnippet>294</a>        };
-<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">if </span>data.relay_url().is_none() &amp;&amp; data.direct_addresses().is_empty() {
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="kw">if </span>!data.has_addrs() {
 <a href=#296 id=296 data-nosnippet>296</a>            <span class="macro">tracing::debug!</span>(<span class="string">"no relay url or direct addresses in endpoint data, not publishing"</span>);
 <a href=#297 id=297 data-nosnippet>297</a>            <span class="kw">return</span>;
 <a href=#298 id=298 data-nosnippet>298</a>        }
 <a href=#299 id=299 data-nosnippet>299</a>        <span class="macro">tracing::debug!</span>(<span class="string">"publishing {data:?}"</span>);
 <a href=#300 id=300 data-nosnippet>300</a>        <span class="kw">let </span><span class="kw-2">mut </span>info = EndpointInfo::from_parts(keypair.public(), data.clone());
 <a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">if </span>!<span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
-<a href=#302 id=302 data-nosnippet>302</a>            info.clear_direct_addresses();
+<a href=#302 id=302 data-nosnippet>302</a>            info.clear_ip_addrs();
 <a href=#303 id=303 data-nosnippet>303</a>        }
 <a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span><span class="prelude-val">Ok</span>(signed_packet) = info.to_pkarr_signed_packet(keypair, <span class="self">self</span>.<span class="number">0</span>.ttl) <span class="kw">else </span>{
 <a href=#305 id=305 data-nosnippet>305</a>            <span class="macro">tracing::warn!</span>(<span class="string">"failed to create signed packet"</span>);
@@ -369,7 +369,7 @@
 <a href=#369 id=369 data-nosnippet>369</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
 <a href=#370 id=370 data-nosnippet>370</a>                    .<span class="kw">await</span>;
 <a href=#371 id=371 data-nosnippet>371</a>                <span class="kw">for </span>item <span class="kw">in </span>items.into_iter().flatten() {
-<a href=#372 id=372 data-nosnippet>372</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.relay_url() {
+<a href=#372 id=372 data-nosnippet>372</a>                    <span class="kw">for </span>url <span class="kw">in </span>item.relay_urls() {
 <a href=#373 id=373 data-nosnippet>373</a>                        found_relay_urls.insert(url.clone());
 <a href=#374 id=374 data-nosnippet>374</a>                    }
 <a href=#375 id=375 data-nosnippet>375</a>                }

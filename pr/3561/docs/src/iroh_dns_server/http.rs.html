@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a>    response::IntoResponse,
 <a href=#15 id=15 data-nosnippet>15</a>    routing::get,
 <a href=#16 id=16 data-nosnippet>16</a>};
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, whatever};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, bail};
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>tokio::{net::TcpListener, task::JoinSet};
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>tower_http::{
@@ -74,7 +74,7 @@
 <a href=#74 id=74 data-nosnippet>74</a>        state: AppState,
 <a href=#75 id=75 data-nosnippet>75</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;HttpServer&gt; {
 <a href=#76 id=76 data-nosnippet>76</a>        <span class="kw">if </span>http_config.is_none() &amp;&amp; https_config.is_none() {
-<a href=#77 id=77 data-nosnippet>77</a>            <span class="macro">whatever!</span>(<span class="string">"Either http or https config is required"</span>);
+<a href=#77 id=77 data-nosnippet>77</a>            <span class="macro">bail!</span>(<span class="string">"Either http or https config is required"</span>);
 <a href=#78 id=78 data-nosnippet>78</a>        }
 <a href=#79 id=79 data-nosnippet>79</a>
 <a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">let </span>app = create_app(state, <span class="kw-2">&amp;</span>rate_limit_config);

@@ -98,12 +98,12 @@
 <a href=#98 id=98 data-nosnippet>98</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>initial(relay_map: <span class="kw-2">&amp;</span>RelayMap, protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;Probe&gt;) -&gt; <span class="self">Self </span>{
 <a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self</span>::default();
 <a href=#100 id=100 data-nosnippet>100</a>
-<a href=#101 id=101 data-nosnippet>101</a>        <span class="kw">for </span>relay_endpoint <span class="kw">in </span>relay_map.endpoints::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;() {
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="kw">for </span>relay <span class="kw">in </span>relay_map.relays::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;() {
 <a href=#102 id=102 data-nosnippet>102</a>            <span class="kw">let </span><span class="kw-2">mut </span>https_probes = ProbeSet::new(Probe::Https);
 <a href=#103 id=103 data-nosnippet>103</a>
 <a href=#104 id=104 data-nosnippet>104</a>            <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0u32</span>..<span class="number">3 </span>{
 <a href=#105 id=105 data-nosnippet>105</a>                <span class="kw">let </span>delay = HTTPS_OFFSET + DEFAULT_INITIAL_RETRANSMIT * attempt;
-<a href=#106 id=106 data-nosnippet>106</a>                https_probes.push(delay, relay_endpoint.clone());
+<a href=#106 id=106 data-nosnippet>106</a>                https_probes.push(delay, relay.clone());
 <a href=#107 id=107 data-nosnippet>107</a>            }
 <a href=#108 id=108 data-nosnippet>108</a>
 <a href=#109 id=109 data-nosnippet>109</a>            plan.add_if_enabled(protocols, https_probes);
@@ -191,14 +191,14 @@
 <a href=#191 id=191 data-nosnippet>191</a>    <span class="attr">#[tokio::test]
 <a href=#192 id=192 data-nosnippet>192</a>    </span><span class="kw">async fn </span>test_initial_probeplan() {
 <a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>relay_endpoint_1 = <span class="kw-2">&amp;</span>relay_map.endpoints::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">0</span>];
-<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">let </span>relay_endpoint_2 = <span class="kw-2">&amp;</span>relay_map.endpoints::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">1</span>];
+<a href=#194 id=194 data-nosnippet>194</a>        <span class="kw">let </span>relay_1 = <span class="kw-2">&amp;</span>relay_map.relays::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">0</span>];
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">let </span>relay_2 = <span class="kw-2">&amp;</span>relay_map.relays::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">1</span>];
 <a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>default_protocols());
 <a href=#197 id=197 data-nosnippet>197</a>
 <a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">let </span>expected_plan: ProbePlan = [
 <a href=#199 id=199 data-nosnippet>199</a>            <span class="macro">probeset!</span> {
 <a href=#200 id=200 data-nosnippet>200</a>                proto: Probe::Https,
-<a href=#201 id=201 data-nosnippet>201</a>                relay: relay_endpoint_1.clone(),
+<a href=#201 id=201 data-nosnippet>201</a>                relay: relay_1.clone(),
 <a href=#202 id=202 data-nosnippet>202</a>                delays: [
 <a href=#203 id=203 data-nosnippet>203</a>                    Duration::from_millis(<span class="number">200</span>),
 <a href=#204 id=204 data-nosnippet>204</a>                    Duration::from_millis(<span class="number">300</span>),
@@ -207,7 +207,7 @@
 <a href=#207 id=207 data-nosnippet>207</a>            },
 <a href=#208 id=208 data-nosnippet>208</a>            <span class="macro">probeset!</span> {
 <a href=#209 id=209 data-nosnippet>209</a>                proto: Probe::Https,
-<a href=#210 id=210 data-nosnippet>210</a>                relay: relay_endpoint_2.clone(),
+<a href=#210 id=210 data-nosnippet>210</a>                relay: relay_2.clone(),
 <a href=#211 id=211 data-nosnippet>211</a>                delays: [
 <a href=#212 id=212 data-nosnippet>212</a>                    Duration::from_millis(<span class="number">200</span>),
 <a href=#213 id=213 data-nosnippet>213</a>                    Duration::from_millis(<span class="number">300</span>),
@@ -231,21 +231,21 @@
 <a href=#231 id=231 data-nosnippet>231</a>    <span class="attr">#[tokio::test]
 <a href=#232 id=232 data-nosnippet>232</a>    </span><span class="kw">async fn </span>test_initial_probeplan_some_protocols() {
 <a href=#233 id=233 data-nosnippet>233</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>relay_endpoint_1 = <span class="kw-2">&amp;</span>relay_map.endpoints::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">0</span>];
-<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">let </span>relay_endpoint_2 = <span class="kw-2">&amp;</span>relay_map.endpoints::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">1</span>];
+<a href=#234 id=234 data-nosnippet>234</a>        <span class="kw">let </span>relay_1 = <span class="kw-2">&amp;</span>relay_map.relays::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">0</span>];
+<a href=#235 id=235 data-nosnippet>235</a>        <span class="kw">let </span>relay_2 = <span class="kw-2">&amp;</span>relay_map.relays::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()[<span class="number">1</span>];
 <a href=#236 id=236 data-nosnippet>236</a>        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>BTreeSet::from([Probe::Https]));
 <a href=#237 id=237 data-nosnippet>237</a>
 <a href=#238 id=238 data-nosnippet>238</a>        <span class="kw">let </span>expected_plan: ProbePlan = [
 <a href=#239 id=239 data-nosnippet>239</a>            <span class="macro">probeset!</span> {
 <a href=#240 id=240 data-nosnippet>240</a>                proto: Probe::Https,
-<a href=#241 id=241 data-nosnippet>241</a>                relay: relay_endpoint_1.clone(),
+<a href=#241 id=241 data-nosnippet>241</a>                relay: relay_1.clone(),
 <a href=#242 id=242 data-nosnippet>242</a>                delays: [Duration::from_millis(<span class="number">200</span>),
 <a href=#243 id=243 data-nosnippet>243</a>                         Duration::from_millis(<span class="number">300</span>),
 <a href=#244 id=244 data-nosnippet>244</a>                         Duration::from_millis(<span class="number">400</span>)],
 <a href=#245 id=245 data-nosnippet>245</a>            },
 <a href=#246 id=246 data-nosnippet>246</a>            <span class="macro">probeset!</span> {
 <a href=#247 id=247 data-nosnippet>247</a>                proto: Probe::Https,
-<a href=#248 id=248 data-nosnippet>248</a>                relay: relay_endpoint_2.clone(),
+<a href=#248 id=248 data-nosnippet>248</a>                relay: relay_2.clone(),
 <a href=#249 id=249 data-nosnippet>249</a>                delays: [Duration::from_millis(<span class="number">200</span>),
 <a href=#250 id=250 data-nosnippet>250</a>                         Duration::from_millis(<span class="number">300</span>),
 <a href=#251 id=251 data-nosnippet>251</a>                         Duration::from_millis(<span class="number">400</span>)],

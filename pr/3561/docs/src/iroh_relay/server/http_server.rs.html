@@ -15,7 +15,7 @@
 <a href=#15 id=15 data-nosnippet>15</a>    service::Service,
 <a href=#16 id=16 data-nosnippet>16</a>    upgrade::Upgraded,
 <a href=#17 id=17 data-nosnippet>17</a>};
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>n0_error::{<span class="prelude-val">Err</span>, Error, add_meta, e};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>n0_error::{Error, add_meta, e};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>n0_future::time::Elapsed;
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
@@ -76,7 +76,7 @@
 <a href=#76 id=76 data-nosnippet>76</a></span><span class="kw">fn </span>downcast_upgrade(upgraded: Upgraded) -&gt; <span class="prelude-ty">Result</span>&lt;(MaybeTlsStream, Bytes), ConnectionHandlerError&gt; {
 <a href=#77 id=77 data-nosnippet>77</a>    <span class="kw">match </span>upgraded.downcast::&lt;hyper_util::rt::TokioIo&lt;MaybeTlsStream&gt;&gt;() {
 <a href=#78 id=78 data-nosnippet>78</a>        <span class="prelude-val">Ok</span>(parts) =&gt; <span class="prelude-val">Ok</span>((parts.io.into_inner(), parts.read_buf)),
-<a href=#79 id=79 data-nosnippet>79</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="macro">Err!</span>(ConnectionHandlerError::DowncastUpgrade),
+<a href=#79 id=79 data-nosnippet>79</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(<span class="macro">e!</span>(ConnectionHandlerError::DowncastUpgrade)),
 <a href=#80 id=80 data-nosnippet>80</a>    }
 <a href=#81 id=81 data-nosnippet>81</a>}
 <a href=#82 id=82 data-nosnippet>82</a>
@@ -464,20 +464,20 @@
 <a href=#464 id=464 data-nosnippet>464</a>        }
 <a href=#465 id=465 data-nosnippet>465</a>
 <a href=#466 id=466 data-nosnippet>466</a>        <span class="kw">let </span>upgrade_header = expect_header(<span class="kw-2">&amp;</span>req, UPGRADE)<span class="question-mark">?</span>;
-<a href=#467 id=467 data-nosnippet>467</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="macro">n0_error::ensure_e!</span>(
 <a href=#468 id=468 data-nosnippet>468</a>            upgrade_header == HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
-<a href=#469 id=469 data-nosnippet>469</a>            <span class="macro">e!</span>(RelayUpgradeReqError::InvalidHeader {
+<a href=#469 id=469 data-nosnippet>469</a>            RelayUpgradeReqError::InvalidHeader {
 <a href=#470 id=470 data-nosnippet>470</a>                header: UPGRADE,
 <a href=#471 id=471 data-nosnippet>471</a>                details: <span class="macro">format!</span>(<span class="string">"value must be {WEBSOCKET_UPGRADE_PROTOCOL}"</span>)
-<a href=#472 id=472 data-nosnippet>472</a>            })
+<a href=#472 id=472 data-nosnippet>472</a>            }
 <a href=#473 id=473 data-nosnippet>473</a>        );
 <a href=#474 id=474 data-nosnippet>474</a>
 <a href=#475 id=475 data-nosnippet>475</a>        <span class="kw">let </span>key = expect_header(<span class="kw-2">&amp;</span>req, SEC_WEBSOCKET_KEY)<span class="question-mark">?</span>.clone();
 <a href=#476 id=476 data-nosnippet>476</a>        <span class="kw">let </span>version = expect_header(<span class="kw-2">&amp;</span>req, SEC_WEBSOCKET_VERSION)<span class="question-mark">?</span>.clone();
 <a href=#477 id=477 data-nosnippet>477</a>
-<a href=#478 id=478 data-nosnippet>478</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#478 id=478 data-nosnippet>478</a>        <span class="macro">n0_error::ensure_e!</span>(
 <a href=#479 id=479 data-nosnippet>479</a>            version.as_bytes() == SUPPORTED_WEBSOCKET_VERSION.as_bytes(),
-<a href=#480 id=480 data-nosnippet>480</a>            <span class="macro">e!</span>(RelayUpgradeReqError::UnsupportedWebsocketVersion)
+<a href=#480 id=480 data-nosnippet>480</a>            RelayUpgradeReqError::UnsupportedWebsocketVersion
 <a href=#481 id=481 data-nosnippet>481</a>        );
 <a href=#482 id=482 data-nosnippet>482</a>
 <a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">let </span>subprotocols = expect_header(<span class="kw-2">&amp;</span>req, SEC_WEBSOCKET_PROTOCOL)<span class="question-mark">?
@@ -492,12 +492,12 @@
 <a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>supports_our_version = subprotocols
 <a href=#493 id=493 data-nosnippet>493</a>            .split_whitespace()
 <a href=#494 id=494 data-nosnippet>494</a>            .any(|p| p == RELAY_PROTOCOL_VERSION);
-<a href=#495 id=495 data-nosnippet>495</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="macro">n0_error::ensure_e!</span>(
 <a href=#496 id=496 data-nosnippet>496</a>            supports_our_version,
-<a href=#497 id=497 data-nosnippet>497</a>            <span class="macro">e!</span>(RelayUpgradeReqError::UnsupportedRelayVersion {
+<a href=#497 id=497 data-nosnippet>497</a>            RelayUpgradeReqError::UnsupportedRelayVersion {
 <a href=#498 id=498 data-nosnippet>498</a>                we_support: RELAY_PROTOCOL_VERSION,
 <a href=#499 id=499 data-nosnippet>499</a>                you_support: subprotocols.to_string()
-<a href=#500 id=500 data-nosnippet>500</a>            })
+<a href=#500 id=500 data-nosnippet>500</a>            }
 <a href=#501 id=501 data-nosnippet>501</a>        );
 <a href=#502 id=502 data-nosnippet>502</a>
 <a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
@@ -626,7 +626,7 @@
 <a href=#626 id=626 data-nosnippet>626</a>        <span class="macro">debug!</span>(<span class="string">"relay_connection upgraded"</span>);
 <a href=#627 id=627 data-nosnippet>627</a>        <span class="kw">let </span>(io, read_buf) = downcast_upgrade(upgraded)<span class="question-mark">?</span>;
 <a href=#628 id=628 data-nosnippet>628</a>        <span class="kw">if </span>!read_buf.is_empty() {
-<a href=#629 id=629 data-nosnippet>629</a>            <span class="kw">return </span><span class="macro">Err!</span>(ConnectionHandlerError::BufferNotEmpty { buf: read_buf });
+<a href=#629 id=629 data-nosnippet>629</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(ConnectionHandlerError::BufferNotEmpty { buf: read_buf }));
 <a href=#630 id=630 data-nosnippet>630</a>        }
 <a href=#631 id=631 data-nosnippet>631</a>
 <a href=#632 id=632 data-nosnippet>632</a>        <span class="self">self</span>.accept(io, client_auth_header).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -858,7 +858,7 @@
 <a href=#858 id=858 data-nosnippet>858</a>    <span class="kw">use </span>std::sync::Arc;
 <a href=#859 id=859 data-nosnippet>859</a>
 <a href=#860 id=860 data-nosnippet>860</a>    <span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
-<a href=#861 id=861 data-nosnippet>861</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, whatever};
+<a href=#861 id=861 data-nosnippet>861</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, bail};
 <a href=#862 id=862 data-nosnippet>862</a>    <span class="kw">use </span>n0_future::{SinkExt, StreamExt};
 <a href=#863 id=863 data-nosnippet>863</a>    <span class="kw">use </span>rand::SeedableRng;
 <a href=#864 id=864 data-nosnippet>864</a>    <span class="kw">use </span>reqwest::Url;
@@ -917,7 +917,7 @@
 <a href=#917 id=917 data-nosnippet>917</a>        <span class="kw">let </span>addr = <span class="kw">if let </span>std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
 <a href=#918 id=918 data-nosnippet>918</a>            ipv4_addr
 <a href=#919 id=919 data-nosnippet>919</a>        } <span class="kw">else </span>{
-<a href=#920 id=920 data-nosnippet>920</a>            <span class="macro">whatever!</span>(<span class="string">"cannot get ipv4 addr from socket addr {addr:?}"</span>);
+<a href=#920 id=920 data-nosnippet>920</a>            <span class="macro">bail!</span>(<span class="string">"cannot get ipv4 addr from socket addr {addr:?}"</span>);
 <a href=#921 id=921 data-nosnippet>921</a>        };
 <a href=#922 id=922 data-nosnippet>922</a>
 <a href=#923 id=923 data-nosnippet>923</a>        <span class="macro">info!</span>(<span class="string">"addr: {addr}:{port}"</span>);
@@ -1038,7 +1038,7 @@
 <a href=#1038 id=1038 data-nosnippet>1038</a>        <span class="kw">let </span>addr = <span class="kw">if let </span>std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
 <a href=#1039 id=1039 data-nosnippet>1039</a>            ipv4_addr
 <a href=#1040 id=1040 data-nosnippet>1040</a>        } <span class="kw">else </span>{
-<a href=#1041 id=1041 data-nosnippet>1041</a>            <span class="macro">whatever!</span>(<span class="string">"cannot get ipv4 addr from socket addr {addr:?}"</span>);
+<a href=#1041 id=1041 data-nosnippet>1041</a>            <span class="macro">bail!</span>(<span class="string">"cannot get ipv4 addr from socket addr {addr:?}"</span>);
 <a href=#1042 id=1042 data-nosnippet>1042</a>        };
 <a href=#1043 id=1043 data-nosnippet>1043</a>
 <a href=#1044 id=1044 data-nosnippet>1044</a>        <span class="macro">info!</span>(<span class="string">"Relay listening on: {addr}:{port}"</span>);
@@ -1158,7 +1158,7 @@
 <a href=#1158 id=1158 data-nosnippet>1158</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1159 id=1159 data-nosnippet>1159</a>            }
 <a href=#1160 id=1160 data-nosnippet>1160</a>            msg =&gt; {
-<a href=#1161 id=1161 data-nosnippet>1161</a>                <span class="macro">whatever!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
+<a href=#1161 id=1161 data-nosnippet>1161</a>                <span class="macro">bail!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
 <a href=#1162 id=1162 data-nosnippet>1162</a>            }
 <a href=#1163 id=1163 data-nosnippet>1163</a>        }
 <a href=#1164 id=1164 data-nosnippet>1164</a>
@@ -1179,7 +1179,7 @@
 <a href=#1179 id=1179 data-nosnippet>1179</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1180 id=1180 data-nosnippet>1180</a>            }
 <a href=#1181 id=1181 data-nosnippet>1181</a>            msg =&gt; {
-<a href=#1182 id=1182 data-nosnippet>1182</a>                <span class="macro">whatever!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
+<a href=#1182 id=1182 data-nosnippet>1182</a>                <span class="macro">bail!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
 <a href=#1183 id=1183 data-nosnippet>1183</a>            }
 <a href=#1184 id=1184 data-nosnippet>1184</a>        }
 <a href=#1185 id=1185 data-nosnippet>1185</a>
@@ -1258,7 +1258,7 @@
 <a href=#1258 id=1258 data-nosnippet>1258</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1259 id=1259 data-nosnippet>1259</a>            }
 <a href=#1260 id=1260 data-nosnippet>1260</a>            msg =&gt; {
-<a href=#1261 id=1261 data-nosnippet>1261</a>                <span class="macro">whatever!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
+<a href=#1261 id=1261 data-nosnippet>1261</a>                <span class="macro">bail!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
 <a href=#1262 id=1262 data-nosnippet>1262</a>            }
 <a href=#1263 id=1263 data-nosnippet>1263</a>        }
 <a href=#1264 id=1264 data-nosnippet>1264</a>
@@ -1279,7 +1279,7 @@
 <a href=#1279 id=1279 data-nosnippet>1279</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1280 id=1280 data-nosnippet>1280</a>            }
 <a href=#1281 id=1281 data-nosnippet>1281</a>            msg =&gt; {
-<a href=#1282 id=1282 data-nosnippet>1282</a>                <span class="macro">whatever!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
+<a href=#1282 id=1282 data-nosnippet>1282</a>                <span class="macro">bail!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
 <a href=#1283 id=1283 data-nosnippet>1283</a>            }
 <a href=#1284 id=1284 data-nosnippet>1284</a>        }
 <a href=#1285 id=1285 data-nosnippet>1285</a>
@@ -1310,7 +1310,7 @@
 <a href=#1310 id=1310 data-nosnippet>1310</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1311 id=1311 data-nosnippet>1311</a>            }
 <a href=#1312 id=1312 data-nosnippet>1312</a>            msg =&gt; {
-<a href=#1313 id=1313 data-nosnippet>1313</a>                <span class="macro">whatever!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
+<a href=#1313 id=1313 data-nosnippet>1313</a>                <span class="macro">bail!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
 <a href=#1314 id=1314 data-nosnippet>1314</a>            }
 <a href=#1315 id=1315 data-nosnippet>1315</a>        }
 <a href=#1316 id=1316 data-nosnippet>1316</a>
@@ -1331,7 +1331,7 @@
 <a href=#1331 id=1331 data-nosnippet>1331</a>                <span class="macro">assert_eq!</span>(msg, datagrams);
 <a href=#1332 id=1332 data-nosnippet>1332</a>            }
 <a href=#1333 id=1333 data-nosnippet>1333</a>            msg =&gt; {
-<a href=#1334 id=1334 data-nosnippet>1334</a>                <span class="macro">whatever!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
+<a href=#1334 id=1334 data-nosnippet>1334</a>                <span class="macro">bail!</span>(<span class="string">"expected ReceivedDatagrams msg, got {msg:?}"</span>);
 <a href=#1335 id=1335 data-nosnippet>1335</a>            }
 <a href=#1336 id=1336 data-nosnippet>1336</a>        }
 <a href=#1337 id=1337 data-nosnippet>1337</a>

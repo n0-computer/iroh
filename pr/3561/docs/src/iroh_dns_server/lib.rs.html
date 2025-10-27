@@ -183,7 +183,7 @@
 <a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">let </span>res = resolver.lookup_endpoint_by_id(<span class="kw-2">&amp;</span>endpoint_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#184 id=184 data-nosnippet>184</a>
 <a href=#185 id=185 data-nosnippet>185</a>        <span class="macro">assert_eq!</span>(res.endpoint_id, endpoint_id);
-<a href=#186 id=186 data-nosnippet>186</a>        <span class="macro">assert_eq!</span>(res.relay_url(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url));
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="macro">assert_eq!</span>(res.relay_urls().next(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url));
 <a href=#187 id=187 data-nosnippet>187</a>
 <a href=#188 id=188 data-nosnippet>188</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#189 id=189 data-nosnippet>189</a>        <span class="prelude-val">Ok</span>(())
@@ -257,7 +257,7 @@
 <a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">let </span>res = resolver.lookup_endpoint_by_id(<span class="kw-2">&amp;</span>endpoint_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#258 id=258 data-nosnippet>258</a>
 <a href=#259 id=259 data-nosnippet>259</a>        <span class="macro">assert_eq!</span>(res.endpoint_id, endpoint_id);
-<a href=#260 id=260 data-nosnippet>260</a>        <span class="macro">assert_eq!</span>(res.relay_url(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url));
+<a href=#260 id=260 data-nosnippet>260</a>        <span class="macro">assert_eq!</span>(res.relay_urls().next(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url));
 <a href=#261 id=261 data-nosnippet>261</a>
 <a href=#262 id=262 data-nosnippet>262</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#263 id=263 data-nosnippet>263</a>        <span class="prelude-val">Ok</span>(())

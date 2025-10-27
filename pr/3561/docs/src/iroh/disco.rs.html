@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>
 <a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>data_encoding::HEXLOWER;
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>iroh_base::{PublicKey, RelayUrl};
-<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>n0_error::{<span class="prelude-val">Err</span>, Error, add_meta, e};
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>n0_error::{Error, add_meta, e};
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>rand::Rng;
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#31 id=31 data-nosnippet>31</a><span class="comment">// use n0_error ensure macro path-qualified
@@ -217,7 +217,7 @@
 <a href=#217 id=217 data-nosnippet>217</a><span class="kw">impl </span>Ping {
 <a href=#218 id=218 data-nosnippet>218</a>    <span class="kw">fn </span>from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
 <a href=#219 id=219 data-nosnippet>219</a>        <span class="comment">// Deliberately lax on longer-than-expected messages, for future compatibility.
-<a href=#220 id=220 data-nosnippet>220</a>        </span><span class="macro">n0_error::ensure!</span>(p.len() &gt;= PING_LEN, <span class="macro">e!</span>(ParseError::TooShort));
+<a href=#220 id=220 data-nosnippet>220</a>        </span><span class="macro">n0_error::ensure_e!</span>(p.len() &gt;= PING_LEN, ParseError::TooShort);
 <a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect(<span class="string">"length checked"</span>);
 <a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">let </span>raw_key = <span class="kw-2">&amp;</span>p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
 <a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>endpoint_key =
@@ -256,7 +256,7 @@
 <a href=#256 id=256 data-nosnippet>256</a>}
 <a href=#257 id=257 data-nosnippet>257</a>
 <a href=#258 id=258 data-nosnippet>258</a><span class="kw">fn </span>send_addr_from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;SendAddr, ParseError&gt; {
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="macro">n0_error::ensure!</span>(p.len() &gt; <span class="number">2</span>, <span class="macro">e!</span>(ParseError::TooShort));
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="macro">n0_error::ensure_e!</span>(p.len() &gt; <span class="number">2</span>, ParseError::TooShort);
 <a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">match </span>p[<span class="number">0</span>] {
 <a href=#261 id=261 data-nosnippet>261</a>        <span class="number">0u8 </span>=&gt; {
 <a href=#262 id=262 data-nosnippet>262</a>            <span class="kw">let </span>bytes: [u8; EP_LENGTH] = p[<span class="number">1</span>..].try_into().map_err(|<span class="kw">_</span>| <span class="macro">e!</span>(ParseError::TooShort))<span class="question-mark">?</span>;
@@ -268,7 +268,7 @@
 <a href=#268 id=268 data-nosnippet>268</a>            <span class="kw">let </span>u: Url = s.parse().map_err(|<span class="kw">_</span>| <span class="macro">e!</span>(ParseError::InvalidEncoding))<span class="question-mark">?</span>;
 <a href=#269 id=269 data-nosnippet>269</a>            <span class="prelude-val">Ok</span>(SendAddr::Relay(u.into()))
 <a href=#270 id=270 data-nosnippet>270</a>        }
-<a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">_ </span>=&gt; <span class="macro">Err!</span>(ParseError::UnknownFormat),
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">e!</span>(ParseError::UnknownFormat)),
 <a href=#272 id=272 data-nosnippet>272</a>    }
 <a href=#273 id=273 data-nosnippet>273</a>}
 <a href=#274 id=274 data-nosnippet>274</a>
@@ -340,7 +340,7 @@
 <a href=#340 id=340 data-nosnippet>340</a>
 <a href=#341 id=341 data-nosnippet>341</a><span class="kw">impl </span>CallMeMaybe {
 <a href=#342 id=342 data-nosnippet>342</a>    <span class="kw">fn </span>from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
-<a href=#343 id=343 data-nosnippet>343</a>        <span class="macro">n0_error::ensure!</span>(p.len() % EP_LENGTH == <span class="number">0</span>, <span class="macro">e!</span>(ParseError::InvalidEncoding));
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="macro">n0_error::ensure_e!</span>(p.len() % EP_LENGTH == <span class="number">0</span>, ParseError::InvalidEncoding);
 <a href=#344 id=344 data-nosnippet>344</a>
 <a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">let </span>num_entries = p.len() / EP_LENGTH;
 <a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span><span class="kw-2">mut </span>m = CallMeMaybe {
@@ -379,11 +379,11 @@
 <a href=#379 id=379 data-nosnippet>379</a><span class="kw">impl </span>Message {
 <a href=#380 id=380 data-nosnippet>380</a>    <span class="doccomment">/// Parses the encrypted part of the message from inside the nacl secretbox.
 <a href=#381 id=381 data-nosnippet>381</a>    </span><span class="kw">pub fn </span>from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
-<a href=#382 id=382 data-nosnippet>382</a>        <span class="macro">n0_error::ensure!</span>(p.len() &gt;= <span class="number">2</span>, <span class="macro">e!</span>(ParseError::TooShort));
+<a href=#382 id=382 data-nosnippet>382</a>        <span class="macro">n0_error::ensure_e!</span>(p.len() &gt;= <span class="number">2</span>, ParseError::TooShort);
 <a href=#383 id=383 data-nosnippet>383</a>
 <a href=#384 id=384 data-nosnippet>384</a>        <span class="kw">let </span>t = MessageType::try_from(p[<span class="number">0</span>]).map_err(|<span class="kw">_</span>| <span class="macro">e!</span>(ParseError::UnknownFormat))<span class="question-mark">?</span>;
 <a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">let </span>version = p[<span class="number">1</span>];
-<a href=#386 id=386 data-nosnippet>386</a>        <span class="macro">n0_error::ensure!</span>(version == V0, <span class="macro">e!</span>(ParseError::UnknownFormat));
+<a href=#386 id=386 data-nosnippet>386</a>        <span class="macro">n0_error::ensure_e!</span>(version == V0, ParseError::UnknownFormat);
 <a href=#387 id=387 data-nosnippet>387</a>
 <a href=#388 id=388 data-nosnippet>388</a>        <span class="kw">let </span>p = <span class="kw-2">&amp;</span>p[<span class="number">2</span>..];
 <a href=#389 id=389 data-nosnippet>389</a>        <span class="kw">match </span>t {

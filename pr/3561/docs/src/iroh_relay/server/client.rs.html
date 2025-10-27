@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>std::{collections::HashSet, sync::Arc, time::Duration};
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>iroh_base::EndpointId;
-<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>n0_error::{<span class="prelude-val">Err</span>, Error, add_meta, e};
+<a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>n0_error::{Error, add_meta, e};
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>n0_future::{SinkExt, StreamExt};
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>rand::Rng;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>time::{Date, OffsetDateTime};
@@ -380,7 +380,7 @@
 <a href=#380 id=380 data-nosnippet>380</a>    </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: RelayToClientMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), WriteFrameError&gt; {
 <a href=#381 id=381 data-nosnippet>381</a>        tokio::time::timeout(<span class="self">self</span>.timeout, <span class="self">self</span>.stream.send(frame))
 <a href=#382 id=382 data-nosnippet>382</a>            .<span class="kw">await</span><span class="question-mark">?
-<a href=#383 id=383 data-nosnippet>383</a>            </span>.map_err(|err| <span class="macro">e!</span>(WriteFrameError::Stream { source: err }))<span class="question-mark">?</span>;
+<a href=#383 id=383 data-nosnippet>383</a>            </span>.map_err(|err| <span class="macro">e!</span>(WriteFrameError::Stream, err))<span class="question-mark">?</span>;
 <a href=#384 id=384 data-nosnippet>384</a>        <span class="prelude-val">Ok</span>(())
 <a href=#385 id=385 data-nosnippet>385</a>    }
 <a href=#386 id=386 data-nosnippet>386</a>
@@ -438,7 +438,7 @@
 <a href=#438 id=438 data-nosnippet>438</a>        <span class="macro">trace!</span>(<span class="question-mark">?</span>maybe_frame, <span class="string">"handle incoming frame"</span>);
 <a href=#439 id=439 data-nosnippet>439</a>        <span class="kw">let </span>frame = <span class="kw">match </span>maybe_frame {
 <a href=#440 id=440 data-nosnippet>440</a>            <span class="prelude-val">Some</span>(frame) =&gt; frame<span class="question-mark">?</span>,
-<a href=#441 id=441 data-nosnippet>441</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="macro">Err!</span>(HandleFrameError::StreamTerminated),
+<a href=#441 id=441 data-nosnippet>441</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(HandleFrameError::StreamTerminated)),
 <a href=#442 id=442 data-nosnippet>442</a>        };
 <a href=#443 id=443 data-nosnippet>443</a>
 <a href=#444 id=444 data-nosnippet>444</a>        <span class="kw">match </span>frame {
@@ -559,7 +559,7 @@
 <a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">match </span>stream.next().<span class="kw">await </span>{
 <a href=#560 id=560 data-nosnippet>560</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(frame)) =&gt; {
 <a href=#561 id=561 data-nosnippet>561</a>                <span class="kw">if </span>frame_type != frame.typ() {
-<a href=#562 id=562 data-nosnippet>562</a>                    <span class="macro">n0_error::whatever!</span>(
+<a href=#562 id=562 data-nosnippet>562</a>                    <span class="macro">n0_error::bail!</span>(
 <a href=#563 id=563 data-nosnippet>563</a>                        <span class="string">"Unexpected frame, got {:?}, but expected {:?}"</span>,
 <a href=#564 id=564 data-nosnippet>564</a>                        frame.typ(),
 <a href=#565 id=565 data-nosnippet>565</a>                        frame_type
@@ -568,7 +568,7 @@
 <a href=#568 id=568 data-nosnippet>568</a>                <span class="prelude-val">Ok</span>(frame)
 <a href=#569 id=569 data-nosnippet>569</a>            }
 <a href=#570 id=570 data-nosnippet>570</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(err).e(),
-<a href=#571 id=571 data-nosnippet>571</a>            <span class="prelude-val">None </span>=&gt; <span class="macro">n0_error::whatever!</span>(<span class="string">"Unexpected EOF, expected frame {frame_type:?}"</span>),
+<a href=#571 id=571 data-nosnippet>571</a>            <span class="prelude-val">None </span>=&gt; <span class="macro">n0_error::bail!</span>(<span class="string">"Unexpected EOF, expected frame {frame_type:?}"</span>),
 <a href=#572 id=572 data-nosnippet>572</a>        }
 <a href=#573 id=573 data-nosnippet>573</a>    }
 <a href=#574 id=574 data-nosnippet>574</a>
