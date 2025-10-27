@@ -13,7 +13,7 @@ use hickory_server::{
     server::RequestInfo,
     store::in_memory::InMemoryAuthority,
 };
-use n0_error::{Result, StackResultExt, StdResultExt, whatever};
+use n0_error::{Result, StackResultExt, StdResultExt, bail};
 use tracing::{debug, trace};
 
 use crate::{
@@ -41,7 +41,7 @@ impl NodeAuthority {
         serial: u32,
     ) -> Result<Self> {
         if origins.is_empty() {
-            whatever!("at least one origin is required");
+            bail!("at least one origin is required");
         }
         let first_origin = LowerName::from(&origins[0]);
         Ok(Self {
@@ -183,7 +183,7 @@ fn parse_name_as_pkarr_with_origin(
             continue;
         }
         if name.num_labels() < origin.num_labels() + 1 {
-            whatever!("not a valid pkarr name: missing pubkey");
+            bail!("not a valid pkarr name: missing pubkey");
         }
         trace!("parse {origin}");
         let labels = name.iter().rev();
@@ -195,7 +195,7 @@ fn parse_name_as_pkarr_with_origin(
         let remaining_name = Name::from_labels(labels_without_origin.rev()).e()?;
         return Ok((remaining_name, pkey, origin.clone()));
     }
-    whatever!("name does not match any allowed origin");
+    bail!("name does not match any allowed origin");
 }
 
 fn err_refused(e: impl fmt::Debug) -> LookupError {

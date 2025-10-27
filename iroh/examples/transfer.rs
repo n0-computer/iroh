@@ -202,7 +202,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                n0_error::whatever!(
+                n0_error::bail!(
                     "Must have the `test-utils` feature enabled when using the `--env=dev` flag"
                 )
             }
@@ -238,7 +238,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                n0_error::whatever!(
+                n0_error::bail!(
                     "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
                 );
             }
@@ -269,7 +269,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "discovery-local-network"))]
             {
-                n0_error::whatever!(
+                n0_error::bail!(
                     "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
                 );
             }

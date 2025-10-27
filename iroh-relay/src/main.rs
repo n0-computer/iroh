@@ -19,7 +19,7 @@ use iroh_relay::{
     },
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
-use n0_error::{AnyError as Error, Result, StdResultExt, whatever};
+use n0_error::{AnyError as Error, Result, StdResultExt, bail};
 use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{AcmeConfig, caches::DirCache};
@@ -98,7 +98,7 @@ fn load_secret_key(
         }
     }
 
-    whatever!(
+    bail!(
         "no keys found in {} (encrypted keys not supported)",
         filename.display()
     );
@@ -299,10 +299,10 @@ async fn http_access_check_inner(
         }
         Ok(res) if res.status() == StatusCode::OK => match res.text().await {
             Ok(text) if text == "true" => Ok(()),
-            Ok(_) => whatever!("Invalid response text (must be 'true')"),
+            Ok(_) => bail!("Invalid response text (must be 'true')"),
             Err(err) => Err(err).std_context("Failed to read response"),
         },
-        Ok(res) => whatever!("Received invalid status code ({})", res.status()),
+        Ok(res) => bail!("Received invalid status code ({})", res.status()),
     }
 }
 
@@ -507,7 +507,7 @@ impl Config {
 
     async fn read_from_file(path: impl AsRef<Path>) -> Result<Self> {
         if !path.as_ref().is_file() {
-            whatever!("config-path must be a file");
+            bail!("config-path must be a file");
         }
         let config_ser = tokio::fs::read_to_string(&path)
             .await
@@ -526,7 +526,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut cfg = Config::load(&cli).await?;
     if cfg.enable_quic_addr_discovery && cfg.tls.is_none() {
-        whatever!("TLS must be configured in order to spawn a QUIC endpoint");
+        bail!("TLS must be configured in order to spawn a QUIC endpoint");
     }
     if cli.dev {
         // When in `--dev` mode, do not use https, even when tls is configured.
@@ -538,7 +538,7 @@ async fn main() -> Result<()> {
         }
     }
     if cfg.tls.is_none() && cfg.enable_quic_addr_discovery {
-        whatever!("If QUIC address discovery is enabled, TLS must also be configured");
+        bail!("If QUIC address discovery is enabled, TLS must also be configured");
     };
     let relay_config = build_relay_config(cfg).await?;
     debug!("{relay_config:#?}");
@@ -664,7 +664,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
                 bind_addr: tls.quic_bind_addr,
             });
         } else {
-            whatever!(
+            bail!(
                 "Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery"
             )
         }
@@ -674,7 +674,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
             let client_rx = match &limits.client {
                 Some(PerClientRateLimitConfig { rx: Some(rx) }) => {
                     if rx.bytes_per_second.is_none() && rx.max_burst_bytes.is_some() {
-                        whatever!("bytes_per_seconds must be specified to enable the rate-limiter");
+                        bail!("bytes_per_seconds must be specified to enable the rate-limiter");
                     }
                     match rx.bytes_per_second {
                         Some(bps) => Some(ClientRateLimit {

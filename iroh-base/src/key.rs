@@ -11,7 +11,7 @@ use std::{
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use n0_error::{Err, Error, add_meta, e};
+use n0_error::{Error, add_meta, e};
 use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize};
 
@@ -127,7 +127,7 @@ impl PublicKey {
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<(), SignatureError> {
         self.as_verifying_key()
             .verify_strict(message, &signature.0)
-            .map_err(|_| e!(SignatureError))
+            .map_err(|_| SignatureError::new())
     }
 
     /// Convert to a hex string limited to the first 5 bytes for a friendly string
@@ -210,15 +210,13 @@ impl Display for PublicKey {
 pub enum KeyParsingError {
     /// Error when decoding.
     #[error(transparent)]
-    Decode { source: data_encoding::DecodeError },
+    Decode(data_encoding::DecodeError),
     /// Error when decoding the public key.
     #[error(transparent)]
-    Key {
-        source: ed25519_dalek::SignatureError,
-    },
+    Key(ed25519_dalek::SignatureError),
     /// The encoded information had the wrong length.
     #[display("invalid length")]
-    DecodeInvalidLength {},
+    DecodeInvalidLength,
 }
 
 /// Deserialises the [`PublicKey`] from it's base32 encoding.
@@ -380,14 +378,14 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
         let input = s.to_ascii_uppercase();
         let input = input.as_bytes();
         if data_encoding::BASE32_NOPAD.decode_len(input.len())? != bytes.len() {
-            return Err!(KeyParsingError::DecodeInvalidLength);
+            return Err(e!(KeyParsingError::DecodeInvalidLength));
         }
         data_encoding::BASE32_NOPAD.decode_mut(input, &mut bytes)
     };
     match res {
         Ok(len) => {
             if len != PublicKey::LENGTH {
-                return Err!(KeyParsingError::DecodeInvalidLength);
+                return Err(e!(KeyParsingError::DecodeInvalidLength));
             }
         }
         Err(partial) => return Err(partial.error.into()),

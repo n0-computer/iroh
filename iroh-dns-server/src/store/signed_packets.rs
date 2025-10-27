@@ -391,7 +391,7 @@ async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: Cance
             if let Err(cause) = evict_task_inner(send, options).await {
                 error!("evict task failed: {:?}", cause);
             }
-            // when we are done for whatever reason we want to shut down the actor
+            // when we are done for bail reason we want to shut down the actor
             cancel.cancel();
         })
         .await;

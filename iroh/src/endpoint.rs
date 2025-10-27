@@ -2376,7 +2376,7 @@ mod tests {
             let server = server.clone();
             async move {
                 let Some(conn) = server.accept().await else {
-                    n0_error::whatever!("Expected an incoming connection");
+                    n0_error::bail!("Expected an incoming connection");
                 };
                 let conn = conn.await.e()?;
                 let (mut send, mut recv) = conn.accept_bi().await.e()?;
@@ -2427,7 +2427,7 @@ mod tests {
                 for i in 0..2 {
                     println!("accept: round {i}");
                     let Some(conn) = server.accept().await else {
-                        n0_error::whatever!("Expected an incoming connection");
+                        n0_error::bail!("Expected an incoming connection");
                     };
                     let conn = conn.await.e()?;
                     let (mut send, mut recv) = conn.accept_bi().await.e()?;
@@ -2646,7 +2646,7 @@ mod tests {
                     return Ok(());
                 }
             }
-            n0_error::whatever!("conn_type stream ended before `ConnectionType::Direct`");
+            n0_error::bail!("conn_type stream ended before `ConnectionType::Direct`");
         }
 
         async fn accept(ep: &Endpoint) -> Result<Connection> {
