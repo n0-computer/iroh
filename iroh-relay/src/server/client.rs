@@ -327,28 +327,30 @@ impl Actor {
                 maybe_frame = self.stream.next() => {
                     self
                         .handle_frame(maybe_frame)
-                        .await
-                        .map_err(|source| e!(RunError::HandleFrame { source }))?;
+                        .await?;
                     // reset the ping interval, we just received a message
                     ping_interval.reset();
                 }
                 // First priority, disco packets
                 packet = self.disco_send_queue.recv() => {
-                let packet = packet.ok_or_else(|| e!(RunError::DiscoSendQueuePacketDrop))?;
-                    self.send_disco_packet(packet).await
+                    let packet = packet.ok_or_else(|| e!(RunError::DiscoSendQueuePacketDrop))?;
+                    self.send_disco_packet(packet)
+                        .await
                         .map_err(|err| e!(RunError::DiscoPacketSend, err))?;
                 }
                 // Second priority, sending regular packets
                 packet = self.send_queue.recv() => {
-                let packet = packet.ok_or_else(|| e!(RunError::SendQueuePacketDrop))?;
-                    self.send_packet(packet).await
+                    let packet = packet.ok_or_else(|| e!(RunError::SendQueuePacketDrop))?;
+                    self.send_packet(packet)
+                        .await
                         .map_err(|err| e!(RunError::PacketSend, err))?;
                 }
                 // Last priority, sending left endpoints
                 endpoint_id = self.endpoint_gone.recv() => {
-                let endpoint_id = endpoint_id.ok_or_else(|| e!(RunError::EndpointGoneDrop))?;
+                    let endpoint_id = endpoint_id.ok_or_else(|| e!(RunError::EndpointGoneDrop))?;
                     trace!("endpoint_id gone: {:?}", endpoint_id);
-                    self.write_frame(RelayToClientMsg::EndpointGone(endpoint_id)).await
+                    self.write_frame(RelayToClientMsg::EndpointGone(endpoint_id))
+                        .await
                         .map_err(|err| e!(RunError::EndpointGoneWriteFrame, err))?;
                 }
                 _ = self.ping_tracker.timeout() => {
@@ -378,9 +380,7 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     async fn write_frame(&mut self, frame: RelayToClientMsg) -> Result<(), WriteFrameError> {
-        tokio::time::timeout(self.timeout, self.stream.send(frame))
-            .await?
-            .map_err(|err| e!(WriteFrameError::Stream, err))?;
+        tokio::time::timeout(self.timeout, self.stream.send(frame)).await??;
         Ok(())
     }
 

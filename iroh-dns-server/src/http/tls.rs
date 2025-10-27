@@ -9,7 +9,7 @@ use axum_server::{
     accept::Accept,
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
-use n0_error::{Result, StdResultExt, bail};
+use n0_error::{Result, StackResultExt, StdResultExt, bail};
 use n0_future::{FutureExt, future::Boxed as BoxFuture};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -42,8 +42,8 @@ impl CertMode {
             CertMode::Manual => TlsAcceptor::manual(domains, cert_cache).await?,
             CertMode::SelfSigned => TlsAcceptor::self_signed(domains).await?,
             CertMode::LetsEncrypt => {
-                let contact = letsencrypt_contact
-                    .std_context("contact is required for letsencrypt cert mode")?;
+                let contact =
+                    letsencrypt_contact.context("contact is required for letsencrypt cert mode")?;
                 TlsAcceptor::letsencrypt(domains, &contact, letsencrypt_prod, cert_cache)?
             }
         })

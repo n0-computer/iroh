@@ -14,7 +14,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use n0_error::{Result, StdResultExt, bail};
+use n0_error::{Result, StdResultExt, anyerr, bail};
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, task::JoinSet};
 use tower_http::{
@@ -172,11 +172,11 @@ impl HttpServer {
                 Err(err) if err.is_cancelled() => {}
                 Ok(Err(err)) => {
                     warn!(?err, "task failed");
-                    final_res = Err(err).std_context("task");
+                    final_res = Err(anyerr!(err, "task"));
                 }
                 Err(err) => {
                     warn!(?err, "task panicked");
-                    final_res = Err(err).std_context("join");
+                    final_res = Err(anyerr!(err, "join"));
                 }
             }
         }

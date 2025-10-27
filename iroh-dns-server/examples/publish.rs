@@ -10,7 +10,7 @@ use iroh::{
     },
     endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME},
 };
-use n0_error::{Result, StdResultExt};
+use n0_error::{Result, StackResultExt};
 use url::Url;
 
 const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
 
     let secret_key = match std::env::var("IROH_SECRET") {
         Ok(s) => SecretKey::from_str(&s)
-            .std_context("failed to parse IROH_SECRET environment variable as iroh secret key")?,
+            .context("failed to parse IROH_SECRET environment variable as iroh secret key")?,
         Err(_) => {
             let s = SecretKey::generate(&mut rand::rng());
             println!("Generated a new endpoint secret. To reuse, set");

@@ -140,16 +140,19 @@ pub enum Error {
     #[error(transparent)]
     Websocket {
         #[cfg(not(wasm_browser))]
-        #[error(std_err)]
+        #[error(from, std_err)]
         source: tokio_websockets::Error,
         #[cfg(wasm_browser)]
-        #[error(std_err)]
+        #[error(from, std_err)]
         source: ws_stream_wasm::WsErr,
     },
     #[display("Handshake stream ended prematurely")]
     UnexpectedEnd {},
     #[error(transparent)]
-    FrameTypeError { source: FrameTypeError },
+    FrameTypeError {
+        #[error(from)]
+        source: FrameTypeError,
+    },
     #[display("The relay denied our authentication ({reason})")]
     ServerDeniedAuth { reason: String },
     #[display("Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}")]
@@ -491,10 +494,8 @@ async fn write_frame<F: serde::Serialize + Frame>(
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
         .into_inner()
         .freeze();
-    io.send(bytes)
-        .await
-        .map_err(|err| e!(Error::Websocket, err))?;
-    io.flush().await.map_err(|err| e!(Error::Websocket, err))?;
+    io.send(bytes).await?;
+    io.flush().await?;
     Ok(())
 }
 
@@ -504,12 +505,10 @@ async fn read_frame(
 ) -> Result<(FrameType, Bytes), Error> {
     let mut payload = io
         .try_next()
-        .await
-        .map_err(|err| e!(Error::Websocket, err))?
+        .await?
         .ok_or_else(|| e!(Error::UnexpectedEnd))?;
 
-    let frame_type =
-        FrameType::from_bytes(&mut payload).map_err(|err| e!(Error::FrameTypeError, err))?;
+    let frame_type = FrameType::from_bytes(&mut payload)?;
     trace!(?frame_type, "Reading frame");
     n0_error::ensure_e!(
         expected_types.contains(&frame_type),
@@ -535,7 +534,7 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
 mod tests {
     use bytes::BytesMut;
     use iroh_base::{PublicKey, SecretKey};
-    use n0_error::{Result, StdResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use rand::SeedableRng;
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -650,13 +649,13 @@ mod tests {
             async {
                 super::clientside(&mut client_io, secret_key)
                     .await
-                    .std_context("clientside")
+                    .context("clientside")
             }
             .instrument(info_span!("clientside")),
             async {
                 let auth_n = super::serverside(&mut server_io, client_auth_header)
                     .await
-                    .std_context("serverside")?;
+                    .context("serverside")?;
                 let mechanism = auth_n.mechanism;
                 let is_authorized = restricted_to.is_none_or(|key| key == auth_n.client_key);
                 let key = auth_n.authorize_if(is_authorized, &mut server_io).await?;
