@@ -23,7 +23,7 @@ url = { version = "2.5.3", features = ["serde"], optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 rand_core = { version = "0.9.3", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
-n0-error = { git = "https://github.com/n0-computer/n0-error" }
+n0-error = { git = "https://github.com/n0-computer/n0-error", branch = "Frando/dev" }
 zeroize = { version = "1.8.2", optional = true, features = ["derive"] }
 zeroize_derive = { version = "1.4.2", optional = true } # needed for minimal versions
 

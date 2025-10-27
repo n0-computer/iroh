@@ -1980,7 +1980,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "tokio",
  "tower-service",
  "tracing",
@@ -2400,7 +2400,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.36.2"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#5242e5cde624bb37758d85cf0d11f5cf16fb5b4f"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#a3f936680259bec8e07e50f1c76370aff7bacd97"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2419,7 +2419,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics-derive"
 version = "0.3.1"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#5242e5cde624bb37758d85cf0d11f5cf16fb5b4f"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#a3f936680259bec8e07e50f1c76370aff7bacd97"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2803,7 +2803,7 @@ dependencies = [
 [[package]]
 name = "n0-error"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-error#0070b103873f285627240e3c772fecec3f0b4528"
+source = "git+https://github.com/n0-computer/n0-error?branch=Frando%2Fdev#6b46dafc04efe0d8a4b9bdd0889cae6c0890a72d"
 dependencies = [
  "anyhow",
  "derive_more 2.0.1",
@@ -2814,7 +2814,7 @@ dependencies = [
 [[package]]
 name = "n0-error-macros"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-error#0070b103873f285627240e3c772fecec3f0b4528"
+source = "git+https://github.com/n0-computer/n0-error?branch=Frando%2Fdev#6b46dafc04efe0d8a4b9bdd0889cae6c0890a72d"
 dependencies = [
  "darling",
  "heck",
@@ -3699,7 +3699,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3736,7 +3736,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "tracing",
  "windows-sys 0.60.2",
 ]
