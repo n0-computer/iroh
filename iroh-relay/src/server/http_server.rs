@@ -854,7 +854,7 @@ mod tests {
     use std::sync::Arc;
 
     use iroh_base::{PublicKey, SecretKey};
-    use n0_error::{Result, StdResultExt, bail};
+    use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::{SinkExt, StreamExt};
     use rand::SeedableRng;
     use reqwest::Url;
@@ -913,7 +913,7 @@ mod tests {
         let addr = if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
             ipv4_addr
         } else {
-            bail!("cannot get ipv4 addr from socket addr {addr:?}");
+            bail_any!("cannot get ipv4 addr from socket addr {addr:?}");
         };
 
         info!("addr: {addr}:{port}");
@@ -1034,7 +1034,7 @@ mod tests {
         let addr = if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
             ipv4_addr
         } else {
-            bail!("cannot get ipv4 addr from socket addr {addr:?}");
+            bail_any!("cannot get ipv4 addr from socket addr {addr:?}");
         };
 
         info!("Relay listening on: {addr}:{port}");
@@ -1154,7 +1154,7 @@ mod tests {
                 assert_eq!(msg, datagrams);
             }
             msg => {
-                bail!("expected ReceivedDatagrams msg, got {msg:?}");
+                bail_any!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
@@ -1175,7 +1175,7 @@ mod tests {
                 assert_eq!(msg, datagrams);
             }
             msg => {
-                bail!("expected ReceivedDatagrams msg, got {msg:?}");
+                bail_any!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
@@ -1254,7 +1254,7 @@ mod tests {
                 assert_eq!(msg, datagrams);
             }
             msg => {
-                bail!("expected ReceivedDatagrams msg, got {msg:?}");
+                bail_any!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
@@ -1275,7 +1275,7 @@ mod tests {
                 assert_eq!(msg, datagrams);
             }
             msg => {
-                bail!("expected ReceivedDatagrams msg, got {msg:?}");
+                bail_any!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
@@ -1306,7 +1306,7 @@ mod tests {
                 assert_eq!(msg, datagrams);
             }
             msg => {
-                bail!("expected ReceivedDatagrams msg, got {msg:?}");
+                bail_any!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
@@ -1327,7 +1327,7 @@ mod tests {
                 assert_eq!(msg, datagrams);
             }
             msg => {
-                bail!("expected ReceivedDatagrams msg, got {msg:?}");
+                bail_any!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 

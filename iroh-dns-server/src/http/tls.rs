@@ -9,7 +9,7 @@ use axum_server::{
     accept::Accept,
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
-use n0_error::{Result, StackResultExt, StdResultExt, bail};
+use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::{FutureExt, future::Boxed as BoxFuture};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -86,7 +86,7 @@ impl TlsAcceptor {
     async fn manual(domains: Vec<String>, dir: PathBuf) -> Result<Self> {
         let config = rustls::ServerConfig::builder().with_no_client_auth();
         if domains.len() != 1 {
-            bail!("Multiple domains in manual mode are not supported");
+            bail_any!("Multiple domains in manual mode are not supported");
         }
 
         let keyname = escape_hostname(&domains[0]);
@@ -174,7 +174,7 @@ async fn load_secret_key(
         }
     }
 
-    bail!(
+    bail_any!(
         "no keys found in {} (encrypted keys not supported)",
         filename.as_ref().display()
     );

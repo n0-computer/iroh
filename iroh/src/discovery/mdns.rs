@@ -546,7 +546,7 @@ mod tests {
     /// tests)
     mod run_in_isolation {
         use iroh_base::{SecretKey, TransportAddr};
-        use n0_error::{AnyError as Error, Result, StdResultExt, bail};
+        use n0_error::{AnyError as Error, Result, StdResultExt, bail_any};
         use n0_future::StreamExt;
         use rand::{CryptoRng, SeedableRng};
         use tracing_test::traced_test;
@@ -707,7 +707,7 @@ mod tests {
                             got_ids.insert((endpoint_info.endpoint_id, data));
                         }
                     } else {
-                        bail!(
+                        bail_any!(
                             "no more events, only got {} ids, expected {num_endpoints}\n",
                             got_ids.len()
                         );

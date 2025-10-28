@@ -6,7 +6,7 @@ use iroh::{
     EndpointId, SecretKey,
     endpoint::{Connecting, Connection},
 };
-use n0_error::{Result, StackResultExt, StdResultExt, bail};
+use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::{StreamExt, future};
 use n0_watcher::Watcher;
 use tracing::{info, trace};
@@ -141,7 +141,7 @@ async fn accept(_args: Args) -> Result<()> {
     let mut addrs = endpoint.watch_addr().stream();
     let addr = loop {
         let Some(addr) = addrs.next().await else {
-            bail!("Address stream closed");
+            bail_any!("Address stream closed");
         };
         if !addr.ip_addrs().count() == 0 {
             break addr;

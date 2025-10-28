@@ -559,7 +559,7 @@ mod tests {
         match stream.next().await {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
-                    n0_error::bail!(
+                    n0_error::bail_any!(
                         "Unexpected frame, got {:?}, but expected {:?}",
                         frame.typ(),
                         frame_type
@@ -568,7 +568,7 @@ mod tests {
                 Ok(frame)
             }
             Some(Err(err)) => Err(err).e(),
-            None => n0_error::bail!("Unexpected EOF, expected frame {frame_type:?}"),
+            None => n0_error::bail_any!("Unexpected EOF, expected frame {frame_type:?}"),
         }
     }
 

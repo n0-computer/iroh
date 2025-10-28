@@ -315,7 +315,7 @@ impl QuicClient {
         // tokio::select! {
         //     _ = cancel.cancelled() => {
         //         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        //         bail!("QUIC address discovery canceled early");
+        //         bail_any!("QUIC address discovery canceled early");
         //     },
         //     res = external_addresses.wait_for(|addr| addr.is_some()) => {
         //         let addr = res?.expect("checked");

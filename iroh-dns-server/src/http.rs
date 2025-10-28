@@ -14,7 +14,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use n0_error::{Result, StdResultExt, anyerr, bail};
+use n0_error::{Result, StdResultExt, anyerr, bail_any};
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, task::JoinSet};
 use tower_http::{
@@ -74,7 +74,7 @@ impl HttpServer {
         state: AppState,
     ) -> Result<HttpServer> {
         if http_config.is_none() && https_config.is_none() {
-            bail!("Either http or https config is required");
+            bail_any!("Either http or https config is required");
         }
 
         let app = create_app(state, &rate_limit_config);
