@@ -9,7 +9,7 @@
 <a href=#9 id=9 data-nosnippet>9</a>    accept::Accept,
 <a href=#10 id=10 data-nosnippet>10</a>    tls_rustls::{RustlsAcceptor, RustlsConfig},
 <a href=#11 id=11 data-nosnippet>11</a>};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt, bail};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt, bail_any};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>n0_future::{FutureExt, future::Boxed <span class="kw">as </span>BoxFuture};
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
@@ -86,7 +86,7 @@
 <a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">async fn </span>manual(domains: Vec&lt;String&gt;, dir: PathBuf) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
 <a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span>config = rustls::ServerConfig::builder().with_no_client_auth();
 <a href=#88 id=88 data-nosnippet>88</a>        <span class="kw">if </span>domains.len() != <span class="number">1 </span>{
-<a href=#89 id=89 data-nosnippet>89</a>            <span class="macro">bail!</span>(<span class="string">"Multiple domains in manual mode are not supported"</span>);
+<a href=#89 id=89 data-nosnippet>89</a>            <span class="macro">bail_any!</span>(<span class="string">"Multiple domains in manual mode are not supported"</span>);
 <a href=#90 id=90 data-nosnippet>90</a>        }
 <a href=#91 id=91 data-nosnippet>91</a>
 <a href=#92 id=92 data-nosnippet>92</a>        <span class="kw">let </span>keyname = escape_hostname(<span class="kw-2">&amp;</span>domains[<span class="number">0</span>]);
@@ -174,7 +174,7 @@
 <a href=#174 id=174 data-nosnippet>174</a>        }
 <a href=#175 id=175 data-nosnippet>175</a>    }
 <a href=#176 id=176 data-nosnippet>176</a>
-<a href=#177 id=177 data-nosnippet>177</a>    <span class="macro">bail!</span>(
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="macro">bail_any!</span>(
 <a href=#178 id=178 data-nosnippet>178</a>        <span class="string">"no keys found in {} (encrypted keys not supported)"</span>,
 <a href=#179 id=179 data-nosnippet>179</a>        filename.as_ref().display()
 <a href=#180 id=180 data-nosnippet>180</a>    );

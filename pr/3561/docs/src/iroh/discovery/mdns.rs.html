@@ -546,7 +546,7 @@
 <a href=#546 id=546 data-nosnippet>546</a>    /// tests)
 <a href=#547 id=547 data-nosnippet>547</a>    </span><span class="kw">mod </span>run_in_isolation {
 <a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">use </span>iroh_base::{SecretKey, TransportAddr};
-<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt, bail};
+<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt, bail_any};
 <a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">use </span>n0_future::StreamExt;
 <a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
 <a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">use </span>tracing_test::traced_test;
@@ -707,7 +707,7 @@
 <a href=#707 id=707 data-nosnippet>707</a>                            got_ids.insert((endpoint_info.endpoint_id, data));
 <a href=#708 id=708 data-nosnippet>708</a>                        }
 <a href=#709 id=709 data-nosnippet>709</a>                    } <span class="kw">else </span>{
-<a href=#710 id=710 data-nosnippet>710</a>                        <span class="macro">bail!</span>(
+<a href=#710 id=710 data-nosnippet>710</a>                        <span class="macro">bail_any!</span>(
 <a href=#711 id=711 data-nosnippet>711</a>                            <span class="string">"no more events, only got {} ids, expected {num_endpoints}\n"</span>,
 <a href=#712 id=712 data-nosnippet>712</a>                            got_ids.len()
 <a href=#713 id=713 data-nosnippet>713</a>                        );

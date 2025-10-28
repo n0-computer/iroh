@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a>    server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
 <a href=#26 id=26 data-nosnippet>26</a>    store::in_memory::InMemoryAuthority,
 <a href=#27 id=27 data-nosnippet>27</a>};
-<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, format_err};
+<a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, anyerr};
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>tokio::{
 <a href=#31 id=31 data-nosnippet>31</a>    net::{TcpListener, UdpSocket},
@@ -236,7 +236,7 @@
 <a href=#236 id=236 data-nosnippet>236</a>    )
 <a href=#237 id=237 data-nosnippet>237</a>    .e()<span class="question-mark">?
 <a href=#238 id=238 data-nosnippet>238</a>    </span>.into_soa()
-<a href=#239 id=239 data-nosnippet>239</a>    .map_err(|<span class="kw">_</span>| <span class="macro">format_err!</span>(<span class="string">"Couldn't parse SOA: {}"</span>, config.default_soa))<span class="question-mark">?</span>;
+<a href=#239 id=239 data-nosnippet>239</a>    .map_err(|<span class="kw">_</span>| <span class="macro">anyerr!</span>(<span class="string">"Couldn't parse SOA: {}"</span>, config.default_soa))<span class="question-mark">?</span>;
 <a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">let </span>serial = soa.serial();
 <a href=#241 id=241 data-nosnippet>241</a>    <span class="kw">let </span><span class="kw-2">mut </span>records = BTreeMap::new();
 <a href=#242 id=242 data-nosnippet>242</a>    <span class="kw">for </span>name <span class="kw">in </span>origins {
@@ -270,7 +270,7 @@
 <a href=#270 id=270 data-nosnippet>270</a>    }
 <a href=#271 id=271 data-nosnippet>271</a>
 <a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span>static_authority = InMemoryAuthority::new(Name::root(), records, ZoneType::Primary, <span class="bool-val">false</span>)
-<a href=#273 id=273 data-nosnippet>273</a>        .map_err(|e| <span class="macro">format_err!</span>(<span class="string">"new authority: {e}"</span>))<span class="question-mark">?</span>;
+<a href=#273 id=273 data-nosnippet>273</a>        .map_err(|e| <span class="macro">anyerr!</span>(<span class="string">"new authority: {e}"</span>))<span class="question-mark">?</span>;
 <a href=#274 id=274 data-nosnippet>274</a>
 <a href=#275 id=275 data-nosnippet>275</a>    <span class="prelude-val">Ok</span>((static_authority, serial))
 <a href=#276 id=276 data-nosnippet>276</a>}

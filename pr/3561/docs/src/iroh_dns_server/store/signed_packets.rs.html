@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>    time::{Duration, SystemTime},
 <a href=#7 id=7 data-nosnippet>7</a>};
 <a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, format_err};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, anyerr};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>pkarr::{SignedPacket, Timestamp};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>redb::{
 <a href=#12 id=12 data-nosnippet>12</a>    Database, MultimapTableDefinition, ReadableTable, TableDefinition, backends::InMemoryBackend,
@@ -375,7 +375,7 @@
 <a href=#375 id=375 data-nosnippet>375</a>            buf.extend(data);
 <a href=#376 id=376 data-nosnippet>376</a>            <span class="kw">match </span>SignedPacket::deserialize(<span class="kw-2">&amp;</span>buf) {
 <a href=#377 id=377 data-nosnippet>377</a>                <span class="prelude-val">Ok</span>(packet) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(packet)),
-<a href=#378 id=378 data-nosnippet>378</a>                <span class="prelude-val">Err</span>(err2) =&gt; <span class="prelude-val">Err</span>(<span class="macro">format_err!</span>(
+<a href=#378 id=378 data-nosnippet>378</a>                <span class="prelude-val">Err</span>(err2) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyerr!</span>(
 <a href=#379 id=379 data-nosnippet>379</a>                    <span class="string">"Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"
 <a href=#380 id=380 data-nosnippet>380</a>                </span>)),
 <a href=#381 id=381 data-nosnippet>381</a>            }
