@@ -367,7 +367,7 @@
 <a href=#367 id=367 data-nosnippet>367</a>    }
 <a href=#368 id=368 data-nosnippet>368</a>
 <a href=#369 id=369 data-nosnippet>369</a>    <span class="doccomment">/// Add the contact information for an endpoint.
-<a href=#370 id=370 data-nosnippet>370</a>    </span><span class="attr">#[instrument(skip_all, fields(endpoint = %endpoint_addr.endpoint_id.fmt_short()))]
+<a href=#370 id=370 data-nosnippet>370</a>    </span><span class="attr">#[instrument(skip_all, fields(endpoint = %endpoint_addr.id.fmt_short()))]
 <a href=#371 id=371 data-nosnippet>371</a>    </span><span class="kw">fn </span>add_endpoint_addr(
 <a href=#372 id=372 data-nosnippet>372</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#373 id=373 data-nosnippet>373</a>        endpoint_addr: EndpointAddr,
@@ -376,8 +376,8 @@
 <a href=#376 id=376 data-nosnippet>376</a>        metrics: <span class="kw-2">&amp;</span>Metrics,
 <a href=#377 id=377 data-nosnippet>377</a>    ) {
 <a href=#378 id=378 data-nosnippet>378</a>        <span class="kw">let </span>source0 = source.clone();
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>endpoint_id = endpoint_addr.endpoint_id;
-<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">let </span>relay_url = endpoint_addr.relay_url.clone();
+<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>endpoint_id = endpoint_addr.id;
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">let </span>relay_url = endpoint_addr.relay_urls().next().cloned();
 <a href=#381 id=381 data-nosnippet>381</a>        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 <a href=#382 id=382 data-nosnippet>382</a>        </span><span class="kw">let </span>path_selection = <span class="self">self</span>.path_selection;
 <a href=#383 id=383 data-nosnippet>383</a>        <span class="kw">let </span>endpoint_state =
@@ -390,14 +390,14 @@
 <a href=#390 id=390 data-nosnippet>390</a>                </span>path_selection,
 <a href=#391 id=391 data-nosnippet>391</a>            });
 <a href=#392 id=392 data-nosnippet>392</a>        endpoint_state.update_from_endpoint_addr(
-<a href=#393 id=393 data-nosnippet>393</a>            endpoint_addr.relay_url.as_ref(),
-<a href=#394 id=394 data-nosnippet>394</a>            <span class="kw-2">&amp;</span>endpoint_addr.direct_addresses,
+<a href=#393 id=393 data-nosnippet>393</a>            endpoint_addr.relay_urls().next(),
+<a href=#394 id=394 data-nosnippet>394</a>            endpoint_addr.ip_addrs().copied(),
 <a href=#395 id=395 data-nosnippet>395</a>            source0,
 <a href=#396 id=396 data-nosnippet>396</a>            have_ipv6,
 <a href=#397 id=397 data-nosnippet>397</a>            metrics,
 <a href=#398 id=398 data-nosnippet>398</a>        );
 <a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>id = endpoint_state.id();
-<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">for </span>addr <span class="kw">in </span>endpoint_addr.direct_addresses() {
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">for </span>addr <span class="kw">in </span>endpoint_addr.ip_addrs() {
 <a href=#401 id=401 data-nosnippet>401</a>            <span class="self">self</span>.set_endpoint_state_for_ip_port(<span class="kw-2">*</span>addr, id);
 <a href=#402 id=402 data-nosnippet>402</a>        }
 <a href=#403 id=403 data-nosnippet>403</a>    }
@@ -419,7 +419,7 @@
 <a href=#419 id=419 data-nosnippet>419</a>            <span class="kw">if let </span>Entry::Occupied(<span class="kw-2">mut </span>entry) = <span class="self">self</span>.by_id.entry(id) {
 <a href=#420 id=420 data-nosnippet>420</a>                <span class="kw">let </span>endpoint = entry.get_mut();
 <a href=#421 id=421 data-nosnippet>421</a>                endpoint.remove_direct_addr(<span class="kw-2">&amp;</span>ipp, now, why);
-<a href=#422 id=422 data-nosnippet>422</a>                <span class="kw">if </span>endpoint.direct_addresses().count() == <span class="number">0 </span>{
+<a href=#422 id=422 data-nosnippet>422</a>                <span class="kw">if </span>endpoint.ip_addrs().count() == <span class="number">0 </span>{
 <a href=#423 id=423 data-nosnippet>423</a>                    <span class="kw">let </span>endpoint_id = endpoint.public_key();
 <a href=#424 id=424 data-nosnippet>424</a>                    <span class="kw">let </span>mapped_addr = endpoint.quic_mapped_addr();
 <a href=#425 id=425 data-nosnippet>425</a>                    <span class="self">self</span>.by_endpoint_key.remove(endpoint_id);
@@ -707,7 +707,7 @@
 <a href=#707 id=707 data-nosnippet>707</a>                <span class="kw">continue</span>;
 <a href=#708 id=708 data-nosnippet>708</a>            };
 <a href=#709 id=709 data-nosnippet>709</a>
-<a href=#710 id=710 data-nosnippet>710</a>            <span class="kw">for </span>ip_port <span class="kw">in </span>ep.direct_addresses() {
+<a href=#710 id=710 data-nosnippet>710</a>            <span class="kw">for </span>ip_port <span class="kw">in </span>ep.ip_addrs() {
 <a href=#711 id=711 data-nosnippet>711</a>                <span class="self">self</span>.by_ip_port.remove(<span class="kw-2">&amp;</span>ip_port);
 <a href=#712 id=712 data-nosnippet>712</a>            }
 <a href=#713 id=713 data-nosnippet>713</a>
@@ -757,7 +757,7 @@
 <a href=#757 id=757 data-nosnippet>757</a></span><span class="kw">mod </span>tests {
 <a href=#758 id=758 data-nosnippet>758</a>    <span class="kw">use </span>std::net::Ipv4Addr;
 <a href=#759 id=759 data-nosnippet>759</a>
-<a href=#760 id=760 data-nosnippet>760</a>    <span class="kw">use </span>iroh_base::SecretKey;
+<a href=#760 id=760 data-nosnippet>760</a>    <span class="kw">use </span>iroh_base::{SecretKey, TransportAddr};
 <a href=#761 id=761 data-nosnippet>761</a>    <span class="kw">use </span>rand::SeedableRng;
 <a href=#762 id=762 data-nosnippet>762</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#763 id=763 data-nosnippet>763</a>
@@ -792,168 +792,165 @@
 <a href=#792 id=792 data-nosnippet>792</a>        <span class="kw">let </span>relay_x: RelayUrl = <span class="string">"https://my-relay-1.com"</span>.parse().unwrap();
 <a href=#793 id=793 data-nosnippet>793</a>        <span class="kw">let </span>relay_y: RelayUrl = <span class="string">"https://my-relay-2.com"</span>.parse().unwrap();
 <a href=#794 id=794 data-nosnippet>794</a>
-<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>direct_addresses_a = [addr(<span class="number">4000</span>), addr(<span class="number">4001</span>)];
-<a href=#796 id=796 data-nosnippet>796</a>        <span class="kw">let </span>direct_addresses_c = [addr(<span class="number">5000</span>)];
+<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>ip_addresses_a = [TransportAddr::Ip(addr(<span class="number">4000</span>)), TransportAddr::Ip(addr(<span class="number">4001</span>))];
+<a href=#796 id=796 data-nosnippet>796</a>        <span class="kw">let </span>ip_addresses_c = [TransportAddr::Ip(addr(<span class="number">5000</span>))];
 <a href=#797 id=797 data-nosnippet>797</a>
-<a href=#798 id=798 data-nosnippet>798</a>        <span class="kw">let </span>endpoint_addr_a = EndpointAddr::new(endpoint_a)
-<a href=#799 id=799 data-nosnippet>799</a>            .with_relay_url(relay_x)
-<a href=#800 id=800 data-nosnippet>800</a>            .with_direct_addresses(direct_addresses_a);
-<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">let </span>endpoint_addr_b = EndpointAddr::new(endpoint_b).with_relay_url(relay_y);
-<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span>endpoint_addr_c =
-<a href=#803 id=803 data-nosnippet>803</a>            EndpointAddr::new(endpoint_c).with_direct_addresses(direct_addresses_c);
-<a href=#804 id=804 data-nosnippet>804</a>        <span class="kw">let </span>endpoint_addr_d = EndpointAddr::new(endpoint_d);
-<a href=#805 id=805 data-nosnippet>805</a>
-<a href=#806 id=806 data-nosnippet>806</a>        endpoint_map.add_test_addr(endpoint_addr_a);
-<a href=#807 id=807 data-nosnippet>807</a>        endpoint_map.add_test_addr(endpoint_addr_b);
-<a href=#808 id=808 data-nosnippet>808</a>        endpoint_map.add_test_addr(endpoint_addr_c);
-<a href=#809 id=809 data-nosnippet>809</a>        endpoint_map.add_test_addr(endpoint_addr_d);
-<a href=#810 id=810 data-nosnippet>810</a>
-<a href=#811 id=811 data-nosnippet>811</a>        <span class="kw">let </span><span class="kw-2">mut </span>addrs: Vec&lt;EndpointAddr&gt; = endpoint_map
-<a href=#812 id=812 data-nosnippet>812</a>            .list_remote_infos(Instant::now())
-<a href=#813 id=813 data-nosnippet>813</a>            .into_iter()
-<a href=#814 id=814 data-nosnippet>814</a>            .filter_map(|info| {
-<a href=#815 id=815 data-nosnippet>815</a>                <span class="kw">let </span>addr: EndpointAddr = info.into();
-<a href=#816 id=816 data-nosnippet>816</a>                <span class="kw">if </span>addr.is_empty() {
-<a href=#817 id=817 data-nosnippet>817</a>                    <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#818 id=818 data-nosnippet>818</a>                }
-<a href=#819 id=819 data-nosnippet>819</a>                <span class="prelude-val">Some</span>(addr)
-<a href=#820 id=820 data-nosnippet>820</a>            })
-<a href=#821 id=821 data-nosnippet>821</a>            .collect();
-<a href=#822 id=822 data-nosnippet>822</a>        <span class="kw">let </span>loaded_endpoint_map = EndpointMap::load_from_vec(
-<a href=#823 id=823 data-nosnippet>823</a>            addrs.clone(),
-<a href=#824 id=824 data-nosnippet>824</a>            PathSelection::default(),
-<a href=#825 id=825 data-nosnippet>825</a>            <span class="bool-val">true</span>,
-<a href=#826 id=826 data-nosnippet>826</a>            <span class="kw-2">&amp;</span>Default::default(),
-<a href=#827 id=827 data-nosnippet>827</a>        );
-<a href=#828 id=828 data-nosnippet>828</a>
-<a href=#829 id=829 data-nosnippet>829</a>        <span class="kw">let </span><span class="kw-2">mut </span>loaded: Vec&lt;EndpointAddr&gt; = loaded_endpoint_map
-<a href=#830 id=830 data-nosnippet>830</a>            .list_remote_infos(Instant::now())
-<a href=#831 id=831 data-nosnippet>831</a>            .into_iter()
-<a href=#832 id=832 data-nosnippet>832</a>            .filter_map(|info| {
-<a href=#833 id=833 data-nosnippet>833</a>                <span class="kw">let </span>addr: EndpointAddr = info.into();
-<a href=#834 id=834 data-nosnippet>834</a>                <span class="kw">if </span>addr.is_empty() {
-<a href=#835 id=835 data-nosnippet>835</a>                    <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#836 id=836 data-nosnippet>836</a>                }
-<a href=#837 id=837 data-nosnippet>837</a>                <span class="prelude-val">Some</span>(addr)
-<a href=#838 id=838 data-nosnippet>838</a>            })
-<a href=#839 id=839 data-nosnippet>839</a>            .collect();
-<a href=#840 id=840 data-nosnippet>840</a>
-<a href=#841 id=841 data-nosnippet>841</a>        loaded.sort_unstable();
-<a href=#842 id=842 data-nosnippet>842</a>        addrs.sort_unstable();
-<a href=#843 id=843 data-nosnippet>843</a>
-<a href=#844 id=844 data-nosnippet>844</a>        <span class="comment">// compare the endpoint maps via their known endpoints
-<a href=#845 id=845 data-nosnippet>845</a>        </span><span class="macro">assert_eq!</span>(addrs, loaded);
-<a href=#846 id=846 data-nosnippet>846</a>    }
-<a href=#847 id=847 data-nosnippet>847</a>
-<a href=#848 id=848 data-nosnippet>848</a>    <span class="kw">fn </span>addr(port: u16) -&gt; SocketAddr {
-<a href=#849 id=849 data-nosnippet>849</a>        (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
-<a href=#850 id=850 data-nosnippet>850</a>    }
-<a href=#851 id=851 data-nosnippet>851</a>
-<a href=#852 id=852 data-nosnippet>852</a>    <span class="attr">#[test]
-<a href=#853 id=853 data-nosnippet>853</a>    #[traced_test]
-<a href=#854 id=854 data-nosnippet>854</a>    </span><span class="kw">fn </span>test_prune_direct_addresses() {
-<a href=#855 id=855 data-nosnippet>855</a>        <span class="kw">let </span>endpoint_map = EndpointMap::default();
-<a href=#856 id=856 data-nosnippet>856</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#857 id=857 data-nosnippet>857</a>        <span class="kw">let </span>public_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#858 id=858 data-nosnippet>858</a>        <span class="kw">let </span>id = endpoint_map
-<a href=#859 id=859 data-nosnippet>859</a>            .inner
-<a href=#860 id=860 data-nosnippet>860</a>            .lock()
-<a href=#861 id=861 data-nosnippet>861</a>            .unwrap()
-<a href=#862 id=862 data-nosnippet>862</a>            .insert_endpoint(Options {
-<a href=#863 id=863 data-nosnippet>863</a>                endpoint_id: public_key,
-<a href=#864 id=864 data-nosnippet>864</a>                relay_url: <span class="prelude-val">None</span>,
-<a href=#865 id=865 data-nosnippet>865</a>                active: <span class="bool-val">false</span>,
-<a href=#866 id=866 data-nosnippet>866</a>                source: Source::NamedApp {
-<a href=#867 id=867 data-nosnippet>867</a>                    name: <span class="string">"test"</span>.into(),
-<a href=#868 id=868 data-nosnippet>868</a>                },
-<a href=#869 id=869 data-nosnippet>869</a>                path_selection: PathSelection::default(),
-<a href=#870 id=870 data-nosnippet>870</a>            })
-<a href=#871 id=871 data-nosnippet>871</a>            .id();
+<a href=#798 id=798 data-nosnippet>798</a>        <span class="kw">let </span>addrs_a = std::iter::once(TransportAddr::Relay(relay_x)).chain(ip_addresses_a);
+<a href=#799 id=799 data-nosnippet>799</a>        <span class="kw">let </span>endpoint_addr_a = EndpointAddr::new(endpoint_a).with_addrs(addrs_a);
+<a href=#800 id=800 data-nosnippet>800</a>        <span class="kw">let </span>endpoint_addr_b = EndpointAddr::new(endpoint_b).with_relay_url(relay_y);
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">let </span>endpoint_addr_c = EndpointAddr::new(endpoint_c).with_addrs(ip_addresses_c);
+<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span>endpoint_addr_d = EndpointAddr::new(endpoint_d);
+<a href=#803 id=803 data-nosnippet>803</a>
+<a href=#804 id=804 data-nosnippet>804</a>        endpoint_map.add_test_addr(endpoint_addr_a);
+<a href=#805 id=805 data-nosnippet>805</a>        endpoint_map.add_test_addr(endpoint_addr_b);
+<a href=#806 id=806 data-nosnippet>806</a>        endpoint_map.add_test_addr(endpoint_addr_c);
+<a href=#807 id=807 data-nosnippet>807</a>        endpoint_map.add_test_addr(endpoint_addr_d);
+<a href=#808 id=808 data-nosnippet>808</a>
+<a href=#809 id=809 data-nosnippet>809</a>        <span class="kw">let </span><span class="kw-2">mut </span>addrs: Vec&lt;EndpointAddr&gt; = endpoint_map
+<a href=#810 id=810 data-nosnippet>810</a>            .list_remote_infos(Instant::now())
+<a href=#811 id=811 data-nosnippet>811</a>            .into_iter()
+<a href=#812 id=812 data-nosnippet>812</a>            .filter_map(|info| {
+<a href=#813 id=813 data-nosnippet>813</a>                <span class="kw">let </span>addr: EndpointAddr = info.into();
+<a href=#814 id=814 data-nosnippet>814</a>                <span class="kw">if </span>addr.is_empty() {
+<a href=#815 id=815 data-nosnippet>815</a>                    <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#816 id=816 data-nosnippet>816</a>                }
+<a href=#817 id=817 data-nosnippet>817</a>                <span class="prelude-val">Some</span>(addr)
+<a href=#818 id=818 data-nosnippet>818</a>            })
+<a href=#819 id=819 data-nosnippet>819</a>            .collect();
+<a href=#820 id=820 data-nosnippet>820</a>        <span class="kw">let </span>loaded_endpoint_map = EndpointMap::load_from_vec(
+<a href=#821 id=821 data-nosnippet>821</a>            addrs.clone(),
+<a href=#822 id=822 data-nosnippet>822</a>            PathSelection::default(),
+<a href=#823 id=823 data-nosnippet>823</a>            <span class="bool-val">true</span>,
+<a href=#824 id=824 data-nosnippet>824</a>            <span class="kw-2">&amp;</span>Default::default(),
+<a href=#825 id=825 data-nosnippet>825</a>        );
+<a href=#826 id=826 data-nosnippet>826</a>
+<a href=#827 id=827 data-nosnippet>827</a>        <span class="kw">let </span><span class="kw-2">mut </span>loaded: Vec&lt;EndpointAddr&gt; = loaded_endpoint_map
+<a href=#828 id=828 data-nosnippet>828</a>            .list_remote_infos(Instant::now())
+<a href=#829 id=829 data-nosnippet>829</a>            .into_iter()
+<a href=#830 id=830 data-nosnippet>830</a>            .filter_map(|info| {
+<a href=#831 id=831 data-nosnippet>831</a>                <span class="kw">let </span>addr: EndpointAddr = info.into();
+<a href=#832 id=832 data-nosnippet>832</a>                <span class="kw">if </span>addr.is_empty() {
+<a href=#833 id=833 data-nosnippet>833</a>                    <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#834 id=834 data-nosnippet>834</a>                }
+<a href=#835 id=835 data-nosnippet>835</a>                <span class="prelude-val">Some</span>(addr)
+<a href=#836 id=836 data-nosnippet>836</a>            })
+<a href=#837 id=837 data-nosnippet>837</a>            .collect();
+<a href=#838 id=838 data-nosnippet>838</a>
+<a href=#839 id=839 data-nosnippet>839</a>        loaded.sort_unstable();
+<a href=#840 id=840 data-nosnippet>840</a>        addrs.sort_unstable();
+<a href=#841 id=841 data-nosnippet>841</a>
+<a href=#842 id=842 data-nosnippet>842</a>        <span class="comment">// compare the endpoint maps via their known endpoints
+<a href=#843 id=843 data-nosnippet>843</a>        </span><span class="macro">assert_eq!</span>(addrs, loaded);
+<a href=#844 id=844 data-nosnippet>844</a>    }
+<a href=#845 id=845 data-nosnippet>845</a>
+<a href=#846 id=846 data-nosnippet>846</a>    <span class="kw">fn </span>addr(port: u16) -&gt; SocketAddr {
+<a href=#847 id=847 data-nosnippet>847</a>        (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
+<a href=#848 id=848 data-nosnippet>848</a>    }
+<a href=#849 id=849 data-nosnippet>849</a>
+<a href=#850 id=850 data-nosnippet>850</a>    <span class="attr">#[test]
+<a href=#851 id=851 data-nosnippet>851</a>    #[traced_test]
+<a href=#852 id=852 data-nosnippet>852</a>    </span><span class="kw">fn </span>test_prune_direct_addresses() {
+<a href=#853 id=853 data-nosnippet>853</a>        <span class="kw">let </span>endpoint_map = EndpointMap::default();
+<a href=#854 id=854 data-nosnippet>854</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#855 id=855 data-nosnippet>855</a>        <span class="kw">let </span>public_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#856 id=856 data-nosnippet>856</a>        <span class="kw">let </span>id = endpoint_map
+<a href=#857 id=857 data-nosnippet>857</a>            .inner
+<a href=#858 id=858 data-nosnippet>858</a>            .lock()
+<a href=#859 id=859 data-nosnippet>859</a>            .unwrap()
+<a href=#860 id=860 data-nosnippet>860</a>            .insert_endpoint(Options {
+<a href=#861 id=861 data-nosnippet>861</a>                endpoint_id: public_key,
+<a href=#862 id=862 data-nosnippet>862</a>                relay_url: <span class="prelude-val">None</span>,
+<a href=#863 id=863 data-nosnippet>863</a>                active: <span class="bool-val">false</span>,
+<a href=#864 id=864 data-nosnippet>864</a>                source: Source::NamedApp {
+<a href=#865 id=865 data-nosnippet>865</a>                    name: <span class="string">"test"</span>.into(),
+<a href=#866 id=866 data-nosnippet>866</a>                },
+<a href=#867 id=867 data-nosnippet>867</a>                path_selection: PathSelection::default(),
+<a href=#868 id=868 data-nosnippet>868</a>            })
+<a href=#869 id=869 data-nosnippet>869</a>            .id();
+<a href=#870 id=870 data-nosnippet>870</a>
+<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw">const </span>LOCALHOST: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
 <a href=#872 id=872 data-nosnippet>872</a>
-<a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">const </span>LOCALHOST: IpAddr = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
-<a href=#874 id=874 data-nosnippet>874</a>
-<a href=#875 id=875 data-nosnippet>875</a>        <span class="comment">// add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
-<a href=#876 id=876 data-nosnippet>876</a>        // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
-<a href=#877 id=877 data-nosnippet>877</a>
-<a href=#878 id=878 data-nosnippet>878</a>        </span><span class="macro">info!</span>(<span class="string">"Adding active addresses"</span>);
-<a href=#879 id=879 data-nosnippet>879</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..MAX_INACTIVE_DIRECT_ADDRESSES {
-<a href=#880 id=880 data-nosnippet>880</a>            <span class="kw">let </span>addr = SocketAddr::new(LOCALHOST, <span class="number">5000 </span>+ i <span class="kw">as </span>u16);
-<a href=#881 id=881 data-nosnippet>881</a>            <span class="kw">let </span>endpoint_addr = EndpointAddr::new(public_key).with_direct_addresses([addr]);
-<a href=#882 id=882 data-nosnippet>882</a>            <span class="comment">// add address
-<a href=#883 id=883 data-nosnippet>883</a>            </span>endpoint_map.add_test_addr(endpoint_addr);
-<a href=#884 id=884 data-nosnippet>884</a>            <span class="comment">// make it active
-<a href=#885 id=885 data-nosnippet>885</a>            </span>endpoint_map.inner.lock().unwrap().receive_udp(addr);
-<a href=#886 id=886 data-nosnippet>886</a>        }
-<a href=#887 id=887 data-nosnippet>887</a>
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="macro">info!</span>(<span class="string">"Adding offline/inactive addresses"</span>);
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..MAX_INACTIVE_DIRECT_ADDRESSES * <span class="number">2 </span>{
-<a href=#890 id=890 data-nosnippet>890</a>            <span class="kw">let </span>addr = SocketAddr::new(LOCALHOST, <span class="number">6000 </span>+ i <span class="kw">as </span>u16);
-<a href=#891 id=891 data-nosnippet>891</a>            <span class="kw">let </span>endpoint_addr = EndpointAddr::new(public_key).with_direct_addresses([addr]);
-<a href=#892 id=892 data-nosnippet>892</a>            endpoint_map.add_test_addr(endpoint_addr);
-<a href=#893 id=893 data-nosnippet>893</a>        }
-<a href=#894 id=894 data-nosnippet>894</a>
-<a href=#895 id=895 data-nosnippet>895</a>        <span class="kw">let </span><span class="kw-2">mut </span>endpoint_map_inner = endpoint_map.inner.lock().unwrap();
-<a href=#896 id=896 data-nosnippet>896</a>        <span class="kw">let </span>endpoint = endpoint_map_inner.by_id.get_mut(<span class="kw-2">&amp;</span>id).unwrap();
-<a href=#897 id=897 data-nosnippet>897</a>
-<a href=#898 id=898 data-nosnippet>898</a>        <span class="macro">info!</span>(<span class="string">"Adding alive addresses"</span>);
-<a href=#899 id=899 data-nosnippet>899</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..MAX_INACTIVE_DIRECT_ADDRESSES {
-<a href=#900 id=900 data-nosnippet>900</a>            <span class="kw">let </span>addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, <span class="number">7000 </span>+ i <span class="kw">as </span>u16));
-<a href=#901 id=901 data-nosnippet>901</a>            <span class="kw">let </span>txid = TransactionId::from([i <span class="kw">as </span>u8; <span class="number">12</span>]);
-<a href=#902 id=902 data-nosnippet>902</a>            <span class="comment">// Note that this already invokes .prune_direct_addresses() because these are
-<a href=#903 id=903 data-nosnippet>903</a>            // new UDP paths.
-<a href=#904 id=904 data-nosnippet>904</a>            </span>endpoint.handle_ping(addr, txid);
-<a href=#905 id=905 data-nosnippet>905</a>        }
-<a href=#906 id=906 data-nosnippet>906</a>
-<a href=#907 id=907 data-nosnippet>907</a>        <span class="macro">info!</span>(<span class="string">"Pruning addresses"</span>);
-<a href=#908 id=908 data-nosnippet>908</a>        endpoint.prune_direct_addresses(Instant::now());
-<a href=#909 id=909 data-nosnippet>909</a>
-<a href=#910 id=910 data-nosnippet>910</a>        <span class="comment">// Half the offline addresses should have been pruned.  All the active and alive
-<a href=#911 id=911 data-nosnippet>911</a>        // addresses should have been kept.
-<a href=#912 id=912 data-nosnippet>912</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#913 id=913 data-nosnippet>913</a>            endpoint.direct_addresses().count(),
-<a href=#914 id=914 data-nosnippet>914</a>            MAX_INACTIVE_DIRECT_ADDRESSES * <span class="number">3
-<a href=#915 id=915 data-nosnippet>915</a>        </span>);
-<a href=#916 id=916 data-nosnippet>916</a>
-<a href=#917 id=917 data-nosnippet>917</a>        <span class="comment">// We should have both offline and alive addresses which are not active.
-<a href=#918 id=918 data-nosnippet>918</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#919 id=919 data-nosnippet>919</a>            endpoint
-<a href=#920 id=920 data-nosnippet>920</a>                .direct_address_states()
-<a href=#921 id=921 data-nosnippet>921</a>                .filter(|(_addr, state)| !state.is_active())
-<a href=#922 id=922 data-nosnippet>922</a>                .count(),
-<a href=#923 id=923 data-nosnippet>923</a>            MAX_INACTIVE_DIRECT_ADDRESSES * <span class="number">2
-<a href=#924 id=924 data-nosnippet>924</a>        </span>)
-<a href=#925 id=925 data-nosnippet>925</a>    }
-<a href=#926 id=926 data-nosnippet>926</a>
-<a href=#927 id=927 data-nosnippet>927</a>    <span class="attr">#[test]
-<a href=#928 id=928 data-nosnippet>928</a>    </span><span class="kw">fn </span>test_prune_inactive() {
-<a href=#929 id=929 data-nosnippet>929</a>        <span class="kw">let </span>endpoint_map = EndpointMap::default();
-<a href=#930 id=930 data-nosnippet>930</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#931 id=931 data-nosnippet>931</a>
-<a href=#932 id=932 data-nosnippet>932</a>        <span class="comment">// add one active endpoint and more than MAX_INACTIVE_ENDPOINTS inactive endpoints
-<a href=#933 id=933 data-nosnippet>933</a>        </span><span class="kw">let </span>active_endpoint = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#934 id=934 data-nosnippet>934</a>        <span class="kw">let </span>addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">167</span>);
-<a href=#935 id=935 data-nosnippet>935</a>        endpoint_map
-<a href=#936 id=936 data-nosnippet>936</a>            .add_test_addr(EndpointAddr::new(active_endpoint).with_direct_addresses([addr]));
-<a href=#937 id=937 data-nosnippet>937</a>        endpoint_map
-<a href=#938 id=938 data-nosnippet>938</a>            .inner
-<a href=#939 id=939 data-nosnippet>939</a>            .lock()
-<a href=#940 id=940 data-nosnippet>940</a>            .unwrap()
-<a href=#941 id=941 data-nosnippet>941</a>            .receive_udp(addr)
-<a href=#942 id=942 data-nosnippet>942</a>            .expect(<span class="string">"registered"</span>);
-<a href=#943 id=943 data-nosnippet>943</a>
-<a href=#944 id=944 data-nosnippet>944</a>        <span class="kw">for _ in </span><span class="number">0</span>..MAX_INACTIVE_ENDPOINTS + <span class="number">1 </span>{
-<a href=#945 id=945 data-nosnippet>945</a>            <span class="kw">let </span>endpoint = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#946 id=946 data-nosnippet>946</a>            endpoint_map.add_test_addr(EndpointAddr::new(endpoint));
-<a href=#947 id=947 data-nosnippet>947</a>        }
-<a href=#948 id=948 data-nosnippet>948</a>
-<a href=#949 id=949 data-nosnippet>949</a>        <span class="macro">assert_eq!</span>(endpoint_map.endpoint_count(), MAX_INACTIVE_ENDPOINTS + <span class="number">2</span>);
-<a href=#950 id=950 data-nosnippet>950</a>        endpoint_map.prune_inactive();
-<a href=#951 id=951 data-nosnippet>951</a>        <span class="macro">assert_eq!</span>(endpoint_map.endpoint_count(), MAX_INACTIVE_ENDPOINTS + <span class="number">1</span>);
-<a href=#952 id=952 data-nosnippet>952</a>        endpoint_map
-<a href=#953 id=953 data-nosnippet>953</a>            .inner
-<a href=#954 id=954 data-nosnippet>954</a>            .lock()
-<a href=#955 id=955 data-nosnippet>955</a>            .unwrap()
-<a href=#956 id=956 data-nosnippet>956</a>            .get(EndpointStateKey::EndpointId(active_endpoint))
-<a href=#957 id=957 data-nosnippet>957</a>            .expect(<span class="string">"should not be pruned"</span>);
-<a href=#958 id=958 data-nosnippet>958</a>    }
-<a href=#959 id=959 data-nosnippet>959</a>}</code></pre></div></section></main></body></html>
+<a href=#873 id=873 data-nosnippet>873</a>        <span class="comment">// add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
+<a href=#874 id=874 data-nosnippet>874</a>        // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
+<a href=#875 id=875 data-nosnippet>875</a>
+<a href=#876 id=876 data-nosnippet>876</a>        </span><span class="macro">info!</span>(<span class="string">"Adding active addresses"</span>);
+<a href=#877 id=877 data-nosnippet>877</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..MAX_INACTIVE_DIRECT_ADDRESSES {
+<a href=#878 id=878 data-nosnippet>878</a>            <span class="kw">let </span>addr = SocketAddr::new(LOCALHOST, <span class="number">5000 </span>+ i <span class="kw">as </span>u16);
+<a href=#879 id=879 data-nosnippet>879</a>            <span class="kw">let </span>endpoint_addr = EndpointAddr::new(public_key).with_ip_addr(addr);
+<a href=#880 id=880 data-nosnippet>880</a>            <span class="comment">// add address
+<a href=#881 id=881 data-nosnippet>881</a>            </span>endpoint_map.add_test_addr(endpoint_addr);
+<a href=#882 id=882 data-nosnippet>882</a>            <span class="comment">// make it active
+<a href=#883 id=883 data-nosnippet>883</a>            </span>endpoint_map.inner.lock().unwrap().receive_udp(addr);
+<a href=#884 id=884 data-nosnippet>884</a>        }
+<a href=#885 id=885 data-nosnippet>885</a>
+<a href=#886 id=886 data-nosnippet>886</a>        <span class="macro">info!</span>(<span class="string">"Adding offline/inactive addresses"</span>);
+<a href=#887 id=887 data-nosnippet>887</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..MAX_INACTIVE_DIRECT_ADDRESSES * <span class="number">2 </span>{
+<a href=#888 id=888 data-nosnippet>888</a>            <span class="kw">let </span>addr = SocketAddr::new(LOCALHOST, <span class="number">6000 </span>+ i <span class="kw">as </span>u16);
+<a href=#889 id=889 data-nosnippet>889</a>            <span class="kw">let </span>endpoint_addr = EndpointAddr::new(public_key).with_ip_addr(addr);
+<a href=#890 id=890 data-nosnippet>890</a>            endpoint_map.add_test_addr(endpoint_addr);
+<a href=#891 id=891 data-nosnippet>891</a>        }
+<a href=#892 id=892 data-nosnippet>892</a>
+<a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">let </span><span class="kw-2">mut </span>endpoint_map_inner = endpoint_map.inner.lock().unwrap();
+<a href=#894 id=894 data-nosnippet>894</a>        <span class="kw">let </span>endpoint = endpoint_map_inner.by_id.get_mut(<span class="kw-2">&amp;</span>id).unwrap();
+<a href=#895 id=895 data-nosnippet>895</a>
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="macro">info!</span>(<span class="string">"Adding alive addresses"</span>);
+<a href=#897 id=897 data-nosnippet>897</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..MAX_INACTIVE_DIRECT_ADDRESSES {
+<a href=#898 id=898 data-nosnippet>898</a>            <span class="kw">let </span>addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, <span class="number">7000 </span>+ i <span class="kw">as </span>u16));
+<a href=#899 id=899 data-nosnippet>899</a>            <span class="kw">let </span>txid = TransactionId::from([i <span class="kw">as </span>u8; <span class="number">12</span>]);
+<a href=#900 id=900 data-nosnippet>900</a>            <span class="comment">// Note that this already invokes .prune_direct_addresses() because these are
+<a href=#901 id=901 data-nosnippet>901</a>            // new UDP paths.
+<a href=#902 id=902 data-nosnippet>902</a>            </span>endpoint.handle_ping(addr, txid);
+<a href=#903 id=903 data-nosnippet>903</a>        }
+<a href=#904 id=904 data-nosnippet>904</a>
+<a href=#905 id=905 data-nosnippet>905</a>        <span class="macro">info!</span>(<span class="string">"Pruning addresses"</span>);
+<a href=#906 id=906 data-nosnippet>906</a>        endpoint.prune_direct_addresses(Instant::now());
+<a href=#907 id=907 data-nosnippet>907</a>
+<a href=#908 id=908 data-nosnippet>908</a>        <span class="comment">// Half the offline addresses should have been pruned.  All the active and alive
+<a href=#909 id=909 data-nosnippet>909</a>        // addresses should have been kept.
+<a href=#910 id=910 data-nosnippet>910</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#911 id=911 data-nosnippet>911</a>            endpoint.ip_addrs().count(),
+<a href=#912 id=912 data-nosnippet>912</a>            MAX_INACTIVE_DIRECT_ADDRESSES * <span class="number">3
+<a href=#913 id=913 data-nosnippet>913</a>        </span>);
+<a href=#914 id=914 data-nosnippet>914</a>
+<a href=#915 id=915 data-nosnippet>915</a>        <span class="comment">// We should have both offline and alive addresses which are not active.
+<a href=#916 id=916 data-nosnippet>916</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#917 id=917 data-nosnippet>917</a>            endpoint
+<a href=#918 id=918 data-nosnippet>918</a>                .ip_addr_states()
+<a href=#919 id=919 data-nosnippet>919</a>                .filter(|(_addr, state)| !state.is_active())
+<a href=#920 id=920 data-nosnippet>920</a>                .count(),
+<a href=#921 id=921 data-nosnippet>921</a>            MAX_INACTIVE_DIRECT_ADDRESSES * <span class="number">2
+<a href=#922 id=922 data-nosnippet>922</a>        </span>)
+<a href=#923 id=923 data-nosnippet>923</a>    }
+<a href=#924 id=924 data-nosnippet>924</a>
+<a href=#925 id=925 data-nosnippet>925</a>    <span class="attr">#[test]
+<a href=#926 id=926 data-nosnippet>926</a>    </span><span class="kw">fn </span>test_prune_inactive() {
+<a href=#927 id=927 data-nosnippet>927</a>        <span class="kw">let </span>endpoint_map = EndpointMap::default();
+<a href=#928 id=928 data-nosnippet>928</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#929 id=929 data-nosnippet>929</a>
+<a href=#930 id=930 data-nosnippet>930</a>        <span class="comment">// add one active endpoint and more than MAX_INACTIVE_ENDPOINTS inactive endpoints
+<a href=#931 id=931 data-nosnippet>931</a>        </span><span class="kw">let </span>active_endpoint = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#932 id=932 data-nosnippet>932</a>        <span class="kw">let </span>addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">167</span>);
+<a href=#933 id=933 data-nosnippet>933</a>        endpoint_map.add_test_addr(EndpointAddr::new(active_endpoint).with_ip_addr(addr));
+<a href=#934 id=934 data-nosnippet>934</a>        endpoint_map
+<a href=#935 id=935 data-nosnippet>935</a>            .inner
+<a href=#936 id=936 data-nosnippet>936</a>            .lock()
+<a href=#937 id=937 data-nosnippet>937</a>            .unwrap()
+<a href=#938 id=938 data-nosnippet>938</a>            .receive_udp(addr)
+<a href=#939 id=939 data-nosnippet>939</a>            .expect(<span class="string">"registered"</span>);
+<a href=#940 id=940 data-nosnippet>940</a>
+<a href=#941 id=941 data-nosnippet>941</a>        <span class="kw">for _ in </span><span class="number">0</span>..MAX_INACTIVE_ENDPOINTS + <span class="number">1 </span>{
+<a href=#942 id=942 data-nosnippet>942</a>            <span class="kw">let </span>endpoint = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#943 id=943 data-nosnippet>943</a>            endpoint_map.add_test_addr(EndpointAddr::new(endpoint));
+<a href=#944 id=944 data-nosnippet>944</a>        }
+<a href=#945 id=945 data-nosnippet>945</a>
+<a href=#946 id=946 data-nosnippet>946</a>        <span class="macro">assert_eq!</span>(endpoint_map.endpoint_count(), MAX_INACTIVE_ENDPOINTS + <span class="number">2</span>);
+<a href=#947 id=947 data-nosnippet>947</a>        endpoint_map.prune_inactive();
+<a href=#948 id=948 data-nosnippet>948</a>        <span class="macro">assert_eq!</span>(endpoint_map.endpoint_count(), MAX_INACTIVE_ENDPOINTS + <span class="number">1</span>);
+<a href=#949 id=949 data-nosnippet>949</a>        endpoint_map
+<a href=#950 id=950 data-nosnippet>950</a>            .inner
+<a href=#951 id=951 data-nosnippet>951</a>            .lock()
+<a href=#952 id=952 data-nosnippet>952</a>            .unwrap()
+<a href=#953 id=953 data-nosnippet>953</a>            .get(EndpointStateKey::EndpointId(active_endpoint))
+<a href=#954 id=954 data-nosnippet>954</a>            .expect(<span class="string">"should not be pruned"</span>);
+<a href=#955 id=955 data-nosnippet>955</a>    }
+<a href=#956 id=956 data-nosnippet>956</a>}</code></pre></div></section></main></body></html>
