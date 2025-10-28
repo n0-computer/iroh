@@ -75,7 +75,7 @@ pub use super::magicsock::{
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///
-/// When a connection is attempted with a [`EndpointAddr`] containing direct addresses the
+/// When a connection is attempted with an [`EndpointAddr`] containing direct addresses the
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
 /// is still no connection the configured [`crate::discovery::Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
@@ -618,8 +618,8 @@ impl Endpoint {
 
     /// Connects to a remote [`Endpoint`].
     ///
-    /// A value that can be converted into a [`EndpointAddr`] is required. This can be either a
-    /// [`EndpointAddr`] or a [`EndpointId`].
+    /// A value that can be converted into an [`EndpointAddr`] is required. This can be either an
+    /// [`EndpointAddr`] or an [`EndpointId`].
     ///
     /// The [`EndpointAddr`] must contain the [`EndpointId`] to dial and may also contain a [`RelayUrl`]
     /// and direct addresses. If direct addresses are provided, they will be used to try and
@@ -890,7 +890,7 @@ impl Endpoint {
     /// Returns a [`Watcher`] for the current [`EndpointAddr`] for this endpoint.
     ///
     /// When compiled to Wasm, this function returns a watcher that initializes
-    /// with a [`EndpointAddr`] that only contains a relay URL, but no direct addresses,
+    /// with an [`EndpointAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
     #[cfg(wasm_browser)]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
@@ -1507,7 +1507,7 @@ impl Future for IncomingFuture {
             Poll::Ready(Ok(inner)) => {
                 let conn: Connection = inner.try_into()?;
 
-                try_send_rtt_msg(&conn.quinn_connection(), this.ep, Some(conn.remote_id()));
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1525,7 +1525,7 @@ fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
 
 /// Returns the [`EndpointId`] from the peer's TLS certificate.
 ///
-/// The [`PublicKey`] of an endpoint is also known as a [`EndpointId`].  This [`PublicKey`] is
+/// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
 /// included in the TLS certificate presented during the handshake when connecting.
 /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
 /// connection.
@@ -1643,14 +1643,14 @@ impl Connecting {
     /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
     /// and thus whether parts of the stream are operating under this reduced security level.
     #[allow(clippy::result_large_err)]
-    pub fn into_0rtt(self) -> Result<(ZRTTConnection, ZeroRttAccepted), Self> {
+    pub fn into_0rtt(self) -> Result<ZeroRttConnection, Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
-                let conn = ZRTTConnection { inner };
-                let zrtt_accepted = ZeroRttAccepted {
+                let accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
                 };
+                let conn = ZeroRttConnection { inner, accepted };
                 // This call is why `self.remote_endpoint_id` was introduced.
                 // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
                 // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
@@ -1658,7 +1658,7 @@ impl Connecting {
                 // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
                 // after all.
                 try_send_rtt_msg(&conn.inner, &self.ep, self.remote_endpoint_id);
-                Ok((conn, zrtt_accepted))
+                Ok(conn)
             }
             Err(inner) => Err(Self {
                 inner,
@@ -1729,24 +1729,33 @@ impl Future for ZeroRttAccepted {
     }
 }
 
-/// A QUIC connection that can possible be 0-RTT
-#[derive(Debug, Clone)]
-pub struct ZRTTConnection {
+/// A QUIC connection that can possibly be 0-RTT
+#[derive(Debug)]
+pub struct ZeroRttConnection {
     inner: quinn::Connection,
+    accepted: ZeroRttAccepted,
 }
 
-/// `ZRTTConnection` is a connection that does not have an infallible
+/// `ZeroRttConnection` is a connection that does not have an infallible
 /// alpn or remote_id.
 ///
-/// Otherwise, a `ZRTTConnection` has the same methods as a [`Connection`].
+/// Otherwise, a `ZeroRttConnection` has the same methods as a [`Connection`].
 ///
-/// `ZRTTConnection`s have not necessarily completed the entire handshake.
+/// `ZeroRttConnection`s have not necessarily completed the entire handshake.
 ///
-/// Use the [`ZRTTConnection::into_connection`] method to get a [`Connection`] from a
-/// `ZRTTConnection`. This waits until 0-rtt connection has completed
+/// Use the [`ZeroRttConnection::into_connection`] method to get a [`Connection`] from a
+/// `ZeroRttConnection`. This waits until 0-rtt connection has completed
 /// the handshake and can now confidently derive the ALPN and the
 /// [`EndpointId`] to the remote endpoint.
-impl ZRTTConnection {
+impl ZeroRttConnection {
+    /// Waits until the full handshake occurs and returns a [`Connection`].
+    ///
+    /// May fail if the remote is not an `iroh::Connection`.
+    pub async fn into_connection(self) -> Result<(Connection, bool), ConnectionError> {
+        let accepted = self.accepted.await;
+        self.inner.try_into().map(|c| (c, accepted))
+    }
+
     /// Initiates a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
@@ -1950,7 +1959,7 @@ impl ZRTTConnection {
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as a [`EndpointId`].  This [`PublicKey`] is
+    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
     /// included in the TLS certificate presented during the handshake when connecting.
     /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
     /// connection.
@@ -2241,8 +2250,8 @@ impl Connection {
     }
 
     /// Extracts the ALPN protocol from the peer's handshake data.
-    pub fn alpn(&self) -> Vec<u8> {
-        self.alpn.clone()
+    pub fn alpn(&self) -> &[u8] {
+        &self.alpn
     }
 
     /// Cryptographic identity of the peer.
@@ -2260,7 +2269,7 @@ impl Connection {
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as a [`EndpointId`].  This [`PublicKey`] is
+    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
     /// included in the TLS certificate presented during the handshake when connecting.
     /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
     /// connection.
@@ -2450,7 +2459,7 @@ mod tests {
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
-    use quinn::ConnectionError;
+    use quinn::{ConnectionError, RecvStream, SendStream};
     use rand::SeedableRng;
     use tracing::{Instrument, error_span, info, info_span};
     use tracing_test::traced_test;
@@ -3041,27 +3050,6 @@ mod tests {
         Ok(())
     }
 
-    enum Conn {
-        ZRTT(super::ZRTTConnection),
-        Full(Connection),
-    }
-
-    impl Conn {
-        pub fn accept_bi(&self) -> quinn::AcceptBi<'_> {
-            match self {
-                Conn::ZRTT(conn) => conn.accept_bi(),
-                Conn::Full(conn) => conn.accept_bi(),
-            }
-        }
-
-        async fn closed(&self) -> ConnectionError {
-            match self {
-                Conn::ZRTT(conn) => conn.closed().await,
-                Conn::Full(conn) => conn.closed().await,
-            }
-        }
-    }
-
     async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
         let server = Endpoint::empty_builder(RelayMode::Disabled)
             .secret_key(secret_key)
@@ -3086,15 +3074,40 @@ mod tests {
                         }
                     };
 
-                    let conn = match connecting.into_0rtt() {
-                        Ok((conn, _)) => {
+                    let (conn, stream_task) = match connecting.into_0rtt() {
+                        Ok(z_rtt) => {
                             info!("0rtt accepted");
-                            Conn::ZRTT(conn)
+                            let (send, recv) = match z_rtt.accept_bi().await {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    tracing::warn!("Failed to accept bi stream: {e:?}");
+                                    continue;
+                                }
+                            };
+                            let stream_task = tokio::spawn(handle_stream(send, recv));
+                            let conn = match z_rtt.into_connection().await {
+                                Ok((conn, _)) => conn,
+                                Err(e) => {
+                                    tracing::warn!("Failed to create Connection: {e:?}");
+                                    continue;
+                                }
+                            };
+                            (conn, stream_task)
                         }
                         Err(connecting) => {
                             info!("0rtt denied");
                             match connecting.await {
-                                Ok(c) => Conn::Full(c),
+                                Ok(c) => {
+                                    let (send, recv) = match c.accept_bi().await {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            tracing::warn!("Failed to accept bi stream: {e:?}");
+                                            continue;
+                                        }
+                                    };
+                                    let stream_task = tokio::spawn(handle_stream(send, recv));
+                                    (c, stream_task)
+                                }
                                 Err(e) => {
                                     tracing::warn!("Connection failed: {e:?}");
                                     continue;
@@ -3102,32 +3115,8 @@ mod tests {
                             }
                         }
                     };
-
-                    // Handle stream errors gracefully
-                    let (mut send, mut recv) = match conn.accept_bi().await {
-                        Ok(s) => s,
-                        Err(e) => {
-                            tracing::warn!("Failed to accept bi stream: {e:?}");
-                            continue;
-                        }
-                    };
-
-                    let data = match recv.read_to_end(10_000_000).await {
-                        Ok(d) => d,
-                        Err(e) => {
-                            tracing::warn!("Failed to read data: {e:?}");
-                            continue;
-                        }
-                    };
-
-                    if let Err(e) = send.write_all(&data).await {
-                        tracing::warn!("Failed to write data: {e:?}");
-                        continue;
-                    }
-
-                    if let Err(e) = send.finish() {
-                        tracing::warn!("Failed to finish send: {e:?}");
-                        continue;
+                    if let Err(e) = stream_task.await {
+                        tracing::trace!("{e:?}");
                     }
 
                     // Stay alive until the other side closes the connection.
@@ -3141,6 +3130,20 @@ mod tests {
         });
 
         Ok(server)
+    }
+
+    async fn handle_stream(mut send: SendStream, mut recv: RecvStream) -> Result<()> {
+        let data = recv
+            .read_to_end(10_000_000)
+            .await
+            .context("Failed to read data")?;
+
+        send.write_all(&data)
+            .await
+            .context("Failed to write data")?;
+
+        send.finish().context("Failed to finish send")?;
+        Ok(())
     }
 
     async fn connect_client_0rtt_expect_err(
@@ -3170,7 +3173,7 @@ mod tests {
         expect_server_accepts: bool,
     ) -> Result {
         tracing::trace!(?server_addr, "Client connecting with 0-RTT");
-        let (conn, accepted_0rtt) = client
+        let zrtt_conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
             .into_0rtt()
@@ -3179,12 +3182,12 @@ mod tests {
 
         tracing::trace!("Client established 0-RTT connection");
         // This is how we send data in 0-RTT:
-        let (mut send, recv) = conn.open_bi().await.e()?;
+        let (mut send, recv) = zrtt_conn.open_bi().await.e()?;
         send.write_all(b"hello").await.e()?;
         send.finish().e()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
-        let accepted = accepted_0rtt.await;
+        let (conn, accepted) = zrtt_conn.into_connection().await.e()?;
         tracing::trace!(?accepted, "Server responded to 0-RTT");
         assert_eq!(accepted, expect_server_accepts);
         let mut recv = if accepted {
@@ -3393,7 +3396,7 @@ mod tests {
                 let incoming = server.accept().await.e()?;
                 let conn = incoming.await.e()?;
                 conn.close(0u32.into(), b"bye!");
-                Ok::<_, n0_snafu::Error>(conn.alpn())
+                Ok::<_, n0_snafu::Error>(conn.alpn().to_vec())
             }
         });
 
@@ -3414,7 +3417,7 @@ mod tests {
 
         assert_eq!(client_alpn, server_alpn);
 
-        Ok(server_alpn)
+        Ok(server_alpn.to_vec())
     }
 
     #[tokio::test]
