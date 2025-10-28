@@ -2907,7 +2907,7 @@
 <a href=#2907 id=2907 data-nosnippet>2907</a>            <span class="kw">async move </span>{
 <a href=#2908 id=2908 data-nosnippet>2908</a>                <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = endpoint.accept().<span class="kw">await </span>{
 <a href=#2909 id=2909 data-nosnippet>2909</a>                    <span class="macro">println!</span>(<span class="string">"Incoming first conn!"</span>);
-<a href=#2910 id=2910 data-nosnippet>2910</a>                    <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+<a href=#2910 id=2910 data-nosnippet>2910</a>                    <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
 <a href=#2911 id=2911 data-nosnippet>2911</a>                    conn.closed().<span class="kw">await</span>;
 <a href=#2912 id=2912 data-nosnippet>2912</a>                }
 <a href=#2913 id=2913 data-nosnippet>2913</a>
@@ -3160,7 +3160,7 @@
 <a href=#3160 id=3160 data-nosnippet>3160</a>                <span class="kw-2">&amp;</span>tls::name::encode(endpoint_id),
 <a href=#3161 id=3161 data-nosnippet>3161</a>            )
 <a href=#3162 id=3162 data-nosnippet>3162</a>            .std_context(<span class="string">"connect"</span>)<span class="question-mark">?</span>;
-<a href=#3163 id=3163 data-nosnippet>3163</a>        <span class="kw">let </span>connection = connect.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+<a href=#3163 id=3163 data-nosnippet>3163</a>        <span class="kw">let </span>connection = connect.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
 <a href=#3164 id=3164 data-nosnippet>3164</a>        <span class="prelude-val">Ok</span>(connection)
 <a href=#3165 id=3165 data-nosnippet>3165</a>    }
 <a href=#3166 id=3166 data-nosnippet>3166</a>

@@ -73,7 +73,7 @@
 <a href=#73 id=73 data-nosnippet>73</a>        quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">0</span>)).unwrap();
 <a href=#74 id=74 data-nosnippet>74</a>
 <a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span><span class="kw-2">mut </span>roots = RootCertStore::empty();
-<a href=#76 id=76 data-nosnippet>76</a>    roots.add(server_cert).e()<span class="question-mark">?</span>;
+<a href=#76 id=76 data-nosnippet>76</a>    roots.add(server_cert).anyerr()<span class="question-mark">?</span>;
 <a href=#77 id=77 data-nosnippet>77</a>
 <a href=#78 id=78 data-nosnippet>78</a>    <span class="kw">let </span>provider = rustls::crypto::ring::default_provider();
 <a href=#79 id=79 data-nosnippet>79</a>
@@ -84,7 +84,7 @@
 <a href=#84 id=84 data-nosnippet>84</a>        .with_no_client_auth();
 <a href=#85 id=85 data-nosnippet>85</a>
 <a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">let </span><span class="kw-2">mut </span>client_config =
-<a href=#87 id=87 data-nosnippet>87</a>        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).e()<span class="question-mark">?</span>));
+<a href=#87 id=87 data-nosnippet>87</a>        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).anyerr()<span class="question-mark">?</span>));
 <a href=#88 id=88 data-nosnippet>88</a>    client_config.transport_config(Arc::new(transport_config(opt.max_streams, opt.initial_mtu)));
 <a href=#89 id=89 data-nosnippet>89</a>
 <a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>connection = endpoint
@@ -125,7 +125,7 @@
 <a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">let </span><span class="kw-2">mut </span>num_chunks: u64 = <span class="number">0</span>;
 <a href=#126 id=126 data-nosnippet>126</a>
 <a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">if </span>read_unordered {
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">? </span>{
 <a href=#129 id=129 data-nosnippet>129</a>            <span class="kw">if </span>first_byte {
 <a href=#130 id=130 data-nosnippet>130</a>                ttfb = download_start.elapsed();
 <a href=#131 id=131 data-nosnippet>131</a>                first_byte = <span class="bool-val">false</span>;
@@ -147,7 +147,7 @@
 <a href=#147 id=147 data-nosnippet>147</a>            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
 <a href=#148 id=148 data-nosnippet>148</a>        ];
 <a href=#149 id=149 data-nosnippet>149</a>
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.anyerr()<span class="question-mark">? </span>{
 <a href=#151 id=151 data-nosnippet>151</a>            <span class="kw">if </span>first_byte {
 <a href=#152 id=152 data-nosnippet>152</a>                ttfb = download_start.elapsed();
 <a href=#153 id=153 data-nosnippet>153</a>                first_byte = <span class="bool-val">false</span>;

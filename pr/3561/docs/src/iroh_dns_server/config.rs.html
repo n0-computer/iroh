@@ -163,7 +163,7 @@
 <a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>s = tokio::fs::read_to_string(path.as_ref())
 <a href=#164 id=164 data-nosnippet>164</a>            .<span class="kw">await
 <a href=#165 id=165 data-nosnippet>165</a>            </span>.with_std_context(|<span class="kw">_</span>| <span class="macro">format!</span>(<span class="string">"failed to read {}"</span>, path.as_ref().to_string_lossy()))<span class="question-mark">?</span>;
-<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">let </span>config: Config = toml::from_str(<span class="kw-2">&amp;</span>s).e()<span class="question-mark">?</span>;
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">let </span>config: Config = toml::from_str(<span class="kw-2">&amp;</span>s).anyerr()<span class="question-mark">?</span>;
 <a href=#167 id=167 data-nosnippet>167</a>        <span class="prelude-val">Ok</span>(config)
 <a href=#168 id=168 data-nosnippet>168</a>    }
 <a href=#169 id=169 data-nosnippet>169</a>

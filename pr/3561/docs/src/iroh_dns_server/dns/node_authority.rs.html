@@ -189,10 +189,10 @@
 <a href=#189 id=189 data-nosnippet>189</a>        <span class="kw">let </span>labels = name.iter().rev();
 <a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span><span class="kw-2">mut </span>labels_without_origin = labels.skip(origin.num_labels() <span class="kw">as </span>usize);
 <a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">let </span>pkey_label = labels_without_origin.next().expect(<span class="string">"length checked above"</span>);
-<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">let </span>pkey_str = std::str::from_utf8(pkey_label).e()<span class="question-mark">?</span>;
+<a href=#192 id=192 data-nosnippet>192</a>        <span class="kw">let </span>pkey_str = std::str::from_utf8(pkey_label).anyerr()<span class="question-mark">?</span>;
 <a href=#193 id=193 data-nosnippet>193</a>        <span class="kw">let </span>pkey =
 <a href=#194 id=194 data-nosnippet>194</a>            PublicKeyBytes::from_z32(pkey_str).context(<span class="string">"not a valid pkarr name: invalid pubkey"</span>)<span class="question-mark">?</span>;
-<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">let </span>remaining_name = Name::from_labels(labels_without_origin.rev()).e()<span class="question-mark">?</span>;
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">let </span>remaining_name = Name::from_labels(labels_without_origin.rev()).anyerr()<span class="question-mark">?</span>;
 <a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">return </span><span class="prelude-val">Ok</span>((remaining_name, pkey, origin.clone()));
 <a href=#197 id=197 data-nosnippet>197</a>    }
 <a href=#198 id=198 data-nosnippet>198</a>    <span class="macro">bail_any!</span>(<span class="string">"name does not match any allowed origin"</span>);

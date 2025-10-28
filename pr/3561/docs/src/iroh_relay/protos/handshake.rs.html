@@ -769,8 +769,8 @@
 <a href=#769 id=769 data-nosnippet>769</a>        <span class="kw">let </span>challenge = ServerChallenge::new(<span class="kw-2">&amp;mut </span>rng);
 <a href=#770 id=770 data-nosnippet>770</a>        <span class="kw">let </span>client_auth = ClientAuth::new(<span class="kw-2">&amp;</span>secret_key, <span class="kw-2">&amp;</span>challenge);
 <a href=#771 id=771 data-nosnippet>771</a>
-<a href=#772 id=772 data-nosnippet>772</a>        <span class="kw">let </span>bytes = postcard::to_allocvec(<span class="kw-2">&amp;</span>client_auth).e()<span class="question-mark">?</span>;
-<a href=#773 id=773 data-nosnippet>773</a>        <span class="kw">let </span>decoded: ClientAuth = postcard::from_bytes(<span class="kw-2">&amp;</span>bytes).e()<span class="question-mark">?</span>;
+<a href=#772 id=772 data-nosnippet>772</a>        <span class="kw">let </span>bytes = postcard::to_allocvec(<span class="kw-2">&amp;</span>client_auth).anyerr()<span class="question-mark">?</span>;
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="kw">let </span>decoded: ClientAuth = postcard::from_bytes(<span class="kw-2">&amp;</span>bytes).anyerr()<span class="question-mark">?</span>;
 <a href=#774 id=774 data-nosnippet>774</a>
 <a href=#775 id=775 data-nosnippet>775</a>        <span class="macro">assert_eq!</span>(client_auth.public_key, decoded.public_key);
 <a href=#776 id=776 data-nosnippet>776</a>        <span class="macro">assert_eq!</span>(client_auth.signature, decoded.signature);
@@ -789,10 +789,10 @@
 <a href=#789 id=789 data-nosnippet>789</a>                shared_secret: <span class="prelude-val">Some</span>(<span class="number">42</span>),
 <a href=#790 id=790 data-nosnippet>790</a>            },
 <a href=#791 id=791 data-nosnippet>791</a>        )
-<a href=#792 id=792 data-nosnippet>792</a>        .e()<span class="question-mark">?</span>;
+<a href=#792 id=792 data-nosnippet>792</a>        .anyerr()<span class="question-mark">?</span>;
 <a href=#793 id=793 data-nosnippet>793</a>
-<a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">let </span>bytes = postcard::to_allocvec(<span class="kw-2">&amp;</span>client_auth).e()<span class="question-mark">?</span>;
-<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>decoded: KeyMaterialClientAuth = postcard::from_bytes(<span class="kw-2">&amp;</span>bytes).e()<span class="question-mark">?</span>;
+<a href=#794 id=794 data-nosnippet>794</a>        <span class="kw">let </span>bytes = postcard::to_allocvec(<span class="kw-2">&amp;</span>client_auth).anyerr()<span class="question-mark">?</span>;
+<a href=#795 id=795 data-nosnippet>795</a>        <span class="kw">let </span>decoded: KeyMaterialClientAuth = postcard::from_bytes(<span class="kw-2">&amp;</span>bytes).anyerr()<span class="question-mark">?</span>;
 <a href=#796 id=796 data-nosnippet>796</a>
 <a href=#797 id=797 data-nosnippet>797</a>        <span class="macro">assert_eq!</span>(client_auth.public_key, decoded.public_key);
 <a href=#798 id=798 data-nosnippet>798</a>        <span class="macro">assert_eq!</span>(client_auth.signature, decoded.signature);
@@ -819,7 +819,7 @@
 <a href=#819 id=819 data-nosnippet>819</a>            inner: (),
 <a href=#820 id=820 data-nosnippet>820</a>            shared_secret: <span class="prelude-val">Some</span>(<span class="number">42</span>),
 <a href=#821 id=821 data-nosnippet>821</a>        };
-<a href=#822 id=822 data-nosnippet>822</a>        <span class="kw">let </span>client_auth = KeyMaterialClientAuth::new(<span class="kw-2">&amp;</span>secret_key, <span class="kw-2">&amp;</span>io).e()<span class="question-mark">?</span>;
+<a href=#822 id=822 data-nosnippet>822</a>        <span class="kw">let </span>client_auth = KeyMaterialClientAuth::new(<span class="kw-2">&amp;</span>secret_key, <span class="kw-2">&amp;</span>io).anyerr()<span class="question-mark">?</span>;
 <a href=#823 id=823 data-nosnippet>823</a>        <span class="macro">assert!</span>(client_auth.verify(<span class="kw-2">&amp;</span>io).is_ok());
 <a href=#824 id=824 data-nosnippet>824</a>
 <a href=#825 id=825 data-nosnippet>825</a>        <span class="prelude-val">Ok</span>(())

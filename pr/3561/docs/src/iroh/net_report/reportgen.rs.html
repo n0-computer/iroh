@@ -882,20 +882,21 @@
 <a href=#882 id=882 data-nosnippet>882</a>        <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
 <a href=#883 id=883 data-nosnippet>883</a>        <span class="kw">let </span>relay = Arc::new(relay);
 <a href=#884 id=884 data-nosnippet>884</a>        <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
-<a href=#885 id=885 data-nosnippet>885</a>        <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).e()<span class="question-mark">?</span>;
-<a href=#886 id=886 data-nosnippet>886</a>        <span class="kw">let </span>client_addr = ep.local_addr().e()<span class="question-mark">?</span>;
-<a href=#887 id=887 data-nosnippet>887</a>
-<a href=#888 id=888 data-nosnippet>888</a>        <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
-<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw">let </span>dns_resolver = DnsResolver::default();
-<a href=#890 id=890 data-nosnippet>890</a>
-<a href=#891 id=891 data-nosnippet>891</a>        <span class="kw">let </span>(report, conn) = <span class="kw">super</span>::<span class="kw">super</span>::run_probe_v4(<span class="prelude-val">None</span>, relay, quic_client, dns_resolver)
-<a href=#892 id=892 data-nosnippet>892</a>            .<span class="kw">await
-<a href=#893 id=893 data-nosnippet>893</a>            </span>.unwrap();
-<a href=#894 id=894 data-nosnippet>894</a>
-<a href=#895 id=895 data-nosnippet>895</a>        <span class="macro">assert_eq!</span>(report.addr, client_addr);
-<a href=#896 id=896 data-nosnippet>896</a>        drop(conn);
-<a href=#897 id=897 data-nosnippet>897</a>        ep.wait_idle().<span class="kw">await</span>;
-<a href=#898 id=898 data-nosnippet>898</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#899 id=899 data-nosnippet>899</a>        <span class="prelude-val">Ok</span>(())
-<a href=#900 id=900 data-nosnippet>900</a>    }
-<a href=#901 id=901 data-nosnippet>901</a>}</code></pre></div></section></main></body></html>
+<a href=#885 id=885 data-nosnippet>885</a>        <span class="kw">let </span>ep =
+<a href=#886 id=886 data-nosnippet>886</a>            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).anyerr()<span class="question-mark">?</span>;
+<a href=#887 id=887 data-nosnippet>887</a>        <span class="kw">let </span>client_addr = ep.local_addr().anyerr()<span class="question-mark">?</span>;
+<a href=#888 id=888 data-nosnippet>888</a>
+<a href=#889 id=889 data-nosnippet>889</a>        <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
+<a href=#890 id=890 data-nosnippet>890</a>        <span class="kw">let </span>dns_resolver = DnsResolver::default();
+<a href=#891 id=891 data-nosnippet>891</a>
+<a href=#892 id=892 data-nosnippet>892</a>        <span class="kw">let </span>(report, conn) = <span class="kw">super</span>::<span class="kw">super</span>::run_probe_v4(<span class="prelude-val">None</span>, relay, quic_client, dns_resolver)
+<a href=#893 id=893 data-nosnippet>893</a>            .<span class="kw">await
+<a href=#894 id=894 data-nosnippet>894</a>            </span>.unwrap();
+<a href=#895 id=895 data-nosnippet>895</a>
+<a href=#896 id=896 data-nosnippet>896</a>        <span class="macro">assert_eq!</span>(report.addr, client_addr);
+<a href=#897 id=897 data-nosnippet>897</a>        drop(conn);
+<a href=#898 id=898 data-nosnippet>898</a>        ep.wait_idle().<span class="kw">await</span>;
+<a href=#899 id=899 data-nosnippet>899</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#900 id=900 data-nosnippet>900</a>        <span class="prelude-val">Ok</span>(())
+<a href=#901 id=901 data-nosnippet>901</a>    }
+<a href=#902 id=902 data-nosnippet>902</a>}</code></pre></div></section></main></body></html>

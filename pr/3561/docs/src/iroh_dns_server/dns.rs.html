@@ -82,12 +82,12 @@
 <a href=#82 id=82 data-nosnippet>82</a>            config.port,
 <a href=#83 id=83 data-nosnippet>83</a>        );
 <a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">let </span>socket = UdpSocket::bind(bind_addr).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">let </span>socket = UdpSocket::bind(bind_addr).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
 <a href=#86 id=86 data-nosnippet>86</a>
-<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span>socket_addr = socket.local_addr().e()<span class="question-mark">?</span>;
+<a href=#87 id=87 data-nosnippet>87</a>        <span class="kw">let </span>socket_addr = socket.local_addr().anyerr()<span class="question-mark">?</span>;
 <a href=#88 id=88 data-nosnippet>88</a>
 <a href=#89 id=89 data-nosnippet>89</a>        server.register_socket(socket);
-<a href=#90 id=90 data-nosnippet>90</a>        server.register_listener(TcpListener::bind(bind_addr).<span class="kw">await</span>.e()<span class="question-mark">?</span>, TCP_TIMEOUT);
+<a href=#90 id=90 data-nosnippet>90</a>        server.register_listener(TcpListener::bind(bind_addr).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>, TCP_TIMEOUT);
 <a href=#91 id=91 data-nosnippet>91</a>        <span class="macro">info!</span>(<span class="string">"DNS server listening on {}"</span>, bind_addr);
 <a href=#92 id=92 data-nosnippet>92</a>
 <a href=#93 id=93 data-nosnippet>93</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -103,7 +103,7 @@
 <a href=#103 id=103 data-nosnippet>103</a>
 <a href=#104 id=104 data-nosnippet>104</a>    <span class="doccomment">/// Shutdown the server an wait for all tasks to complete.
 <a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#106 id=106 data-nosnippet>106</a>        <span class="self">self</span>.server.shutdown_gracefully().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+<a href=#106 id=106 data-nosnippet>106</a>        <span class="self">self</span>.server.shutdown_gracefully().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
 <a href=#107 id=107 data-nosnippet>107</a>        <span class="prelude-val">Ok</span>(())
 <a href=#108 id=108 data-nosnippet>108</a>    }
 <a href=#109 id=109 data-nosnippet>109</a>
@@ -111,7 +111,7 @@
 <a href=#111 id=111 data-nosnippet>111</a>    ///
 <a href=#112 id=112 data-nosnippet>112</a>    /// Runs forever unless tasks fail.
 <a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">pub async fn </span>run_until_done(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#114 id=114 data-nosnippet>114</a>        <span class="self">self</span>.server.block_until_done().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+<a href=#114 id=114 data-nosnippet>114</a>        <span class="self">self</span>.server.block_until_done().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
 <a href=#115 id=115 data-nosnippet>115</a>        <span class="prelude-val">Ok</span>(())
 <a href=#116 id=116 data-nosnippet>116</a>    }
 <a href=#117 id=117 data-nosnippet>117</a>}
@@ -133,7 +133,7 @@
 <a href=#133 id=133 data-nosnippet>133</a>            .iter()
 <a href=#134 id=134 data-nosnippet>134</a>            .map(Name::from_utf8)
 <a href=#135 id=135 data-nosnippet>135</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#136 id=136 data-nosnippet>136</a>            .e()<span class="question-mark">?</span>;
+<a href=#136 id=136 data-nosnippet>136</a>            .anyerr()<span class="question-mark">?</span>;
 <a href=#137 id=137 data-nosnippet>137</a>
 <a href=#138 id=138 data-nosnippet>138</a>        <span class="kw">let </span>(static_authority, serial) = create_static_authority(<span class="kw-2">&amp;</span>origins, config)<span class="question-mark">?</span>;
 <a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">let </span>authority = Arc::new(NodeAuthority::new(
@@ -159,7 +159,7 @@
 <a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">let </span>(tx, <span class="kw-2">mut </span>rx) = broadcast::channel(<span class="number">1</span>);
 <a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">let </span>response_handle = Handle(tx);
 <a href=#161 id=161 data-nosnippet>161</a>        <span class="self">self</span>.handle_request(<span class="kw-2">&amp;</span>request, response_handle).<span class="kw">await</span>;
-<a href=#162 id=162 data-nosnippet>162</a>        rx.recv().<span class="kw">await</span>.e()
+<a href=#162 id=162 data-nosnippet>162</a>        rx.recv().<span class="kw">await</span>.anyerr()
 <a href=#163 id=163 data-nosnippet>163</a>    }
 <a href=#164 id=164 data-nosnippet>164</a>}
 <a href=#165 id=165 data-nosnippet>165</a>
@@ -234,7 +234,7 @@
 <a href=#234 id=234 data-nosnippet>234</a>        config.default_soa.split_ascii_whitespace(),
 <a href=#235 id=235 data-nosnippet>235</a>        <span class="prelude-val">None</span>,
 <a href=#236 id=236 data-nosnippet>236</a>    )
-<a href=#237 id=237 data-nosnippet>237</a>    .e()<span class="question-mark">?
+<a href=#237 id=237 data-nosnippet>237</a>    .anyerr()<span class="question-mark">?
 <a href=#238 id=238 data-nosnippet>238</a>    </span>.into_soa()
 <a href=#239 id=239 data-nosnippet>239</a>    .map_err(|<span class="kw">_</span>| <span class="macro">anyerr!</span>(<span class="string">"Couldn't parse SOA: {}"</span>, config.default_soa))<span class="question-mark">?</span>;
 <a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">let </span>serial = soa.serial();
@@ -260,7 +260,7 @@
 <a href=#260 id=260 data-nosnippet>260</a>            );
 <a href=#261 id=261 data-nosnippet>261</a>        }
 <a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(ns) = <span class="kw-2">&amp;</span>config.rr_ns {
-<a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">let </span>ns = Name::parse(ns, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Name::root())).e()<span class="question-mark">?</span>;
+<a href=#263 id=263 data-nosnippet>263</a>            <span class="kw">let </span>ns = Name::parse(ns, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Name::root())).anyerr()<span class="question-mark">?</span>;
 <a href=#264 id=264 data-nosnippet>264</a>            push_record(
 <a href=#265 id=265 data-nosnippet>265</a>                <span class="kw-2">&amp;mut </span>records,
 <a href=#266 id=266 data-nosnippet>266</a>                serial,

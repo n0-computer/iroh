@@ -75,10 +75,10 @@
 <a href=#75 id=75 data-nosnippet>75</a><span class="kw">impl </span>TlsAcceptor {
 <a href=#76 id=76 data-nosnippet>76</a>    <span class="kw">async fn </span>self_signed(domains: Vec&lt;String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
 <a href=#77 id=77 data-nosnippet>77</a>        <span class="kw">let </span>rcgen::CertifiedKey { cert, signing_key } =
-<a href=#78 id=78 data-nosnippet>78</a>            rcgen::generate_simple_self_signed(domains).e()<span class="question-mark">?</span>;
+<a href=#78 id=78 data-nosnippet>78</a>            rcgen::generate_simple_self_signed(domains).anyerr()<span class="question-mark">?</span>;
 <a href=#79 id=79 data-nosnippet>79</a>        <span class="kw">let </span>config = RustlsConfig::from_der(<span class="macro">vec!</span>[cert.der().to_vec()], signing_key.serialize_der())
 <a href=#80 id=80 data-nosnippet>80</a>            .<span class="kw">await
-<a href=#81 id=81 data-nosnippet>81</a>            </span>.e()<span class="question-mark">?</span>;
+<a href=#81 id=81 data-nosnippet>81</a>            </span>.anyerr()<span class="question-mark">?</span>;
 <a href=#82 id=82 data-nosnippet>82</a>        <span class="kw">let </span>acceptor = RustlsAcceptor::new(config);
 <a href=#83 id=83 data-nosnippet>83</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Manual(acceptor))
 <a href=#84 id=84 data-nosnippet>84</a>    }
@@ -96,7 +96,7 @@
 <a href=#96 id=96 data-nosnippet>96</a>        <span class="kw">let </span>certs = load_certs(cert_path).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">let </span>secret_key = load_secret_key(key_path).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#98 id=98 data-nosnippet>98</a>
-<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>config = config.with_single_cert(certs, secret_key).e()<span class="question-mark">?</span>;
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>config = config.with_single_cert(certs, secret_key).anyerr()<span class="question-mark">?</span>;
 <a href=#100 id=100 data-nosnippet>100</a>        <span class="kw">let </span>config = RustlsConfig::from_config(Arc::new(config));
 <a href=#101 id=101 data-nosnippet>101</a>        <span class="kw">let </span>acceptor = RustlsAcceptor::new(config);
 <a href=#102 id=102 data-nosnippet>102</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Manual(acceptor))
@@ -143,7 +143,7 @@
 <a href=#143 id=143 data-nosnippet>143</a>        </span>.std_context(<span class="string">"cannot open certificate file"</span>)<span class="question-mark">?</span>;
 <a href=#144 id=144 data-nosnippet>144</a>    <span class="kw">let </span><span class="kw-2">mut </span>reader = std::io::Cursor::new(certfile);
 <a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">let </span>certs: <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, std::io::Error&gt; = rustls_pemfile::certs(<span class="kw-2">&amp;mut </span>reader).collect();
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span>certs = certs.e()<span class="question-mark">?</span>;
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">let </span>certs = certs.anyerr()<span class="question-mark">?</span>;
 <a href=#147 id=147 data-nosnippet>147</a>
 <a href=#148 id=148 data-nosnippet>148</a>    <span class="prelude-val">Ok</span>(certs)
 <a href=#149 id=149 data-nosnippet>149</a>}

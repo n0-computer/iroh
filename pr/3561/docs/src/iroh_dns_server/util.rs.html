@@ -27,7 +27,7 @@
 <a href=#27 id=27 data-nosnippet>27</a>    }
 <a href=#28 id=28 data-nosnippet>28</a>
 <a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">pub fn </span>from_z32(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#30 id=30 data-nosnippet>30</a>        <span class="kw">let </span>bytes = z32::decode(s.as_bytes()).e()<span class="question-mark">?</span>;
+<a href=#30 id=30 data-nosnippet>30</a>        <span class="kw">let </span>bytes = z32::decode(s.as_bytes()).anyerr()<span class="question-mark">?</span>;
 <a href=#31 id=31 data-nosnippet>31</a>        <span class="kw">let </span>bytes = TryInto::&lt;[u8; <span class="number">32</span>]&gt;::try_into(<span class="kw-2">&amp;</span>bytes[..]).std_context(<span class="string">"invalid length"</span>)<span class="question-mark">?</span>;
 <a href=#32 id=32 data-nosnippet>32</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(bytes))
 <a href=#33 id=33 data-nosnippet>33</a>    }
@@ -70,7 +70,7 @@
 <a href=#70 id=70 data-nosnippet>70</a><span class="kw">impl </span>TryFrom&lt;PublicKeyBytes&gt; <span class="kw">for </span>pkarr::PublicKey {
 <a href=#71 id=71 data-nosnippet>71</a>    <span class="kw">type </span>Error = AnyError;
 <a href=#72 id=72 data-nosnippet>72</a>    <span class="kw">fn </span>try_from(value: PublicKeyBytes) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-<a href=#73 id=73 data-nosnippet>73</a>        pkarr::PublicKey::try_from(<span class="kw-2">&amp;</span>value.<span class="number">0</span>).e()
+<a href=#73 id=73 data-nosnippet>73</a>        pkarr::PublicKey::try_from(<span class="kw-2">&amp;</span>value.<span class="number">0</span>).anyerr()
 <a href=#74 id=74 data-nosnippet>74</a>    }
 <a href=#75 id=75 data-nosnippet>75</a>}
 <a href=#76 id=76 data-nosnippet>76</a>
@@ -89,7 +89,7 @@
 <a href=#89 id=89 data-nosnippet>89</a>
 <a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub fn </span>signed_packet_to_hickory_message(signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;Message&gt; {
 <a href=#91 id=91 data-nosnippet>91</a>    <span class="kw">let </span>encoded = signed_packet.encoded_packet();
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span>message = Message::from_bytes(<span class="kw-2">&amp;</span>encoded).e()<span class="question-mark">?</span>;
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">let </span>message = Message::from_bytes(<span class="kw-2">&amp;</span>encoded).anyerr()<span class="question-mark">?</span>;
 <a href=#93 id=93 data-nosnippet>93</a>    <span class="prelude-val">Ok</span>(message)
 <a href=#94 id=94 data-nosnippet>94</a>}
 <a href=#95 id=95 data-nosnippet>95</a>
@@ -97,7 +97,7 @@
 <a href=#97 id=97 data-nosnippet>97</a>    signed_packet: <span class="kw-2">&amp;</span>SignedPacket,
 <a href=#98 id=98 data-nosnippet>98</a>    filter: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>Record) -&gt; bool,
 <a href=#99 id=99 data-nosnippet>99</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Label, BTreeMap&lt;RrKey, Arc&lt;RecordSet&gt;&gt;)&gt; {
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">let </span>common_zone = Label::from_utf8(<span class="kw-2">&amp;</span>signed_packet.public_key().to_z32()).e()<span class="question-mark">?</span>;
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">let </span>common_zone = Label::from_utf8(<span class="kw-2">&amp;</span>signed_packet.public_key().to_z32()).anyerr()<span class="question-mark">?</span>;
 <a href=#101 id=101 data-nosnippet>101</a>    <span class="kw">let </span><span class="kw-2">mut </span>message = signed_packet_to_hickory_message(signed_packet)<span class="question-mark">?</span>;
 <a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">let </span>answers = message.take_answers();
 <a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">let </span><span class="kw-2">mut </span>output: BTreeMap&lt;RrKey, Arc&lt;RecordSet&gt;&gt; = BTreeMap::new();
@@ -111,7 +111,7 @@
 <a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">if </span>name.num_labels() &lt; <span class="number">1 </span>{
 <a href=#112 id=112 data-nosnippet>112</a>            <span class="kw">continue</span>;
 <a href=#113 id=113 data-nosnippet>113</a>        }
-<a href=#114 id=114 data-nosnippet>114</a>        <span class="kw">let </span>zone = name.iter().next_back().unwrap().into_label().e()<span class="question-mark">?</span>;
+<a href=#114 id=114 data-nosnippet>114</a>        <span class="kw">let </span>zone = name.iter().next_back().unwrap().into_label().anyerr()<span class="question-mark">?</span>;
 <a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">if </span>zone != common_zone {
 <a href=#116 id=116 data-nosnippet>116</a>            <span class="kw">continue</span>;
 <a href=#117 id=117 data-nosnippet>117</a>        }
@@ -120,7 +120,7 @@
 <a href=#120 id=120 data-nosnippet>120</a>        }
 <a href=#121 id=121 data-nosnippet>121</a>
 <a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">let </span>name_without_zone =
-<a href=#123 id=123 data-nosnippet>123</a>            Name::from_labels(name.iter().take(name.num_labels() <span class="kw">as </span>usize - <span class="number">1</span>)).e()<span class="question-mark">?</span>;
+<a href=#123 id=123 data-nosnippet>123</a>            Name::from_labels(name.iter().take(name.num_labels() <span class="kw">as </span>usize - <span class="number">1</span>)).anyerr()<span class="question-mark">?</span>;
 <a href=#124 id=124 data-nosnippet>124</a>        record.set_name(name_without_zone);
 <a href=#125 id=125 data-nosnippet>125</a>
 <a href=#126 id=126 data-nosnippet>126</a>        <span class="kw">let </span>rrkey = RrKey::new(record.name().into(), record.record_type());
@@ -145,7 +145,7 @@
 <a href=#145 id=145 data-nosnippet>145</a>    origin: <span class="kw-2">&amp;</span>Name,
 <a href=#146 id=146 data-nosnippet>146</a>    serial: u32,
 <a href=#147 id=147 data-nosnippet>147</a>) -&gt; <span class="prelude-ty">Result</span>&lt;RecordSet&gt; {
-<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">let </span>new_name = input.name().clone().append_name(origin).e()<span class="question-mark">?</span>;
+<a href=#148 id=148 data-nosnippet>148</a>    <span class="kw">let </span>new_name = input.name().clone().append_name(origin).anyerr()<span class="question-mark">?</span>;
 <a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">let </span><span class="kw-2">mut </span>output = RecordSet::new(new_name.clone(), input.record_type(), serial);
 <a href=#150 id=150 data-nosnippet>150</a>    <span class="comment">// TODO: less clones
 <a href=#151 id=151 data-nosnippet>151</a>    </span><span class="kw">for </span>record <span class="kw">in </span>input.records_without_rrsigs() {
