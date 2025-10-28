@@ -527,7 +527,7 @@ mod tests {
             },
         )
         .await
-        .e()?;
+        .anyerr()?;
 
         let duration = time::Instant::now().duration_since(before);
         assert_ne!(duration.as_millis(), 0);

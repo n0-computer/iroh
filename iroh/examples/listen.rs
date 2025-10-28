@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
             }
         };
         let alpn = connecting.alpn().await?;
-        let conn = connecting.await.e()?;
+        let conn = connecting.await.anyerr()?;
         let endpoint_id = conn.remote_id()?;
         info!(
             "new connection from {endpoint_id} with ALPN {}",
@@ -81,16 +81,16 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
-            let (mut send, mut recv) = conn.accept_bi().await.e()?;
+            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             debug!("accepted bi stream, waiting for data...");
-            let message = recv.read_to_end(100).await.e()?;
-            let message = String::from_utf8(message).e()?;
+            let message = recv.read_to_end(100).await.anyerr()?;
+            let message = String::from_utf8(message).anyerr()?;
             println!("received: {message}");
 
             let message = format!("hi! you connected to {me}. bye bye");
-            send.write_all(message.as_bytes()).await.e()?;
+            send.write_all(message.as_bytes()).await.anyerr()?;
             // call `finish` to close the connection gracefully
-            send.finish().e()?;
+            send.finish().anyerr()?;
 
             // We sent the last message, so wait for the client to close the connection once
             // it received this message.

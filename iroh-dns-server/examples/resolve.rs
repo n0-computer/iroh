@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
     let resolver = if let Some(host) = args.dns_server {
         let addr = tokio::net::lookup_host(host)
             .await
-            .e()?
+            .anyerr()?
             .next()
             .context("failed to resolve DNS server address")?;
         DnsResolver::with_nameserver(addr)

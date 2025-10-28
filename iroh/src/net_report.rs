@@ -966,7 +966,8 @@ mod tests {
     async fn test_basic() -> Result<()> {
         let (server, relay) = test_utils::relay().await;
         let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).e()?;
+        let ep =
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let quic_addr_disc = QuicConfig {
             ep: ep.clone(),
             client_config,

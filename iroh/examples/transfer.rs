@@ -339,7 +339,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
         // spawn a task to handle reading and writing off of the connection
         let endpoint_clone = endpoint.clone();
         tokio::spawn(async move {
-            let conn = connecting.await.e()?;
+            let conn = connecting.await.anyerr()?;
             let endpoint_id = conn.remote_id()?;
             info!(
                 "new connection from {endpoint_id} with ALPN {}",
@@ -354,10 +354,10 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
-            let (mut send, mut recv) = conn.accept_bi().await.e()?;
+            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             tracing::debug!("accepted bi stream, waiting for data...");
-            let message = recv.read_to_end(100).await.e()?;
-            let message = String::from_utf8(message).e()?;
+            let message = recv.read_to_end(100).await.anyerr()?;
+            let message = String::from_utf8(message).anyerr()?;
             println!("[{remote}] Received: \"{message}\"");
 
             let start = Instant::now();
@@ -407,12 +407,12 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let _guard = watch_conn_type(&endpoint, remote_id);
 
     // Use the Quinn API to send and recv content.
-    let (mut send, mut recv) = conn.open_bi().await.e()?;
+    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
     let message = format!("{me} is saying hello!");
-    send.write_all(message.as_bytes()).await.e()?;
+    send.write_all(message.as_bytes()).await.anyerr()?;
     // Call `finish` to signal no more data will be sent on this stream.
-    send.finish().e()?;
+    send.finish().anyerr()?;
     println!("Sent: \"{message}\"");
 
     let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false).await?;
@@ -421,7 +421,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     // message to be sent.
     tokio::time::timeout(Duration::from_secs(3), endpoint.close())
         .await
-        .e()?;
+        .anyerr()?;
 
     let duration = start.elapsed();
     println!(
@@ -448,7 +448,7 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.e()? {
+        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
             if first_byte {
                 time_to_first_byte = download_start.elapsed();
                 first_byte = false;
@@ -470,7 +470,7 @@ async fn drain_stream(
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.e()? {
+        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.anyerr()? {
             if first_byte {
                 time_to_first_byte = download_start.elapsed();
                 first_byte = false;

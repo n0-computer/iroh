@@ -72,7 +72,7 @@ async fn chat_server(args: Args) -> Result<()> {
         .bind()
         .await?;
     let zid = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
-        .e()?
+        .anyerr()?
         .to_z32();
     println!("Listening on {endpoint_id}");
     println!("pkarr z32: {zid}");
@@ -88,11 +88,11 @@ async fn chat_server(args: Args) -> Result<()> {
             }
         };
         tokio::spawn(async move {
-            let connection = connecting.await.e()?;
+            let connection = connecting.await.anyerr()?;
             let remote_endpoint_id = connection.remote_id()?;
             println!("got connection from {remote_endpoint_id}");
             // just leave the tasks hanging. this is just an example.
-            let (mut writer, mut reader) = connection.accept_bi().await.e()?;
+            let (mut writer, mut reader) = connection.accept_bi().await.anyerr()?;
             let _copy_to_stdout = tokio::spawn(async move {
                 tokio::io::copy(&mut reader, &mut tokio::io::stdout()).await
             });
@@ -121,13 +121,13 @@ async fn chat_client(args: Args) -> Result<()> {
     println!("We are {endpoint_id} and connecting to {remote_endpoint_id}");
     let connection = endpoint.connect(remote_endpoint_id, CHAT_ALPN).await?;
     println!("connected to {remote_endpoint_id}");
-    let (mut writer, mut reader) = connection.open_bi().await.e()?;
+    let (mut writer, mut reader) = connection.open_bi().await.anyerr()?;
     let _copy_to_stdout =
         tokio::spawn(async move { tokio::io::copy(&mut reader, &mut tokio::io::stdout()).await });
     let _copy_from_stdin =
         tokio::spawn(async move { tokio::io::copy(&mut tokio::io::stdin(), &mut writer).await });
-    _copy_to_stdout.await.e()?.e()?;
-    _copy_from_stdin.await.e()?.e()?;
+    _copy_to_stdout.await.anyerr()?.anyerr()?;
+    _copy_from_stdin.await.anyerr()?.anyerr()?;
     Ok(())
 }
 

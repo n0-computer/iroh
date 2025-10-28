@@ -769,8 +769,8 @@ mod tests {
         let challenge = ServerChallenge::new(&mut rng);
         let client_auth = ClientAuth::new(&secret_key, &challenge);
 
-        let bytes = postcard::to_allocvec(&client_auth).e()?;
-        let decoded: ClientAuth = postcard::from_bytes(&bytes).e()?;
+        let bytes = postcard::to_allocvec(&client_auth).anyerr()?;
+        let decoded: ClientAuth = postcard::from_bytes(&bytes).anyerr()?;
 
         assert_eq!(client_auth.public_key, decoded.public_key);
         assert_eq!(client_auth.signature, decoded.signature);
@@ -789,10 +789,10 @@ mod tests {
                 shared_secret: Some(42),
             },
         )
-        .e()?;
+        .anyerr()?;
 
-        let bytes = postcard::to_allocvec(&client_auth).e()?;
-        let decoded: KeyMaterialClientAuth = postcard::from_bytes(&bytes).e()?;
+        let bytes = postcard::to_allocvec(&client_auth).anyerr()?;
+        let decoded: KeyMaterialClientAuth = postcard::from_bytes(&bytes).anyerr()?;
 
         assert_eq!(client_auth.public_key, decoded.public_key);
         assert_eq!(client_auth.signature, decoded.signature);
@@ -819,7 +819,7 @@ mod tests {
             inner: (),
             shared_secret: Some(42),
         };
-        let client_auth = KeyMaterialClientAuth::new(&secret_key, &io).e()?;
+        let client_auth = KeyMaterialClientAuth::new(&secret_key, &io).anyerr()?;
         assert!(client_auth.verify(&io).is_ok());
 
         Ok(())

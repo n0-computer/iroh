@@ -83,11 +83,12 @@ async fn main() -> Result<()> {
 
     // Send a datagram over the connection.
     let message = format!("{me} is saying 'hello!'");
-    conn.send_datagram(message.as_bytes().to_vec().into()).e()?;
+    conn.send_datagram(message.as_bytes().to_vec().into())
+        .anyerr()?;
 
     // Read a datagram over the connection.
-    let message = conn.read_datagram().await.e()?;
-    let message = String::from_utf8(message.into()).e()?;
+    let message = conn.read_datagram().await.anyerr()?;
+    let message = String::from_utf8(message.into()).anyerr()?;
     println!("received: {message}");
 
     Ok(())

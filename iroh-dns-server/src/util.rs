@@ -27,7 +27,7 @@ impl PublicKeyBytes {
     }
 
     pub fn from_z32(s: &str) -> Result<Self> {
-        let bytes = z32::decode(s.as_bytes()).e()?;
+        let bytes = z32::decode(s.as_bytes()).anyerr()?;
         let bytes = TryInto::<[u8; 32]>::try_into(&bytes[..]).std_context("invalid length")?;
         Ok(Self(bytes))
     }
@@ -70,7 +70,7 @@ impl From<pkarr::PublicKey> for PublicKeyBytes {
 impl TryFrom<PublicKeyBytes> for pkarr::PublicKey {
     type Error = AnyError;
     fn try_from(value: PublicKeyBytes) -> Result<Self, Self::Error> {
-        pkarr::PublicKey::try_from(&value.0).e()
+        pkarr::PublicKey::try_from(&value.0).anyerr()
     }
 }
 
@@ -89,7 +89,7 @@ impl AsRef<[u8; 32]> for PublicKeyBytes {
 
 pub fn signed_packet_to_hickory_message(signed_packet: &SignedPacket) -> Result<Message> {
     let encoded = signed_packet.encoded_packet();
-    let message = Message::from_bytes(&encoded).e()?;
+    let message = Message::from_bytes(&encoded).anyerr()?;
     Ok(message)
 }
 
@@ -97,7 +97,7 @@ pub fn signed_packet_to_hickory_records_without_origin(
     signed_packet: &SignedPacket,
     filter: impl Fn(&Record) -> bool,
 ) -> Result<(Label, BTreeMap<RrKey, Arc<RecordSet>>)> {
-    let common_zone = Label::from_utf8(&signed_packet.public_key().to_z32()).e()?;
+    let common_zone = Label::from_utf8(&signed_packet.public_key().to_z32()).anyerr()?;
     let mut message = signed_packet_to_hickory_message(signed_packet)?;
     let answers = message.take_answers();
     let mut output: BTreeMap<RrKey, Arc<RecordSet>> = BTreeMap::new();
@@ -111,7 +111,7 @@ pub fn signed_packet_to_hickory_records_without_origin(
         if name.num_labels() < 1 {
             continue;
         }
-        let zone = name.iter().next_back().unwrap().into_label().e()?;
+        let zone = name.iter().next_back().unwrap().into_label().anyerr()?;
         if zone != common_zone {
             continue;
         }
@@ -120,7 +120,7 @@ pub fn signed_packet_to_hickory_records_without_origin(
         }
 
         let name_without_zone =
-            Name::from_labels(name.iter().take(name.num_labels() as usize - 1)).e()?;
+            Name::from_labels(name.iter().take(name.num_labels() as usize - 1)).anyerr()?;
         record.set_name(name_without_zone);
 
         let rrkey = RrKey::new(record.name().into(), record.record_type());
@@ -145,7 +145,7 @@ pub fn record_set_append_origin(
     origin: &Name,
     serial: u32,
 ) -> Result<RecordSet> {
-    let new_name = input.name().clone().append_name(origin).e()?;
+    let new_name = input.name().clone().append_name(origin).anyerr()?;
     let mut output = RecordSet::new(new_name.clone(), input.record_type(), serial);
     // TODO: less clones
     for record in input.records_without_rrsigs() {

@@ -343,17 +343,17 @@ mod tests {
     #[traced_test]
     async fn dht_discovery_smoke() -> Result {
         let secret = SecretKey::generate(&mut rand::rng());
-        let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;
+        let testnet = pkarr::mainline::Testnet::new_async(3).await.anyerr()?;
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()
-            .e()?;
+            .anyerr()?;
         let discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
             .client(client)
             .build()?;
 
-        let relay_url: RelayUrl = Url::parse("https://example.com").e()?.into();
+        let relay_url: RelayUrl = Url::parse("https://example.com").anyerr()?.into();
 
         let data = EndpointData::default().with_relay_url(Some(relay_url.clone()));
         discovery.publish(&data);

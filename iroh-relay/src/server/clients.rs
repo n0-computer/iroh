@@ -223,7 +223,7 @@ mod tests {
                 }
                 Ok(frame)
             }
-            Some(Err(err)) => Err(err).e(),
+            Some(Err(err)) => Err(err).anyerr(),
             None => n0_error::bail_any!("Unexpected EOF, expected frame {frame_type:?}"),
         }
     }

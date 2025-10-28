@@ -53,22 +53,22 @@ async fn pingpong(
     proceed: impl Future<Output = bool>,
     x: u64,
 ) -> Result<()> {
-    let (mut send, recv) = connection.open_bi().await.e()?;
+    let (mut send, recv) = connection.open_bi().await.anyerr()?;
     let data = x.to_be_bytes();
-    send.write_all(&data).await.e()?;
-    send.finish().e()?;
+    send.write_all(&data).await.anyerr()?;
+    send.finish().anyerr()?;
     let mut recv = if proceed.await {
         // use recv directly if we can proceed
         recv
     } else {
         // proceed returned false, so we have learned that the 0-RTT send was rejected.
         // at this point we have a fully handshaked connection, so we try again.
-        let (mut send, recv) = connection.open_bi().await.e()?;
-        send.write_all(&data).await.e()?;
-        send.finish().e()?;
+        let (mut send, recv) = connection.open_bi().await.anyerr()?;
+        send.write_all(&data).await.anyerr()?;
+        send.finish().anyerr()?;
         recv
     };
-    let echo = recv.read_to_end(8).await.e()?;
+    let echo = recv.read_to_end(8).await.anyerr()?;
     assert!(echo == data);
     Ok(())
 }
@@ -82,7 +82,7 @@ async fn pingpong_0rtt(connecting: Connecting, i: u64) -> Result<Connection> {
         }
         Err(connecting) => {
             trace!("0-RTT not possible from our side");
-            let connection = connecting.await.e()?;
+            let connection = connecting.await.anyerr()?;
             pingpong(&connection, future::ready(true), i).await?;
             connection
         }
@@ -104,7 +104,7 @@ async fn connect(args: Args) -> Result<()> {
             .connect_with_opts(remote_id, PINGPONG_ALPN, Default::default())
             .await?;
         let connection = if args.disable_0rtt {
-            let connection = connecting.await.e()?;
+            let connection = connecting.await.anyerr()?;
             trace!("connecting without 0-RTT");
             pingpong(&connection, future::ready(true), i).await?;
             connection
@@ -152,16 +152,16 @@ async fn accept(_args: Args) -> Result<()> {
     let accept = async move {
         while let Some(incoming) = endpoint.accept().await {
             tokio::spawn(async move {
-                let connecting = incoming.accept().e()?;
+                let connecting = incoming.accept().anyerr()?;
                 let (connection, _zero_rtt_accepted) = connecting
                     .into_0rtt()
                     .expect("accept into 0.5 RTT always succeeds");
-                let (mut send, mut recv) = connection.accept_bi().await.e()?;
+                let (mut send, mut recv) = connection.accept_bi().await.anyerr()?;
                 trace!("recv.is_0rtt: {}", recv.is_0rtt());
-                let data = recv.read_to_end(8).await.e()?;
+                let data = recv.read_to_end(8).await.anyerr()?;
                 trace!("recv: {}", data.len());
-                send.write_all(&data).await.e()?;
-                send.finish().e()?;
+                send.write_all(&data).await.anyerr()?;
+                send.finish().anyerr()?;
                 connection.closed().await;
                 n0_error::Ok(())
             });

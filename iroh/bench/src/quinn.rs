@@ -73,7 +73,7 @@ pub async fn connect_client(
         quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
 
     let mut roots = RootCertStore::empty();
-    roots.add(server_cert).e()?;
+    roots.add(server_cert).anyerr()?;
 
     let provider = rustls::crypto::ring::default_provider();
 
@@ -84,7 +84,7 @@ pub async fn connect_client(
         .with_no_client_auth();
 
     let mut client_config =
-        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).e()?));
+        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).anyerr()?));
     client_config.transport_config(Arc::new(transport_config(opt.max_streams, opt.initial_mtu)));
 
     let connection = endpoint
@@ -125,7 +125,7 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.e()? {
+        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -147,7 +147,7 @@ async fn drain_stream(
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.e()? {
+        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;

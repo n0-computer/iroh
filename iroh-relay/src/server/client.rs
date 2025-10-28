@@ -561,7 +561,7 @@ mod tests {
                 }
                 Ok(frame)
             }
-            Some(Err(err)) => Err(err).e(),
+            Some(Err(err)) => Err(err).anyerr(),
             None => n0_error::bail_any!("Unexpected EOF, expected frame {frame_type:?}"),
         }
     }
@@ -616,7 +616,7 @@ mod tests {
             .std_context("send")?;
         let frame = recv_frame(FrameType::RelayToClientDatagram, &mut io_rw)
             .await
-            .e()?;
+            .anyerr()?;
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
@@ -633,7 +633,7 @@ mod tests {
             .std_context("send")?;
         let frame = recv_frame(FrameType::RelayToClientDatagram, &mut io_rw)
             .await
-            .e()?;
+            .anyerr()?;
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
@@ -645,7 +645,9 @@ mod tests {
         // send peer_gone
         println!("send peer gone");
         peer_gone_s.send(endpoint_id).await.std_context("send")?;
-        let frame = recv_frame(FrameType::EndpointGone, &mut io_rw).await.e()?;
+        let frame = recv_frame(FrameType::EndpointGone, &mut io_rw)
+            .await
+            .anyerr()?;
         assert_eq!(frame, RelayToClientMsg::EndpointGone(endpoint_id));
 
         // Read tests

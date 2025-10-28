@@ -2907,7 +2907,7 @@ mod tests {
             async move {
                 while let Some(incoming) = endpoint.accept().await {
                     println!("Incoming first conn!");
-                    let conn = incoming.await.e()?;
+                    let conn = incoming.await.anyerr()?;
                     conn.closed().await;
                 }
 
@@ -3160,7 +3160,7 @@ mod tests {
                 &tls::name::encode(endpoint_id),
             )
             .std_context("connect")?;
-        let connection = connect.await.e()?;
+        let connection = connect.await.anyerr()?;
         Ok(connection)
     }
 
