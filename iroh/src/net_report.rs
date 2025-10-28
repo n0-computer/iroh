@@ -67,7 +67,7 @@ mod options;
 pub(crate) mod portmapper {
     /// Output of a port mapping probe.
     #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-    #[error("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
+    #[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
     pub struct ProbeOutput {
         /// If UPnP can be considered available.
         pub upnp: bool,
