@@ -67,7 +67,7 @@
 <a href=#67 id=67 data-nosnippet>67</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>portmapper {
 <a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// Output of a port mapping probe.
 <a href=#69 id=69 data-nosnippet>69</a>    </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-<a href=#70 id=70 data-nosnippet>70</a>    #[error(<span class="string">"portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}"</span>)]
+<a href=#70 id=70 data-nosnippet>70</a>    #[display(<span class="string">"portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}"</span>)]
 <a href=#71 id=71 data-nosnippet>71</a>    </span><span class="kw">pub struct </span>ProbeOutput {
 <a href=#72 id=72 data-nosnippet>72</a>        <span class="doccomment">/// If UPnP can be considered available.
 <a href=#73 id=73 data-nosnippet>73</a>        </span><span class="kw">pub </span>upnp: bool,
