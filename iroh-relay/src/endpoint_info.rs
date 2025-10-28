@@ -41,15 +41,14 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey, TransportAddr};
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use url::Url;
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum EncodingError {
     #[error(transparent)]
@@ -65,8 +64,7 @@ pub enum EncodingError {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum DecodingError {
     #[error("endpoint id was not encoded in valid z32")]
@@ -245,8 +243,7 @@ impl UserData {
 
 /// Error returned when an input value is too long for [`UserData`].
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[error("max length exceeded")]
 pub struct MaxLengthExceededError {}
 
@@ -426,9 +423,7 @@ impl EndpointInfo {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum ParseError {
     #[error("Expected format `key=value`, received `{s}`")]

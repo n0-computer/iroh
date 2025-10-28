@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use n0_error::{Result, StdResultExt, format_err};
+use n0_error::{Result, StdResultExt, anyerr};
 use pkarr::{SignedPacket, Timestamp};
 use redb::{
     Database, MultimapTableDefinition, ReadableTable, TableDefinition, backends::InMemoryBackend,
@@ -375,7 +375,7 @@ fn get_packet(
             buf.extend(data);
             match SignedPacket::deserialize(&buf) {
                 Ok(packet) => Ok(Some(packet)),
-                Err(err2) => Err(format_err!(
+                Err(err2) => Err(anyerr!(
                     "Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"
                 )),
             }

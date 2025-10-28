@@ -7,11 +7,10 @@ use std::{
     },
 };
 
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 
 /// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[error("Failed to convert")]
 pub struct IpMappedAddrError;
 

@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use aead::{AeadCore, AeadInOut, Buffer};
 use iroh_base::{PublicKey, SecretKey};
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 
 pub(crate) const NONCE_LEN: usize = 24;
 
@@ -24,9 +24,7 @@ pub(super) fn secret_ed_box(key: &SecretKey) -> crypto_box::SecretKey {
 pub struct SharedSecret(crypto_box::ChaChaBox);
 
 /// Errors that can occur during [`SharedSecret::open`].
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources, std_sources)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum DecryptionError {
     /// The nonce had the wrong size.

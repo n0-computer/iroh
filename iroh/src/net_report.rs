@@ -33,6 +33,8 @@ use iroh_relay::{
 };
 use n0_error::e;
 #[cfg(not(wasm_browser))]
+use n0_error::stack_error;
+#[cfg(not(wasm_browser))]
 use n0_future::task;
 use n0_future::{
     StreamExt,
@@ -81,8 +83,7 @@ pub(crate) use ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
 pub(crate) use self::reportgen::IfStateDetails;
 #[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
-#[n0_error::add_meta]
-#[derive(n0_error::Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 enum QadProbeError {
     #[error("Failed to resolve relay address")]

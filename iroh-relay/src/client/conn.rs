@@ -8,7 +8,7 @@ use std::{
 };
 
 use iroh_base::SecretKey;
-use n0_error::{Error, add_meta};
+use n0_error::stack_error;
 use n0_future::{Sink, Stream};
 use tracing::debug;
 
@@ -25,9 +25,7 @@ use crate::{
 };
 
 /// Error for sending messages to the relay server.
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources, std_sources)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum SendError {
@@ -45,9 +43,7 @@ pub enum SendError {
 }
 
 /// Errors when receiving messages from the relay server.
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources, std_sources)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum RecvError {

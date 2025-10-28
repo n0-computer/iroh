@@ -25,7 +25,7 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
-use n0_error::{Error, add_meta, e, ensure};
+use n0_error::{e, ensure, stack_error};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -242,8 +242,7 @@ impl Ping {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum ParseError {
     #[error("message is too short")]

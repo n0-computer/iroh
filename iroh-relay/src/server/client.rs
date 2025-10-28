@@ -3,7 +3,7 @@
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use n0_future::{SinkExt, StreamExt};
 use rand::Rng;
 use time::{Date, OffsetDateTime};
@@ -170,9 +170,7 @@ impl Client {
 }
 
 /// Error for [`Actor::handle_frame`]
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources)]
+#[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum HandleFrameError {
@@ -187,9 +185,7 @@ pub enum HandleFrameError {
 }
 
 /// Error for [`Actor::write_frame`]
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources)]
+#[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum WriteFrameError {
@@ -203,8 +199,7 @@ pub enum WriteFrameError {
 }
 
 /// Run error
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum RunError {
@@ -497,8 +492,7 @@ pub(crate) enum SendError {
     Closed,
 }
 
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[error("failed to forward {scope:?} packet: {reason:?}")]
 pub struct ForwardPacketError {
     scope: PacketScope,

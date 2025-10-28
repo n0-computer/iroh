@@ -1287,13 +1287,13 @@ pub enum DiscoPingPurpose {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, derive_more::Display)]
 pub enum ControlMsg {
     /// We received a Ping from the endpoint.
-    #[error("ping←")]
+    #[display("ping←")]
     Ping,
     /// We received a Pong from the endpoint.
-    #[error("pong←")]
+    #[display("pong←")]
     Pong,
     /// We received a CallMeMaybe.
-    #[error("call me")]
+    #[display("call me")]
     CallMeMaybe,
 }
 
@@ -1427,20 +1427,20 @@ impl RemoteInfo {
 #[derive(derive_more::Display, Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {
     /// Direct UDP connection
-    #[error("direct({_0})")]
+    #[display("direct({_0})")]
     Direct(SocketAddr),
     /// Relay connection over relay
-    #[error("relay({_0})")]
+    #[display("relay({_0})")]
     Relay(RelayUrl),
     /// Both a UDP and a relay connection are used.
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
     /// the address works.
-    #[error("mixed(udp: {_0}, relay: {_1})")]
+    #[display("mixed(udp: {_0}, relay: {_1})")]
     Mixed(SocketAddr, RelayUrl),
     /// We have no verified connection to this PublicKey
     #[default]
-    #[error("none")]
+    #[display("none")]
     None,
 }
 

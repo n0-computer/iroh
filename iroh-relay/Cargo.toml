@@ -70,7 +70,7 @@ webpki_types = { package = "rustls-pki-types", version = "1.12" }
 data-encoding = "2.6.0"
 lru = "0.16"
 z32 = "1.0.3"
-n0-error = { git = "https://github.com/n0-computer/n0-error", branch = "main" }
+n0-error = { git = "https://github.com/n0-computer/n0-error", branch = "Frando/stackerr-macro" }
 
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }

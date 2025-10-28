@@ -22,7 +22,7 @@ derive_more = { version = "2.0.1", features = ["display"], optional = true }
 url = { version = "2.5.3", features = ["serde"], optional = true }
 rand_core = { version = "0.9.3", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
-n0-error = { git = "https://github.com/n0-computer/n0-error", branch = "main" }
+n0-error = { git = "https://github.com/n0-computer/n0-error", branch = "Frando/stackerr-macro" }
 zeroize = { version = "1.8.2", optional = true, features = ["derive"] }
 zeroize_derive = { version = "1.4.2", optional = true } # needed for minimal versions
 

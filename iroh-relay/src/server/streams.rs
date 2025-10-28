@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use n0_error::{Error, add_meta};
+use n0_error::stack_error;
 use n0_future::{FutureExt, Sink, Stream, ready, time};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::instrument;
@@ -75,8 +75,7 @@ impl RelayedStream {
 }
 
 /// Relay send errors
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum SendError {
     #[error(transparent)]
@@ -122,9 +121,7 @@ impl Sink<RelayToClientMsg> for RelayedStream {
 }
 
 /// Relay receive errors
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum RecvError {
     #[error(transparent)]
@@ -290,8 +287,7 @@ struct Bucket {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 pub struct InvalidBucketConfig {
     max: i64,
     bytes_per_second: i64,

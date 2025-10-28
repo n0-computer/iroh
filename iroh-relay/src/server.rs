@@ -26,7 +26,7 @@ use hyper::body::Incoming;
 use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use n0_future::{StreamExt, future::Boxed};
 use tokio::{
     net::TcpListener,
@@ -265,10 +265,8 @@ pub struct Server {
 
 /// Server spawn errors
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta, std_sources)]
 #[non_exhaustive]
-#[error(std_sources)]
 pub enum SpawnError {
     #[error("Unable to get local address")]
     LocalAddr { source: std::io::Error },
@@ -289,8 +287,7 @@ pub enum SpawnError {
 
 /// Server task errors
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum SupervisorError {
     #[error("Error starting metrics server")]

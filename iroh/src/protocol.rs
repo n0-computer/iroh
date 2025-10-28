@@ -43,7 +43,7 @@ use std::{
 };
 
 use iroh_base::EndpointId;
-use n0_error::{AnyError, Error, add_meta, e};
+use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
@@ -102,9 +102,7 @@ pub struct RouterBuilder {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources, std_sources)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum AcceptError {
     #[error(transparent)]

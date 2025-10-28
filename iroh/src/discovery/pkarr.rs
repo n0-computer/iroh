@@ -48,7 +48,7 @@ use std::sync::Arc;
 
 use iroh_base::{EndpointId, RelayUrl, SecretKey};
 use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
@@ -76,8 +76,7 @@ use crate::{
 pub mod dht;
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum PkarrError {
     #[error("Invalid public key")]

@@ -33,7 +33,7 @@ use iroh_relay::{
     dns::{DnsError, DnsResolver, StaggeredError},
     quic::QuicClient,
 };
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 #[cfg(wasm_browser)]
 use n0_future::future::Pending;
 use n0_future::{
@@ -176,8 +176,7 @@ struct Actor {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(super) enum ProbesError {
     #[error("Probe failed")]
@@ -448,8 +447,7 @@ pub(super) struct HttpsProbeReport {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(super) enum ProbeError {
     #[error("Client is gone")]
@@ -461,8 +459,7 @@ pub(super) enum ProbeError {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(super) enum QuicError {
     #[error("No relay available")]
@@ -533,8 +530,7 @@ pub(super) fn maybe_to_mapped_addr(
 }
 
 #[cfg(not(wasm_browser))]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 enum CaptivePortalError {
     #[error(transparent)]
@@ -653,8 +649,7 @@ fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
 }
 
 #[cfg(not(wasm_browser))]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum GetRelayAddrError {
     #[error("No valid hostname in the relay URL")]
@@ -755,8 +750,7 @@ async fn relay_lookup_ipv6_staggered(
     }
 }
 
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum MeasureHttpsLatencyError {
     #[error(transparent)]

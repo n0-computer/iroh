@@ -2,7 +2,7 @@
 //! for QUIC address discovery.
 use std::{net::SocketAddr, sync::Arc};
 
-use n0_error::{Error, add_meta};
+use n0_error::stack_error;
 use n0_future::time::Duration;
 use quinn::{VarInt, crypto::rustls::QuicClientConfig};
 use tokio::sync::watch;
@@ -36,8 +36,7 @@ pub(crate) mod server {
 
     /// Server spawn errors
     #[allow(missing_docs)]
-    #[add_meta]
-    #[derive(Error)]
+    #[stack_error(derive, add_meta)]
     #[non_exhaustive]
     pub enum QuicSpawnError {
         #[error(transparent)]
@@ -225,9 +224,7 @@ pub(crate) mod server {
 
 /// Quic client related errors.
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources, std_sources)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum Error {
     #[error(transparent)]

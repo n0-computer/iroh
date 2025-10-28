@@ -13,7 +13,7 @@ use hickory_resolver::{
     name_server::TokioConnectionProvider,
 };
 use iroh_base::EndpointId;
-use n0_error::{Error, StackError, add_meta, e};
+use n0_error::{StackError, e, stack_error};
 use n0_future::{
     StreamExt,
     boxed::BoxFuture,
@@ -62,9 +62,7 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to dns.
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources, std_sources)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum DnsError {
     #[error(transparent)]
@@ -88,10 +86,8 @@ pub enum DnsError {
 
 #[cfg(not(wasm_browser))]
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
-#[error(from_sources)]
 pub enum LookupError {
     #[error("Malformed txt from lookup")]
     ParseError { source: ParseError },
@@ -100,8 +96,7 @@ pub enum LookupError {
 }
 
 /// Error returned when a staggered call fails.
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[error("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
 pub struct StaggeredError<E: n0_error::StackError + 'static> {
     errors: Vec<E>,

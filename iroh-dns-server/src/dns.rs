@@ -25,7 +25,7 @@ use hickory_server::{
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
 };
-use n0_error::{Result, StdResultExt, format_err};
+use n0_error::{Result, StdResultExt, anyerr};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -236,7 +236,7 @@ fn create_static_authority(
     )
     .e()?
     .into_soa()
-    .map_err(|_| format_err!("Couldn't parse SOA: {}", config.default_soa))?;
+    .map_err(|_| anyerr!("Couldn't parse SOA: {}", config.default_soa))?;
     let serial = soa.serial();
     let mut records = BTreeMap::new();
     for name in origins {
@@ -270,7 +270,7 @@ fn create_static_authority(
     }
 
     let static_authority = InMemoryAuthority::new(Name::root(), records, ZoneType::Primary, false)
-        .map_err(|e| format_err!("new authority: {e}"))?;
+        .map_err(|e| anyerr!("new authority: {e}"))?;
 
     Ok((static_authority, serial))
 }

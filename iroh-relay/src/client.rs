@@ -11,7 +11,7 @@ use std::{
 
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use n0_future::{
     Sink, Stream,
     split::{SplitSink, SplitStream, split},
@@ -46,9 +46,7 @@ mod util;
 ///
 /// `ConnectError` contains `DialError`, errors that can occur while dialing the
 /// relay, as well as errors that occur while creating or maintaining a connection.
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources)]
+#[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum ConnectError {
@@ -94,9 +92,7 @@ pub enum ConnectError {
 }
 
 /// Errors that can occur while dialing the relay server.
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources)]
+#[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum DialError {

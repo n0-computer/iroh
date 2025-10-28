@@ -1,6 +1,6 @@
 use std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
-use n0_error::{Error, add_meta};
+use n0_error::stack_error;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -39,8 +39,7 @@ impl From<Url> for RelayUrl {
 }
 
 /// Can occur when parsing a string into a [`RelayUrl`].
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[error("Failed to parse relay URL")]
 pub struct RelayUrlParseError(#[error(std_err)] url::ParseError);
 

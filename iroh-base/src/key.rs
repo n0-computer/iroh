@@ -11,7 +11,7 @@ use std::{
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize, de, ser};
 
@@ -203,9 +203,7 @@ impl Display for PublicKey {
 }
 
 /// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources, std_sources)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[allow(missing_docs)]
 pub enum KeyParsingError {
     /// Error when decoding.
@@ -413,8 +411,7 @@ impl Signature {
 }
 
 /// Verification of a signature failed.
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[error("Invalid signature")]
 pub struct SignatureError {}
 

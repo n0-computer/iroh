@@ -44,7 +44,7 @@ use iroh_relay::{
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 };
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use n0_future::{
     FuturesUnorderedBounded, SinkExt, StreamExt,
     task::JoinSet,
@@ -210,8 +210,7 @@ struct RelayConnectionOptions {
 
 /// Possible reasons for a failed relay connection.
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 enum RelayConnectionError {
     #[error("Failed to connect to relay server")]
     Dial { source: DialError },
@@ -222,8 +221,7 @@ enum RelayConnectionError {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 enum RunError {
     #[error("Send timeout")]
     SendTimeout,
@@ -248,8 +246,7 @@ enum RunError {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 enum DialError {
     #[error("timeout (>{timeout:?}) trying to establish a connection")]
     Timeout { timeout: Duration },

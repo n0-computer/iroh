@@ -113,7 +113,7 @@
 use std::sync::{Arc, RwLock};
 
 use iroh_base::{EndpointAddr, EndpointId};
-use n0_error::{AnyError, Error, add_meta, e, ensure};
+use n0_error::{AnyError, e, ensure, stack_error};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -181,8 +181,7 @@ impl<T: IntoDiscovery> DynIntoDiscovery for T {
 
 /// IntoDiscovery errors
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum IntoDiscoveryError {
     #[error("Service '{provenance}' error")]
@@ -218,8 +217,7 @@ impl IntoDiscoveryError {
 
 /// Discovery errors
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum DiscoveryError {
     #[error("No discovery service configured")]

@@ -31,7 +31,7 @@ use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use n0_future::{SinkExt, TryStreamExt};
 #[cfg(feature = "server")]
 use rand::CryptoRng;
@@ -132,8 +132,7 @@ impl Frame for ServerDeniesAuth {
     const TAG: FrameType = FrameType::ServerDeniesAuth;
 }
 
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {
@@ -172,8 +171,7 @@ pub enum Error {
 }
 
 #[cfg(feature = "server")]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 pub(crate) enum VerificationError {
     #[error("Couldn't export TLS keying material on our end")]
     NoKeyingMaterial,

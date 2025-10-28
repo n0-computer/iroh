@@ -11,7 +11,7 @@ use std::num::NonZeroU16;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use iroh_base::{EndpointId, KeyParsingError};
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use n0_future::time::Duration;
 
 use super::common::{FrameType, FrameTypeError};
@@ -40,9 +40,7 @@ pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(15);
 pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
 
 /// Protocol send errors.
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources)]
+#[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum Error {

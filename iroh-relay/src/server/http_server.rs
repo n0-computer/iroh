@@ -15,7 +15,7 @@ use hyper::{
     service::Service,
     upgrade::Upgraded,
 };
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use n0_future::time::Elapsed;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
@@ -151,8 +151,7 @@ pub(super) struct TlsConfig {
 
 /// Errors when attempting to upgrade and
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum ServeConnectionError {
     #[error("TLS[acme] handshake")]
@@ -194,10 +193,8 @@ pub enum ServeConnectionError {
 
 /// Server accept errors.
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
-#[error(from_sources)]
 pub enum AcceptError {
     #[error(transparent)]
     Handshake { source: handshake::Error },
@@ -207,10 +204,8 @@ pub enum AcceptError {
 
 /// Server connection errors, includes errors that can happen on `accept`.
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
-#[error(from_sources)]
 pub enum ConnectionHandlerError {
     #[error(transparent)]
     Accept { source: AcceptError },
@@ -413,8 +408,7 @@ struct Inner {
     metrics: Arc<Metrics>,
 }
 
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 enum RelayUpgradeReqError {
     #[error("missing header: {header}")]
     MissingHeader { header: http::HeaderName },

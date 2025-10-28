@@ -4,7 +4,7 @@
 //! integers for different frames.
 
 use bytes::{Buf, BufMut};
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use quinn_proto::{
     VarInt,
     coding::{Codec, UnexpectedEnd},
@@ -55,8 +55,7 @@ pub enum FrameType {
     Restarting = 12,
 }
 
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum FrameTypeError {

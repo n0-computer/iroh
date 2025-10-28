@@ -32,7 +32,7 @@ use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{Error, add_meta, e};
+use n0_error::{e, stack_error};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -213,8 +213,7 @@ pub(crate) struct MagicSock {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum AddEndpointAddrError {
     #[error("Empty addressing info")]
@@ -1332,8 +1331,7 @@ impl DirectAddrUpdateState {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum CreateHandleError {
     #[error("Failed to create bind sockets")]
@@ -1711,8 +1709,7 @@ impl DiscoState {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 enum DiscoBoxError {
     #[error("Failed to open crypto box")]
@@ -2399,8 +2396,7 @@ impl DiscoveredDirectAddrs {
 pub(crate) struct EndpointIdMappedAddr(Ipv6Addr);
 
 /// Can occur when converting a [`SocketAddr`] to an [`EndpointIdMappedAddr`]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[error("Failed to convert")]
 pub struct EndpointIdMappedAddrError;
 

@@ -23,7 +23,7 @@ use std::{
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{Error, add_meta, e, ensure};
+use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use pin_project::pin_project;
@@ -482,10 +482,8 @@ pub struct Endpoint {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
-#[error(from_sources)]
 pub enum ConnectWithOptsError {
     #[error(transparent)]
     AddEndpointAddr { source: AddEndpointAddrError },
@@ -501,9 +499,7 @@ pub enum ConnectWithOptsError {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum ConnectError {
     #[error(transparent)]
@@ -516,9 +512,7 @@ pub enum ConnectError {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum BindError {
     #[error(transparent)]
@@ -532,8 +526,7 @@ pub enum BindError {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum GetMappingAddressError {
     #[error("Discovery service required due to missing addressing information")]
@@ -1514,9 +1507,7 @@ pub struct Connecting {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
-#[error(from_sources, std_sources)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum AlpnError {
     #[error(transparent)]
@@ -1682,8 +1673,7 @@ pub struct Connection {
 }
 
 #[allow(missing_docs)]
-#[add_meta]
-#[derive(Error)]
+#[stack_error(derive, add_meta)]
 #[error("Protocol error: no remote id available")]
 pub struct RemoteEndpointIdError;
 
