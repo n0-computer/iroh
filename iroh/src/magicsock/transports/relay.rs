@@ -169,7 +169,6 @@ impl RelayTransport {
         self.my_relay
             .watch()
             .map(move |url| url.map(|url| (url, my_endpoint_id)))
-            .expect("disconnected")
     }
 
     pub(super) fn create_network_change_sender(&self) -> RelayNetworkChangeSender {

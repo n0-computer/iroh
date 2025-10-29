@@ -43,6 +43,13 @@ impl PartialEq for RelayMap {
 impl Eq for RelayMap {}
 
 impl RelayMap {
+    /// Creates an empty relay map.
+    pub fn empty() -> Self {
+        Self {
+            relays: Default::default(),
+        }
+    }
+
     /// Returns the URLs of all servers in this relay map.
     ///
     /// This function is generic over the container to collect into. If you simply want a list
@@ -57,13 +64,6 @@ impl RelayMap {
             .keys()
             .cloned()
             .collect::<T>()
-    }
-
-    /// Creates an empty relay map.
-    pub fn empty() -> Self {
-        Self {
-            relays: Default::default(),
-        }
     }
 
     /// Returns a list with the [`RelayConfig`] for each relay in this relay map.
@@ -111,14 +111,27 @@ impl RelayMap {
     pub fn remove(&self, url: &RelayUrl) -> Option<Arc<RelayConfig>> {
         self.relays.write().expect("poisoned").remove(url)
     }
+
+    /// Extends this `RelayMap` with another one.
+    pub fn extend(&self, other: &RelayMap) {
+        let mut a = self.relays.write().expect("poisoned");
+        let b = other.relays.read().expect("poisoned");
+        a.extend(b.iter().map(|(a, b)| (a.clone(), b.clone())));
+    }
 }
 
 impl FromIterator<RelayConfig> for RelayMap {
     fn from_iter<T: IntoIterator<Item = RelayConfig>>(iter: T) -> Self {
+        Self::from_iter(iter.into_iter().map(Arc::new))
+    }
+}
+
+impl FromIterator<Arc<RelayConfig>> for RelayMap {
+    fn from_iter<T: IntoIterator<Item = Arc<RelayConfig>>>(iter: T) -> Self {
         Self {
             relays: Arc::new(RwLock::new(
                 iter.into_iter()
-                    .map(|endpoint| (endpoint.url.clone(), Arc::new(endpoint)))
+                    .map(|config| (config.url.clone(), config))
                     .collect(),
             )),
         }
@@ -218,5 +231,45 @@ impl Default for RelayQuicConfig {
 impl fmt::Display for RelayConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+
+    #[test]
+    fn relay_map_extend() {
+        let urls1 = vec![
+            RelayUrl::from_str("https://hello-a-01.com").unwrap(),
+            RelayUrl::from_str("https://hello-b-01.com").unwrap(),
+            RelayUrl::from_str("https://hello-c-01-.com").unwrap(),
+        ];
+
+        let urls2 = vec![
+            RelayUrl::from_str("https://hello-a-02.com").unwrap(),
+            RelayUrl::from_str("https://hello-b-02.com").unwrap(),
+            RelayUrl::from_str("https://hello-c-02-.com").unwrap(),
+        ];
+
+        let map1 = RelayMap::from_iter(urls1.clone().into_iter().map(RelayConfig::from));
+        let map2 = RelayMap::from_iter(urls2.clone().into_iter().map(RelayConfig::from));
+
+        assert_ne!(map1, map2);
+
+        // combine
+
+        let map3 = RelayMap::from_iter(
+            map1.relays::<Vec<_>>()
+                .into_iter()
+                .chain(map2.relays::<Vec<_>>()),
+        );
+
+        assert_eq!(map3.len(), 6);
+
+        map1.extend(&map2);
+        assert_eq!(map3, map1);
     }
 }

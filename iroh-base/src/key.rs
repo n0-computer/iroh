@@ -13,7 +13,7 @@ use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use nested_enum_utils::common_fields;
 use rand_core::CryptoRng;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de, ser};
 use snafu::{Backtrace, Snafu};
 
 /// A public key.
@@ -342,6 +342,56 @@ impl TryFrom<&[u8]> for SecretKey {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Signature(ed25519_dalek::Signature);
 
+impl Serialize for Signature {
+    fn serialize<S: ser::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use ser::SerializeTuple;
+
+        let mut seq = serializer.serialize_tuple(Signature::LENGTH)?;
+
+        for byte in self.to_bytes() {
+            seq.serialize_element(&byte)?;
+        }
+
+        seq.end()
+    }
+}
+
+// serde lacks support for deserializing arrays larger than 32-bytes
+// see: <https://github.com/serde-rs/serde/issues/631>
+impl<'de> Deserialize<'de> for Signature {
+    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ByteArrayVisitor;
+
+        impl<'de> de::Visitor<'de> for ByteArrayVisitor {
+            type Value = [u8; Signature::LENGTH];
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("bytestring of length 64")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<[u8; Signature::LENGTH], A::Error>
+            where
+                A: de::SeqAccess<'de>,
+            {
+                use de::Error;
+                let mut arr = [0u8; Signature::LENGTH];
+
+                for (i, byte) in arr.iter_mut().enumerate() {
+                    *byte = seq
+                        .next_element()?
+                        .ok_or_else(|| Error::invalid_length(i, &self))?;
+                }
+
+                Ok(arr)
+            }
+        }
+
+        deserializer
+            .deserialize_tuple(Signature::LENGTH, ByteArrayVisitor)
+            .map(|b| Signature::from_bytes(&b))
+    }
+}
+
 impl Debug for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.0)
@@ -455,5 +505,14 @@ mod tests {
     fn test_regression_parse_endpoint_id_panic() {
         let not_a_endpoint_id = "foobarbaz";
         assert!(PublicKey::from_str(not_a_endpoint_id).is_err());
+    }
+
+    #[test]
+    fn signature_postcard() {
+        let key = SecretKey::generate(&mut rand::rng());
+        let signature = key.sign(b"hello world");
+        let bytes = postcard::to_stdvec(&signature).unwrap();
+        let signature2: Signature = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(signature, signature2);
     }
 }
