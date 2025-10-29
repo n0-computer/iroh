@@ -2387,7 +2387,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#20e462d8103000b8b5cf29aa8b76f263bd627f83"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#20e462d8103000b8b5cf29aa8b76f263bd627f83"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2407,7 +2407,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#20e462d8103000b8b5cf29aa8b76f263bd627f83"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#20e462d8103000b8b5cf29aa8b76f263bd627f83"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2429,7 +2429,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.12"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#20e462d8103000b8b5cf29aa8b76f263bd627f83"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#20e462d8103000b8b5cf29aa8b76f263bd627f83"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2886,7 +2886,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.11.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#7fb79f7fe82a9ac8bea2ca5eca195e7448a6087e"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#f27b7f011837048dc1245e63a68b1b00e5dedf97"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3271,7 +3271,7 @@ checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 [[package]]
 name = "portmapper"
 version = "0.11.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#7fb79f7fe82a9ac8bea2ca5eca195e7448a6087e"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#f27b7f011837048dc1245e63a68b1b00e5dedf97"
 dependencies = [
  "base64",
  "bytes",
