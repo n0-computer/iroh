@@ -11,7 +11,7 @@ use iroh_base::SecretKey;
 use n0_future::{Sink, Stream};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, Snafu};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use super::KeyCache;
 #[cfg(not(wasm_browser))]
@@ -99,9 +99,9 @@ impl Conn {
         let mut conn = WsBytesFramed { io };
 
         // exchange information with the server
-        debug!("server_handshake: started");
+        trace!("server_handshake: started");
         handshake::clientside(&mut conn, secret_key).await?;
-        debug!("server_handshake: done");
+        trace!("server_handshake: done");
 
         Ok(Self { conn, key_cache })
     }

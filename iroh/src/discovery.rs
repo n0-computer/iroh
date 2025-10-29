@@ -124,12 +124,11 @@ use snafu::{IntoError, Snafu, ensure};
 use tokio::sync::oneshot;
 use tracing::{Instrument, debug, error_span, warn};
 
-use crate::Endpoint;
 pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData};
+use crate::{Endpoint, magicsock::endpoint_map::Source};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
-
 #[cfg(feature = "discovery-local-network")]
 pub mod mdns;
 pub mod pkarr;
@@ -492,11 +491,7 @@ impl Discovery for ConcurrentDiscovery {
     }
 }
 
-/// Maximum duration since the last control or data message received from an endpoint to make us
-/// start a discovery task.
-const MAX_AGE: Duration = Duration::from_secs(10);
-
-/// A wrapper around a tokio task which runs an endpoint discovery.
+/// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<(), DiscoveryError>>,
     _task: AbortOnDropHandle<()>,
@@ -527,30 +522,19 @@ impl DiscoveryTask {
     /// If `delay` is set, the [`DiscoveryTask`] will first wait for `delay` and then check again
     /// if we recently received messages from remote endpoint. If true, the task will abort.
     /// Otherwise, or if no `delay` is set, the discovery will be started.
-    pub(super) fn maybe_start_after_delay(
+    pub(super) fn start_after_delay(
         ep: &Endpoint,
         endpoint_id: EndpointId,
-        delay: Option<Duration>,
+        delay: Duration,
     ) -> Result<Option<Self>, DiscoveryError> {
         // If discovery is not needed, don't even spawn a task.
-        if !ep.needs_discovery(endpoint_id, MAX_AGE) {
-            return Ok(None);
-        }
         ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.id();
         let task = task::spawn(
             async move {
-                // If delay is set, wait and recheck if discovery is needed. If not, early-exit.
-                if let Some(delay) = delay {
-                    time::sleep(delay).await;
-                    if !ep.needs_discovery(endpoint_id, MAX_AGE) {
-                        debug!("no discovery needed, abort");
-                        on_first_tx.send(Ok(())).ok();
-                        return;
-                    }
-                }
+                time::sleep(delay).await;
                 Self::run(ep, endpoint_id, on_first_tx).await
             }
             .instrument(
@@ -606,10 +590,10 @@ impl DiscoveryTask {
                         continue;
                     }
                     debug!(%provenance, addr = ?endpoint_addr, "new address found");
-                    let source = crate::magicsock::Source::Discovery {
+                    let source = Source::Discovery {
                         name: provenance.to_string(),
                     };
-                    ep.add_endpoint_addr(endpoint_addr, source).ok();
+                    ep.add_endpoint_addr(endpoint_addr, source).await.ok();
 
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();

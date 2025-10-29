@@ -36,7 +36,9 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#endpoint-discovery
 /// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
 /// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    derive_more::Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 pub struct EndpointAddr {
     /// The endpoint's identifier.
     pub id: EndpointId,
@@ -52,6 +54,18 @@ pub enum TransportAddr {
     Relay(RelayUrl),
     /// IP based addresses
     Ip(SocketAddr),
+}
+
+impl TransportAddr {
+    /// Whether this is a transport address via a relay server.
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::Relay(_))
+    }
+
+    /// Whether this is an IP transport address.
+    pub fn is_ip(&self) -> bool {
+        matches!(self, Self::Ip(_))
+    }
 }
 
 impl EndpointAddr {
