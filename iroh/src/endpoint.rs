@@ -308,7 +308,8 @@ impl Builder {
     /// the endpoint. Discovery services that need to publish information need
     /// to use this secret key to sign the information.
     ///
-    /// If you add multiple discovery services, they will be combined using a
+    /// The internals of the [`Builder`] use the discovery objects passed to this function and
+    /// automatically combines them upon [`Builder::bind`] via a
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to an endpoint without providing its
