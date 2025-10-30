@@ -50,7 +50,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     // ensure the server has connected to a relay
     // and therefore has enough information to publish
     tracing::info!("waiting for server to go online");
-    time::timeout(Duration::from_secs(60), server.online())
+    time::timeout(Duration::from_secs(12), server.online())
         .await
         .context("server endpoint took too long to get online")?;
 
@@ -84,7 +84,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     });
 
     // Wait for pkarr records to be published
-    time::timeout(Duration::from_secs(60), {
+    time::timeout(Duration::from_secs(20), {
         let endpoint_id = server.id();
         tracing::info!(
             "start timeout waiting for records to be published, waiting for {endpoint_id} resolution"
