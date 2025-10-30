@@ -1650,24 +1650,18 @@ impl Connecting {
     /// security.
     ///
     /// Returns `Ok` immediately if the local endpoint is able to attempt sending 0/0.5-RTT data.
-    /// If so, the returned [`Connection`] can be used to send application data without waiting for
+    /// If so, the returned [`ZeroRttClientConnection`] can be used to send application data without waiting for
     /// the rest of the handshake to complete, at the cost of weakened cryptographic security
-    /// guarantees. The returned [`ZeroRttAccepted`] future resolves when the handshake does
-    /// complete, at which point subsequently opened streams and written data will have full
-    /// cryptographic protection.
+    /// guarantees.
     ///
-    /// Once the [`ZeroRttAccepted`] future completed, a full handshake has been carried through
-    /// and any data sent and any streams opened on the [`Connection`] will operate with the same
-    /// security as on normal 1-RTT connections.
-    ///
-    /// This method will error if attempted on an incoming [`Connecting`]. To
-    /// accept 0-RTT data, use the [`Incoming::accept_0rtt`] method.
+    /// This method will error if attempted on an incoming [`Connecting`]. To accept 0-RTT data,
+    /// use the [`Incoming::accept_0rtt`] method.
     ///
     /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
     /// 0-RTT data will attempt to resume a previous TLS session. However, **the remote endpoint
     /// may not actually _accept_ the 0-RTT data**--yet still accept the connection attempt in
-    /// general. This possibility is conveyed through the [`ZeroRttClientConn::handshake_completed`]
-    /// method. Once the handshake completes, it returns [`ZeroRtt:::Accepted`] if the 0-RTT data
+    /// general. This possibility is conveyed through the [`ZeroRttClientConnection::handshake_completed`]
+    /// method. Once the handshake completes, it returns [`ZeroRtt::Accepted`] if the 0-RTT data
     /// was accepted and [`ZeroRtt::Rejected`] if it was rejected.
     ///
     /// If it was rejected, the existence of streams opened and other application data
@@ -1783,7 +1777,7 @@ impl Future for ZeroRttAccepted {
 ///
 /// Creating a `ZeroRttClientConnection` means that the endpoint is capable
 /// of attempting a 0-RTT connection with the remote. The remote may still
-/// reject the 0-RTT connectiong. In which case, any data sent before the
+/// reject the 0-RTT connection. In which case, any data sent before the
 /// handshake has completed may need to be resent.
 ///
 /// Look at the [`ZeroRttClientConnection::handshake_completed`] method for
@@ -1794,7 +1788,7 @@ pub struct ZeroRttClientConnection {
     accepted: ZeroRttAccepted,
 }
 
-/// Returned from a `ZeroRttClientConn::handshake_complete` method.
+/// Returned from a `ZeroRttClientConnection::handshake_complete` method.
 #[derive(Debug)]
 pub enum ZeroRtt {
     /// If the 0-rtt data was accepted, you can continue to use any streams
@@ -2094,7 +2088,7 @@ impl ZeroRttClientConnection {
 ///
 /// It is very similar to a `Connection`, but the `ZeroRttServerConnection::remote_id`
 /// and `ZeroRttServerConnection::alpn` may not be set yet, since the handshake has
-/// not necessarily occured yet.
+/// not necessarily occurred yet.
 ///
 /// If the `ZeroRttServerConnection` has rejected 0-RTT or does not have enough information
 /// to accept 0-RTT, any received 0-RTT packets will simply be dropped before
