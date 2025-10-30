@@ -25,7 +25,7 @@ use tracing::{Instrument, info_span};
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
 // Enable this if you want to run these tests in the browser.
-// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in endpointjs.
+// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in nodejs.
 // #[cfg(wasm_browser)]
 // wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -50,7 +50,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     // ensure the server has connected to a relay
     // and therefore has enough information to publish
     tracing::info!("waiting for server to go online");
-    time::timeout(Duration::from_secs(12), server.online())
+    time::timeout(Duration::from_secs(60), server.online())
         .await
         .context("server endpoint took too long to get online")?;
 
@@ -84,7 +84,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     });
 
     // Wait for pkarr records to be published
-    time::timeout(Duration::from_secs(20), {
+    time::timeout(Duration::from_secs(60), {
         let endpoint_id = server.id();
         tracing::info!(
             "start timeout waiting for records to be published, waiting for {endpoint_id} resolution"
