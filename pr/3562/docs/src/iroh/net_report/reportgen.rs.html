@@ -563,7 +563,7 @@
 <a href=#563 id=563 data-nosnippet>563</a>
 <a href=#564 id=564 data-nosnippet>564</a>    </span><span class="kw">use </span><span class="kw">crate</span>::util::reqwest_client_builder;
 <a href=#565 id=565 data-nosnippet>565</a>
-<a href=#566 id=566 data-nosnippet>566</a>    <span class="kw">let </span>preferred_relay = preferred_relay.and_then(|url| dm.get_endpoint(<span class="kw-2">&amp;</span>url).map(|<span class="kw">_</span>| url));
+<a href=#566 id=566 data-nosnippet>566</a>    <span class="kw">let </span>preferred_relay = preferred_relay.and_then(|url| dm.get(<span class="kw-2">&amp;</span>url).map(|<span class="kw">_</span>| url));
 <a href=#567 id=567 data-nosnippet>567</a>
 <a href=#568 id=568 data-nosnippet>568</a>    <span class="kw">let </span>url = <span class="kw">match </span>preferred_relay {
 <a href=#569 id=569 data-nosnippet>569</a>        <span class="prelude-val">Some</span>(url) =&gt; url,
