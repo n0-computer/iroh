@@ -860,41 +860,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "darling"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cdf337090841a411e2a7f3deb9187445851f91b309c0c0a29e05f74a00a48c0"
-dependencies = [
- "darling_core",
- "darling_macro",
-]
-
-[[package]]
-name = "darling_core"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1247195ecd7e3c85f83c8d2a366e4210d588e802133e1e355180a9870b517ea4"
-dependencies = [
- "fnv",
- "ident_case",
- "proc-macro2",
- "quote",
- "strsim",
- "syn",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.21.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d38308df82d1080de0afee5d069fa14b0326a88c14f15c5ccda35b4a6c414c81"
-dependencies = [
- "darling_core",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "dashmap"
 version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1156,7 +1121,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1919,7 +1884,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2029,12 +1994,6 @@ dependencies = [
  "zerotrie",
  "zerovec",
 ]
-
-[[package]]
-name = "ident_case"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "idna"
@@ -2319,7 +2278,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.36.2"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#10c8ea376f2377e1bcabf4b6d8b9163d5d6350db"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#fe4937507fc144085fd53862219a1ddfaf5bde89"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2338,7 +2297,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics-derive"
 version = "0.3.1"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#10c8ea376f2377e1bcabf4b6d8b9163d5d6350db"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#fe4937507fc144085fd53862219a1ddfaf5bde89"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2709,7 +2668,7 @@ dependencies = [
 [[package]]
 name = "n0-error"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-error?branch=main#1c518f29bc8719665041cfe727d8e261567e7a77"
+source = "git+https://github.com/n0-computer/n0-error?branch=main#54dea84b75d577eedc0b83ddbd0bec7ca62f0c9e"
 dependencies = [
  "derive_more 2.0.1",
  "n0-error-macros",
@@ -2719,9 +2678,8 @@ dependencies = [
 [[package]]
 name = "n0-error-macros"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-error?branch=main#1c518f29bc8719665041cfe727d8e261567e7a77"
+source = "git+https://github.com/n0-computer/n0-error?branch=main#54dea84b75d577eedc0b83ddbd0bec7ca62f0c9e"
 dependencies = [
- "darling",
  "heck",
  "proc-macro2",
  "quote",
@@ -2915,7 +2873,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3385,7 +3343,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3422,9 +3380,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3723,7 +3681,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4403,7 +4361,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5175,7 +5133,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
