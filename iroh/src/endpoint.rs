@@ -1629,7 +1629,7 @@ pub struct Connecting {
     #[pin]
     inner: quinn::Connecting,
     ep: Endpoint,
-    /// exists this is an outgoing connection, `None` if this is an incoming conn
+    /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
     remote_endpoint_id: Option<EndpointId>,
     /// We run discovery as long as we haven't established a connection yet.
     #[debug("Option<DiscoveryTask>")]
