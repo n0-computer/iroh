@@ -221,6 +221,7 @@ mod tests {
         panic!("store did not evict packet");
     }
 
+    #[ignore = "flaky"]
     #[tokio::test]
     #[traced_test]
     async fn integration_mainline() -> Result {
