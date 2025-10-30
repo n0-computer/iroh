@@ -31,7 +31,7 @@ recv_stream
     .read_exact(<span class="kw-2">&amp;mut </span>buf)
     .<span class="kw">await
     </span>.context(<span class="string">"unable to read"</span>)<span class="question-mark">?</span>;</code></pre></div>
-<p>Of course you can also use <a href="endpoint/struct.Connection.html#method.open_bi" title="method iroh::endpoint::Connection::open_bi">bi-directional streams</a> or any other features from QUIC.</p>
+<p>Of course you can also use <a href="endpoint/connection/struct.Connection.html#method.open_bi" title="method iroh::endpoint::connection::Connection::open_bi">bi-directional streams</a> or any other features from QUIC.</p>
 <p>For more elaborate examples, see <a href="#examples">below</a> or the examples directory in
 the source repository.</p>
 <h2 id="connection-establishment"><a class="doc-anchor" href="#connection-establishment">§</a>Connection Establishment</h2>
@@ -111,9 +111,9 @@ block each other.  Allowing many streams to co-exist, regardless of how long the
 <div class="warning">
 <p>To keep streams cheap, they are lazily created on the network: only once a sender starts
 sending data on the stream will the receiver become aware of a stream.  This means only
-calling <a href="endpoint/struct.Connection.html#method.open_bi" title="method iroh::endpoint::Connection::open_bi"><code>Connection::open_bi</code></a> is not sufficient for the corresponding call to
-<a href="endpoint/struct.Connection.html#method.accept_bi" title="method iroh::endpoint::Connection::accept_bi"><code>Connection::accept_bi</code></a> to return.  The sender <strong>must</strong> send data on the stream before
-the receiver’s <a href="endpoint/struct.Connection.html#method.accept_bi" title="method iroh::endpoint::Connection::accept_bi"><code>Connection::accept_bi</code></a> call will return.</p>
+calling <a href="endpoint/connection/struct.Connection.html#method.open_bi" title="method iroh::endpoint::connection::Connection::open_bi"><code>Connection::open_bi</code></a> is not sufficient for the corresponding call to
+<a href="endpoint/connection/struct.Connection.html#method.accept_bi" title="method iroh::endpoint::connection::Connection::accept_bi"><code>Connection::accept_bi</code></a> to return.  The sender <strong>must</strong> send data on the stream before
+the receiver’s <a href="endpoint/connection/struct.Connection.html#method.accept_bi" title="method iroh::endpoint::connection::Connection::accept_bi"><code>Connection::accept_bi</code></a> call will return.</p>
 </div>
 <h3 id="endpoint-discovery"><a class="doc-anchor" href="#endpoint-discovery">§</a>Endpoint Discovery</h3>
 <p>The need to know the <a href="struct.RelayUrl.html" title="struct iroh::RelayUrl"><code>RelayUrl</code></a> <em>or</em> some direct addresses in addition to the
