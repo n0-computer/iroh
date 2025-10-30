@@ -2,7 +2,7 @@ use std::{env, str::FromStr, time::Instant};
 
 use clap::Parser;
 use data_encoding::HEXLOWER;
-use iroh::{EndpointId, SecretKey};
+use iroh::{EndpointId, SecretKey, endpoint::ZeroRtt};
 use n0_future::StreamExt;
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
@@ -80,15 +80,17 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
                     trace!("0-RTT possible from our side");
                     let (send, recv) = zrtt_connection.open_bi().await.e()?;
                     let zrtt_task = tokio::spawn(pingpong(send, recv, i));
-                    let (conn, accepted) = zrtt_connection.into_connection().await.e()?;
-                    if accepted {
-                        let _ = zrtt_task.await.e()?;
-                        conn
-                    } else {
-                        zrtt_task.abort();
-                        let (send, recv) = conn.open_bi().await.e()?;
-                        pingpong(send, recv, i).await?;
-                        conn
+                    match zrtt_connection.handshake_completed().await {
+                        ZeroRtt::Accepted(conn) => {
+                            let _ = zrtt_task.await.e()?;
+                            conn
+                        }
+                        ZeroRtt::Rejected(conn) => {
+                            zrtt_task.abort();
+                            let (send, recv) = conn.open_bi().await.e()?;
+                            pingpong(send, recv, i).await?;
+                            conn
+                        }
                     }
                 }
                 Err(connecting) => {

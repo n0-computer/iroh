@@ -1416,6 +1416,48 @@ impl Incoming {
         })
     }
 
+    /// Turns this into a connection that can accept 0-rtt data.
+    ///
+    /// Returning `Ok` indicates that the connection has been created without error.
+    ///
+    /// It does not indicate whether or not 0-RTT data can be received. If it
+    /// cannot be received, any 0-RTT packets will be dropped before reaching
+    /// the stream.
+    ///
+    /// If 0-RTT data can be received, data will flow normally.
+    ///
+    /// Regardless of whether or not 0-RTT data can be received, any streams created
+    /// before the handshake has completed will remain valid to send or receive on,
+    /// they just may wait until the handshake has been completed before sending
+    /// or receiving the packets.
+    ///
+    /// ## Errors
+    /// This will fail if there is an issue creating a connection.
+    ///
+    /// ## Security
+    ///
+    /// This enables transmission of 0.5-RTT data, which may be sent
+    /// before TLS client authentication has occurred, and should therefore not be used to send
+    /// data for which client authentication is being used.
+    ///
+    /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
+    /// and thus whether parts of the stream are operating under this reduced security level.
+    pub fn accept_0rtt(self) -> Result<ZeroRttServerConnection, ConnectionError> {
+        let connecting = self.accept()?;
+        let _discovery_drop_guard = connecting._discovery_drop_guard;
+        let (conn, accepted) = connecting
+            .inner
+            .into_0rtt()
+            .expect("This always returns Ok on the server side");
+        Ok(ZeroRttServerConnection {
+            inner: conn,
+            accepted: ZeroRttAccepted {
+                inner: accepted,
+                _discovery_drop_guard,
+            },
+        })
+    }
+
     /// Accepts this incoming connection using a custom configuration.
     ///
     /// See [`accept()`] for more details.
@@ -1505,8 +1547,7 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn: Connection = inner.try_into()?;
-
+                let conn = conn_from_quinn_conn(inner).expect("handshake has completed");
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
             }
@@ -1523,6 +1564,14 @@ fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
     }
 }
 
+fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, ConnectionError> {
+    Ok(Connection {
+        remote_id: remote_id_from_quinn_conn(&conn).map_err(|_| ConnectionError::LocallyClosed)?,
+        alpn: alpn_from_quinn_conn(&conn).ok_or(ConnectionError::LocallyClosed)?,
+        inner: conn,
+    })
+}
+
 /// Returns the [`EndpointId`] from the peer's TLS certificate.
 ///
 /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
@@ -1531,7 +1580,7 @@ fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
 /// connection.
 ///
 /// [`PublicKey`]: iroh_base::PublicKey
-pub fn remote_id_from_quinn_conn(
+fn remote_id_from_quinn_conn(
     conn: &quinn::Connection,
 ) -> Result<EndpointId, RemoteEndpointIdError> {
     let data = conn.peer_identity();
@@ -1611,14 +1660,17 @@ impl Connecting {
     /// and any data sent and any streams opened on the [`Connection`] will operate with the same
     /// security as on normal 1-RTT connections.
     ///
-    /// ## Outgoing
+    /// This method will error if attempted on an incoming [`Connecting`]. To
+    /// accept 0-RTT data, use the [`Incoming::accept_0rtt`] method.
     ///
     /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
     /// 0-RTT data will attempt to resume a previous TLS session. However, **the remote endpoint
     /// may not actually _accept_ the 0-RTT data**--yet still accept the connection attempt in
-    /// general. This possibility is conveyed through the [`ZeroRttAccepted`] future--when the
-    /// handshake completes, it resolves to true if the 0-RTT data was accepted and false if it was
-    /// rejected. If it was rejected, the existence of streams opened and other application data
+    /// general. This possibility is conveyed through the [`ZeroRttClientConn::handshake_completed`]
+    /// method. Once the handshake completes, it returns [`ZeroRtt:::Accepted`] if the 0-RTT data
+    /// was accepted and [`ZeroRtt::Rejected`] if it was rejected.
+    ///
+    /// If it was rejected, the existence of streams opened and other application data
     /// sent prior to the handshake completing will not be conveyed to the remote application, and
     /// local operations on them will return `ZeroRttRejected` errors.
     ///
@@ -1626,31 +1678,26 @@ impl Connecting {
     /// relevant resumption state to be stored in the server, which servers may limit or lose for
     /// various reasons including not persisting resumption state across server restarts.
     ///
-    /// ## Incoming
-    ///
-    /// For incoming connections, conversion to 0.5-RTT will always fully succeed. `into_0rtt` will
-    /// always return `Ok` and the [`ZeroRttAccepted`] will always resolve to true.
-    ///
     /// ## Security
     ///
-    /// On outgoing connections, this enables transmission of 0-RTT data, which is vulnerable to
+    /// This enables transmission of 0-RTT data, which is vulnerable to
     /// replay attacks, and should therefore never invoke non-idempotent operations.
-    ///
-    /// On incoming connections, this enables transmission of 0.5-RTT data, which may be sent
-    /// before TLS client authentication has occurred, and should therefore not be used to send
-    /// data for which client authentication is being used.
     ///
     /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
     /// and thus whether parts of the stream are operating under this reduced security level.
     #[allow(clippy::result_large_err)]
-    pub fn into_0rtt(self) -> Result<ZeroRttConnection, Self> {
+    pub fn into_0rtt(self) -> Result<ZeroRttClientConnection, Self> {
+        if self.remote_endpoint_id.is_none() {
+            // Only outgoing connections contain a remote_endpoint_id
+            return Err(self);
+        }
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
                 let accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
                 };
-                let conn = ZeroRttConnection { inner, accepted };
+                let conn = ZeroRttClientConnection { inner, accepted };
                 // This call is why `self.remote_endpoint_id` was introduced.
                 // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
                 // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
@@ -1696,7 +1743,8 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn: Connection = inner.try_into()?;
+                let conn = conn_from_quinn_conn(inner).expect("handshake has completed");
+
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
             }
@@ -1710,7 +1758,7 @@ impl Future for Connecting {
 /// value is meaningless.
 #[derive(derive_more::Debug)]
 #[debug("ZeroRttAccepted")]
-pub struct ZeroRttAccepted {
+struct ZeroRttAccepted {
     inner: quinn::ZeroRttAccepted,
     /// When we call `Connecting::into_0rtt`, we don't want to stop discovery, so we transfer the task
     /// to this future.
@@ -1729,31 +1777,348 @@ impl Future for ZeroRttAccepted {
     }
 }
 
-/// A QUIC connection that can possibly be 0-RTT
+/// The client side of a 0-RTT connection.
+///
+/// This is created using [`Connecting::into_0rtt`].
+///
+/// Creating a `ZeroRttClientConnection` means that the endpoint is capable
+/// of attempting a 0-RTT connection with the remote. The remote may still
+/// reject the 0-RTT connectiong. In which case, any data sent before the
+/// handshake has completed may need to be resent.
+///
+/// Look at the [`ZeroRttClientConnection::handshake_completed`] method for
+/// more details.
 #[derive(Debug)]
-pub struct ZeroRttConnection {
+pub struct ZeroRttClientConnection {
     inner: quinn::Connection,
     accepted: ZeroRttAccepted,
 }
 
-/// `ZeroRttConnection` is a connection that does not have an infallible
-/// alpn or remote_id.
-///
-/// Otherwise, a `ZeroRttConnection` has the same methods as a [`Connection`].
-///
-/// `ZeroRttConnection`s have not necessarily completed the entire handshake.
-///
-/// Use the [`ZeroRttConnection::into_connection`] method to get a [`Connection`] from a
-/// `ZeroRttConnection`. This waits until 0-rtt connection has completed
-/// the handshake and can now confidently derive the ALPN and the
-/// [`EndpointId`] to the remote endpoint.
-impl ZeroRttConnection {
-    /// Waits until the full handshake occurs and returns a [`Connection`].
+/// Returned from a `ZeroRttClientConn::handshake_complete` method.
+#[derive(Debug)]
+pub enum ZeroRtt {
+    /// If the 0-rtt data was accepted, you can continue to use any streams
+    /// that were created before the handshake was completed.
+    Accepted(Connection),
+    /// If the 0-rtt data was rejected, any streams that were created before
+    /// the handshake was completed will error and any data that was
+    /// previously sent on those streams will need to be resent.
+    Rejected(Connection),
+}
+
+impl ZeroRttClientConnection {
+    /// Waits until the full handshake occurs and returns a [`ZeroRtt`].
     ///
-    /// May fail if the remote is not an `iroh::Connection`.
-    pub async fn into_connection(self) -> Result<(Connection, bool), ConnectionError> {
+    /// If `ZeroRtt::Accepted` is returned, than any streams created before
+    /// the handshake has completed can still be used.
+    ///
+    /// If `ZeroRtt::Rejected` is returned, than any streams created before
+    /// the handshake will error and any data sent should be re-sent on a
+    /// new stream.
+    pub async fn handshake_completed(self) -> ZeroRtt {
         let accepted = self.accepted.await;
-        self.inner.try_into().map(|c| (c, accepted))
+        let conn = conn_from_quinn_conn(self.inner).expect("handshake has completed");
+
+        match accepted {
+            true => ZeroRtt::Accepted(conn),
+            false => ZeroRtt::Rejected(conn),
+        }
+    }
+
+    /// Initiates a new outgoing unidirectional stream.
+    ///
+    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
+    /// consequence, the peer won’t be notified that a stream has been opened until the
+    /// stream is actually used.
+    #[inline]
+    pub fn open_uni(&self) -> OpenUni<'_> {
+        self.inner.open_uni()
+    }
+
+    /// Initiates a new outgoing bidirectional stream.
+    ///
+    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
+    /// consequence, the peer won't be notified that a stream has been opened until the
+    /// stream is actually used. Calling [`open_bi`] then waiting on the [`RecvStream`]
+    /// without writing anything to [`SendStream`] will never succeed.
+    ///
+    /// [`open_bi`]: Connection::open_bi
+    #[inline]
+    pub fn open_bi(&self) -> OpenBi<'_> {
+        self.inner.open_bi()
+    }
+
+    /// Accepts the next incoming uni-directional stream.
+    #[inline]
+    pub fn accept_uni(&self) -> AcceptUni<'_> {
+        self.inner.accept_uni()
+    }
+
+    /// Accept the next incoming bidirectional stream.
+    ///
+    /// **Important Note**: The peer that calls [`open_bi`] must write to its [`SendStream`]
+    /// before the peer `Connection` is able to accept the stream using
+    /// `accept_bi()`. Calling [`open_bi`] then waiting on the [`RecvStream`] without
+    /// writing anything to the connected [`SendStream`] will never succeed.
+    ///
+    /// [`open_bi`]: Connection::open_bi
+    #[inline]
+    pub fn accept_bi(&self) -> AcceptBi<'_> {
+        self.inner.accept_bi()
+    }
+
+    /// Receives an application datagram.
+    #[inline]
+    pub fn read_datagram(&self) -> ReadDatagram<'_> {
+        self.inner.read_datagram()
+    }
+
+    /// Wait for the connection to be closed for any reason.
+    ///
+    /// Despite the return type's name, closed connections are often not an error condition
+    /// at the application layer. Cases that might be routine include
+    /// [`ConnectionError::LocallyClosed`] and [`ConnectionError::ApplicationClosed`].
+    #[inline]
+    pub async fn closed(&self) -> ConnectionError {
+        self.inner.closed().await
+    }
+
+    /// If the connection is closed, the reason why.
+    ///
+    /// Returns `None` if the connection is still open.
+    #[inline]
+    pub fn close_reason(&self) -> Option<ConnectionError> {
+        self.inner.close_reason()
+    }
+
+    /// Closes the connection immediately.
+    ///
+    /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. No
+    /// more data is sent to the peer and the peer may drop buffered data upon receiving the
+    /// CONNECTION_CLOSE frame.
+    ///
+    /// `error_code` and `reason` are not interpreted, and are provided directly to the
+    /// peer.
+    ///
+    /// `reason` will be truncated to fit in a single packet with overhead; to improve odds
+    /// that it is preserved in full, it should be kept under 1KiB.
+    ///
+    /// # Gracefully closing a connection
+    ///
+    /// Only the peer last receiving application data can be certain that all data is
+    /// delivered. The only reliable action it can then take is to close the connection,
+    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
+    /// frame is very likely if both endpoints stay online long enough, calling
+    /// [`Endpoint::close`] will wait to provide sufficient time. Otherwise, the remote peer
+    /// will time out the connection, provided that the idle timeout is not disabled.
+    ///
+    /// The sending side can not guarantee all stream data is delivered to the remote
+    /// application. It only knows the data is delivered to the QUIC stack of the remote
+    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
+    /// [`close`] the remote endpoint may drop any data it received but is as yet
+    /// undelivered to the application, including data that was acknowledged as received to
+    /// the local endpoint.
+    ///
+    /// [`close`]: Connection::close
+    #[inline]
+    pub fn close(&self, error_code: VarInt, reason: &[u8]) {
+        self.inner.close(error_code, reason)
+    }
+
+    /// Transmits `data` as an unreliable, unordered application datagram.
+    ///
+    /// Application datagrams are a low-level primitive. They may be lost or delivered out
+    /// of order, and `data` must both fit inside a single QUIC packet and be smaller than
+    /// the maximum dictated by the peer.
+    #[inline]
+    pub fn send_datagram(&self, data: bytes::Bytes) -> Result<(), SendDatagramError> {
+        self.inner.send_datagram(data)
+    }
+
+    // TODO: It seems `SendDatagram` is not yet exposed by quinn.  This has been fixed
+    //       upstream and will be in the next release.
+    // /// Transmits `data` as an unreliable, unordered application datagram
+    // ///
+    // /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
+    // /// conditions, which effectively prioritizes old datagrams over new datagrams.
+    // ///
+    // /// See [`send_datagram()`] for details.
+    // ///
+    // /// [`send_datagram()`]: Connection::send_datagram
+    // #[inline]
+    // pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
+    //     self.inner.send_datagram_wait(data)
+    // }
+
+    /// Computes the maximum size of datagrams that may be passed to [`send_datagram`].
+    ///
+    /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
+    ///
+    /// This may change over the lifetime of a connection according to variation in the path
+    /// MTU estimate. The peer can also enforce an arbitrarily small fixed limit, but if the
+    /// peer's limit is large this is guaranteed to be a little over a kilobyte at minimum.
+    ///
+    /// Not necessarily the maximum size of received datagrams.
+    ///
+    /// [`send_datagram`]: Self::send_datagram
+    #[inline]
+    pub fn max_datagram_size(&self) -> Option<usize> {
+        self.inner.max_datagram_size()
+    }
+
+    /// Bytes available in the outgoing datagram buffer.
+    ///
+    /// When greater than zero, calling [`send_datagram`] with a
+    /// datagram of at most this size is guaranteed not to cause older datagrams to be
+    /// dropped.
+    ///
+    /// [`send_datagram`]: Self::send_datagram
+    #[inline]
+    pub fn datagram_send_buffer_space(&self) -> usize {
+        self.inner.datagram_send_buffer_space()
+    }
+
+    /// Current best estimate of this connection's latency (round-trip-time).
+    #[inline]
+    pub fn rtt(&self) -> Duration {
+        self.inner.rtt()
+    }
+
+    /// Returns connection statistics.
+    #[inline]
+    pub fn stats(&self) -> ConnectionStats {
+        self.inner.stats()
+    }
+
+    /// Current state of the congestion control algorithm, for debugging purposes.
+    #[inline]
+    pub fn congestion_state(&self) -> Box<dyn quinn_proto::congestion::Controller> {
+        self.inner.congestion_state()
+    }
+
+    /// Parameters negotiated during the handshake.
+    ///
+    /// Guaranteed to return `Some` on fully established connections or after
+    /// [`Connecting::handshake_data()`] succeeds. See that method's documentations for
+    /// details on the returned value.
+    ///
+    /// [`Connection::handshake_data()`]: crate::endpoint::Connecting::handshake_data
+    #[inline]
+    pub fn handshake_data(&self) -> Option<Box<dyn Any>> {
+        self.inner.handshake_data()
+    }
+
+    /// Extracts the ALPN protocol from the peer's handshake data.
+    pub fn alpn(&self) -> Option<Vec<u8>> {
+        alpn_from_quinn_conn(&self.inner)
+    }
+
+    /// Cryptographic identity of the peer.
+    ///
+    /// The dynamic type returned is determined by the configured [`Session`]. For the
+    /// default `rustls` session, the return value can be [`downcast`] to a
+    /// <code>Vec<[rustls::pki_types::CertificateDer]></code>
+    ///
+    /// [`Session`]: quinn_proto::crypto::Session
+    /// [`downcast`]: Box::downcast
+    #[inline]
+    pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
+        self.inner.peer_identity()
+    }
+
+    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    ///
+    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// included in the TLS certificate presented during the handshake when connecting.
+    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// connection.
+    ///
+    /// [`PublicKey`]: iroh_base::PublicKey
+    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
+        remote_id_from_quinn_conn(&self.inner)
+    }
+
+    /// A stable identifier for this connection.
+    ///
+    /// Peer addresses and connection IDs can change, but this value will remain fixed for
+    /// the lifetime of the connection.
+    #[inline]
+    pub fn stable_id(&self) -> usize {
+        self.inner.stable_id()
+    }
+
+    /// Derives keying material from this connection's TLS session secrets.
+    ///
+    /// When both peers call this method with the same `label` and `context`
+    /// arguments and `output` buffers of equal length, they will get the
+    /// same sequence of bytes in `output`. These bytes are cryptographically
+    /// strong and pseudorandom, and are suitable for use as keying material.
+    ///
+    /// See [RFC5705](https://tools.ietf.org/html/rfc5705) for more information.
+    #[inline]
+    pub fn export_keying_material(
+        &self,
+        output: &mut [u8],
+        label: &[u8],
+        context: &[u8],
+    ) -> Result<(), quinn_proto::crypto::ExportKeyingMaterialError> {
+        self.inner.export_keying_material(output, label, context)
+    }
+
+    /// Modifies the number of unidirectional streams that may be concurrently opened.
+    ///
+    /// No streams may be opened by the peer unless fewer than `count` are already
+    /// open. Large `count`s increase both minimum and worst-case memory consumption.
+    #[inline]
+    pub fn set_max_concurrent_uni_streams(&self, count: VarInt) {
+        self.inner.set_max_concurrent_uni_streams(count)
+    }
+
+    /// See [`quinn_proto::TransportConfig::receive_window`].
+    #[inline]
+    pub fn set_receive_window(&self, receive_window: VarInt) {
+        self.inner.set_receive_window(receive_window)
+    }
+
+    /// Modifies the number of bidirectional streams that may be concurrently opened.
+    ///
+    /// No streams may be opened by the peer unless fewer than `count` are already
+    /// open. Large `count`s increase both minimum and worst-case memory consumption.
+    #[inline]
+    pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
+        self.inner.set_max_concurrent_bi_streams(count)
+    }
+}
+
+/// A QUIC connection on the server-side that can possibly accept 0-RTT data.
+///
+/// It is very similar to a `Connection`, but the `ZeroRttServerConnection::remote_id`
+/// and `ZeroRttServerConnection::alpn` may not be set yet, since the handshake has
+/// not necessarily occured yet.
+///
+/// If the `ZeroRttServerConnection` has rejected 0-RTT or does not have enough information
+/// to accept 0-RTT, any received 0-RTT packets will simply be dropped before
+/// reaching any receive streams.
+///
+/// Any streams that are created to send or receive data can continue to be used
+/// even after the handshake has completed and we are no longer in a 0-RTT
+/// situation.
+///
+/// Use the [`ZeroRttServerConnection::handshake_completed`] method to get a [`Connection`] from a
+/// `ZeroRttServerConnection`. This waits until 0-RTT connection has completed
+/// the handshake and can now confidently derive the ALPN and the
+/// [`EndpointId`] of the remote endpoint.
+#[derive(Debug)]
+pub struct ZeroRttServerConnection {
+    inner: quinn::Connection,
+    accepted: ZeroRttAccepted,
+}
+
+impl ZeroRttServerConnection {
+    /// Waits until the full handshake occurs and returns a [`Connection`].
+    pub async fn handshake_completed(self) -> Connection {
+        self.accepted.await;
+        conn_from_quinn_conn(self.inner).expect("handshake has completed")
     }
 
     /// Initiates a new outgoing unidirectional stream.
@@ -2039,19 +2404,6 @@ pub struct Connection {
     inner: quinn::Connection,
     remote_id: EndpointId,
     alpn: Vec<u8>,
-}
-
-impl TryFrom<quinn::Connection> for Connection {
-    type Error = ConnectionError;
-
-    fn try_from(value: quinn::Connection) -> Result<Self, Self::Error> {
-        Ok(Self {
-            remote_id: remote_id_from_quinn_conn(&value)
-                .map_err(|_| ConnectionError::LocallyClosed)?,
-            alpn: alpn_from_quinn_conn(&value).ok_or(ConnectionError::LocallyClosed)?,
-            inner: value,
-        })
-    }
 }
 
 #[allow(missing_docs)]
@@ -2468,7 +2820,7 @@ mod tests {
     use crate::{
         RelayMode,
         discovery::static_provider::StaticProvider,
-        endpoint::{ConnectOptions, Connection, ConnectionType},
+        endpoint::{ConnectOptions, Connection, ConnectionType, ZeroRtt},
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{run_relay_server, run_relay_server_with},
     };
@@ -3066,15 +3418,7 @@ mod tests {
                 while let Some(incoming) = server.accept().await {
                     tracing::trace!("Server received incoming connection");
                     // Handle connection errors gracefully instead of exiting the task
-                    let connecting = match incoming.accept() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            tracing::warn!("Failed to accept incoming connection: {e:?}");
-                            continue;
-                        }
-                    };
-
-                    let (conn, stream_task) = match connecting.into_0rtt() {
+                    let (conn, stream_task) = match incoming.accept_0rtt() {
                         Ok(z_rtt) => {
                             info!("0rtt accepted");
                             let (send, recv) = match z_rtt.accept_bi().await {
@@ -3085,34 +3429,11 @@ mod tests {
                                 }
                             };
                             let stream_task = tokio::spawn(handle_stream(send, recv));
-                            let conn = match z_rtt.into_connection().await {
-                                Ok((conn, _)) => conn,
-                                Err(e) => {
-                                    tracing::warn!("Failed to create Connection: {e:?}");
-                                    continue;
-                                }
-                            };
-                            (conn, stream_task)
+                            (z_rtt.handshake_completed().await, stream_task)
                         }
-                        Err(connecting) => {
-                            info!("0rtt denied");
-                            match connecting.await {
-                                Ok(c) => {
-                                    let (send, recv) = match c.accept_bi().await {
-                                        Ok(s) => s,
-                                        Err(e) => {
-                                            tracing::warn!("Failed to accept bi stream: {e:?}");
-                                            continue;
-                                        }
-                                    };
-                                    let stream_task = tokio::spawn(handle_stream(send, recv));
-                                    (c, stream_task)
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Connection failed: {e:?}");
-                                    continue;
-                                }
-                            }
+                        Err(e) => {
+                            tracing::warn!("Connection failed: {e:?}");
+                            continue;
                         }
                     };
                     if let Err(e) = stream_task.await {
@@ -3182,22 +3503,27 @@ mod tests {
 
         tracing::trace!("Client established 0-RTT connection");
         // This is how we send data in 0-RTT:
-        let (mut send, recv) = zrtt_conn.open_bi().await.e()?;
+        let (mut send, mut recv) = zrtt_conn.open_bi().await.e()?;
         send.write_all(b"hello").await.e()?;
         send.finish().e()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
-        let (conn, accepted) = zrtt_conn.into_connection().await.e()?;
-        tracing::trace!(?accepted, "Server responded to 0-RTT");
-        assert_eq!(accepted, expect_server_accepts);
-        let mut recv = if accepted {
-            recv
-        } else {
-            // in this case we need to re-send data by re-creating the connection.
-            let (mut send, recv) = conn.open_bi().await.e()?;
-            send.write_all(b"hello").await.e()?;
-            send.finish().e()?;
-            recv
+        let zrtt_res = zrtt_conn.handshake_completed().await;
+        tracing::trace!(?zrtt_res, "Server responded to 0-RTT");
+        let conn = match zrtt_res {
+            ZeroRtt::Accepted(conn) => {
+                assert!(expect_server_accepts);
+                conn
+            }
+            ZeroRtt::Rejected(conn) => {
+                assert!(!expect_server_accepts);
+                // in this case we need to re-send data by re-creating the stream.
+                let (mut send, r) = conn.open_bi().await.e()?;
+                send.write_all(b"hello").await.e()?;
+                send.finish().e()?;
+                recv = r;
+                conn
+            }
         };
         let received = recv.read_to_end(1_000).await.e()?;
         assert_eq!(&received, b"hello");
