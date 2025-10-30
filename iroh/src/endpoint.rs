@@ -1547,7 +1547,7 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = conn_from_quinn_conn(inner).expect("handshake has completed");
+                let conn = conn_from_quinn_conn_dangerous(inner);
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
             }
@@ -1564,12 +1564,20 @@ fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
     }
 }
 
-fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, ConnectionError> {
-    Ok(Connection {
-        remote_id: remote_id_from_quinn_conn(&conn).map_err(|_| ConnectionError::LocallyClosed)?,
-        alpn: alpn_from_quinn_conn(&conn).ok_or(ConnectionError::LocallyClosed)?,
+/// Converts a `quinn::Connection` to a `Connection`.
+///
+/// Can panic if passing in `quinn::Connection` that has not completed its
+/// cryptographic handshake, as with 0-RTT `quinn::Connection`s that have
+/// not waited for `quinn::ZeroRttAccepted` to resolve.
+///
+/// Only use this when the given `quinn::Connection` has definitely completed
+/// it's cryptographic handshake.
+fn conn_from_quinn_conn_dangerous(conn: quinn::Connection) -> Connection {
+    Connection {
+        remote_id: remote_id_from_quinn_conn(&conn).expect("handshake has completed"),
+        alpn: alpn_from_quinn_conn(&conn).expect("handshake has completed"),
         inner: conn,
-    })
+    }
 }
 
 /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -1737,7 +1745,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = conn_from_quinn_conn(inner).expect("handshake has completed");
+                let conn = conn_from_quinn_conn_dangerous(inner);
 
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
@@ -1811,7 +1819,7 @@ impl ZeroRttClientConnection {
     /// new stream.
     pub async fn handshake_completed(self) -> ZeroRtt {
         let accepted = self.accepted.await;
-        let conn = conn_from_quinn_conn(self.inner).expect("handshake has completed");
+        let conn = conn_from_quinn_conn_dangerous(self.inner);
 
         match accepted {
             true => ZeroRtt::Accepted(conn),
@@ -2112,7 +2120,7 @@ impl ZeroRttServerConnection {
     /// Waits until the full handshake occurs and returns a [`Connection`].
     pub async fn handshake_completed(self) -> Connection {
         self.accepted.await;
-        conn_from_quinn_conn(self.inner).expect("handshake has completed")
+        conn_from_quinn_conn_dangerous(self.inner)
     }
 
     /// Initiates a new outgoing unidirectional stream.
