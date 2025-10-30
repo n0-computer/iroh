@@ -25,7 +25,7 @@ use tracing::{Instrument, info_span};
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
 // Enable this if you want to run these tests in the browser.
-// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in endpointjs.
+// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in nodejs.
 // #[cfg(wasm_browser)]
 // wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -103,7 +103,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
                     tracing::info!("no items on stream when resolving, looping");
                     continue;
                 };
-                if item.relay_url().is_some() {
+                if item.relay_urls().next().is_some() {
                     tracing::info!("home relay found");
                     break;
                 }

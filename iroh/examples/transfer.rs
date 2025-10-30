@@ -1,4 +1,5 @@
 use std::{
+    net::SocketAddr,
     str::FromStr,
     time::{Duration, Instant},
 };
@@ -8,7 +9,7 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
@@ -16,7 +17,6 @@ use iroh::{
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::ConnectionError,
 };
-use iroh_base::ticket::EndpointTicket;
 use n0_future::task::AbortOnDropHandle;
 use n0_snafu::{Result, ResultExt};
 use n0_watcher::Watcher as _;
@@ -146,7 +146,11 @@ enum Commands {
     },
     /// Fetch data.
     Fetch {
-        ticket: String,
+        remote_id: EndpointId,
+        #[clap(long)]
+        remote_relay_url: Option<RelayUrl>,
+        #[clap(long)]
+        remote_direct_address: Vec<SocketAddr>,
         #[clap(flatten)]
         endpoint_args: EndpointArgs,
     },
@@ -167,11 +171,18 @@ async fn main() -> Result<()> {
             provide(endpoint, size).await?
         }
         Commands::Fetch {
-            ticket,
+            remote_id,
+            remote_relay_url,
+            remote_direct_address,
             endpoint_args,
         } => {
             let endpoint = endpoint_args.bind_endpoint().await?;
-            fetch(endpoint, &ticket).await?
+            let addrs = remote_relay_url
+                .into_iter()
+                .map(TransportAddr::Relay)
+                .chain(remote_direct_address.into_iter().map(TransportAddr::Ip));
+            let remote_addr = EndpointAddr::from_parts(remote_id, addrs);
+            fetch(endpoint, remote_addr).await?
         }
     }
 
@@ -288,11 +299,11 @@ impl EndpointArgs {
         let endpoint_addr = endpoint.addr();
 
         println!("Our direct addresses:");
-        for addr in &endpoint_addr.direct_addresses {
+        for addr in endpoint_addr.ip_addrs() {
             println!("\t{addr}");
         }
 
-        if let Some(url) = endpoint_addr.relay_url {
+        if let Some(url) = endpoint_addr.relay_urls().next() {
             println!("Our home relay server:\t{url}");
         } else {
             println!("No home relay server found");
@@ -305,18 +316,14 @@ impl EndpointArgs {
 
 async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     let endpoint_id = endpoint.id();
-
     let endpoint_addr = endpoint.addr();
-    let ticket = EndpointTicket::new(endpoint_addr);
-    println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
-    let mut endpoint_addr = endpoint.addr();
-    endpoint_addr.direct_addresses = Default::default();
-    let ticket = EndpointTicket::new(endpoint_addr);
-    println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);
-
-    let ticket = EndpointTicket::new(EndpointAddr::new(endpoint_id));
-    println!("Ticket with only our endpoint id:\n{ticket}\n");
+    println!("Endpoint id:\n{endpoint_id}");
+    println!("Direct addresses:");
+    for addr in endpoint_addr.ip_addrs() {
+        println!("\t{addr}");
+    }
+    println!();
 
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
@@ -387,20 +394,17 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     Ok(())
 }
 
-async fn fetch(endpoint: Endpoint, ticket: &str) -> Result<()> {
+async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let me = endpoint.id().fmt_short();
-    let ticket: EndpointTicket = ticket.parse()?;
-    let remote_endpoint_id = ticket.endpoint_addr().endpoint_id;
     let start = Instant::now();
+    let remote_id = remote_addr.id;
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
-    let conn = endpoint
-        .connect(EndpointAddr::from(ticket), TRANSFER_ALPN)
-        .await?;
-    println!("Connected to {remote_endpoint_id}");
+    let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
+    println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(&endpoint, remote_endpoint_id);
+    let _guard = watch_conn_type(&endpoint, remote_id);
 
     // Use the Quinn API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await.e()?;

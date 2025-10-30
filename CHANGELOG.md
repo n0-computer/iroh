@@ -2,11 +2,53 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.93.2](https://github.com/n0-computer/iroh/compare/v0.93.1..0.93.2) - 2025-10-13
+## [0.94.0](https://github.com/n0-computer/iroh/compare/v0.93.2..0.94.0) - 2025-10-21
+
+### ⛰️  Features
+
+- *(iroh)* Allow to override provenance for StaticProvider ([#3527](https://github.com/n0-computer/iroh/issues/3527)) - ([3d92f6b](https://github.com/n0-computer/iroh/commit/3d92f6ba27f7a098953ea80c72318a616760c78c))
+- *(iroh)* [**breaking**] Allow dynamic changing of the `RelayMap` of an endpoint ([#3522](https://github.com/n0-computer/iroh/issues/3522)) - ([7a0644f](https://github.com/n0-computer/iroh/commit/7a0644fee4e8ab96f73f58e4909fb9797bd9f2da))
+- *(iroh)* Introduce endpoint presets ([#3523](https://github.com/n0-computer/iroh/issues/3523)) - ([2d367f9](https://github.com/n0-computer/iroh/commit/2d367f93656bc487980b7f846fa79b931cb3466b))
+- *(iroh-base)* [**breaking**] Reduce external types in the iroh-base API for keys ([#3529](https://github.com/n0-computer/iroh/issues/3529)) - ([b45ae27](https://github.com/n0-computer/iroh/commit/b45ae2701140ee0fd43ee330502b9ef26907ce4d))
+- *(iroh-relay)* [**breaking**] Remove support for legacy headers ([#3539](https://github.com/n0-computer/iroh/issues/3539)) - ([f7692df](https://github.com/n0-computer/iroh/commit/f7692dfe0afa4cc51a2df804ad8203c379dce6fe))
+- [**breaking**] Transport generic EndpointAddr ([#3554](https://github.com/n0-computer/iroh/issues/3554)) - ([9cb4020](https://github.com/n0-computer/iroh/commit/9cb4020cc33945596bca1339344372a8134b6cc0))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Improve reusing of QAD reports ([#3512](https://github.com/n0-computer/iroh/issues/3512)) - ([b2a55bf](https://github.com/n0-computer/iroh/commit/b2a55bfd99dfb27825f94ff25b38f0aba1841ddf))
+- Flakey test `simple_node_id_based_connection_transfer` ([#3534](https://github.com/n0-computer/iroh/issues/3534)) - ([0f86c38](https://github.com/n0-computer/iroh/commit/0f86c3840b4c107a2ad2dad52c449d7ea86e71d1))
+
+### 🚜 Refactor
+
+- *(iroh)* [**breaking**] Finish removal of add_node_addr from public api ([#3528](https://github.com/n0-computer/iroh/issues/3528)) - ([c2fce51](https://github.com/n0-computer/iroh/commit/c2fce512b249c12a163cda5787d3f7e9f12c6d48))
+- *(iroh)* Remove stun-rs ([#3546](https://github.com/n0-computer/iroh/issues/3546)) - ([bafde6f](https://github.com/n0-computer/iroh/commit/bafde6f67bdce3e72c1a5b9b23145386224bb4e6))
+- *(iroh-base)* [**breaking**] Move tickets into their own crate ([#3544](https://github.com/n0-computer/iroh/issues/3544)) - ([25cea67](https://github.com/n0-computer/iroh/commit/25cea678cbb122326a0b45489b8d2a39bf4db8c7))
+- *(iroh-relay)* [**breaking**] Improve relay map api ([#3563](https://github.com/n0-computer/iroh/issues/3563)) - ([a6b8456](https://github.com/n0-computer/iroh/commit/a6b845662fe7ab7c42a8c11204fafe80f8df9b74))
+- [**breaking**] Rename Node to Endpoint in all cases ([#3542](https://github.com/n0-computer/iroh/issues/3542)) - ([bfc6ba0](https://github.com/n0-computer/iroh/commit/bfc6ba0b2c02588a38eec6be94bc75a78eb9969a))
+
+### 📚 Documentation
+
+- *(iroh)* Fix docstring for ProtocolHandler ([#3558](https://github.com/n0-computer/iroh/issues/3558)) - ([b7baaeb](https://github.com/n0-computer/iroh/commit/b7baaebbe0a7782f5509112cdf81f77700ecb933))
+
+### 🧪 Testing
+
+- *(iroh)* Fix flaky test_active_relay_inactive - ([b29c158](https://github.com/n0-computer/iroh/commit/b29c158fc4bbcd80c92a61aa7f283f7dc9ccc0e3))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(dpes)* Bump iroh-relay deps ([#3547](https://github.com/n0-computer/iroh/issues/3547)) - ([4ed700e](https://github.com/n0-computer/iroh/commit/4ed700e8da8daf6bb3d897ceadea52a4dad6952c))
+- Update copyright dates ([#3543](https://github.com/n0-computer/iroh/issues/3543)) - ([5eaf52a](https://github.com/n0-computer/iroh/commit/5eaf52adc4097894dc3f6f08c23cfcdfef024fab))
+- Update deps & remove unused deps ([#3564](https://github.com/n0-computer/iroh/issues/3564)) - ([a63bcfd](https://github.com/n0-computer/iroh/commit/a63bcfdfe588fb9a9682a26a2f4c5e2ae2ce8a97))
+
+## [0.93.2](https://github.com/n0-computer/iroh/compare/v0.93.1..v0.93.2) - 2025-10-13
 
 ### 🐛 Bug Fixes
 
 - *(iroh)* Ensure initial addresses are published via discovery ([#3525](https://github.com/n0-computer/iroh/issues/3525)) - ([ca85faa](https://github.com/n0-computer/iroh/commit/ca85faac23d8509030a956000e56ae25f5610fcd))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([b39b325](https://github.com/n0-computer/iroh/commit/b39b325f25779a29b60b77c896d81f38f06ed764))
 
 ## [0.93.1](https://github.com/n0-computer/iroh/compare/v0.93.0..v0.93.1) - 2025-10-09
 

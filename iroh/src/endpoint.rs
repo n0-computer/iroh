@@ -21,7 +21,7 @@ use std::{
 };
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
@@ -619,7 +619,7 @@ impl Endpoint {
     /// Connects to a remote [`Endpoint`].
     ///
     /// A value that can be converted into a [`EndpointAddr`] is required. This can be either a
-    /// [`EndpointAddr`], a [`EndpointId`] or a [`iroh_base::ticket::EndpointTicket`].
+    /// [`EndpointAddr`] or a [`EndpointId`].
     ///
     /// The [`EndpointAddr`] must contain the [`EndpointId`] to dial and may also contain a [`RelayUrl`]
     /// and direct addresses. If direct addresses are provided, they will be used to try and
@@ -645,7 +645,7 @@ impl Endpoint {
         alpn: &[u8],
     ) -> Result<Connection, ConnectError> {
         let endpoint_addr = endpoint_addr.into();
-        let remote = endpoint_addr.endpoint_id;
+        let remote = endpoint_addr.id;
         let connecting = self
             .connect_with_opts(endpoint_addr, alpn, Default::default())
             .await?;
@@ -688,18 +688,18 @@ impl Endpoint {
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
         tracing::Span::current().record(
             "remote",
-            tracing::field::display(endpoint_addr.endpoint_id.fmt_short()),
+            tracing::field::display(endpoint_addr.id.fmt_short()),
         );
 
         // Connecting to ourselves is not supported.
-        ensure!(endpoint_addr.endpoint_id != self.id(), SelfConnectSnafu);
+        ensure!(endpoint_addr.id != self.id(), SelfConnectSnafu);
 
         if !endpoint_addr.is_empty() {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
         }
-        let endpoint_id = endpoint_addr.endpoint_id;
-        let direct_addresses = endpoint_addr.direct_addresses.clone();
-        let relay_url = endpoint_addr.relay_url.clone();
+        let endpoint_id = endpoint_addr.id;
+        let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
+        let relay_url = endpoint_addr.relay_urls().next().cloned();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
         // address.  Start discovery for this endpoint if it's enabled and we have no valid or
@@ -719,7 +719,7 @@ impl Endpoint {
 
         debug!(
             ?mapped_addr,
-            ?direct_addresses,
+            ?ip_addresses,
             ?relay_url,
             "Attempting connection..."
         );
@@ -799,7 +799,7 @@ impl Endpoint {
         source: Source,
     ) -> Result<(), AddEndpointAddrError> {
         // Connecting to ourselves is not supported.
-        snafu::ensure!(endpoint_addr.endpoint_id != self.id(), OwnAddressSnafu);
+        snafu::ensure!(endpoint_addr.id != self.id(), OwnAddressSnafu);
         self.msock.add_endpoint_addr(endpoint_addr, source)
     }
 
@@ -857,8 +857,8 @@ impl Endpoint {
     /// that initial call to [`Endpoint::online`], to understand if your
     /// endpoint is no longer able to be connected to by endpoints outside
     /// of the private or local network, watch for changes in it's [`EndpointAddr`].
-    /// If the `relay_url` is `None` or if there are no `direct_addresses` in
-    /// the [`EndpointAddr`], you may not be dialable by other endpoints on the internet.
+    /// If there are no `addrs`in the [`EndpointAddr`], you may not be dialable by other endpoints
+    /// on the internet.
     ///
     ///
     /// The `EndpointAddr` will change as:
@@ -870,22 +870,21 @@ impl Endpoint {
     /// [`RelayUrl`]: crate::RelayUrl
     #[cfg(not(wasm_browser))]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
-        let watch_addrs = self.msock.direct_addresses();
+        let watch_addrs = self.msock.ip_addrs();
         let watch_relay = self.msock.home_relay();
         let endpoint_id = self.id();
 
-        watch_addrs
-            .or(watch_relay)
-            .map(move |(addrs, mut relays)| {
-                debug_assert!(!addrs.is_empty(), "direct addresses must never be empty");
+        watch_addrs.or(watch_relay).map(move |(addrs, relays)| {
+            debug_assert!(!addrs.is_empty(), "direct addresses must never be empty");
 
-                EndpointAddr::from_parts(
-                    endpoint_id,
-                    relays.pop(),
-                    addrs.into_iter().map(|x| x.addr),
-                )
-            })
-            .expect("watchable is alive - cannot be disconnected yet")
+            EndpointAddr::from_parts(
+                endpoint_id,
+                relays
+                    .into_iter()
+                    .map(TransportAddr::Relay)
+                    .chain(addrs.into_iter().map(|x| TransportAddr::Ip(x.addr))),
+            )
+        })
     }
 
     /// Returns a [`Watcher`] for the current [`EndpointAddr`] for this endpoint.
@@ -900,11 +899,9 @@ impl Endpoint {
         // of connecting to us.
         let watch_relay = self.msock.home_relay();
         let endpoint_id = self.id();
-        watch_relay
-            .map(move |mut relays| {
-                EndpointAddr::from_parts(endpoint_id, relays.pop(), std::iter::empty())
-            })
-            .expect("watchable is alive - cannot be disconnected yet")
+        watch_relay.map(move |mut relays| {
+            EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
+        })
     }
 
     /// A convenience method that waits for the endpoint to be considered "online".
@@ -1263,7 +1260,7 @@ impl Endpoint {
         &self,
         endpoint_addr: EndpointAddr,
     ) -> Result<(EndpointIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
-        let endpoint_id = endpoint_addr.endpoint_id;
+        let endpoint_id = endpoint_addr.id;
 
         // Only return a mapped addr if we have some way of dialing this endpoint, in other
         // words, we have either a relay URL or at least one direct address.
@@ -2131,7 +2128,7 @@ fn is_cgi() -> bool {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use iroh_base::{EndpointAddr, EndpointId, SecretKey};
+    use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
@@ -2456,7 +2453,8 @@ mod tests {
         println!("round1: {:?}", addr);
 
         // remove direct addrs to force relay usage
-        addr.direct_addresses.clear();
+        addr.addrs
+            .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
 
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
@@ -2470,7 +2468,7 @@ mod tests {
         // setup a second relay server
         let (new_relay_map, new_relay_url, _guard2) = run_relay_server().await?;
         let new_endpoint = new_relay_map
-            .get_endpoint(&new_relay_url)
+            .get(&new_relay_url)
             .expect("missing endpoint")
             .clone();
         dbg!(&new_relay_map);
@@ -2492,7 +2490,7 @@ mod tests {
         let mut addr = tokio::time::timeout(Duration::from_secs(10), async move {
             let mut stream = addr_watcher.stream();
             while let Some(addr) = stream.next().await {
-                if addr.relay_url.as_ref() != Some(&relay_url) {
+                if addr.relay_urls().next() != Some(&relay_url) {
                     return addr;
                 }
             }
@@ -2502,10 +2500,11 @@ mod tests {
         .e()?;
 
         println!("round2: {:?}", addr);
-        assert_eq!(addr.relay_url, Some(new_relay_url));
+        assert_eq!(addr.relay_urls().next(), Some(&new_relay_url));
 
         // remove direct addrs to force relay usage
-        addr.direct_addresses.clear();
+        addr.addrs
+            .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
 
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
@@ -2673,7 +2672,7 @@ mod tests {
         let ep1_endpointaddr = ep1.addr();
         tracing::info!(
             "endpoint id 1 {ep1_endpointid}, relay URL {:?}",
-            ep1_endpointaddr.relay_url()
+            ep1_endpointaddr.relay_urls().next()
         );
         tracing::info!("endpoint id 2 {ep2_endpointid}");
 
@@ -2719,7 +2718,7 @@ mod tests {
             .bind()
             .await?;
 
-        assert!(!ep.addr().direct_addresses.is_empty());
+        assert!(ep.addr().ip_addrs().count() > 0);
 
         Ok(())
     }
@@ -3186,10 +3185,7 @@ mod tests {
             .iter()
             .map(|(_, addr)| addr.clone())
             .collect::<Vec<_>>();
-        let ids = addrs
-            .iter()
-            .map(|addr| addr.endpoint_id)
-            .collect::<Vec<_>>();
+        let ids = addrs.iter().map(|addr| addr.id).collect::<Vec<_>>();
         let discovery = StaticProvider::from_endpoint_info(addrs);
         let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
             .discovery(discovery)
