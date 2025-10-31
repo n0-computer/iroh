@@ -6,7 +6,8 @@ use std::{
     time::Duration,
 };
 
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl};
+use iroh_base::{EndpointAddr, PublicKey, RelayUrl};
+use iroh_relay::RelayEndpointId;
 use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument, trace, warn};
@@ -53,7 +54,7 @@ pub(super) struct EndpointMap {
 
 #[derive(Default, Debug)]
 pub(super) struct EndpointMapInner {
-    by_endpoint_key: HashMap<EndpointId, usize>,
+    by_endpoint_key: HashMap<RelayEndpointId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
     by_quic_mapped_addr: HashMap<EndpointIdMappedAddr, usize>,
     by_id: HashMap<usize, EndpointState>,
@@ -69,7 +70,7 @@ pub(super) struct EndpointMapInner {
 #[derive(Debug, Clone)]
 enum EndpointStateKey {
     Idx(usize),
-    EndpointId(EndpointId),
+    EndpointId(RelayEndpointId),
     EndpointIdMappedAddr(EndpointIdMappedAddr),
     IpPort(IpPort),
 }
@@ -171,7 +172,7 @@ impl EndpointMap {
     pub(super) fn receive_relay(
         &self,
         relay_url: &RelayUrl,
-        src: EndpointId,
+        src: RelayEndpointId,
     ) -> EndpointIdMappedAddr {
         self.inner
             .lock()
@@ -210,7 +211,7 @@ impl EndpointMap {
 
     pub(super) fn get_quic_mapped_addr_for_endpoint_key(
         &self,
-        endpoint_key: EndpointId,
+        endpoint_key: RelayEndpointId,
     ) -> Option<EndpointIdMappedAddr> {
         self.inner
             .lock()
@@ -317,17 +318,17 @@ impl EndpointMap {
     /// the `endpoint_id`
     pub(super) fn conn_type(
         &self,
-        endpoint_id: EndpointId,
+        endpoint_id: RelayEndpointId,
     ) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.inner.lock().expect("poisoned").conn_type(endpoint_id)
     }
 
-    pub(super) fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+    pub(super) fn latency(&self, endpoint_id: RelayEndpointId) -> Option<Duration> {
         self.inner.lock().expect("poisoned").latency(endpoint_id)
     }
 
     /// Get the [`RemoteInfo`]s for the endpoint identified by [`EndpointId`].
-    pub(super) fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+    pub(super) fn remote_info(&self, endpoint_id: RelayEndpointId) -> Option<RemoteInfo> {
         self.inner
             .lock()
             .expect("poisoned")
@@ -376,7 +377,9 @@ impl EndpointMapInner {
         metrics: &Metrics,
     ) {
         let source0 = source.clone();
-        let endpoint_id = endpoint_addr.id;
+        let Some(endpoint_id) = endpoint_addr.id.to_ed25519() else {
+            panic!();
+        };
         let relay_url = endpoint_addr.relay_urls().next().cloned();
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
@@ -471,7 +474,7 @@ impl EndpointMapInner {
 
     /// Marks the endpoint we believe to be at `ipp` as recently used.
     #[cfg(not(wasm_browser))]
-    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(EndpointId, EndpointIdMappedAddr)> {
+    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(RelayEndpointId, EndpointIdMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
         let Some(endpoint_state) = self.get_mut(EndpointStateKey::IpPort(ip_port)) else {
             trace!(src=%udp_addr, "receive_udp: no endpoint_state found for addr, ignore");
@@ -485,7 +488,7 @@ impl EndpointMapInner {
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &RelayUrl, src: EndpointId) -> EndpointIdMappedAddr {
+    fn receive_relay(&mut self, relay_url: &RelayUrl, src: RelayEndpointId) -> EndpointIdMappedAddr {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
         let endpoint_state = self.get_or_insert_with(EndpointStateKey::EndpointId(src), || {
@@ -519,7 +522,7 @@ impl EndpointMapInner {
     }
 
     /// Get the [`RemoteInfo`]s for each endpoint.
-    fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+    fn remote_info(&self, endpoint_id: RelayEndpointId) -> Option<RemoteInfo> {
         self.get(EndpointStateKey::EndpointId(endpoint_id))
             .map(|ep| ep.info(Instant::now()))
     }
@@ -533,19 +536,19 @@ impl EndpointMapInner {
     ///
     /// Will return `None` if there is not an entry in the [`EndpointMap`] for
     /// the `public_key`
-    fn conn_type(&self, endpoint_id: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
+    fn conn_type(&self, endpoint_id: RelayEndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.get(EndpointStateKey::EndpointId(endpoint_id))
             .map(|ep| ep.conn_type())
     }
 
-    fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+    fn latency(&self, endpoint_id: RelayEndpointId) -> Option<Duration> {
         self.get(EndpointStateKey::EndpointId(endpoint_id))
             .and_then(|ep| ep.latency())
     }
 
     fn handle_pong(
         &mut self,
-        sender: EndpointId,
+        sender: RelayEndpointId,
         src: &transports::Addr,
         pong: Pong,
         metrics: &Metrics,
@@ -564,7 +567,7 @@ impl EndpointMapInner {
     #[must_use = "actions must be handled"]
     fn handle_call_me_maybe(
         &mut self,
-        sender: EndpointId,
+        sender: RelayEndpointId,
         cm: CallMeMaybe,
         metrics: &Metrics,
     ) -> Vec<PingAction> {
@@ -591,7 +594,7 @@ impl EndpointMapInner {
 
     fn handle_ping(
         &mut self,
-        sender: EndpointId,
+        sender: RelayEndpointId,
         src: SendAddr,
         tx_id: TransactionId,
     ) -> PingHandled {
@@ -639,7 +642,7 @@ impl EndpointMapInner {
         self.by_quic_mapped_addr
             .insert(*endpoint_state.quic_mapped_addr(), id);
         self.by_endpoint_key
-            .insert(*endpoint_state.public_key(), id);
+            .insert((*endpoint_state.public_key()).into(), id);
 
         self.by_id.insert(id, endpoint_state);
         self.by_id.get_mut(&id).expect("just inserted")
@@ -796,10 +799,10 @@ mod tests {
         let ip_addresses_c = [TransportAddr::Ip(addr(5000))];
 
         let addrs_a = std::iter::once(TransportAddr::Relay(relay_x)).chain(ip_addresses_a);
-        let endpoint_addr_a = EndpointAddr::new(endpoint_a).with_addrs(addrs_a);
-        let endpoint_addr_b = EndpointAddr::new(endpoint_b).with_relay_url(relay_y);
-        let endpoint_addr_c = EndpointAddr::new(endpoint_c).with_addrs(ip_addresses_c);
-        let endpoint_addr_d = EndpointAddr::new(endpoint_d);
+        let endpoint_addr_a = EndpointAddr::new(endpoint_a.into()).with_addrs(addrs_a);
+        let endpoint_addr_b = EndpointAddr::new(endpoint_b.into()).with_relay_url(relay_y);
+        let endpoint_addr_c = EndpointAddr::new(endpoint_c.into()).with_addrs(ip_addresses_c);
+        let endpoint_addr_d = EndpointAddr::new(endpoint_d.into());
 
         endpoint_map.add_test_addr(endpoint_addr_a);
         endpoint_map.add_test_addr(endpoint_addr_b);
@@ -876,7 +879,7 @@ mod tests {
         info!("Adding active addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
-            let endpoint_addr = EndpointAddr::new(public_key).with_ip_addr(addr);
+            let endpoint_addr = EndpointAddr::new(public_key.into()).with_ip_addr(addr);
             // add address
             endpoint_map.add_test_addr(endpoint_addr);
             // make it active
@@ -886,7 +889,7 @@ mod tests {
         info!("Adding offline/inactive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
-            let endpoint_addr = EndpointAddr::new(public_key).with_ip_addr(addr);
+            let endpoint_addr = EndpointAddr::new(public_key.into()).with_ip_addr(addr);
             endpoint_map.add_test_addr(endpoint_addr);
         }
 
@@ -930,7 +933,7 @@ mod tests {
         // add one active endpoint and more than MAX_INACTIVE_ENDPOINTS inactive endpoints
         let active_endpoint = SecretKey::generate(&mut rng).public();
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 167);
-        endpoint_map.add_test_addr(EndpointAddr::new(active_endpoint).with_ip_addr(addr));
+        endpoint_map.add_test_addr(EndpointAddr::new(active_endpoint.into()).with_ip_addr(addr));
         endpoint_map
             .inner
             .lock()
@@ -939,7 +942,7 @@ mod tests {
             .expect("registered");
 
         for _ in 0..MAX_INACTIVE_ENDPOINTS + 1 {
-            let endpoint = SecretKey::generate(&mut rng).public();
+            let endpoint = SecretKey::generate(&mut rng).public().into();
             endpoint_map.add_test_addr(EndpointAddr::new(endpoint));
         }
 

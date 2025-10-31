@@ -5,8 +5,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use iroh_base::{EndpointId, RelayUrl};
-use iroh_relay::protos::relay::Datagrams;
+use iroh_base::RelayUrl;
+use iroh_relay::{RelayEndpointId, protos::relay::Datagrams};
 use n0_future::{
     ready,
     task::{self, AbortOnDropHandle},
@@ -34,7 +34,7 @@ pub(crate) struct RelayTransport {
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: Watchable<Option<RelayUrl>>,
-    my_endpoint_id: EndpointId,
+    my_endpoint_id: RelayEndpointId,
 }
 
 impl RelayTransport {
@@ -149,7 +149,7 @@ impl RelayTransport {
             meta_out.ecn = None;
             meta_out.dst_ip = None; // TODO: insert the relay url for this relay
 
-            *addr = (dm.url, dm.src).into();
+            *addr = (dm.url, dm.src.into()).into();
             num_msgs += 1;
         }
 
@@ -164,7 +164,7 @@ impl RelayTransport {
 
     pub(super) fn local_addr_watch(
         &self,
-    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>> {
+    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, RelayEndpointId)>> {
         let my_endpoint_id = self.my_endpoint_id;
         self.my_relay
             .watch()
@@ -240,14 +240,14 @@ pub(crate) struct RelaySender {
 }
 
 impl RelaySender {
-    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _endpoint_id: &EndpointId) -> bool {
+    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _endpoint_id: &RelayEndpointId) -> bool {
         true
     }
 
     pub(super) async fn send(
         &self,
         dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
+        dest_endpoint: RelayEndpointId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
         let contents = datagrams_from_transmit(transmit);
@@ -284,7 +284,7 @@ impl RelaySender {
         &mut self,
         cx: &mut Context,
         dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
+        dest_endpoint: RelayEndpointId,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         match ready!(self.sender.poll_reserve(cx)) {
@@ -327,7 +327,7 @@ impl RelaySender {
     pub(super) fn try_send(
         &self,
         dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
+        dest_endpoint: RelayEndpointId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
         let contents = datagrams_from_transmit(transmit);
@@ -388,7 +388,7 @@ fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
 mod tests {
     use std::{collections::BTreeSet, time::Duration};
 
-    use iroh_base::EndpointId;
+    use iroh_base::{EndpointId, PublicKey};
     use tokio::task::JoinSet;
     use tracing::debug;
 
@@ -427,7 +427,7 @@ mod tests {
                     sender
                         .try_send(RelayRecvDatagram {
                             url,
-                            src: EndpointId::from_bytes(&[0u8; 32]).unwrap(),
+                            src: PublicKey::from_bytes(&[0u8; 32]).unwrap().into(),
                             datagrams: Datagrams::from(&i.to_le_bytes()),
                         })
                         .unwrap();

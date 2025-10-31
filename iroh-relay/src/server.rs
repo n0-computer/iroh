@@ -23,7 +23,6 @@ use http::{
     response::Builder as ResponseBuilder,
 };
 use hyper::body::Incoming;
-use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use n0_future::{StreamExt, future::Boxed};
@@ -37,6 +36,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument, debug, error, info, info_span, instrument};
 
 use crate::{
+    RelayEndpointId,
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
@@ -135,12 +135,12 @@ pub enum AccessConfig {
     Everyone,
     /// Only endpoints for which the function returns `Access::Allow`.
     #[debug("restricted")]
-    Restricted(Box<dyn Fn(EndpointId) -> Boxed<Access> + Send + Sync + 'static>),
+    Restricted(Box<dyn Fn(RelayEndpointId) -> Boxed<Access> + Send + Sync + 'static>),
 }
 
 impl AccessConfig {
     /// Is this endpoint allowed?
-    pub async fn is_allowed(&self, endpoint: EndpointId) -> bool {
+    pub async fn is_allowed(&self, endpoint: RelayEndpointId) -> bool {
         match self {
             Self::Everyone => true,
             Self::Restricted(check) => {
@@ -749,7 +749,7 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use http::StatusCode;
-    use iroh_base::{EndpointId, RelayUrl, SecretKey};
+    use iroh_base::{RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_snafu::Result;
     use rand::SeedableRng;
@@ -761,6 +761,7 @@ mod tests {
         Server, ServerConfig, SpawnError,
     };
     use crate::{
+        RelayEndpointId,
         client::{ClientBuilder, ConnectError},
         dns::DnsResolver,
         protos::{
@@ -788,7 +789,7 @@ mod tests {
     async fn try_send_recv(
         client_a: &mut crate::client::Client,
         client_b: &mut crate::client::Client,
-        b_key: EndpointId,
+        b_key: RelayEndpointId,
         msg: Datagrams,
     ) -> Result<RelayToClientMsg> {
         // try resend 10 times

@@ -7,6 +7,7 @@ use std::{
 };
 
 use iroh_base::{EndpointId, RelayUrl};
+use iroh_relay::RelayEndpointId;
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use smallvec::SmallVec;
@@ -40,8 +41,8 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     (
         n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
         n0_watcher::Join<
-            Option<(RelayUrl, EndpointId)>,
-            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
+            Option<(RelayUrl, RelayEndpointId)>,
+            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, RelayEndpointId)>>,
         >,
     ),
     Vec<Addr>,
@@ -304,7 +305,7 @@ pub(crate) struct Transmit<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Addr {
     Ip(SocketAddr),
-    Relay(RelayUrl, EndpointId),
+    Relay(RelayUrl, RelayEndpointId),
 }
 
 impl Default for Addr {
@@ -326,7 +327,7 @@ impl From<SocketAddr> for Addr {
 
 impl From<(RelayUrl, EndpointId)> for Addr {
     fn from(value: (RelayUrl, EndpointId)) -> Self {
-        Self::Relay(value.0, value.1)
+        Self::Relay(value.0, value.1.to_ed25519().unwrap())
     }
 }
 

@@ -12,20 +12,20 @@
 //! We *could* decide to remove that indicator in the future likely without breakage.
 
 use data_encoding::BASE32_DNSSEC;
-use iroh_base::EndpointId;
+use iroh_relay::RelayEndpointId;
 
-pub(crate) fn encode(endpoint_id: EndpointId) -> String {
+pub(crate) fn encode(endpoint_id: RelayEndpointId) -> String {
     format!(
         "{}.iroh.invalid",
         BASE32_DNSSEC.encode(endpoint_id.as_bytes())
     )
 }
 
-pub(crate) fn decode(name: &str) -> Option<EndpointId> {
+pub(crate) fn decode(name: &str) -> Option<RelayEndpointId> {
     let [base32_endpoint_id, "iroh", "invalid"] = name.split(".").collect::<Vec<_>>()[..] else {
         return None;
     };
-    EndpointId::from_bytes(
+    RelayEndpointId::from_bytes(
         &BASE32_DNSSEC
             .decode(base32_endpoint_id.as_bytes())
             .ok()?
