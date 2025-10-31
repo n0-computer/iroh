@@ -252,8 +252,6 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
-mod disco;
-mod key;
 mod magicsock;
 mod tls;
 
