@@ -945,13 +945,6 @@ impl Endpoint {
     //
     // Partially they return things passed into the builder.
 
-    /// Returns the currently lowest latency for this endpoint.
-    ///
-    /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub async fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
-        self.msock.latency(endpoint_id).await
-    }
-
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
     /// See [`Builder::dns_resolver`].
