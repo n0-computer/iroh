@@ -521,6 +521,7 @@ impl EndpointStateActor {
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
     async fn do_holepunching(&mut self, conn: quinn::Connection) {
+        self.metrics.nat_traversal.inc();
         let local_candidates = self
             .local_addrs
             .get()

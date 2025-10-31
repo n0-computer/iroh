@@ -31,6 +31,12 @@ pub struct Metrics {
     pub relay_home_change: Counter,
 
     /*
+     * Holepunching metrics
+     */
+    /// The number of NAT traversal attempts initiated.
+    pub nat_traversal: Counter,
+
+    /*
      * Connection Metrics
      */
     /// The number of direct connections we have made to peers.
