@@ -41,7 +41,7 @@ use crate::{
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
-pub mod connection;
+mod connection;
 pub mod presets;
 mod rtt_actor;
 
@@ -63,8 +63,8 @@ pub use quinn_proto::{
 };
 
 pub use self::connection::{
-    Accept, AlpnError, Connecting, Connection, Incoming, RemoteEndpointIdError,
-    ZeroRttClientConnection, ZeroRttConnection, ZeroRttServerConnection, ZeroRttStatus,
+    Accept, Accepting, AlpnError, Connecting, Connection, Incoming, RemoteEndpointIdError,
+    ZeroRttClientConnection, ZeroRttServerConnection, ZeroRttStatus,
 };
 pub use super::magicsock::{
     AddEndpointAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
@@ -663,7 +663,7 @@ impl Endpoint {
     /// Like [`Endpoint::connect`] (see also its docs for general details), but allows for a more
     /// advanced connection setup with more customization in two aspects:
     /// 1. The returned future resolves to a [`Connecting`], which can be further processed into
-    ///    a [`Connection`] by awaiting, or alternatively allows connecting with 0RTT via
+    ///    a [`Connection`] by awaiting, or alternatively allows connecting with 0-RTT via
     ///    [`Connecting::into_0rtt`].
     ///    **Note:** Please read the documentation for `into_0rtt` carefully to assess
     ///    security concerns.
@@ -747,7 +747,7 @@ impl Endpoint {
         Ok(Connecting::new(
             connect,
             self.clone(),
-            Some(endpoint_id),
+            endpoint_id,
             _discovery_drop_guard,
         ))
     }

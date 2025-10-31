@@ -75,7 +75,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
             pingpong(send, recv, i).await?;
             connection
         } else {
-            match connecting.into_0rtt().unwrap_outgoing() {
+            match connecting.into_0rtt() {
                 Ok(zrtt_connection) => {
                     trace!("0-RTT possible from our side");
                     let (send, recv) = zrtt_connection.open_bi().await.e()?;
@@ -143,8 +143,8 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
     let accept = async move {
         while let Some(incoming) = endpoint.accept().await {
             tokio::spawn(async move {
-                let connecting = incoming.accept().e()?;
-                let connection = connecting.into_0rtt().unwrap_incoming();
+                let accepting = incoming.accept().e()?;
+                let connection = accepting.into_0rtt();
                 let (mut send, mut recv) = connection.accept_bi().await.e()?;
                 trace!("recv.is_0rtt: {}", recv.is_0rtt());
                 let data = recv.read_to_end(8).await.e()?;

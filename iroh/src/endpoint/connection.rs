@@ -31,29 +31,13 @@ use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
-// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
-pub use quinn::{
-    AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
-    ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
-    ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
-    SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
-    WeakConnectionHandle, WriteError,
-};
-pub use quinn_proto::{
-    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
-    congestion::{Controller, ControllerFactory},
-    crypto::{
-        AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
-        ServerConfig as CryptoServerConfig, UnsupportedVersion,
-    },
+use quinn::{
+    AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
+    RetryError, SendDatagramError, ServerConfig, VarInt,
 };
 use snafu::Snafu;
 use tracing::warn;
 
-pub use super::magicsock::{
-    AddEndpointAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    Source,
-};
 use crate::{Endpoint, discovery::DiscoveryTask, endpoint::rtt_actor::RttMessage};
 
 /// Future produced by [`Endpoint::accept`].
@@ -100,13 +84,10 @@ impl Incoming {
     ///
     /// Thus it is common to simply log the errors here and accept them as something which
     /// can happen.
-    pub fn accept(self) -> Result<Connecting, ConnectionError> {
-        self.inner.accept().map(|conn| Connecting {
-            inner: conn,
-            ep: self.ep,
-            remote_endpoint_id: None,
-            _discovery_drop_guard: None,
-        })
+    pub fn accept(self) -> Result<Accepting, ConnectionError> {
+        self.inner
+            .accept()
+            .map(|conn| Accepting::new(conn, self.ep))
     }
 
     /// Accepts this incoming connection using a custom configuration.
@@ -117,15 +98,10 @@ impl Incoming {
     pub fn accept_with(
         self,
         server_config: Arc<ServerConfig>,
-    ) -> Result<Connecting, ConnectionError> {
+    ) -> Result<Accepting, ConnectionError> {
         self.inner
             .accept_with(server_config)
-            .map(|conn| Connecting {
-                inner: conn,
-                ep: self.ep,
-                remote_endpoint_id: None,
-                _discovery_drop_guard: None,
-            })
+            .map(|conn| Accepting::new(conn, self.ep))
     }
 
     /// Rejects this incoming connection attempt.
@@ -214,6 +190,17 @@ fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
     }
 }
 
+async fn alpn_from_quinn_connecting(conn: &mut quinn::Connecting) -> Result<Vec<u8>, AlpnError> {
+    let data = conn.handshake_data().await?;
+    match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
+        Ok(data) => match data.protocol {
+            Some(protocol) => Ok(protocol),
+            None => Err(UnavailableSnafu.build()),
+        },
+        Err(_) => Err(UnknownHandshakeSnafu.build()),
+    }
+}
+
 #[allow(missing_docs, dead_code)]
 #[common_fields({
     backtrace: Option<snafu::Backtrace>,
@@ -283,7 +270,9 @@ fn remote_id_from_quinn_conn(
     }
 }
 
-/// In-progress connection attempt future
+/// An outgoing connection in progress.
+///
+/// This future resolves to a [`Connection`] once the handshake completes.
 #[derive(derive_more::Debug)]
 #[pin_project]
 pub struct Connecting {
@@ -291,10 +280,19 @@ pub struct Connecting {
     inner: quinn::Connecting,
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
-    remote_endpoint_id: Option<EndpointId>,
+    remote_endpoint_id: EndpointId,
     /// We run discovery as long as we haven't established a connection yet.
     #[debug("Option<DiscoveryTask>")]
     _discovery_drop_guard: Option<DiscoveryTask>,
+}
+
+/// In-progress connection attempt future
+#[derive(derive_more::Debug)]
+#[pin_project]
+pub struct Accepting {
+    #[pin]
+    inner: quinn::Connecting,
+    ep: Endpoint,
 }
 
 #[allow(missing_docs)]
@@ -314,57 +312,11 @@ pub enum AlpnError {
     UnknownHandshake {},
 }
 
-/// Result of a [`Connecting::into_0rtt`].
-///
-/// Incoming connections will never fail for [`Connecting::into_0rtt`].
-///
-/// Outgoing connections may fail if they are not configured to use 0-rtt or
-/// if they have never connected to the remote endpoint before, and so do not
-/// have the proper cryptographic information to attempt 0-rtt.
-#[derive(Debug)]
-pub enum ZeroRttConnection {
-    /// An outgoing 0-rtt connection.
-    ///
-    /// This may fail if the local endpoint is not configured to use 0-rtt or
-    /// if it has never connected to the remote endpoint before, and so does not
-    /// have the necessary cryptographic information to attempt 0-rtt.
-    Outgoing(Result<ZeroRttClientConnection, Connecting>),
-    /// An incoming 0-rtt connection.
-    ///
-    /// Attempting a 0-rtt connection for an incoming connection will never fail, although
-    /// it does not necessarily mean that the connection will accept 0-rtt
-    /// packets.
-    Incoming(ZeroRttServerConnection),
-}
-
-impl ZeroRttConnection {
-    /// Returns the unwrapped result of `Connecting::into_0rtt` for an outgoing connection.
-    ///
-    /// Panics if the `ZeroRttConnection` is not an outgoing connection.
-    #[allow(clippy::result_large_err)]
-    pub fn unwrap_outgoing(self) -> Result<ZeroRttClientConnection, Connecting> {
-        match self {
-            ZeroRttConnection::Outgoing(res) => res,
-            ZeroRttConnection::Incoming(_) => unreachable!("expected Outgoing connection"),
-        }
-    }
-
-    /// Returns a `ZeroRttServerConnection`.
-    ///
-    /// Panics if the `ZeroRttConnection` is not an incoming connection.
-    pub fn unwrap_incoming(self) -> ZeroRttServerConnection {
-        match self {
-            ZeroRttConnection::Outgoing(_) => unreachable!("expected Incoming Connection"),
-            ZeroRttConnection::Incoming(res) => res,
-        }
-    }
-}
-
 impl Connecting {
     pub(crate) fn new(
         inner: quinn::Connecting,
         ep: Endpoint,
-        remote_endpoint_id: Option<EndpointId>,
+        remote_endpoint_id: EndpointId,
         _discovery_drop_guard: Option<DiscoveryTask>,
     ) -> Self {
         Self {
@@ -375,22 +327,17 @@ impl Connecting {
         }
     }
 
-    /// Converts this [`Connecting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
-    /// security.
+    /// Converts this [`Connecting`] into a 0-RTT connection at the cost of weakened security.
     ///
-    /// Returns a [`ZeroRttConnection`], which represents either an outgoing
-    /// or incoming 0-rtt connection.
+    /// If 0-RTT can be attempted, returns a [`ZeroRttClientConnection`], which represents
+    /// outgoing 0-rtt connection.
     ///
-    /// ## Outgoing
+    /// If the 0-RTT cannot even be attempted, returns back the same [`Connecting`] without
+    /// changes. You can still `.await` this connecting to get a normal [`Connection`].
     ///
-    /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
-    /// 0-RTT data will attempt to resume a previous TLS session. However, **the remote endpoint
-    /// may not actually _accept_ the 0-RTT data**--yet still accept the connection attempt in
-    /// general.
-    ///
-    /// Use the [`ZeroRttConnection::unwrap_outgoing`] to get the result of
-    /// this attempt. If the attempt failed, it returns an `Err(Connecting)`, which you will then
-    /// have to `.await` to get a normal [`Connection`].
+    /// The initial attempt to convert to a [`Connection`] which sends 0-RTT data will attempt to
+    /// resume a previous TLS session. However, **the remote endpoint may not actually _accept_
+    /// the 0-RTT data** -- yet still accept the connection attempt in general.
     ///
     /// If the attempt was successful, it will return an `Ok(ZeroRttClientConnection)`, which can
     /// then be used to create streams to send 0-rtt data.
@@ -399,8 +346,8 @@ impl Connecting {
     /// if the remote endpoint does not have the proper cryptographic information
     /// to verify the 0-rtt connection.
     ///
-    /// This possibility is conveyed through the [`ZeroRttStatus`] after calling [ZeroRttClientConnection::handshake_completed]
-    /// --when the handshake completes, it returns [`ZeroRttStatus::Accepted`] if the 0-RTT data
+    /// This possibility is conveyed through the [`ZeroRttStatus`] after calling [`ZeroRttClientConnection::handshake_completed`]
+    /// -- when the handshake completes, it returns [`ZeroRttStatus::Accepted`] if the 0-RTT data
     /// was accepted and [`ZeroRttStatus::Rejected`] if it was rejected. If it was rejected, the
     /// existence of streams opened and other application data sent prior to the handshake
     /// completing will not be conveyed to the remote application, and local operations on them
@@ -410,53 +357,41 @@ impl Connecting {
     /// relevant resumption state to be stored in the server, which servers may limit or lose for
     /// various reasons including not persisting resumption state across server restarts.
     ///
-    /// ## Incoming
-    ///
-    /// For incoming connections, conversion to 0.5-RTT will always fully succeed. `into_0rtt` will
-    /// always return [`ZeroRttConnection::Outgoing`] which will always unwrap to a [`ZeroRttServerConnection`].
-    ///
     /// ## Security
     ///
-    /// On outgoing connections, this enables transmission of 0-RTT data, which is vulnerable to
-    /// replay attacks, and should therefore never invoke non-idempotent operations.
-    ///
-    /// On incoming connections, this enables transmission of 0.5-RTT data, which may be sent
-    /// before TLS client authentication has occurred, and should therefore not be used to send
-    /// data for which client authentication is being used.
+    /// This enables transmission of 0-RTT data, which is vulnerable to replay attacks, and
+    /// should therefore never invoke non-idempotent operations.
     ///
     /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
     /// and thus whether parts of the stream are operating under this reduced security level.
-    pub fn into_0rtt(self) -> ZeroRttConnection {
-        // only outgoing connections have a remote_endpoint_id
+    ///
+    /// See also documentation for [`Accepting::into_0rtt`].
+    ///
+    /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
+    pub fn into_0rtt(self) -> Result<ZeroRttClientConnection, Connecting> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
-                // only outgoing connections have the remote endpoint id at this point
-                let outgoing = self.remote_endpoint_id.is_some();
-
-                let accepted = ZeroRttAccepted {
-                    inner: zrtt_accepted,
-                    _discovery_drop_guard: self._discovery_drop_guard,
-                };
                 // This call is why `self.remote_endpoint_id` was introduced.
                 // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
                 // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
                 // `Connection::remote_endpoint_id`.
                 // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
                 // after all.
-                try_send_rtt_msg(&inner, &self.ep, self.remote_endpoint_id);
-                if outgoing {
-                    let conn = ZeroRttClientConnection { inner, accepted };
-                    ZeroRttConnection::Outgoing(Ok(conn))
-                } else {
-                    ZeroRttConnection::Incoming(ZeroRttServerConnection { inner, accepted })
-                }
+                try_send_rtt_msg(&inner, &self.ep, Some(self.remote_endpoint_id));
+                Ok(ZeroRttClientConnection {
+                    inner,
+                    accepted: ZeroRttAccepted {
+                        inner: zrtt_accepted,
+                        _discovery_drop_guard: self._discovery_drop_guard,
+                    },
+                })
             }
-            Err(inner) => ZeroRttConnection::Outgoing(Err(Self {
+            Err(inner) => Err(Self {
                 inner,
                 ep: self.ep,
                 remote_endpoint_id: self.remote_endpoint_id,
                 _discovery_drop_guard: self._discovery_drop_guard,
-            })),
+            }),
         }
     }
 
@@ -467,14 +402,12 @@ impl Connecting {
 
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub async fn alpn(&mut self) -> Result<Vec<u8>, AlpnError> {
-        let data = self.handshake_data().await?;
-        match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
-            Ok(data) => match data.protocol {
-                Some(protocol) => Ok(protocol),
-                None => Err(UnavailableSnafu.build()),
-            },
-            Err(_) => Err(UnknownHandshakeSnafu.build()),
-        }
+        alpn_from_quinn_connecting(&mut self.inner).await
+    }
+
+    /// Returns the [`EndpointId`] of the endpoint that this connection attempt tries to connect to.
+    pub fn remote_id(&self) -> EndpointId {
+        self.remote_endpoint_id
     }
 }
 
@@ -496,6 +429,88 @@ impl Future for Connecting {
     }
 }
 
+impl Accepting {
+    pub(crate) fn new(inner: quinn::Connecting, ep: Endpoint) -> Self {
+        Self { inner, ep }
+    }
+
+    /// Converts this [`Accepting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
+    /// security.
+    ///
+    /// Returns a [`ZeroRttServerConnection`], which represents an incoming 0-RTT or 0.5-RTT
+    /// connection.
+    ///
+    /// If the original outgoing connection was initiated with 0-RTT, this might accept the 0-RTT
+    /// attempt, allowing the server to receive application streams and data before the handshake
+    /// finishes.
+    ///
+    /// Otherwise this will enable 0.5-RTT, and thus enable opening streams and sending data
+    /// before the handshake finishes.
+    ///
+    /// ## Security
+    ///
+    /// Transmitted 0-RTT data from the client is vulnerable to replay attacks, and should
+    /// therefore never invoke non-idempotent operations.
+    ///
+    /// Transmission of 0.5-RTT data from the server may be sent before TLS client authentication
+    /// has occurred, and should therefore not be used to send data for which client
+    /// authentication is required.
+    ///
+    /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
+    /// and thus whether parts of the stream are operating under this reduced security level.
+    ///
+    /// See also documentation for [`Connecting::into_0rtt`].
+    ///
+    /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
+    pub fn into_0rtt(self) -> ZeroRttServerConnection {
+        let (inner, accepted) = self
+            .inner
+            .into_0rtt()
+            .expect("incoming connections can always be converted to 0-RTT");
+        // This call is why `self.remote_endpoint_id` was introduced.
+        // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
+        // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
+        // `Connection::remote_endpoint_id`.
+        // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
+        // after all.
+        try_send_rtt_msg(&inner, &self.ep, None);
+        ZeroRttServerConnection {
+            accepted: ZeroRttAccepted {
+                inner: accepted,
+                _discovery_drop_guard: None,
+            },
+            inner,
+        }
+    }
+
+    /// Parameters negotiated during the handshake
+    pub async fn handshake_data(&mut self) -> Result<Box<dyn Any>, ConnectionError> {
+        self.inner.handshake_data().await
+    }
+
+    /// Extracts the ALPN protocol from the peer's handshake data.
+    pub async fn alpn(&mut self) -> Result<Vec<u8>, AlpnError> {
+        alpn_from_quinn_connecting(&mut self.inner).await
+    }
+}
+
+impl Future for Accepting {
+    type Output = Result<Connection, ConnectionError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this.inner.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Ok(inner)) => {
+                let conn = conn_from_quinn_conn(inner).expect("handshake completed");
+
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
+                Poll::Ready(Ok(conn))
+            }
+        }
+    }
+}
 /// Future that completes when a connection is fully established.
 ///
 /// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
@@ -1492,7 +1507,7 @@ mod tests {
                     };
 
                     // accept the 0-rtt connection
-                    let z_rtt = connecting.into_0rtt().unwrap_incoming();
+                    let z_rtt = connecting.into_0rtt();
 
                     // Handle stream errors gracefully
                     let (mut send, mut recv) = match z_rtt.accept_bi().await {
@@ -1542,8 +1557,6 @@ mod tests {
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
             .into_0rtt()
-            // we know this is an outgoing connection
-            .unwrap_outgoing()
             .expect_err("expected 0-rtt to fail")
             .await
             .e()?;
@@ -1567,8 +1580,6 @@ mod tests {
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
             .into_0rtt()
-            // we know this is an outgoing connection
-            .unwrap_outgoing()
             .ok()
             .e()?;
 

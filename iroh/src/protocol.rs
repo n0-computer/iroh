@@ -53,7 +53,7 @@ use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
-    endpoint::{Connecting, Connection, RemoteEndpointIdError},
+    endpoint::{Accepting, Connection, RemoteEndpointIdError},
 };
 
 /// The built router.
@@ -156,17 +156,17 @@ impl From<quinn::ClosedStream> for AcceptError {
 ///
 /// See the [module documentation](crate::protocol) for an example.
 pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
-    /// Optional interception point to handle the `Connecting` state.
+    /// Optional interception point to handle the `Accepting` state.
     ///
-    /// Can be implemented as `async fn on_connecting(&self, connecting: Connecting) -> Result<Connection>`.
+    /// Can be implemented as `async fn on_accepting(&self, accepting: Accepting) -> Result<Connection>`.
     ///
     /// This enables accepting 0-RTT data from clients, among other things.
-    fn on_connecting(
+    fn on_accepting(
         &self,
-        connecting: Connecting,
+        accepting: Accepting,
     ) -> impl Future<Output = Result<Connection, AcceptError>> + Send {
         async move {
-            let conn = connecting.await?;
+            let conn = accepting.await?;
             Ok(conn)
         }
     }
@@ -197,8 +197,8 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
-    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, AcceptError> {
-        self.as_ref().on_connecting(conn).await
+    async fn on_accepting(&self, accepting: Accepting) -> Result<Connection, AcceptError> {
+        self.as_ref().on_accepting(accepting).await
     }
 
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
@@ -211,8 +211,8 @@ impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
-    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, AcceptError> {
-        self.as_ref().on_connecting(conn).await
+    async fn on_accepting(&self, accepting: Accepting) -> Result<Connection, AcceptError> {
+        self.as_ref().on_accepting(accepting).await
     }
 
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
@@ -239,13 +239,13 @@ impl<T: ProtocolHandler> From<T> for Box<dyn DynProtocolHandler> {
 // We are not using [`n0_future::boxed::BoxFuture] because we don't need a `'static` bound
 // on these futures.
 pub trait DynProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
-    /// See [`ProtocolHandler::on_connecting`].
-    fn on_connecting(
+    /// See [`ProtocolHandler::on_accepting`].
+    fn on_accepting(
         &self,
-        connecting: Connecting,
+        accepting: Accepting,
     ) -> Pin<Box<dyn Future<Output = Result<Connection, AcceptError>> + Send + '_>> {
         Box::pin(async move {
-            let conn = connecting.await?;
+            let conn = accepting.await?;
             Ok(conn)
         })
     }
@@ -270,11 +270,11 @@ impl<P: ProtocolHandler> DynProtocolHandler for P {
         Box::pin(<Self as ProtocolHandler>::accept(self, connection))
     }
 
-    fn on_connecting(
+    fn on_accepting(
         &self,
-        connecting: Connecting,
+        accepting: Accepting,
     ) -> Pin<Box<dyn Future<Output = Result<Connection, AcceptError>> + Send + '_>> {
-        Box::pin(<Self as ProtocolHandler>::on_connecting(self, connecting))
+        Box::pin(<Self as ProtocolHandler>::on_accepting(self, accepting))
     }
 
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
@@ -487,14 +487,14 @@ impl RouterBuilder {
 }
 
 async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
-    let mut connecting = match incoming.accept() {
+    let mut accepting = match incoming.accept() {
         Ok(conn) => conn,
         Err(err) => {
             warn!("Ignoring connection: accepting failed: {err:#}");
             return;
         }
     };
-    let alpn = match connecting.alpn().await {
+    let alpn = match accepting.alpn().await {
         Ok(alpn) => alpn,
         Err(err) => {
             warn!("Ignoring connection: invalid handshake: {err:#}");
@@ -506,7 +506,7 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
         warn!("Ignoring connection: unsupported ALPN protocol");
         return;
     };
-    match handler.on_connecting(connecting).await {
+    match handler.on_accepting(accepting).await {
         Ok(connection) => {
             tracing::Span::current().record(
                 "remote",
@@ -517,7 +517,7 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
             }
         }
         Err(err) => {
-            warn!("Handling incoming connecting ended with error: {err}");
+            warn!("Accepting incoming connection ended with error: {err}");
         }
     }
 }
@@ -550,11 +550,11 @@ impl<P: ProtocolHandler + Clone> AccessLimit<P> {
 }
 
 impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
-    fn on_connecting(
+    fn on_accepting(
         &self,
-        conn: Connecting,
+        accepting: Accepting,
     ) -> impl Future<Output = Result<Connection, AcceptError>> + Send {
-        self.proto.on_connecting(conn)
+        self.proto.on_accepting(accepting)
     }
 
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {

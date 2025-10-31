@@ -327,8 +327,8 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
-        let connecting = match incoming.accept() {
-            Ok(connecting) => connecting,
+        let accepting = match incoming.accept() {
+            Ok(accepting) => accepting,
             Err(err) => {
                 warn!("incoming connection failed: {err:#}");
                 // we can carry on in these cases:
@@ -339,7 +339,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
         // spawn a task to handle reading and writing off of the connection
         let endpoint_clone = endpoint.clone();
         tokio::spawn(async move {
-            let conn = connecting.await.e()?;
+            let conn = accepting.await.e()?;
             let endpoint_id = conn.remote_id();
             info!(
                 "new connection from {endpoint_id} with ALPN {}",

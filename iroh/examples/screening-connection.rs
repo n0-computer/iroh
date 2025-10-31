@@ -14,7 +14,7 @@ use std::sync::{
 
 use iroh::{
     Endpoint, EndpointAddr,
-    endpoint::{Connecting, Connection},
+    endpoint::{Accepting, Connection},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_snafu::{Result, ResultExt};
@@ -100,10 +100,10 @@ struct ScreenedEcho {
 }
 
 impl ProtocolHandler for ScreenedEcho {
-    /// `on_connecting` allows us to intercept a connection as it's being formed,
+    /// `on_accepting` allows us to intercept a connection as it's being formed,
     /// which is the right place to cut off a connection as early as possible.
     /// This is an optional method on the ProtocolHandler trait.
-    async fn on_connecting(&self, connecting: Connecting) -> Result<Connection, AcceptError> {
+    async fn on_accepting(&self, accepting: Accepting) -> Result<Connection, AcceptError> {
         self.conn_attempt_count.fetch_add(1, Ordering::Relaxed);
         let count = self.conn_attempt_count.load(Ordering::Relaxed);
 
@@ -113,8 +113,8 @@ impl ProtocolHandler for ScreenedEcho {
             return Err(AcceptError::NotAllowed {});
         }
 
-        // To allow normal connection construction, await the connecting future & return
-        let conn = connecting.await?;
+        // To allow normal connection construction, await the accepting future & return
+        let conn = accepting.await?;
         Ok(conn)
     }
 
