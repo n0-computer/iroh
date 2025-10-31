@@ -1121,7 +1121,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1884,7 +1884,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tokio",
  "tower-service",
  "tracing",
@@ -2278,7 +2278,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.36.2"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#fe4937507fc144085fd53862219a1ddfaf5bde89"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#53cf550e13144722de713e9c73cd76c81f68b854"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2297,7 +2297,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics-derive"
 version = "0.3.1"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#fe4937507fc144085fd53862219a1ddfaf5bde89"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#53cf550e13144722de713e9c73cd76c81f68b854"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2668,7 +2668,8 @@ dependencies = [
 [[package]]
 name = "n0-error"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-error?branch=main#54dea84b75d577eedc0b83ddbd0bec7ca62f0c9e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a4839a11b62f1fdd75be912ee20634053c734c2240e867ded41c7f50822c549"
 dependencies = [
  "derive_more 2.0.1",
  "n0-error-macros",
@@ -2678,7 +2679,8 @@ dependencies = [
 [[package]]
 name = "n0-error-macros"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-error?branch=main#54dea84b75d577eedc0b83ddbd0bec7ca62f0c9e"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ed2a7e5ca3cb5729d4a162d7bcab5b338bed299a2fee8457568d7e0a747ed89"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2873,7 +2875,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3343,7 +3345,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3380,9 +3382,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3681,7 +3683,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4361,7 +4363,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
