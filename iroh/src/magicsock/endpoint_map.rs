@@ -16,7 +16,7 @@ use super::transports::TransportsSender;
 #[cfg(not(any(test, feature = "test-utils")))]
 use super::transports::TransportsSender;
 use super::{
-    DirectAddr, DiscoState, MagicsockMetrics,
+    DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr},
     transports::{self, OwnedTransmit},
 };
@@ -53,7 +53,6 @@ pub(super) struct EndpointMapInner {
     /// Handle to an actor that can send over the transports.
     transports_handle: TransportsSenderHandle,
     local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    disco: DiscoState,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
     /// The [`EndpointStateActor`] for each remote endpoint.
@@ -94,10 +93,6 @@ pub enum Source {
         /// The name of the application that added the endpoint
         name: String,
     },
-    /// The address was advertised by a call-me-maybe DISCO message.
-    CallMeMaybe,
-    /// We received a ping on the path.
-    Ping,
     /// We established a connection on this address.
     ///
     /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
@@ -116,14 +111,13 @@ impl EndpointMap {
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        disco: DiscoState,
     ) -> Self {
         #[cfg(not(any(test, feature = "test-utils")))]
-        let inner = EndpointMapInner::new(metrics, sender, local_addrs, disco);
+        let inner = EndpointMapInner::new(metrics, sender, local_addrs);
 
         #[cfg(any(test, feature = "test-utils"))]
         let inner = {
-            let mut inner = EndpointMapInner::new(metrics, sender, local_addrs, disco);
+            let mut inner = EndpointMapInner::new(metrics, sender, local_addrs);
             inner.path_selection = path_selection;
             inner
         };
@@ -227,14 +221,12 @@ impl EndpointMapInner {
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        disco: DiscoState,
     ) -> Self {
         let transports_handle = Self::start_transports_sender(sender);
         Self {
             metrics,
             transports_handle,
             local_addrs,
-            disco,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: Default::default(),
             endpoint_states: Default::default(),

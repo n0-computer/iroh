@@ -922,7 +922,6 @@ impl Handle {
                 metrics.magicsock.clone(),
                 sender,
                 direct_addrs.addrs.watch(),
-                disco.clone(),
             )
         };
 
