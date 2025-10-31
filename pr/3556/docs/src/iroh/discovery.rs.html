@@ -929,9 +929,9 @@
 <a href=#929 id=929 data-nosnippet>929</a>                <span class="comment">// Keep connections alive until the task is dropped.
 <a href=#930 id=930 data-nosnippet>930</a>                </span><span class="kw">let </span><span class="kw-2">mut </span>connections = Vec::new();
 <a href=#931 id=931 data-nosnippet>931</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
-<a href=#932 id=932 data-nosnippet>932</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+<a href=#932 id=932 data-nosnippet>932</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(accepting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
 <a href=#933 id=933 data-nosnippet>933</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
-<a href=#934 id=934 data-nosnippet>934</a>                    </span><span class="kw">let </span>conn = connecting.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#934 id=934 data-nosnippet>934</a>                    </span><span class="kw">let </span>conn = accepting.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#935 id=935 data-nosnippet>935</a>                    connections.push(conn);
 <a href=#936 id=936 data-nosnippet>936</a>                }
 <a href=#937 id=937 data-nosnippet>937</a>
@@ -1091,8 +1091,8 @@
 <a href=#1091 id=1091 data-nosnippet>1091</a>            <span class="kw">let </span>ep = ep.clone();
 <a href=#1092 id=1092 data-nosnippet>1092</a>            <span class="kw">async move </span>{
 <a href=#1093 id=1093 data-nosnippet>1093</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
-<a href=#1094 id=1094 data-nosnippet>1094</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
-<a href=#1095 id=1095 data-nosnippet>1095</a>                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#1094 id=1094 data-nosnippet>1094</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(accepting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+<a href=#1095 id=1095 data-nosnippet>1095</a>                    <span class="kw">let </span>_conn = accepting.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#1096 id=1096 data-nosnippet>1096</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
 <a href=#1097 id=1097 data-nosnippet>1097</a>                </span>}
 <a href=#1098 id=1098 data-nosnippet>1098</a>

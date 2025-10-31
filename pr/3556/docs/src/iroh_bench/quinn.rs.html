@@ -220,8 +220,8 @@
 <a href=#220 id=220 data-nosnippet>220</a>    <span class="comment">// Handle only the expected amount of clients
 <a href=#221 id=221 data-nosnippet>221</a>    </span><span class="kw">for _ in </span><span class="number">0</span>..opt.clients {
 <a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">let </span>incoming = endpoint.accept().<span class="kw">await</span>.unwrap();
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>connecting = <span class="kw">match </span>incoming.accept() {
-<a href=#224 id=224 data-nosnippet>224</a>            <span class="prelude-val">Ok</span>(connecting) =&gt; connecting,
+<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>accepting = <span class="kw">match </span>incoming.accept() {
+<a href=#224 id=224 data-nosnippet>224</a>            <span class="prelude-val">Ok</span>(accepting) =&gt; accepting,
 <a href=#225 id=225 data-nosnippet>225</a>            <span class="prelude-val">Err</span>(err) =&gt; {
 <a href=#226 id=226 data-nosnippet>226</a>                <span class="macro">warn!</span>(<span class="string">"incoming connection failed: {err:#}"</span>);
 <a href=#227 id=227 data-nosnippet>227</a>                <span class="comment">// we can carry on in these cases:
@@ -229,7 +229,7 @@
 <a href=#229 id=229 data-nosnippet>229</a>                </span><span class="kw">continue</span>;
 <a href=#230 id=230 data-nosnippet>230</a>            }
 <a href=#231 id=231 data-nosnippet>231</a>        };
-<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>connection = connecting.<span class="kw">await</span>.context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
+<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>connection = accepting.<span class="kw">await</span>.context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
 <a href=#233 id=233 data-nosnippet>233</a>
 <a href=#234 id=234 data-nosnippet>234</a>        server_tasks.push(tokio::spawn(<span class="kw">async move </span>{
 <a href=#235 id=235 data-nosnippet>235</a>            <span class="kw">loop </span>{

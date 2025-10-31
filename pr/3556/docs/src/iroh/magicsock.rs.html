@@ -2726,8 +2726,8 @@
 <a href=#2726 id=2726 data-nosnippet>2726</a>        <span class="macro">info!</span>(<span class="string">"accepting conn"</span>);
 <a href=#2727 id=2727 data-nosnippet>2727</a>        <span class="kw">let </span>conn = ep.endpoint.accept().<span class="kw">await</span>.expect(<span class="string">"no conn"</span>);
 <a href=#2728 id=2728 data-nosnippet>2728</a>
-<a href=#2729 id=2729 data-nosnippet>2729</a>        <span class="macro">info!</span>(<span class="string">"connecting"</span>);
-<a href=#2730 id=2730 data-nosnippet>2730</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#2729 id=2729 data-nosnippet>2729</a>        <span class="macro">info!</span>(<span class="string">"accepting"</span>);
+<a href=#2730 id=2730 data-nosnippet>2730</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#2731 id=2731 data-nosnippet>2731</a>        <span class="macro">info!</span>(<span class="string">"accepting bi"</span>);
 <a href=#2732 id=2732 data-nosnippet>2732</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.accept_bi().<span class="kw">await</span>.context(<span class="string">"accept bi"</span>)<span class="question-mark">?</span>;
 <a href=#2733 id=2733 data-nosnippet>2733</a>
@@ -3215,7 +3215,7 @@
 <a href=#3215 id=3215 data-nosnippet>3215</a>                    .accept()
 <a href=#3216 id=3216 data-nosnippet>3216</a>                    .context(<span class="string">"accept"</span>)<span class="question-mark">?
 <a href=#3217 id=3217 data-nosnippet>3217</a>                    </span>.<span class="kw">await
-<a href=#3218 id=3218 data-nosnippet>3218</a>                    </span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#3218 id=3218 data-nosnippet>3218</a>                    </span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#3219 id=3219 data-nosnippet>3219</a>
 <a href=#3220 id=3220 data-nosnippet>3220</a>                <span class="comment">// Keep this connection alive for a while
 <a href=#3221 id=3221 data-nosnippet>3221</a>                </span>tokio::time::sleep(Duration::from_secs(<span class="number">10</span>)).<span class="kw">await</span>;
