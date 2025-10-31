@@ -578,164 +578,54 @@ impl MagicSock {
         #[cfg(windows)]
         let dst_ip = None;
 
-        let mut quic_packets_total = 0;
-
-        for ((quinn_meta, buf), source_addr) in metas
-            .iter_mut()
-            .zip(bufs.iter_mut())
-            .zip(source_addrs.iter())
-        {
-            let mut buf_contains_quic_datagrams = false;
-            let mut quic_datagram_count = 0;
-            if quinn_meta.len > quinn_meta.stride {
-                trace!(%quinn_meta.len, %quinn_meta.stride, "GRO datagram received");
-                self.metrics.magicsock.recv_gro_datagrams.inc();
-            }
-
-            // Chunk through the datagrams in this GRO payload to find disco
-            // packets and forward them to the actor
-            for datagram in buf[..quinn_meta.len].chunks_mut(quinn_meta.stride) {
-                if datagram.len() < quinn_meta.stride {
-                    trace!(
-                        len = %datagram.len(),
-                        %quinn_meta.stride,
-                        "Last GRO datagram smaller than stride",
-                    );
-                }
-
-                // Detect DISCO datagrams and process them.  Overwrite the first
-                // byte of those packets with zero to make Quinn ignore the packet.  This
-                // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
-                // which we do in Endpoint::bind.
-                if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
-                    trace!(src = ?source_addr, len = datagram.len(), "UDP recv: DISCO packet");
-                    self.handle_disco_message(sender, sealed_box, source_addr);
-                    datagram[0] = 0u8;
-                } else {
-                    trace!(src = ?source_addr, len = datagram.len(), "UDP recv: QUIC packet");
-                    match source_addr {
-                        transports::Addr::Ip(SocketAddr::V4(..)) => {
-                            self.metrics
-                                .magicsock
-                                .recv_data_ipv4
-                                .inc_by(datagram.len() as _);
-                        }
-                        transports::Addr::Ip(SocketAddr::V6(..)) => {
-                            self.metrics
-                                .magicsock
-                                .recv_data_ipv6
-                                .inc_by(datagram.len() as _);
-                        }
-                        transports::Addr::Relay(..) => {
-                            self.metrics
-                                .magicsock
-                                .recv_data_relay
-                                .inc_by(datagram.len() as _);
-                        }
-                    }
-
-                    quic_datagram_count += 1;
-                    buf_contains_quic_datagrams = true;
-                }
-            }
-
-            if buf_contains_quic_datagrams {
-                match source_addr {
-                    #[cfg(wasm_browser)]
-                    transports::Addr::Ip(_addr) => {
-                        panic!("cannot use IP based addressing in the browser");
-                    }
-                    #[cfg(not(wasm_browser))]
-                    transports::Addr::Ip(_addr) => {
-                        quic_packets_total += quic_datagram_count;
-                    }
-                    transports::Addr::Relay(src_url, src_node) => {
-                        let mapped_addr = self
-                            .endpoint_map
-                            .relay_mapped_addrs
-                            .get(&(src_url.clone(), *src_node));
-                        quinn_meta.addr = mapped_addr.private_socket_addr();
-                    }
-                }
-            } else {
-                // If all datagrams in this buf are DISCO, set len to zero to make
-                // Quinn skip the buf completely.
-                quinn_meta.len = 0;
-            }
-            // Normalize local_ip
-            quinn_meta.dst_ip = dst_ip;
-        }
-
-        if quic_packets_total > 0 {
+        for (quinn_meta, source_addr) in metas.iter_mut().zip(source_addrs.iter()) {
+            let datagram_count = quinn_meta.len.div_ceil(quinn_meta.stride);
             self.metrics
                 .magicsock
                 .recv_datagrams
-                .inc_by(quic_packets_total as _);
-            trace!("UDP recv: {} packets", quic_packets_total);
-        }
-    }
-
-    /// Handles a discovery message.
-    #[instrument("disco_in", skip_all, fields(endpoint = %sender.fmt_short(), ?src))]
-    fn handle_disco_message(&self, sender: PublicKey, sealed_box: &[u8], src: &transports::Addr) {
-        if self.is_closed() {
-            return;
-        }
-
-        if let transports::Addr::Relay(_, endpoint_id) = src {
-            if endpoint_id != &sender {
-                // TODO: return here?
-                warn!(
-                    "Received relay disco message from connection for {}, but with message from {}",
-                    endpoint_id.fmt_short(),
-                    sender.fmt_short()
+                .inc_by(datagram_count as _);
+            if quinn_meta.len > quinn_meta.stride {
+                trace!(
+                    src = ?source_addr,
+                    len = quinn_meta.len,
+                    stride = %quinn_meta.stride,
+                    datagram_count = quinn_meta.len.div_ceil(quinn_meta.stride),
+                    "GRO datagram received",
                 );
+                self.metrics.magicsock.recv_gro_datagrams.inc();
+            } else {
+                trace!(src = ?source_addr, len = quinn_meta.len, "datagram received");
             }
-        }
+            match source_addr {
+                transports::Addr::Ip(SocketAddr::V4(..)) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_ipv4
+                        .inc_by(quinn_meta.len as _);
+                }
+                transports::Addr::Ip(SocketAddr::V6(..)) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_ipv6
+                        .inc_by(quinn_meta.len as _);
+                }
+                transports::Addr::Relay(src_url, src_node) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_relay
+                        .inc_by(quinn_meta.len as _);
 
-        // We're now reasonably sure we're expecting communication from
-        // this endpoint, do the heavy crypto lifting to see what they want.
-        let dm = match self.disco.unseal_and_decode(sender, sealed_box) {
-            Ok(dm) => dm,
-            Err(DiscoBoxError::Open { source, .. }) => {
-                warn!(?source, "failed to open disco box");
-                self.metrics.magicsock.recv_disco_bad_key.inc();
-                return;
+                    // Fill in the correct mapped address
+                    let mapped_addr = self
+                        .endpoint_map
+                        .relay_mapped_addrs
+                        .get(&(src_url.clone(), *src_node));
+                    quinn_meta.addr = mapped_addr.private_socket_addr();
+                }
             }
-            Err(DiscoBoxError::Parse { source, .. }) => {
-                // Couldn't parse it, but it was inside a correctly
-                // signed box, so just ignore it, assuming it's from a
-                // newer version of Tailscale that we don't
-                // understand. Not even worth logging about, lest it
-                // be too spammy for old clients.
 
-                self.metrics.magicsock.recv_disco_bad_parse.inc();
-                debug!(?source, "failed to parse disco message");
-                return;
-            }
-        };
-
-        if src.is_relay() {
-            self.metrics.magicsock.recv_disco_relay.inc();
-        } else {
-            self.metrics.magicsock.recv_disco_udp.inc();
-        }
-
-        trace!(?dm, "receive disco message");
-        match dm {
-            disco::Message::Ping(ping) => {
-                self.metrics.magicsock.recv_disco_ping.inc();
-                self.endpoint_map.handle_ping(ping, sender, src.clone());
-            }
-            disco::Message::Pong(pong) => {
-                self.metrics.magicsock.recv_disco_pong.inc();
-                self.endpoint_map.handle_pong(pong, sender, src.clone());
-            }
-            disco::Message::CallMeMaybe(cm) => {
-                self.metrics.magicsock.recv_disco_call_me_maybe.inc();
-                self.endpoint_map
-                    .handle_call_me_maybe(cm, sender, src.clone());
-            }
+            // Normalize local_ip
+            quinn_meta.dst_ip = dst_ip;
         }
     }
 

@@ -287,15 +287,6 @@ impl EndpointStateActor {
             EndpointStateMessage::AddEndpointAddr(addr, source) => {
                 self.handle_msg_add_endpoint_addr(addr, source);
             }
-            EndpointStateMessage::CallMeMaybeReceived(msg) => {
-                self.handle_msg_call_me_maybe_received(msg).await;
-            }
-            EndpointStateMessage::PingReceived(ping, src) => {
-                self.handle_msg_ping_received(ping, src).await;
-            }
-            EndpointStateMessage::PongReceived(pong, src) => {
-                self.handle_msg_pong_received(pong, src);
-            }
             EndpointStateMessage::CanSend(tx) => {
                 self.handle_msg_can_send(tx);
             }
@@ -970,14 +961,6 @@ pub(crate) enum EndpointStateMessage {
     ),
     /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
     AddEndpointAddr(EndpointAddr, Source),
-    /// Process a received DISCO CallMeMaybe message.
-    CallMeMaybeReceived(disco::CallMeMaybe),
-    /// Process a received DISCO Ping message.
-    #[debug("PingReceived({:?}, src: {_1:?})", _0.tx_id)]
-    PingReceived(disco::Ping, transports::Addr),
-    /// Process a received DISCO Pong message.
-    #[debug("PongReceived({:?}, src: {_1:?})", _0.tx_id)]
-    PongReceived(disco::Pong, transports::Addr),
     /// Asks if there is any possible path that could be used.
     ///
     /// This does not mean there is any guarantee that the remote endpoint is reachable.

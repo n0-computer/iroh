@@ -9,7 +9,7 @@ use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_future::task::{self, AbortOnDropHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{Instrument, error, info_span, trace, warn};
+use tracing::{Instrument, error, info_span, trace};
 
 #[cfg(any(test, feature = "test-utils"))]
 use super::transports::TransportsSender;
@@ -20,7 +20,6 @@ use super::{
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr},
     transports::{self, OwnedTransmit},
 };
-use crate::disco::{self};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
@@ -221,46 +220,6 @@ impl EndpointMap {
                 self.endpoint_mapped_addrs.get(&eid);
                 sender
             }
-        }
-    }
-
-    pub(super) fn handle_ping(&self, msg: disco::Ping, sender: EndpointId, src: transports::Addr) {
-        if msg.endpoint_key != sender {
-            warn!("DISCO Ping EndpointId mismatch, ignoring ping");
-            return;
-        }
-        let endpoint_state = self.endpoint_state_actor(sender);
-        if let Err(err) = endpoint_state.try_send(EndpointStateMessage::PingReceived(msg, src)) {
-            // TODO: This is really, really bad and will drop pings under load.  But
-            //    DISCO pings are going away with QUIC-NAT-TRAVERSAL so I don't care.
-            warn!("DISCO Ping dropped: {err:#}");
-        }
-    }
-
-    pub(super) fn handle_pong(&self, msg: disco::Pong, sender: EndpointId, src: transports::Addr) {
-        let actor = self.endpoint_state_actor(sender);
-        if let Err(err) = actor.try_send(EndpointStateMessage::PongReceived(msg, src)) {
-            // TODO: This is really, really bad and will drop pongs under load.  But
-            //    DISCO pongs are going away with QUIC-NAT-TRAVERSAL so I don't care.
-            warn!("DISCO Pong dropped: {err:#}");
-        }
-    }
-
-    pub(super) fn handle_call_me_maybe(
-        &self,
-        msg: disco::CallMeMaybe,
-        sender: EndpointId,
-        src: transports::Addr,
-    ) {
-        if !src.is_relay() {
-            warn!("DISCO CallMeMaybe packets should only come via relay");
-            return;
-        }
-        let actor = self.endpoint_state_actor(sender);
-        if let Err(err) = actor.try_send(EndpointStateMessage::CallMeMaybeReceived(msg)) {
-            // TODO: This is bad and will drop call-me-maybe's under load.  But
-            //    DISCO CallMeMaybe going away with QUIC-NAT-TRAVERSAL so I don't care.
-            warn!("DISCO CallMeMaybe dropped: {err:#}");
         }
     }
 }
