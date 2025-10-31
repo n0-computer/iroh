@@ -136,8 +136,7 @@ impl Builder {
         self
     }
 
-    /// Creates an empty builder, which means there are no relays
-    /// and no discovery services configured.
+    /// Creates an empty builder with no discovery services.
     pub fn empty(relay_mode: RelayMode) -> Self {
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
