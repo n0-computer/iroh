@@ -2,7 +2,7 @@ use std::{env, str::FromStr, time::Instant};
 
 use clap::Parser;
 use data_encoding::HEXLOWER;
-use iroh::{EndpointId, SecretKey, endpoint::ZeroRtt};
+use iroh::{EndpointId, SecretKey, endpoint::ZeroRttStatus};
 use n0_future::StreamExt;
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
@@ -75,17 +75,17 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
             pingpong(send, recv, i).await?;
             connection
         } else {
-            match connecting.into_0rtt() {
+            match connecting.into_0rtt().unwrap_outgoing() {
                 Ok(zrtt_connection) => {
                     trace!("0-RTT possible from our side");
                     let (send, recv) = zrtt_connection.open_bi().await.e()?;
                     let zrtt_task = tokio::spawn(pingpong(send, recv, i));
                     match zrtt_connection.handshake_completed().await {
-                        ZeroRtt::Accepted(conn) => {
+                        ZeroRttStatus::Accepted(conn) => {
                             let _ = zrtt_task.await.e()?;
                             conn
                         }
-                        ZeroRtt::Rejected(conn) => {
+                        ZeroRttStatus::Rejected(conn) => {
                             zrtt_task.abort();
                             let (send, recv) = conn.open_bi().await.e()?;
                             pingpong(send, recv, i).await?;
@@ -144,9 +144,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
         while let Some(incoming) = endpoint.accept().await {
             tokio::spawn(async move {
                 let connecting = incoming.accept().e()?;
-                let connection = connecting
-                    .into_0rtt()
-                    .expect("accept into 0.5 RTT always succeeds");
+                let connection = connecting.into_0rtt().unwrap_incoming();
                 let (mut send, mut recv) = connection.accept_bi().await.e()?;
                 trace!("recv.is_0rtt: {}", recv.is_0rtt());
                 let data = recv.read_to_end(8).await.e()?;

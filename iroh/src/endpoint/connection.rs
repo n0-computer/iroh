@@ -109,48 +109,6 @@ impl Incoming {
         })
     }
 
-    /// Turns this into a connection that can accept 0-rtt data.
-    ///
-    /// Returning `Ok` indicates that the connection has been created without error.
-    ///
-    /// It does not indicate whether or not 0-RTT data can be received. If it
-    /// cannot be received, any 0-RTT packets will be dropped before reaching
-    /// the stream.
-    ///
-    /// If 0-RTT data can be received, data will flow normally.
-    ///
-    /// Regardless of whether or not 0-RTT data can be received, any streams created
-    /// before the handshake has completed will remain valid to send or receive on,
-    /// they just may wait until the handshake has been completed before sending
-    /// or receiving the packets.
-    ///
-    /// ## Errors
-    /// This will fail if there is an issue creating a connection.
-    ///
-    /// ## Security
-    ///
-    /// This enables transmission of 0.5-RTT data, which may be sent
-    /// before TLS client authentication has occurred, and should therefore not be used to send
-    /// data for which client authentication is being used.
-    ///
-    /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
-    /// and thus whether parts of the stream are operating under this reduced security level.
-    pub fn accept_0rtt(self) -> Result<ZeroRttServerConnection, ConnectionError> {
-        let connecting = self.accept()?;
-        let _discovery_drop_guard = connecting._discovery_drop_guard;
-        let (conn, accepted) = connecting
-            .inner
-            .into_0rtt()
-            .expect("This always returns Ok on the server side");
-        Ok(ZeroRttServerConnection {
-            inner: conn,
-            accepted: ZeroRttAccepted {
-                inner: accepted,
-                _discovery_drop_guard,
-            },
-        })
-    }
-
     /// Accepts this incoming connection using a custom configuration.
     ///
     /// See [`accept()`] for more details.
@@ -356,6 +314,52 @@ pub enum AlpnError {
     UnknownHandshake {},
 }
 
+/// Result of a [`Connecting::into_0rtt`].
+///
+/// Incoming connections will never fail for [`Connecting::into_0rtt`].
+///
+/// Outgoing connections may fail if they are not configured to use 0-rtt or
+/// if they have never connected to the remote endpoint before, and so do not
+/// have the proper cryptographic information to attempt 0-rtt.
+#[derive(Debug)]
+pub enum ZeroRttConnection {
+    /// An outgoing 0-rtt connection.
+    ///
+    /// This may fail if the local endpoint is not configured to use 0-rtt or
+    /// if it has never connected to the remote endpoint before, and so does not
+    /// have the necessary cryptographic information to attempt 0-rtt.
+    Outgoing(Result<ZeroRttClientConnection, Connecting>),
+    /// An incoming 0-rtt connection.
+    ///
+    /// Attempting a 0-rtt connection for an incoming connection will never fail, although
+    /// it does not necessarily mean that the connection will accept 0-rtt
+    /// packets.
+    Incoming(ZeroRttServerConnection),
+}
+
+impl ZeroRttConnection {
+    /// Returns the unwrapped result of `Connecting::into_0rtt` for an outgoing connection.
+    ///
+    /// Panics if the `ZeroRttConnection` is not an outgoing connection.
+    #[allow(clippy::result_large_err)]
+    pub fn unwrap_outgoing(self) -> Result<ZeroRttClientConnection, Connecting> {
+        match self {
+            ZeroRttConnection::Outgoing(res) => res,
+            ZeroRttConnection::Incoming(_) => unreachable!("expected Outgoing connection"),
+        }
+    }
+
+    /// Returns a `ZeroRttServerConnection`.
+    ///
+    /// Panics if the `ZeroRttConnection` is not an incoming connection.
+    pub fn unwrap_incoming(self) -> ZeroRttServerConnection {
+        match self {
+            ZeroRttConnection::Outgoing(_) => unreachable!("expected Incoming Connection"),
+            ZeroRttConnection::Incoming(res) => res,
+        }
+    }
+}
+
 impl Connecting {
     pub(crate) fn new(
         inner: quinn::Connecting,
@@ -370,67 +374,89 @@ impl Connecting {
             _discovery_drop_guard,
         }
     }
+
     /// Converts this [`Connecting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
     /// security.
     ///
-    /// Returns `Ok` immediately if the local endpoint is able to attempt sending 0/0.5-RTT data.
-    /// If so, the returned [`ZeroRttClientConnection`] can be used to send application data without waiting for
-    /// the rest of the handshake to complete, at the cost of weakened cryptographic security
-    /// guarantees.
+    /// Returns a [`ZeroRttConnection`], which represents either an outgoing
+    /// or incoming 0-rtt connection.
     ///
-    /// This method will error if attempted on an incoming [`Connecting`]. To accept 0-RTT data,
-    /// use the [`Incoming::accept_0rtt`] method.
+    /// ## Outgoing
     ///
     /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
     /// 0-RTT data will attempt to resume a previous TLS session. However, **the remote endpoint
     /// may not actually _accept_ the 0-RTT data**--yet still accept the connection attempt in
-    /// general. This possibility is conveyed through the [`ZeroRttClientConnection::handshake_completed`]
-    /// method. Once the handshake completes, it returns [`ZeroRtt::Accepted`] if the 0-RTT data
-    /// was accepted and [`ZeroRtt::Rejected`] if it was rejected.
+    /// general.
     ///
-    /// If it was rejected, the existence of streams opened and other application data
-    /// sent prior to the handshake completing will not be conveyed to the remote application, and
-    /// local operations on them will return `ZeroRttRejected` errors.
+    /// Use the [`ZeroRttConnection::unwrap_outgoing`] to get the result of
+    /// this attempt. If the attempt failed, it returns an `Err(Connecting)`, which you will then
+    /// have to `.await` to get a normal [`Connection`].
+    ///
+    /// If the attempt was successful, it will return an `Ok(ZeroRttClientConnection)`, which can
+    /// then be used to create streams to send 0-rtt data.
+    ///
+    /// However, this 0-rtt data may still be ignored by the remote endpoint
+    /// if the remote endpoint does not have the proper cryptographic information
+    /// to verify the 0-rtt connection.
+    ///
+    /// This possibility is conveyed through the [`ZeroRttStatus`] after calling [ZeroRttClientConnection::handshake_completed]
+    /// --when the handshake completes, it returns [`ZeroRttStatus::Accepted`] if the 0-RTT data
+    /// was accepted and [`ZeroRttStatus::Rejected`] if it was rejected. If it was rejected, the
+    /// existence of streams opened and other application data sent prior to the handshake
+    /// completing will not be conveyed to the remote application, and local operations on them
+    /// will return `ZeroRttRejected` errors.
     ///
     /// A server may reject 0-RTT data at its discretion, but accepting 0-RTT data requires the
     /// relevant resumption state to be stored in the server, which servers may limit or lose for
     /// various reasons including not persisting resumption state across server restarts.
     ///
+    /// ## Incoming
+    ///
+    /// For incoming connections, conversion to 0.5-RTT will always fully succeed. `into_0rtt` will
+    /// always return [`ZeroRttConnection::Outgoing`] which will always unwrap to a [`ZeroRttServerConnection`].
+    ///
     /// ## Security
     ///
-    /// This enables transmission of 0-RTT data, which is vulnerable to
+    /// On outgoing connections, this enables transmission of 0-RTT data, which is vulnerable to
     /// replay attacks, and should therefore never invoke non-idempotent operations.
+    ///
+    /// On incoming connections, this enables transmission of 0.5-RTT data, which may be sent
+    /// before TLS client authentication has occurred, and should therefore not be used to send
+    /// data for which client authentication is being used.
     ///
     /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
     /// and thus whether parts of the stream are operating under this reduced security level.
-    #[allow(clippy::result_large_err)]
-    pub fn into_0rtt(self) -> Result<ZeroRttClientConnection, Self> {
-        if self.remote_endpoint_id.is_none() {
-            // Only outgoing connections contain a remote_endpoint_id
-            return Err(self);
-        }
+    pub fn into_0rtt(self) -> ZeroRttConnection {
+        // only outgoing connections have a remote_endpoint_id
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
+                // only outgoing connections have the remote endpoint id at this point
+                let outgoing = self.remote_endpoint_id.is_some();
+
                 let accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
                 };
-                let conn = ZeroRttClientConnection { inner, accepted };
                 // This call is why `self.remote_endpoint_id` was introduced.
                 // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
                 // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
                 // `Connection::remote_endpoint_id`.
                 // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
                 // after all.
-                try_send_rtt_msg(&conn.inner, &self.ep, self.remote_endpoint_id);
-                Ok(conn)
+                try_send_rtt_msg(&inner, &self.ep, self.remote_endpoint_id);
+                if outgoing {
+                    let conn = ZeroRttClientConnection { inner, accepted };
+                    ZeroRttConnection::Outgoing(Ok(conn))
+                } else {
+                    ZeroRttConnection::Incoming(ZeroRttServerConnection { inner, accepted })
+                }
             }
-            Err(inner) => Err(Self {
+            Err(inner) => ZeroRttConnection::Outgoing(Err(Self {
                 inner,
                 ep: self.ep,
                 remote_endpoint_id: self.remote_endpoint_id,
                 _discovery_drop_guard: self._discovery_drop_guard,
-            }),
+            })),
         }
     }
 
@@ -514,7 +540,7 @@ pub struct ZeroRttClientConnection {
 
 /// Returned from a `ZeroRttClientConnection::handshake_complete` method.
 #[derive(Debug)]
-pub enum ZeroRtt {
+pub enum ZeroRttStatus {
     /// If the 0-rtt data was accepted, you can continue to use any streams
     /// that were created before the handshake was completed.
     Accepted(Connection),
@@ -525,21 +551,21 @@ pub enum ZeroRtt {
 }
 
 impl ZeroRttClientConnection {
-    /// Waits until the full handshake occurs and returns a [`ZeroRtt`].
+    /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
     ///
-    /// If `ZeroRtt::Accepted` is returned, than any streams created before
+    /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
     /// the handshake has completed can still be used.
     ///
-    /// If `ZeroRtt::Rejected` is returned, than any streams created before
+    /// If `ZeroRttStatus::Rejected` is returned, than any streams created before
     /// the handshake will error and any data sent should be re-sent on a
     /// new stream.
-    pub async fn handshake_completed(self) -> ZeroRtt {
+    pub async fn handshake_completed(self) -> ZeroRttStatus {
         let accepted = self.accepted.await;
         let conn = conn_from_quinn_conn(self.inner).expect("handshake has completed");
 
         match accepted {
-            true => ZeroRtt::Accepted(conn),
-            false => ZeroRtt::Rejected(conn),
+            true => ZeroRttStatus::Accepted(conn),
+            false => ZeroRttStatus::Rejected(conn),
         }
     }
 
@@ -1422,5 +1448,227 @@ fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint, remote_id: Op
     };
     if let Err(err) = magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
         warn!(?conn, "rtt-actor not reachable: {err:#}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iroh_base::{EndpointAddr, SecretKey};
+    use n0_snafu::{Error, Result, ResultExt};
+    use rand::SeedableRng;
+    use tracing::{Instrument, info_span};
+    use tracing_test::traced_test;
+
+    use super::Endpoint;
+    use crate::{
+        RelayMode,
+        endpoint::{ConnectOptions, ZeroRttStatus},
+    };
+
+    const TEST_ALPN: &[u8] = b"n0/iroh/test";
+
+    async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
+        let server = Endpoint::empty_builder(RelayMode::Disabled)
+            .secret_key(secret_key)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        // Gets aborted via the endpoint closing causing an `Err`
+        // a simple echo server
+        tokio::spawn({
+            let server = server.clone();
+            async move {
+                tracing::trace!("Server accept loop started");
+                while let Some(incoming) = server.accept().await {
+                    tracing::trace!("Server received incoming connection");
+                    // Handle connection errors gracefully instead of exiting the task
+                    let connecting = match incoming.accept() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!("Failed to accept incoming connection: {e:?}");
+                            continue;
+                        }
+                    };
+
+                    // accept the 0-rtt connection
+                    let z_rtt = connecting.into_0rtt().unwrap_incoming();
+
+                    // Handle stream errors gracefully
+                    let (mut send, mut recv) = match z_rtt.accept_bi().await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            tracing::warn!("Failed to accept bi stream: {e:?}");
+                            continue;
+                        }
+                    };
+
+                    let data = match recv.read_to_end(10_000_000).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            tracing::warn!("Failed to read data: {e:?}");
+                            continue;
+                        }
+                    };
+
+                    if let Err(e) = send.write_all(&data).await {
+                        tracing::warn!("Failed to write data: {e:?}");
+                        continue;
+                    }
+
+                    if let Err(e) = send.finish() {
+                        tracing::warn!("Failed to finish send: {e:?}");
+                        continue;
+                    }
+
+                    // Stay alive until the other side closes the connection.
+                    z_rtt.closed().await;
+                    tracing::trace!("Connection closed, ready for next");
+                }
+                tracing::trace!("Server accept loop exiting");
+                Ok::<_, Error>(())
+            }
+            .instrument(log_span)
+        });
+
+        Ok(server)
+    }
+
+    async fn connect_client_0rtt_expect_err(
+        client: &Endpoint,
+        server_addr: EndpointAddr,
+    ) -> Result {
+        let conn = client
+            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+            .await?
+            .into_0rtt()
+            // we know this is an outgoing connection
+            .unwrap_outgoing()
+            .expect_err("expected 0-rtt to fail")
+            .await
+            .e()?;
+
+        let (mut send, mut recv) = conn.open_bi().await.e()?;
+        send.write_all(b"hello").await.e()?;
+        send.finish().e()?;
+        let received = recv.read_to_end(1_000).await.e()?;
+        assert_eq!(&received, b"hello");
+        conn.close(0u32.into(), b"thx");
+        Ok(())
+    }
+
+    async fn connect_client_0rtt_expect_ok(
+        client: &Endpoint,
+        server_addr: EndpointAddr,
+        expect_server_accepts: bool,
+    ) -> Result {
+        tracing::trace!(?server_addr, "Client connecting with 0-RTT");
+        let zrtt_conn = client
+            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
+            .await?
+            .into_0rtt()
+            // we know this is an outgoing connection
+            .unwrap_outgoing()
+            .ok()
+            .e()?;
+
+        tracing::trace!("Client established 0-RTT connection");
+        // This is how we send data in 0-RTT:
+        let (mut send, mut recv) = zrtt_conn.open_bi().await.e()?;
+        send.write_all(b"hello").await.e()?;
+        send.finish().e()?;
+        tracing::trace!("Client sent 0-RTT data, waiting for server response");
+        // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
+        let zrtt_res = zrtt_conn.handshake_completed().await;
+        tracing::trace!(?zrtt_res, "Server responded to 0-RTT");
+        let conn = match zrtt_res {
+            ZeroRttStatus::Accepted(conn) => {
+                assert!(expect_server_accepts);
+                conn
+            }
+            ZeroRttStatus::Rejected(conn) => {
+                assert!(!expect_server_accepts);
+                // in this case we need to re-send data by re-creating the stream.
+                let (mut send, r) = conn.open_bi().await.e()?;
+                send.write_all(b"hello").await.e()?;
+                send.finish().e()?;
+                recv = r;
+                conn
+            }
+        };
+        let received = recv.read_to_end(1_000).await.e()?;
+        assert_eq!(&received, b"hello");
+        conn.close(0u32.into(), b"thx");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_0rtt() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
+
+        connect_client_0rtt_expect_err(&client, server.addr()).await?;
+        // The second 0rtt attempt should work
+        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
+
+        client.close().await;
+        server.close().await;
+
+        Ok(())
+    }
+
+    // We have this test, as this would've failed at some point.
+    // This effectively tests that we correctly categorize the TLS session tickets we
+    // receive into the respective "bucket" for the recipient.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_0rtt_non_consecutive() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
+
+        connect_client_0rtt_expect_err(&client, server.addr()).await?;
+
+        // connecting with another endpoint should not interfere with our
+        // TLS session ticket cache for the first endpoint:
+        let another =
+            spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("another")).await?;
+        connect_client_0rtt_expect_err(&client, another.addr()).await?;
+        another.close().await;
+
+        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
+
+        client.close().await;
+        server.close().await;
+
+        Ok(())
+    }
+
+    // Test whether 0-RTT is possible after a restart:
+    #[tokio::test]
+    #[traced_test]
+    async fn test_0rtt_after_server_restart() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let server_key = SecretKey::generate(&mut rng);
+        let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
+
+        connect_client_0rtt_expect_err(&client, server.addr()).await?;
+        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
+
+        server.close().await;
+
+        let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
+
+        // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+        // but the server will reject the early data because it discarded necessary state
+        // to decrypt it when restarting.
+        connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
+
+        client.close().await;
+
+        Ok(())
     }
 }

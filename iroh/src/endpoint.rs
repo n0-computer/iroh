@@ -63,8 +63,8 @@ pub use quinn_proto::{
 };
 
 pub use self::connection::{
-    Accept, AlpnError, Connecting, Connection, Incoming, RemoteEndpointIdError, ZeroRtt,
-    ZeroRttClientConnection, ZeroRttServerConnection,
+    Accept, AlpnError, Connecting, Connection, Incoming, RemoteEndpointIdError,
+    ZeroRttClientConnection, ZeroRttConnection, ZeroRttServerConnection, ZeroRttStatus,
 };
 pub use super::magicsock::{
     AddEndpointAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
@@ -1465,7 +1465,7 @@ mod tests {
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
-    use quinn::{ConnectionError, RecvStream, SendStream};
+    use quinn::ConnectionError;
     use rand::SeedableRng;
     use tracing::{Instrument, error_span, info, info_span};
     use tracing_test::traced_test;
@@ -1474,7 +1474,7 @@ mod tests {
     use crate::{
         RelayMode,
         discovery::static_provider::StaticProvider,
-        endpoint::{ConnectOptions, Connection, ConnectionType, ZeroRtt},
+        endpoint::{ConnectOptions, Connection, ConnectionType},
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{run_relay_server, run_relay_server_with},
     };
@@ -2052,205 +2052,6 @@ mod tests {
             .await?;
 
         assert!(ep.addr().ip_addrs().count() > 0);
-
-        Ok(())
-    }
-
-    async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
-        let server = Endpoint::empty_builder(RelayMode::Disabled)
-            .secret_key(secret_key)
-            .alpns(vec![TEST_ALPN.to_vec()])
-            .bind()
-            .await?;
-
-        // Gets aborted via the endpoint closing causing an `Err`
-        // a simple echo server
-        tokio::spawn({
-            let server = server.clone();
-            async move {
-                tracing::trace!("Server accept loop started");
-                while let Some(incoming) = server.accept().await {
-                    tracing::trace!("Server received incoming connection");
-                    // Handle connection errors gracefully instead of exiting the task
-                    let (conn, stream_task) = match incoming.accept_0rtt() {
-                        Ok(z_rtt) => {
-                            info!("0rtt accepted");
-                            let (send, recv) = match z_rtt.accept_bi().await {
-                                Ok(s) => s,
-                                Err(e) => {
-                                    tracing::warn!("Failed to accept bi stream: {e:?}");
-                                    continue;
-                                }
-                            };
-                            let stream_task = tokio::spawn(handle_stream(send, recv));
-                            (z_rtt.handshake_completed().await, stream_task)
-                        }
-                        Err(e) => {
-                            tracing::warn!("Connection failed: {e:?}");
-                            continue;
-                        }
-                    };
-                    if let Err(e) = stream_task.await {
-                        tracing::trace!("{e:?}");
-                    }
-
-                    // Stay alive until the other side closes the connection.
-                    conn.closed().await;
-                    tracing::trace!("Connection closed, ready for next");
-                }
-                tracing::trace!("Server accept loop exiting");
-                Ok::<_, Error>(())
-            }
-            .instrument(log_span)
-        });
-
-        Ok(server)
-    }
-
-    async fn handle_stream(mut send: SendStream, mut recv: RecvStream) -> Result<()> {
-        let data = recv
-            .read_to_end(10_000_000)
-            .await
-            .context("Failed to read data")?;
-
-        send.write_all(&data)
-            .await
-            .context("Failed to write data")?;
-
-        send.finish().context("Failed to finish send")?;
-        Ok(())
-    }
-
-    async fn connect_client_0rtt_expect_err(
-        client: &Endpoint,
-        server_addr: EndpointAddr,
-    ) -> Result {
-        let conn = client
-            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
-            .await?
-            .into_0rtt()
-            .expect_err("expected 0rtt to fail")
-            .await
-            .e()?;
-
-        let (mut send, mut recv) = conn.open_bi().await.e()?;
-        send.write_all(b"hello").await.e()?;
-        send.finish().e()?;
-        let received = recv.read_to_end(1_000).await.e()?;
-        assert_eq!(&received, b"hello");
-        conn.close(0u32.into(), b"thx");
-        Ok(())
-    }
-
-    async fn connect_client_0rtt_expect_ok(
-        client: &Endpoint,
-        server_addr: EndpointAddr,
-        expect_server_accepts: bool,
-    ) -> Result {
-        tracing::trace!(?server_addr, "Client connecting with 0-RTT");
-        let zrtt_conn = client
-            .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
-            .await?
-            .into_0rtt()
-            .ok()
-            .e()?;
-
-        tracing::trace!("Client established 0-RTT connection");
-        // This is how we send data in 0-RTT:
-        let (mut send, mut recv) = zrtt_conn.open_bi().await.e()?;
-        send.write_all(b"hello").await.e()?;
-        send.finish().e()?;
-        tracing::trace!("Client sent 0-RTT data, waiting for server response");
-        // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
-        let zrtt_res = zrtt_conn.handshake_completed().await;
-        tracing::trace!(?zrtt_res, "Server responded to 0-RTT");
-        let conn = match zrtt_res {
-            ZeroRtt::Accepted(conn) => {
-                assert!(expect_server_accepts);
-                conn
-            }
-            ZeroRtt::Rejected(conn) => {
-                assert!(!expect_server_accepts);
-                // in this case we need to re-send data by re-creating the stream.
-                let (mut send, r) = conn.open_bi().await.e()?;
-                send.write_all(b"hello").await.e()?;
-                send.finish().e()?;
-                recv = r;
-                conn
-            }
-        };
-        let received = recv.read_to_end(1_000).await.e()?;
-        assert_eq!(&received, b"hello");
-        conn.close(0u32.into(), b"thx");
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_0rtt() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
-
-        connect_client_0rtt_expect_err(&client, server.addr()).await?;
-        // The second 0rtt attempt should work
-        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
-
-        client.close().await;
-        server.close().await;
-
-        Ok(())
-    }
-
-    // We have this test, as this would've failed at some point.
-    // This effectively tests that we correctly categorize the TLS session tickets we
-    // receive into the respective "bucket" for the recipient.
-    #[tokio::test]
-    #[traced_test]
-    async fn test_0rtt_non_consecutive() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
-
-        connect_client_0rtt_expect_err(&client, server.addr()).await?;
-
-        // connecting with another endpoint should not interfere with our
-        // TLS session ticket cache for the first endpoint:
-        let another =
-            spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("another")).await?;
-        connect_client_0rtt_expect_err(&client, another.addr()).await?;
-        another.close().await;
-
-        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
-
-        client.close().await;
-        server.close().await;
-
-        Ok(())
-    }
-
-    // Test whether 0-RTT is possible after a restart:
-    #[tokio::test]
-    #[traced_test]
-    async fn test_0rtt_after_server_restart() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server_key = SecretKey::generate(&mut rng);
-        let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
-
-        connect_client_0rtt_expect_err(&client, server.addr()).await?;
-        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
-
-        server.close().await;
-
-        let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
-
-        // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
-        // but the server will reject the early data because it discarded necessary state
-        // to decrypt it when restarting.
-        connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
-
-        client.close().await;
 
         Ok(())
     }
