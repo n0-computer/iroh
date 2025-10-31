@@ -9,18 +9,17 @@ use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_future::task::{self, AbortOnDropHandle};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{Instrument, error, info_span, trace, warn};
+use tracing::{Instrument, error, info_span, trace};
 
 #[cfg(any(test, feature = "test-utils"))]
 use super::transports::TransportsSender;
 #[cfg(not(any(test, feature = "test-utils")))]
 use super::transports::TransportsSender;
 use super::{
-    DirectAddr, DiscoState, MagicsockMetrics,
+    DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr},
     transports::{self, OwnedTransmit},
 };
-use crate::disco::{self};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
@@ -54,7 +53,6 @@ pub(super) struct EndpointMapInner {
     /// Handle to an actor that can send over the transports.
     transports_handle: TransportsSenderHandle,
     local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    disco: DiscoState,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
     /// The [`EndpointStateActor`] for each remote endpoint.
@@ -95,10 +93,6 @@ pub enum Source {
         /// The name of the application that added the endpoint
         name: String,
     },
-    /// The address was advertised by a call-me-maybe DISCO message.
-    CallMeMaybe,
-    /// We received a ping on the path.
-    Ping,
     /// We established a connection on this address.
     ///
     /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
@@ -117,14 +111,13 @@ impl EndpointMap {
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        disco: DiscoState,
     ) -> Self {
         #[cfg(not(any(test, feature = "test-utils")))]
-        let inner = EndpointMapInner::new(metrics, sender, local_addrs, disco);
+        let inner = EndpointMapInner::new(metrics, sender, local_addrs);
 
         #[cfg(any(test, feature = "test-utils"))]
         let inner = {
-            let mut inner = EndpointMapInner::new(metrics, sender, local_addrs, disco);
+            let mut inner = EndpointMapInner::new(metrics, sender, local_addrs);
             inner.path_selection = path_selection;
             inner
         };
@@ -202,14 +195,12 @@ impl EndpointMap {
                 // Create a new EndpointStateActor and insert it into the endpoint map.
                 let sender = inner.transports_handle.inbox.clone();
                 let local_addrs = inner.local_addrs.clone();
-                let disco = inner.disco.clone();
                 let metrics = inner.metrics.clone();
                 let actor = EndpointStateActor::new(
                     eid,
                     self.local_endpoint_id,
                     sender,
                     local_addrs,
-                    disco,
                     self.relay_mapped_addrs.clone(),
                     metrics,
                 );
@@ -223,46 +214,6 @@ impl EndpointMap {
             }
         }
     }
-
-    pub(super) fn handle_ping(&self, msg: disco::Ping, sender: EndpointId, src: transports::Addr) {
-        if msg.endpoint_key != sender {
-            warn!("DISCO Ping EndpointId mismatch, ignoring ping");
-            return;
-        }
-        let endpoint_state = self.endpoint_state_actor(sender);
-        if let Err(err) = endpoint_state.try_send(EndpointStateMessage::PingReceived(msg, src)) {
-            // TODO: This is really, really bad and will drop pings under load.  But
-            //    DISCO pings are going away with QUIC-NAT-TRAVERSAL so I don't care.
-            warn!("DISCO Ping dropped: {err:#}");
-        }
-    }
-
-    pub(super) fn handle_pong(&self, msg: disco::Pong, sender: EndpointId, src: transports::Addr) {
-        let actor = self.endpoint_state_actor(sender);
-        if let Err(err) = actor.try_send(EndpointStateMessage::PongReceived(msg, src)) {
-            // TODO: This is really, really bad and will drop pongs under load.  But
-            //    DISCO pongs are going away with QUIC-NAT-TRAVERSAL so I don't care.
-            warn!("DISCO Pong dropped: {err:#}");
-        }
-    }
-
-    pub(super) fn handle_call_me_maybe(
-        &self,
-        msg: disco::CallMeMaybe,
-        sender: EndpointId,
-        src: transports::Addr,
-    ) {
-        if !src.is_relay() {
-            warn!("DISCO CallMeMaybe packets should only come via relay");
-            return;
-        }
-        let actor = self.endpoint_state_actor(sender);
-        if let Err(err) = actor.try_send(EndpointStateMessage::CallMeMaybeReceived(msg)) {
-            // TODO: This is bad and will drop call-me-maybe's under load.  But
-            //    DISCO CallMeMaybe going away with QUIC-NAT-TRAVERSAL so I don't care.
-            warn!("DISCO CallMeMaybe dropped: {err:#}");
-        }
-    }
 }
 
 impl EndpointMapInner {
@@ -270,14 +221,12 @@ impl EndpointMapInner {
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        disco: DiscoState,
     ) -> Self {
         let transports_handle = Self::start_transports_sender(sender);
         Self {
             metrics,
             transports_handle,
             local_addrs,
-            disco,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: Default::default(),
             endpoint_states: Default::default(),
