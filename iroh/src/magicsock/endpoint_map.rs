@@ -201,14 +201,12 @@ impl EndpointMap {
                 // Create a new EndpointStateActor and insert it into the endpoint map.
                 let sender = inner.transports_handle.inbox.clone();
                 let local_addrs = inner.local_addrs.clone();
-                let disco = inner.disco.clone();
                 let metrics = inner.metrics.clone();
                 let actor = EndpointStateActor::new(
                     eid,
                     self.local_endpoint_id,
                     sender,
                     local_addrs,
-                    disco,
                     self.relay_mapped_addrs.clone(),
                     metrics,
                 );

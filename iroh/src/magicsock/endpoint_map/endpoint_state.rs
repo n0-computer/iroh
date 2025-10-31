@@ -26,10 +26,9 @@ use super::{Source, TransportsSenderMessage, path_state::PathState};
 // #[cfg(any(test, feature = "test-utils"))]
 // use crate::endpoint::PathSelection;
 use crate::{
-    disco::{self},
     endpoint::DirectAddr,
     magicsock::{
-        DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
+        HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, MappedAddr, MultipathMappedAddr, RelayMappedAddr},
         transports::{self, OwnedTransmit},
     },
@@ -110,8 +109,6 @@ pub(super) struct EndpointStateActor {
     ///
     /// These are our local addresses and any reflexive transport addresses.
     local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    /// Shared state to allow to encrypt DISCO messages to peers.
-    disco: DiscoState,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
 
@@ -158,7 +155,6 @@ impl EndpointStateActor {
         local_endpoint_id: EndpointId,
         transports_sender: mpsc::Sender<TransportsSenderMessage>,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        disco: DiscoState,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
     ) -> Self {
@@ -169,7 +165,6 @@ impl EndpointStateActor {
             transports_sender,
             local_addrs,
             relay_mapped_addrs,
-            disco,
             connections: FxHashMap::default(),
             path_events: Default::default(),
             addr_events: Default::default(),
@@ -428,90 +423,6 @@ impl EndpointStateActor {
         trace!("added addressing information");
     }
 
-    /// Handles [`EndpointStateMessage::CallMeMaybeReceived`].
-    async fn handle_msg_call_me_maybe_received(&mut self, msg: disco::CallMeMaybe) {
-        event!(
-            target: "iroh::_events::call_me_maybe::recv",
-            Level::DEBUG,
-            remote = %self.endpoint_id.fmt_short(),
-            addrs = ?msg.my_numbers,
-        );
-        let now = Instant::now();
-        for addr in msg.my_numbers {
-            let dst = transports::Addr::Ip(addr);
-            let ping = disco::Ping::new(self.local_endpoint_id);
-
-            let path = self.paths.entry(dst.clone()).or_default();
-            path.sources.insert(Source::CallMeMaybe, now);
-            path.ping_sent = Some(ping.tx_id);
-
-            event!(
-                target: "iroh::_events::ping::sent",
-                Level::DEBUG,
-                remote = %self.endpoint_id.fmt_short(),
-                ?dst,
-            );
-            self.send_disco_message(dst, disco::Message::Ping(ping))
-                .await;
-        }
-    }
-
-    /// Handles [`EndpointStateMessage::PingReceived`].
-    async fn handle_msg_ping_received(&mut self, ping: disco::Ping, src: transports::Addr) {
-        let transports::Addr::Ip(addr) = src else {
-            warn!("received ping via relay transport, ignored");
-            return;
-        };
-        event!(
-            target: "iroh::_events::ping::recv",
-            Level::DEBUG,
-            remote = %self.endpoint_id.fmt_short(),
-            ?src,
-            txn = ?ping.tx_id,
-        );
-        let pong = disco::Pong {
-            tx_id: ping.tx_id,
-            ping_observed_addr: addr.into(),
-        };
-        event!(
-            target: "iroh::_events::pong::sent",
-            Level::DEBUG,
-            remote = %self.endpoint_id.fmt_short(),
-            dst = ?src,
-            txn = ?pong.tx_id,
-        );
-        self.send_disco_message(src.clone(), disco::Message::Pong(pong))
-            .await;
-
-        let path = self.paths.entry(src).or_default();
-        path.sources.insert(Source::Ping, Instant::now());
-
-        trace!("ping received, triggering holepunching");
-        self.trigger_holepunching().await;
-    }
-
-    /// Handles [`EndpointStateMessage::PongReceived`].
-    fn handle_msg_pong_received(&mut self, pong: disco::Pong, src: transports::Addr) {
-        let Some(state) = self.paths.get(&src) else {
-            warn!(path = ?src, ?self.paths, "ignoring DISCO Pong for unknown path");
-            return;
-        };
-        if state.ping_sent != Some(pong.tx_id) {
-            debug!(path = ?src, ?state.ping_sent, pong_tx = ?pong.tx_id,
-                        "ignoring unknown DISCO Pong for path");
-            return;
-        }
-        event!(
-            target: "iroh::_events::pong::recv",
-            Level::DEBUG,
-            remote_endpoint = %self.endpoint_id.fmt_short(),
-            ?src,
-            txn = ?pong.tx_id,
-        );
-
-        self.open_path(&src);
-    }
-
     /// Handles [`EndpointStateMessage::CanSend`].
     fn handle_msg_can_send(&self, tx: oneshot::Sender<bool>) {
         let can_send = !self.paths.is_empty();
@@ -632,30 +543,6 @@ impl EndpointStateActor {
             Err(_) => {
                 // TODO: log error
                 warn!("failed to initiate NAT traversal");
-            }
-        }
-    }
-
-    /// Sends a DISCO message to the remote endpoint this actor manages.
-    #[instrument(skip(self), fields(remote = %self.endpoint_id.fmt_short()))]
-    async fn send_disco_message(&self, dst: transports::Addr, msg: disco::Message) {
-        let pkt = self.disco.encode_and_seal(self.endpoint_id, &msg);
-        let transmit = transports::OwnedTransmit {
-            ecn: None,
-            contents: pkt,
-            segment_size: None,
-        };
-        let counter = match dst {
-            transports::Addr::Ip(_) => &self.metrics.send_disco_udp,
-            transports::Addr::Relay(_, _) => &self.metrics.send_disco_relay,
-        };
-        match self.transports_sender.send((dst, transmit).into()).await {
-            Ok(()) => {
-                trace!("sent");
-                counter.inc();
-            }
-            Err(err) => {
-                warn!("failed to send disco message: {err:#}");
             }
         }
     }
