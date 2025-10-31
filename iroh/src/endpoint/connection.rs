@@ -8,7 +8,7 @@
 //! The main items in this module are:
 //!
 //! - [`Connection`] to create streams to talk to a remote endpoint.
-//! - [`Connecting`] to intercept a connection before it is fully formed.
+//! - [`Connecting`] for operating on connections that haven't finished their handshake yet.
 //! - [`Incoming`] to accept or reject an incoming connection.
 //! - [`ZeroRttClientConnection`] to attempt to send 0-RTT data before the cryptographic
 //!   handshake has completed.
