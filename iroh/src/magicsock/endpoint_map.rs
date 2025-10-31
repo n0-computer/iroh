@@ -322,6 +322,7 @@ impl EndpointMap {
         self.inner.lock().expect("poisoned").conn_type(endpoint_id)
     }
 
+    #[allow(dead_code)]
     pub(super) fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
         self.inner.lock().expect("poisoned").latency(endpoint_id)
     }

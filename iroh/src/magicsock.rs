@@ -387,6 +387,7 @@ impl MagicSock {
         self.endpoint_map.conn_type(endpoint_id)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
         self.endpoint_map.latency(endpoint_id)
     }

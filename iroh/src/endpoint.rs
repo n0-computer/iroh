@@ -1000,13 +1000,6 @@ impl Endpoint {
         self.msock.conn_type(endpoint_id)
     }
 
-    /// Returns the currently lowest latency for this endpoint.
-    ///
-    /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
-        self.msock.latency(endpoint_id)
-    }
-
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
     /// See [`Builder::dns_resolver`].
