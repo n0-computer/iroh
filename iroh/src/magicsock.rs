@@ -26,7 +26,6 @@ use std::{
     },
 };
 
-use bytes::Bytes;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_future::{
@@ -52,7 +51,7 @@ use self::transports::IpTransport;
 use self::{
     endpoint_map::{EndpointMap, EndpointStateMessage},
     metrics::Metrics as MagicsockMetrics,
-    transports::{RelayActorConfig, RelayTransport, Transports, TransportsSender},
+    transports::{RelayActorConfig, RelayTransport, Transports},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -62,9 +61,7 @@ use crate::endpoint::PathSelection;
 use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
-    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -208,9 +205,6 @@ pub(crate) struct MagicSock {
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
     relay_map: RelayMap,
-
-    /// Disco
-    disco: DiscoState,
 
     // - Discovery
     /// Optional discovery service
@@ -629,50 +623,6 @@ impl MagicSock {
         }
     }
 
-    /// Sends out a disco message.
-    async fn send_disco_message(
-        &self,
-        sender: &TransportsSender,
-        dst: SendAddr,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -> io::Result<()> {
-        let dst = match dst {
-            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
-            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
-        };
-
-        trace!(?dst, %msg, "send disco message (UDP)");
-        if self.is_closed() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            ));
-        }
-
-        let pkt = self.disco.encode_and_seal(dst_key, &msg);
-
-        let transmit = transports::Transmit {
-            contents: &pkt,
-            ecn: None,
-            segment_size: None,
-        };
-
-        let dst2 = dst.clone();
-        match sender.send(&dst2, None, &transmit).await {
-            Ok(()) => {
-                trace!(?dst, %msg, "sent disco message");
-                self.metrics.magicsock.sent_disco_udp.inc();
-                disco_message_sent(&msg, &self.metrics.magicsock);
-                Ok(())
-            }
-            Err(err) => {
-                warn!(?dst, ?msg, ?err, "failed to send disco message");
-                Err(err)
-            }
-        }
-    }
-
     /// Publishes our address to a discovery service, if configured.
     ///
     /// Called whenever our addresses or home relay endpoint changes.
@@ -911,7 +861,6 @@ impl Handle {
         let transports = Transports::new(relay_transports);
 
         let direct_addrs = DiscoveredDirectAddrs::default();
-        let (disco, disco_receiver) = DiscoState::new(&secret_key);
 
         let endpoint_map = {
             let sender = transports.create_sender();
@@ -929,7 +878,6 @@ impl Handle {
             public_key: secret_key.public(),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            disco,
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             endpoint_map,
@@ -954,7 +902,6 @@ impl Handle {
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
-        let sender = transports.create_sender();
         let local_addrs_watch = transports.local_addrs_watch();
         let network_change_sender = transports.create_network_change_sender();
 
@@ -1027,8 +974,6 @@ impl Handle {
             direct_addr_update_state,
             network_change_sender,
             direct_addr_done_rx,
-            pending_call_me_maybes: Default::default(),
-            disco_receiver,
         };
         // Initialize addresses
         #[cfg(not(wasm_browser))]
@@ -1039,7 +984,7 @@ impl Handle {
 
         let actor_task = task::spawn(
             actor
-                .run(token, local_addrs_watch, sender)
+                .run(token, local_addrs_watch)
                 .instrument(info_span!("actor")),
         );
 
@@ -1132,92 +1077,6 @@ fn default_quic_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
-#[derive(Debug, Clone)]
-struct DiscoState {
-    /// The EndpointId/PublikeKey of this node.
-    this_id: EndpointId,
-    /// Encryption key for this endpoint.
-    secret_encryption_key: Arc<crypto_box::SecretKey>,
-    /// The state for an active DiscoKey.
-    secrets: Arc<Mutex<HashMap<PublicKey, SharedSecret>>>,
-    /// Disco (ping) queue
-    sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
-}
-
-impl DiscoState {
-    fn new(
-        secret_key: &SecretKey,
-    ) -> (Self, mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>) {
-        let this_id = secret_key.public();
-        let secret_encryption_key = secret_ed_box(secret_key);
-        let (disco_sender, disco_receiver) = mpsc::channel(256);
-
-        (
-            Self {
-                this_id,
-                secret_encryption_key: Arc::new(secret_encryption_key),
-                secrets: Default::default(),
-                sender: disco_sender,
-            },
-            disco_receiver,
-        )
-    }
-
-    fn try_send(&self, dst: SendAddr, dst_key: PublicKey, msg: disco::Message) -> bool {
-        self.sender.try_send((dst, dst_key, msg)).is_ok()
-    }
-
-    fn encode_and_seal(&self, other_key: PublicKey, msg: &disco::Message) -> Bytes {
-        let mut seal = msg.as_bytes();
-        self.get_secret(other_key, |secret| secret.seal(&mut seal));
-        disco::encode_message(&self.this_id, seal).into()
-    }
-
-    fn unseal_and_decode(
-        &self,
-        endpoint_key: PublicKey,
-        sealed_box: &[u8],
-    ) -> Result<disco::Message, DiscoBoxError> {
-        let mut sealed_box = sealed_box.to_vec();
-        self.get_secret(endpoint_key, |secret| secret.open(&mut sealed_box))
-            .context(OpenSnafu)?;
-        disco::Message::from_bytes(&sealed_box).context(ParseSnafu)
-    }
-
-    fn get_secret<F, T>(&self, endpoint_id: PublicKey, cb: F) -> T
-    where
-        F: FnOnce(&mut SharedSecret) -> T,
-    {
-        let mut inner = self.secrets.lock().expect("poisoned");
-        let x = inner.entry(endpoint_id).or_insert_with(|| {
-            let public_key = public_ed_box(&endpoint_id);
-            SharedSecret::new(&self.secret_encryption_key, &public_key)
-        });
-        cb(x)
-    }
-}
-
-#[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-enum DiscoBoxError {
-    #[snafu(display("Failed to open crypto box"))]
-    Open {
-        #[snafu(source(from(DecryptionError, Box::new)))]
-        source: Box<DecryptionError>,
-    },
-    #[snafu(display("Failed to parse disco message"))]
-    Parse {
-        #[snafu(source(from(disco::ParseError, Box::new)))]
-        source: Box<disco::ParseError>,
-    },
-}
-
 #[derive(Debug)]
 #[allow(clippy::enum_variant_names)]
 enum ActorMessage {
@@ -1239,11 +1098,6 @@ struct Actor {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
-
-    /// List of CallMeMaybe disco messages that should be sent out after
-    /// the next endpoint update completes
-    pending_call_me_maybes: HashMap<PublicKey, RelayUrl>,
-    disco_receiver: mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>,
 }
 
 #[cfg(not(wasm_browser))]
@@ -1301,7 +1155,6 @@ impl Actor {
         mut self,
         shutdown_token: CancellationToken,
         mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
-        sender: TransportsSender,
     ) {
         // Setup network monitoring
         let mut current_netmon_state = self.netmon_watcher.get();
@@ -1427,11 +1280,6 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
-                    if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
-                        warn!(%dst, endpoint = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
-                    }
-                }
             }
         }
     }
@@ -1556,7 +1404,6 @@ impl Actor {
                 })
                 .collect(),
         );
-        self.send_queued_call_me_maybes();
     }
 
     #[cfg(not(wasm_browser))]
@@ -1619,22 +1466,6 @@ impl Actor {
         for (bound, local) in local_addrs {
             if !bound.ip().is_unspecified() {
                 addrs.entry(local).or_insert(DirectAddrType::Local);
-            }
-        }
-    }
-
-    fn send_queued_call_me_maybes(&mut self) {
-        let msg = self.msock.direct_addrs.to_call_me_maybe_message();
-        let msg = disco::Message::CallMeMaybe(msg);
-        // allocate, to minimize locking duration
-
-        for (public_key, url) in self.pending_call_me_maybes.drain() {
-            if !self
-                .msock
-                .disco
-                .try_send(SendAddr::Relay(url), public_key, msg.clone())
-            {
-                warn!(endpoint = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
             }
         }
     }
@@ -1732,25 +1563,6 @@ impl DiscoveredDirectAddrs {
 
     fn sockaddrs(&self) -> impl Iterator<Item = SocketAddr> {
         self.addrs.get().into_iter().map(|da| da.addr)
-    }
-
-    fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
-        let my_numbers = self.addrs.get().into_iter().map(|da| da.addr).collect();
-        disco::CallMeMaybe { my_numbers }
-    }
-}
-
-fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
-    match msg {
-        disco::Message::Ping(_) => {
-            metrics.sent_disco_ping.inc();
-        }
-        disco::Message::Pong(_) => {
-            metrics.sent_disco_pong.inc();
-        }
-        disco::Message::CallMeMaybe(_) => {
-            metrics.sent_disco_call_me_maybe.inc();
-        }
     }
 }
 
