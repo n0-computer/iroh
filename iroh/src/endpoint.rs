@@ -64,8 +64,7 @@ pub use quinn_proto::{
 
 pub use self::connection::{
     Accept, Accepting, AlpnError, Connecting, ConnectingError, Connection, Incoming,
-    QuinnConnectionError, RemoteEndpointIdError, ZeroRttClientConnection, ZeroRttServerConnection,
-    ZeroRttStatus,
+    QuinnConnectionError, RemoteEndpointIdError, ZeroRttInConn, ZeroRttOutConn, ZeroRttStatus,
 };
 pub use super::magicsock::{
     AddEndpointAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
