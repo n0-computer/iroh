@@ -31,11 +31,6 @@ use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
-use snafu::Snafu;
-use tracing::{debug, warn};
-
-use crate::{Endpoint, discovery::DiscoveryTask, endpoint::rtt_actor::RttMessage};
-
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
@@ -52,11 +47,14 @@ pub use quinn_proto::{
         ServerConfig as CryptoServerConfig, UnsupportedVersion,
     },
 };
+use snafu::Snafu;
+use tracing::warn;
 
 pub use super::magicsock::{
     AddEndpointAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
     Source,
 };
+use crate::{Endpoint, discovery::DiscoveryTask, endpoint::rtt_actor::RttMessage};
 
 /// Future produced by [`Endpoint::accept`].
 #[derive(derive_more::Debug)]

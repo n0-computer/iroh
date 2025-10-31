@@ -45,11 +45,6 @@ pub mod connection;
 pub mod presets;
 mod rtt_actor;
 
-pub use self::connection::{
-    Accept, AlpnError, Connecting, Connection, Incoming, RemoteEndpointIdError, ZeroRtt,
-    ZeroRttClientConnection, ZeroRttServerConnection,
-};
-
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
@@ -67,6 +62,10 @@ pub use quinn_proto::{
     },
 };
 
+pub use self::connection::{
+    Accept, AlpnError, Connecting, Connection, Incoming, RemoteEndpointIdError, ZeroRtt,
+    ZeroRttClientConnection, ZeroRttServerConnection,
+};
 pub use super::magicsock::{
     AddEndpointAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
     Source,
