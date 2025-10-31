@@ -2595,18 +2595,21 @@ mod tests {
 
             let mut paths = conn.paths_info().stream();
             time::timeout(Duration::from_secs(5), async move {
-                let mut have_relay = false;
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
-                    have_relay = infos.keys().any(|a| a.is_relay());
-                    if have_relay {
+                    if infos.keys().any(|a| a.is_relay()) {
                         break;
                     }
                 }
-                have_relay
             })
             .await
             .e()?;
+
+            // wait for the server to signal it has the relay connection
+            let mut stream = conn.accept_uni().await.e()?;
+            stream.read_to_end(100).await.e()?;
+
+            info!("client closing");
             conn.close(0u8.into(), b"");
             ep.close().await;
             Ok(())
@@ -2631,6 +2634,25 @@ mod tests {
 
             info!(me = %ep.id().fmt_short(), "server starting");
             let conn = ep.accept().await.e()?.await.e()?;
+
+            // Wait for a relay connection to be added.  Client does all the asserting here,
+            // we just want to wait so we get to see all the mechanics of the connection
+            // being added on this side too.
+            let mut paths = conn.paths_info().stream();
+            time::timeout(Duration::from_secs(5), async move {
+                while let Some(infos) = paths.next().await {
+                    info!(?infos, "new PathInfos");
+                    if infos.keys().any(|a| a.is_relay()) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .e()?;
+
+            let mut stream = conn.open_uni().await.e()?;
+            stream.write_all(b"have relay").await.e()?;
+
             Ok(conn.closed().await)
         }
 
