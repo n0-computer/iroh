@@ -12,7 +12,7 @@
 //! - [`Incoming`] to accept or reject an incoming connection.
 //! - [`ZeroRttClientConnection`] to attempt to send 0-RTT data before the cryptographic
 //!   handshake has completed.
-//! - [`ZeroRttServerConnection`] to attempt to read 0-RTT data before the cryptographic
+//! - [`ZeroRttServerConnection`] to attempt to read 0-RTT or send 0.5-RTT data before the cryptographic
 //!   handshake has completed.
 //!
 //! [module docs]: crate
