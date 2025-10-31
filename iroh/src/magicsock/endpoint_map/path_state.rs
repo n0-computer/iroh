@@ -20,6 +20,6 @@ pub(super) struct PathState {
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
     /// of the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
-    /// The last ping sent on this path.
+    /// The last DISCO ping sent on this path.
     pub(super) ping_sent: Option<TransactionId>,
 }
