@@ -80,7 +80,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
                     trace!("0-RTT possible from our side");
                     let (send, recv) = zrtt_connection.open_bi().await.e()?;
                     let zrtt_task = tokio::spawn(pingpong(send, recv, i));
-                    match zrtt_connection.handshake_completed().await {
+                    match zrtt_connection.handshake_completed().await? {
                         ZeroRttStatus::Accepted(conn) => {
                             let _ = zrtt_task.await.e()?;
                             conn

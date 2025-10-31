@@ -1626,7 +1626,7 @@ mod tests {
         send.finish().e()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
-        let zrtt_res = zrtt_conn.handshake_completed().await;
+        let zrtt_res = zrtt_conn.handshake_completed().await?;
         tracing::trace!(?zrtt_res, "Server responded to 0-RTT");
         let conn = match zrtt_res {
             ZeroRttStatus::Accepted(conn) => {
