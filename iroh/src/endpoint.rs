@@ -63,8 +63,9 @@ pub use quinn_proto::{
 };
 
 pub use self::connection::{
-    Accept, Accepting, AlpnError, Connecting, Connection, Incoming, RemoteEndpointIdError,
-    ZeroRttClientConnection, ZeroRttServerConnection, ZeroRttStatus,
+    Accept, Accepting, AlpnError, Connecting, ConnectingError, Connection, Incoming,
+    QuinnConnectionError, RemoteEndpointIdError, ZeroRttClientConnection, ZeroRttServerConnection,
+    ZeroRttStatus,
 };
 pub use super::magicsock::{
     AddEndpointAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
@@ -512,6 +513,11 @@ pub enum ConnectError {
     Connect {
         #[snafu(source(from(ConnectWithOptsError, Box::new)))]
         source: Box<ConnectWithOptsError>,
+    },
+    #[snafu(transparent)]
+    Connecting {
+        #[snafu(source(from(ConnectingError, Box::new)))]
+        source: Box<ConnectingError>,
     },
     #[snafu(transparent)]
     Connection {

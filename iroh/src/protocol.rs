@@ -106,6 +106,13 @@ pub struct RouterBuilder {
 #[non_exhaustive]
 pub enum AcceptError {
     #[snafu(transparent)]
+    Connecting {
+        source: crate::endpoint::ConnectingError,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(transparent)]
     Connection {
         source: crate::endpoint::ConnectionError,
         backtrace: Option<Backtrace>,

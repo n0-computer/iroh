@@ -35,7 +35,7 @@ use quinn::{
     AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
     RetryError, SendDatagramError, ServerConfig, VarInt,
 };
-use snafu::Snafu;
+use snafu::{IntoError, Snafu};
 use tracing::warn;
 
 use crate::{Endpoint, discovery::DiscoveryTask, endpoint::rtt_actor::RttMessage};
@@ -145,7 +145,7 @@ impl Incoming {
 }
 
 impl IntoFuture for Incoming {
-    type Output = Result<Connection, ConnectionError>;
+    type Output = Result<Connection, ConnectingError>;
     type IntoFuture = IncomingFuture;
 
     fn into_future(self) -> Self::IntoFuture {
@@ -166,15 +166,18 @@ pub struct IncomingFuture {
 }
 
 impl Future for IncomingFuture {
-    type Output = Result<Connection, ConnectionError>;
+    type Output = Result<Connection, ConnectingError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this.inner.poll(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
             Poll::Ready(Ok(inner)) => {
-                let conn = conn_from_quinn_conn(inner).expect("handshake has completed");
+                let conn = match conn_from_quinn_conn(inner) {
+                    Ok(conn) => conn,
+                    Err(err) => return Poll::Ready(Err(HandshakeFailureSnafu.into_error(err))),
+                };
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
             }
@@ -207,7 +210,7 @@ async fn alpn_from_quinn_connecting(conn: &mut quinn::Connecting) -> Result<Vec<
 })]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-enum QuinnConnectionError {
+pub enum QuinnConnectionError {
     #[snafu(transparent)]
     RemoteId { source: RemoteEndpointIdError },
     #[snafu(display("no ALPN provided"))]
@@ -312,6 +315,21 @@ pub enum AlpnError {
     UnknownHandshake {},
 }
 
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum ConnectingError {
+    #[snafu(transparent)]
+    ConnectionError { source: ConnectionError },
+    #[snafu(display("Failure finalizing the handshake"))]
+    HandshakeFailure { source: QuinnConnectionError },
+}
+
 impl Connecting {
     pub(crate) fn new(
         inner: quinn::Connecting,
@@ -412,15 +430,18 @@ impl Connecting {
 }
 
 impl Future for Connecting {
-    type Output = Result<Connection, ConnectionError>;
+    type Output = Result<Connection, ConnectingError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this.inner.poll(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
             Poll::Ready(Ok(inner)) => {
-                let conn = conn_from_quinn_conn(inner).expect("handshake has completed");
+                let conn = match conn_from_quinn_conn(inner) {
+                    Ok(conn) => conn,
+                    Err(err) => return Poll::Ready(Err(HandshakeFailureSnafu.into_error(err))),
+                };
 
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
@@ -495,15 +516,18 @@ impl Accepting {
 }
 
 impl Future for Accepting {
-    type Output = Result<Connection, ConnectionError>;
+    type Output = Result<Connection, ConnectingError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.project();
         match this.inner.poll(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
             Poll::Ready(Ok(inner)) => {
-                let conn = conn_from_quinn_conn(inner).expect("handshake completed");
+                let conn = match conn_from_quinn_conn(inner) {
+                    Ok(conn) => conn,
+                    Err(err) => return Poll::Ready(Err(HandshakeFailureSnafu.into_error(err))),
+                };
 
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
@@ -574,14 +598,20 @@ impl ZeroRttClientConnection {
     /// If `ZeroRttStatus::Rejected` is returned, than any streams created before
     /// the handshake will error and any data sent should be re-sent on a
     /// new stream.
-    pub async fn handshake_completed(self) -> ZeroRttStatus {
+    ///
+    /// This may fail if the other side doesn't use the right TLS authentication,
+    /// which usually every iroh endpoint uses and requires.
+    ///
+    /// In practice this should only fail if someone connects to you with a modified iroh endpoint
+    /// or with a plain QUIC client.
+    pub async fn handshake_completed(self) -> Result<ZeroRttStatus, QuinnConnectionError> {
         let accepted = self.accepted.await;
-        let conn = conn_from_quinn_conn(self.inner).expect("handshake has completed");
+        let conn = conn_from_quinn_conn(self.inner)?;
 
-        match accepted {
+        Ok(match accepted {
             true => ZeroRttStatus::Accepted(conn),
             false => ZeroRttStatus::Rejected(conn),
-        }
+        })
     }
 
     /// Initiates a new outgoing unidirectional stream.
@@ -874,10 +904,16 @@ pub struct ZeroRttServerConnection {
 }
 
 impl ZeroRttServerConnection {
-    /// Waits until the full handshake occurs and returns a [`Connection`].
-    pub async fn handshake_completed(self) -> Connection {
+    /// Waits until the full handshake occurs and then returns a [`Connection`].
+    ///
+    /// This may fail if the connecting side doesn't actually use TLS client authentication,
+    /// which usually every iroh endpoint uses and requires.
+    ///
+    /// In practice this should only fail if someone connects to you with a modified iroh endpoint
+    /// or with a plain QUIC client.
+    pub async fn handshake_completed(self) -> Result<Connection, QuinnConnectionError> {
         self.accepted.await;
-        conn_from_quinn_conn(self.inner).expect("handshake has completed")
+        conn_from_quinn_conn(self.inner)
     }
 
     /// Initiates a new outgoing unidirectional stream.
