@@ -2726,8 +2726,8 @@ mod tests {
         info!("accepting conn");
         let conn = ep.endpoint.accept().await.expect("no conn");
 
-        info!("connecting");
-        let conn = conn.await.context("connecting")?;
+        info!("accepting");
+        let conn = conn.await.context("accepting")?;
         info!("accepting bi");
         let (mut send_bi, mut recv_bi) = conn.accept_bi().await.context("accept bi")?;
 
@@ -3215,7 +3215,7 @@ mod tests {
                     .accept()
                     .context("accept")?
                     .await
-                    .context("connecting")?;
+                    .context("accepting")?;
 
                 // Keep this connection alive for a while
                 tokio::time::sleep(Duration::from_secs(10)).await;

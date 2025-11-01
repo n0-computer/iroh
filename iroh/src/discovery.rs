@@ -929,9 +929,9 @@ mod tests {
                 // Keep connections alive until the task is dropped.
                 let mut connections = Vec::new();
                 // we skip accept() errors, they can be caused by retransmits
-                while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
+                while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     // Just accept incoming connections, but don't do anything with them.
-                    let conn = connecting.await.context("connecting")?;
+                    let conn = accepting.await.context("accepting")?;
                     connections.push(conn);
                 }
 
@@ -1091,8 +1091,8 @@ mod test_dns_pkarr {
             let ep = ep.clone();
             async move {
                 // we skip accept() errors, they can be caused by retransmits
-                while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await.context("connecting")?;
+                while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
+                    let _conn = accepting.await.context("accepting")?;
                     // Just accept incoming connections, but don't do anything with them.
                 }
 
