@@ -10,9 +10,9 @@
 //! - [`Connection`] to create streams to talk to a remote endpoint.
 //! - [`Connecting`] for operating on connections that haven't finished their handshake yet.
 //! - [`Incoming`] to accept or reject an incoming connection.
-//! - [`ZeroRttOutConn`] to attempt to send 0-RTT data before the cryptographic
+//! - [`OutgoingZeroRttConnection`] to attempt to send 0-RTT data before the cryptographic
 //!   handshake has completed.
-//! - [`ZeroRttInConn`] to attempt to read 0-RTT or send 0.5-RTT data before the cryptographic
+//! - [`IncomingZeroRttConnection`] to attempt to read 0-RTT or send 0.5-RTT data before the cryptographic
 //!   handshake has completed.
 //!
 //! [module docs]: crate
@@ -347,18 +347,18 @@ impl Connecting {
 
     /// Converts this [`Connecting`] into a 0-RTT connection at the cost of weakened security.
     ///
-    /// If 0-RTT can be attempted, returns a [`ZeroRttOutConn`], which represents
+    /// If 0-RTT can be attempted, returns a [`OutgoingZeroRttConnection`], which represents
     /// outgoing 0-RTT connection.
     ///
     /// If the 0-RTT cannot even be attempted, returns back the same [`Connecting`] without
     /// changes. You can still `.await` this [`Connecting`] to get a normal [`Connection`].
     ///
-    /// The [`ZeroRttOutConn`] will attempt to resume a previous TLS session. However,
+    /// The [`OutgoingZeroRttConnection`] will attempt to resume a previous TLS session. However,
     /// **the remote endpoint may actually _reject_ the 0-RTT data--yet still accept
     /// the connection attempt in general**, once the handshake has completed.
     ///
     /// This possibility of whether the 0-RTT data was accepted or rejected is conveyed
-    /// through the [`ZeroRttStatus`] after calling [`ZeroRttOutConn::handshake_completed`].
+    /// through the [`ZeroRttStatus`] after calling [`OutgoingZeroRttConnection::handshake_completed`].
     /// When the handshake completes, it returns [`ZeroRttStatus::Accepted`] if the 0-RTT data
     /// was accepted and [`ZeroRttStatus::Rejected`] if it was rejected. If it was rejected, the
     /// existence of any streams opened and application data sent prior to the handshake
@@ -381,7 +381,7 @@ impl Connecting {
     ///
     /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
     #[allow(clippy::result_large_err)]
-    pub fn into_0rtt(self) -> Result<ZeroRttOutConn, Connecting> {
+    pub fn into_0rtt(self) -> Result<OutgoingZeroRttConnection, Connecting> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
                 // This call is why `self.remote_endpoint_id` was introduced.
@@ -391,7 +391,7 @@ impl Connecting {
                 // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
                 // after all.
                 try_send_rtt_msg(&inner, &self.ep, Some(self.remote_endpoint_id));
-                Ok(ZeroRttOutConn {
+                Ok(OutgoingZeroRttConnection {
                     inner,
                     accepted: ZeroRttAccepted {
                         inner: zrtt_accepted,
@@ -453,13 +453,13 @@ impl Accepting {
     /// Converts this [`Accepting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
     /// security.
     ///
-    /// Returns a [`ZeroRttInConn`], which represents an incoming 0-RTT or 0.5-RTT connection.
+    /// Returns a [`IncomingZeroRttConnection`], which represents an incoming 0-RTT or 0.5-RTT connection.
     ///
     /// If the connection was initiated with 0-RTT by the remote endpoint, the local endpoint
     /// might accept the 0-RTT attempt, allowing the local endpoint to receive application streams
     /// and data before the handshake finishes.
     ///
-    /// Otherwise this will enable 0.5-RTT, allowing the [`ZeroRttInConn`] to open streams and send
+    /// Otherwise this will enable 0.5-RTT, allowing the [`IncomingZeroRttConnection`] to open streams and send
     /// data before the handshake finishes.
     ///
     /// ## Security
@@ -477,13 +477,13 @@ impl Accepting {
     /// See also documentation for [`Connecting::into_0rtt`].
     ///
     /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
-    pub fn into_0rtt(self) -> ZeroRttInConn {
+    pub fn into_0rtt(self) -> IncomingZeroRttConnection {
         let (inner, accepted) = self
             .inner
             .into_0rtt()
             .expect("incoming connections can always be converted to 0-RTT");
         try_send_rtt_msg(&inner, &self.ep, None);
-        ZeroRttInConn {
+        IncomingZeroRttConnection {
             accepted: ZeroRttAccepted {
                 inner: accepted,
                 _discovery_drop_guard: None,
@@ -552,20 +552,20 @@ impl Future for ZeroRttAccepted {
 ///
 /// This is created using [`Connecting::into_0rtt`].
 ///
-/// Creating a `ZeroRttOutConn` means that the endpoint is capable
+/// Creating a `OutgoingZeroRttConnection` means that the endpoint is capable
 /// of attempting a 0-RTT connection with the remote. The remote may still
 /// reject the 0-RTT connection. In which case, any data sent before the
 /// handshake has completed may need to be resent.
 ///
-/// Look at the [`ZeroRttOutConn::handshake_completed`] method for
+/// Look at the [`OutgoingZeroRttConnection::handshake_completed`] method for
 /// more details.
 #[derive(Debug)]
-pub struct ZeroRttOutConn {
+pub struct OutgoingZeroRttConnection {
     inner: quinn::Connection,
     accepted: ZeroRttAccepted,
 }
 
-/// Returned from a `ZeroRttOutConn::handshake_complete` method.
+/// Returned from a `OutgoingZeroRttConnection::handshake_complete` method.
 #[derive(Debug)]
 pub enum ZeroRttStatus {
     /// If the 0-RTT data was accepted, you can continue to use any streams
@@ -577,7 +577,7 @@ pub enum ZeroRttStatus {
     Rejected(Connection),
 }
 
-impl ZeroRttOutConn {
+impl OutgoingZeroRttConnection {
     /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
     ///
     /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
@@ -873,11 +873,11 @@ impl ZeroRttOutConn {
 
 /// A QUIC connection on the server-side that can possibly accept 0-RTT data.
 ///
-/// It is very similar to a `Connection`, but the `ZeroRttInConn::remote_id`
-/// and `ZeroRttInConn::alpn` may not be set yet, since the handshake has
+/// It is very similar to a `Connection`, but the `IncomingZeroRttConnection::remote_id`
+/// and `IncomingZeroRttConnection::alpn` may not be set yet, since the handshake has
 /// not necessarily occurred yet.
 ///
-/// If the `ZeroRttInConn` has rejected 0-RTT or does not have enough information
+/// If the `IncomingZeroRttConnection` has rejected 0-RTT or does not have enough information
 /// to accept 0-RTT, any received 0-RTT packets will simply be dropped before
 /// reaching any receive streams.
 ///
@@ -885,17 +885,17 @@ impl ZeroRttOutConn {
 /// even after the handshake has completed and we are no longer in a 0-RTT
 /// situation.
 ///
-/// Use the [`ZeroRttInConn::handshake_completed`] method to get a [`Connection`] from a
-/// `ZeroRttInConn`. This waits until 0-RTT connection has completed
+/// Use the [`IncomingZeroRttConnection::handshake_completed`] method to get a [`Connection`] from a
+/// `IncomingZeroRttConnection`. This waits until 0-RTT connection has completed
 /// the handshake and can now confidently derive the ALPN and the
 /// [`EndpointId`] of the remote endpoint.
 #[derive(Debug)]
-pub struct ZeroRttInConn {
+pub struct IncomingZeroRttConnection {
     inner: quinn::Connection,
     accepted: ZeroRttAccepted,
 }
 
-impl ZeroRttInConn {
+impl IncomingZeroRttConnection {
     /// Waits until the full handshake occurs and then returns a [`Connection`].
     ///
     /// This may fail if the connecting side doesn't actually use TLS client authentication,
