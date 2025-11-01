@@ -2,10 +2,9 @@
 //! for QUIC address discovery.
 use std::{net::SocketAddr, sync::Arc};
 
+use n0_error::stack_error;
 use n0_future::time::Duration;
-use nested_enum_utils::common_fields;
 use quinn::{VarInt, crypto::rustls::QuicClientConfig};
-use snafu::{Backtrace, Snafu};
 use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
@@ -17,11 +16,11 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
+    use n0_error::e;
     use quinn::{
         ApplicationClose, ConnectionError,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     };
-    use snafu::ResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, debug, info, info_span};
@@ -37,29 +36,23 @@ pub(crate) mod server {
 
     /// Server spawn errors
     #[allow(missing_docs)]
-    #[derive(Debug, Snafu)]
+    #[stack_error(derive, add_meta)]
     #[non_exhaustive]
     pub enum QuicSpawnError {
-        #[snafu(transparent)]
+        #[error(transparent)]
         NoInitialCipherSuite {
+            #[error(std_err, from)]
             source: NoInitialCipherSuite,
-            backtrace: Option<Backtrace>,
-            #[snafu(implicit)]
-            span_trace: n0_snafu::SpanTrace,
         },
-        #[snafu(display("Unable to spawn a QUIC endpoint server"))]
+        #[error("Unable to spawn a QUIC endpoint server")]
         EndpointServer {
+            #[error(std_err)]
             source: std::io::Error,
-            backtrace: Option<Backtrace>,
-            #[snafu(implicit)]
-            span_trace: n0_snafu::SpanTrace,
         },
-        #[snafu(display("Unable to get the local address from the endpoint"))]
+        #[error("Unable to get the local address from the endpoint")]
         LocalAddr {
+            #[error(std_err)]
             source: std::io::Error,
-            backtrace: Option<Backtrace>,
-            #[snafu(implicit)]
-            span_trace: n0_snafu::SpanTrace,
         },
     }
 
@@ -114,8 +107,10 @@ pub(crate) mod server {
                 .send_observed_address_reports(true);
 
             let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)
-                .context(EndpointServerSnafu)?;
-            let bind_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
+                .map_err(|err| e!(QuicSpawnError::EndpointServer, err))?;
+            let bind_addr = endpoint
+                .local_addr()
+                .map_err(|err| e!(QuicSpawnError::LocalAddr, err))?;
 
             info!(?bind_addr, "QUIC server listening on");
 
@@ -228,21 +223,25 @@ pub(crate) mod server {
 }
 
 /// Quic client related errors.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(transparent)]
-    Connect { source: quinn::ConnectError },
-    #[snafu(transparent)]
-    Connection { source: quinn::ConnectionError },
-    #[snafu(transparent)]
-    WatchRecv { source: watch::error::RecvError },
+    #[error(transparent)]
+    Connect {
+        #[error(std_err)]
+        source: quinn::ConnectError,
+    },
+    #[error(transparent)]
+    Connection {
+        #[error(std_err)]
+        source: quinn::ConnectionError,
+    },
+    #[error(transparent)]
+    WatchRecv {
+        #[error(std_err)]
+        source: watch::error::RecvError,
+    },
 }
 
 /// Handles the client side of QUIC address discovery.
@@ -313,7 +312,7 @@ impl QuicClient {
         // tokio::select! {
         //     _ = cancel.cancelled() => {
         //         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        //         bail!("QUIC address discovery canceled early");
+        //         bail_any!("QUIC address discovery canceled early");
         //     },
         //     res = external_addresses.wait_for(|addr| addr.is_some()) => {
         //         let addr = res?.expect("checked");
@@ -358,11 +357,11 @@ impl QuicClient {
 mod tests {
     use std::net::Ipv4Addr;
 
+    use n0_error::{Result, StdResultExt};
     use n0_future::{
         task::AbortOnDropHandle,
         time::{self, Instant},
     };
-    use n0_snafu::{Error, Result, ResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
     use tracing::{Instrument, debug, info, info_span};
     use tracing_test::traced_test;
@@ -387,8 +386,8 @@ mod tests {
 
         // create a client-side endpoint
         let client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new(host.into(), 0)).context("client")?;
-        let client_addr = client_endpoint.local_addr().context("local addr")?;
+            quinn::Endpoint::client(SocketAddr::new(host.into(), 0)).std_context("client")?;
+        let client_addr = client_endpoint.local_addr().std_context("local addr")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -414,14 +413,14 @@ mod tests {
         // create a client-side endpoint
         let client_endpoint =
             quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
-                .context("client")?;
+                .std_context("client")?;
 
         // create an socket that does not respond.
         let server_socket =
             tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
                 .await
-                .context("bind")?;
-        let server_addr = server_socket.local_addr().context("local addr")?;
+                .std_context("bind")?;
+        let server_addr = server_socket.local_addr().std_context("local addr")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -465,22 +464,22 @@ mod tests {
         // need to pop off messages before we attach it to the Quinn Endpoint.
         let socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
             .await
-            .context("bind")?;
-        let server_addr = socket.local_addr().context("local addr")?;
+            .std_context("bind")?;
+        let server_addr = socket.local_addr().std_context("local addr")?;
         info!(addr = ?server_addr, "server socket bound");
 
         // Create a QAD server with a self-signed cert, all manually.
-        let cert =
-            rcgen::generate_simple_self_signed(vec!["localhost".into()]).context("self signed")?;
+        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])
+            .std_context("self signed")?;
         let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(vec![cert.cert.into()], key.into())
-            .context("tls")?;
+            .std_context("tls")?;
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         server_crypto.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.to_vec()];
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
-            QuicServerConfig::try_from(server_crypto).context("config")?,
+            QuicServerConfig::try_from(server_crypto).std_context("config")?,
         ));
         let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
         transport_config.send_observed_address_reports(true);
@@ -505,14 +504,14 @@ mod tests {
                     socket.into_std().unwrap(),
                     Arc::new(quinn::TokioRuntime),
                 )
-                .context("endpoint new")?;
+                .std_context("endpoint new")?;
                 info!("accepting conn");
                 let incoming = server.accept().await.expect("missing conn");
                 info!("incoming!");
-                let conn = incoming.await.context("incoming")?;
+                let conn = incoming.await.std_context("incoming")?;
                 conn.closed().await;
                 server.wait_idle().await;
-                Ok::<_, Error>(())
+                n0_error::Ok(())
             }
             .instrument(info_span!("server")),
         );
@@ -521,7 +520,7 @@ mod tests {
         info!("starting client");
         let client_endpoint =
             quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
-                .context("client")?;
+                .std_context("client")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -535,15 +534,15 @@ mod tests {
             quic_client.get_addr_and_latency(server_addr, "localhost"),
         )
         .await
-        .context("timeout")??;
+        .std_context("timeout")??;
         let duration = start.elapsed();
         info!(?duration, ?addr, ?latency, "QAD succeeded");
         assert!(duration >= Duration::from_secs(1));
 
         time::timeout(Duration::from_secs(10), server_task)
             .await
-            .context("timeout")?
-            .context("server task")??;
+            .std_context("timeout")?
+            .std_context("server task")??;
 
         Ok(())
     }

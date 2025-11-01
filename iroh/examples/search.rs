@@ -37,7 +37,7 @@ use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt};
 use tokio::sync::Mutex;
 use tracing_subscriber::{EnvFilter, prelude::*};
 
@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
             }
 
             // Wait for Ctrl-C to be pressed.
-            tokio::signal::ctrl_c().await.e()?;
+            tokio::signal::ctrl_c().await.anyerr()?;
         }
         Command::Query { endpoint_id, query } => {
             // Query the remote endpoint.
@@ -110,7 +110,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    router.shutdown().await.e()?;
+    router.shutdown().await.anyerr()?;
 
     Ok(())
 }
@@ -178,21 +178,21 @@ impl BlobSearch {
         let conn = self.endpoint.connect(endpoint_id, ALPN).await?;
 
         // Open a bi-directional in our connection.
-        let (mut send, mut recv) = conn.open_bi().await.e()?;
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
         // Send our query.
-        send.write_all(query.as_bytes()).await.e()?;
+        send.write_all(query.as_bytes()).await.anyerr()?;
 
         // Finish the send stream, signalling that no further data will be sent.
         // This makes the `read_to_end` call on the accepting side terminate.
-        send.finish().e()?;
+        send.finish().anyerr()?;
 
         // The response is a 64 bit integer
         // We simply read it into a byte buffer.
         let mut num_matches = [0u8; 8];
 
         // Read 8 bytes from the stream.
-        recv.read_exact(&mut num_matches).await.e()?;
+        recv.read_exact(&mut num_matches).await.anyerr()?;
 
         let num_matches = u64::from_le_bytes(num_matches);
 

@@ -7,11 +7,11 @@ use std::{
     },
 };
 
-use snafu::Snafu;
+use n0_error::{e, stack_error};
 
 /// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to convert"))]
+#[stack_error(derive, add_meta)]
+#[error("Failed to convert")]
 pub struct IpMappedAddrError;
 
 /// A map fake Ipv6 address with an actual IP address.
@@ -73,7 +73,7 @@ impl TryFrom<Ipv6Addr> for IpMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err(IpMappedAddrError)
+        Err(e!(IpMappedAddrError))
     }
 }
 

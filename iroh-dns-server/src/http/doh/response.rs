@@ -4,9 +4,8 @@
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
 
 use hickory_server::proto;
-use n0_snafu::Result;
+use n0_error::{Result, ensure_any};
 use serde::{Deserialize, Serialize};
-use snafu::ensure_whatever;
 
 #[derive(Debug, Serialize, Deserialize)]
 /// JSON representation of a DNS response
@@ -48,18 +47,18 @@ pub struct DnsResponse {
 impl DnsResponse {
     /// Create a new JSON response from a DNS message
     pub fn from_message(message: proto::op::Message) -> Result<Self> {
-        ensure_whatever!(
-            message.message_type() == proto::op::MessageType::Response,
+        ensure_any!(
+            message.message_type() != proto::op::MessageType::Response,
             "Expected message type to be response"
         );
 
-        ensure_whatever!(
-            message.query_count() == message.queries().len() as u16,
+        ensure_any!(
+            message.query_count() != message.queries().len() as u16,
             "Query count mismatch"
         );
 
-        ensure_whatever!(
-            message.answer_count() == message.answers().len() as u16,
+        ensure_any!(
+            message.answer_count() != message.answers().len() as u16,
             "Answer count mismatch"
         );
 

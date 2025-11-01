@@ -4,7 +4,7 @@ use iroh::{
     discovery::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     dns::DnsResolver,
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StackResultExt, StdResultExt};
 
 const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";
@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
     let resolver = if let Some(host) = args.dns_server {
         let addr = tokio::net::lookup_host(host)
             .await
-            .e()?
+            .anyerr()?
             .next()
             .context("failed to resolve DNS server address")?;
         DnsResolver::with_nameserver(addr)

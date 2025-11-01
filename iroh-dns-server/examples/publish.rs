@@ -10,7 +10,7 @@ use iroh::{
     },
     endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME},
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StackResultExt};
 use url::Url;
 
 const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";

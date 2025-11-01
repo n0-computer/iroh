@@ -26,9 +26,8 @@ use hyper::body::Incoming;
 use iroh_base::EndpointId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
+use n0_error::{e, stack_error};
 use n0_future::{StreamExt, future::Boxed};
-use nested_enum_utils::common_fields;
-use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::{
     net::TcpListener,
     task::{JoinError, JoinSet},
@@ -265,48 +264,47 @@ pub struct Server {
 }
 
 /// Server spawn errors
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, std_sources)]
 #[non_exhaustive]
 pub enum SpawnError {
-    #[snafu(display("Unable to get local address"))]
+    #[error("Unable to get local address")]
     LocalAddr { source: std::io::Error },
-    #[snafu(display("Failed to bind QAD listener"))]
+    #[error("Failed to bind QAD listener")]
     QuicSpawn { source: QuicSpawnError },
-    #[snafu(display("Failed to parse TLS header"))]
+    #[error("Failed to parse TLS header")]
     TlsHeaderParse { source: InvalidHeaderValue },
-    #[snafu(display("Failed to bind TcpListener"))]
+    #[error("Failed to bind TcpListener")]
     BindTlsListener { source: std::io::Error },
-    #[snafu(display("No local address"))]
+    #[error("No local address")]
     NoLocalAddr { source: std::io::Error },
-    #[snafu(display("Failed to bind server socket to {addr}"))]
-    BindTcpListener { addr: SocketAddr },
+    #[error("Failed to bind server socket to {addr}")]
+    BindTcpListener {
+        source: std::io::Error,
+        addr: SocketAddr,
+    },
 }
 
 /// Server task errors
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum SupervisorError {
-    #[snafu(display("Error starting metrics server"))]
-    Metrics { source: std::io::Error },
-    #[snafu(display("Acme event stream finished"))]
+    #[error("Error starting metrics server")]
+    Metrics {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
+    #[error("Acme event stream finished")]
     AcmeEventStreamFinished {},
-    #[snafu(transparent)]
-    JoinError { source: JoinError },
-    #[snafu(display("No relay services are enabled"))]
+    #[error(transparent)]
+    JoinError {
+        #[error(from, std_err)]
+        source: JoinError,
+    },
+    #[error("No relay services are enabled")]
     NoRelayServicesEnabled {},
-    #[snafu(display("Task cancelled"))]
+    #[error("Task cancelled")]
     TaskCancelled {},
 }
 
@@ -330,7 +328,7 @@ impl Server {
                 async move {
                     iroh_metrics::service::start_metrics_server(addr, Arc::new(registry))
                         .await
-                        .context(MetricsSnafu)
+                        .map_err(|err| e!(SupervisorError::Metrics, err))
                 }
                 .instrument(info_span!("metrics-server")),
             );
@@ -348,7 +346,7 @@ impl Server {
         let quic_server = match config.quic {
             Some(quic_config) => {
                 debug!("Starting QUIC server {}", quic_config.bind_addr);
-                Some(QuicServer::spawn(quic_config).context(QuicSpawnSnafu)?)
+                Some(QuicServer::spawn(quic_config).map_err(|err| e!(SpawnError::QuicSpawn, err))?)
             }
             None => None,
         };
@@ -360,7 +358,12 @@ impl Server {
                 debug!("Starting Relay server");
                 let mut headers = HeaderMap::new();
                 for (name, value) in TLS_HEADERS.iter() {
-                    headers.insert(*name, value.parse().context(TlsHeaderParseSnafu)?);
+                    headers.insert(
+                        *name,
+                        value
+                            .parse()
+                            .map_err(|err| e!(SpawnError::TlsHeaderParse, err))?,
+                    );
                 }
                 let relay_bind_addr = match relay_config.tls {
                     Some(ref tls) => tls.https_bind_addr,
@@ -395,7 +398,7 @@ impl Server {
                                                 Err(err) => error!("error: {err:?}"),
                                             }
                                         }
-                                        Err(AcmeEventStreamFinishedSnafu.build())
+                                        Err(e!(SupervisorError::AcmeEventStreamFinished))
                                     }
                                     .instrument(info_span!("acme")),
                                 );
@@ -421,8 +424,10 @@ impl Server {
                         // these standalone.
                         let http_listener = TcpListener::bind(&relay_config.http_bind_addr)
                             .await
-                            .context(BindTlsListenerSnafu)?;
-                        let http_addr = http_listener.local_addr().context(NoLocalAddrSnafu)?;
+                            .map_err(|err| e!(SpawnError::BindTlsListener, err))?;
+                        let http_addr = http_listener
+                            .local_addr()
+                            .map_err(|err| e!(SpawnError::NoLocalAddr, err))?;
                         tasks.spawn(
                             async move {
                                 run_captive_portal_service(http_listener).await;
@@ -564,7 +569,7 @@ async fn relay_supervisor(
         Some(ret) = tasks.join_next() => ret,
         ret = &mut quic_fut, if quic_enabled => ret.map(Ok),
         ret = &mut relay_fut, if relay_enabled => ret.map(Ok),
-        else => Ok(Err(NoRelayServicesEnabledSnafu.build())),
+        else => Ok(Err(e!(SupervisorError::NoRelayServicesEnabled))),
     };
     let ret = match res {
         Ok(Ok(())) => {
@@ -581,7 +586,7 @@ async fn relay_supervisor(
                 std::panic::resume_unwind(panic);
             }
             debug!("Task cancelled");
-            Err(TaskCancelledSnafu.build())
+            Err(e!(SupervisorError::TaskCancelled))
         }
     };
 
@@ -750,8 +755,8 @@ mod tests {
 
     use http::StatusCode;
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
+    use n0_error::Result;
     use n0_future::{FutureExt, SinkExt, StreamExt};
-    use n0_snafu::Result;
     use rand::SeedableRng;
     use tracing::{info, instrument};
     use tracing_test::traced_test;

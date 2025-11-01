@@ -39,9 +39,8 @@ http = "1"
 iroh-base = { version = "0.94.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.94", path = "../iroh-relay", default-features = false }
 n0-future = "0.3.0"
-n0-snafu = "0.2.2"
+n0-error = "0.1.0"
 n0-watcher = "0.4"
-nested_enum_utils = "0.2.1"
 netwatch = { version = "0.11" }
 pin-project = "1"
 pkarr = { version = "5", default-features = false, features = ["relays"] }
@@ -56,7 +55,6 @@ reqwest = { version = "0.12", default-features = false, features = [
 rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 smallvec = "1.11.1"
-snafu = { version = "0.8.5", features = ["rust_1_81"] }
 strum = { version = "0.27", features = ["derive"] }
 tokio = { version = "1.44.1", features = [
     "io-util",

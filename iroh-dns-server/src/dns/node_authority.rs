@@ -13,8 +13,7 @@ use hickory_server::{
     server::RequestInfo,
     store::in_memory::InMemoryAuthority,
 };
-use n0_snafu::{Result, ResultExt};
-use snafu::whatever;
+use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use tracing::{debug, trace};
 
 use crate::{
@@ -42,7 +41,7 @@ impl NodeAuthority {
         serial: u32,
     ) -> Result<Self> {
         if origins.is_empty() {
-            whatever!("at least one origin is required");
+            bail_any!("at least one origin is required");
         }
         let first_origin = LowerName::from(&origins[0]);
         Ok(Self {
@@ -184,19 +183,19 @@ fn parse_name_as_pkarr_with_origin(
             continue;
         }
         if name.num_labels() < origin.num_labels() + 1 {
-            whatever!("not a valid pkarr name: missing pubkey");
+            bail_any!("not a valid pkarr name: missing pubkey");
         }
         trace!("parse {origin}");
         let labels = name.iter().rev();
         let mut labels_without_origin = labels.skip(origin.num_labels() as usize);
         let pkey_label = labels_without_origin.next().expect("length checked above");
-        let pkey_str = std::str::from_utf8(pkey_label).e()?;
+        let pkey_str = std::str::from_utf8(pkey_label).anyerr()?;
         let pkey =
             PublicKeyBytes::from_z32(pkey_str).context("not a valid pkarr name: invalid pubkey")?;
-        let remaining_name = Name::from_labels(labels_without_origin.rev()).e()?;
+        let remaining_name = Name::from_labels(labels_without_origin.rev()).anyerr()?;
         return Ok((remaining_name, pkey, origin.clone()));
     }
-    whatever!("name does not match any allowed origin");
+    bail_any!("name does not match any allowed origin");
 }
 
 fn err_refused(e: impl fmt::Debug) -> LookupError {

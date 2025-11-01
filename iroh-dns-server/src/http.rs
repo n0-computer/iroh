@@ -14,9 +14,8 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt, anyerr, bail_any};
 use serde::{Deserialize, Serialize};
-use snafu::whatever;
 use tokio::{net::TcpListener, task::JoinSet};
 use tower_http::{
     cors::{self, CorsLayer},
@@ -75,7 +74,7 @@ impl HttpServer {
         state: AppState,
     ) -> Result<HttpServer> {
         if http_config.is_none() && https_config.is_none() {
-            whatever!("Either http or https config is required");
+            bail_any!("Either http or https config is required");
         }
 
         let app = create_app(state, &rate_limit_config);
@@ -89,8 +88,12 @@ impl HttpServer {
                 config.port,
             );
             let app = app.clone();
-            let listener = TcpListener::bind(bind_addr).await.e()?.into_std().e()?;
-            let bound_addr = listener.local_addr().e()?;
+            let listener = TcpListener::bind(bind_addr)
+                .await
+                .anyerr()?
+                .into_std()
+                .anyerr()?;
+            let bound_addr = listener.local_addr().anyerr()?;
             let fut = axum_server::from_tcp(listener)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());
             info!("HTTP server listening on {bind_addr}");
@@ -112,7 +115,7 @@ impl HttpServer {
                     .join(config.cert_mode.to_string());
                 tokio::fs::create_dir_all(&cache_path)
                     .await
-                    .with_context(|| {
+                    .with_std_context(|_| {
                         format!("failed to create cert cache dir at {cache_path:?}")
                     })?;
                 config
@@ -125,8 +128,12 @@ impl HttpServer {
                     )
                     .await?
             };
-            let listener = TcpListener::bind(bind_addr).await.e()?.into_std().e()?;
-            let bound_addr = listener.local_addr().e()?;
+            let listener = TcpListener::bind(bind_addr)
+                .await
+                .anyerr()?
+                .into_std()
+                .anyerr()?;
+            let bound_addr = listener.local_addr().anyerr()?;
             let fut = axum_server::from_tcp(listener)
                 .acceptor(acceptor)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());
@@ -173,11 +180,11 @@ impl HttpServer {
                 Err(err) if err.is_cancelled() => {}
                 Ok(Err(err)) => {
                     warn!(?err, "task failed");
-                    final_res = Err(err).context("task");
+                    final_res = Err(anyerr!(err, "task"));
                 }
                 Err(err) => {
                     warn!(?err, "task panicked");
-                    final_res = Err(err).context("join");
+                    final_res = Err(anyerr!(err, "join"));
                 }
             }
         }
