@@ -10,9 +10,9 @@
 <a href=#10 id=10 data-nosnippet>10</a>//! - [`Connection`] to create streams to talk to a remote endpoint.
 <a href=#11 id=11 data-nosnippet>11</a>//! - [`Connecting`] for operating on connections that haven't finished their handshake yet.
 <a href=#12 id=12 data-nosnippet>12</a>//! - [`Incoming`] to accept or reject an incoming connection.
-<a href=#13 id=13 data-nosnippet>13</a>//! - [`ZeroRttOutConn`] to attempt to send 0-RTT data before the cryptographic
+<a href=#13 id=13 data-nosnippet>13</a>//! - [`OutgoingZeroRttConnection`] to attempt to send 0-RTT data before the cryptographic
 <a href=#14 id=14 data-nosnippet>14</a>//!   handshake has completed.
-<a href=#15 id=15 data-nosnippet>15</a>//! - [`ZeroRttInConn`] to attempt to read 0-RTT or send 0.5-RTT data before the cryptographic
+<a href=#15 id=15 data-nosnippet>15</a>//! - [`IncomingZeroRttConnection`] to attempt to read 0-RTT or send 0.5-RTT data before the cryptographic
 <a href=#16 id=16 data-nosnippet>16</a>//!   handshake has completed.
 <a href=#17 id=17 data-nosnippet>17</a>//!
 <a href=#18 id=18 data-nosnippet>18</a>//! [module docs]: crate
@@ -347,18 +347,18 @@
 <a href=#347 id=347 data-nosnippet>347</a>
 <a href=#348 id=348 data-nosnippet>348</a>    <span class="doccomment">/// Converts this [`Connecting`] into a 0-RTT connection at the cost of weakened security.
 <a href=#349 id=349 data-nosnippet>349</a>    ///
-<a href=#350 id=350 data-nosnippet>350</a>    /// If 0-RTT can be attempted, returns a [`ZeroRttOutConn`], which represents
+<a href=#350 id=350 data-nosnippet>350</a>    /// If 0-RTT can be attempted, returns a [`OutgoingZeroRttConnection`], which represents
 <a href=#351 id=351 data-nosnippet>351</a>    /// outgoing 0-RTT connection.
 <a href=#352 id=352 data-nosnippet>352</a>    ///
 <a href=#353 id=353 data-nosnippet>353</a>    /// If the 0-RTT cannot even be attempted, returns back the same [`Connecting`] without
 <a href=#354 id=354 data-nosnippet>354</a>    /// changes. You can still `.await` this [`Connecting`] to get a normal [`Connection`].
 <a href=#355 id=355 data-nosnippet>355</a>    ///
-<a href=#356 id=356 data-nosnippet>356</a>    /// The [`ZeroRttOutConn`] will attempt to resume a previous TLS session. However,
+<a href=#356 id=356 data-nosnippet>356</a>    /// The [`OutgoingZeroRttConnection`] will attempt to resume a previous TLS session. However,
 <a href=#357 id=357 data-nosnippet>357</a>    /// **the remote endpoint may actually _reject_ the 0-RTT data--yet still accept
 <a href=#358 id=358 data-nosnippet>358</a>    /// the connection attempt in general**, once the handshake has completed.
 <a href=#359 id=359 data-nosnippet>359</a>    ///
 <a href=#360 id=360 data-nosnippet>360</a>    /// This possibility of whether the 0-RTT data was accepted or rejected is conveyed
-<a href=#361 id=361 data-nosnippet>361</a>    /// through the [`ZeroRttStatus`] after calling [`ZeroRttOutConn::handshake_completed`].
+<a href=#361 id=361 data-nosnippet>361</a>    /// through the [`ZeroRttStatus`] after calling [`OutgoingZeroRttConnection::handshake_completed`].
 <a href=#362 id=362 data-nosnippet>362</a>    /// When the handshake completes, it returns [`ZeroRttStatus::Accepted`] if the 0-RTT data
 <a href=#363 id=363 data-nosnippet>363</a>    /// was accepted and [`ZeroRttStatus::Rejected`] if it was rejected. If it was rejected, the
 <a href=#364 id=364 data-nosnippet>364</a>    /// existence of any streams opened and application data sent prior to the handshake
@@ -381,7 +381,7 @@
 <a href=#381 id=381 data-nosnippet>381</a>    ///
 <a href=#382 id=382 data-nosnippet>382</a>    /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
 <a href=#383 id=383 data-nosnippet>383</a>    </span><span class="attr">#[allow(clippy::result_large_err)]
-<a href=#384 id=384 data-nosnippet>384</a>    </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ZeroRttOutConn, Connecting&gt; {
+<a href=#384 id=384 data-nosnippet>384</a>    </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;OutgoingZeroRttConnection, Connecting&gt; {
 <a href=#385 id=385 data-nosnippet>385</a>        <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
 <a href=#386 id=386 data-nosnippet>386</a>            <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
 <a href=#387 id=387 data-nosnippet>387</a>                <span class="comment">// This call is why `self.remote_endpoint_id` was introduced.
@@ -391,7 +391,7 @@
 <a href=#391 id=391 data-nosnippet>391</a>                // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
 <a href=#392 id=392 data-nosnippet>392</a>                // after all.
 <a href=#393 id=393 data-nosnippet>393</a>                </span>try_send_rtt_msg(<span class="kw-2">&amp;</span>inner, <span class="kw-2">&amp;</span><span class="self">self</span>.ep, <span class="prelude-val">Some</span>(<span class="self">self</span>.remote_endpoint_id));
-<a href=#394 id=394 data-nosnippet>394</a>                <span class="prelude-val">Ok</span>(ZeroRttOutConn {
+<a href=#394 id=394 data-nosnippet>394</a>                <span class="prelude-val">Ok</span>(OutgoingZeroRttConnection {
 <a href=#395 id=395 data-nosnippet>395</a>                    inner,
 <a href=#396 id=396 data-nosnippet>396</a>                    accepted: ZeroRttAccepted {
 <a href=#397 id=397 data-nosnippet>397</a>                        inner: zrtt_accepted,
@@ -453,13 +453,13 @@
 <a href=#453 id=453 data-nosnippet>453</a>    <span class="doccomment">/// Converts this [`Accepting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
 <a href=#454 id=454 data-nosnippet>454</a>    /// security.
 <a href=#455 id=455 data-nosnippet>455</a>    ///
-<a href=#456 id=456 data-nosnippet>456</a>    /// Returns a [`ZeroRttInConn`], which represents an incoming 0-RTT or 0.5-RTT connection.
+<a href=#456 id=456 data-nosnippet>456</a>    /// Returns a [`IncomingZeroRttConnection`], which represents an incoming 0-RTT or 0.5-RTT connection.
 <a href=#457 id=457 data-nosnippet>457</a>    ///
 <a href=#458 id=458 data-nosnippet>458</a>    /// If the connection was initiated with 0-RTT by the remote endpoint, the local endpoint
 <a href=#459 id=459 data-nosnippet>459</a>    /// might accept the 0-RTT attempt, allowing the local endpoint to receive application streams
 <a href=#460 id=460 data-nosnippet>460</a>    /// and data before the handshake finishes.
 <a href=#461 id=461 data-nosnippet>461</a>    ///
-<a href=#462 id=462 data-nosnippet>462</a>    /// Otherwise this will enable 0.5-RTT, allowing the [`ZeroRttInConn`] to open streams and send
+<a href=#462 id=462 data-nosnippet>462</a>    /// Otherwise this will enable 0.5-RTT, allowing the [`IncomingZeroRttConnection`] to open streams and send
 <a href=#463 id=463 data-nosnippet>463</a>    /// data before the handshake finishes.
 <a href=#464 id=464 data-nosnippet>464</a>    ///
 <a href=#465 id=465 data-nosnippet>465</a>    /// ## Security
@@ -477,13 +477,13 @@
 <a href=#477 id=477 data-nosnippet>477</a>    /// See also documentation for [`Connecting::into_0rtt`].
 <a href=#478 id=478 data-nosnippet>478</a>    ///
 <a href=#479 id=479 data-nosnippet>479</a>    /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
-<a href=#480 id=480 data-nosnippet>480</a>    </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; ZeroRttInConn {
+<a href=#480 id=480 data-nosnippet>480</a>    </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; IncomingZeroRttConnection {
 <a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">let </span>(inner, accepted) = <span class="self">self
 <a href=#482 id=482 data-nosnippet>482</a>            </span>.inner
 <a href=#483 id=483 data-nosnippet>483</a>            .into_0rtt()
 <a href=#484 id=484 data-nosnippet>484</a>            .expect(<span class="string">"incoming connections can always be converted to 0-RTT"</span>);
 <a href=#485 id=485 data-nosnippet>485</a>        try_send_rtt_msg(<span class="kw-2">&amp;</span>inner, <span class="kw-2">&amp;</span><span class="self">self</span>.ep, <span class="prelude-val">None</span>);
-<a href=#486 id=486 data-nosnippet>486</a>        ZeroRttInConn {
+<a href=#486 id=486 data-nosnippet>486</a>        IncomingZeroRttConnection {
 <a href=#487 id=487 data-nosnippet>487</a>            accepted: ZeroRttAccepted {
 <a href=#488 id=488 data-nosnippet>488</a>                inner: accepted,
 <a href=#489 id=489 data-nosnippet>489</a>                _discovery_drop_guard: <span class="prelude-val">None</span>,
@@ -552,20 +552,20 @@
 <a href=#552 id=552 data-nosnippet>552</a>///
 <a href=#553 id=553 data-nosnippet>553</a>/// This is created using [`Connecting::into_0rtt`].
 <a href=#554 id=554 data-nosnippet>554</a>///
-<a href=#555 id=555 data-nosnippet>555</a>/// Creating a `ZeroRttOutConn` means that the endpoint is capable
+<a href=#555 id=555 data-nosnippet>555</a>/// Creating a `OutgoingZeroRttConnection` means that the endpoint is capable
 <a href=#556 id=556 data-nosnippet>556</a>/// of attempting a 0-RTT connection with the remote. The remote may still
 <a href=#557 id=557 data-nosnippet>557</a>/// reject the 0-RTT connection. In which case, any data sent before the
 <a href=#558 id=558 data-nosnippet>558</a>/// handshake has completed may need to be resent.
 <a href=#559 id=559 data-nosnippet>559</a>///
-<a href=#560 id=560 data-nosnippet>560</a>/// Look at the [`ZeroRttOutConn::handshake_completed`] method for
+<a href=#560 id=560 data-nosnippet>560</a>/// Look at the [`OutgoingZeroRttConnection::handshake_completed`] method for
 <a href=#561 id=561 data-nosnippet>561</a>/// more details.
 <a href=#562 id=562 data-nosnippet>562</a></span><span class="attr">#[derive(Debug)]
-<a href=#563 id=563 data-nosnippet>563</a></span><span class="kw">pub struct </span>ZeroRttOutConn {
+<a href=#563 id=563 data-nosnippet>563</a></span><span class="kw">pub struct </span>OutgoingZeroRttConnection {
 <a href=#564 id=564 data-nosnippet>564</a>    inner: quinn::Connection,
 <a href=#565 id=565 data-nosnippet>565</a>    accepted: ZeroRttAccepted,
 <a href=#566 id=566 data-nosnippet>566</a>}
 <a href=#567 id=567 data-nosnippet>567</a>
-<a href=#568 id=568 data-nosnippet>568</a><span class="doccomment">/// Returned from a `ZeroRttOutConn::handshake_complete` method.
+<a href=#568 id=568 data-nosnippet>568</a><span class="doccomment">/// Returned from a `OutgoingZeroRttConnection::handshake_complete` method.
 <a href=#569 id=569 data-nosnippet>569</a></span><span class="attr">#[derive(Debug)]
 <a href=#570 id=570 data-nosnippet>570</a></span><span class="kw">pub enum </span>ZeroRttStatus {
 <a href=#571 id=571 data-nosnippet>571</a>    <span class="doccomment">/// If the 0-RTT data was accepted, you can continue to use any streams
@@ -577,7 +577,7 @@
 <a href=#577 id=577 data-nosnippet>577</a>    </span>Rejected(Connection),
 <a href=#578 id=578 data-nosnippet>578</a>}
 <a href=#579 id=579 data-nosnippet>579</a>
-<a href=#580 id=580 data-nosnippet>580</a><span class="kw">impl </span>ZeroRttOutConn {
+<a href=#580 id=580 data-nosnippet>580</a><span class="kw">impl </span>OutgoingZeroRttConnection {
 <a href=#581 id=581 data-nosnippet>581</a>    <span class="doccomment">/// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
 <a href=#582 id=582 data-nosnippet>582</a>    ///
 <a href=#583 id=583 data-nosnippet>583</a>    /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
@@ -873,11 +873,11 @@
 <a href=#873 id=873 data-nosnippet>873</a>
 <a href=#874 id=874 data-nosnippet>874</a><span class="doccomment">/// A QUIC connection on the server-side that can possibly accept 0-RTT data.
 <a href=#875 id=875 data-nosnippet>875</a>///
-<a href=#876 id=876 data-nosnippet>876</a>/// It is very similar to a `Connection`, but the `ZeroRttInConn::remote_id`
-<a href=#877 id=877 data-nosnippet>877</a>/// and `ZeroRttInConn::alpn` may not be set yet, since the handshake has
+<a href=#876 id=876 data-nosnippet>876</a>/// It is very similar to a `Connection`, but the `IncomingZeroRttConnection::remote_id`
+<a href=#877 id=877 data-nosnippet>877</a>/// and `IncomingZeroRttConnection::alpn` may not be set yet, since the handshake has
 <a href=#878 id=878 data-nosnippet>878</a>/// not necessarily occurred yet.
 <a href=#879 id=879 data-nosnippet>879</a>///
-<a href=#880 id=880 data-nosnippet>880</a>/// If the `ZeroRttInConn` has rejected 0-RTT or does not have enough information
+<a href=#880 id=880 data-nosnippet>880</a>/// If the `IncomingZeroRttConnection` has rejected 0-RTT or does not have enough information
 <a href=#881 id=881 data-nosnippet>881</a>/// to accept 0-RTT, any received 0-RTT packets will simply be dropped before
 <a href=#882 id=882 data-nosnippet>882</a>/// reaching any receive streams.
 <a href=#883 id=883 data-nosnippet>883</a>///
@@ -885,17 +885,17 @@
 <a href=#885 id=885 data-nosnippet>885</a>/// even after the handshake has completed and we are no longer in a 0-RTT
 <a href=#886 id=886 data-nosnippet>886</a>/// situation.
 <a href=#887 id=887 data-nosnippet>887</a>///
-<a href=#888 id=888 data-nosnippet>888</a>/// Use the [`ZeroRttInConn::handshake_completed`] method to get a [`Connection`] from a
-<a href=#889 id=889 data-nosnippet>889</a>/// `ZeroRttInConn`. This waits until 0-RTT connection has completed
+<a href=#888 id=888 data-nosnippet>888</a>/// Use the [`IncomingZeroRttConnection::handshake_completed`] method to get a [`Connection`] from a
+<a href=#889 id=889 data-nosnippet>889</a>/// `IncomingZeroRttConnection`. This waits until 0-RTT connection has completed
 <a href=#890 id=890 data-nosnippet>890</a>/// the handshake and can now confidently derive the ALPN and the
 <a href=#891 id=891 data-nosnippet>891</a>/// [`EndpointId`] of the remote endpoint.
 <a href=#892 id=892 data-nosnippet>892</a></span><span class="attr">#[derive(Debug)]
-<a href=#893 id=893 data-nosnippet>893</a></span><span class="kw">pub struct </span>ZeroRttInConn {
+<a href=#893 id=893 data-nosnippet>893</a></span><span class="kw">pub struct </span>IncomingZeroRttConnection {
 <a href=#894 id=894 data-nosnippet>894</a>    inner: quinn::Connection,
 <a href=#895 id=895 data-nosnippet>895</a>    accepted: ZeroRttAccepted,
 <a href=#896 id=896 data-nosnippet>896</a>}
 <a href=#897 id=897 data-nosnippet>897</a>
-<a href=#898 id=898 data-nosnippet>898</a><span class="kw">impl </span>ZeroRttInConn {
+<a href=#898 id=898 data-nosnippet>898</a><span class="kw">impl </span>IncomingZeroRttConnection {
 <a href=#899 id=899 data-nosnippet>899</a>    <span class="doccomment">/// Waits until the full handshake occurs and then returns a [`Connection`].
 <a href=#900 id=900 data-nosnippet>900</a>    ///
 <a href=#901 id=901 data-nosnippet>901</a>    /// This may fail if the connecting side doesn't actually use TLS client authentication,
