@@ -2,9 +2,12 @@
 
 use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
-use hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
+use hickory_server::proto::{
+    ProtoError,
+    rr::{Name, RecordSet, RecordType, RrKey},
+};
 use lru::LruCache;
-use n0_error::Result;
+use n0_error::{Result, StdResultExt};
 use pkarr::{Client as PkarrClient, SignedPacket};
 use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};
@@ -234,7 +237,7 @@ impl ZoneCache {
         record_type: RecordType,
     ) -> Result<Option<Arc<RecordSet>>> {
         let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
-        let zone = CachedZone::from_signed_packet(signed_packet)?;
+        let zone = CachedZone::from_signed_packet(signed_packet).anyerr()?;
         let res = zone.resolve(name, record_type);
         self.dht_cache.insert(pubkey, zone, DHT_CACHE_TTL);
         Ok(res)
@@ -251,8 +254,10 @@ impl ZoneCache {
             trace!("insert skip: cached is newer");
             Ok(())
         } else {
-            self.cache
-                .put(pubkey, CachedZone::from_signed_packet(signed_packet)?);
+            self.cache.put(
+                pubkey,
+                CachedZone::from_signed_packet(signed_packet).anyerr()?,
+            );
             trace!("inserted into cache");
             Ok(())
         }
@@ -271,7 +276,7 @@ struct CachedZone {
 }
 
 impl CachedZone {
-    fn from_signed_packet(signed_packet: &SignedPacket) -> Result<Self> {
+    fn from_signed_packet(signed_packet: &SignedPacket) -> Result<Self, ProtoError> {
         let (_label, records) =
             signed_packet_to_hickory_records_without_origin(signed_packet, |_| true)?;
         Ok(Self {

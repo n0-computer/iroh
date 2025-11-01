@@ -11,7 +11,7 @@ use std::{
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use n0_error::{e, stack_error};
+use n0_error::{ensure, stack_error};
 use rand_core::CryptoRng;
 use serde::{Deserialize, Serialize, de, ser};
 
@@ -424,16 +424,18 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
     } else {
         let input = s.to_ascii_uppercase();
         let input = input.as_bytes();
-        if data_encoding::BASE32_NOPAD.decode_len(input.len())? != bytes.len() {
-            return Err(e!(KeyParsingError::DecodeInvalidLength));
-        }
+        ensure!(
+            data_encoding::BASE32_NOPAD.decode_len(input.len())? == bytes.len(),
+            KeyParsingError::DecodeInvalidLength
+        );
         data_encoding::BASE32_NOPAD.decode_mut(input, &mut bytes)
     };
     match res {
         Ok(len) => {
-            if len != PublicKey::LENGTH {
-                return Err(e!(KeyParsingError::DecodeInvalidLength));
-            }
+            ensure!(
+                len == PublicKey::LENGTH,
+                KeyParsingError::DecodeInvalidLength
+            );
         }
         Err(partial) => return Err(partial.error.into()),
     }
