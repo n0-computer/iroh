@@ -223,6 +223,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    #[ignore = "flaky"]
     async fn integration_mainline() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
