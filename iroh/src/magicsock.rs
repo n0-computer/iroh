@@ -303,7 +303,7 @@ impl MagicSock {
         let endpoint_state = self.endpoint_map.endpoint_state_actor(remote);
         let msg = EndpointStateMessage::AddConnection(weak_handle, paths_info);
 
-        tokio::task::spawn(async move {
+        task::spawn(async move {
             endpoint_state.send(msg).await.ok();
         });
     }
