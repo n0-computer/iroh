@@ -2968,14 +2968,7 @@ mod tests {
             .await?;
         let server_addr = server.addr();
         let server_task = tokio::task::spawn(async move {
-            let conn = server
-                .accept()
-                .await
-                .anyerr()?
-                .accept()
-                .anyerr()?
-                .await
-                .anyerr()?;
+            let conn = server.accept().await.anyerr()?.await.anyerr()?;
             let mut uni = conn.accept_uni().await.anyerr()?;
             uni.read_to_end(10).await.anyerr()?;
             drop(conn);
