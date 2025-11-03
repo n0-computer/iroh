@@ -2521,7 +2521,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, PublicKey, TransportAddr};
-    use n0_error::{Result, StdResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{StreamExt, time};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
@@ -2705,7 +2705,7 @@ mod tests {
         let conn = ep.endpoint.accept().await.expect("no conn");
 
         info!("accepting");
-        let conn = conn.await.std_context("accepting")?;
+        let conn = conn.await.context("accepting")?;
         info!("accepting bi");
         let (mut send_bi, mut recv_bi) = conn.accept_bi().await.std_context("accept bi")?;
 

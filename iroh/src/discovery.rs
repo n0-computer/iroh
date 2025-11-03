@@ -659,7 +659,7 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use n0_error::{AnyError as Error, Result, StdResultExt};
+    use n0_error::{AnyError as Error, Result, StackResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
@@ -835,7 +835,7 @@ mod tests {
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
-            .std_context("connecting")?;
+            .context("connecting")?;
         Ok(())
     }
 
@@ -952,7 +952,7 @@ mod tests {
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     // Just accept incoming connections, but don't do anything with them.
-                    let conn = accepting.await.std_context("accepting")?;
+                    let conn = accepting.await.context("accepting")?;
                     connections.push(conn);
                 }
 
