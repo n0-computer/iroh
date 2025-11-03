@@ -210,7 +210,7 @@ async fn alpn_from_quinn_connecting(conn: &mut quinn::Connecting) -> Result<Vec<
 })]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-pub enum QuinnConnectionError {
+pub enum AuthenticationError {
     #[snafu(transparent)]
     RemoteId { source: RemoteEndpointIdError },
     #[snafu(display("no ALPN provided"))]
@@ -221,9 +221,9 @@ pub enum QuinnConnectionError {
 ///
 /// ## Errors
 ///
-/// Returns a [`QuinnConnectionError`] if the handshake data has
+/// Returns a [`AuthenticationError`] if the handshake data has
 /// not completed, or if no alpn was set by the remote node.
-fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, QuinnConnectionError> {
+fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, AuthenticationError> {
     Ok(Connection {
         remote_id: remote_id_from_quinn_conn(&conn)?,
         alpn: alpn_from_quinn_conn(&conn).ok_or_else(|| NoAlpnSnafu {}.build())?,
@@ -327,7 +327,7 @@ pub enum ConnectingError {
     #[snafu(transparent)]
     ConnectionError { source: ConnectionError },
     #[snafu(display("Failure finalizing the handshake"))]
-    HandshakeFailure { source: QuinnConnectionError },
+    HandshakeFailure { source: AuthenticationError },
 }
 
 impl Connecting {
@@ -592,7 +592,7 @@ impl OutgoingZeroRttConnection {
     ///
     /// In practice this should only fail if someone connects to you with a modified iroh endpoint
     /// or with a plain QUIC client.
-    pub async fn handshake_completed(self) -> Result<ZeroRttStatus, QuinnConnectionError> {
+    pub async fn handshake_completed(self) -> Result<ZeroRttStatus, AuthenticationError> {
         let accepted = self.accepted.await;
         let conn = conn_from_quinn_conn(self.inner)?;
 
@@ -903,7 +903,7 @@ impl IncomingZeroRttConnection {
     ///
     /// In practice this should only fail if someone connects to you with a modified iroh endpoint
     /// or with a plain QUIC client.
-    pub async fn handshake_completed(self) -> Result<Connection, QuinnConnectionError> {
+    pub async fn handshake_completed(self) -> Result<Connection, AuthenticationError> {
         self.accepted.await;
         conn_from_quinn_conn(self.inner)
     }
