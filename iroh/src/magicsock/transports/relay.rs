@@ -399,7 +399,7 @@ mod tests {
     async fn test_relay_datagram_queue() {
         let capacity = 16;
         let (sender, mut receiver) = mpsc::channel(capacity);
-        let url = staging::default_na_relay().url;
+        let url = staging::default_na_east_relay().url;
 
         let mut tasks = JoinSet::new();
 
