@@ -49,7 +49,9 @@ use snafu::{ResultExt, Snafu, ensure};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-pub use super::magicsock::{AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType};
+pub use super::magicsock::{
+    AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType, endpoint_map::Source,
+};
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
 #[cfg(not(wasm_browser))]
@@ -62,7 +64,6 @@ use crate::{
     magicsock::{
         self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, OwnAddressSnafu,
         PATH_MAX_IDLE_TIMEOUT, PathInfo,
-        endpoint_map::Source,
         mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
     },
     metrics::EndpointMetrics,

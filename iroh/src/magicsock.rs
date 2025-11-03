@@ -272,12 +272,12 @@ impl MagicSock {
         self.local_addrs_watch.clone().get()
     }
 
-    /// Registers the connection in the [`NodeStateActor`].
+    /// Registers the connection in the [`EndpointStateActor`].
     ///
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
     ///
-    /// [`NodeStateActor`]: crate::magicsock::node_map::node_state::NodeStateActor
+    /// [`EndpointStateActor`]: crate::magicsock::endpoint_map::endpoint_state::EndpointStateActor
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
@@ -298,13 +298,13 @@ impl MagicSock {
         // we'll end up changing Connecting::into_0rtt() to return a ZrttConnection.  Then
         // have a ZrttConnection::into_connection() function which can be async and actually
         // send this.  Before the handshake has completed we don't have anything useful to
-        // do with this connection inside of the NodeStateActor anyway.
+        // do with this connection inside of the EndpointStateActor anyway.
         let weak_handle = conn.weak_handle();
-        let node_state = self.endpoint_map.endpoint_state_actor(remote);
+        let endpoint_state = self.endpoint_map.endpoint_state_actor(remote);
         let msg = EndpointStateMessage::AddConnection(weak_handle, paths_info);
 
         tokio::task::spawn(async move {
-            node_state.send(msg).await.ok();
+            endpoint_state.send(msg).await.ok();
         });
     }
 
@@ -438,10 +438,10 @@ impl MagicSock {
         self.endpoint_map.endpoint_mapped_addr(eid)
     }
 
-    /// Add potential addresses for a node to the [`EndpointStateActor`].
+    /// Add potential addresses for a endpoint to the [`EndpointStateActor`].
     ///
-    /// This is used to add possible paths that the remote node might be reachable on.  They
-    /// will be used when there is no active connection to the node to attempt to establish
+    /// This is used to add possible paths that the remote endpoint might be reachable on.  They
+    /// will be used when there is no active connection to the endpoint to attempt to establish
     /// a connection.
     #[instrument(skip_all)]
     pub(crate) async fn add_endpoint_addr(
@@ -649,11 +649,11 @@ impl MagicSock {
                     transports::Addr::Ip(_addr) => {
                         quic_packets_total += quic_datagram_count;
                     }
-                    transports::Addr::Relay(src_url, src_node) => {
+                    transports::Addr::Relay(src_url, src_endpoint) => {
                         let mapped_addr = self
                             .endpoint_map
                             .relay_mapped_addrs
-                            .get(&(src_url.clone(), *src_node));
+                            .get(&(src_url.clone(), *src_endpoint));
                         quinn_meta.addr = mapped_addr.private_socket_addr();
                     }
                 }
@@ -1245,7 +1245,7 @@ fn default_quic_client_config() -> rustls::ClientConfig {
 
 #[derive(Debug, Clone)]
 struct DiscoState {
-    /// The EndpointId/PublikeKey of this node.
+    /// The EndpointId/PublikeKey of this endpoint.
     this_id: EndpointId,
     /// Encryption key for this endpoint.
     secret_encryption_key: Arc<crypto_box::SecretKey>,
@@ -2125,7 +2125,7 @@ mod tests {
     /// Returns a pair of endpoints with a shared [`StaticDiscovery`].
     ///
     /// The endpoints do not use a relay server but can connect to each other via local
-    /// addresses.  Dialing by [`NodeId`] is possible, and the addresses get updated even if
+    /// addresses.  Dialing by [`EndpointId`] is possible, and the addresses get updated even if
     /// the endpoints rebind.
     async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
         let discovery = StaticProvider::new();

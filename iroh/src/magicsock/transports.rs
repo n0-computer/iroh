@@ -677,7 +677,7 @@ impl quinn::UdpSender for MagicSender {
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
                         debug!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(),
-                            "NodeStateActor inbox {err:#}, dropped transmit");
+                            "EndpointStateActor inbox {err:#}, dropped transmit");
                         Poll::Ready(Ok(()))
                     }
                 };
@@ -689,7 +689,7 @@ impl quinn::UdpSender for MagicSender {
                     .relay_mapped_addrs
                     .lookup(&relay_mapped_addr)
                 {
-                    Some((relay_url, node_id)) => Addr::Relay(relay_url, node_id),
+                    Some((relay_url, endpoint_id)) => Addr::Relay(relay_url, endpoint_id),
                     None => {
                         error!("unknown RelayMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));

@@ -102,10 +102,9 @@ pub enum Source {
     /// We established a connection on this address.
     ///
     /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
-    /// was added to the [`NodeStateActor`].
+    /// was added to the `EndpointStateActor`.
     ///
     /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
-    /// [`NodeStateActor`]: self::node_state::NodeStateActor
     Connection,
 }
 
@@ -137,7 +136,7 @@ impl EndpointMap {
         }
     }
 
-    /// Adds addresses where a node might be contactable.
+    /// Adds addresses where a endpoint might be contactable.
     pub(super) async fn add_endpoint_addr(&self, endpoint_addr: EndpointAddr, source: Source) {
         for url in endpoint_addr.relay_urls() {
             // Ensure we have a RelayMappedAddress.
@@ -146,7 +145,7 @@ impl EndpointMap {
         }
         let actor = self.endpoint_state_actor(endpoint_addr.id);
 
-        // This only fails if the sender is closed.  That means the NodeStateActor has
+        // This only fails if the sender is closed.  That means the EndpointStateActor has
         // stopped, which only happens during shutdown.
         actor
             .send(EndpointStateMessage::AddEndpointAddr(endpoint_addr, source))
@@ -342,11 +341,11 @@ impl IpPort {
 
 /// An actor that can send datagrams onto iroh transports.
 ///
-/// The [`NodeStateActor`]s want to be able to send datagrams.  Because we can not create
-/// [`TransportsSender`]s on demand we must share one for the entire [`NodeMap`], which
+/// The [`EndpointStateActor`]s want to be able to send datagrams.  Because we can not create
+/// [`TransportsSender`]s on demand we must share one for the entire [`EndpointMap`], which
 /// lives in this actor.
 ///
-/// [`NodeStateActor`]: node_state::NodeStateActor
+/// [`EndpointStateActor`]: endpoint_state::EndpointStateActor
 #[derive(Debug)]
 struct TransportsSenderActor {
     sender: TransportsSender,

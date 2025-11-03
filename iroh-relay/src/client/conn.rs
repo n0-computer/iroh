@@ -11,7 +11,7 @@ use iroh_base::SecretKey;
 use n0_future::{Sink, Stream};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, Snafu};
-use tracing::{debug, trace};
+use tracing::trace;
 
 use super::KeyCache;
 #[cfg(not(wasm_browser))]
