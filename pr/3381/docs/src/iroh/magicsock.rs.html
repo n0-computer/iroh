@@ -303,7 +303,7 @@
 <a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>endpoint_state = <span class="self">self</span>.endpoint_map.endpoint_state_actor(remote);
 <a href=#304 id=304 data-nosnippet>304</a>        <span class="kw">let </span>msg = EndpointStateMessage::AddConnection(weak_handle, paths_info);
 <a href=#305 id=305 data-nosnippet>305</a>
-<a href=#306 id=306 data-nosnippet>306</a>        tokio::task::spawn(<span class="kw">async move </span>{
+<a href=#306 id=306 data-nosnippet>306</a>        task::spawn(<span class="kw">async move </span>{
 <a href=#307 id=307 data-nosnippet>307</a>            endpoint_state.send(msg).<span class="kw">await</span>.ok();
 <a href=#308 id=308 data-nosnippet>308</a>        });
 <a href=#309 id=309 data-nosnippet>309</a>    }
