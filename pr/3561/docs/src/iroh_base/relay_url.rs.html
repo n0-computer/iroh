@@ -51,7 +51,7 @@
 <a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= RelayUrlParseError;
 <a href=#52 id=52 data-nosnippet>52</a>
 <a href=#53 id=53 data-nosnippet>53</a>    <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>inner = Url::from_str(s).map_err(|err| RelayUrlParseError::new(err))<span class="question-mark">?</span>;
+<a href=#54 id=54 data-nosnippet>54</a>        <span class="kw">let </span>inner = Url::from_str(s).map_err(RelayUrlParseError::new)<span class="question-mark">?</span>;
 <a href=#55 id=55 data-nosnippet>55</a>        <span class="prelude-val">Ok</span>(RelayUrl::from(inner))
 <a href=#56 id=56 data-nosnippet>56</a>    }
 <a href=#57 id=57 data-nosnippet>57</a>}

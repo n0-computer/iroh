@@ -534,7 +534,7 @@
 <a href=#534 id=534 data-nosnippet>534</a><span class="attr">#[cfg(test)]
 <a href=#535 id=535 data-nosnippet>535</a></span><span class="kw">mod </span>tests {
 <a href=#536 id=536 data-nosnippet>536</a>    <span class="kw">use </span>iroh_base::SecretKey;
-<a href=#537 id=537 data-nosnippet>537</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
+<a href=#537 id=537 data-nosnippet>537</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt, bail_any};
 <a href=#538 id=538 data-nosnippet>538</a>    <span class="kw">use </span>n0_future::Stream;
 <a href=#539 id=539 data-nosnippet>539</a>    <span class="kw">use </span>rand::SeedableRng;
 <a href=#540 id=540 data-nosnippet>540</a>    <span class="kw">use </span>tracing::info;
@@ -553,7 +553,7 @@
 <a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">match </span>stream.next().<span class="kw">await </span>{
 <a href=#554 id=554 data-nosnippet>554</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(frame)) =&gt; {
 <a href=#555 id=555 data-nosnippet>555</a>                <span class="kw">if </span>frame_type != frame.typ() {
-<a href=#556 id=556 data-nosnippet>556</a>                    <span class="macro">n0_error::bail_any!</span>(
+<a href=#556 id=556 data-nosnippet>556</a>                    <span class="macro">bail_any!</span>(
 <a href=#557 id=557 data-nosnippet>557</a>                        <span class="string">"Unexpected frame, got {:?}, but expected {:?}"</span>,
 <a href=#558 id=558 data-nosnippet>558</a>                        frame.typ(),
 <a href=#559 id=559 data-nosnippet>559</a>                        frame_type
@@ -562,7 +562,7 @@
 <a href=#562 id=562 data-nosnippet>562</a>                <span class="prelude-val">Ok</span>(frame)
 <a href=#563 id=563 data-nosnippet>563</a>            }
 <a href=#564 id=564 data-nosnippet>564</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(err).anyerr(),
-<a href=#565 id=565 data-nosnippet>565</a>            <span class="prelude-val">None </span>=&gt; <span class="macro">n0_error::bail_any!</span>(<span class="string">"Unexpected EOF, expected frame {frame_type:?}"</span>),
+<a href=#565 id=565 data-nosnippet>565</a>            <span class="prelude-val">None </span>=&gt; <span class="macro">bail_any!</span>(<span class="string">"Unexpected EOF, expected frame {frame_type:?}"</span>),
 <a href=#566 id=566 data-nosnippet>566</a>        }
 <a href=#567 id=567 data-nosnippet>567</a>    }
 <a href=#568 id=568 data-nosnippet>568</a>

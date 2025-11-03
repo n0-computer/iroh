@@ -15,7 +15,7 @@
 <a href=#15 id=15 data-nosnippet>15</a>    service::Service,
 <a href=#16 id=16 data-nosnippet>16</a>    upgrade::Upgraded,
 <a href=#17 id=17 data-nosnippet>17</a>};
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>n0_error::{e, stack_error};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>n0_error::{e, ensure, stack_error};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>n0_future::time::Elapsed;
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
@@ -454,7 +454,7 @@
 <a href=#454 id=454 data-nosnippet>454</a>        }
 <a href=#455 id=455 data-nosnippet>455</a>
 <a href=#456 id=456 data-nosnippet>456</a>        <span class="kw">let </span>upgrade_header = expect_header(<span class="kw-2">&amp;</span>req, UPGRADE)<span class="question-mark">?</span>;
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">ensure!</span>(
 <a href=#458 id=458 data-nosnippet>458</a>            upgrade_header == HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
 <a href=#459 id=459 data-nosnippet>459</a>            RelayUpgradeReqError::InvalidHeader {
 <a href=#460 id=460 data-nosnippet>460</a>                header: UPGRADE,
@@ -465,7 +465,7 @@
 <a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">let </span>key = expect_header(<span class="kw-2">&amp;</span>req, SEC_WEBSOCKET_KEY)<span class="question-mark">?</span>.clone();
 <a href=#466 id=466 data-nosnippet>466</a>        <span class="kw">let </span>version = expect_header(<span class="kw-2">&amp;</span>req, SEC_WEBSOCKET_VERSION)<span class="question-mark">?</span>.clone();
 <a href=#467 id=467 data-nosnippet>467</a>
-<a href=#468 id=468 data-nosnippet>468</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#468 id=468 data-nosnippet>468</a>        <span class="macro">ensure!</span>(
 <a href=#469 id=469 data-nosnippet>469</a>            version.as_bytes() == SUPPORTED_WEBSOCKET_VERSION.as_bytes(),
 <a href=#470 id=470 data-nosnippet>470</a>            RelayUpgradeReqError::UnsupportedWebsocketVersion
 <a href=#471 id=471 data-nosnippet>471</a>        );
@@ -482,7 +482,7 @@
 <a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">let </span>supports_our_version = subprotocols
 <a href=#483 id=483 data-nosnippet>483</a>            .split_whitespace()
 <a href=#484 id=484 data-nosnippet>484</a>            .any(|p| p == RELAY_PROTOCOL_VERSION);
-<a href=#485 id=485 data-nosnippet>485</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#485 id=485 data-nosnippet>485</a>        <span class="macro">ensure!</span>(
 <a href=#486 id=486 data-nosnippet>486</a>            supports_our_version,
 <a href=#487 id=487 data-nosnippet>487</a>            RelayUpgradeReqError::UnsupportedRelayVersion {
 <a href=#488 id=488 data-nosnippet>488</a>                we_support: RELAY_PROTOCOL_VERSION,
