@@ -1514,7 +1514,6 @@ mod tests {
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .insecure_skip_relay_cert_verify(true)
-            .path_selection(crate::endpoint::PathSelection::RelayOnly)
             .bind()
             .await?;
 
