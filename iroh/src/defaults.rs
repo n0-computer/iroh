@@ -25,7 +25,7 @@ pub mod prod {
     /// Hostname of the default NA east relay.
     pub const NA_EAST_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
     /// Hostname of the default NA west relay.
-    pub const NA_WEST_RELAY_HOSTNAME: &str = "https://usw1-1.relay.n0.iroh-canary.iroh.link./";
+    pub const NA_WEST_RELAY_HOSTNAME: &str = "https://usw1-1.relay.n0.iroh-canary.iroh.link.";
     /// Hostname of the default EU relay.
     pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh-canary.iroh.link.";
     /// Hostname of the default Asia-Pacific relay.
