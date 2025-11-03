@@ -1491,9 +1491,9 @@ fn try_send_rtt_msg(conn: &quinn::Connection, ep: &Endpoint, remote_id: Endpoint
 #[cfg(test)]
 mod tests {
     use iroh_base::{EndpointAddr, SecretKey};
-    use n0_error::{Result, StdResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use rand::SeedableRng;
-    use tracing::{Instrument, info_span};
+    use tracing::{Instrument, info_span, trace_span};
     use tracing_test::traced_test;
 
     use super::Endpoint;
@@ -1515,6 +1515,7 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .insecure_skip_relay_cert_verify(true)
             .bind()
+            .instrument(log_span.clone())
             .await?;
 
         // Gets aborted via the endpoint closing causing an `Err`
@@ -1605,10 +1606,11 @@ mod tests {
         tracing::trace!(?server_addr, "Client connecting with 0-RTT");
         let zrtt_conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
-            .await?
+            .await
+            .context("connect")?
             .into_0rtt()
             .ok()
-            .anyerr()?;
+            .context("into_0rtt")?;
 
         tracing::trace!("Client established 0-RTT connection");
         // This is how we send data in 0-RTT:
@@ -1617,8 +1619,9 @@ mod tests {
         send.finish().anyerr()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
-        let zrtt_res = zrtt_conn.handshake_completed().await?;
+        let zrtt_res = zrtt_conn.handshake_completed().await;
         tracing::trace!(?zrtt_res, "Server responded to 0-RTT");
+        let zrtt_res = zrtt_res.context("handshake completed")?;
         let conn = match zrtt_res {
             ZeroRttStatus::Accepted(conn) => {
                 assert!(expect_server_accepts);
@@ -1706,9 +1709,11 @@ mod tests {
         let relay_mode = RelayMode::Custom(relay_map);
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let client = Endpoint::empty_builder(relay_mode.clone())
+            .secret_key(SecretKey::generate(&mut rng))
             .insecure_skip_relay_cert_verify(true)
             .path_selection(crate::endpoint::PathSelection::RelayOnly)
             .bind()
+            .instrument(info_span!("client"))
             .await?;
         let server_key = SecretKey::generate(&mut rng);
         let server = spawn_0rtt_server(
@@ -1719,8 +1724,14 @@ mod tests {
         .await?;
         tokio::join!(client.online(), server.online());
 
-        connect_client_0rtt_expect_err(&client, server.addr()).await?;
-        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
+        connect_client_0rtt_expect_err(&client, server.addr())
+            .instrument(trace_span!("connect1"))
+            .await
+            .context("client connect 1")?;
+        connect_client_0rtt_expect_ok(&client, server.addr(), true)
+            .instrument(trace_span!("connect2"))
+            .await
+            .context("client connect 2")?;
 
         // close server in background, no need to hold up the test for this.
         let server_close = tokio::spawn(async move {
@@ -1734,7 +1745,10 @@ mod tests {
         // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
         // but the server will reject the early data because it discarded necessary state
         // to decrypt it when restarting.
-        connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
+        connect_client_0rtt_expect_ok(&client, server.addr(), false)
+            .instrument(trace_span!("connect3"))
+            .await
+            .context("client connect 3")?;
 
         let (_, res) = tokio::join!(client.close(), server_close);
         res.expect("server close panicked");
