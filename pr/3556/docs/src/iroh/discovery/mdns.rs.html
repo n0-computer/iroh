@@ -546,287 +546,286 @@
 <a href=#546 id=546 data-nosnippet>546</a>    /// tests)
 <a href=#547 id=547 data-nosnippet>547</a>    </span><span class="kw">mod </span>run_in_isolation {
 <a href=#548 id=548 data-nosnippet>548</a>        <span class="kw">use </span>iroh_base::{SecretKey, TransportAddr};
-<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">use </span>n0_future::StreamExt;
-<a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
+<a href=#549 id=549 data-nosnippet>549</a>        <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt, bail_any};
+<a href=#550 id=550 data-nosnippet>550</a>        <span class="kw">use </span>n0_future::StreamExt;
 <a href=#551 id=551 data-nosnippet>551</a>        <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
-<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">use </span>snafu::whatever;
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">use </span>tracing_test::traced_test;
-<a href=#554 id=554 data-nosnippet>554</a>
-<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;
-<a href=#556 id=556 data-nosnippet>556</a>        <span class="kw">use </span><span class="kw">crate</span>::discovery::UserData;
-<a href=#557 id=557 data-nosnippet>557</a>
-<a href=#558 id=558 data-nosnippet>558</a>        <span class="attr">#[tokio::test]
-<a href=#559 id=559 data-nosnippet>559</a>        #[traced_test]
-<a href=#560 id=560 data-nosnippet>560</a>        </span><span class="kw">async fn </span>mdns_publish_resolve() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#561 id=561 data-nosnippet>561</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#562 id=562 data-nosnippet>562</a>
-<a href=#563 id=563 data-nosnippet>563</a>            <span class="comment">// Create discoverer A with advertise=false (only listens)
-<a href=#564 id=564 data-nosnippet>564</a>            </span><span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
-<a href=#565 id=565 data-nosnippet>565</a>            <span class="comment">// Create discoverer B with advertise=true (will broadcast)
-<a href=#566 id=566 data-nosnippet>566</a>            </span><span class="kw">let </span>(endpoint_id_b, discovery_b) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
-<a href=#567 id=567 data-nosnippet>567</a>
-<a href=#568 id=568 data-nosnippet>568</a>            <span class="comment">// make addr info for discoverer b
-<a href=#569 id=569 data-nosnippet>569</a>            </span><span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse()<span class="question-mark">?</span>;
-<a href=#570 id=570 data-nosnippet>570</a>            <span class="kw">let </span>endpoint_data =
-<a href=#571 id=571 data-nosnippet>571</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())])
-<a href=#572 id=572 data-nosnippet>572</a>                    .with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
-<a href=#573 id=573 data-nosnippet>573</a>
-<a href=#574 id=574 data-nosnippet>574</a>            <span class="comment">// resolve twice to ensure we can create separate streams for the same endpoint_id
-<a href=#575 id=575 data-nosnippet>575</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_a.subscribe().<span class="kw">await</span>.filter(|event| <span class="kw">match </span>event {
-<a href=#576 id=576 data-nosnippet>576</a>                DiscoveryEvent::Discovered { endpoint_info, .. } =&gt; {
-<a href=#577 id=577 data-nosnippet>577</a>                    endpoint_info.endpoint_id == endpoint_id_b
-<a href=#578 id=578 data-nosnippet>578</a>                }
-<a href=#579 id=579 data-nosnippet>579</a>                <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
-<a href=#580 id=580 data-nosnippet>580</a>            });
-<a href=#581 id=581 data-nosnippet>581</a>            <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_a.subscribe().<span class="kw">await</span>.filter(|event| <span class="kw">match </span>event {
-<a href=#582 id=582 data-nosnippet>582</a>                DiscoveryEvent::Discovered { endpoint_info, .. } =&gt; {
-<a href=#583 id=583 data-nosnippet>583</a>                    endpoint_info.endpoint_id == endpoint_id_b
-<a href=#584 id=584 data-nosnippet>584</a>                }
-<a href=#585 id=585 data-nosnippet>585</a>                <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
-<a href=#586 id=586 data-nosnippet>586</a>            });
-<a href=#587 id=587 data-nosnippet>587</a>
-<a href=#588 id=588 data-nosnippet>588</a>            <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>endpoint_id_b, <span class="string">"Discovering endpoint id b"</span>);
-<a href=#589 id=589 data-nosnippet>589</a>            <span class="comment">// publish discovery_b's address
-<a href=#590 id=590 data-nosnippet>590</a>            </span>discovery_b.publish(<span class="kw-2">&amp;</span>endpoint_data);
-<a href=#591 id=591 data-nosnippet>591</a>            <span class="kw">let </span>DiscoveryEvent::Discovered {
-<a href=#592 id=592 data-nosnippet>592</a>                endpoint_info: s1_endpoint_info,
-<a href=#593 id=593 data-nosnippet>593</a>                ..
-<a href=#594 id=594 data-nosnippet>594</a>            } = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
-<a href=#595 id=595 data-nosnippet>595</a>                .<span class="kw">await
-<a href=#596 id=596 data-nosnippet>596</a>                </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
-<a href=#597 id=597 data-nosnippet>597</a>                </span>.unwrap()
-<a href=#598 id=598 data-nosnippet>598</a>            <span class="kw">else </span>{
-<a href=#599 id=599 data-nosnippet>599</a>                <span class="macro">panic!</span>(<span class="string">"Received unexpected discovery event"</span>);
-<a href=#600 id=600 data-nosnippet>600</a>            };
-<a href=#601 id=601 data-nosnippet>601</a>            <span class="kw">let </span>DiscoveryEvent::Discovered {
-<a href=#602 id=602 data-nosnippet>602</a>                endpoint_info: s2_endpoint_info,
-<a href=#603 id=603 data-nosnippet>603</a>                ..
-<a href=#604 id=604 data-nosnippet>604</a>            } = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
-<a href=#605 id=605 data-nosnippet>605</a>                .<span class="kw">await
-<a href=#606 id=606 data-nosnippet>606</a>                </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
-<a href=#607 id=607 data-nosnippet>607</a>                </span>.unwrap()
-<a href=#608 id=608 data-nosnippet>608</a>            <span class="kw">else </span>{
-<a href=#609 id=609 data-nosnippet>609</a>                <span class="macro">panic!</span>(<span class="string">"Received unexpected discovery event"</span>);
-<a href=#610 id=610 data-nosnippet>610</a>            };
-<a href=#611 id=611 data-nosnippet>611</a>            <span class="macro">assert_eq!</span>(s1_endpoint_info.data, endpoint_data);
-<a href=#612 id=612 data-nosnippet>612</a>            <span class="macro">assert_eq!</span>(s2_endpoint_info.data, endpoint_data);
-<a href=#613 id=613 data-nosnippet>613</a>
-<a href=#614 id=614 data-nosnippet>614</a>            <span class="prelude-val">Ok</span>(())
-<a href=#615 id=615 data-nosnippet>615</a>        }
-<a href=#616 id=616 data-nosnippet>616</a>
-<a href=#617 id=617 data-nosnippet>617</a>        <span class="attr">#[tokio::test]
-<a href=#618 id=618 data-nosnippet>618</a>        #[traced_test]
-<a href=#619 id=619 data-nosnippet>619</a>        </span><span class="kw">async fn </span>mdns_publish_expire() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#620 id=620 data-nosnippet>620</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#621 id=621 data-nosnippet>621</a>            <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
-<a href=#622 id=622 data-nosnippet>622</a>            <span class="kw">let </span>(endpoint_id_b, discovery_b) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
-<a href=#623 id=623 data-nosnippet>623</a>
-<a href=#624 id=624 data-nosnippet>624</a>            <span class="comment">// publish discovery_b's address
-<a href=#625 id=625 data-nosnippet>625</a>            </span><span class="kw">let </span>endpoint_data =
-<a href=#626 id=626 data-nosnippet>626</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())])
-<a href=#627 id=627 data-nosnippet>627</a>                    .with_user_data(<span class="prelude-val">Some</span>(<span class="string">""</span>.parse()<span class="question-mark">?</span>));
-<a href=#628 id=628 data-nosnippet>628</a>            discovery_b.publish(<span class="kw-2">&amp;</span>endpoint_data);
-<a href=#629 id=629 data-nosnippet>629</a>
-<a href=#630 id=630 data-nosnippet>630</a>            <span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_a.subscribe().<span class="kw">await</span>;
-<a href=#631 id=631 data-nosnippet>631</a>            <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>endpoint_id_b, <span class="string">"Discovering endpoint id b"</span>);
-<a href=#632 id=632 data-nosnippet>632</a>
-<a href=#633 id=633 data-nosnippet>633</a>            <span class="comment">// Wait for the specific endpoint to be discovered
-<a href=#634 id=634 data-nosnippet>634</a>            </span><span class="kw">loop </span>{
-<a href=#635 id=635 data-nosnippet>635</a>                <span class="kw">let </span>event = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
-<a href=#636 id=636 data-nosnippet>636</a>                    .<span class="kw">await
-<a href=#637 id=637 data-nosnippet>637</a>                    </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
-<a href=#638 id=638 data-nosnippet>638</a>                    </span>.expect(<span class="string">"Stream should not be closed"</span>);
-<a href=#639 id=639 data-nosnippet>639</a>
-<a href=#640 id=640 data-nosnippet>640</a>                <span class="kw">match </span>event {
-<a href=#641 id=641 data-nosnippet>641</a>                    DiscoveryEvent::Discovered { endpoint_info, .. }
-<a href=#642 id=642 data-nosnippet>642</a>                        <span class="kw">if </span>endpoint_info.endpoint_id == endpoint_id_b =&gt;
-<a href=#643 id=643 data-nosnippet>643</a>                    {
-<a href=#644 id=644 data-nosnippet>644</a>                        <span class="kw">break</span>;
-<a href=#645 id=645 data-nosnippet>645</a>                    }
-<a href=#646 id=646 data-nosnippet>646</a>                    <span class="kw">_ </span>=&gt; <span class="kw">continue</span>, <span class="comment">// Ignore other discovery events
-<a href=#647 id=647 data-nosnippet>647</a>                </span>}
-<a href=#648 id=648 data-nosnippet>648</a>            }
-<a href=#649 id=649 data-nosnippet>649</a>
-<a href=#650 id=650 data-nosnippet>650</a>            <span class="comment">// Shutdown endpoint B
-<a href=#651 id=651 data-nosnippet>651</a>            </span>drop(discovery_b);
-<a href=#652 id=652 data-nosnippet>652</a>            tokio::time::sleep(Duration::from_secs(<span class="number">5</span>)).<span class="kw">await</span>;
-<a href=#653 id=653 data-nosnippet>653</a>
-<a href=#654 id=654 data-nosnippet>654</a>            <span class="comment">// Wait for the expiration event for the specific endpoint
-<a href=#655 id=655 data-nosnippet>655</a>            </span><span class="kw">loop </span>{
-<a href=#656 id=656 data-nosnippet>656</a>                <span class="kw">let </span>event = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), s1.next())
-<a href=#657 id=657 data-nosnippet>657</a>                    .<span class="kw">await
-<a href=#658 id=658 data-nosnippet>658</a>                    </span>.context(<span class="string">"timeout waiting for expiration event"</span>)<span class="question-mark">?
-<a href=#659 id=659 data-nosnippet>659</a>                    </span>.expect(<span class="string">"Stream should not be closed"</span>);
-<a href=#660 id=660 data-nosnippet>660</a>
-<a href=#661 id=661 data-nosnippet>661</a>                <span class="kw">match </span>event {
-<a href=#662 id=662 data-nosnippet>662</a>                    DiscoveryEvent::Expired {
-<a href=#663 id=663 data-nosnippet>663</a>                        endpoint_id: expired_endpoint_id,
-<a href=#664 id=664 data-nosnippet>664</a>                    } <span class="kw">if </span>expired_endpoint_id == endpoint_id_b =&gt; {
-<a href=#665 id=665 data-nosnippet>665</a>                        <span class="kw">break</span>;
-<a href=#666 id=666 data-nosnippet>666</a>                    }
-<a href=#667 id=667 data-nosnippet>667</a>                    <span class="kw">_ </span>=&gt; <span class="kw">continue</span>, <span class="comment">// Ignore other events
-<a href=#668 id=668 data-nosnippet>668</a>                </span>}
-<a href=#669 id=669 data-nosnippet>669</a>            }
-<a href=#670 id=670 data-nosnippet>670</a>
-<a href=#671 id=671 data-nosnippet>671</a>            <span class="prelude-val">Ok</span>(())
-<a href=#672 id=672 data-nosnippet>672</a>        }
-<a href=#673 id=673 data-nosnippet>673</a>
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="attr">#[tokio::test]
-<a href=#675 id=675 data-nosnippet>675</a>        #[traced_test]
-<a href=#676 id=676 data-nosnippet>676</a>        </span><span class="kw">async fn </span>mdns_subscribe() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#677 id=677 data-nosnippet>677</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#678 id=678 data-nosnippet>678</a>
-<a href=#679 id=679 data-nosnippet>679</a>            <span class="kw">let </span>num_endpoints = <span class="number">5</span>;
-<a href=#680 id=680 data-nosnippet>680</a>            <span class="kw">let </span><span class="kw-2">mut </span>endpoint_ids = BTreeSet::new();
-<a href=#681 id=681 data-nosnippet>681</a>            <span class="kw">let </span><span class="kw-2">mut </span>discoverers = <span class="macro">vec!</span>[];
-<a href=#682 id=682 data-nosnippet>682</a>
-<a href=#683 id=683 data-nosnippet>683</a>            <span class="kw">let </span>(<span class="kw">_</span>, discovery) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
-<a href=#684 id=684 data-nosnippet>684</a>            <span class="kw">let </span>endpoint_data =
-<a href=#685 id=685 data-nosnippet>685</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())]);
-<a href=#686 id=686 data-nosnippet>686</a>
-<a href=#687 id=687 data-nosnippet>687</a>            <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..num_endpoints {
-<a href=#688 id=688 data-nosnippet>688</a>                <span class="kw">let </span>(endpoint_id, discovery) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
-<a href=#689 id=689 data-nosnippet>689</a>                <span class="kw">let </span>user_data: UserData = <span class="macro">format!</span>(<span class="string">"endpoint{i}"</span>).parse()<span class="question-mark">?</span>;
-<a href=#690 id=690 data-nosnippet>690</a>                <span class="kw">let </span>endpoint_data = endpoint_data
-<a href=#691 id=691 data-nosnippet>691</a>                    .clone()
-<a href=#692 id=692 data-nosnippet>692</a>                    .with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
-<a href=#693 id=693 data-nosnippet>693</a>                endpoint_ids.insert((endpoint_id, <span class="prelude-val">Some</span>(user_data)));
-<a href=#694 id=694 data-nosnippet>694</a>                discovery.publish(<span class="kw-2">&amp;</span>endpoint_data);
-<a href=#695 id=695 data-nosnippet>695</a>                discoverers.push(discovery);
-<a href=#696 id=696 data-nosnippet>696</a>            }
-<a href=#697 id=697 data-nosnippet>697</a>
-<a href=#698 id=698 data-nosnippet>698</a>            <span class="kw">let </span><span class="kw-2">mut </span>events = discovery.subscribe().<span class="kw">await</span>;
-<a href=#699 id=699 data-nosnippet>699</a>
-<a href=#700 id=700 data-nosnippet>700</a>            <span class="kw">let </span>test = <span class="kw">async move </span>{
-<a href=#701 id=701 data-nosnippet>701</a>                <span class="kw">let </span><span class="kw-2">mut </span>got_ids = BTreeSet::new();
-<a href=#702 id=702 data-nosnippet>702</a>                <span class="kw">while </span>got_ids.len() != num_endpoints {
-<a href=#703 id=703 data-nosnippet>703</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(DiscoveryEvent::Discovered { endpoint_info, .. }) =
-<a href=#704 id=704 data-nosnippet>704</a>                        events.next().<span class="kw">await
-<a href=#705 id=705 data-nosnippet>705</a>                    </span>{
-<a href=#706 id=706 data-nosnippet>706</a>                        <span class="kw">let </span>data = endpoint_info.data.user_data().cloned();
-<a href=#707 id=707 data-nosnippet>707</a>                        <span class="kw">if </span>endpoint_ids.contains(<span class="kw-2">&amp;</span>(endpoint_info.endpoint_id, data.clone())) {
-<a href=#708 id=708 data-nosnippet>708</a>                            got_ids.insert((endpoint_info.endpoint_id, data));
-<a href=#709 id=709 data-nosnippet>709</a>                        }
-<a href=#710 id=710 data-nosnippet>710</a>                    } <span class="kw">else </span>{
-<a href=#711 id=711 data-nosnippet>711</a>                        <span class="macro">whatever!</span>(
-<a href=#712 id=712 data-nosnippet>712</a>                            <span class="string">"no more events, only got {} ids, expected {num_endpoints}\n"</span>,
-<a href=#713 id=713 data-nosnippet>713</a>                            got_ids.len()
-<a href=#714 id=714 data-nosnippet>714</a>                        );
-<a href=#715 id=715 data-nosnippet>715</a>                    }
-<a href=#716 id=716 data-nosnippet>716</a>                }
-<a href=#717 id=717 data-nosnippet>717</a>                <span class="macro">assert_eq!</span>(got_ids, endpoint_ids);
-<a href=#718 id=718 data-nosnippet>718</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
-<a href=#719 id=719 data-nosnippet>719</a>            };
-<a href=#720 id=720 data-nosnippet>720</a>            tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), test)
-<a href=#721 id=721 data-nosnippet>721</a>                .<span class="kw">await
-<a href=#722 id=722 data-nosnippet>722</a>                </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
-<a href=#723 id=723 data-nosnippet>723</a>        </span>}
-<a href=#724 id=724 data-nosnippet>724</a>
-<a href=#725 id=725 data-nosnippet>725</a>        <span class="attr">#[tokio::test]
-<a href=#726 id=726 data-nosnippet>726</a>        #[traced_test]
-<a href=#727 id=727 data-nosnippet>727</a>        </span><span class="kw">async fn </span>non_advertising_endpoint_not_discovered() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#728 id=728 data-nosnippet>728</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#729 id=729 data-nosnippet>729</a>
-<a href=#730 id=730 data-nosnippet>730</a>            <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
-<a href=#731 id=731 data-nosnippet>731</a>            <span class="kw">let </span>(endpoint_id_b, discovery_b) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
-<a href=#732 id=732 data-nosnippet>732</a>
-<a href=#733 id=733 data-nosnippet>733</a>            <span class="kw">let </span>(endpoint_id_c, discovery_c) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
-<a href=#734 id=734 data-nosnippet>734</a>            <span class="kw">let </span>endpoint_data_c =
-<a href=#735 id=735 data-nosnippet>735</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:22222"</span>.parse().unwrap())]);
-<a href=#736 id=736 data-nosnippet>736</a>            discovery_c.publish(<span class="kw-2">&amp;</span>endpoint_data_c);
-<a href=#737 id=737 data-nosnippet>737</a>
-<a href=#738 id=738 data-nosnippet>738</a>            <span class="kw">let </span>endpoint_data_b =
-<a href=#739 id=739 data-nosnippet>739</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())]);
-<a href=#740 id=740 data-nosnippet>740</a>            discovery_b.publish(<span class="kw-2">&amp;</span>endpoint_data_b);
-<a href=#741 id=741 data-nosnippet>741</a>
-<a href=#742 id=742 data-nosnippet>742</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_c = discovery_a.resolve(endpoint_id_c).unwrap();
-<a href=#743 id=743 data-nosnippet>743</a>            <span class="kw">let </span>result_c = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_c.next()).<span class="kw">await</span>;
-<a href=#744 id=744 data-nosnippet>744</a>            <span class="macro">assert!</span>(
-<a href=#745 id=745 data-nosnippet>745</a>                result_c.is_ok(),
-<a href=#746 id=746 data-nosnippet>746</a>                <span class="string">"Advertising endpoint should be discoverable"
-<a href=#747 id=747 data-nosnippet>747</a>            </span>);
-<a href=#748 id=748 data-nosnippet>748</a>
-<a href=#749 id=749 data-nosnippet>749</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_b = discovery_a.resolve(endpoint_id_b).unwrap();
-<a href=#750 id=750 data-nosnippet>750</a>            <span class="kw">let </span>result_b = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_b.next()).<span class="kw">await</span>;
-<a href=#751 id=751 data-nosnippet>751</a>            <span class="macro">assert!</span>(
-<a href=#752 id=752 data-nosnippet>752</a>                result_b.is_err(),
-<a href=#753 id=753 data-nosnippet>753</a>                <span class="string">"Expected timeout since endpoint b isn't advertising"
-<a href=#754 id=754 data-nosnippet>754</a>            </span>);
-<a href=#755 id=755 data-nosnippet>755</a>
-<a href=#756 id=756 data-nosnippet>756</a>            <span class="prelude-val">Ok</span>(())
-<a href=#757 id=757 data-nosnippet>757</a>        }
-<a href=#758 id=758 data-nosnippet>758</a>
-<a href=#759 id=759 data-nosnippet>759</a>        <span class="attr">#[tokio::test]
-<a href=#760 id=760 data-nosnippet>760</a>        #[traced_test]
-<a href=#761 id=761 data-nosnippet>761</a>        </span><span class="kw">async fn </span>test_service_names() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#762 id=762 data-nosnippet>762</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#763 id=763 data-nosnippet>763</a>
-<a href=#764 id=764 data-nosnippet>764</a>            <span class="comment">// Create a discovery service using the default
-<a href=#765 id=765 data-nosnippet>765</a>            // service name
-<a href=#766 id=766 data-nosnippet>766</a>            </span><span class="kw">let </span>id_a = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#767 id=767 data-nosnippet>767</a>            <span class="kw">let </span>discovery_a = MdnsDiscovery::builder().build(id_a)<span class="question-mark">?</span>;
-<a href=#768 id=768 data-nosnippet>768</a>
-<a href=#769 id=769 data-nosnippet>769</a>            <span class="comment">// Create a discovery service using a custom
-<a href=#770 id=770 data-nosnippet>770</a>            // service name
-<a href=#771 id=771 data-nosnippet>771</a>            </span><span class="kw">let </span>id_b = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#772 id=772 data-nosnippet>772</a>            <span class="kw">let </span>discovery_b = MdnsDiscovery::builder()
-<a href=#773 id=773 data-nosnippet>773</a>                .service_name(<span class="string">"different.name"</span>)
-<a href=#774 id=774 data-nosnippet>774</a>                .build(id_b)<span class="question-mark">?</span>;
-<a href=#775 id=775 data-nosnippet>775</a>
-<a href=#776 id=776 data-nosnippet>776</a>            <span class="comment">// Create a discovery service using the same
-<a href=#777 id=777 data-nosnippet>777</a>            // custom service name
-<a href=#778 id=778 data-nosnippet>778</a>            </span><span class="kw">let </span>id_c = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
-<a href=#779 id=779 data-nosnippet>779</a>            <span class="kw">let </span>discovery_c = MdnsDiscovery::builder()
-<a href=#780 id=780 data-nosnippet>780</a>                .service_name(<span class="string">"different.name"</span>)
-<a href=#781 id=781 data-nosnippet>781</a>                .build(id_c)<span class="question-mark">?</span>;
-<a href=#782 id=782 data-nosnippet>782</a>
-<a href=#783 id=783 data-nosnippet>783</a>            <span class="kw">let </span>endpoint_data_a =
-<a href=#784 id=784 data-nosnippet>784</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())]);
-<a href=#785 id=785 data-nosnippet>785</a>            discovery_a.publish(<span class="kw-2">&amp;</span>endpoint_data_a);
-<a href=#786 id=786 data-nosnippet>786</a>
-<a href=#787 id=787 data-nosnippet>787</a>            <span class="kw">let </span>endpoint_data_b =
-<a href=#788 id=788 data-nosnippet>788</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:22222"</span>.parse().unwrap())]);
-<a href=#789 id=789 data-nosnippet>789</a>            discovery_b.publish(<span class="kw-2">&amp;</span>endpoint_data_b);
-<a href=#790 id=790 data-nosnippet>790</a>
-<a href=#791 id=791 data-nosnippet>791</a>            <span class="kw">let </span>endpoint_data_c =
-<a href=#792 id=792 data-nosnippet>792</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:33333"</span>.parse().unwrap())]);
-<a href=#793 id=793 data-nosnippet>793</a>            discovery_c.publish(<span class="kw-2">&amp;</span>endpoint_data_c);
-<a href=#794 id=794 data-nosnippet>794</a>
-<a href=#795 id=795 data-nosnippet>795</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_a = discovery_a.resolve(id_b).unwrap();
-<a href=#796 id=796 data-nosnippet>796</a>            <span class="kw">let </span>result_a = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_a.next()).<span class="kw">await</span>;
-<a href=#797 id=797 data-nosnippet>797</a>            <span class="macro">assert!</span>(
-<a href=#798 id=798 data-nosnippet>798</a>                result_a.is_err(),
-<a href=#799 id=799 data-nosnippet>799</a>                <span class="string">"Endpoint on a different service should NOT be discoverable"
-<a href=#800 id=800 data-nosnippet>800</a>            </span>);
-<a href=#801 id=801 data-nosnippet>801</a>
-<a href=#802 id=802 data-nosnippet>802</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_b = discovery_b.resolve(id_c).unwrap();
-<a href=#803 id=803 data-nosnippet>803</a>            <span class="kw">let </span>result_b = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_b.next()).<span class="kw">await</span>;
-<a href=#804 id=804 data-nosnippet>804</a>            <span class="macro">assert!</span>(
-<a href=#805 id=805 data-nosnippet>805</a>                result_b.is_ok(),
-<a href=#806 id=806 data-nosnippet>806</a>                <span class="string">"Endpoint on the same service should be discoverable"
-<a href=#807 id=807 data-nosnippet>807</a>            </span>);
-<a href=#808 id=808 data-nosnippet>808</a>
-<a href=#809 id=809 data-nosnippet>809</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_b = discovery_b.resolve(id_a).unwrap();
-<a href=#810 id=810 data-nosnippet>810</a>            <span class="kw">let </span>result_b = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_b.next()).<span class="kw">await</span>;
-<a href=#811 id=811 data-nosnippet>811</a>            <span class="macro">assert!</span>(
-<a href=#812 id=812 data-nosnippet>812</a>                result_b.is_err(),
-<a href=#813 id=813 data-nosnippet>813</a>                <span class="string">"Endpoint on a different service should NOT be discoverable"
-<a href=#814 id=814 data-nosnippet>814</a>            </span>);
-<a href=#815 id=815 data-nosnippet>815</a>
-<a href=#816 id=816 data-nosnippet>816</a>            <span class="prelude-val">Ok</span>(())
-<a href=#817 id=817 data-nosnippet>817</a>        }
-<a href=#818 id=818 data-nosnippet>818</a>
-<a href=#819 id=819 data-nosnippet>819</a>        <span class="kw">fn </span>make_discoverer&lt;R: CryptoRng + <span class="question-mark">?</span>Sized&gt;(
-<a href=#820 id=820 data-nosnippet>820</a>            rng: <span class="kw-2">&amp;mut </span>R,
-<a href=#821 id=821 data-nosnippet>821</a>            advertise: bool,
-<a href=#822 id=822 data-nosnippet>822</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, MdnsDiscovery)&gt; {
-<a href=#823 id=823 data-nosnippet>823</a>            <span class="kw">let </span>endpoint_id = SecretKey::generate(rng).public();
-<a href=#824 id=824 data-nosnippet>824</a>            <span class="prelude-val">Ok</span>((
-<a href=#825 id=825 data-nosnippet>825</a>                endpoint_id,
-<a href=#826 id=826 data-nosnippet>826</a>                MdnsDiscovery::builder()
-<a href=#827 id=827 data-nosnippet>827</a>                    .advertise(advertise)
-<a href=#828 id=828 data-nosnippet>828</a>                    .build(endpoint_id)<span class="question-mark">?</span>,
-<a href=#829 id=829 data-nosnippet>829</a>            ))
-<a href=#830 id=830 data-nosnippet>830</a>        }
-<a href=#831 id=831 data-nosnippet>831</a>    }
-<a href=#832 id=832 data-nosnippet>832</a>}</code></pre></div></section></main></body></html>
+<a href=#552 id=552 data-nosnippet>552</a>        <span class="kw">use </span>tracing_test::traced_test;
+<a href=#553 id=553 data-nosnippet>553</a>
+<a href=#554 id=554 data-nosnippet>554</a>        <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;
+<a href=#555 id=555 data-nosnippet>555</a>        <span class="kw">use </span><span class="kw">crate</span>::discovery::UserData;
+<a href=#556 id=556 data-nosnippet>556</a>
+<a href=#557 id=557 data-nosnippet>557</a>        <span class="attr">#[tokio::test]
+<a href=#558 id=558 data-nosnippet>558</a>        #[traced_test]
+<a href=#559 id=559 data-nosnippet>559</a>        </span><span class="kw">async fn </span>mdns_publish_resolve() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#560 id=560 data-nosnippet>560</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#561 id=561 data-nosnippet>561</a>
+<a href=#562 id=562 data-nosnippet>562</a>            <span class="comment">// Create discoverer A with advertise=false (only listens)
+<a href=#563 id=563 data-nosnippet>563</a>            </span><span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#564 id=564 data-nosnippet>564</a>            <span class="comment">// Create discoverer B with advertise=true (will broadcast)
+<a href=#565 id=565 data-nosnippet>565</a>            </span><span class="kw">let </span>(endpoint_id_b, discovery_b) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+<a href=#566 id=566 data-nosnippet>566</a>
+<a href=#567 id=567 data-nosnippet>567</a>            <span class="comment">// make addr info for discoverer b
+<a href=#568 id=568 data-nosnippet>568</a>            </span><span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse()<span class="question-mark">?</span>;
+<a href=#569 id=569 data-nosnippet>569</a>            <span class="kw">let </span>endpoint_data =
+<a href=#570 id=570 data-nosnippet>570</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())])
+<a href=#571 id=571 data-nosnippet>571</a>                    .with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
+<a href=#572 id=572 data-nosnippet>572</a>
+<a href=#573 id=573 data-nosnippet>573</a>            <span class="comment">// resolve twice to ensure we can create separate streams for the same endpoint_id
+<a href=#574 id=574 data-nosnippet>574</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_a.subscribe().<span class="kw">await</span>.filter(|event| <span class="kw">match </span>event {
+<a href=#575 id=575 data-nosnippet>575</a>                DiscoveryEvent::Discovered { endpoint_info, .. } =&gt; {
+<a href=#576 id=576 data-nosnippet>576</a>                    endpoint_info.endpoint_id == endpoint_id_b
+<a href=#577 id=577 data-nosnippet>577</a>                }
+<a href=#578 id=578 data-nosnippet>578</a>                <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+<a href=#579 id=579 data-nosnippet>579</a>            });
+<a href=#580 id=580 data-nosnippet>580</a>            <span class="kw">let </span><span class="kw-2">mut </span>s2 = discovery_a.subscribe().<span class="kw">await</span>.filter(|event| <span class="kw">match </span>event {
+<a href=#581 id=581 data-nosnippet>581</a>                DiscoveryEvent::Discovered { endpoint_info, .. } =&gt; {
+<a href=#582 id=582 data-nosnippet>582</a>                    endpoint_info.endpoint_id == endpoint_id_b
+<a href=#583 id=583 data-nosnippet>583</a>                }
+<a href=#584 id=584 data-nosnippet>584</a>                <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
+<a href=#585 id=585 data-nosnippet>585</a>            });
+<a href=#586 id=586 data-nosnippet>586</a>
+<a href=#587 id=587 data-nosnippet>587</a>            <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>endpoint_id_b, <span class="string">"Discovering endpoint id b"</span>);
+<a href=#588 id=588 data-nosnippet>588</a>            <span class="comment">// publish discovery_b's address
+<a href=#589 id=589 data-nosnippet>589</a>            </span>discovery_b.publish(<span class="kw-2">&amp;</span>endpoint_data);
+<a href=#590 id=590 data-nosnippet>590</a>            <span class="kw">let </span>DiscoveryEvent::Discovered {
+<a href=#591 id=591 data-nosnippet>591</a>                endpoint_info: s1_endpoint_info,
+<a href=#592 id=592 data-nosnippet>592</a>                ..
+<a href=#593 id=593 data-nosnippet>593</a>            } = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
+<a href=#594 id=594 data-nosnippet>594</a>                .<span class="kw">await
+<a href=#595 id=595 data-nosnippet>595</a>                </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#596 id=596 data-nosnippet>596</a>                </span>.unwrap()
+<a href=#597 id=597 data-nosnippet>597</a>            <span class="kw">else </span>{
+<a href=#598 id=598 data-nosnippet>598</a>                <span class="macro">panic!</span>(<span class="string">"Received unexpected discovery event"</span>);
+<a href=#599 id=599 data-nosnippet>599</a>            };
+<a href=#600 id=600 data-nosnippet>600</a>            <span class="kw">let </span>DiscoveryEvent::Discovered {
+<a href=#601 id=601 data-nosnippet>601</a>                endpoint_info: s2_endpoint_info,
+<a href=#602 id=602 data-nosnippet>602</a>                ..
+<a href=#603 id=603 data-nosnippet>603</a>            } = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
+<a href=#604 id=604 data-nosnippet>604</a>                .<span class="kw">await
+<a href=#605 id=605 data-nosnippet>605</a>                </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#606 id=606 data-nosnippet>606</a>                </span>.unwrap()
+<a href=#607 id=607 data-nosnippet>607</a>            <span class="kw">else </span>{
+<a href=#608 id=608 data-nosnippet>608</a>                <span class="macro">panic!</span>(<span class="string">"Received unexpected discovery event"</span>);
+<a href=#609 id=609 data-nosnippet>609</a>            };
+<a href=#610 id=610 data-nosnippet>610</a>            <span class="macro">assert_eq!</span>(s1_endpoint_info.data, endpoint_data);
+<a href=#611 id=611 data-nosnippet>611</a>            <span class="macro">assert_eq!</span>(s2_endpoint_info.data, endpoint_data);
+<a href=#612 id=612 data-nosnippet>612</a>
+<a href=#613 id=613 data-nosnippet>613</a>            <span class="prelude-val">Ok</span>(())
+<a href=#614 id=614 data-nosnippet>614</a>        }
+<a href=#615 id=615 data-nosnippet>615</a>
+<a href=#616 id=616 data-nosnippet>616</a>        <span class="attr">#[tokio::test]
+<a href=#617 id=617 data-nosnippet>617</a>        #[traced_test]
+<a href=#618 id=618 data-nosnippet>618</a>        </span><span class="kw">async fn </span>mdns_publish_expire() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#619 id=619 data-nosnippet>619</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#620 id=620 data-nosnippet>620</a>            <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#621 id=621 data-nosnippet>621</a>            <span class="kw">let </span>(endpoint_id_b, discovery_b) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+<a href=#622 id=622 data-nosnippet>622</a>
+<a href=#623 id=623 data-nosnippet>623</a>            <span class="comment">// publish discovery_b's address
+<a href=#624 id=624 data-nosnippet>624</a>            </span><span class="kw">let </span>endpoint_data =
+<a href=#625 id=625 data-nosnippet>625</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())])
+<a href=#626 id=626 data-nosnippet>626</a>                    .with_user_data(<span class="prelude-val">Some</span>(<span class="string">""</span>.parse()<span class="question-mark">?</span>));
+<a href=#627 id=627 data-nosnippet>627</a>            discovery_b.publish(<span class="kw-2">&amp;</span>endpoint_data);
+<a href=#628 id=628 data-nosnippet>628</a>
+<a href=#629 id=629 data-nosnippet>629</a>            <span class="kw">let </span><span class="kw-2">mut </span>s1 = discovery_a.subscribe().<span class="kw">await</span>;
+<a href=#630 id=630 data-nosnippet>630</a>            <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>endpoint_id_b, <span class="string">"Discovering endpoint id b"</span>);
+<a href=#631 id=631 data-nosnippet>631</a>
+<a href=#632 id=632 data-nosnippet>632</a>            <span class="comment">// Wait for the specific endpoint to be discovered
+<a href=#633 id=633 data-nosnippet>633</a>            </span><span class="kw">loop </span>{
+<a href=#634 id=634 data-nosnippet>634</a>                <span class="kw">let </span>event = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
+<a href=#635 id=635 data-nosnippet>635</a>                    .<span class="kw">await
+<a href=#636 id=636 data-nosnippet>636</a>                    </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#637 id=637 data-nosnippet>637</a>                    </span>.expect(<span class="string">"Stream should not be closed"</span>);
+<a href=#638 id=638 data-nosnippet>638</a>
+<a href=#639 id=639 data-nosnippet>639</a>                <span class="kw">match </span>event {
+<a href=#640 id=640 data-nosnippet>640</a>                    DiscoveryEvent::Discovered { endpoint_info, .. }
+<a href=#641 id=641 data-nosnippet>641</a>                        <span class="kw">if </span>endpoint_info.endpoint_id == endpoint_id_b =&gt;
+<a href=#642 id=642 data-nosnippet>642</a>                    {
+<a href=#643 id=643 data-nosnippet>643</a>                        <span class="kw">break</span>;
+<a href=#644 id=644 data-nosnippet>644</a>                    }
+<a href=#645 id=645 data-nosnippet>645</a>                    <span class="kw">_ </span>=&gt; <span class="kw">continue</span>, <span class="comment">// Ignore other discovery events
+<a href=#646 id=646 data-nosnippet>646</a>                </span>}
+<a href=#647 id=647 data-nosnippet>647</a>            }
+<a href=#648 id=648 data-nosnippet>648</a>
+<a href=#649 id=649 data-nosnippet>649</a>            <span class="comment">// Shutdown endpoint B
+<a href=#650 id=650 data-nosnippet>650</a>            </span>drop(discovery_b);
+<a href=#651 id=651 data-nosnippet>651</a>            tokio::time::sleep(Duration::from_secs(<span class="number">5</span>)).<span class="kw">await</span>;
+<a href=#652 id=652 data-nosnippet>652</a>
+<a href=#653 id=653 data-nosnippet>653</a>            <span class="comment">// Wait for the expiration event for the specific endpoint
+<a href=#654 id=654 data-nosnippet>654</a>            </span><span class="kw">loop </span>{
+<a href=#655 id=655 data-nosnippet>655</a>                <span class="kw">let </span>event = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), s1.next())
+<a href=#656 id=656 data-nosnippet>656</a>                    .<span class="kw">await
+<a href=#657 id=657 data-nosnippet>657</a>                    </span>.std_context(<span class="string">"timeout waiting for expiration event"</span>)<span class="question-mark">?
+<a href=#658 id=658 data-nosnippet>658</a>                    </span>.expect(<span class="string">"Stream should not be closed"</span>);
+<a href=#659 id=659 data-nosnippet>659</a>
+<a href=#660 id=660 data-nosnippet>660</a>                <span class="kw">match </span>event {
+<a href=#661 id=661 data-nosnippet>661</a>                    DiscoveryEvent::Expired {
+<a href=#662 id=662 data-nosnippet>662</a>                        endpoint_id: expired_endpoint_id,
+<a href=#663 id=663 data-nosnippet>663</a>                    } <span class="kw">if </span>expired_endpoint_id == endpoint_id_b =&gt; {
+<a href=#664 id=664 data-nosnippet>664</a>                        <span class="kw">break</span>;
+<a href=#665 id=665 data-nosnippet>665</a>                    }
+<a href=#666 id=666 data-nosnippet>666</a>                    <span class="kw">_ </span>=&gt; <span class="kw">continue</span>, <span class="comment">// Ignore other events
+<a href=#667 id=667 data-nosnippet>667</a>                </span>}
+<a href=#668 id=668 data-nosnippet>668</a>            }
+<a href=#669 id=669 data-nosnippet>669</a>
+<a href=#670 id=670 data-nosnippet>670</a>            <span class="prelude-val">Ok</span>(())
+<a href=#671 id=671 data-nosnippet>671</a>        }
+<a href=#672 id=672 data-nosnippet>672</a>
+<a href=#673 id=673 data-nosnippet>673</a>        <span class="attr">#[tokio::test]
+<a href=#674 id=674 data-nosnippet>674</a>        #[traced_test]
+<a href=#675 id=675 data-nosnippet>675</a>        </span><span class="kw">async fn </span>mdns_subscribe() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#676 id=676 data-nosnippet>676</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#677 id=677 data-nosnippet>677</a>
+<a href=#678 id=678 data-nosnippet>678</a>            <span class="kw">let </span>num_endpoints = <span class="number">5</span>;
+<a href=#679 id=679 data-nosnippet>679</a>            <span class="kw">let </span><span class="kw-2">mut </span>endpoint_ids = BTreeSet::new();
+<a href=#680 id=680 data-nosnippet>680</a>            <span class="kw">let </span><span class="kw-2">mut </span>discoverers = <span class="macro">vec!</span>[];
+<a href=#681 id=681 data-nosnippet>681</a>
+<a href=#682 id=682 data-nosnippet>682</a>            <span class="kw">let </span>(<span class="kw">_</span>, discovery) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#683 id=683 data-nosnippet>683</a>            <span class="kw">let </span>endpoint_data =
+<a href=#684 id=684 data-nosnippet>684</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())]);
+<a href=#685 id=685 data-nosnippet>685</a>
+<a href=#686 id=686 data-nosnippet>686</a>            <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..num_endpoints {
+<a href=#687 id=687 data-nosnippet>687</a>                <span class="kw">let </span>(endpoint_id, discovery) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+<a href=#688 id=688 data-nosnippet>688</a>                <span class="kw">let </span>user_data: UserData = <span class="macro">format!</span>(<span class="string">"endpoint{i}"</span>).parse()<span class="question-mark">?</span>;
+<a href=#689 id=689 data-nosnippet>689</a>                <span class="kw">let </span>endpoint_data = endpoint_data
+<a href=#690 id=690 data-nosnippet>690</a>                    .clone()
+<a href=#691 id=691 data-nosnippet>691</a>                    .with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
+<a href=#692 id=692 data-nosnippet>692</a>                endpoint_ids.insert((endpoint_id, <span class="prelude-val">Some</span>(user_data)));
+<a href=#693 id=693 data-nosnippet>693</a>                discovery.publish(<span class="kw-2">&amp;</span>endpoint_data);
+<a href=#694 id=694 data-nosnippet>694</a>                discoverers.push(discovery);
+<a href=#695 id=695 data-nosnippet>695</a>            }
+<a href=#696 id=696 data-nosnippet>696</a>
+<a href=#697 id=697 data-nosnippet>697</a>            <span class="kw">let </span><span class="kw-2">mut </span>events = discovery.subscribe().<span class="kw">await</span>;
+<a href=#698 id=698 data-nosnippet>698</a>
+<a href=#699 id=699 data-nosnippet>699</a>            <span class="kw">let </span>test = <span class="kw">async move </span>{
+<a href=#700 id=700 data-nosnippet>700</a>                <span class="kw">let </span><span class="kw-2">mut </span>got_ids = BTreeSet::new();
+<a href=#701 id=701 data-nosnippet>701</a>                <span class="kw">while </span>got_ids.len() != num_endpoints {
+<a href=#702 id=702 data-nosnippet>702</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(DiscoveryEvent::Discovered { endpoint_info, .. }) =
+<a href=#703 id=703 data-nosnippet>703</a>                        events.next().<span class="kw">await
+<a href=#704 id=704 data-nosnippet>704</a>                    </span>{
+<a href=#705 id=705 data-nosnippet>705</a>                        <span class="kw">let </span>data = endpoint_info.data.user_data().cloned();
+<a href=#706 id=706 data-nosnippet>706</a>                        <span class="kw">if </span>endpoint_ids.contains(<span class="kw-2">&amp;</span>(endpoint_info.endpoint_id, data.clone())) {
+<a href=#707 id=707 data-nosnippet>707</a>                            got_ids.insert((endpoint_info.endpoint_id, data));
+<a href=#708 id=708 data-nosnippet>708</a>                        }
+<a href=#709 id=709 data-nosnippet>709</a>                    } <span class="kw">else </span>{
+<a href=#710 id=710 data-nosnippet>710</a>                        <span class="macro">bail_any!</span>(
+<a href=#711 id=711 data-nosnippet>711</a>                            <span class="string">"no more events, only got {} ids, expected {num_endpoints}\n"</span>,
+<a href=#712 id=712 data-nosnippet>712</a>                            got_ids.len()
+<a href=#713 id=713 data-nosnippet>713</a>                        );
+<a href=#714 id=714 data-nosnippet>714</a>                    }
+<a href=#715 id=715 data-nosnippet>715</a>                }
+<a href=#716 id=716 data-nosnippet>716</a>                <span class="macro">assert_eq!</span>(got_ids, endpoint_ids);
+<a href=#717 id=717 data-nosnippet>717</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
+<a href=#718 id=718 data-nosnippet>718</a>            };
+<a href=#719 id=719 data-nosnippet>719</a>            tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), test)
+<a href=#720 id=720 data-nosnippet>720</a>                .<span class="kw">await
+<a href=#721 id=721 data-nosnippet>721</a>                </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#722 id=722 data-nosnippet>722</a>        </span>}
+<a href=#723 id=723 data-nosnippet>723</a>
+<a href=#724 id=724 data-nosnippet>724</a>        <span class="attr">#[tokio::test]
+<a href=#725 id=725 data-nosnippet>725</a>        #[traced_test]
+<a href=#726 id=726 data-nosnippet>726</a>        </span><span class="kw">async fn </span>non_advertising_endpoint_not_discovered() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#727 id=727 data-nosnippet>727</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#728 id=728 data-nosnippet>728</a>
+<a href=#729 id=729 data-nosnippet>729</a>            <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#730 id=730 data-nosnippet>730</a>            <span class="kw">let </span>(endpoint_id_b, discovery_b) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">false</span>)<span class="question-mark">?</span>;
+<a href=#731 id=731 data-nosnippet>731</a>
+<a href=#732 id=732 data-nosnippet>732</a>            <span class="kw">let </span>(endpoint_id_c, discovery_c) = make_discoverer(<span class="kw-2">&amp;mut </span>rng, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+<a href=#733 id=733 data-nosnippet>733</a>            <span class="kw">let </span>endpoint_data_c =
+<a href=#734 id=734 data-nosnippet>734</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:22222"</span>.parse().unwrap())]);
+<a href=#735 id=735 data-nosnippet>735</a>            discovery_c.publish(<span class="kw-2">&amp;</span>endpoint_data_c);
+<a href=#736 id=736 data-nosnippet>736</a>
+<a href=#737 id=737 data-nosnippet>737</a>            <span class="kw">let </span>endpoint_data_b =
+<a href=#738 id=738 data-nosnippet>738</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())]);
+<a href=#739 id=739 data-nosnippet>739</a>            discovery_b.publish(<span class="kw-2">&amp;</span>endpoint_data_b);
+<a href=#740 id=740 data-nosnippet>740</a>
+<a href=#741 id=741 data-nosnippet>741</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_c = discovery_a.resolve(endpoint_id_c).unwrap();
+<a href=#742 id=742 data-nosnippet>742</a>            <span class="kw">let </span>result_c = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_c.next()).<span class="kw">await</span>;
+<a href=#743 id=743 data-nosnippet>743</a>            <span class="macro">assert!</span>(
+<a href=#744 id=744 data-nosnippet>744</a>                result_c.is_ok(),
+<a href=#745 id=745 data-nosnippet>745</a>                <span class="string">"Advertising endpoint should be discoverable"
+<a href=#746 id=746 data-nosnippet>746</a>            </span>);
+<a href=#747 id=747 data-nosnippet>747</a>
+<a href=#748 id=748 data-nosnippet>748</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_b = discovery_a.resolve(endpoint_id_b).unwrap();
+<a href=#749 id=749 data-nosnippet>749</a>            <span class="kw">let </span>result_b = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_b.next()).<span class="kw">await</span>;
+<a href=#750 id=750 data-nosnippet>750</a>            <span class="macro">assert!</span>(
+<a href=#751 id=751 data-nosnippet>751</a>                result_b.is_err(),
+<a href=#752 id=752 data-nosnippet>752</a>                <span class="string">"Expected timeout since endpoint b isn't advertising"
+<a href=#753 id=753 data-nosnippet>753</a>            </span>);
+<a href=#754 id=754 data-nosnippet>754</a>
+<a href=#755 id=755 data-nosnippet>755</a>            <span class="prelude-val">Ok</span>(())
+<a href=#756 id=756 data-nosnippet>756</a>        }
+<a href=#757 id=757 data-nosnippet>757</a>
+<a href=#758 id=758 data-nosnippet>758</a>        <span class="attr">#[tokio::test]
+<a href=#759 id=759 data-nosnippet>759</a>        #[traced_test]
+<a href=#760 id=760 data-nosnippet>760</a>        </span><span class="kw">async fn </span>test_service_names() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#761 id=761 data-nosnippet>761</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#762 id=762 data-nosnippet>762</a>
+<a href=#763 id=763 data-nosnippet>763</a>            <span class="comment">// Create a discovery service using the default
+<a href=#764 id=764 data-nosnippet>764</a>            // service name
+<a href=#765 id=765 data-nosnippet>765</a>            </span><span class="kw">let </span>id_a = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#766 id=766 data-nosnippet>766</a>            <span class="kw">let </span>discovery_a = MdnsDiscovery::builder().build(id_a)<span class="question-mark">?</span>;
+<a href=#767 id=767 data-nosnippet>767</a>
+<a href=#768 id=768 data-nosnippet>768</a>            <span class="comment">// Create a discovery service using a custom
+<a href=#769 id=769 data-nosnippet>769</a>            // service name
+<a href=#770 id=770 data-nosnippet>770</a>            </span><span class="kw">let </span>id_b = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#771 id=771 data-nosnippet>771</a>            <span class="kw">let </span>discovery_b = MdnsDiscovery::builder()
+<a href=#772 id=772 data-nosnippet>772</a>                .service_name(<span class="string">"different.name"</span>)
+<a href=#773 id=773 data-nosnippet>773</a>                .build(id_b)<span class="question-mark">?</span>;
+<a href=#774 id=774 data-nosnippet>774</a>
+<a href=#775 id=775 data-nosnippet>775</a>            <span class="comment">// Create a discovery service using the same
+<a href=#776 id=776 data-nosnippet>776</a>            // custom service name
+<a href=#777 id=777 data-nosnippet>777</a>            </span><span class="kw">let </span>id_c = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng).public();
+<a href=#778 id=778 data-nosnippet>778</a>            <span class="kw">let </span>discovery_c = MdnsDiscovery::builder()
+<a href=#779 id=779 data-nosnippet>779</a>                .service_name(<span class="string">"different.name"</span>)
+<a href=#780 id=780 data-nosnippet>780</a>                .build(id_c)<span class="question-mark">?</span>;
+<a href=#781 id=781 data-nosnippet>781</a>
+<a href=#782 id=782 data-nosnippet>782</a>            <span class="kw">let </span>endpoint_data_a =
+<a href=#783 id=783 data-nosnippet>783</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:11111"</span>.parse().unwrap())]);
+<a href=#784 id=784 data-nosnippet>784</a>            discovery_a.publish(<span class="kw-2">&amp;</span>endpoint_data_a);
+<a href=#785 id=785 data-nosnippet>785</a>
+<a href=#786 id=786 data-nosnippet>786</a>            <span class="kw">let </span>endpoint_data_b =
+<a href=#787 id=787 data-nosnippet>787</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:22222"</span>.parse().unwrap())]);
+<a href=#788 id=788 data-nosnippet>788</a>            discovery_b.publish(<span class="kw-2">&amp;</span>endpoint_data_b);
+<a href=#789 id=789 data-nosnippet>789</a>
+<a href=#790 id=790 data-nosnippet>790</a>            <span class="kw">let </span>endpoint_data_c =
+<a href=#791 id=791 data-nosnippet>791</a>                EndpointData::new([TransportAddr::Ip(<span class="string">"0.0.0.0:33333"</span>.parse().unwrap())]);
+<a href=#792 id=792 data-nosnippet>792</a>            discovery_c.publish(<span class="kw-2">&amp;</span>endpoint_data_c);
+<a href=#793 id=793 data-nosnippet>793</a>
+<a href=#794 id=794 data-nosnippet>794</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_a = discovery_a.resolve(id_b).unwrap();
+<a href=#795 id=795 data-nosnippet>795</a>            <span class="kw">let </span>result_a = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_a.next()).<span class="kw">await</span>;
+<a href=#796 id=796 data-nosnippet>796</a>            <span class="macro">assert!</span>(
+<a href=#797 id=797 data-nosnippet>797</a>                result_a.is_err(),
+<a href=#798 id=798 data-nosnippet>798</a>                <span class="string">"Endpoint on a different service should NOT be discoverable"
+<a href=#799 id=799 data-nosnippet>799</a>            </span>);
+<a href=#800 id=800 data-nosnippet>800</a>
+<a href=#801 id=801 data-nosnippet>801</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_b = discovery_b.resolve(id_c).unwrap();
+<a href=#802 id=802 data-nosnippet>802</a>            <span class="kw">let </span>result_b = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_b.next()).<span class="kw">await</span>;
+<a href=#803 id=803 data-nosnippet>803</a>            <span class="macro">assert!</span>(
+<a href=#804 id=804 data-nosnippet>804</a>                result_b.is_ok(),
+<a href=#805 id=805 data-nosnippet>805</a>                <span class="string">"Endpoint on the same service should be discoverable"
+<a href=#806 id=806 data-nosnippet>806</a>            </span>);
+<a href=#807 id=807 data-nosnippet>807</a>
+<a href=#808 id=808 data-nosnippet>808</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream_b = discovery_b.resolve(id_a).unwrap();
+<a href=#809 id=809 data-nosnippet>809</a>            <span class="kw">let </span>result_b = tokio::time::timeout(Duration::from_secs(<span class="number">2</span>), stream_b.next()).<span class="kw">await</span>;
+<a href=#810 id=810 data-nosnippet>810</a>            <span class="macro">assert!</span>(
+<a href=#811 id=811 data-nosnippet>811</a>                result_b.is_err(),
+<a href=#812 id=812 data-nosnippet>812</a>                <span class="string">"Endpoint on a different service should NOT be discoverable"
+<a href=#813 id=813 data-nosnippet>813</a>            </span>);
+<a href=#814 id=814 data-nosnippet>814</a>
+<a href=#815 id=815 data-nosnippet>815</a>            <span class="prelude-val">Ok</span>(())
+<a href=#816 id=816 data-nosnippet>816</a>        }
+<a href=#817 id=817 data-nosnippet>817</a>
+<a href=#818 id=818 data-nosnippet>818</a>        <span class="kw">fn </span>make_discoverer&lt;R: CryptoRng + <span class="question-mark">?</span>Sized&gt;(
+<a href=#819 id=819 data-nosnippet>819</a>            rng: <span class="kw-2">&amp;mut </span>R,
+<a href=#820 id=820 data-nosnippet>820</a>            advertise: bool,
+<a href=#821 id=821 data-nosnippet>821</a>        ) -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, MdnsDiscovery)&gt; {
+<a href=#822 id=822 data-nosnippet>822</a>            <span class="kw">let </span>endpoint_id = SecretKey::generate(rng).public();
+<a href=#823 id=823 data-nosnippet>823</a>            <span class="prelude-val">Ok</span>((
+<a href=#824 id=824 data-nosnippet>824</a>                endpoint_id,
+<a href=#825 id=825 data-nosnippet>825</a>                MdnsDiscovery::builder()
+<a href=#826 id=826 data-nosnippet>826</a>                    .advertise(advertise)
+<a href=#827 id=827 data-nosnippet>827</a>                    .build(endpoint_id)<span class="question-mark">?</span>,
+<a href=#828 id=828 data-nosnippet>828</a>            ))
+<a href=#829 id=829 data-nosnippet>829</a>        }
+<a href=#830 id=830 data-nosnippet>830</a>    }
+<a href=#831 id=831 data-nosnippet>831</a>}</code></pre></div></section></main></body></html>

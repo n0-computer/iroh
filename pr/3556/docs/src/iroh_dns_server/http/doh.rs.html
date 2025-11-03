@@ -16,7 +16,7 @@
 <a href=#16 id=16 data-nosnippet>16</a>    HeaderValue, StatusCode,
 <a href=#17 id=17 data-nosnippet>17</a>    header::{CACHE_CONTROL, CONTENT_TYPE},
 <a href=#18 id=18 data-nosnippet>18</a>};
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>n0_snafu::ResultExt;
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>n0_error::StdResultExt;
 <a href=#20 id=20 data-nosnippet>20</a>
 <a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span><span class="kw">super</span>::error::AppResult;
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">crate</span>::state::AppState;
@@ -32,7 +32,7 @@
 <a href=#32 id=32 data-nosnippet>32</a>    DnsRequestQuery(request, accept_type): DnsRequestQuery,
 <a href=#33 id=33 data-nosnippet>33</a>) -&gt; AppResult&lt;Response&gt; {
 <a href=#34 id=34 data-nosnippet>34</a>    <span class="kw">let </span>message_bytes = state.dns_handler.answer_request(request).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span>message = proto::op::Message::from_bytes(<span class="kw-2">&amp;</span>message_bytes).e()<span class="question-mark">?</span>;
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span>message = proto::op::Message::from_bytes(<span class="kw-2">&amp;</span>message_bytes).anyerr()<span class="question-mark">?</span>;
 <a href=#36 id=36 data-nosnippet>36</a>
 <a href=#37 id=37 data-nosnippet>37</a>    <span class="kw">let </span>min_ttl = message.answers().iter().map(|rec| rec.ttl()).min();
 <a href=#38 id=38 data-nosnippet>38</a>
@@ -49,7 +49,7 @@
 <a href=#49 id=49 data-nosnippet>49</a>        .insert(CONTENT_TYPE, accept_type.to_header_value());
 <a href=#50 id=50 data-nosnippet>50</a>
 <a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(min_ttl) = min_ttl {
-<a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>maxage = HeaderValue::from_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"s-maxage={min_ttl}"</span>)).e()<span class="question-mark">?</span>;
+<a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span>maxage = HeaderValue::from_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"s-maxage={min_ttl}"</span>)).anyerr()<span class="question-mark">?</span>;
 <a href=#53 id=53 data-nosnippet>53</a>        response.headers_mut().insert(CACHE_CONTROL, maxage);
 <a href=#54 id=54 data-nosnippet>54</a>    }
 <a href=#55 id=55 data-nosnippet>55</a>

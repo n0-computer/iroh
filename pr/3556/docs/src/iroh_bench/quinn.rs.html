@@ -5,7 +5,7 @@
 <a href=#5 id=5 data-nosnippet>5</a>};
 <a href=#6 id=6 data-nosnippet>6</a>
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>bytes::Bytes;
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>quinn::{
 <a href=#10 id=10 data-nosnippet>10</a>    Connection, Endpoint, RecvStream, SendStream, TransportConfig, crypto::rustls::QuicClientConfig,
 <a href=#11 id=11 data-nosnippet>11</a>};
@@ -73,7 +73,7 @@
 <a href=#73 id=73 data-nosnippet>73</a>        quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">0</span>)).unwrap();
 <a href=#74 id=74 data-nosnippet>74</a>
 <a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span><span class="kw-2">mut </span>roots = RootCertStore::empty();
-<a href=#76 id=76 data-nosnippet>76</a>    roots.add(server_cert).e()<span class="question-mark">?</span>;
+<a href=#76 id=76 data-nosnippet>76</a>    roots.add(server_cert).anyerr()<span class="question-mark">?</span>;
 <a href=#77 id=77 data-nosnippet>77</a>
 <a href=#78 id=78 data-nosnippet>78</a>    <span class="kw">let </span>provider = rustls::crypto::ring::default_provider();
 <a href=#79 id=79 data-nosnippet>79</a>
@@ -84,14 +84,14 @@
 <a href=#84 id=84 data-nosnippet>84</a>        .with_no_client_auth();
 <a href=#85 id=85 data-nosnippet>85</a>
 <a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">let </span><span class="kw-2">mut </span>client_config =
-<a href=#87 id=87 data-nosnippet>87</a>        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).e()<span class="question-mark">?</span>));
+<a href=#87 id=87 data-nosnippet>87</a>        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).anyerr()<span class="question-mark">?</span>));
 <a href=#88 id=88 data-nosnippet>88</a>    client_config.transport_config(Arc::new(transport_config(opt.max_streams, opt.initial_mtu)));
 <a href=#89 id=89 data-nosnippet>89</a>
 <a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">let </span>connection = endpoint
 <a href=#91 id=91 data-nosnippet>91</a>        .connect_with(client_config, server_addr, <span class="string">"localhost"</span>)
 <a href=#92 id=92 data-nosnippet>92</a>        .unwrap()
 <a href=#93 id=93 data-nosnippet>93</a>        .<span class="kw">await
-<a href=#94 id=94 data-nosnippet>94</a>        </span>.context(<span class="string">"unable to connect"</span>)<span class="question-mark">?</span>;
+<a href=#94 id=94 data-nosnippet>94</a>        </span>.std_context(<span class="string">"unable to connect"</span>)<span class="question-mark">?</span>;
 <a href=#95 id=95 data-nosnippet>95</a>    <span class="macro">trace!</span>(<span class="string">"connected"</span>);
 <a href=#96 id=96 data-nosnippet>96</a>
 <a href=#97 id=97 data-nosnippet>97</a>    <span class="prelude-val">Ok</span>((endpoint, connection))
@@ -125,7 +125,7 @@
 <a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">let </span><span class="kw-2">mut </span>num_chunks: u64 = <span class="number">0</span>;
 <a href=#126 id=126 data-nosnippet>126</a>
 <a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">if </span>read_unordered {
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
+<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">? </span>{
 <a href=#129 id=129 data-nosnippet>129</a>            <span class="kw">if </span>first_byte {
 <a href=#130 id=130 data-nosnippet>130</a>                ttfb = download_start.elapsed();
 <a href=#131 id=131 data-nosnippet>131</a>                first_byte = <span class="bool-val">false</span>;
@@ -147,7 +147,7 @@
 <a href=#147 id=147 data-nosnippet>147</a>            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
 <a href=#148 id=148 data-nosnippet>148</a>        ];
 <a href=#149 id=149 data-nosnippet>149</a>
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.anyerr()<span class="question-mark">? </span>{
 <a href=#151 id=151 data-nosnippet>151</a>            <span class="kw">if </span>first_byte {
 <a href=#152 id=152 data-nosnippet>152</a>                ttfb = download_start.elapsed();
 <a href=#153 id=153 data-nosnippet>153</a>                first_byte = <span class="bool-val">false</span>;
@@ -171,21 +171,21 @@
 <a href=#171 id=171 data-nosnippet>171</a>        stream
 <a href=#172 id=172 data-nosnippet>172</a>            .write_chunk(bytes_data.clone())
 <a href=#173 id=173 data-nosnippet>173</a>            .<span class="kw">await
-<a href=#174 id=174 data-nosnippet>174</a>            </span>.context(<span class="string">"failed sending data"</span>)<span class="question-mark">?</span>;
+<a href=#174 id=174 data-nosnippet>174</a>            </span>.std_context(<span class="string">"failed sending data"</span>)<span class="question-mark">?</span>;
 <a href=#175 id=175 data-nosnippet>175</a>    }
 <a href=#176 id=176 data-nosnippet>176</a>
 <a href=#177 id=177 data-nosnippet>177</a>    <span class="kw">if </span>remaining != <span class="number">0 </span>{
 <a href=#178 id=178 data-nosnippet>178</a>        stream
 <a href=#179 id=179 data-nosnippet>179</a>            .write_chunk(bytes_data.slice(<span class="number">0</span>..remaining))
 <a href=#180 id=180 data-nosnippet>180</a>            .<span class="kw">await
-<a href=#181 id=181 data-nosnippet>181</a>            </span>.context(<span class="string">"failed sending data"</span>)<span class="question-mark">?</span>;
+<a href=#181 id=181 data-nosnippet>181</a>            </span>.std_context(<span class="string">"failed sending data"</span>)<span class="question-mark">?</span>;
 <a href=#182 id=182 data-nosnippet>182</a>    }
 <a href=#183 id=183 data-nosnippet>183</a>
-<a href=#184 id=184 data-nosnippet>184</a>    stream.finish().context(<span class="string">"failed finishing stream"</span>)<span class="question-mark">?</span>;
+<a href=#184 id=184 data-nosnippet>184</a>    stream.finish().std_context(<span class="string">"failed finishing stream"</span>)<span class="question-mark">?</span>;
 <a href=#185 id=185 data-nosnippet>185</a>    stream
 <a href=#186 id=186 data-nosnippet>186</a>        .stopped()
 <a href=#187 id=187 data-nosnippet>187</a>        .<span class="kw">await
-<a href=#188 id=188 data-nosnippet>188</a>        </span>.context(<span class="string">"failed to wait for stream to be stopped"</span>)<span class="question-mark">?</span>;
+<a href=#188 id=188 data-nosnippet>188</a>        </span>.std_context(<span class="string">"failed to wait for stream to be stopped"</span>)<span class="question-mark">?</span>;
 <a href=#189 id=189 data-nosnippet>189</a>
 <a href=#190 id=190 data-nosnippet>190</a>    <span class="prelude-val">Ok</span>(())
 <a href=#191 id=191 data-nosnippet>191</a>}
@@ -200,7 +200,7 @@
 <a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) = connection
 <a href=#201 id=201 data-nosnippet>201</a>        .open_bi()
 <a href=#202 id=202 data-nosnippet>202</a>        .<span class="kw">await
-<a href=#203 id=203 data-nosnippet>203</a>        </span>.context(<span class="string">"failed to open stream"</span>)<span class="question-mark">?</span>;
+<a href=#203 id=203 data-nosnippet>203</a>        </span>.std_context(<span class="string">"failed to open stream"</span>)<span class="question-mark">?</span>;
 <a href=#204 id=204 data-nosnippet>204</a>
 <a href=#205 id=205 data-nosnippet>205</a>    send_data_on_stream(<span class="kw-2">&amp;mut </span>send_stream, upload_size).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#206 id=206 data-nosnippet>206</a>
@@ -229,7 +229,7 @@
 <a href=#229 id=229 data-nosnippet>229</a>                </span><span class="kw">continue</span>;
 <a href=#230 id=230 data-nosnippet>230</a>            }
 <a href=#231 id=231 data-nosnippet>231</a>        };
-<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>connection = accepting.<span class="kw">await</span>.context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
+<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>connection = accepting.<span class="kw">await</span>.std_context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
 <a href=#233 id=233 data-nosnippet>233</a>
 <a href=#234 id=234 data-nosnippet>234</a>        server_tasks.push(tokio::spawn(<span class="kw">async move </span>{
 <a href=#235 id=235 data-nosnippet>235</a>            <span class="kw">loop </span>{
@@ -246,7 +246,7 @@
 <a href=#246 id=246 data-nosnippet>246</a>                tokio::spawn(<span class="kw">async move </span>{
 <a href=#247 id=247 data-nosnippet>247</a>                    drain_stream(<span class="kw-2">&amp;mut </span>recv_stream, opt.read_unordered).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#248 id=248 data-nosnippet>248</a>                    send_data_on_stream(<span class="kw-2">&amp;mut </span>send_stream, opt.download_size).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#249 id=249 data-nosnippet>249</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::Error&gt;(())
+<a href=#249 id=249 data-nosnippet>249</a>                    n0_error::Ok(())
 <a href=#250 id=250 data-nosnippet>250</a>                });
 <a href=#251 id=251 data-nosnippet>251</a>            }
 <a href=#252 id=252 data-nosnippet>252</a>

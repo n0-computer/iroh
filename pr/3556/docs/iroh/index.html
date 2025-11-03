@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Peer-to-peer QUIC connections."><title>iroh - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate iroh</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../iroh/index.html">iroh</a><span class="version">0.94.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#connection-establishment" title="Connection Establishment">Connection Establishment</a></li><li><a href="#encryption" title="Encryption">Encryption</a></li><li><a href="#relay-servers" title="Relay Servers">Relay Servers</a></li><li><a href="#connections-and-streams" title="Connections and Streams">Connections and Streams</a><ul><li><a href="#endpoint-discovery" title="Endpoint Discovery">Endpoint Discovery</a></li></ul></li><li><a href="#examples" title="Examples">Examples</a></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>iroh</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/iroh/lib.rs.html#1-282">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Peer-to-peer QUIC connections.</p>
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Peer-to-peer QUIC connections."><title>iroh - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate iroh</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../iroh/index.html">iroh</a><span class="version">0.94.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#connection-establishment" title="Connection Establishment">Connection Establishment</a></li><li><a href="#encryption" title="Encryption">Encryption</a></li><li><a href="#relay-servers" title="Relay Servers">Relay Servers</a></li><li><a href="#connections-and-streams" title="Connections and Streams">Connections and Streams</a><ul><li><a href="#endpoint-discovery" title="Endpoint Discovery">Endpoint Discovery</a></li></ul></li><li><a href="#examples" title="Examples">Examples</a></li></ul><h3><a href="#reexports">Crate Items</a></h3><ul class="block"><li><a href="#reexports" title="Re-exports">Re-exports</a></li><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#types" title="Type Aliases">Type Aliases</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>iroh</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/iroh/lib.rs.html#1-283">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Peer-to-peer QUIC connections.</p>
 <p>iroh is a library to establish direct connectivity between peers.  It exposes an
 interface to <a href="https://quicwg.org">QUIC</a> connections and streams to the user, while implementing direct
 connectivity using <a href="https://en.wikipedia.org/wiki/Hole_punching_(networking)">hole punching</a> complemented by relay servers under the hood.</p>
@@ -8,11 +8,11 @@ another endpoint:</p>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>addr: EndpointAddr = <span class="macro">todo!</span>();
 <span class="kw">let </span>ep = Endpoint::bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"my-alpn"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-<span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span>.context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
+<span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span>.std_context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
 send_stream
     .write_all(<span class="string">b"msg"</span>)
     .<span class="kw">await
-    </span>.context(<span class="string">"unable to write all"</span>)<span class="question-mark">?</span>;</code></pre></div>
+    </span>.std_context(<span class="string">"unable to write all"</span>)<span class="question-mark">?</span>;</code></pre></div>
 <p>The other endpoint can accept incoming connections using the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> as well:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>ep = Endpoint::builder()
@@ -24,13 +24,13 @@ send_stream
     .<span class="kw">await
     </span>.context(<span class="string">"accept error"</span>)<span class="question-mark">?
     </span>.<span class="kw">await
-    </span>.context(<span class="string">"connecting error"</span>)<span class="question-mark">?</span>;
-<span class="kw">let </span><span class="kw-2">mut </span>recv_stream = conn.accept_uni().<span class="kw">await</span>.context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
+    </span>.std_context(<span class="string">"connecting error"</span>)<span class="question-mark">?</span>;
+<span class="kw">let </span><span class="kw-2">mut </span>recv_stream = conn.accept_uni().<span class="kw">await</span>.std_context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
 <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">3</span>];
 recv_stream
     .read_exact(<span class="kw-2">&amp;mut </span>buf)
     .<span class="kw">await
-    </span>.context(<span class="string">"unable to read"</span>)<span class="question-mark">?</span>;</code></pre></div>
+    </span>.std_context(<span class="string">"unable to read"</span>)<span class="question-mark">?</span>;</code></pre></div>
 <p>Of course you can also use <a href="endpoint/struct.Connection.html#method.open_bi" title="method iroh::endpoint::Connection::open_bi">bi-directional streams</a> or any other features from QUIC.</p>
 <p>For more elaborate examples, see <a href="#examples">below</a> or the examples directory in
 the source repository.</p>
@@ -128,7 +128,7 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
 <p>The central struct is the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>, which allows you to connect to other endpoints:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, EndpointAddr};
-<span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+<span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 
 <span class="kw">async fn </span>connect(addr: EndpointAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="comment">// The Endpoint is the central object that manages an iroh node.
@@ -136,10 +136,10 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
 
     <span class="comment">// Establish a QUIC connection, open a bi-directional stream, exchange messages.
     </span><span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"hello-world"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) = conn.open_bi().<span class="kw">await</span>.context(<span class="string">"open bi"</span>)<span class="question-mark">?</span>;
-    send_stream.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.context(<span class="string">"write"</span>)<span class="question-mark">?</span>;
-    send_stream.finish().context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
-    <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.context(<span class="string">"read"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) = conn.open_bi().<span class="kw">await</span>.std_context(<span class="string">"open bi"</span>)<span class="question-mark">?</span>;
+    send_stream.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.std_context(<span class="string">"write"</span>)<span class="question-mark">?</span>;
+    send_stream.finish().std_context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.std_context(<span class="string">"read"</span>)<span class="question-mark">?</span>;
 
     <span class="comment">// Gracefully close the connection and endpoint.
     </span>conn.close(<span class="number">1u8</span>.into(), <span class="string">b"done"</span>);
@@ -150,8 +150,8 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
 <p>Every <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> can also accept connections:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, EndpointAddr};
+<span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <span class="kw">use </span>n0_future::StreamExt;
-<span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 
 <span class="kw">async fn </span>accept() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="comment">// To accept connections at least one ALPN must be configured.
@@ -166,11 +166,12 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
         .<span class="kw">await
         </span>.context(<span class="string">"no incoming connection"</span>)<span class="question-mark">?
         </span>.<span class="kw">await
-        </span>.context(<span class="string">"accept conn"</span>)<span class="question-mark">?</span>;
-    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) = conn.accept_bi().<span class="kw">await</span>.context(<span class="string">"accept stream"</span>)<span class="question-mark">?</span>;
-    <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.context(<span class="string">"read"</span>)<span class="question-mark">?</span>;
-    send_stream.write_all(<span class="string">b"world"</span>).<span class="kw">await</span>.context(<span class="string">"write"</span>)<span class="question-mark">?</span>;
-    send_stream.finish().context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
+        </span>.std_context(<span class="string">"accept conn"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) =
+        conn.accept_bi().<span class="kw">await</span>.std_context(<span class="string">"accept stream"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.std_context(<span class="string">"read"</span>)<span class="question-mark">?</span>;
+    send_stream.write_all(<span class="string">b"world"</span>).<span class="kw">await</span>.std_context(<span class="string">"write"</span>)<span class="question-mark">?</span>;
+    send_stream.finish().std_context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
 
     <span class="comment">// Wait for the client to close the connection and gracefully close the endpoint.
     </span>conn.closed().<span class="kw">await</span>;

@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>/// use iroh_base::SecretKey;
 <a href=#42 id=42 data-nosnippet>42</a>///
 <a href=#43 id=43 data-nosnippet>43</a>/// # #[tokio::main]
-<a href=#44 id=44 data-nosnippet>44</a>/// # async fn main() -&gt; n0_snafu::Result&lt;()&gt; {
+<a href=#44 id=44 data-nosnippet>44</a>/// # async fn main() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#45 id=45 data-nosnippet>45</a>/// // Create the discovery service and endpoint.
 <a href=#46 id=46 data-nosnippet>46</a>/// let discovery = StaticProvider::new();
 <a href=#47 id=47 data-nosnippet>47</a>///
@@ -127,7 +127,7 @@
 <a href=#127 id=127 data-nosnippet>127</a>    /// #     Vec::new()
 <a href=#128 id=128 data-nosnippet>128</a>    /// # }
 <a href=#129 id=129 data-nosnippet>129</a>    /// # #[tokio::main]
-<a href=#130 id=130 data-nosnippet>130</a>    /// # async fn main() -&gt; n0_snafu::Result&lt;()&gt; {
+<a href=#130 id=130 data-nosnippet>130</a>    /// # async fn main() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#131 id=131 data-nosnippet>131</a>    /// // get addrs from somewhere
 <a href=#132 id=132 data-nosnippet>132</a>    /// let addrs = get_addrs();
 <a href=#133 id=133 data-nosnippet>133</a>    ///
@@ -233,7 +233,7 @@
 <a href=#233 id=233 data-nosnippet>233</a><span class="attr">#[cfg(test)]
 <a href=#234 id=234 data-nosnippet>234</a></span><span class="kw">mod </span>tests {
 <a href=#235 id=235 data-nosnippet>235</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt};
 <a href=#237 id=237 data-nosnippet>237</a>
 <a href=#238 id=238 data-nosnippet>238</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#239 id=239 data-nosnippet>239</a>    <span class="kw">use crate</span>::{Endpoint, RelayMode};

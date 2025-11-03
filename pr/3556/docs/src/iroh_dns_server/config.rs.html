@@ -7,7 +7,7 @@
 <a href=#7 id=7 data-nosnippet>7</a>    time::Duration,
 <a href=#8 id=8 data-nosnippet>8</a>};
 <a href=#9 id=9 data-nosnippet>9</a>
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tracing::info;
 <a href=#13 id=13 data-nosnippet>13</a>
@@ -162,8 +162,8 @@
 <a href=#162 id=162 data-nosnippet>162</a>        );
 <a href=#163 id=163 data-nosnippet>163</a>        <span class="kw">let </span>s = tokio::fs::read_to_string(path.as_ref())
 <a href=#164 id=164 data-nosnippet>164</a>            .<span class="kw">await
-<a href=#165 id=165 data-nosnippet>165</a>            </span>.with_context(|| <span class="macro">format!</span>(<span class="string">"failed to read {}"</span>, path.as_ref().to_string_lossy()))<span class="question-mark">?</span>;
-<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">let </span>config: Config = toml::from_str(<span class="kw-2">&amp;</span>s).e()<span class="question-mark">?</span>;
+<a href=#165 id=165 data-nosnippet>165</a>            </span>.with_std_context(|<span class="kw">_</span>| <span class="macro">format!</span>(<span class="string">"failed to read {}"</span>, path.as_ref().to_string_lossy()))<span class="question-mark">?</span>;
+<a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">let </span>config: Config = toml::from_str(<span class="kw-2">&amp;</span>s).anyerr()<span class="question-mark">?</span>;
 <a href=#167 id=167 data-nosnippet>167</a>        <span class="prelude-val">Ok</span>(config)
 <a href=#168 id=168 data-nosnippet>168</a>    }
 <a href=#169 id=169 data-nosnippet>169</a>
@@ -173,7 +173,7 @@
 <a href=#173 id=173 data-nosnippet>173</a>            PathBuf::from(val)
 <a href=#174 id=174 data-nosnippet>174</a>        } <span class="kw">else </span>{
 <a href=#175 id=175 data-nosnippet>175</a>            <span class="kw">let </span>path = dirs_next::data_dir()
-<a href=#176 id=176 data-nosnippet>176</a>                .context(<span class="string">"operating environment provides no directory for application data"</span>)<span class="question-mark">?</span>;
+<a href=#176 id=176 data-nosnippet>176</a>                .std_context(<span class="string">"operating environment provides no directory for application data"</span>)<span class="question-mark">?</span>;
 <a href=#177 id=177 data-nosnippet>177</a>
 <a href=#178 id=178 data-nosnippet>178</a>            path.join(<span class="string">"iroh-dns"</span>)
 <a href=#179 id=179 data-nosnippet>179</a>        };
