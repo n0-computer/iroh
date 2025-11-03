@@ -1697,25 +1697,27 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server_key = SecretKey::generate(&mut rng);
-        let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
+        for _ in 0..20 {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+            let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+            let server_key = SecretKey::generate(&mut rng);
+            let server =
+                spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.addr()).await?;
-        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
+            connect_client_0rtt_expect_err(&client, server.addr()).await?;
+            connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
 
-        server.close().await;
+            server.close().await;
 
-        let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
+            let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
 
-        // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
-        // but the server will reject the early data because it discarded necessary state
-        // to decrypt it when restarting.
-        connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
+            // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+            // but the server will reject the early data because it discarded necessary state
+            // to decrypt it when restarting.
+            connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
 
-        client.close().await;
-
+            client.close().await;
+        }
         Ok(())
     }
 }
