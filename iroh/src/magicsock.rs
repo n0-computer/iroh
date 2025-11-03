@@ -1335,30 +1335,15 @@ impl DirectAddrUpdateState {
 #[non_exhaustive]
 pub enum CreateHandleError {
     #[error("Failed to create bind sockets")]
-    BindSockets {
-        #[error(std_err)]
-        source: io::Error,
-    },
+    BindSockets { source: io::Error },
     #[error("Failed to create internal quinn endpoint")]
-    CreateQuinnEndpoint {
-        #[error(std_err)]
-        source: io::Error,
-    },
+    CreateQuinnEndpoint { source: io::Error },
     #[error("Failed to create socket state")]
-    CreateSocketState {
-        #[error(std_err)]
-        source: io::Error,
-    },
+    CreateSocketState { source: io::Error },
     #[error("Failed to create netmon monitor")]
-    CreateNetmonMonitor {
-        #[error(std_err)]
-        source: netmon::Error,
-    },
+    CreateNetmonMonitor { source: netmon::Error },
     #[error("Failed to subscribe netmon monitor")]
-    SubscribeNetmonMonitor {
-        #[error(std_err)]
-        source: netmon::Error,
-    },
+    SubscribeNetmonMonitor { source: netmon::Error },
 }
 
 impl Handle {
