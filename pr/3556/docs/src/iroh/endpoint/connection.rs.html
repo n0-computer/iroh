@@ -210,7 +210,7 @@
 <a href=#210 id=210 data-nosnippet>210</a>})]
 <a href=#211 id=211 data-nosnippet>211</a>#[derive(Debug, Snafu)]
 <a href=#212 id=212 data-nosnippet>212</a>#[non_exhaustive]
-<a href=#213 id=213 data-nosnippet>213</a></span><span class="kw">pub enum </span>QuinnConnectionError {
+<a href=#213 id=213 data-nosnippet>213</a></span><span class="kw">pub enum </span>AuthenticationError {
 <a href=#214 id=214 data-nosnippet>214</a>    <span class="attr">#[snafu(transparent)]
 <a href=#215 id=215 data-nosnippet>215</a>    </span>RemoteId { source: RemoteEndpointIdError },
 <a href=#216 id=216 data-nosnippet>216</a>    <span class="attr">#[snafu(display(<span class="string">"no ALPN provided"</span>))]
@@ -221,9 +221,9 @@
 <a href=#221 id=221 data-nosnippet>221</a>///
 <a href=#222 id=222 data-nosnippet>222</a>/// ## Errors
 <a href=#223 id=223 data-nosnippet>223</a>///
-<a href=#224 id=224 data-nosnippet>224</a>/// Returns a [`QuinnConnectionError`] if the handshake data has
+<a href=#224 id=224 data-nosnippet>224</a>/// Returns a [`AuthenticationError`] if the handshake data has
 <a href=#225 id=225 data-nosnippet>225</a>/// not completed, or if no alpn was set by the remote node.
-<a href=#226 id=226 data-nosnippet>226</a></span><span class="kw">fn </span>conn_from_quinn_conn(conn: quinn::Connection) -&gt; <span class="prelude-ty">Result</span>&lt;Connection, QuinnConnectionError&gt; {
+<a href=#226 id=226 data-nosnippet>226</a></span><span class="kw">fn </span>conn_from_quinn_conn(conn: quinn::Connection) -&gt; <span class="prelude-ty">Result</span>&lt;Connection, AuthenticationError&gt; {
 <a href=#227 id=227 data-nosnippet>227</a>    <span class="prelude-val">Ok</span>(Connection {
 <a href=#228 id=228 data-nosnippet>228</a>        remote_id: remote_id_from_quinn_conn(<span class="kw-2">&amp;</span>conn)<span class="question-mark">?</span>,
 <a href=#229 id=229 data-nosnippet>229</a>        alpn: alpn_from_quinn_conn(<span class="kw-2">&amp;</span>conn).ok_or_else(|| NoAlpnSnafu {}.build())<span class="question-mark">?</span>,
@@ -327,7 +327,7 @@
 <a href=#327 id=327 data-nosnippet>327</a>    <span class="attr">#[snafu(transparent)]
 <a href=#328 id=328 data-nosnippet>328</a>    </span>ConnectionError { source: ConnectionError },
 <a href=#329 id=329 data-nosnippet>329</a>    <span class="attr">#[snafu(display(<span class="string">"Failure finalizing the handshake"</span>))]
-<a href=#330 id=330 data-nosnippet>330</a>    </span>HandshakeFailure { source: QuinnConnectionError },
+<a href=#330 id=330 data-nosnippet>330</a>    </span>HandshakeFailure { source: AuthenticationError },
 <a href=#331 id=331 data-nosnippet>331</a>}
 <a href=#332 id=332 data-nosnippet>332</a>
 <a href=#333 id=333 data-nosnippet>333</a><span class="kw">impl </span>Connecting {
@@ -592,7 +592,7 @@
 <a href=#592 id=592 data-nosnippet>592</a>    ///
 <a href=#593 id=593 data-nosnippet>593</a>    /// In practice this should only fail if someone connects to you with a modified iroh endpoint
 <a href=#594 id=594 data-nosnippet>594</a>    /// or with a plain QUIC client.
-<a href=#595 id=595 data-nosnippet>595</a>    </span><span class="kw">pub async fn </span>handshake_completed(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ZeroRttStatus, QuinnConnectionError&gt; {
+<a href=#595 id=595 data-nosnippet>595</a>    </span><span class="kw">pub async fn </span>handshake_completed(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;ZeroRttStatus, AuthenticationError&gt; {
 <a href=#596 id=596 data-nosnippet>596</a>        <span class="kw">let </span>accepted = <span class="self">self</span>.accepted.<span class="kw">await</span>;
 <a href=#597 id=597 data-nosnippet>597</a>        <span class="kw">let </span>conn = conn_from_quinn_conn(<span class="self">self</span>.inner)<span class="question-mark">?</span>;
 <a href=#598 id=598 data-nosnippet>598</a>
@@ -903,7 +903,7 @@
 <a href=#903 id=903 data-nosnippet>903</a>    ///
 <a href=#904 id=904 data-nosnippet>904</a>    /// In practice this should only fail if someone connects to you with a modified iroh endpoint
 <a href=#905 id=905 data-nosnippet>905</a>    /// or with a plain QUIC client.
-<a href=#906 id=906 data-nosnippet>906</a>    </span><span class="kw">pub async fn </span>handshake_completed(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Connection, QuinnConnectionError&gt; {
+<a href=#906 id=906 data-nosnippet>906</a>    </span><span class="kw">pub async fn </span>handshake_completed(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Connection, AuthenticationError&gt; {
 <a href=#907 id=907 data-nosnippet>907</a>        <span class="self">self</span>.accepted.<span class="kw">await</span>;
 <a href=#908 id=908 data-nosnippet>908</a>        conn_from_quinn_conn(<span class="self">self</span>.inner)
 <a href=#909 id=909 data-nosnippet>909</a>    }
