@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>aead::{AeadCore, AeadInOut, Buffer};
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>n0_error::{e, stack_error};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>n0_error::{e, ensure, stack_error};
 <a href=#8 id=8 data-nosnippet>8</a>
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>NONCE_LEN: usize = <span class="number">24</span>;
 <a href=#10 id=10 data-nosnippet>10</a>
@@ -63,7 +63,7 @@
 <a href=#63 id=63 data-nosnippet>63</a>
 <a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
 <a href=#65 id=65 data-nosnippet>65</a>    </span><span class="kw">pub fn </span>open(<span class="kw-2">&amp;</span><span class="self">self</span>, buffer: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>Buffer) -&gt; <span class="prelude-ty">Result</span>&lt;(), DecryptionError&gt; {
-<a href=#66 id=66 data-nosnippet>66</a>        <span class="macro">n0_error::ensure!</span>(buffer.len() &gt;= NONCE_LEN, DecryptionError::InvalidNonce);
+<a href=#66 id=66 data-nosnippet>66</a>        <span class="macro">ensure!</span>(buffer.len() &gt;= NONCE_LEN, DecryptionError::InvalidNonce);
 <a href=#67 id=67 data-nosnippet>67</a>
 <a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">let </span>offset = buffer.len() - NONCE_LEN;
 <a href=#69 id=69 data-nosnippet>69</a>        <span class="kw">let </span>nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..]

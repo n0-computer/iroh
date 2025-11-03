@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>    task::{Context, Poll},
 <a href=#7 id=7 data-nosnippet>7</a>};
 <a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>n0_error::stack_error;
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>n0_error::{ensure, stack_error};
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>n0_future::{FutureExt, Sink, Stream, ready, time};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tracing::instrument;
@@ -98,12 +98,12 @@
 <a href=#98 id=98 data-nosnippet>98</a>
 <a href=#99 id=99 data-nosnippet>99</a>    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, item: RelayToClientMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
 <a href=#100 id=100 data-nosnippet>100</a>        <span class="kw">let </span>size = item.encoded_len();
-<a href=#101 id=101 data-nosnippet>101</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="macro">ensure!</span>(
 <a href=#102 id=102 data-nosnippet>102</a>            size &lt;= MAX_PACKET_SIZE,
 <a href=#103 id=103 data-nosnippet>103</a>            SendError::ExceedsMaxPacketSize { size }
 <a href=#104 id=104 data-nosnippet>104</a>        );
 <a href=#105 id=105 data-nosnippet>105</a>        <span class="kw">if let </span>RelayToClientMsg::Datagrams { datagrams, .. } = <span class="kw-2">&amp;</span>item {
-<a href=#106 id=106 data-nosnippet>106</a>            <span class="macro">n0_error::ensure!</span>(!datagrams.contents.is_empty(), SendError::EmptyPacket);
+<a href=#106 id=106 data-nosnippet>106</a>            <span class="macro">ensure!</span>(!datagrams.contents.is_empty(), SendError::EmptyPacket);
 <a href=#107 id=107 data-nosnippet>107</a>        }
 <a href=#108 id=108 data-nosnippet>108</a>
 <a href=#109 id=109 data-nosnippet>109</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner)
@@ -302,7 +302,7 @@
 <a href=#302 id=302 data-nosnippet>302</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, InvalidBucketConfig&gt; {
 <a href=#303 id=303 data-nosnippet>303</a>        <span class="comment">// milliseconds is the tokio timer resolution
 <a href=#304 id=304 data-nosnippet>304</a>        </span><span class="kw">let </span>refill = bytes_per_second.saturating_mul(refill_period.as_millis() <span class="kw">as </span>i64) / <span class="number">1000</span>;
-<a href=#305 id=305 data-nosnippet>305</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#305 id=305 data-nosnippet>305</a>        <span class="macro">ensure!</span>(
 <a href=#306 id=306 data-nosnippet>306</a>            max &gt; <span class="number">0 </span>&amp;&amp; bytes_per_second &gt; <span class="number">0 </span>&amp;&amp; refill_period.as_millis() <span class="kw">as </span>u32 &gt; <span class="number">0 </span>&amp;&amp; refill &gt; <span class="number">0</span>,
 <a href=#307 id=307 data-nosnippet>307</a>            InvalidBucketConfig {
 <a href=#308 id=308 data-nosnippet>308</a>                max,

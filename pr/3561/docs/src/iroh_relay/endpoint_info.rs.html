@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>};
 <a href=#42 id=42 data-nosnippet>42</a>
 <a href=#43 id=43 data-nosnippet>43</a><span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey, TransportAddr};
-<a href=#44 id=44 data-nosnippet>44</a><span class="kw">use </span>n0_error::{e, stack_error};
+<a href=#44 id=44 data-nosnippet>44</a><span class="kw">use </span>n0_error::{e, ensure, stack_error};
 <a href=#45 id=45 data-nosnippet>45</a><span class="kw">use </span>url::Url;
 <a href=#46 id=46 data-nosnippet>46</a>
 <a href=#47 id=47 data-nosnippet>47</a><span class="doccomment">/// The DNS name for the iroh TXT record.
@@ -251,7 +251,7 @@
 <a href=#251 id=251 data-nosnippet>251</a>    <span class="kw">type </span>Error = MaxLengthExceededError;
 <a href=#252 id=252 data-nosnippet>252</a>
 <a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">fn </span>try_from(value: String) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="macro">n0_error::ensure!</span>(value.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededError);
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="macro">ensure!</span>(value.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededError);
 <a href=#255 id=255 data-nosnippet>255</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(value))
 <a href=#256 id=256 data-nosnippet>256</a>    }
 <a href=#257 id=257 data-nosnippet>257</a>}
@@ -260,7 +260,7 @@
 <a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= MaxLengthExceededError;
 <a href=#261 id=261 data-nosnippet>261</a>
 <a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="macro">n0_error::ensure!</span>(s.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededError);
+<a href=#263 id=263 data-nosnippet>263</a>        <span class="macro">ensure!</span>(s.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededError);
 <a href=#264 id=264 data-nosnippet>264</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(s.to_string()))
 <a href=#265 id=265 data-nosnippet>265</a>    }
 <a href=#266 id=266 data-nosnippet>266</a>}

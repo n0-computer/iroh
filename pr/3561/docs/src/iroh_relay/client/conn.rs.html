@@ -8,7 +8,7 @@
 <a href=#8 id=8 data-nosnippet>8</a>};
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>iroh_base::SecretKey;
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_error::stack_error;
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_error::{ensure, stack_error};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_future::{Sink, Stream};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>tracing::debug;
 <a href=#14 id=14 data-nosnippet>14</a>
@@ -135,12 +135,12 @@
 <a href=#135 id=135 data-nosnippet>135</a>
 <a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, frame: ClientToRelayMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
 <a href=#137 id=137 data-nosnippet>137</a>        <span class="kw">let </span>size = frame.encoded_len();
-<a href=#138 id=138 data-nosnippet>138</a>        <span class="macro">n0_error::ensure!</span>(
+<a href=#138 id=138 data-nosnippet>138</a>        <span class="macro">ensure!</span>(
 <a href=#139 id=139 data-nosnippet>139</a>            size &lt;= MAX_PACKET_SIZE,
 <a href=#140 id=140 data-nosnippet>140</a>            SendError::ExceedsMaxPacketSize { size }
 <a href=#141 id=141 data-nosnippet>141</a>        );
 <a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">if let </span>ClientToRelayMsg::Datagrams { datagrams, .. } = <span class="kw-2">&amp;</span>frame {
-<a href=#143 id=143 data-nosnippet>143</a>            <span class="macro">n0_error::ensure!</span>(!datagrams.contents.is_empty(), SendError::EmptyPacket);
+<a href=#143 id=143 data-nosnippet>143</a>            <span class="macro">ensure!</span>(!datagrams.contents.is_empty(), SendError::EmptyPacket);
 <a href=#144 id=144 data-nosnippet>144</a>        }
 <a href=#145 id=145 data-nosnippet>145</a>
 <a href=#146 id=146 data-nosnippet>146</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn)
