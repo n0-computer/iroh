@@ -59,7 +59,7 @@ jobs:
           echo TESTS_RESULT=$result
           echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
       - name: download nextest reports
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v6
         with:
           pattern: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-*
           merge-multiple: true
