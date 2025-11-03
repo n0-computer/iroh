@@ -27,15 +27,14 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::EndpointId;
+use n0_error::{e, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
-use nested_enum_utils::common_fields;
 use pin_project::pin_project;
 use quinn::{
     AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
     RetryError, SendDatagramError, ServerConfig, VarInt,
 };
-use snafu::{IntoError, Snafu};
 use tracing::warn;
 
 use crate::{Endpoint, discovery::DiscoveryTask, endpoint::rtt_actor::RttMessage};
@@ -176,7 +175,7 @@ impl Future for IncomingFuture {
             Poll::Ready(Ok(inner)) => {
                 let conn = match conn_from_quinn_conn(inner) {
                     Ok(conn) => conn,
-                    Err(err) => return Poll::Ready(Err(HandshakeFailureSnafu.into_error(err))),
+                    Err(err) => return Poll::Ready(Err(err.into())),
                 };
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
                 Poll::Ready(Ok(conn))
@@ -198,22 +197,19 @@ async fn alpn_from_quinn_connecting(conn: &mut quinn::Connecting) -> Result<Vec<
     match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
         Ok(data) => match data.protocol {
             Some(protocol) => Ok(protocol),
-            None => Err(UnavailableSnafu.build()),
+            None => Err(e!(AlpnError::Unavailable)),
         },
-        Err(_) => Err(UnknownHandshakeSnafu.build()),
+        Err(_) => Err(e!(AlpnError::UnknownHandshake)),
     }
 }
 
-#[allow(missing_docs, dead_code)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-})]
-#[derive(Debug, Snafu)]
+#[stack_error(add_meta, derive, from_sources)]
+#[allow(missing_docs)]
 #[non_exhaustive]
 pub enum AuthenticationError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     RemoteId { source: RemoteEndpointIdError },
-    #[snafu(display("no ALPN provided"))]
+    #[error("no ALPN provided")]
     NoAlpn {},
 }
 
@@ -226,7 +222,7 @@ pub enum AuthenticationError {
 fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, AuthenticationError> {
     Ok(Connection {
         remote_id: remote_id_from_quinn_conn(&conn)?,
-        alpn: alpn_from_quinn_conn(&conn).ok_or_else(|| NoAlpnSnafu {}.build())?,
+        alpn: alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?,
         inner: conn,
     })
 }
@@ -246,7 +242,7 @@ fn remote_id_from_quinn_conn(
     match data {
         None => {
             warn!("no peer certificate found");
-            Err(RemoteEndpointIdSnafu.build())
+            Err(RemoteEndpointIdError::new())
         }
         Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
             Ok(certs) => {
@@ -255,19 +251,19 @@ fn remote_id_from_quinn_conn(
                         "expected a single peer certificate, but {} found",
                         certs.len()
                     );
-                    return Err(RemoteEndpointIdSnafu.build());
+                    return Err(RemoteEndpointIdError::new());
                 }
 
                 let peer_id = EndpointId::from_verifying_key(
                     VerifyingKey::from_public_key_der(&certs[0])
-                        .map_err(|_| RemoteEndpointIdSnafu.build())?,
+                        .map_err(|_| RemoteEndpointIdError::new())?,
                 );
 
                 Ok(peer_id)
             }
             Err(err) => {
                 warn!("invalid peer certificate: {:?}", err);
-                Err(RemoteEndpointIdSnafu.build())
+                Err(RemoteEndpointIdError::new())
             }
         },
     }
@@ -298,35 +294,31 @@ pub struct Accepting {
     ep: Endpoint,
 }
 
+#[stack_error(add_meta, derive, from_sources)]
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum AlpnError {
-    #[snafu(transparent)]
-    ConnectionError { source: ConnectionError },
-    #[snafu(display("No ALPN available"))]
-    Unavailable {},
-    #[snafu(display("Unknown handshake type"))]
-    UnknownHandshake {},
+    #[error(transparent)]
+    ConnectionError {
+        #[error(std_err)]
+        source: ConnectionError,
+    },
+    #[error("No ALPN available")]
+    Unavailable,
+    #[error("Unknown handshake type")]
+    UnknownHandshake,
 }
 
+#[stack_error(add_meta, derive, from_sources)]
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum ConnectingError {
-    #[snafu(transparent)]
-    ConnectionError { source: ConnectionError },
-    #[snafu(display("Failure finalizing the handshake"))]
+    #[error(transparent)]
+    ConnectionError {
+        #[error(std_err)]
+        source: ConnectionError,
+    },
+    #[error("Failure finalizing the handshake")]
     HandshakeFailure { source: AuthenticationError },
 }
 
@@ -435,7 +427,9 @@ impl Future for Connecting {
             Poll::Ready(Ok(inner)) => {
                 let conn = match conn_from_quinn_conn(inner) {
                     Ok(conn) => conn,
-                    Err(err) => return Poll::Ready(Err(HandshakeFailureSnafu.into_error(err))),
+                    Err(err) => {
+                        return Poll::Ready(Err(err.into()));
+                    }
                 };
 
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
@@ -514,7 +508,7 @@ impl Future for Accepting {
             Poll::Ready(Ok(inner)) => {
                 let conn = match conn_from_quinn_conn(inner) {
                     Ok(conn) => conn,
-                    Err(err) => return Poll::Ready(Err(HandshakeFailureSnafu.into_error(err))),
+                    Err(err) => return Poll::Ready(Err(err.into())),
                 };
 
                 try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
@@ -1198,11 +1192,9 @@ pub struct Connection {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[snafu(display("Protocol error: no remote id available"))]
-pub struct RemoteEndpointIdError {
-    backtrace: Option<snafu::Backtrace>,
-}
+#[stack_error(add_meta, derive)]
+#[error("Protocol error: no remote id available")]
+pub struct RemoteEndpointIdError;
 
 impl Connection {
     fn quinn_connection(&self) -> &quinn::Connection {
@@ -1505,7 +1497,7 @@ fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint, remote_id: Op
 #[cfg(test)]
 mod tests {
     use iroh_base::{EndpointAddr, SecretKey};
-    use n0_snafu::{Error, Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
     use rand::SeedableRng;
     use tracing::{Instrument, info_span};
     use tracing_test::traced_test;
@@ -1577,7 +1569,7 @@ mod tests {
                     tracing::trace!("Connection closed, ready for next");
                 }
                 tracing::trace!("Server accept loop exiting");
-                Ok::<_, Error>(())
+                n0_error::Ok(())
             }
             .instrument(log_span)
         });
@@ -1594,13 +1586,12 @@ mod tests {
             .await?
             .into_0rtt()
             .expect_err("expected 0-RTT to fail")
-            .await
-            .e()?;
+            .await?;
 
-        let (mut send, mut recv) = conn.open_bi().await.e()?;
-        send.write_all(b"hello").await.e()?;
-        send.finish().e()?;
-        let received = recv.read_to_end(1_000).await.e()?;
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(b"hello").await.anyerr()?;
+        send.finish().anyerr()?;
+        let received = recv.read_to_end(1_000).await.anyerr()?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
         Ok(())
@@ -1617,13 +1608,13 @@ mod tests {
             .await?
             .into_0rtt()
             .ok()
-            .e()?;
+            .anyerr()?;
 
         tracing::trace!("Client established 0-RTT connection");
         // This is how we send data in 0-RTT:
-        let (mut send, mut recv) = zrtt_conn.open_bi().await.e()?;
-        send.write_all(b"hello").await.e()?;
-        send.finish().e()?;
+        let (mut send, mut recv) = zrtt_conn.open_bi().await.anyerr()?;
+        send.write_all(b"hello").await.anyerr()?;
+        send.finish().anyerr()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
         let zrtt_res = zrtt_conn.handshake_completed().await?;
@@ -1636,14 +1627,14 @@ mod tests {
             ZeroRttStatus::Rejected(conn) => {
                 assert!(!expect_server_accepts);
                 // in this case we need to re-send data by re-creating the stream.
-                let (mut send, r) = conn.open_bi().await.e()?;
-                send.write_all(b"hello").await.e()?;
-                send.finish().e()?;
+                let (mut send, r) = conn.open_bi().await.anyerr()?;
+                send.write_all(b"hello").await.anyerr()?;
+                send.finish().anyerr()?;
                 recv = r;
                 conn
             }
         };
-        let received = recv.read_to_end(1_000).await.e()?;
+        let received = recv.read_to_end(1_000).await.anyerr()?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
         Ok(())

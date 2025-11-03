@@ -229,7 +229,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 continue;
             }
         };
-        let connection = accepting.await.context("handshake failed")?;
+        let connection = accepting.await.std_context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {
             loop {
