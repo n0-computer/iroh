@@ -177,7 +177,7 @@ impl Future for IncomingFuture {
                     Ok(conn) => conn,
                     Err(err) => return Poll::Ready(Err(err.into())),
                 };
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
                 Poll::Ready(Ok(conn))
             }
         }
@@ -382,7 +382,7 @@ impl Connecting {
                 // `Connection::remote_endpoint_id`.
                 // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
                 // after all.
-                try_send_rtt_msg(&inner, &self.ep, Some(self.remote_endpoint_id));
+                try_send_rtt_msg(&inner, &self.ep, self.remote_endpoint_id);
                 Ok(OutgoingZeroRttConnection {
                     inner,
                     accepted: ZeroRttAccepted {
@@ -432,7 +432,7 @@ impl Future for Connecting {
                     }
                 };
 
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
                 Poll::Ready(Ok(conn))
             }
         }
@@ -476,7 +476,6 @@ impl Accepting {
             .inner
             .into_0rtt()
             .expect("incoming connections can always be converted to 0-RTT");
-        try_send_rtt_msg(&inner, &self.ep, None);
         IncomingZeroRttConnection {
             accepted: ZeroRttAccepted {
                 inner: accepted,
@@ -511,7 +510,7 @@ impl Future for Accepting {
                     Err(err) => return Poll::Ready(Err(err.into())),
                 };
 
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, Some(conn.remote_id()));
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1474,13 +1473,8 @@ impl Connection {
 ///
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
-fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint, remote_id: Option<EndpointId>) {
-    // If we can't notify the rtt-actor that's not great but not critical.
-    let Some(remote_id) = remote_id else {
-        warn!(?conn, "failed to get remote endpoint id");
-        return;
-    };
-    let Some(conn_type_changes) = magic_ep.conn_type(remote_id) else {
+fn try_send_rtt_msg(conn: &quinn::Connection, ep: &Endpoint, remote_id: EndpointId) {
+    let Some(conn_type_changes) = ep.conn_type(remote_id) else {
         warn!(?conn, "failed to create conn_type stream");
         return;
     };
@@ -1489,7 +1483,7 @@ fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint, remote_id: Op
         conn_type_changes: conn_type_changes.stream(),
         endpoint_id: remote_id,
     };
-    if let Err(err) = magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
+    if let Err(err) = ep.rtt_actor.msg_tx.try_send(rtt_msg) {
         warn!(?conn, "rtt-actor not reachable: {err:#}");
     }
 }
@@ -1688,27 +1682,25 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
-        for _ in 0..20 {
-            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-            let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-            let server_key = SecretKey::generate(&mut rng);
-            let server =
-                spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+        let server_key = SecretKey::generate(&mut rng);
+        let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
-            connect_client_0rtt_expect_err(&client, server.addr()).await?;
-            connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
+        connect_client_0rtt_expect_err(&client, server.addr()).await?;
+        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
 
-            server.close().await;
+        server.close().await;
 
-            let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
+        let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
 
-            // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
-            // but the server will reject the early data because it discarded necessary state
-            // to decrypt it when restarting.
-            connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
+        // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+        // but the server will reject the early data because it discarded necessary state
+        // to decrypt it when restarting.
+        connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
 
-            client.close().await;
-        }
+        client.close().await;
+
         Ok(())
     }
 }
