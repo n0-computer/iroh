@@ -1508,6 +1508,7 @@ mod tests {
     use n0_snafu::{Error, Result, ResultExt};
     use rand::SeedableRng;
     use tracing::{Instrument, info_span};
+    use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
     use tracing_test::traced_test;
 
     use super::Endpoint;
@@ -1612,21 +1613,27 @@ mod tests {
         expect_server_accepts: bool,
     ) -> Result {
         tracing::trace!(?server_addr, "Client connecting with 0-RTT");
+        let now = std::time::Instant::now();
         let zrtt_conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
             .into_0rtt()
             .ok()
             .e()?;
-
+        println!("  connect done after {:.02}", now.elapsed().as_secs_f32());
         tracing::trace!("Client established 0-RTT connection");
         // This is how we send data in 0-RTT:
         let (mut send, mut recv) = zrtt_conn.open_bi().await.e()?;
+        println!("  open bi after {:.02}", now.elapsed().as_secs_f32());
         send.write_all(b"hello").await.e()?;
         send.finish().e()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
         let zrtt_res = zrtt_conn.handshake_completed().await?;
+        println!(
+            "  handshake completed after {:.02}",
+            now.elapsed().as_secs_f32()
+        );
         tracing::trace!(?zrtt_res, "Server responded to 0-RTT");
         let conn = match zrtt_res {
             ZeroRttStatus::Accepted(conn) => {
@@ -1645,6 +1652,8 @@ mod tests {
         };
         let received = recv.read_to_end(1_000).await.e()?;
         assert_eq!(&received, b"hello");
+        println!("  read to end after {:.02}", now.elapsed().as_secs_f32());
+
         conn.close(0u32.into(), b"thx");
         Ok(())
     }
@@ -1693,29 +1702,45 @@ mod tests {
         Ok(())
     }
 
-    // Test whether 0-RTT is possible after a restart:
+    /// Test whether 0-RTT is possible after a restart:
     #[tokio::test]
-    #[traced_test]
+    // #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .try_init()
+            .ok();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server_key = SecretKey::generate(&mut rng);
-        let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
+        for i in 0..1 {
+            let now = std::time::Instant::now();
+            println!("round {i}");
+            let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+            let server_key = SecretKey::generate(&mut rng);
+            let server =
+                spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.addr()).await?;
-        connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
+            connect_client_0rtt_expect_err(&client, server.addr()).await?;
+            println!(" err done after {:.02}s", now.elapsed().as_secs_f32());
+            connect_client_0rtt_expect_ok(&client, server.addr(), true).await?;
+            println!(" ok done after {:.02}s", now.elapsed().as_secs_f32());
 
-        server.close().await;
+            server.close().await;
+            drop(server);
+            println!(" restarting after {:.02}s", now.elapsed().as_secs_f32());
 
-        let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
+            let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
+            println!(" spawned after {:.02}s", now.elapsed().as_secs_f32());
 
-        // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
-        // but the server will reject the early data because it discarded necessary state
-        // to decrypt it when restarting.
-        connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
+            // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+            // but the server will reject the early data because it discarded necessary state
+            // to decrypt it when restarting.
+            connect_client_0rtt_expect_ok(&client, server.addr(), false).await?;
+            println!(" ok done after {:.02}s", now.elapsed().as_secs_f32());
+            client.close().await;
 
-        client.close().await;
-
+            println!(" took {:.02}s", now.elapsed().as_secs_f32());
+        }
         Ok(())
     }
 }
