@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use aead::{AeadCore, AeadInOut, Buffer};
 use iroh_base::{PublicKey, SecretKey};
-use n0_error::{e, stack_error};
+use n0_error::{e, ensure, stack_error};
 
 pub(crate) const NONCE_LEN: usize = 24;
 
@@ -63,7 +63,7 @@ impl SharedSecret {
 
     /// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
     pub fn open(&self, buffer: &mut dyn Buffer) -> Result<(), DecryptionError> {
-        n0_error::ensure!(buffer.len() >= NONCE_LEN, DecryptionError::InvalidNonce);
+        ensure!(buffer.len() >= NONCE_LEN, DecryptionError::InvalidNonce);
 
         let offset = buffer.len() - NONCE_LEN;
         let nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..]

@@ -278,11 +278,12 @@ impl ClientBuilder {
         }
         let (conn, response) = builder.connect_on(stream).await?;
 
-        if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            return Err(e!(ConnectError::UnexpectedUpgradeStatus {
+        n0_error::ensure!(
+            response.status() == hyper::StatusCode::SWITCHING_PROTOCOLS,
+            ConnectError::UnexpectedUpgradeStatus {
                 code: response.status()
-            }));
-        }
+            }
+        );
 
         let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;
 

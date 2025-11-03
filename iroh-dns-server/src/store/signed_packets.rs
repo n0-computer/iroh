@@ -162,7 +162,8 @@ impl Actor {
                                             tables.update_time.remove(&existing.timestamp().to_bytes(), key.as_bytes()).anyerr()?;
                                             true
                                         }
-                                    } _ => {
+                                    },
+                                    _ => {
                                         false
                                     }
                                 };
