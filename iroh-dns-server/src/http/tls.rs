@@ -9,10 +9,9 @@ use axum_server::{
     accept::Accept,
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
+use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::{FutureExt, future::Boxed as BoxFuture};
-use n0_snafu::{Result, ResultExt};
 use serde::{Deserialize, Serialize};
-use snafu::whatever;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls_acme::{AcmeConfig, axum::AxumAcceptor, caches::DirCache};
 use tokio_stream::StreamExt;
@@ -76,10 +75,10 @@ impl<I: AsyncRead + AsyncWrite + Unpin + Send + 'static, S: Send + 'static> Acce
 impl TlsAcceptor {
     async fn self_signed(domains: Vec<String>) -> Result<Self> {
         let rcgen::CertifiedKey { cert, signing_key } =
-            rcgen::generate_simple_self_signed(domains).e()?;
+            rcgen::generate_simple_self_signed(domains).anyerr()?;
         let config = RustlsConfig::from_der(vec![cert.der().to_vec()], signing_key.serialize_der())
             .await
-            .e()?;
+            .anyerr()?;
         let acceptor = RustlsAcceptor::new(config);
         Ok(Self::Manual(acceptor))
     }
@@ -87,7 +86,7 @@ impl TlsAcceptor {
     async fn manual(domains: Vec<String>, dir: PathBuf) -> Result<Self> {
         let config = rustls::ServerConfig::builder().with_no_client_auth();
         if domains.len() != 1 {
-            whatever!("Multiple domains in manual mode are not supported");
+            bail_any!("Multiple domains in manual mode are not supported");
         }
 
         let keyname = escape_hostname(&domains[0]);
@@ -97,7 +96,7 @@ impl TlsAcceptor {
         let certs = load_certs(cert_path).await?;
         let secret_key = load_secret_key(key_path).await?;
 
-        let config = config.with_single_cert(certs, secret_key).e()?;
+        let config = config.with_single_cert(certs, secret_key).anyerr()?;
         let config = RustlsConfig::from_config(Arc::new(config));
         let acceptor = RustlsAcceptor::new(config);
         Ok(Self::Manual(acceptor))
@@ -141,10 +140,10 @@ async fn load_certs(
 ) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
     let certfile = tokio::fs::read(filename)
         .await
-        .context("cannot open certificate file")?;
+        .std_context("cannot open certificate file")?;
     let mut reader = std::io::Cursor::new(certfile);
     let certs: Result<Vec<_>, std::io::Error> = rustls_pemfile::certs(&mut reader).collect();
-    let certs = certs.e()?;
+    let certs = certs.anyerr()?;
 
     Ok(certs)
 }
@@ -154,11 +153,13 @@ async fn load_secret_key(
 ) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
     let keyfile = tokio::fs::read(filename.as_ref())
         .await
-        .context("cannot open secret key file")?;
+        .std_context("cannot open secret key file")?;
     let mut reader = std::io::Cursor::new(keyfile);
 
     loop {
-        match rustls_pemfile::read_one(&mut reader).context("cannot parse secret key .pem file")? {
+        match rustls_pemfile::read_one(&mut reader)
+            .std_context("cannot parse secret key .pem file")?
+        {
             Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
                 return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
             }
@@ -173,7 +174,7 @@ async fn load_secret_key(
         }
     }
 
-    whatever!(
+    bail_any!(
         "no keys found in {} (encrypted keys not supported)",
         filename.as_ref().display()
     );

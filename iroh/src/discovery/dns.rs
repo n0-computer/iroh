@@ -113,7 +113,7 @@ impl Discovery for DnsDiscovery {
             let endpoint_info = resolver
                 .lookup_endpoint_by_id_staggered(&endpoint_id, &origin_domain, DNS_STAGGERING_MS)
                 .await
-                .map_err(|e| DiscoveryError::from_err("dns", e))?;
+                .map_err(|e| DiscoveryError::from_err_any("dns", e))?;
             Ok(DiscoveryItem::new(endpoint_info, "dns", None))
         };
         let stream = n0_future::stream::once_future(fut);

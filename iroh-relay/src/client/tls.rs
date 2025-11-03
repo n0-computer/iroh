@@ -10,9 +10,9 @@ use bytes::Bytes;
 use data_encoding::BASE64URL;
 use http_body_util::Empty;
 use hyper::{Request, upgrade::Parts};
+use n0_error::e;
 use n0_future::{task, time};
 use rustls::client::Resumption;
-use snafu::{OptionExt, ResultExt};
 use tracing::error;
 
 use super::{
@@ -84,7 +84,7 @@ impl MaybeTlsStreamBuilder {
 
         let local_addr = tcp_stream
             .local_addr()
-            .map_err(|_| NoLocalAddrSnafu.build())?;
+            .map_err(|_| e!(ConnectError::NoLocalAddr))?;
 
         debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
@@ -92,13 +92,13 @@ impl MaybeTlsStreamBuilder {
             debug!("Starting TLS handshake");
             let hostname = self
                 .tls_servername()
-                .ok_or_else(|| InvalidTlsServernameSnafu.build())?;
+                .ok_or_else(|| e!(ConnectError::InvalidTlsServername))?;
 
             let hostname = hostname.to_owned();
             let tls_stream = tls_connector
                 .connect(hostname, tcp_stream)
                 .await
-                .context(TlsSnafu)?;
+                .map_err(|err| e!(ConnectError::Tls, err))?;
             debug!("tls_connector connect success");
             Ok(MaybeTlsStream::Tls(tls_stream))
         } else {
@@ -144,14 +144,15 @@ impl MaybeTlsStreamBuilder {
             .resolve_host(&self.url, self.prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
-        let port = url_port(&self.url).context(InvalidTargetPortSnafu)?;
+        let port = url_port(&self.url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
         let addr = SocketAddr::new(dst_ip, port);
 
         debug!("connecting to {}", addr);
         let tcp_stream = time::timeout(DIAL_ENDPOINT_TIMEOUT, async move {
             TcpStream::connect(addr).await
         })
-        .await??;
+        .await
+        .map_err(|err| e!(DialError::Timeout, err))??;
 
         tcp_stream.set_nodelay(true)?;
 
@@ -174,7 +175,8 @@ impl MaybeTlsStreamBuilder {
             .resolve_host(&proxy_url, self.prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
-        let proxy_port = url_port(&proxy_url).context(ProxyInvalidTargetPortSnafu)?;
+        let proxy_port =
+            url_port(&proxy_url).ok_or_else(|| e!(DialError::ProxyInvalidTargetPort))?;
         let proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
 
         debug!(%proxy_addr, "connecting to proxy");
@@ -190,26 +192,29 @@ impl MaybeTlsStreamBuilder {
         let io = if proxy_url.scheme() == "http" {
             MaybeTlsStream::Raw(tcp_stream)
         } else {
-            let hostname = proxy_url.host_str().context(ProxyInvalidUrlSnafu {
-                proxy_url: proxy_url.clone(),
+            let hostname = proxy_url.host_str().ok_or_else(|| {
+                e!(DialError::ProxyInvalidUrl {
+                    proxy_url: proxy_url.clone()
+                })
             })?;
             let hostname =
                 rustls::pki_types::ServerName::try_from(hostname.to_string()).map_err(|_| {
-                    ProxyInvalidTlsServernameSnafu {
-                        proxy_hostname: hostname.to_string(),
-                    }
-                    .build()
+                    e!(DialError::ProxyInvalidTlsServername {
+                        proxy_hostname: hostname.to_string()
+                    })
                 })?;
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
             MaybeTlsStream::Tls(tls_stream)
         };
         let io = TokioIo::new(io);
 
-        let target_host = self.url.host_str().context(InvalidUrlSnafu {
-            url: self.url.clone(),
+        let target_host = self.url.host_str().ok_or_else(|| {
+            e!(DialError::InvalidUrl {
+                url: self.url.clone()
+            })
         })?;
 
-        let port = url_port(&self.url).context(InvalidTargetPortSnafu)?;
+        let port = url_port(&self.url).ok_or_else(|| e!(DialError::InvalidTargetPort))?;
 
         // Establish Proxy Tunnel
         let mut req_builder = Request::builder()
@@ -240,22 +245,26 @@ impl MaybeTlsStreamBuilder {
 
         let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
             .await
-            .context(ProxyConnectSnafu)?;
+            .map_err(|err| e!(DialError::ProxyConnect, err))?;
         task::spawn(async move {
             if let Err(err) = conn.with_upgrades().await {
                 error!("Proxy connection failed: {:?}", err);
             }
         });
 
-        let res = sender.send_request(req).await.context(ProxyConnectSnafu)?;
+        let res = sender
+            .send_request(req)
+            .await
+            .map_err(|err| e!(DialError::ProxyConnect, err))?;
         if !res.status().is_success() {
-            return Err(ProxyConnectInvalidStatusSnafu {
-                status: res.status(),
-            }
-            .build());
+            return Err(e!(DialError::ProxyConnectInvalidStatus {
+                status: res.status()
+            }));
         }
 
-        let upgraded = hyper::upgrade::on(res).await.context(ProxyConnectSnafu)?;
+        let upgraded = hyper::upgrade::on(res)
+            .await
+            .map_err(|err| e!(DialError::ProxyConnect, err))?;
         let Parts { io, read_buf, .. } = upgraded
             .downcast::<TokioIo<MaybeTlsStream<tokio::net::TcpStream>>>()
             .expect("only this upgrade used");

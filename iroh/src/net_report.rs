@@ -31,6 +31,9 @@ use iroh_relay::{
     RelayMap,
     quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
 };
+use n0_error::e;
+#[cfg(not(wasm_browser))]
+use n0_error::stack_error;
 #[cfg(not(wasm_browser))]
 use n0_future::task;
 use n0_future::{
@@ -78,6 +81,23 @@ pub(crate) mod portmapper {
 pub(crate) use ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
 
 pub(crate) use self::reportgen::IfStateDetails;
+#[cfg(not(wasm_browser))]
+#[allow(missing_docs)]
+#[stack_error(derive, add_meta)]
+#[non_exhaustive]
+enum QadProbeError {
+    #[error("Failed to resolve relay address")]
+    GetRelayAddr {
+        source: self::reportgen::GetRelayAddrError,
+    },
+    #[error("Missing host in relay URL")]
+    MissingHost,
+    #[error("QUIC connection failed")]
+    Quic { source: iroh_relay::quic::Error },
+    #[error("Receiver dropped")]
+    ReceiverDropped,
+}
+
 #[cfg(not(wasm_browser))]
 use self::reportgen::SocketState;
 pub use self::{
@@ -749,23 +769,29 @@ async fn run_probe_v4(
     relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
-) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
-    use n0_snafu::ResultExt;
-
-    let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay).await?;
+) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
+    let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay)
+        .await
+        .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
     let relay_addr =
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
-    let host = relay.url.host_str().context("missing host url")?;
-    let conn = quic_client.create_conn(relay_addr, host).await?;
+    let host = relay
+        .url
+        .host_str()
+        .ok_or_else(|| e!(QadProbeError::MissingHost))?;
+    let conn = quic_client
+        .create_conn(relay_addr, host)
+        .await
+        .map_err(|source| e!(QadProbeError::Quic { source }))?;
     let mut receiver = conn.observed_external_addr();
 
     // wait for an addr
     let addr = receiver
         .wait_for(|addr| addr.is_some())
         .await
-        .context("receiver dropped")?
+        .map_err(|_| e!(QadProbeError::ReceiverDropped))?
         .expect("known");
     let report = QadProbeReport {
         relay: relay.url.clone(),
@@ -817,22 +843,29 @@ async fn run_probe_v6(
     relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
-) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
-    use n0_snafu::ResultExt;
-    let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay).await?;
+) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
+    let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay)
+        .await
+        .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
     let relay_addr =
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
-    let host = relay.url.host_str().context("missing host url")?;
-    let conn = quic_client.create_conn(relay_addr, host).await?;
+    let host = relay
+        .url
+        .host_str()
+        .ok_or_else(|| e!(QadProbeError::MissingHost))?;
+    let conn = quic_client
+        .create_conn(relay_addr, host)
+        .await
+        .map_err(|source| e!(QadProbeError::Quic { source }))?;
     let mut receiver = conn.observed_external_addr();
 
     // wait for an addr
     let addr = receiver
         .wait_for(|addr| addr.is_some())
         .await
-        .context("receiver dropped")?
+        .map_err(|_| e!(QadProbeError::ReceiverDropped))?
         .expect("known");
     let report = QadProbeReport {
         relay: relay.url.clone(),
@@ -921,7 +954,7 @@ mod tests {
 
     use iroh_base::RelayUrl;
     use iroh_relay::dns::DnsResolver;
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
     use tokio_util::sync::CancellationToken;
     use tracing_test::traced_test;
 
@@ -933,7 +966,8 @@ mod tests {
     async fn test_basic() -> Result<()> {
         let (server, relay) = test_utils::relay().await;
         let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).e()?;
+        let ep =
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
         let quic_addr_disc = QuicConfig {
             ep: ep.clone(),
             client_config,
