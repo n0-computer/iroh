@@ -1,18 +1,18 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-6c3ea77c.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.87.0-nightly (f280acf4c 2025-02-19)" data-channel="nightly" data-search-js="search-f7327375.js" data-settings-js="settings-6dad6058.js" ><script src="../../static.files/storage-3a5871a4.js"></script><script defer src="../../static.files/src-script-b8d3f215.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5332ae0c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Peer-to-peer QUIC connections.
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/lib.rs`."><title>lib.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/</div>lib.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Peer-to-peer QUIC connections.
 <a href=#2 id=2 data-nosnippet>2</a>//!
 <a href=#3 id=3 data-nosnippet>3</a>//! iroh is a library to establish direct connectivity between peers.  It exposes an
 <a href=#4 id=4 data-nosnippet>4</a>//! interface to [QUIC] connections and streams to the user, while implementing direct
 <a href=#5 id=5 data-nosnippet>5</a>//! connectivity using [hole punching] complemented by relay servers under the hood.
 <a href=#6 id=6 data-nosnippet>6</a>//!
-<a href=#7 id=7 data-nosnippet>7</a>//! An iroh node is created and controlled by the [`Endpoint`], e.g. connecting to
-<a href=#8 id=8 data-nosnippet>8</a>//! another node:
+<a href=#7 id=7 data-nosnippet>7</a>//! An iroh endpoint is created and controlled by the [`Endpoint`], e.g. connecting to
+<a href=#8 id=8 data-nosnippet>8</a>//! another endpoint:
 <a href=#9 id=9 data-nosnippet>9</a>//!
 <a href=#10 id=10 data-nosnippet>10</a>//! ```no_run
-<a href=#11 id=11 data-nosnippet>11</a>//! # use iroh::{Endpoint, NodeAddr};
+<a href=#11 id=11 data-nosnippet>11</a>//! # use iroh::{Endpoint, EndpointAddr};
 <a href=#12 id=12 data-nosnippet>12</a>//! # use n0_snafu::ResultExt;
 <a href=#13 id=13 data-nosnippet>13</a>//! # async fn wrapper() -&gt; n0_snafu::Result {
-<a href=#14 id=14 data-nosnippet>14</a>//! let addr: NodeAddr = todo!();
-<a href=#15 id=15 data-nosnippet>15</a>//! let ep = Endpoint::builder().bind().await?;
+<a href=#14 id=14 data-nosnippet>14</a>//! let addr: EndpointAddr = todo!();
+<a href=#15 id=15 data-nosnippet>15</a>//! let ep = Endpoint::bind().await?;
 <a href=#16 id=16 data-nosnippet>16</a>//! let conn = ep.connect(addr, b"my-alpn").await?;
 <a href=#17 id=17 data-nosnippet>17</a>//! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
 <a href=#18 id=18 data-nosnippet>18</a>//! send_stream
@@ -23,10 +23,10 @@
 <a href=#23 id=23 data-nosnippet>23</a>//! # }
 <a href=#24 id=24 data-nosnippet>24</a>//! ```
 <a href=#25 id=25 data-nosnippet>25</a>//!
-<a href=#26 id=26 data-nosnippet>26</a>//! The other node can accept incoming connections using the [`Endpoint`] as well:
+<a href=#26 id=26 data-nosnippet>26</a>//! The other endpoint can accept incoming connections using the [`Endpoint`] as well:
 <a href=#27 id=27 data-nosnippet>27</a>//!
 <a href=#28 id=28 data-nosnippet>28</a>//! ```no_run
-<a href=#29 id=29 data-nosnippet>29</a>//! # use iroh::{Endpoint, NodeAddr};
+<a href=#29 id=29 data-nosnippet>29</a>//! # use iroh::{Endpoint, EndpointAddr};
 <a href=#30 id=30 data-nosnippet>30</a>//! # use n0_snafu::ResultExt;
 <a href=#31 id=31 data-nosnippet>31</a>//! # async fn wrapper() -&gt; n0_snafu::Result {
 <a href=#32 id=32 data-nosnippet>32</a>//! let ep = Endpoint::builder()
@@ -57,16 +57,16 @@
 <a href=#57 id=57 data-nosnippet>57</a>//!
 <a href=#58 id=58 data-nosnippet>58</a>//! # Connection Establishment
 <a href=#59 id=59 data-nosnippet>59</a>//!
-<a href=#60 id=60 data-nosnippet>60</a>//! An iroh connection between two iroh nodes is usually established with the help
+<a href=#60 id=60 data-nosnippet>60</a>//! An iroh connection between two iroh endpoints is usually established with the help
 <a href=#61 id=61 data-nosnippet>61</a>//! of a Relay server.  When creating the [`Endpoint`] it connects to the closest Relay
-<a href=#62 id=62 data-nosnippet>62</a>//! server and designates this as the *home relay*.  When other nodes want to connect they
+<a href=#62 id=62 data-nosnippet>62</a>//! server and designates this as the *home relay*.  When other endpoints want to connect they
 <a href=#63 id=63 data-nosnippet>63</a>//! first establish connection via this home relay.  As soon as connection between the two
-<a href=#64 id=64 data-nosnippet>64</a>//! nodes is established they will attempt to create a direct connection, using [hole
+<a href=#64 id=64 data-nosnippet>64</a>//! endpoints is established they will attempt to create a direct connection, using [hole
 <a href=#65 id=65 data-nosnippet>65</a>//! punching] if needed.  Once the direct connection is established the relay server is no
 <a href=#66 id=66 data-nosnippet>66</a>//! longer involved in the connection.
 <a href=#67 id=67 data-nosnippet>67</a>//!
-<a href=#68 id=68 data-nosnippet>68</a>//! If one of the iroh nodes can be reached directly, connectivity can also be
-<a href=#69 id=69 data-nosnippet>69</a>//! established without involving a Relay server.  This is done by using the node's
+<a href=#68 id=68 data-nosnippet>68</a>//! If one of the iroh endpoints can be reached directly, connectivity can also be
+<a href=#69 id=69 data-nosnippet>69</a>//! established without involving a Relay server.  This is done by using the endpoint's
 <a href=#70 id=70 data-nosnippet>70</a>//! listening addresses in the connection establishement instead of the [`RelayUrl`] which
 <a href=#71 id=71 data-nosnippet>71</a>//! is used to identify a Relay server.  Of course it is also possible to use both a
 <a href=#72 id=72 data-nosnippet>72</a>//! [`RelayUrl`] and direct addresses at the same time to connect.
@@ -75,25 +75,25 @@
 <a href=#75 id=75 data-nosnippet>75</a>//! # Encryption
 <a href=#76 id=76 data-nosnippet>76</a>//!
 <a href=#77 id=77 data-nosnippet>77</a>//! The connection is encrypted using TLS, like standard QUIC connections.  Unlike standard
-<a href=#78 id=78 data-nosnippet>78</a>//! QUIC there is no client, server or server TLS key and certificate chain.  Instead each iroh node has a
+<a href=#78 id=78 data-nosnippet>78</a>//! QUIC there is no client, server or server TLS key and certificate chain.  Instead each iroh endpoint has a
 <a href=#79 id=79 data-nosnippet>79</a>//! unique [`SecretKey`] used to authenticate and encrypt the connection.  When an iroh
-<a href=#80 id=80 data-nosnippet>80</a>//! node connects, it uses the corresponding [`PublicKey`] to ensure the connection is only
+<a href=#80 id=80 data-nosnippet>80</a>//! endpoint connects, it uses the corresponding [`PublicKey`] to ensure the connection is only
 <a href=#81 id=81 data-nosnippet>81</a>//! established with the intended peer.
 <a href=#82 id=82 data-nosnippet>82</a>//!
-<a href=#83 id=83 data-nosnippet>83</a>//! Since the [`PublicKey`] is also used to identify the iroh node it is also known as
-<a href=#84 id=84 data-nosnippet>84</a>//! the [`NodeId`].  As encryption is an integral part of TLS as used in QUIC this
-<a href=#85 id=85 data-nosnippet>85</a>//! [`NodeId`] is always a required parameter to establish a connection.
+<a href=#83 id=83 data-nosnippet>83</a>//! Since the [`PublicKey`] is also used to identify the iroh endpoint it is also known as
+<a href=#84 id=84 data-nosnippet>84</a>//! the [`EndpointId`].  As encryption is an integral part of TLS as used in QUIC this
+<a href=#85 id=85 data-nosnippet>85</a>//! [`EndpointId`] is always a required parameter to establish a connection.
 <a href=#86 id=86 data-nosnippet>86</a>//!
-<a href=#87 id=87 data-nosnippet>87</a>//! When accepting connections the peer's [`NodeId`] is authenticated.  However it is up to
+<a href=#87 id=87 data-nosnippet>87</a>//! When accepting connections the peer's [`EndpointId`] is authenticated.  However it is up to
 <a href=#88 id=88 data-nosnippet>88</a>//! the application to decide if a particular peer is allowed to connect or not.
 <a href=#89 id=89 data-nosnippet>89</a>//!
 <a href=#90 id=90 data-nosnippet>90</a>//!
 <a href=#91 id=91 data-nosnippet>91</a>//! # Relay Servers
 <a href=#92 id=92 data-nosnippet>92</a>//!
-<a href=#93 id=93 data-nosnippet>93</a>//! Relay servers exist to ensure all iroh nodes are always reachable.  They accept
-<a href=#94 id=94 data-nosnippet>94</a>//! **encrypted** traffic for iroh nodes which are connected to them, forwarding it to
-<a href=#95 id=95 data-nosnippet>95</a>//! the correct destination based on the [`NodeId`] only.  Since nodes only send encrypted
-<a href=#96 id=96 data-nosnippet>96</a>//! traffic, the Relay servers can not decode any traffic for other iroh nodes and only
+<a href=#93 id=93 data-nosnippet>93</a>//! Relay servers exist to ensure all iroh endpoints are always reachable.  They accept
+<a href=#94 id=94 data-nosnippet>94</a>//! **encrypted** traffic for iroh endpoints which are connected to them, forwarding it to
+<a href=#95 id=95 data-nosnippet>95</a>//! the correct destination based on the [`EndpointId`] only.  Since endpoints only send encrypted
+<a href=#96 id=96 data-nosnippet>96</a>//! traffic, the Relay servers can not decode any traffic for other iroh endpoints and only
 <a href=#97 id=97 data-nosnippet>97</a>//! forward it.
 <a href=#98 id=98 data-nosnippet>98</a>//!
 <a href=#99 id=99 data-nosnippet>99</a>//! The connections to the Relay server are initiated as normal HTTP 1.1 connections using
@@ -103,9 +103,9 @@
 <a href=#103 id=103 data-nosnippet>103</a>//! connection.  However if this is not possible the connection will keep flowing over the
 <a href=#104 id=104 data-nosnippet>104</a>//! relay server as a fallback.
 <a href=#105 id=105 data-nosnippet>105</a>//!
-<a href=#106 id=106 data-nosnippet>106</a>//! Additionally to providing reliable connectivity between iroh nodes, Relay servers
+<a href=#106 id=106 data-nosnippet>106</a>//! Additionally to providing reliable connectivity between iroh endpoints, Relay servers
 <a href=#107 id=107 data-nosnippet>107</a>//! provide some functions to assist in [hole punching].  They have various services to help
-<a href=#108 id=108 data-nosnippet>108</a>//! nodes understand their own network situation.  This includes offering a [QAD] server,
+<a href=#108 id=108 data-nosnippet>108</a>//! endpoints understand their own network situation.  This includes offering a [QAD] server,
 <a href=#109 id=109 data-nosnippet>109</a>//! but also a few HTTP extra endpoints as well as responding to ICMP echo requests.
 <a href=#110 id=110 data-nosnippet>110</a>//!
 <a href=#111 id=111 data-nosnippet>111</a>//! By default the [number 0] relay servers are used, see [`RelayMode::Default`].
@@ -113,11 +113,11 @@
 <a href=#113 id=113 data-nosnippet>113</a>//!
 <a href=#114 id=114 data-nosnippet>114</a>//! # Connections and Streams
 <a href=#115 id=115 data-nosnippet>115</a>//!
-<a href=#116 id=116 data-nosnippet>116</a>//! An iroh node is managed using the [`Endpoint`] and this is used to create or accept
-<a href=#117 id=117 data-nosnippet>117</a>//! connections to other nodes.  To establish a connection to an iroh node you need to
+<a href=#116 id=116 data-nosnippet>116</a>//! An iroh endpoint is managed using the [`Endpoint`] and this is used to create or accept
+<a href=#117 id=117 data-nosnippet>117</a>//! connections to other endpoints.  To establish a connection to an iroh endpoint you need to
 <a href=#118 id=118 data-nosnippet>118</a>//! know three pieces of information:
 <a href=#119 id=119 data-nosnippet>119</a>//!
-<a href=#120 id=120 data-nosnippet>120</a>//! - The [`NodeId`] of the peer to connect to.
+<a href=#120 id=120 data-nosnippet>120</a>//! - The [`EndpointId`] of the peer to connect to.
 <a href=#121 id=121 data-nosnippet>121</a>//! - Some addressing information:
 <a href=#122 id=122 data-nosnippet>122</a>//!   - Usually the [`RelayUrl`] identifying the Relay server.
 <a href=#123 id=123 data-nosnippet>123</a>//!   - Sometimes, or usually additionally, any direct addresses which might be known.
@@ -151,31 +151,31 @@
 <a href=#151 id=151 data-nosnippet>151</a>//!
 <a href=#152 id=152 data-nosnippet>152</a>//! &lt;/div&gt;
 <a href=#153 id=153 data-nosnippet>153</a>//!
-<a href=#154 id=154 data-nosnippet>154</a>//! ## Node Discovery
+<a href=#154 id=154 data-nosnippet>154</a>//! ## Endpoint Discovery
 <a href=#155 id=155 data-nosnippet>155</a>//!
 <a href=#156 id=156 data-nosnippet>156</a>//! The need to know the [`RelayUrl`] *or* some direct addresses in addition to the
-<a href=#157 id=157 data-nosnippet>157</a>//! [`NodeId`] to connect to an iroh node can be an obstacle.  To address this, the
+<a href=#157 id=157 data-nosnippet>157</a>//! [`EndpointId`] to connect to an iroh endpoint can be an obstacle.  To address this, the
 <a href=#158 id=158 data-nosnippet>158</a>//! [`endpoint::Builder`] allows you to configure a [`discovery`] service.
 <a href=#159 id=159 data-nosnippet>159</a>//!
 <a href=#160 id=160 data-nosnippet>160</a>//! The [`DnsDiscovery`] service is a discovery service which will publish the [`RelayUrl`]
 <a href=#161 id=161 data-nosnippet>161</a>//! and direct addresses to a service publishing those as DNS records.  To connect it looks
-<a href=#162 id=162 data-nosnippet>162</a>//! up the [`NodeId`] in the DNS system to find the addressing details.  This enables
-<a href=#163 id=163 data-nosnippet>163</a>//! connecting using only the [`NodeId`] which is often more convenient and resilient.
+<a href=#162 id=162 data-nosnippet>162</a>//! up the [`EndpointId`] in the DNS system to find the addressing details.  This enables
+<a href=#163 id=163 data-nosnippet>163</a>//! connecting using only the [`EndpointId`] which is often more convenient and resilient.
 <a href=#164 id=164 data-nosnippet>164</a>//!
 <a href=#165 id=165 data-nosnippet>165</a>//! See [the discovery module] for more details.
 <a href=#166 id=166 data-nosnippet>166</a>//!
 <a href=#167 id=167 data-nosnippet>167</a>//!
 <a href=#168 id=168 data-nosnippet>168</a>//! # Examples
 <a href=#169 id=169 data-nosnippet>169</a>//!
-<a href=#170 id=170 data-nosnippet>170</a>//! The central struct is the [`Endpoint`], which allows you to connect to other nodes:
+<a href=#170 id=170 data-nosnippet>170</a>//! The central struct is the [`Endpoint`], which allows you to connect to other endpoints:
 <a href=#171 id=171 data-nosnippet>171</a>//!
 <a href=#172 id=172 data-nosnippet>172</a>//! ```no_run
-<a href=#173 id=173 data-nosnippet>173</a>//! use iroh::{Endpoint, NodeAddr};
+<a href=#173 id=173 data-nosnippet>173</a>//! use iroh::{Endpoint, EndpointAddr};
 <a href=#174 id=174 data-nosnippet>174</a>//! use n0_snafu::{Result, ResultExt};
 <a href=#175 id=175 data-nosnippet>175</a>//!
-<a href=#176 id=176 data-nosnippet>176</a>//! async fn connect(addr: NodeAddr) -&gt; Result&lt;()&gt; {
+<a href=#176 id=176 data-nosnippet>176</a>//! async fn connect(addr: EndpointAddr) -&gt; Result&lt;()&gt; {
 <a href=#177 id=177 data-nosnippet>177</a>//!     // The Endpoint is the central object that manages an iroh node.
-<a href=#178 id=178 data-nosnippet>178</a>//!     let ep = Endpoint::builder().bind().await?;
+<a href=#178 id=178 data-nosnippet>178</a>//!     let ep = Endpoint::bind().await?;
 <a href=#179 id=179 data-nosnippet>179</a>//!
 <a href=#180 id=180 data-nosnippet>180</a>//!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 <a href=#181 id=181 data-nosnippet>181</a>//!     let conn = ep.connect(addr, b"hello-world").await?;
@@ -195,7 +195,7 @@
 <a href=#195 id=195 data-nosnippet>195</a>//! Every [`Endpoint`] can also accept connections:
 <a href=#196 id=196 data-nosnippet>196</a>//!
 <a href=#197 id=197 data-nosnippet>197</a>//! ```no_run
-<a href=#198 id=198 data-nosnippet>198</a>//! use iroh::{Endpoint, NodeAddr};
+<a href=#198 id=198 data-nosnippet>198</a>//! use iroh::{Endpoint, EndpointAddr};
 <a href=#199 id=199 data-nosnippet>199</a>//! use n0_future::StreamExt;
 <a href=#200 id=200 data-nosnippet>200</a>//! use n0_snafu::{Result, ResultExt};
 <a href=#201 id=201 data-nosnippet>201</a>//!
@@ -250,7 +250,7 @@
 <a href=#250 id=250 data-nosnippet>250</a>#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 <a href=#251 id=251 data-nosnippet>251</a>#![cfg_attr(wasm_browser, allow(unused))]
 <a href=#252 id=252 data-nosnippet>252</a>#![cfg_attr(not(test), deny(clippy::unwrap_used))]
-<a href=#253 id=253 data-nosnippet>253</a>#![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
+<a href=#253 id=253 data-nosnippet>253</a>#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 <a href=#254 id=254 data-nosnippet>254</a>
 <a href=#255 id=255 data-nosnippet>255</a></span><span class="kw">mod </span>disco;
 <a href=#256 id=256 data-nosnippet>256</a><span class="kw">mod </span>key;
@@ -272,10 +272,11 @@
 <a href=#272 id=272 data-nosnippet>272</a>
 <a href=#273 id=273 data-nosnippet>273</a><span class="kw">pub use </span>endpoint::{Endpoint, RelayMode};
 <a href=#274 id=274 data-nosnippet>274</a><span class="kw">pub use </span>iroh_base::{
-<a href=#275 id=275 data-nosnippet>275</a>    KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
-<a href=#276 id=276 data-nosnippet>276</a>};
-<a href=#277 id=277 data-nosnippet>277</a><span class="kw">pub use </span>iroh_relay::{RelayMap, RelayNode, node_info};
-<a href=#278 id=278 data-nosnippet>278</a><span class="kw">pub use </span>n0_watcher::Watcher;
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#281 id=281 data-nosnippet>281</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>
+<a href=#275 id=275 data-nosnippet>275</a>    EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
+<a href=#276 id=276 data-nosnippet>276</a>    Signature, SignatureError, TransportAddr,
+<a href=#277 id=277 data-nosnippet>277</a>};
+<a href=#278 id=278 data-nosnippet>278</a><span class="kw">pub use </span>iroh_relay::{RelayConfig, RelayMap, endpoint_info};
+<a href=#279 id=279 data-nosnippet>279</a><span class="kw">pub use </span>n0_watcher::Watcher;
+<a href=#280 id=280 data-nosnippet>280</a>
+<a href=#281 id=281 data-nosnippet>281</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#282 id=282 data-nosnippet>282</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>

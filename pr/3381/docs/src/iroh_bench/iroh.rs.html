@@ -1,11 +1,11 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/bench/src/iroh.rs`."><title>iroh.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-6c3ea77c.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh_bench" data-themes="" data-resource-suffix="" data-rustdoc-version="1.87.0-nightly (f280acf4c 2025-02-19)" data-channel="nightly" data-search-js="search-f7327375.js" data-settings-js="settings-6dad6058.js" ><script src="../../static.files/storage-3a5871a4.js"></script><script defer src="../../static.files/src-script-b8d3f215.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5332ae0c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_bench/</div>iroh.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>std::{
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/bench/src/iroh.rs`."><title>iroh.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh_bench" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_bench/</div>iroh.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>std::{
 <a href=#2 id=2 data-nosnippet>2</a>    net::SocketAddr,
 <a href=#3 id=3 data-nosnippet>3</a>    time::{Duration, Instant},
 <a href=#4 id=4 data-nosnippet>4</a>};
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>bytes::Bytes;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>iroh::{
-<a href=#8 id=8 data-nosnippet>8</a>    Endpoint, NodeAddr, RelayMode, RelayUrl, Watcher <span class="kw">as _</span>,
+<a href=#8 id=8 data-nosnippet>8</a>    Endpoint, EndpointAddr, RelayMode, RelayUrl,
 <a href=#9 id=9 data-nosnippet>9</a>    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
 <a href=#10 id=10 data-nosnippet>10</a>};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a>    rt: <span class="kw-2">&amp;</span>tokio::runtime::Runtime,
 <a href=#23 id=23 data-nosnippet>23</a>    relay_url: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#24 id=24 data-nosnippet>24</a>    opt: <span class="kw-2">&amp;</span>Opt,
-<a href=#25 id=25 data-nosnippet>25</a>) -&gt; (NodeAddr, Endpoint) {
+<a href=#25 id=25 data-nosnippet>25</a>) -&gt; (EndpointAddr, Endpoint) {
 <a href=#26 id=26 data-nosnippet>26</a>    <span class="kw">let </span>_guard = rt.enter();
 <a href=#27 id=27 data-nosnippet>27</a>    rt.block_on(<span class="kw">async move </span>{
 <a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">let </span>relay_mode = relay_url
@@ -49,12 +49,12 @@
 <a href=#49 id=49 data-nosnippet>49</a>            </span>.unwrap();
 <a href=#50 id=50 data-nosnippet>50</a>
 <a href=#51 id=51 data-nosnippet>51</a>        <span class="kw">if </span>relay_url.is_some() {
-<a href=#52 id=52 data-nosnippet>52</a>            ep.home_relay().initialized().<span class="kw">await</span>;
+<a href=#52 id=52 data-nosnippet>52</a>            ep.online().<span class="kw">await</span>;
 <a href=#53 id=53 data-nosnippet>53</a>        }
 <a href=#54 id=54 data-nosnippet>54</a>
 <a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>addr = ep.bound_sockets();
 <a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>addr = SocketAddr::new(<span class="string">"127.0.0.1"</span>.parse().unwrap(), addr[<span class="number">0</span>].port());
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
+<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = EndpointAddr::new(ep.id()).with_ip_addr(addr);
 <a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = relay_url {
 <a href=#59 id=59 data-nosnippet>59</a>            addr = addr.with_relay_url(relay_url.clone());
 <a href=#60 id=60 data-nosnippet>60</a>        }
@@ -64,7 +64,7 @@
 <a href=#64 id=64 data-nosnippet>64</a>
 <a href=#65 id=65 data-nosnippet>65</a><span class="doccomment">/// Create and run a client
 <a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub async fn </span>client(
-<a href=#67 id=67 data-nosnippet>67</a>    server_addr: NodeAddr,
+<a href=#67 id=67 data-nosnippet>67</a>    server_addr: EndpointAddr,
 <a href=#68 id=68 data-nosnippet>68</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#69 id=69 data-nosnippet>69</a>    opt: Opt,
 <a href=#70 id=70 data-nosnippet>70</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ClientStats&gt; {
@@ -83,7 +83,7 @@
 <a href=#83 id=83 data-nosnippet>83</a>
 <a href=#84 id=84 data-nosnippet>84</a><span class="doccomment">/// Create a client endpoint and client connection
 <a href=#85 id=85 data-nosnippet>85</a></span><span class="kw">pub async fn </span>connect_client(
-<a href=#86 id=86 data-nosnippet>86</a>    server_addr: NodeAddr,
+<a href=#86 id=86 data-nosnippet>86</a>    server_addr: EndpointAddr,
 <a href=#87 id=87 data-nosnippet>87</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#88 id=88 data-nosnippet>88</a>    opt: Opt,
 <a href=#89 id=89 data-nosnippet>89</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, Connection)&gt; {
@@ -110,7 +110,7 @@
 <a href=#110 id=110 data-nosnippet>110</a>        </span>.unwrap();
 <a href=#111 id=111 data-nosnippet>111</a>
 <a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">if </span>relay_url.is_some() {
-<a href=#113 id=113 data-nosnippet>113</a>        endpoint.home_relay().initialized().<span class="kw">await</span>;
+<a href=#113 id=113 data-nosnippet>113</a>        endpoint.online().<span class="kw">await</span>;
 <a href=#114 id=114 data-nosnippet>114</a>    }
 <a href=#115 id=115 data-nosnippet>115</a>
 <a href=#116 id=116 data-nosnippet>116</a>    <span class="comment">// TODO: We don't support passing client transport config currently
