@@ -1697,25 +1697,27 @@
 <a href=#1697 id=1697 data-nosnippet>1697</a>    </span><span class="attr">#[tokio::test]
 <a href=#1698 id=1698 data-nosnippet>1698</a>    #[traced_test]
 <a href=#1699 id=1699 data-nosnippet>1699</a>    </span><span class="kw">async fn </span>test_0rtt_after_server_restart() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1700 id=1700 data-nosnippet>1700</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-<a href=#1701 id=1701 data-nosnippet>1701</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1702 id=1702 data-nosnippet>1702</a>        <span class="kw">let </span>server_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#1703 id=1703 data-nosnippet>1703</a>        <span class="kw">let </span>server = spawn_0rtt_server(server_key.clone(), <span class="macro">info_span!</span>(<span class="string">"server-initial"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1704 id=1704 data-nosnippet>1704</a>
-<a href=#1705 id=1705 data-nosnippet>1705</a>        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.addr()).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1706 id=1706 data-nosnippet>1706</a>        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.addr(), <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1707 id=1707 data-nosnippet>1707</a>
-<a href=#1708 id=1708 data-nosnippet>1708</a>        server.close().<span class="kw">await</span>;
+<a href=#1700 id=1700 data-nosnippet>1700</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">20 </span>{
+<a href=#1701 id=1701 data-nosnippet>1701</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
+<a href=#1702 id=1702 data-nosnippet>1702</a>            <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1703 id=1703 data-nosnippet>1703</a>            <span class="kw">let </span>server_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1704 id=1704 data-nosnippet>1704</a>            <span class="kw">let </span>server =
+<a href=#1705 id=1705 data-nosnippet>1705</a>                spawn_0rtt_server(server_key.clone(), <span class="macro">info_span!</span>(<span class="string">"server-initial"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1706 id=1706 data-nosnippet>1706</a>
+<a href=#1707 id=1707 data-nosnippet>1707</a>            connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.addr()).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1708 id=1708 data-nosnippet>1708</a>            connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.addr(), <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1709 id=1709 data-nosnippet>1709</a>
-<a href=#1710 id=1710 data-nosnippet>1710</a>        <span class="kw">let </span>server = spawn_0rtt_server(server_key, <span class="macro">info_span!</span>(<span class="string">"server-restart"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1710 id=1710 data-nosnippet>1710</a>            server.close().<span class="kw">await</span>;
 <a href=#1711 id=1711 data-nosnippet>1711</a>
-<a href=#1712 id=1712 data-nosnippet>1712</a>        <span class="comment">// we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
-<a href=#1713 id=1713 data-nosnippet>1713</a>        // but the server will reject the early data because it discarded necessary state
-<a href=#1714 id=1714 data-nosnippet>1714</a>        // to decrypt it when restarting.
-<a href=#1715 id=1715 data-nosnippet>1715</a>        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.addr(), <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1716 id=1716 data-nosnippet>1716</a>
-<a href=#1717 id=1717 data-nosnippet>1717</a>        client.close().<span class="kw">await</span>;
+<a href=#1712 id=1712 data-nosnippet>1712</a>            <span class="kw">let </span>server = spawn_0rtt_server(server_key, <span class="macro">info_span!</span>(<span class="string">"server-restart"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1713 id=1713 data-nosnippet>1713</a>
+<a href=#1714 id=1714 data-nosnippet>1714</a>            <span class="comment">// we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+<a href=#1715 id=1715 data-nosnippet>1715</a>            // but the server will reject the early data because it discarded necessary state
+<a href=#1716 id=1716 data-nosnippet>1716</a>            // to decrypt it when restarting.
+<a href=#1717 id=1717 data-nosnippet>1717</a>            </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.addr(), <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1718 id=1718 data-nosnippet>1718</a>
-<a href=#1719 id=1719 data-nosnippet>1719</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1720 id=1720 data-nosnippet>1720</a>    }
-<a href=#1721 id=1721 data-nosnippet>1721</a>}</code></pre></div></section></main></body></html>
+<a href=#1719 id=1719 data-nosnippet>1719</a>            client.close().<span class="kw">await</span>;
+<a href=#1720 id=1720 data-nosnippet>1720</a>        }
+<a href=#1721 id=1721 data-nosnippet>1721</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1722 id=1722 data-nosnippet>1722</a>    }
+<a href=#1723 id=1723 data-nosnippet>1723</a>}</code></pre></div></section></main></body></html>
