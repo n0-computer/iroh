@@ -51,7 +51,7 @@ impl FromStr for RelayUrl {
     type Err = RelayUrlParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let inner = Url::from_str(s).map_err(|err| RelayUrlParseError::new(err))?;
+        let inner = Url::from_str(s).map_err(RelayUrlParseError::new)?;
         Ok(RelayUrl::from(inner))
     }
 }

@@ -534,7 +534,7 @@ impl ClientCounter {
 #[cfg(test)]
 mod tests {
     use iroh_base::SecretKey;
-    use n0_error::{Result, StdResultExt};
+    use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::Stream;
     use rand::SeedableRng;
     use tracing::info;
@@ -553,7 +553,7 @@ mod tests {
         match stream.next().await {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
-                    n0_error::bail_any!(
+                    bail_any!(
                         "Unexpected frame, got {:?}, but expected {:?}",
                         frame.typ(),
                         frame_type
@@ -562,7 +562,7 @@ mod tests {
                 Ok(frame)
             }
             Some(Err(err)) => Err(err).anyerr(),
-            None => n0_error::bail_any!("Unexpected EOF, expected frame {frame_type:?}"),
+            None => bail_any!("Unexpected EOF, expected frame {frame_type:?}"),
         }
     }
 

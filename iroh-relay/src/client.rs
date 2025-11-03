@@ -96,7 +96,7 @@ pub enum ConnectError {
 #[allow(missing_docs)]
 #[non_exhaustive]
 pub enum DialError {
-    #[error("Invliad target port")]
+    #[error("Invalid target port")]
     InvalidTargetPort {},
     #[error(transparent)]
     #[cfg(not(wasm_browser))]
