@@ -659,7 +659,7 @@
 <a href=#659 id=659 data-nosnippet>659</a>    };
 <a href=#660 id=660 data-nosnippet>660</a>
 <a href=#661 id=661 data-nosnippet>661</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-<a href=#662 id=662 data-nosnippet>662</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt};
+<a href=#662 id=662 data-nosnippet>662</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StackResultExt};
 <a href=#663 id=663 data-nosnippet>663</a>    <span class="kw">use </span>quinn::{IdleTimeout, TransportConfig};
 <a href=#664 id=664 data-nosnippet>664</a>    <span class="kw">use </span>rand::{CryptoRng, Rng, SeedableRng};
 <a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
@@ -835,7 +835,7 @@
 <a href=#835 id=835 data-nosnippet>835</a>        <span class="kw">let </span>_conn = ep2
 <a href=#836 id=836 data-nosnippet>836</a>            .connect(ep1_addr, TEST_ALPN)
 <a href=#837 id=837 data-nosnippet>837</a>            .<span class="kw">await
-<a href=#838 id=838 data-nosnippet>838</a>            </span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#838 id=838 data-nosnippet>838</a>            </span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
 <a href=#839 id=839 data-nosnippet>839</a>        <span class="prelude-val">Ok</span>(())
 <a href=#840 id=840 data-nosnippet>840</a>    }
 <a href=#841 id=841 data-nosnippet>841</a>
@@ -952,7 +952,7 @@
 <a href=#952 id=952 data-nosnippet>952</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
 <a href=#953 id=953 data-nosnippet>953</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(accepting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
 <a href=#954 id=954 data-nosnippet>954</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
-<a href=#955 id=955 data-nosnippet>955</a>                    </span><span class="kw">let </span>conn = accepting.<span class="kw">await</span>.std_context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
+<a href=#955 id=955 data-nosnippet>955</a>                    </span><span class="kw">let </span>conn = accepting.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#956 id=956 data-nosnippet>956</a>                    connections.push(conn);
 <a href=#957 id=957 data-nosnippet>957</a>                }
 <a href=#958 id=958 data-nosnippet>958</a>

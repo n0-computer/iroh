@@ -166,7 +166,7 @@ connecting using only the <a href="type.EndpointId.html" title="type iroh::Endpo
         .<span class="kw">await
         </span>.context(<span class="string">"no incoming connection"</span>)<span class="question-mark">?
         </span>.<span class="kw">await
-        </span>.std_context(<span class="string">"accept conn"</span>)<span class="question-mark">?</span>;
+        </span>.context(<span class="string">"accept conn"</span>)<span class="question-mark">?</span>;
     <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) =
         conn.accept_bi().<span class="kw">await</span>.std_context(<span class="string">"accept stream"</span>)<span class="question-mark">?</span>;
     <span class="kw">let </span>_msg = recv_stream.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.std_context(<span class="string">"read"</span>)<span class="question-mark">?</span>;

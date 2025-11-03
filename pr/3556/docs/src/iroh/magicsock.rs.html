@@ -2521,7 +2521,7 @@
 <a href=#2521 id=2521 data-nosnippet>2521</a>
 <a href=#2522 id=2522 data-nosnippet>2522</a>    <span class="kw">use </span>data_encoding::HEXLOWER;
 <a href=#2523 id=2523 data-nosnippet>2523</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, PublicKey, TransportAddr};
-<a href=#2524 id=2524 data-nosnippet>2524</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
+<a href=#2524 id=2524 data-nosnippet>2524</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#2525 id=2525 data-nosnippet>2525</a>    <span class="kw">use </span>n0_future::{StreamExt, time};
 <a href=#2526 id=2526 data-nosnippet>2526</a>    <span class="kw">use </span>n0_watcher::Watcher;
 <a href=#2527 id=2527 data-nosnippet>2527</a>    <span class="kw">use </span>quinn::ServerConfig;
@@ -2705,7 +2705,7 @@
 <a href=#2705 id=2705 data-nosnippet>2705</a>        <span class="kw">let </span>conn = ep.endpoint.accept().<span class="kw">await</span>.expect(<span class="string">"no conn"</span>);
 <a href=#2706 id=2706 data-nosnippet>2706</a>
 <a href=#2707 id=2707 data-nosnippet>2707</a>        <span class="macro">info!</span>(<span class="string">"accepting"</span>);
-<a href=#2708 id=2708 data-nosnippet>2708</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.std_context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
+<a href=#2708 id=2708 data-nosnippet>2708</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#2709 id=2709 data-nosnippet>2709</a>        <span class="macro">info!</span>(<span class="string">"accepting bi"</span>);
 <a href=#2710 id=2710 data-nosnippet>2710</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.accept_bi().<span class="kw">await</span>.std_context(<span class="string">"accept bi"</span>)<span class="question-mark">?</span>;
 <a href=#2711 id=2711 data-nosnippet>2711</a>
