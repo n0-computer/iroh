@@ -1711,9 +1711,10 @@ mod tests {
 
     // Test whether 0-RTT is possible after a restart:
     #[tokio::test]
-    // #[traced_test]
+    #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
-        for _ in 0..5 {
+        for x in 0..5 {
+            tracing::info!("Loop {x}");
             let (relay_map, _relay_url, _guard) = run_relay_server().await?;
             let relay_mode = RelayMode::Custom(relay_map);
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
