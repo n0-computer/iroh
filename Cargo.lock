@@ -2276,8 +2276,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.36.2"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#53cf550e13144722de713e9c73cd76c81f68b854"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79e3381da7c93c12d353230c74bba26131d1c8bf3a4d8af0fec041546454582e"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2295,8 +2296,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics-derive"
-version = "0.3.1"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando%2Fn0-error#53cf550e13144722de713e9c73cd76c81f68b854"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4e12bd0763fd16062f5cc5e8db15dd52d26e75a8af4c7fb57ccee3589b344b8"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2710,25 +2712,13 @@ dependencies = [
 
 [[package]]
 name = "n0-watcher"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34c65e127e06e5a2781b28df6a33ea474a7bddc0ac0cfea888bd20c79a1b6516"
+checksum = "38acf13c1ddafc60eb7316d52213467f8ccb70b6f02b65e7d97f7799b1f50be4"
 dependencies = [
  "derive_more 2.0.1",
+ "n0-error",
  "n0-future",
- "snafu",
-]
-
-[[package]]
-name = "nested_enum_utils"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1d5475271bdd36a4a2769eac1ef88df0f99428ea43e52dfd8b0ee5cb674695f"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -2799,8 +2789,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98d7ec7abdbfe67ee70af3f2002326491178419caea22254b9070e6ff0c83491"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando%2Fn0-snafu#29ed0df8ea644358b64d30ba37ddefe97628df26"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2809,9 +2798,9 @@ dependencies = [
  "iroh-quinn-udp",
  "js-sys",
  "libc",
+ "n0-error",
  "n0-future",
  "n0-watcher",
- "nested_enum_utils",
  "netdev",
  "netlink-packet-core",
  "netlink-packet-route",
@@ -2819,7 +2808,6 @@ dependencies = [
  "netlink-sys",
  "pin-project-lite",
  "serde",
- "snafu",
  "socket2 0.6.1",
  "time",
  "tokio",
@@ -3176,8 +3164,7 @@ checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 [[package]]
 name = "portmapper"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d73aa9bd141e0ff6060fea89a5437883f3b9ceea1cda71c790b90e17d072a3b3"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando%2Fn0-snafu#29ed0df8ea644358b64d30ba37ddefe97628df26"
 dependencies = [
  "base64",
  "bytes",
@@ -3188,13 +3175,12 @@ dependencies = [
  "igd-next",
  "iroh-metrics",
  "libc",
- "nested_enum_utils",
+ "n0-error",
  "netwatch",
  "num_enum",
  "rand 0.9.2",
  "serde",
  "smallvec",
- "snafu",
  "socket2 0.6.1",
  "time",
  "tokio",
@@ -4124,27 +4110,6 @@ name = "smol_str"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fad6c857cbab2627dcf01ec85a623ca4e7dcb5691cbaa3d7fb7653671f0d09c9"
-
-[[package]]
-name = "snafu"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e84b3f4eacbf3a1ce05eac6763b4d629d60cbc94d632e4092c54ade71f1e1a2"
-dependencies = [
- "snafu-derive",
-]
-
-[[package]]
-name = "snafu-derive"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
-dependencies = [
- "heck",
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "socket2"
@@ -5134,7 +5099,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
