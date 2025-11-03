@@ -238,9 +238,8 @@ impl EndpointStateActor {
                 Some((id, evt)) = self.path_events.next() => {
                     self.handle_path_event(id, evt);
                 }
-                Some((id, evt)) = self.addr_events.next() => {
-                    self.handle_addr_event(id, evt);
-                    trace!("remote addrs updated, triggering holepunching");
+                Some((id, _)) = self.addr_events.next() => {
+                    trace!(?id, "remote addrs updated, triggering holepunching");
                     self.trigger_holepunching().await;
                 }
                 _ = self.local_addrs.updated() => {
@@ -349,7 +348,6 @@ impl EndpointStateActor {
                 ConnectionState {
                     handle: handle.clone(),
                     pub_path_info: paths_info,
-                    nat_candidates: Default::default(),
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
@@ -700,18 +698,6 @@ impl EndpointStateActor {
         }
     }
 
-    /// Handles a NAT address candidate added or removed by the server.
-    ///
-    /// When the server adds an address we want to (re-)holepunch.  Same for when a local
-    /// address changes, though that is not handled here.
-    fn handle_addr_event(&mut self, conn_id: ConnId, event: Vec<SocketAddr>) {
-        if let Some(conn_state) = self.connections.get_mut(&conn_id) {
-            let _ = std::mem::replace(&mut conn_state.nat_candidates, event);
-        } else {
-            warn!(?conn_id, "NAT candidate event for unknown connection");
-        }
-    }
-
     /// Clean up connections which no longer exist.
     // TODO: Call this on a schedule.
     fn cleanup_connections(&mut self) {
@@ -924,10 +910,6 @@ struct ConnectionState {
     handle: WeakConnectionHandle,
     /// The information we publish to users about the paths used in this connection.
     pub_path_info: Watchable<HashMap<TransportAddr, PathInfo>>,
-    /// NAT candidate addresses we received from the server.
-    ///
-    /// If we are the server for this connection, this will remain empty.
-    nat_candidates: Vec<SocketAddr>,
     /// The paths that exist on this connection.
     ///
     /// This could be in any state, e.g. while still validating the path or already closed
