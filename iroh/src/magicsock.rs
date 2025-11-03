@@ -1872,7 +1872,7 @@ fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
 /// iroh endpoint, see [`DirectAddrType`] for the several kinds of sources.
 ///
 /// This is essentially a combination of our local addresses combined with any reflexive
-/// transport addresses we disovered using QAD.
+/// transport addresses we discovered using QAD.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DirectAddr {
     /// The address.

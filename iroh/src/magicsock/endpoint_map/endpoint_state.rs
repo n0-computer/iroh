@@ -200,7 +200,7 @@ impl EndpointStateActor {
     ///
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
-    /// dicipline is needed to not turn pending for a long time.
+    /// discipline is needed to not turn pending for a long time.
     async fn run(
         &mut self,
         mut inbox: mpsc::Receiver<EndpointStateMessage>,
