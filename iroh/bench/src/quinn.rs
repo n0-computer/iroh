@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt};
 use quinn::{
     Connection, Endpoint, RecvStream, SendStream, TransportConfig, crypto::rustls::QuicClientConfig,
 };
@@ -73,7 +73,7 @@ pub async fn connect_client(
         quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
 
     let mut roots = RootCertStore::empty();
-    roots.add(server_cert).e()?;
+    roots.add(server_cert).anyerr()?;
 
     let provider = rustls::crypto::ring::default_provider();
 
@@ -84,14 +84,14 @@ pub async fn connect_client(
         .with_no_client_auth();
 
     let mut client_config =
-        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).e()?));
+        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).anyerr()?));
     client_config.transport_config(Arc::new(transport_config(opt.max_streams, opt.initial_mtu)));
 
     let connection = endpoint
         .connect_with(client_config, server_addr, "localhost")
         .unwrap()
         .await
-        .context("unable to connect")?;
+        .std_context("unable to connect")?;
     trace!("connected");
 
     Ok((endpoint, connection))
@@ -125,7 +125,7 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.e()? {
+        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -147,7 +147,7 @@ async fn drain_stream(
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.e()? {
+        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -171,21 +171,21 @@ async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Resul
         stream
             .write_chunk(bytes_data.clone())
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
     if remaining != 0 {
         stream
             .write_chunk(bytes_data.slice(0..remaining))
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
-    stream.finish().context("failed finishing stream")?;
+    stream.finish().std_context("failed finishing stream")?;
     stream
         .stopped()
         .await
-        .context("failed to wait for stream to be stopped")?;
+        .std_context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }
@@ -200,7 +200,7 @@ pub async fn handle_client_stream(
     let (mut send_stream, mut recv_stream) = connection
         .open_bi()
         .await
-        .context("failed to open stream")?;
+        .std_context("failed to open stream")?;
 
     send_data_on_stream(&mut send_stream, upload_size).await?;
 
@@ -246,7 +246,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 tokio::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
-                    Ok::<_, n0_snafu::Error>(())
+                    n0_error::Ok(())
                 });
             }
 

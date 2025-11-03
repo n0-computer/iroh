@@ -43,11 +43,11 @@ use std::{
 };
 
 use iroh_base::EndpointId;
+use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
 };
-use snafu::{Backtrace, Snafu};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
@@ -70,10 +70,10 @@ use crate::{
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use n0_snafu::ResultExt;
+/// # use n0_error::StdResultExt;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, EndpointAddr};
 /// #
-/// # async fn test_compile() -> n0_snafu::Result<()> {
+/// # async fn test_compile() -> n0_error::Result<()> {
 /// let endpoint = Endpoint::bind().await?;
 ///
 /// let router = Router::builder(endpoint)
@@ -81,8 +81,8 @@ use crate::{
 ///     .spawn();
 ///
 /// // wait until the user wants to
-/// tokio::signal::ctrl_c().await.context("ctrl+c")?;
-/// router.shutdown().await.context("shutdown")?;
+/// tokio::signal::ctrl_c().await.std_context("ctrl+c")?;
+/// router.shutdown().await.std_context("shutdown")?;
 /// # Ok(())
 /// # }
 /// ```
@@ -102,40 +102,32 @@ pub struct RouterBuilder {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum AcceptError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Connecting {
         source: crate::endpoint::ConnectingError,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
     },
-    #[snafu(transparent)]
+    #[error(transparent)]
     Connection {
         source: crate::endpoint::ConnectionError,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
     },
-    #[snafu(transparent)]
+    #[error(transparent)]
     MissingRemoteEndpointId { source: RemoteEndpointIdError },
-    #[snafu(display("Not allowed."))]
+    #[error("Not allowed.")]
     NotAllowed {},
-
-    #[snafu(transparent)]
-    User {
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
-    },
+    #[error(transparent)]
+    User { source: AnyError },
 }
 
 impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
+    #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
-        Self::User {
-            source: Box::new(value),
-        }
+        e!(AcceptError::User {
+            source: AnyError::from_std(value)
+        })
     }
 }
 
@@ -575,7 +567,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
         let is_allowed = (self.limiter)(remote);
         if !is_allowed {
             conn.close(0u32.into(), b"not allowed");
-            return Err(NotAllowedSnafu.build());
+            return Err(e!(AcceptError::NotAllowed));
         }
         self.proto.accept(conn).await?;
         Ok(())
@@ -590,7 +582,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 mod tests {
     use std::{sync::Mutex, time::Duration};
 
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
     use quinn::ApplicationClose;
 
     use super::*;
@@ -604,7 +596,7 @@ mod tests {
         assert!(!router.is_shutdown());
         assert!(!endpoint.is_closed());
 
-        router.shutdown().await.e()?;
+        router.shutdown().await.anyerr()?;
 
         assert!(router.is_shutdown());
         assert!(endpoint.is_closed());
@@ -648,11 +640,11 @@ mod tests {
         println!("connecting");
         let conn = e2.connect(addr1, ECHO_ALPN).await?;
 
-        let (_send, mut recv) = conn.open_bi().await.e()?;
+        let (_send, mut recv) = conn.open_bi().await.anyerr()?;
         let response = recv.read_to_end(1000).await.unwrap_err();
         assert!(format!("{response:#?}").contains("not allowed"));
 
-        r1.shutdown().await.e()?;
+        r1.shutdown().await.anyerr()?;
         e2.close().await;
 
         Ok(())
@@ -696,7 +688,7 @@ mod tests {
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 
         eprintln!("starting shutdown");
-        router.shutdown().await.e()?;
+        router.shutdown().await.anyerr()?;
 
         eprintln!("waiting for closed conn");
         let reason = conn.closed().await;

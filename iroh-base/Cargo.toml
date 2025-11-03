@@ -22,9 +22,7 @@ derive_more = { version = "2.0.1", features = ["display"], optional = true }
 url = { version = "2.5.3", features = ["serde"], optional = true }
 rand_core = { version = "0.9.3", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
-snafu = { version = "0.8.5", features = ["rust_1_81"], optional = true }
-n0-snafu = "0.2.2"
-nested_enum_utils = "0.2.0"
+n0-error = "0.1.0"
 zeroize = { version = "1.8.2", optional = true, features = ["derive"] }
 zeroize_derive = { version = "1.4.2", optional = true } # needed for minimal versions
 
@@ -44,7 +42,6 @@ key = [
   "dep:ed25519-dalek",
   "dep:url",
   "dep:derive_more",
-  "dep:snafu",
   "dep:data-encoding",
   "dep:rand_core",
   "dep:zeroize",
@@ -54,7 +51,6 @@ key = [
 relay = [
   "dep:url",
   "dep:derive_more",
-  "dep:snafu",
 ]
 
 [package.metadata.docs.rs]

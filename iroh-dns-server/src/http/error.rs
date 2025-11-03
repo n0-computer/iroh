@@ -49,8 +49,8 @@ impl IntoResponse for AppError {
     }
 }
 
-impl From<n0_snafu::Error> for AppError {
-    fn from(value: n0_snafu::Error) -> Self {
+impl From<n0_error::AnyError> for AppError {
+    fn from(value: n0_error::AnyError) -> Self {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: Some(value.to_string()),

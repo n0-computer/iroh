@@ -22,8 +22,10 @@ pub mod prod {
 
     use super::*;
 
-    /// Hostname of the default NA relay.
-    pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
+    /// Hostname of the default NA east relay.
+    pub const NA_EAST_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
+    /// Hostname of the default NA west relay.
+    pub const NA_WEST_RELAY_HOSTNAME: &str = "usw1-1.relay.n0.iroh-canary.iroh.link.";
     /// Hostname of the default EU relay.
     pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh-canary.iroh.link.";
     /// Hostname of the default Asia-Pacific relay.
@@ -31,13 +33,30 @@ pub mod prod {
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
-        RelayMap::from_iter([default_na_relay(), default_eu_relay(), default_ap_relay()])
+        RelayMap::from_iter([
+            default_na_east_relay(),
+            default_na_west_relay(),
+            default_eu_relay(),
+            default_ap_relay(),
+        ])
     }
 
-    /// Get the default [`RelayConfig`] for NA.
-    pub fn default_na_relay() -> RelayConfig {
-        // The default NA relay server run by number0.
-        let url: Url = format!("https://{NA_RELAY_HOSTNAME}")
+    /// Get the default [`RelayConfig`] for NA east.
+    pub fn default_na_east_relay() -> RelayConfig {
+        // The default NA east relay server run by number0.
+        let url: Url = format!("https://{NA_EAST_RELAY_HOSTNAME}")
+            .parse()
+            .expect("default url");
+        RelayConfig {
+            url: url.into(),
+            quic: Some(RelayQuicConfig::default()),
+        }
+    }
+
+    /// Get the default [`RelayConfig`] for NA west.
+    pub fn default_na_west_relay() -> RelayConfig {
+        // The default NA west relay server run by number0.
+        let url: Url = format!("https://{NA_WEST_RELAY_HOSTNAME}")
             .parse()
             .expect("default url");
         RelayConfig {
@@ -82,19 +101,19 @@ pub mod staging {
     use super::*;
 
     /// Hostname of the default NA relay.
-    pub const NA_RELAY_HOSTNAME: &str = "staging-use1-1.relay.iroh.network.";
+    pub const NA_EAST_RELAY_HOSTNAME: &str = "staging-use1-1.relay.iroh.network.";
     /// Hostname of the default EU relay.
     pub const EU_RELAY_HOSTNAME: &str = "staging-euw1-1.relay.iroh.network.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
-        RelayMap::from_iter([default_na_relay(), default_eu_relay()])
+        RelayMap::from_iter([default_na_east_relay(), default_eu_relay()])
     }
 
-    /// Get the default [`RelayConfig`] for NA.
-    pub fn default_na_relay() -> RelayConfig {
-        // The default NA relay server run by number0.
-        let url: Url = format!("https://{NA_RELAY_HOSTNAME}")
+    /// Get the default [`RelayConfig`] for NA east.
+    pub fn default_na_east_relay() -> RelayConfig {
+        // The default NA east relay server run by number0.
+        let url: Url = format!("https://{NA_EAST_RELAY_HOSTNAME}")
             .parse()
             .expect("default url");
         RelayConfig {

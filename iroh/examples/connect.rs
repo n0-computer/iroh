@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 
 use clap::Parser;
 use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey, TransportAddr};
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -81,15 +81,15 @@ async fn main() -> Result<()> {
     info!("connected");
 
     // Use the Quinn API to send and recv content.
-    let (mut send, mut recv) = conn.open_bi().await.e()?;
+    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
     let message = format!("{me} is saying 'hello!'");
-    send.write_all(message.as_bytes()).await.e()?;
+    send.write_all(message.as_bytes()).await.anyerr()?;
 
     // Call `finish` to close the send side of the connection gracefully.
-    send.finish().e()?;
-    let message = recv.read_to_end(100).await.e()?;
-    let message = String::from_utf8(message).e()?;
+    send.finish().anyerr()?;
+    let message = recv.read_to_end(100).await.anyerr()?;
+    let message = String::from_utf8(message).anyerr()?;
     println!("received: {message}");
 
     // We received the last message: close all connections and allow for the close
