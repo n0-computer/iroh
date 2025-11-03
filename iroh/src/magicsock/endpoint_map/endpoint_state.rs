@@ -41,6 +41,9 @@ use crate::{
 /// attempted more frequently than at this interval.
 const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Interval at which [`ConnectionState`]s for closed connections are cleaned up.
+const CONN_CLEANUP_INTERVAL: Duration = Duration::from_secs(5);
+
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
 // ///
@@ -216,6 +219,7 @@ impl EndpointStateActor {
         mut inbox: mpsc::Receiver<EndpointStateMessage>,
     ) -> Result<(), Whatever> {
         trace!("actor started");
+        let mut conn_cleanup = std::pin::pin!(time::interval(CONN_CLEANUP_INTERVAL));
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -258,6 +262,9 @@ impl EndpointStateActor {
                     trace!("triggering scheduled holepunching");
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching().await;
+                }
+                _ = conn_cleanup.tick() => {
+                    self.cleanup_connections();
                 }
             }
         }
@@ -699,7 +706,6 @@ impl EndpointStateActor {
     }
 
     /// Clean up connections which no longer exist.
-    // TODO: Call this on a schedule.
     fn cleanup_connections(&mut self) {
         self.connections.retain(|_, c| c.handle.upgrade().is_some());
     }
