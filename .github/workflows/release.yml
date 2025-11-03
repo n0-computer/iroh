@@ -190,7 +190,7 @@ jobs:
 
         - name: attach artifacts
           if: matrix.os != 'windows-latest'
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v5
           with:
             name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}
             path: target/${{ matrix.cargo_targets }}/optimized-release/iroh
@@ -198,7 +198,7 @@ jobs:
 
         - name: attach artifacts
           if: matrix.os == 'windows-latest'
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v5
           with:
             name: iroh-windows-amd64.exe
             path: target/${{ matrix.cargo_targets }}/optimized-release/iroh.exe
@@ -283,7 +283,7 @@ jobs:
             asset_path: ${{ env.ASSET }}
 
         - name: attach artifacts
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v5
           if : matrix.os != 'windows-latest'
           with:
             name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
@@ -292,7 +292,7 @@ jobs:
             retention-days: 1
 
         - name: attach artifacts
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v5
           if : matrix.os == 'windows-latest'
           with:
             name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
