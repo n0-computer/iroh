@@ -210,6 +210,7 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
+    cancel_transports: CancellationToken,
 }
 
 #[allow(missing_docs)]
@@ -1392,17 +1393,22 @@ impl Handle {
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
 
-        let relay_transport = RelayTransport::new(RelayActorConfig {
-            my_relay: my_relay.clone(),
-            secret_key: secret_key.clone(),
-            #[cfg(not(wasm_browser))]
-            dns_resolver: dns_resolver.clone(),
-            proxy_url: proxy_url.clone(),
-            ipv6_reported: ipv6_reported.clone(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
-            metrics: metrics.magicsock.clone(),
-        });
+        let cancel_transports = CancellationToken::new();
+
+        let relay_transport = RelayTransport::new(
+            RelayActorConfig {
+                my_relay: my_relay.clone(),
+                secret_key: secret_key.clone(),
+                #[cfg(not(wasm_browser))]
+                dns_resolver: dns_resolver.clone(),
+                proxy_url: proxy_url.clone(),
+                ipv6_reported: ipv6_reported.clone(),
+                #[cfg(any(test, feature = "test-utils"))]
+                insecure_skip_relay_cert_verify,
+                metrics: metrics.magicsock.clone(),
+            },
+            cancel_transports.child_token(),
+        );
         let relay_transports = vec![relay_transport];
 
         let secret_encryption_key = secret_ed_box(&secret_key);
@@ -1436,6 +1442,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            cancel_transports,
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -1587,6 +1594,7 @@ impl Handle {
             return;
         }
         self.msock.closing.store(true, Ordering::Relaxed);
+        self.msock.cancel_transports.cancel();
         self.actor_token.cancel();
 
         // MutexGuard is not held across await points
