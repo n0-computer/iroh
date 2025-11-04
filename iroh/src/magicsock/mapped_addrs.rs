@@ -15,8 +15,8 @@ use std::{
 };
 
 use iroh_base::{EndpointId, RelayUrl};
+use n0_error::{e, stack_error};
 use rustc_hash::FxHashMap;
-use snafu::Snafu;
 use tracing::{error, trace};
 
 use super::transports;
@@ -178,13 +178,13 @@ impl TryFrom<Ipv6Addr> for EndpointIdMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err(EndpointIdMappedAddrError)
+        Err(e!(EndpointIdMappedAddrError))
     }
 }
 
 /// Can occur when converting a [`SocketAddr`] to an [`EndpointIdMappedAddr`]
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to convert"))]
+#[stack_error(derive, add_meta)]
+#[error("Failed to convert")]
 pub(crate) struct EndpointIdMappedAddrError;
 
 /// An Ipv6 ULA address, identifying a relay path for a [`EndpointId`].
@@ -236,13 +236,13 @@ impl TryFrom<Ipv6Addr> for RelayMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err(RelayMappedAddrError)
+        Err(e!(RelayMappedAddrError))
     }
 }
 
 /// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to convert"))]
+#[stack_error(derive, add_meta)]
+#[error("Failed to convert")]
 pub(crate) struct RelayMappedAddrError;
 
 impl std::fmt::Display for RelayMappedAddr {

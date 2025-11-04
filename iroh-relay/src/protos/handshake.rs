@@ -31,11 +31,10 @@ use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
+use n0_error::{e, ensure, stack_error};
 use n0_future::{SinkExt, TryStreamExt};
-use nested_enum_utils::common_fields;
 #[cfg(feature = "server")]
 use rand::CryptoRng;
-use snafu::{Backtrace, ResultExt, Snafu};
 use tracing::trace;
 
 use super::{
@@ -133,36 +132,37 @@ impl Frame for ServerDeniesAuth {
     const TAG: FrameType = FrameType::ServerDeniesAuth;
 }
 
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[stack_error(derive, add_meta)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Websocket {
         #[cfg(not(wasm_browser))]
+        #[error(from, std_err)]
         source: tokio_websockets::Error,
         #[cfg(wasm_browser)]
+        #[error(from, std_err)]
         source: ws_stream_wasm::WsErr,
     },
-    #[snafu(display("Handshake stream ended prematurely"))]
+    #[error("Handshake stream ended prematurely")]
     UnexpectedEnd {},
-    #[snafu(transparent)]
-    FrameTypeError { source: FrameTypeError },
-    #[snafu(display("The relay denied our authentication ({reason})"))]
+    #[error(transparent)]
+    FrameTypeError {
+        #[error(from)]
+        source: FrameTypeError,
+    },
+    #[error("The relay denied our authentication ({reason})")]
     ServerDeniedAuth { reason: String },
-    #[snafu(display("Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}"))]
+    #[error("Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}")]
     UnexpectedFrameType {
         frame_type: FrameType,
         expected_types: Vec<FrameType>,
     },
-    #[snafu(display("Handshake failed while deserializing {frame_type:?} frame"))]
+    #[error("Handshake failed while deserializing {frame_type:?} frame")]
     DeserializationError {
         frame_type: FrameType,
+        #[error(std_err)]
         source: postcard::Error,
     },
     #[cfg(feature = "server")]
@@ -171,20 +171,20 @@ pub enum Error {
 }
 
 #[cfg(feature = "server")]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 pub(crate) enum VerificationError {
-    #[snafu(display("Couldn't export TLS keying material on our end"))]
+    #[error("Couldn't export TLS keying material on our end")]
     NoKeyingMaterial,
-    #[snafu(display(
+    #[error(
         "Client didn't extract the same keying material, the suffix mismatched: expected {expected:X?} but got {actual:X?}"
-    ))]
+    )]
     MismatchedSuffix {
         expected: [u8; 16],
         actual: [u8; 16],
     },
-    #[snafu(display(
+    #[error(
         "Client signature {signature:X?} for message {message:X?} invalid for public key {public_key}"
-    ))]
+    )]
     SignatureInvalid {
         source: iroh_base::SignatureError,
         message: Vec<u8>,
@@ -231,10 +231,13 @@ impl ClientAuth {
         let message = challenge.message_to_sign();
         self.public_key
             .verify(&message, &Signature::from_bytes(&self.signature))
-            .with_context(|_| SignatureInvalidSnafu {
-                message: message.to_vec(),
-                signature: self.signature,
-                public_key: self.public_key,
+            .map_err(|err| {
+                e!(VerificationError::SignatureInvalid {
+                    source: err,
+                    message: message.to_vec(),
+                    signature: self.signature,
+                    public_key: self.public_key
+                })
             })
             .map_err(Box::new)
     }
@@ -282,15 +285,13 @@ impl KeyMaterialClientAuth {
         &self,
         io: &impl ExportKeyingMaterial,
     ) -> Result<(), Box<VerificationError>> {
-        use snafu::OptionExt;
-
         let key_material = io
             .export_keying_material(
                 [0u8; 32],
                 DOMAIN_SEP_TLS_EXPORT_LABEL,
                 Some(self.public_key.as_bytes()),
             )
-            .context(NoKeyingMaterialSnafu)?;
+            .ok_or_else(|| e!(VerificationError::NoKeyingMaterial))?;
         // We split the export and only sign the first 16 bytes, and
         // pass through the last 16 bytes.
         // Passing on the suffix helps the verifying end figure out what
@@ -301,9 +302,9 @@ impl KeyMaterialClientAuth {
         // there must be something wrong with the client's secret key or signature.
         let (message, suffix) = key_material.split_at(16);
         let suffix: [u8; 16] = suffix.try_into().expect("hardcoded length");
-        snafu::ensure!(
+        ensure!(
             suffix == self.key_material_suffix,
-            MismatchedSuffixSnafu {
+            VerificationError::MismatchedSuffix {
                 expected: self.key_material_suffix,
                 actual: suffix
             }
@@ -313,10 +314,13 @@ impl KeyMaterialClientAuth {
         // the TLS export keying material above.
         self.public_key
             .verify(message, &Signature::from_bytes(&self.signature))
-            .with_context(|_| SignatureInvalidSnafu {
-                message: message.to_vec(),
-                public_key: self.public_key,
-                signature: self.signature,
+            .map_err(|err| {
+                e!(VerificationError::SignatureInvalid {
+                    source: err,
+                    message: message.to_vec(),
+                    public_key: self.public_key,
+                    signature: self.signature
+                })
             })
             .map_err(Box::new)
     }
@@ -353,10 +357,9 @@ pub(crate) async fn clientside(
         }
         FrameType::ServerDeniesAuth => {
             let denial: ServerDeniesAuth = deserialize_frame(frame)?;
-            Err(ServerDeniedAuthSnafu {
-                reason: denial.reason,
-            }
-            .build())
+            Err(e!(Error::ServerDeniedAuth {
+                reason: denial.reason
+            }))
         }
         _ => unreachable!(),
     }
@@ -407,18 +410,16 @@ pub(crate) async fn serverside(
         let client_auth_bytes = data_encoding::BASE64URL_NOPAD
             .decode(client_auth_header.as_ref())
             .map_err(|_| {
-                ClientAuthHeaderInvalidSnafu {
-                    value: client_auth_header.clone(),
-                }
-                .build()
+                e!(Error::ClientAuthHeaderInvalid {
+                    value: client_auth_header.clone()
+                })
             })?;
 
         let client_auth: KeyMaterialClientAuth =
             postcard::from_bytes(&client_auth_bytes).map_err(|_| {
-                ClientAuthHeaderInvalidSnafu {
-                    value: client_auth_header.clone(),
-                }
-                .build()
+                e!(Error::ClientAuthHeaderInvalid {
+                    value: client_auth_header.clone()
+                })
             })?;
 
         if client_auth.verify(io).is_ok() {
@@ -444,10 +445,9 @@ pub(crate) async fn serverside(
             reason: "signature invalid".into(),
         };
         write_frame(io, denial.clone()).await?;
-        ServerDeniedAuthSnafu {
-            reason: denial.reason,
-        }
-        .fail()
+        Err(e!(Error::ServerDeniedAuth {
+            reason: denial.reason
+        }))
     } else {
         trace!(?client_auth.public_key, "authentication succeeded via challenge");
         Ok(SuccessfulAuthentication {
@@ -474,10 +474,9 @@ impl SuccessfulAuthentication {
                 reason: "not authorized".into(),
             };
             write_frame(io, denial.clone()).await?;
-            ServerDeniedAuthSnafu {
-                reason: denial.reason,
-            }
-            .fail()
+            Err(e!(Error::ServerDeniedAuth {
+                reason: denial.reason
+            }))
         }
     }
 }
@@ -505,13 +504,13 @@ async fn read_frame(
     let mut payload = io
         .try_next()
         .await?
-        .ok_or_else(|| UnexpectedEndSnafu.build())?;
+        .ok_or_else(|| e!(Error::UnexpectedEnd))?;
 
     let frame_type = FrameType::from_bytes(&mut payload)?;
     trace!(?frame_type, "Reading frame");
-    snafu::ensure!(
+    ensure!(
         expected_types.contains(&frame_type),
-        UnexpectedFrameTypeSnafu {
+        Error::UnexpectedFrameType {
             frame_type,
             expected_types: expected_types.to_vec()
         }
@@ -521,15 +520,20 @@ async fn read_frame(
 }
 
 fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Result<F, Error> {
-    postcard::from_bytes(&frame).context(DeserializationSnafu { frame_type: F::TAG })
+    postcard::from_bytes(&frame).map_err(|err| {
+        e!(Error::DeserializationError {
+            frame_type: F::TAG,
+            source: err
+        })
+    })
 }
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use bytes::BytesMut;
     use iroh_base::{PublicKey, SecretKey};
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
-    use n0_snafu::{Result, ResultExt};
     use rand::SeedableRng;
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use tracing::{Instrument, info_span};
@@ -765,8 +769,8 @@ mod tests {
         let challenge = ServerChallenge::new(&mut rng);
         let client_auth = ClientAuth::new(&secret_key, &challenge);
 
-        let bytes = postcard::to_allocvec(&client_auth).e()?;
-        let decoded: ClientAuth = postcard::from_bytes(&bytes).e()?;
+        let bytes = postcard::to_allocvec(&client_auth).anyerr()?;
+        let decoded: ClientAuth = postcard::from_bytes(&bytes).anyerr()?;
 
         assert_eq!(client_auth.public_key, decoded.public_key);
         assert_eq!(client_auth.signature, decoded.signature);
@@ -785,10 +789,10 @@ mod tests {
                 shared_secret: Some(42),
             },
         )
-        .e()?;
+        .anyerr()?;
 
-        let bytes = postcard::to_allocvec(&client_auth).e()?;
-        let decoded: KeyMaterialClientAuth = postcard::from_bytes(&bytes).e()?;
+        let bytes = postcard::to_allocvec(&client_auth).anyerr()?;
+        let decoded: KeyMaterialClientAuth = postcard::from_bytes(&bytes).anyerr()?;
 
         assert_eq!(client_auth.public_key, decoded.public_key);
         assert_eq!(client_auth.signature, decoded.signature);
@@ -815,7 +819,7 @@ mod tests {
             inner: (),
             shared_secret: Some(42),
         };
-        let client_auth = KeyMaterialClientAuth::new(&secret_key, &io).e()?;
+        let client_auth = KeyMaterialClientAuth::new(&secret_key, &io).anyerr()?;
         assert!(client_auth.verify(&io).is_ok());
 
         Ok(())

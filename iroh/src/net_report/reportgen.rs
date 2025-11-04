@@ -33,6 +33,7 @@ use iroh_relay::{
     dns::{DnsError, DnsResolver, StaggeredError},
     quic::QuicClient,
 };
+use n0_error::{e, stack_error};
 #[cfg(wasm_browser)]
 use n0_future::future::Pending;
 use n0_future::{
@@ -41,7 +42,6 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use rand::seq::IteratorRandom;
-use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, trace, warn, warn_span};
@@ -174,17 +174,16 @@ struct Actor {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
-#[snafu(module)]
 pub(super) enum ProbesError {
-    #[snafu(display("Probe failed"))]
+    #[error("Probe failed")]
     ProbeFailure { source: ProbeError },
-    #[snafu(display("All probes failed"))]
+    #[error("All probes failed")]
     AllProbesFailed,
-    #[snafu(display("Probe cancelled"))]
+    #[error("Probe cancelled")]
     Cancelled,
-    #[snafu(display("Probe timed out"))]
+    #[error("Probe timed out")]
     Timeout,
 }
 
@@ -298,8 +297,8 @@ impl Actor {
                         Some(Ok(Ok(found))) => Some(found),
                         Some(Ok(Err(err))) => {
                             match err {
-                                CaptivePortalError::CreateReqwestClient { source }
-                                | CaptivePortalError::HttpRequest { source }
+                                CaptivePortalError::CreateReqwestClient { source, .. }
+                                | CaptivePortalError::HttpRequest { source, .. }
                                     if source.is_connect() =>
                                 {
                                     debug!("check_captive_portal failed: {source:#}");
@@ -383,12 +382,10 @@ impl Actor {
                             Some(Ok(Ok(report))) => Ok(report),
                             Some(Ok(Err(err))) => {
                                 warn!("probe failed: {:#}", err);
-                                Err(probes_error::ProbeFailureSnafu {}.into_error(err))
+                                Err(e!(ProbesError::ProbeFailure, err))
                             }
-                            Some(Err(time::Elapsed { .. })) => {
-                                Err(probes_error::TimeoutSnafu.build())
-                            }
-                            None => Err(probes_error::CancelledSnafu.build()),
+                            Some(Err(time::Elapsed { .. })) => Err(e!(ProbesError::Timeout)),
+                            None => Err(e!(ProbesError::Cancelled)),
                         };
                         ProbeFinished::Regular(res)
                     }
@@ -448,26 +445,24 @@ pub(super) struct HttpsProbeReport {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[snafu(module)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(super) enum ProbeError {
-    #[snafu(display("Client is gone"))]
+    #[error("Client is gone")]
     ClientGone,
-    #[snafu(display("Probe is no longer useful"))]
+    #[error("Probe is no longer useful")]
     NotUseful,
-    #[snafu(display("Failed to run HTTPS probe"))]
+    #[error("Failed to run HTTPS probe")]
     Https { source: MeasureHttpsLatencyError },
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[snafu(module)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub(super) enum QuicError {
-    #[snafu(display("No relay available"))]
+    #[error("No relay available")]
     NoRelay,
-    #[snafu(display("URL must have 'host' to use QUIC address discovery probes"))]
+    #[error("URL must have 'host' to use QUIC address discovery probes")]
     InvalidUrl,
 }
 
@@ -512,7 +507,7 @@ impl Probe {
                 .await
                 {
                     Ok(report) => Ok(ProbeReport::Https(report)),
-                    Err(err) => Err(probe_error::HttpsSnafu.into_error(err)),
+                    Err(err) => Err(e!(ProbeError::Https, err)),
                 }
             }
             #[cfg(not(wasm_browser))]
@@ -522,16 +517,24 @@ impl Probe {
 }
 
 #[cfg(not(wasm_browser))]
-#[derive(Debug, Snafu)]
-#[snafu(module)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 enum CaptivePortalError {
-    #[snafu(transparent)]
-    DnsLookup { source: StaggeredError<DnsError> },
-    #[snafu(display("Creating HTTP client failed"))]
-    CreateReqwestClient { source: reqwest::Error },
-    #[snafu(display("HTTP request failed"))]
-    HttpRequest { source: reqwest::Error },
+    #[error(transparent)]
+    DnsLookup {
+        #[error(from)]
+        source: StaggeredError<DnsError>,
+    },
+    #[error("Creating HTTP client failed")]
+    CreateReqwestClient {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
+    #[error("HTTP request failed")]
+    HttpRequest {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
 }
 
 /// Reports whether or not we think the system is behind a
@@ -584,7 +587,7 @@ async fn check_captive_portal(
     }
     let client = builder
         .build()
-        .context(captive_portal_error::CreateReqwestClientSnafu)?;
+        .map_err(|err| e!(CaptivePortalError::CreateReqwestClient, err))?;
 
     // Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/iroh-relay for more
@@ -598,7 +601,7 @@ async fn check_captive_portal(
         .header("X-Iroh-Challenge", &challenge)
         .send()
         .await
-        .context(captive_portal_error::HttpRequestSnafu)?;
+        .map_err(|err| e!(CaptivePortalError::HttpRequest, err))?;
 
     let expected_response = format!("response {challenge}");
     let is_valid_response = res
@@ -633,24 +636,23 @@ fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
 }
 
 #[cfg(not(wasm_browser))]
-#[derive(Debug, Snafu)]
-#[snafu(module)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum GetRelayAddrError {
-    #[snafu(display("No valid hostname in the relay URL"))]
+    #[error("No valid hostname in the relay URL")]
     InvalidHostname,
-    #[snafu(display("No suitable relay address found for {url} ({addr_type})"))]
+    #[error("No suitable relay address found for {url} ({addr_type})")]
     NoAddrFound {
         url: RelayUrl,
         addr_type: &'static str,
     },
-    #[snafu(display("DNS lookup failed"))]
+    #[error("DNS lookup failed")]
     DnsLookup { source: StaggeredError<DnsError> },
-    #[snafu(display("Relay is not suitable"))]
+    #[error("Relay is not suitable")]
     UnsupportedRelay,
-    #[snafu(display("HTTPS probes are not implemented"))]
+    #[error("HTTPS probes are not implemented")]
     UnsupportedHttps,
-    #[snafu(display("No port available for this protocol"))]
+    #[error("No port available for this protocol")]
     MissingPort,
 }
 
@@ -660,7 +662,7 @@ pub(super) async fn get_relay_addr_ipv4(
     dns_resolver: &DnsResolver,
     relay: &RelayConfig,
 ) -> Result<SocketAddrV4, GetRelayAddrError> {
-    let port = get_quic_port(relay).context(get_relay_addr_error::MissingPortSnafu)?;
+    let port = get_quic_port(relay).ok_or_else(|| e!(GetRelayAddrError::MissingPort))?;
     relay_lookup_ipv4_staggered(dns_resolver, relay, port).await
 }
 
@@ -669,7 +671,7 @@ pub(super) async fn get_relay_addr_ipv6(
     dns_resolver: &DnsResolver,
     relay: &RelayConfig,
 ) -> Result<SocketAddrV6, GetRelayAddrError> {
-    let port = get_quic_port(relay).context(get_relay_addr_error::MissingPortSnafu)?;
+    let port = get_quic_port(relay).ok_or_else(|| e!(GetRelayAddrError::MissingPort))?;
     relay_lookup_ipv6_staggered(dns_resolver, relay, port).await
 }
 
@@ -696,23 +698,21 @@ async fn relay_lookup_ipv4_staggered(
                         IpAddr::V4(ip) => SocketAddrV4::new(ip, port),
                         IpAddr::V6(_) => unreachable!("bad DNS lookup: {:?}", addr),
                     })
-                    .ok_or(
-                        get_relay_addr_error::NoAddrFoundSnafu {
+                    .ok_or_else(|| {
+                        e!(GetRelayAddrError::NoAddrFound {
                             url: relay.url.clone(),
                             addr_type: "A",
-                        }
-                        .build(),
-                    ),
-                Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
+                        })
+                    }),
+                Err(err) => Err(e!(GetRelayAddrError::DnsLookup, err)),
             }
         }
         Some(url::Host::Ipv4(addr)) => Ok(SocketAddrV4::new(addr, port)),
-        Some(url::Host::Ipv6(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu {
+        Some(url::Host::Ipv6(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound {
             url: relay.url.clone(),
             addr_type: "A",
-        }
-        .build()),
-        None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
+        })),
+        None => Err(e!(GetRelayAddrError::InvalidHostname)),
     }
 }
 
@@ -738,40 +738,49 @@ async fn relay_lookup_ipv6_staggered(
                         IpAddr::V4(_) => unreachable!("bad DNS lookup: {:?}", addr),
                         IpAddr::V6(ip) => SocketAddrV6::new(ip, port, 0, 0),
                     })
-                    .ok_or(
-                        get_relay_addr_error::NoAddrFoundSnafu {
+                    .ok_or_else(|| {
+                        e!(GetRelayAddrError::NoAddrFound {
                             url: relay.url.clone(),
                             addr_type: "AAAA",
-                        }
-                        .build(),
-                    ),
-                Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
+                        })
+                    }),
+                Err(err) => Err(e!(GetRelayAddrError::DnsLookup, err)),
             }
         }
-        Some(url::Host::Ipv4(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu {
+        Some(url::Host::Ipv4(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound {
             url: relay.url.clone(),
             addr_type: "AAAA",
-        }
-        .build()),
+        })),
         Some(url::Host::Ipv6(addr)) => Ok(SocketAddrV6::new(addr, port, 0, 0)),
-        None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
+        None => Err(e!(GetRelayAddrError::InvalidHostname)),
     }
 }
 
-#[derive(Debug, Snafu)]
-#[snafu(module)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum MeasureHttpsLatencyError {
-    #[snafu(transparent)]
-    InvalidUrl { source: url::ParseError },
+    #[error(transparent)]
+    InvalidUrl {
+        #[error(std_err, from)]
+        source: url::ParseError,
+    },
     #[cfg(not(wasm_browser))]
-    #[snafu(transparent)]
-    DnsLookup { source: StaggeredError<DnsError> },
-    #[snafu(display("Creating HTTP client failed"))]
-    CreateReqwestClient { source: reqwest::Error },
-    #[snafu(display("HTTP request failed"))]
-    HttpRequest { source: reqwest::Error },
-    #[snafu(display("Error response from server {status}: {:?}", status.canonical_reason()))]
+    #[error(transparent)]
+    DnsLookup {
+        #[error(from)]
+        source: StaggeredError<DnsError>,
+    },
+    #[error("Creating HTTP client failed")]
+    CreateReqwestClient {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
+    #[error("HTTP request failed")]
+    HttpRequest {
+        #[error(std_err)]
+        source: reqwest::Error,
+    },
+    #[error("Error response from server {status}: {:?}", status.canonical_reason())]
     InvalidResponse { status: StatusCode },
 }
 
@@ -821,14 +830,14 @@ async fn run_https_probe(
 
     let client = builder
         .build()
-        .context(measure_https_latency_error::CreateReqwestClientSnafu)?;
+        .map_err(|err| e!(MeasureHttpsLatencyError::CreateReqwestClient, err))?;
 
     let start = Instant::now();
     let response = client
         .request(reqwest::Method::GET, url)
         .send()
         .await
-        .context(measure_https_latency_error::HttpRequestSnafu)?;
+        .map_err(|err| e!(MeasureHttpsLatencyError::HttpRequest, err))?;
     let latency = start.elapsed();
     if response.status().is_success() {
         // Drain the response body to be nice to the server, up to a limit.
@@ -845,10 +854,9 @@ async fn run_https_probe(
 
         Ok(HttpsProbeReport { relay, latency })
     } else {
-        Err(measure_https_latency_error::InvalidResponseSnafu {
-            status: response.status(),
-        }
-        .build())
+        Err(e!(MeasureHttpsLatencyError::InvalidResponse {
+            status: response.status()
+        }))
     }
 }
 
@@ -857,7 +865,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use iroh_relay::dns::DnsResolver;
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
     use tracing_test::traced_test;
 
     use super::{super::test_utils, *};
@@ -880,8 +888,9 @@ mod tests {
         let (server, relay) = test_utils::relay().await;
         let relay = Arc::new(relay);
         let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).e()?;
-        let client_addr = ep.local_addr().e()?;
+        let ep =
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).anyerr()?;
+        let client_addr = ep.local_addr().anyerr()?;
 
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
         let dns_resolver = DnsResolver::default();

@@ -41,50 +41,41 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey, TransportAddr};
-use nested_enum_utils::common_fields;
-use snafu::{Backtrace, ResultExt, Snafu};
+use n0_error::{e, ensure, stack_error};
 use url::Url;
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
 
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum EncodingError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     FailedBuildingPacket {
+        #[error(std_err)]
         source: pkarr::errors::SignedPacketBuildError,
     },
-    #[snafu(display("invalid TXT entry"))]
-    InvalidTxtEntry { source: pkarr::dns::SimpleDnsError },
+    #[error("invalid TXT entry")]
+    InvalidTxtEntry {
+        #[error(std_err)]
+        source: pkarr::dns::SimpleDnsError,
+    },
 }
 
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum DecodingError {
-    #[snafu(display("endpoint id was not encoded in valid z32"))]
-    InvalidEncodingZ32 { source: z32::Z32Error },
-    #[snafu(display("length must be 32 bytes, but got {len} byte(s)"))]
-    InvalidLength { len: usize },
-    #[snafu(display("endpoint id is not a valid public key"))]
-    InvalidKey {
-        #[snafu(source(from(KeyParsingError, Box::new)))]
-        source: Box<KeyParsingError>,
+    #[error("endpoint id was not encoded in valid z32")]
+    InvalidEncodingZ32 {
+        #[error(std_err)]
+        source: z32::Z32Error,
     },
+    #[error("length must be 32 bytes, but got {len} byte(s)")]
+    InvalidLength { len: usize },
+    #[error("endpoint id is not a valid public key")]
+    InvalidKey { source: KeyParsingError },
 }
 
 /// Extension methods for [`EndpointId`] to encode to and decode from [`z32`],
@@ -107,11 +98,13 @@ impl EndpointIdExt for EndpointId {
     }
 
     fn from_z32(s: &str) -> Result<EndpointId, DecodingError> {
-        let bytes = z32::decode(s.as_bytes()).context(InvalidEncodingZ32Snafu)?;
+        let bytes =
+            z32::decode(s.as_bytes()).map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
         let bytes: &[u8; 32] = &bytes
             .try_into()
-            .map_err(|_| InvalidLengthSnafu { len: s.len() }.build())?;
-        let endpoint_id = EndpointId::from_bytes(bytes).context(InvalidKeySnafu)?;
+            .map_err(|_| e!(DecodingError::InvalidLength { len: s.len() }))?;
+        let endpoint_id =
+            EndpointId::from_bytes(bytes).map_err(|err| e!(DecodingError::InvalidKey, err))?;
         Ok(endpoint_id)
     }
 }
@@ -250,18 +243,15 @@ impl UserData {
 
 /// Error returned when an input value is too long for [`UserData`].
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-pub struct MaxLengthExceededError {
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-}
+#[stack_error(derive, add_meta)]
+#[error("max length exceeded")]
+pub struct MaxLengthExceededError {}
 
 impl TryFrom<String> for UserData {
     type Error = MaxLengthExceededError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        snafu::ensure!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu);
+        ensure!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededError);
         Ok(Self(value))
     }
 }
@@ -270,7 +260,7 @@ impl FromStr for UserData {
     type Err = MaxLengthExceededError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        snafu::ensure!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu);
+        ensure!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededError);
         Ok(Self(s.to_string()))
     }
 }
@@ -432,31 +422,25 @@ impl EndpointInfo {
     }
 }
 
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum ParseError {
-    #[snafu(display("Expected format `key=value`, received `{s}`"))]
+    #[error("Expected format `key=value`, received `{s}`")]
     UnexpectedFormat { s: String },
-    #[snafu(display("Could not convert key to Attr"))]
+    #[error("Could not convert key to Attr")]
     AttrFromString { key: String },
-    #[snafu(display("Expected 2 labels, received {num_labels}"))]
+    #[error("Expected 2 labels, received {num_labels}")]
     NumLabels { num_labels: usize },
-    #[snafu(display("Could not parse labels"))]
-    Utf8 { source: Utf8Error },
-    #[snafu(display("Record is not an `iroh` record, expected `_iroh`, got `{label}`"))]
-    NotAnIrohRecord { label: String },
-    #[snafu(transparent)]
-    DecodingError {
-        #[snafu(source(from(DecodingError, Box::new)))]
-        source: Box<DecodingError>,
+    #[error("Could not parse labels")]
+    Utf8 {
+        #[error(std_err)]
+        source: Utf8Error,
     },
+    #[error("Record is not an `iroh` record, expected `_iroh`, got `{label}`")]
+    NotAnIrohRecord { label: String },
+    #[error(transparent)]
+    DecodingError { source: DecodingError },
 }
 
 impl std::ops::Deref for EndpointInfo {
@@ -481,12 +465,14 @@ impl std::ops::DerefMut for EndpointInfo {
 fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
     let num_labels = name.split(".").count();
     if num_labels < 2 {
-        return Err(NumLabelsSnafu { num_labels }.build());
+        return Err(e!(ParseError::NumLabels { num_labels }));
     }
     let mut labels = name.split(".");
     let label = labels.next().expect("checked above");
     if label != IROH_TXT_NAME {
-        return Err(NotAnIrohRecordSnafu { label }.build());
+        return Err(e!(ParseError::NotAnIrohRecord {
+            label: label.to_string()
+        }));
     }
     let label = labels.next().expect("checked above");
     let endpoint_id = EndpointId::from_z32(label)?;
@@ -562,9 +548,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         for s in strings {
             let mut parts = s.split('=');
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
-                return Err(UnexpectedFormatSnafu { s }.build());
+                return Err(e!(ParseError::UnexpectedFormat { s }));
             };
-            let attr = T::from_str(key).map_err(|_| AttrFromStringSnafu { key }.build())?;
+            let attr = T::from_str(key).map_err(|_| {
+                e!(ParseError::AttrFromString {
+                    key: key.to_string()
+                })
+            })?;
             attrs.entry(attr).or_default().push(value.to_string());
         }
         Ok(Self { attrs, endpoint_id })
@@ -640,10 +630,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let mut builder = pkarr::SignedPacket::builder();
         for s in self.to_txt_strings() {
             let mut txt = rdata::TXT::new();
-            txt.add_string(&s).context(InvalidTxtEntrySnafu)?;
+            txt.add_string(&s)
+                .map_err(|err| e!(EncodingError::InvalidTxtEntry, err))?;
             builder = builder.txt(name.clone(), txt.into_owned(), ttl);
         }
-        let signed_packet = builder.build(&keypair)?;
+        let signed_packet = builder
+            .build(&keypair)
+            .map_err(|err| e!(EncodingError::FailedBuildingPacket, err))?;
         Ok(signed_packet)
     }
 }
@@ -679,7 +672,7 @@ mod tests {
         },
     };
     use iroh_base::{EndpointId, SecretKey, TransportAddr};
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
 
     use super::{EndpointData, EndpointIdExt, EndpointInfo};
     use crate::dns::TxtRecordData;
@@ -726,7 +719,7 @@ mod tests {
         let name = Name::from_utf8(
             "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
         )
-        .context("dns name")?;
+        .std_context("dns name")?;
         let query = Query::query(name.clone(), RecordType::TXT);
         let records = [
             Record::from_rdata(
@@ -751,7 +744,7 @@ mod tests {
                     )?
                     .to_z32()
                 ))
-                .context("name")?,
+                .std_context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
                     "relay=https://euw1-1.relay.iroh.network./".to_string(),
@@ -759,7 +752,7 @@ mod tests {
             ),
             // Test a record with a completely different name
             Record::from_rdata(
-                Name::from_utf8("dns.iroh.link.").context("name")?,
+                Name::from_utf8("dns.iroh.link.").std_context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
                     "relay=https://euw1-1.relay.iroh.network./".to_string(),

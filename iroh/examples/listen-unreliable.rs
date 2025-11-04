@@ -4,7 +4,7 @@
 //! run this example from the project root:
 //!     $ cargo run --example listen-unreliable
 use iroh::{Endpoint, RelayMode, SecretKey};
-use n0_snafu::{Error, Result, ResultExt};
+use n0_error::{AnyError as Error, Result, StdResultExt};
 use tracing::{info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -72,7 +72,7 @@ async fn main() -> Result<()> {
             }
         };
         let alpn = connecting.alpn().await?;
-        let conn = connecting.await.e()?;
+        let conn = connecting.await.anyerr()?;
         let endpoint_id = conn.remote_id()?;
         info!(
             "new (unreliable) connection from {endpoint_id} with ALPN {}",
@@ -82,11 +82,12 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             // use the `quinn` API to read a datagram off the connection, and send a datagra, in return
             while let Ok(message) = conn.read_datagram().await {
-                let message = String::from_utf8(message.into()).e()?;
+                let message = String::from_utf8(message.into()).anyerr()?;
                 println!("received: {message}");
 
                 let message = format!("hi! you connected to {me}. bye bye");
-                conn.send_datagram(message.as_bytes().to_vec().into()).e()?;
+                conn.send_datagram(message.as_bytes().to_vec().into())
+                    .anyerr()?;
             }
 
             Ok::<_, Error>(())

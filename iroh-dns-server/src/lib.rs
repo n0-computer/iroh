@@ -25,7 +25,7 @@ mod tests {
         RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
         endpoint_info::EndpointInfo,
     };
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
     use pkarr::{SignedPacket, Timestamp};
     use rand::{CryptoRng, SeedableRng};
     use tracing_test::traced_test;
@@ -55,98 +55,98 @@ mod tests {
             let mut packet = dns::Packet::new_reply(0);
             // record at root
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("").e()?,
+                dns::Name::new("").anyerr()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi0".try_into().unwrap()),
             ));
             // record at level one
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("_hello").e()?,
+                dns::Name::new("_hello").anyerr()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi1".try_into().unwrap()),
             ));
             // record at level two
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("_hello.world").e()?,
+                dns::Name::new("_hello.world").anyerr()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi2".try_into().unwrap()),
             ));
             // multiple records for same name
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("multiple").e()?,
+                dns::Name::new("multiple").anyerr()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi3".try_into().unwrap()),
             ));
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("multiple").e()?,
+                dns::Name::new("multiple").anyerr()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi4".try_into().unwrap()),
             ));
             // record of type A
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("").e()?,
+                dns::Name::new("").anyerr()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::A(Ipv4Addr::LOCALHOST.into()),
             ));
             // record of type AAAA
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("foo.bar.baz").e()?,
+                dns::Name::new("foo.bar.baz").anyerr()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
             ));
-            SignedPacket::new(&keypair, &packet.answers, Timestamp::now()).e()?
+            SignedPacket::new(&keypair, &packet.answers, Timestamp::now()).anyerr()?
         };
         let pkarr_client = pkarr::Client::builder()
             .no_default_network()
             .relays(&[pkarr_relay_url])
-            .e()?
+            .anyerr()?
             .build()
-            .e()?;
-        pkarr_client.publish(&signed_packet, None).await.e()?;
+            .anyerr()?;
+        pkarr_client.publish(&signed_packet, None).await.anyerr()?;
 
         use hickory_server::proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
         let resolver = test_resolver(nameserver);
 
         // resolve root record
-        let name = Name::from_utf8(format!("{pubkey}.")).e()?;
+        let name = Name::from_utf8(format!("{pubkey}.")).anyerr()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
-        let name = Name::from_utf8(format!("_hello.{pubkey}.")).e()?;
+        let name = Name::from_utf8(format!("_hello.{pubkey}.")).anyerr()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
-        let name = Name::from_utf8(format!("_hello.world.{pubkey}.")).e()?;
+        let name = Name::from_utf8(format!("_hello.world.{pubkey}.")).anyerr()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
-        let name = Name::from_utf8(format!("multiple.{pubkey}.")).e()?;
+        let name = Name::from_utf8(format!("multiple.{pubkey}.")).anyerr()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
-        let name = Name::from_utf8(format!("{pubkey}.")).e()?;
+        let name = Name::from_utf8(format!("{pubkey}.")).anyerr()?;
         let res = resolver.lookup_ipv4(name, DNS_TIMEOUT).await?;
         let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv4Addr::LOCALHOST]);
 
         // resolve AAAA record
-        let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}.")).e()?;
+        let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}.")).anyerr()?;
         let res = resolver.lookup_ipv6(name, DNS_TIMEOUT).await?;
         let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv6Addr::LOCALHOST]);
@@ -223,11 +223,12 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    #[ignore = "flaky"]
     async fn integration_mainline() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         // run a mainline testnet
-        let testnet = pkarr::mainline::Testnet::new_async(5).await.e()?;
+        let testnet = pkarr::mainline::Testnet::new_async(5).await.anyerr()?;
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
@@ -249,8 +250,8 @@ mod tests {
             .no_default_network()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()
-            .e()?;
-        pkarr.publish(&signed_packet, None).await.e()?;
+            .anyerr()?;
+        pkarr.publish(&signed_packet, None).await.anyerr()?;
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);

@@ -29,18 +29,17 @@ use std::{
 use bytes::Bytes;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
+use n0_error::{e, stack_error};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
 use n0_watcher::{self, Watchable, Watcher};
-use nested_enum_utils::common_fields;
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::ServerConfig;
 use rand::Rng;
-use snafu::{ResultExt, Snafu};
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, event, info, info_span, instrument, trace, warn};
@@ -160,8 +159,8 @@ pub(crate) struct Handle {
     msock: Arc<MagicSock>,
     // empty when shutdown
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
-    /// Token to cancel the actor task.
-    actor_token: CancellationToken,
+    /// Token to cancel the actor task and shutdown the relay transport.
+    shutdown_token: CancellationToken,
     // quinn endpoint
     endpoint: quinn::Endpoint,
 }
@@ -223,21 +222,15 @@ pub(crate) struct MagicSock {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
-#[snafu(visibility(pub(crate)))]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum AddEndpointAddrError {
-    #[snafu(display("Empty addressing info"))]
-    Empty {},
-    #[snafu(display("Empty addressing info, {pruned} direct address have been pruned"))]
+    #[error("Empty addressing info")]
+    Empty,
+    #[error("Empty addressing info, {pruned} direct address have been pruned")]
     EmptyPruned { pruned: usize },
-    #[snafu(display("Adding our own address is not supported"))]
-    OwnAddress {},
+    #[error("Adding our own address is not supported")]
+    OwnAddress,
 }
 
 impl MagicSock {
@@ -463,9 +456,9 @@ impl MagicSock {
                 .await;
             Ok(())
         } else if pruned != 0 {
-            Err(EmptyPrunedSnafu { pruned }.build())
+            Err(e!(AddEndpointAddrError::EmptyPruned { pruned }))
         } else {
-            Err(EmptySnafu.build())
+            Err(e!(AddEndpointAddrError::Empty))
         }
     }
 
@@ -946,23 +939,18 @@ impl DirectAddrUpdateState {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum CreateHandleError {
-    #[snafu(display("Failed to create bind sockets"))]
+    #[error("Failed to create bind sockets")]
     BindSockets { source: io::Error },
-    #[snafu(display("Failed to create internal quinn endpoint"))]
+    #[error("Failed to create internal quinn endpoint")]
     CreateQuinnEndpoint { source: io::Error },
-    #[snafu(display("Failed to create socket state"))]
+    #[error("Failed to create socket state")]
     CreateSocketState { source: io::Error },
-    #[snafu(display("Failed to create netmon monitor"))]
+    #[error("Failed to create netmon monitor")]
     CreateNetmonMonitor { source: netmon::Error },
-    #[snafu(display("Failed to subscribe netmon monitor"))]
+    #[error("Failed to subscribe netmon monitor")]
     SubscribeNetmonMonitor { source: netmon::Error },
 }
 
@@ -991,25 +979,30 @@ impl Handle {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
         #[cfg(not(wasm_browser))]
-        let (ip_transports, port_mapper) =
-            bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
+        let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, &metrics)
+            .map_err(|err| e!(CreateHandleError::BindSockets, err))?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(false));
 
-        let relay_transport = RelayTransport::new(RelayActorConfig {
-            my_relay: my_relay.clone(),
-            secret_key: secret_key.clone(),
-            #[cfg(not(wasm_browser))]
-            dns_resolver: dns_resolver.clone(),
-            proxy_url: proxy_url.clone(),
-            ipv6_reported: ipv6_reported.clone(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
-            metrics: metrics.magicsock.clone(),
-        });
+        let shutdown_token = CancellationToken::new();
+
+        let relay_transport = RelayTransport::new(
+            RelayActorConfig {
+                my_relay: my_relay.clone(),
+                secret_key: secret_key.clone(),
+                #[cfg(not(wasm_browser))]
+                dns_resolver: dns_resolver.clone(),
+                proxy_url: proxy_url.clone(),
+                ipv6_reported: ipv6_reported.clone(),
+                #[cfg(any(test, feature = "test-utils"))]
+                insecure_skip_relay_cert_verify,
+                metrics: metrics.magicsock.clone(),
+            },
+            shutdown_token.child_token(),
+        );
         let relay_transports = vec![relay_transport];
 
         #[cfg(not(wasm_browser))]
@@ -1078,11 +1071,11 @@ impl Handle {
             #[cfg(wasm_browser)]
             Arc::new(crate::web_runtime::WebRuntime),
         )
-        .context(CreateQuinnEndpointSnafu)?;
+        .map_err(|err| e!(CreateHandleError::CreateQuinnEndpoint, err))?;
 
         let network_monitor = netmon::Monitor::new()
             .await
-            .context(CreateNetmonMonitorSnafu)?;
+            .map_err(|err| e!(CreateHandleError::CreateNetmonMonitor, err))?;
 
         let qad_endpoint = endpoint.clone();
 
@@ -1145,12 +1138,9 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         actor.update_direct_addresses(None);
 
-        let actor_token = CancellationToken::new();
-        let token = actor_token.clone();
-
         let actor_task = task::spawn(
             actor
-                .run(token, local_addrs_watch, sender)
+                .run(shutdown_token.child_token(), local_addrs_watch, sender)
                 .instrument(info_span!("actor")),
         );
 
@@ -1160,7 +1150,7 @@ impl Handle {
             msock,
             actor_task,
             endpoint,
-            actor_token,
+            shutdown_token,
         })
     }
 
@@ -1203,7 +1193,7 @@ impl Handle {
             return;
         }
         self.msock.closing.store(true, Ordering::Relaxed);
-        self.actor_token.cancel();
+        self.shutdown_token.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
@@ -1291,8 +1281,9 @@ impl DiscoState {
     ) -> Result<disco::Message, DiscoBoxError> {
         let mut sealed_box = sealed_box.to_vec();
         self.get_secret(endpoint_key, |secret| secret.open(&mut sealed_box))
-            .context(OpenSnafu)?;
-        disco::Message::from_bytes(&sealed_box).context(ParseSnafu)
+            .map_err(|source| e!(DiscoBoxError::Open { source }))?;
+        disco::Message::from_bytes(&sealed_box)
+            .map_err(|source| e!(DiscoBoxError::Parse { source }))
     }
 
     fn get_secret<F, T>(&self, endpoint_id: PublicKey, cb: F) -> T
@@ -1309,24 +1300,13 @@ impl DiscoState {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 enum DiscoBoxError {
-    #[snafu(display("Failed to open crypto box"))]
-    Open {
-        #[snafu(source(from(DecryptionError, Box::new)))]
-        source: Box<DecryptionError>,
-    },
-    #[snafu(display("Failed to parse disco message"))]
-    Parse {
-        #[snafu(source(from(disco::ParseError, Box::new)))]
-        source: Box<disco::ParseError>,
-    },
+    #[error("Failed to open crypto box")]
+    Open { source: DecryptionError },
+    #[error("Failed to parse disco message")]
+    Parse { source: disco::ParseError },
 }
 
 #[derive(Debug)]
@@ -1928,8 +1908,8 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
+    use n0_error::{Result, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
-    use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
     use rand::{CryptoRng, Rng, RngCore, SeedableRng};
@@ -1985,24 +1965,24 @@ mod tests {
         let conn = ep.accept().await.expect("no conn");
 
         info!("connecting");
-        let conn = conn.await.context("connecting")?;
+        let conn = conn.await.std_context("connecting")?;
         info!("accepting bi");
-        let (mut send_bi, mut recv_bi) = conn.accept_bi().await.context("accept bi")?;
+        let (mut send_bi, mut recv_bi) = conn.accept_bi().await.std_context("accept bi")?;
 
         info!("reading");
         let val = recv_bi
             .read_to_end(usize::MAX)
             .await
-            .context("read to end")?;
+            .std_context("read to end")?;
 
         info!("replying");
         for chunk in val.chunks(12) {
-            send_bi.write_all(chunk).await.context("write all")?;
+            send_bi.write_all(chunk).await.std_context("write all")?;
         }
 
         info!("finishing");
-        send_bi.finish().context("finish")?;
-        send_bi.stopped().await.context("stopped")?;
+        send_bi.finish().std_context("finish")?;
+        send_bi.stopped().await.std_context("stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -2036,20 +2016,20 @@ mod tests {
         let conn = ep.connect(dest, ALPN).await?;
 
         info!("opening bi");
-        let (mut send_bi, mut recv_bi) = conn.open_bi().await.context("open bi")?;
+        let (mut send_bi, mut recv_bi) = conn.open_bi().await.std_context("open bi")?;
 
         info!("writing message");
-        send_bi.write_all(msg).await.context("write all")?;
+        send_bi.write_all(msg).await.std_context("write all")?;
 
         info!("finishing");
-        send_bi.finish().context("finish")?;
-        send_bi.stopped().await.context("stopped")?;
+        send_bi.finish().std_context("finish")?;
+        send_bi.stopped().await.std_context("stopped")?;
 
         info!("reading_to_end");
         let val = recv_bi
             .read_to_end(usize::MAX)
             .await
-            .context("read to end")?;
+            .std_context("read to end")?;
         assert_eq!(
             val,
             msg,
@@ -2195,7 +2175,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_regression_network_change_rebind_wakes_connection_driver() -> n0_snafu::Result {
+    async fn test_regression_network_change_rebind_wakes_connection_driver() -> Result {
         let (_guard, m1, m2) = endpoint_pair().await;
 
         println!("Net change");
@@ -2207,11 +2187,11 @@ mod tests {
             async move {
                 while let Some(incoming) = endpoint.accept().await {
                     println!("Incoming first conn!");
-                    let conn = incoming.await.e()?;
+                    let conn = incoming.await.anyerr()?;
                     conn.closed().await;
                 }
 
-                Ok::<_, n0_snafu::Error>(())
+                n0_error::Ok(())
             }
         }));
 
@@ -2233,7 +2213,7 @@ mod tests {
             test_two_devices_roundtrip_network_change_impl(),
         )
         .await
-        .context("timeout")?
+        .std_context("timeout")?
     }
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
@@ -2452,8 +2432,8 @@ mod tests {
                 mapped_addr.private_socket_addr(),
                 &tls::name::encode(endpoint_id),
             )
-            .context("connect")?;
-        let connection = connect.await.e()?;
+            .std_context("connect")?;
+        let connection = connect.await.anyerr()?;
         Ok(connection)
     }
 
@@ -2496,12 +2476,12 @@ mod tests {
         // This needs an accept task
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> Result<()> {
-                let incoming = ep.accept().await.context("no incoming")?;
+                let incoming = ep.accept().await.std_context("no incoming")?;
                 let _conn = incoming
                     .accept()
-                    .context("accept")?
+                    .std_context("accept")?
                     .await
-                    .context("connecting")?;
+                    .std_context("connecting")?;
 
                 // Keep this connection alive for a while
                 tokio::time::sleep(Duration::from_secs(10)).await;
@@ -2574,14 +2554,17 @@ mod tests {
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> Result<()> {
-                let incoming = ep.accept().await.context("no incoming")?;
+                let incoming = ep.accept().await.std_context("no incoming")?;
                 let conn = incoming
                     .accept()
-                    .context("accept")?
+                    .std_context("accept")?
                     .await
-                    .context("connecting")?;
-                let mut stream = conn.accept_uni().await.context("accept uni")?;
-                stream.read_to_end(1 << 16).await.context("read to end")?;
+                    .std_context("connecting")?;
+                let mut stream = conn.accept_uni().await.std_context("accept uni")?;
+                stream
+                    .read_to_end(1 << 16)
+                    .await
+                    .std_context("read to end")?;
                 info!("accept finished");
                 Ok(())
             }

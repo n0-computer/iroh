@@ -24,9 +24,9 @@ use std::{
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
+use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
-use nested_enum_utils::common_fields;
 use pin_project::pin_project;
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
@@ -45,7 +45,6 @@ pub use quinn_proto::{
         ServerConfig as CryptoServerConfig, UnsupportedVersion,
     },
 };
-use snafu::{ResultExt, Snafu, ensure};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -62,8 +61,7 @@ use crate::{
         UserData,
     },
     magicsock::{
-        self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, OwnAddressSnafu,
-        PATH_MAX_IDLE_TIMEOUT, PathInfo,
+        self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT, PathInfo,
         mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
     },
     metrics::EndpointMetrics,
@@ -491,80 +489,59 @@ pub struct Endpoint {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum ConnectWithOptsError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     AddEndpointAddr { source: AddEndpointAddrError },
-    #[snafu(display("Connecting to ourself is not supported"))]
-    SelfConnect {},
-    #[snafu(display("No addressing information available"))]
+    #[error("Connecting to ourself is not supported")]
+    SelfConnect,
+    #[error("No addressing information available")]
     NoAddress { source: GetMappingAddressError },
-    #[snafu(display("Unable to connect to remote"))]
-    Quinn { source: quinn::ConnectError },
+    #[error("Unable to connect to remote")]
+    Quinn {
+        #[error(std_err)]
+        source: quinn_proto::ConnectError,
+    },
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum ConnectError {
-    #[snafu(transparent)]
-    Connect {
-        #[snafu(source(from(ConnectWithOptsError, Box::new)))]
-        source: Box<ConnectWithOptsError>,
-    },
-    #[snafu(transparent)]
+    #[error(transparent)]
+    Connect { source: ConnectWithOptsError },
+    #[error(transparent)]
     Connection {
-        #[snafu(source(from(ConnectionError, Box::new)))]
-        source: Box<ConnectionError>,
+        #[error(std_err)]
+        source: ConnectionError,
     },
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum BindError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     MagicSpawn {
         source: magicsock::CreateHandleError,
     },
-    #[snafu(transparent)]
+    #[error(transparent)]
     Discovery {
         source: crate::discovery::IntoDiscoveryError,
     },
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
-#[snafu(module)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum GetMappingAddressError {
-    #[snafu(display("Discovery service required due to missing addressing information"))]
+    #[error("Discovery service required due to missing addressing information")]
     DiscoveryStart { source: DiscoveryError },
-    #[snafu(display("Discovery service failed"))]
+    #[error("Discovery service failed")]
     Discover { source: DiscoveryError },
-    #[snafu(display("No addressing information found"))]
-    NoAddress {},
+    #[error("No addressing information found")]
+    NoAddress,
 }
 
 impl Endpoint {
@@ -700,7 +677,10 @@ impl Endpoint {
         );
 
         // Connecting to ourselves is not supported.
-        ensure!(endpoint_addr.id != self.id(), SelfConnectSnafu);
+        ensure!(
+            endpoint_addr.id != self.id(),
+            ConnectWithOptsError::SelfConnect
+        );
 
         if !endpoint_addr.is_empty() {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)
@@ -723,8 +703,7 @@ impl Endpoint {
         // cancels any still running task.
         let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(endpoint_addr)
-            .await
-            .context(NoAddressSnafu)?;
+            .await?;
 
         let transport_config = options
             .transport_config
@@ -750,8 +729,7 @@ impl Endpoint {
         let connect = self
             .msock
             .endpoint()
-            .connect_with(client_config, dest_addr, server_name)
-            .context(QuinnSnafu)?;
+            .connect_with(client_config, dest_addr, server_name)?;
 
         Ok(Connecting {
             inner: connect,
@@ -806,7 +784,10 @@ impl Endpoint {
         source: Source,
     ) -> Result<(), AddEndpointAddrError> {
         // Connecting to ourselves is not supported.
-        snafu::ensure!(endpoint_addr.id != self.id(), OwnAddressSnafu);
+        ensure!(
+            endpoint_addr.id != self.id(),
+            AddEndpointAddrError::OwnAddress
+        );
         self.msock.add_endpoint_addr(endpoint_addr, source).await
     }
 
@@ -846,7 +827,7 @@ impl Endpoint {
     /// The observed [`EndpointAddr`] will have the current [`RelayUrl`] and direct addresses.
     ///
     /// ```no_run
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// use iroh::{Endpoint, Watcher};
     ///
     /// let endpoint = Endpoint::builder()
@@ -1038,7 +1019,7 @@ impl Endpoint {
     /// ```rust
     /// # use std::collections::BTreeMap;
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// let endpoint = Endpoint::bind().await?;
     /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
@@ -1056,7 +1037,7 @@ impl Endpoint {
     /// # use std::collections::BTreeMap;
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// let endpoint = Endpoint::bind().await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
@@ -1079,7 +1060,7 @@ impl Endpoint {
     /// ```rust
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// let endpoint = Endpoint::bind().await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
@@ -1102,8 +1083,8 @@ impl Endpoint {
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # use n0_snafu::ResultExt;
-    /// # async fn wrapper() -> n0_snafu::Result {
+    /// # use n0_error::{StackResultExt, StdResultExt};
+    /// # async fn wrapper() -> n0_error::Result<()> {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
@@ -1124,10 +1105,10 @@ impl Endpoint {
     /// tokio::time::sleep(Duration::from_millis(500));
     /// let res = reqwest::get("http://localhost:9100/metrics")
     ///     .await
-    ///     .context("get")?
+    ///     .std_context("get")?
     ///     .text()
     ///     .await
-    ///     .context("text")?;
+    ///     .std_context("text")?;
     ///
     /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
     /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
@@ -1270,11 +1251,13 @@ impl Endpoint {
                 // only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
                 let res = DiscoveryTask::start(self.clone(), endpoint_id);
-                let mut discovery = res.context(get_mapping_address_error::DiscoveryStartSnafu)?;
+                let mut discovery =
+                    res.map_err(|err| e!(GetMappingAddressError::DiscoveryStart, err))?;
                 discovery
                     .first_arrived()
                     .await
-                    .context(get_mapping_address_error::DiscoverSnafu)?;
+                    .map_err(|err| e!(GetMappingAddressError::Discover, err))?;
+
                 let addr = self.msock.get_endpoint_mapped_addr(endpoint_id);
                 Ok((addr, Some(discovery)))
             }
@@ -1502,20 +1485,18 @@ pub struct Connecting {
 }
 
 #[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum AlpnError {
-    #[snafu(transparent)]
-    ConnectionError { source: ConnectionError },
-    #[snafu(display("No ALPN available"))]
-    Unavailable {},
-    #[snafu(display("Unknown handshake type"))]
-    UnknownHandshake {},
+    #[error(transparent)]
+    ConnectionError {
+        #[error(std_err)]
+        source: ConnectionError,
+    },
+    #[error("No ALPN available")]
+    Unavailable,
+    #[error("Unknown handshake type")]
+    UnknownHandshake,
 }
 
 impl Connecting {
@@ -1602,9 +1583,9 @@ impl Connecting {
         match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
             Ok(data) => match data.protocol {
                 Some(protocol) => Ok(protocol),
-                None => Err(UnavailableSnafu.build()),
+                None => Err(e!(AlpnError::Unavailable)),
             },
-            Err(_) => Err(UnknownHandshakeSnafu.build()),
+            Err(_) => Err(e!(AlpnError::UnknownHandshake)),
         }
     }
 }
@@ -1670,11 +1651,9 @@ pub struct Connection {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[snafu(display("Protocol error: no remote id available"))]
-pub struct RemoteEndpointIdError {
-    backtrace: Option<snafu::Backtrace>,
-}
+#[stack_error(derive, add_meta)]
+#[error("Protocol error: no remote id available")]
+pub struct RemoteEndpointIdError;
 
 impl Connection {
     fn new(inner: quinn::Connection, remote_id: Option<EndpointId>, ep: &Endpoint) -> Self {
@@ -1932,7 +1911,7 @@ impl Connection {
         match data {
             None => {
                 warn!("no peer certificate found");
-                Err(RemoteEndpointIdSnafu.build())
+                Err(RemoteEndpointIdError::new())
             }
             Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
                 Ok(certs) => {
@@ -1941,19 +1920,19 @@ impl Connection {
                             "expected a single peer certificate, but {} found",
                             certs.len()
                         );
-                        return Err(RemoteEndpointIdSnafu.build());
+                        return Err(RemoteEndpointIdError::new());
                     }
 
                     let peer_id = EndpointId::from_verifying_key(
                         VerifyingKey::from_public_key_der(&certs[0])
-                            .map_err(|_| RemoteEndpointIdSnafu.build())?,
+                            .map_err(|_| RemoteEndpointIdError::new())?,
                     );
 
                     Ok(peer_id)
                 }
                 Err(err) => {
                     warn!("invalid peer certificate: {:?}", err);
-                    Err(RemoteEndpointIdSnafu.build())
+                    Err(RemoteEndpointIdError::new())
                 }
             },
         }
@@ -2121,8 +2100,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
+    use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle, time};
-    use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
@@ -2179,11 +2158,11 @@ mod tests {
         let server = tokio::spawn(
             async move {
                 info!("accepting connection");
-                let incoming = ep.accept().await.e()?;
-                let conn = incoming.await.e()?;
-                let mut stream = conn.accept_uni().await.e()?;
+                let incoming = ep.accept().await.anyerr()?;
+                let conn = incoming.await.anyerr()?;
+                let mut stream = conn.accept_uni().await.anyerr()?;
                 let mut buf = [0u8; 5];
-                stream.read_exact(&mut buf).await.e()?;
+                stream.read_exact(&mut buf).await.anyerr()?;
                 info!("Accepted 1 stream, received {buf:?}.  Closing now.");
                 // close the connection
                 conn.close(7u8.into(), b"bye");
@@ -2214,13 +2193,13 @@ mod tests {
                 info!("client connecting");
                 let endpoint_addr = EndpointAddr::new(server_peer_id).with_relay_url(relay_url);
                 let conn = ep.connect(endpoint_addr, TEST_ALPN).await?;
-                let mut stream = conn.open_uni().await.e()?;
+                let mut stream = conn.open_uni().await.anyerr()?;
 
                 // First write is accepted by server.  We need this bit of synchronisation
                 // because if the server closes after simply accepting the connection we can
                 // not be sure our .open_uni() call would succeed as it may already receive
                 // the error.
-                stream.write_all(b"hello").await.e()?;
+                stream.write_all(b"hello").await.anyerr()?;
 
                 info!("waiting for closed");
                 // Remote now closes the connection, we should see an error sometime soon.
@@ -2246,9 +2225,9 @@ mod tests {
             n0_future::future::zip(server, client),
         )
         .await
-        .e()?;
-        server.e()??;
-        client.e()??;
+        .anyerr()?;
+        server.anyerr()??;
+        client.anyerr()??;
         Ok(())
     }
 
@@ -2285,17 +2264,17 @@ mod tests {
                 for i in 0..n_clients {
                     let round_start = Instant::now();
                     info!("[server] round {i}");
-                    let incoming = ep.accept().await.e()?;
-                    let conn = incoming.await.e()?;
+                    let incoming = ep.accept().await.anyerr()?;
+                    let conn = incoming.await.anyerr()?;
                     let endpoint_id = conn.remote_id()?;
                     info!(%i, peer = %endpoint_id.fmt_short(), "accepted connection");
-                    let (mut send, mut recv) = conn.accept_bi().await.e()?;
+                    let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
                     let mut buf = vec![0u8; chunk_size];
                     for _i in 0..n_chunks_per_client {
-                        recv.read_exact(&mut buf).await.e()?;
-                        send.write_all(&buf).await.e()?;
+                        recv.read_exact(&mut buf).await.anyerr()?;
+                        send.write_all(&buf).await.anyerr()?;
                     }
-                    send.finish().e()?;
+                    send.finish().anyerr()?;
                     conn.closed().await; // we're the last to send data, so we wait for the other side to close
                     info!(%i, peer = %endpoint_id.fmt_short(), "finished");
                     info!("[server] round {i} done in {:?}", round_start.elapsed());
@@ -2325,14 +2304,14 @@ mod tests {
                 let endpoint_addr =
                     EndpointAddr::new(server_endpoint_id).with_relay_url(relay_url.clone());
                 info!(to = ?endpoint_addr, "client connecting");
-                let conn = ep.connect(endpoint_addr, TEST_ALPN).await.e()?;
+                let conn = ep.connect(endpoint_addr, TEST_ALPN).await.anyerr()?;
                 info!("client connected");
-                let (mut send, mut recv) = conn.open_bi().await.e()?;
+                let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
                 for i in 0..n_chunks_per_client {
                     let mut buf = vec![i; chunk_size];
-                    send.write_all(&buf).await.e()?;
-                    recv.read_exact(&mut buf).await.e()?;
+                    send.write_all(&buf).await.anyerr()?;
+                    recv.read_exact(&mut buf).await.anyerr()?;
                     assert_eq!(buf, vec![i; chunk_size]);
                 }
                 // we're the last to receive data, so we close
@@ -2347,7 +2326,7 @@ mod tests {
             info!("[client] round {i} done in {:?}", round_start.elapsed());
         }
 
-        server.await.e()??;
+        server.await.anyerr()??;
 
         // We appear to have seen this being very slow at times.  So ensure we fail if this
         // test is too slow.  We're only making two connections transferring very little
@@ -2377,13 +2356,13 @@ mod tests {
             let server = server.clone();
             async move {
                 let Some(conn) = server.accept().await else {
-                    snafu::whatever!("Expected an incoming connection");
+                    n0_error::bail_any!("Expected an incoming connection");
                 };
-                let conn = conn.await.e()?;
-                let (mut send, mut recv) = conn.accept_bi().await.e()?;
-                let data = recv.read_to_end(1000).await.e()?;
-                send.write_all(&data).await.e()?;
-                send.finish().e()?;
+                let conn = conn.await.anyerr()?;
+                let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+                let data = recv.read_to_end(1000).await.anyerr()?;
+                send.write_all(&data).await.anyerr()?;
+                send.finish().anyerr()?;
                 conn.closed().await;
 
                 Ok::<_, Error>(())
@@ -2392,13 +2371,13 @@ mod tests {
 
         let addr = server.addr();
         let conn = client.connect(addr, TEST_ALPN).await?;
-        let (mut send, mut recv) = conn.open_bi().await.e()?;
-        send.write_all(b"Hello, world!").await.e()?;
-        send.finish().e()?;
-        let data = recv.read_to_end(1000).await.e()?;
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(b"Hello, world!").await.anyerr()?;
+        send.finish().anyerr()?;
+        let data = recv.read_to_end(1000).await.anyerr()?;
         conn.close(0u32.into(), b"bye!");
 
-        task.await.e()??;
+        task.await.anyerr()??;
 
         client.close().await;
         server.close().await;
@@ -2437,20 +2416,20 @@ mod tests {
         async fn connect(ep: Endpoint, dst: EndpointAddr) -> Result<quinn::ConnectionError> {
             info!(me = %ep.id().fmt_short(), "client starting");
             let conn = ep.connect(dst, TEST_ALPN).await?;
-            let mut send = conn.open_uni().await.e()?;
-            send.write_all(b"hello").await.e()?;
-            send.finish().e()?;
+            let mut send = conn.open_uni().await.anyerr()?;
+            send.write_all(b"hello").await.anyerr()?;
+            send.finish().anyerr()?;
             Ok(conn.closed().await)
         }
 
         #[instrument(name = "server", skip_all)]
         async fn accept(ep: Endpoint, src: EndpointId) -> Result {
             info!(me = %ep.id().fmt_short(), "server starting");
-            let conn = ep.accept().await.e()?.await.e()?;
+            let conn = ep.accept().await.anyerr()?.await.anyerr()?;
             let node_id = conn.remote_id()?;
             assert_eq!(node_id, src);
-            let mut recv = conn.accept_uni().await.e()?;
-            let msg = recv.read_to_end(100).await.e()?;
+            let mut recv = conn.accept_uni().await.anyerr()?;
+            let msg = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(msg, b"hello");
             // Dropping the connection closes it just fine.
             Ok(())
@@ -2459,8 +2438,8 @@ mod tests {
         let ep1_accept = tokio::spawn(accept(ep1.clone(), ep2.id()));
         let ep2_connect = tokio::spawn(connect(ep2.clone(), ep1_nodeaddr));
 
-        ep1_accept.await.e()??;
-        let conn_closed = dbg!(ep2_connect.await.e()??);
+        ep1_accept.await.anyerr()??;
+        let conn_closed = dbg!(ep2_connect.await.anyerr()??);
         assert!(matches!(
             conn_closed,
             ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
@@ -2492,12 +2471,12 @@ mod tests {
                 .bind()
                 .await?;
             info!(me = %ep.id().fmt_short(), "client starting");
-            let dst = node_addr_rx.await.e()?;
+            let dst = node_addr_rx.await.anyerr()?;
 
             info!(me = %ep.id().fmt_short(), "client connecting");
             let conn = ep.connect(dst, TEST_ALPN).await?;
-            let mut send = conn.open_uni().await.e()?;
-            send.write_all(b"hello").await.e()?;
+            let mut send = conn.open_uni().await.anyerr()?;
+            send.write_all(b"hello").await.anyerr()?;
             let mut paths = conn.paths_info().stream();
             info!("Waiting for direct connection");
             while let Some(infos) = paths.next().await {
@@ -2507,8 +2486,8 @@ mod tests {
                 }
             }
             info!("Have direct connection");
-            send.write_all(b"close please").await.e()?;
-            send.finish().e()?;
+            send.write_all(b"close please").await.anyerr()?;
+            send.finish().anyerr()?;
             Ok(conn.closed().await)
         }
 
@@ -2532,15 +2511,15 @@ mod tests {
             node_addr_tx.send(node_addr).unwrap();
 
             info!(me = %ep.id().fmt_short(), "server starting");
-            let conn = ep.accept().await.e()?.await.e()?;
+            let conn = ep.accept().await.anyerr()?.await.anyerr()?;
             // let node_id = conn.remote_node_id()?;
             // assert_eq!(node_id, src);
-            let mut recv = conn.accept_uni().await.e()?;
+            let mut recv = conn.accept_uni().await.anyerr()?;
             let mut msg = [0u8; 5];
-            recv.read_exact(&mut msg).await.e()?;
+            recv.read_exact(&mut msg).await.anyerr()?;
             assert_eq!(&msg, b"hello");
             info!("received hello");
-            let msg = recv.read_to_end(100).await.e()?;
+            let msg = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(msg, b"close please");
             info!("received 'close please'");
             // Dropping the connection closes it just fine.
@@ -2550,8 +2529,8 @@ mod tests {
         let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
         let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
 
-        server_task.await.e()??;
-        let conn_closed = dbg!(client_task.await.e()??);
+        server_task.await.anyerr()??;
+        let conn_closed = dbg!(client_task.await.anyerr()??);
         assert!(matches!(
             conn_closed,
             ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
@@ -2582,7 +2561,7 @@ mod tests {
                 .bind()
                 .await?;
             info!(me = %ep.id().fmt_short(), "client starting");
-            let dst = node_addr_rx.await.e()?;
+            let dst = node_addr_rx.await.anyerr()?;
 
             info!(me = %ep.id().fmt_short(), "client connecting");
             let conn = ep.connect(dst, TEST_ALPN).await?;
@@ -2603,11 +2582,11 @@ mod tests {
                 }
             })
             .await
-            .e()?;
+            .anyerr()?;
 
             // wait for the server to signal it has the relay connection
-            let mut stream = conn.accept_uni().await.e()?;
-            stream.read_to_end(100).await.e()?;
+            let mut stream = conn.accept_uni().await.anyerr()?;
+            stream.read_to_end(100).await.anyerr()?;
 
             info!("client closing");
             conn.close(0u8.into(), b"");
@@ -2633,7 +2612,7 @@ mod tests {
             node_addr_tx.send(node_addr).unwrap();
 
             info!(me = %ep.id().fmt_short(), "server starting");
-            let conn = ep.accept().await.e()?.await.e()?;
+            let conn = ep.accept().await.anyerr()?.await.anyerr()?;
 
             // Wait for a relay connection to be added.  Client does all the asserting here,
             // we just want to wait so we get to see all the mechanics of the connection
@@ -2648,10 +2627,10 @@ mod tests {
                 }
             })
             .await
-            .e()?;
+            .anyerr()?;
 
-            let mut stream = conn.open_uni().await.e()?;
-            stream.write_all(b"have relay").await.e()?;
+            let mut stream = conn.open_uni().await.anyerr()?;
+            stream.write_all(b"have relay").await.anyerr()?;
 
             Ok(conn.closed().await)
         }
@@ -2659,8 +2638,8 @@ mod tests {
         let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
         let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
 
-        client_task.await.e()??;
-        let conn_closed = dbg!(server_task.await.e()??);
+        client_task.await.anyerr()??;
+        let conn_closed = dbg!(server_task.await.anyerr()??);
         assert!(matches!(
             conn_closed,
             ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
@@ -2689,13 +2668,13 @@ mod tests {
                 for i in 0..2 {
                     println!("accept: round {i}");
                     let Some(conn) = server.accept().await else {
-                        snafu::whatever!("Expected an incoming connection");
+                        n0_error::bail_any!("Expected an incoming connection");
                     };
-                    let conn = conn.await.e()?;
-                    let (mut send, mut recv) = conn.accept_bi().await.e()?;
-                    let data = recv.read_to_end(1000).await.e()?;
-                    send.write_all(&data).await.e()?;
-                    send.finish().e()?;
+                    let conn = conn.await.anyerr()?;
+                    let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+                    let data = recv.read_to_end(1000).await.anyerr()?;
+                    send.write_all(&data).await.anyerr()?;
+                    send.finish().anyerr()?;
                     conn.closed().await;
                 }
                 Ok::<_, Error>(())
@@ -2712,10 +2691,10 @@ mod tests {
             .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
 
         let conn = client.connect(addr, TEST_ALPN).await?;
-        let (mut send, mut recv) = conn.open_bi().await.e()?;
-        send.write_all(b"Hello, world!").await.e()?;
-        send.finish().e()?;
-        let data = recv.read_to_end(1000).await.e()?;
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(b"Hello, world!").await.anyerr()?;
+        send.finish().anyerr()?;
+        let data = recv.read_to_end(1000).await.anyerr()?;
         conn.close(0u32.into(), b"bye!");
 
         assert_eq!(&data, b"Hello, world!");
@@ -2752,7 +2731,7 @@ mod tests {
             panic!("failed to change relay");
         })
         .await
-        .e()?;
+        .anyerr()?;
 
         println!("round2: {:?}", addr);
         assert_eq!(addr.relay_urls().next(), Some(&new_relay_url));
@@ -2762,13 +2741,13 @@ mod tests {
             .retain(|addr| !matches!(addr, TransportAddr::Ip(_)));
 
         let conn = client.connect(addr, TEST_ALPN).await?;
-        let (mut send, mut recv) = conn.open_bi().await.e()?;
-        send.write_all(b"Hello, world!").await.e()?;
-        send.finish().e()?;
-        let data = recv.read_to_end(1000).await.e()?;
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(b"Hello, world!").await.anyerr()?;
+        send.finish().anyerr()?;
+        let data = recv.read_to_end(1000).await.anyerr()?;
         conn.close(0u32.into(), b"bye!");
 
-        task.await.e()??;
+        task.await.anyerr()??;
 
         client.close().await;
         server.close().await;
@@ -2804,32 +2783,32 @@ mod tests {
 
         async fn connect_hello(ep: Endpoint, dst: EndpointId) -> Result {
             let conn = ep.connect(dst, TEST_ALPN).await?;
-            let (mut send, mut recv) = conn.open_bi().await.e()?;
+            let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
             info!("sending hello");
-            send.write_all(b"hello").await.e()?;
-            send.finish().e()?;
+            send.write_all(b"hello").await.anyerr()?;
+            send.finish().anyerr()?;
             info!("receiving world");
-            let m = recv.read_to_end(100).await.e()?;
+            let m = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(m, b"world");
             conn.close(1u8.into(), b"done");
             Ok(())
         }
 
         async fn accept_world(ep: Endpoint, src: EndpointId) -> Result {
-            let incoming = ep.accept().await.e()?;
-            let mut iconn = incoming.accept().e()?;
+            let incoming = ep.accept().await.anyerr()?;
+            let mut iconn = incoming.accept().anyerr()?;
             let alpn = iconn.alpn().await?;
-            let conn = iconn.await.e()?;
+            let conn = iconn.await.anyerr()?;
             let endpoint_id = conn.remote_id()?;
             assert_eq!(endpoint_id, src);
             assert_eq!(alpn, TEST_ALPN);
-            let (mut send, mut recv) = conn.accept_bi().await.e()?;
+            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             info!("receiving hello");
-            let m = recv.read_to_end(100).await.e()?;
+            let m = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(m, b"hello");
             info!("sending hello");
-            send.write_all(b"world").await.e()?;
-            send.finish().e()?;
+            send.write_all(b"world").await.anyerr()?;
+            send.finish().anyerr()?;
             match conn.closed().await {
                 ConnectionError::ApplicationClosed(closed) => {
                     assert_eq!(closed.error_code, 1u8.into());
@@ -2868,10 +2847,10 @@ mod tests {
             ),
         ));
 
-        p1_accept.await.e()??;
-        p2_accept.await.e()??;
-        p1_connect.await.e()??;
-        p2_connect.await.e()??;
+        p1_accept.await.anyerr()??;
+        p2_accept.await.anyerr()??;
+        p1_connect.await.anyerr()??;
+        p2_connect.await.anyerr()??;
 
         Ok(())
     }
@@ -2910,12 +2889,12 @@ mod tests {
                     return Ok(());
                 }
             }
-            snafu::whatever!("conn_type stream ended before `ConnectionType::Direct`");
+            n0_error::bail_any!("conn_type stream ended before `ConnectionType::Direct`");
         }
 
         async fn accept(ep: &Endpoint) -> Result<Connection> {
             let incoming = ep.accept().await.expect("ep closed");
-            let conn = incoming.await.e()?;
+            let conn = incoming.await.anyerr()?;
             let endpoint_id = conn.remote_id()?;
             tracing::info!(endpoint_id=%endpoint_id.fmt_short(), "accepted connection");
             Ok(conn)
@@ -2933,19 +2912,19 @@ mod tests {
 
         let ep1_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = accept(&ep1).await?;
-            let mut send = conn.open_uni().await.e()?;
+            let mut send = conn.open_uni().await.anyerr()?;
             wait_for_conn_type_direct(&ep1, ep2_endpointid).await?;
-            send.write_all(b"Conn is direct").await.e()?;
-            send.finish().e()?;
+            send.write_all(b"Conn is direct").await.anyerr()?;
+            send.finish().anyerr()?;
             conn.closed().await;
             Ok::<(), Error>(())
         });
 
         let ep2_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = ep2.connect(ep1_endpointaddr, TEST_ALPN).await?;
-            let mut recv = conn.accept_uni().await.e()?;
+            let mut recv = conn.accept_uni().await.anyerr()?;
             wait_for_conn_type_direct(&ep2, ep1_endpointid).await?;
-            let read = recv.read_to_end(100).await.e()?;
+            let read = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(read, b"Conn is direct".to_vec());
             conn.close(0u32.into(), b"done");
             conn.closed().await;
@@ -2955,9 +2934,9 @@ mod tests {
         let res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
         let res_ep2 = AbortOnDropHandle::new(tokio::spawn(ep2_side));
 
-        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).e()?;
-        r1.e()??;
-        r2.e()??;
+        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).anyerr()?;
+        r1.anyerr()??;
+        r2.anyerr()??;
 
         Ok(())
     }
@@ -3069,12 +3048,12 @@ mod tests {
             .into_0rtt()
             .expect_err("expected 0rtt to fail")
             .await
-            .e()?;
+            .anyerr()?;
 
-        let (mut send, mut recv) = conn.open_bi().await.e()?;
-        send.write_all(b"hello").await.e()?;
-        send.finish().e()?;
-        let received = recv.read_to_end(1_000).await.e()?;
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(b"hello").await.anyerr()?;
+        send.finish().anyerr()?;
+        let received = recv.read_to_end(1_000).await.anyerr()?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
         Ok(())
@@ -3091,13 +3070,13 @@ mod tests {
             .await?
             .into_0rtt()
             .ok()
-            .e()?;
+            .anyerr()?;
 
         tracing::trace!("Client established 0-RTT connection");
         // This is how we send data in 0-RTT:
-        let (mut send, recv) = conn.open_bi().await.e()?;
-        send.write_all(b"hello").await.e()?;
-        send.finish().e()?;
+        let (mut send, recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(b"hello").await.anyerr()?;
+        send.finish().anyerr()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
         let accepted = accepted_0rtt.await;
@@ -3107,12 +3086,12 @@ mod tests {
             recv
         } else {
             // in this case we need to re-send data by re-creating the connection.
-            let (mut send, recv) = conn.open_bi().await.e()?;
-            send.write_all(b"hello").await.e()?;
-            send.finish().e()?;
+            let (mut send, recv) = conn.open_bi().await.anyerr()?;
+            send.write_all(b"hello").await.anyerr()?;
+            send.finish().anyerr()?;
             recv
         };
-        let received = recv.read_to_end(1_000).await.e()?;
+        let received = recv.read_to_end(1_000).await.anyerr()?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
         Ok(())
@@ -3199,25 +3178,25 @@ mod tests {
             .await?;
         let server_addr = server.addr();
         let server_task = tokio::spawn(async move {
-            let incoming = server.accept().await.e()?;
-            let conn = incoming.await.e()?;
-            let (mut send, mut recv) = conn.accept_bi().await.e()?;
-            let msg = recv.read_to_end(1_000).await.e()?;
-            send.write_all(&msg).await.e()?;
-            send.finish().e()?;
+            let incoming = server.accept().await.anyerr()?;
+            let conn = incoming.await.anyerr()?;
+            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+            let msg = recv.read_to_end(1_000).await.anyerr()?;
+            send.write_all(&msg).await.anyerr()?;
+            send.finish().anyerr()?;
             let close_reason = conn.closed().await;
             Ok::<_, Error>(close_reason)
         });
 
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let (mut send, mut recv) = conn.open_bi().await.e()?;
-        send.write_all(b"Hello, world!").await.e()?;
-        send.finish().e()?;
-        recv.read_to_end(1_000).await.e()?;
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(b"Hello, world!").await.anyerr()?;
+        send.finish().anyerr()?;
+        recv.read_to_end(1_000).await.anyerr()?;
         conn.close(42u32.into(), b"thanks, bye!");
         client.close().await;
 
-        let close_err = server_task.await.e()??;
+        let close_err = server_task.await.anyerr()??;
         let ConnectionError::ApplicationClosed(app_close) = close_err else {
             panic!("Unexpected close reason: {close_err:?}");
         };
@@ -3247,19 +3226,19 @@ mod tests {
             .await?;
         let server_addr = server.addr();
         let server_task = tokio::task::spawn(async move {
-            let conn = server.accept().await.e()?.accept().e()?.await.e()?;
-            let mut uni = conn.accept_uni().await.e()?;
-            uni.read_to_end(10).await.e()?;
+            let conn = server.accept().await.anyerr()?.await.anyerr()?;
+            let mut uni = conn.accept_uni().await.anyerr()?;
+            uni.read_to_end(10).await.anyerr()?;
             drop(conn);
             Ok::<_, Error>(server)
         });
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let mut uni = conn.open_uni().await.e()?;
-        uni.write_all(b"helloworld").await.e()?;
-        uni.finish().e()?;
+        let mut uni = conn.open_uni().await.anyerr()?;
+        uni.write_all(b"helloworld").await.anyerr()?;
+        uni.finish().anyerr()?;
         conn.closed().await;
         drop(conn);
-        let server = server_task.await.e()??;
+        let server = server_task.await.anyerr()??;
 
         let m = client.metrics();
         assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
@@ -3284,7 +3263,7 @@ mod tests {
         let mut registry = Registry::default();
         register_endpoint(&mut registry, &client);
         register_endpoint(&mut registry, &server);
-        let s = registry.encode_openmetrics_to_string()?;
+        let s = registry.encode_openmetrics_to_string().anyerr()?;
         assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#));
         assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#));
         Ok(())
@@ -3306,10 +3285,10 @@ mod tests {
         let server_task = tokio::spawn({
             let server = server.clone();
             async move {
-                let incoming = server.accept().await.e()?;
-                let conn = incoming.await.e()?;
+                let incoming = server.accept().await.anyerr()?;
+                let conn = incoming.await.anyerr()?;
                 conn.close(0u32.into(), b"bye!");
-                Ok::<_, n0_snafu::Error>(conn.alpn())
+                n0_error::Ok(conn.alpn())
             }
         });
 
@@ -3320,13 +3299,13 @@ mod tests {
                 ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
             )
             .await?;
-        let conn = conn.await.e()?;
+        let conn = conn.await.anyerr()?;
         let client_alpn = conn.alpn();
         conn.closed().await;
         client.close().await;
         server.close().await;
 
-        let server_alpn = server_task.await.e()??;
+        let server_alpn = server_task.await.anyerr()??;
 
         assert_eq!(client_alpn, server_alpn);
 
@@ -3390,7 +3369,7 @@ mod tests {
         let endpoint = Endpoint::empty_builder(RelayMode::Staging).bind().await?;
 
         // can get a first report
-        endpoint.net_report().updated().await?;
+        endpoint.net_report().updated().await.anyerr()?;
 
         Ok(())
     }
@@ -3421,7 +3400,7 @@ mod tests {
             let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
                 .bind()
                 .await
-                .e()?;
+                .anyerr()?;
             let addr = endpoint.addr();
             let router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
             Ok((router, addr))
@@ -3434,7 +3413,7 @@ mod tests {
             .await
             .into_iter()
             .collect::<Result<Vec<_>, _>>()
-            .e()?;
+            .anyerr()?;
 
         let addrs = routers
             .iter()
@@ -3446,7 +3425,7 @@ mod tests {
             .discovery(discovery)
             .bind()
             .await
-            .e()?;
+            .anyerr()?;
         // wait for the endpoint to be initialized. This should not be needed,
         // but we don't want to measure endpoint init time but connection time
         // from a fully initialized endpoint.

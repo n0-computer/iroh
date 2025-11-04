@@ -6,6 +6,7 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
+use n0_error::StdResultExt;
 use n0_future::{
     MergeUnbounded, Stream, StreamExt,
     task::{self, AbortOnDropHandle},
@@ -16,7 +17,6 @@ use quinn::WeakConnectionHandle;
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use snafu::{ResultExt, Whatever};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
@@ -204,7 +204,7 @@ impl EndpointStateActor {
     async fn run(
         &mut self,
         mut inbox: mpsc::Receiver<EndpointStateMessage>,
-    ) -> Result<(), Whatever> {
+    ) -> n0_error::Result<()> {
         trace!("actor started");
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
@@ -255,7 +255,7 @@ impl EndpointStateActor {
     ///
     /// Error returns are fatal and kill the actor.
     #[instrument(skip(self))]
-    async fn handle_message(&mut self, msg: EndpointStateMessage) -> Result<(), Whatever> {
+    async fn handle_message(&mut self, msg: EndpointStateMessage) -> n0_error::Result<()> {
         // trace!("handling message");
         match msg {
             EndpointStateMessage::SendDatagram(transmit) => {
@@ -289,13 +289,13 @@ impl EndpointStateActor {
     /// Handles [`EndpointStateMessage::SendDatagram`].
     ///
     /// Error returns are fatal and kill the actor.
-    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> Result<(), Whatever> {
+    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> n0_error::Result<()> {
         if let Some(ref addr) = self.selected_path {
             trace!(?addr, "sending datagram to selected path");
             self.transports_sender
                 .send((addr.clone(), transmit).into())
                 .await
-                .whatever_context("TransportSenderActor stopped")?;
+                .std_context("TransportSenderActor stopped")?;
         } else {
             trace!(
                 paths = ?self.paths.keys().collect::<Vec<_>>(),
@@ -305,7 +305,7 @@ impl EndpointStateActor {
                 self.transports_sender
                     .send((addr.clone(), transmit.clone()).into())
                     .await
-                    .whatever_context("TransportSenerActor stopped")?;
+                    .std_context("TransportSenerActor stopped")?;
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger

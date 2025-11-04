@@ -6,6 +6,7 @@ use std::{
 };
 
 use hickory_server::proto::{
+    ProtoError,
     op::Message,
     rr::{
         Name, Record, RecordSet, RecordType, RrKey,
@@ -13,7 +14,7 @@ use hickory_server::proto::{
     },
     serialize::binary::BinDecodable,
 };
-use n0_snafu::{Error, Result, ResultExt};
+use n0_error::{AnyError, StdResultExt, e, stack_error};
 use pkarr::SignedPacket;
 
 #[derive(
@@ -21,14 +22,26 @@ use pkarr::SignedPacket;
 )]
 pub struct PublicKeyBytes([u8; 32]);
 
+#[stack_error(derive, add_meta, from_sources)]
+pub enum InvalidPublicKeyBytes {
+    #[error(transparent)]
+    Encoding {
+        #[error(std_err)]
+        source: z32::Z32Error,
+    },
+    #[error("invalid length, must be 32 bytes")]
+    InvalidLength,
+}
+
 impl PublicKeyBytes {
     pub fn new(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    pub fn from_z32(s: &str) -> Result<Self> {
-        let bytes = z32::decode(s.as_bytes()).e()?;
-        let bytes = TryInto::<[u8; 32]>::try_into(&bytes[..]).context("invalid length")?;
+    pub fn from_z32(s: &str) -> Result<Self, InvalidPublicKeyBytes> {
+        let bytes = z32::decode(s.as_bytes())?;
+        let bytes = TryInto::<[u8; 32]>::try_into(&bytes[..])
+            .map_err(|_| e!(InvalidPublicKeyBytes::InvalidLength))?;
         Ok(Self(bytes))
     }
 
@@ -68,14 +81,15 @@ impl From<pkarr::PublicKey> for PublicKeyBytes {
 }
 
 impl TryFrom<PublicKeyBytes> for pkarr::PublicKey {
-    type Error = Error;
+    type Error = AnyError;
     fn try_from(value: PublicKeyBytes) -> Result<Self, Self::Error> {
-        pkarr::PublicKey::try_from(&value.0).e()
+        pkarr::PublicKey::try_from(&value.0).anyerr()
     }
 }
 
 impl FromStr for PublicKeyBytes {
-    type Err = Error;
+    type Err = InvalidPublicKeyBytes;
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::from_z32(s)
     }
@@ -87,17 +101,19 @@ impl AsRef<[u8; 32]> for PublicKeyBytes {
     }
 }
 
-pub fn signed_packet_to_hickory_message(signed_packet: &SignedPacket) -> Result<Message> {
+pub fn signed_packet_to_hickory_message(
+    signed_packet: &SignedPacket,
+) -> Result<Message, ProtoError> {
     let encoded = signed_packet.encoded_packet();
-    let message = Message::from_bytes(&encoded).e()?;
+    let message = Message::from_bytes(&encoded)?;
     Ok(message)
 }
 
 pub fn signed_packet_to_hickory_records_without_origin(
     signed_packet: &SignedPacket,
     filter: impl Fn(&Record) -> bool,
-) -> Result<(Label, BTreeMap<RrKey, Arc<RecordSet>>)> {
-    let common_zone = Label::from_utf8(&signed_packet.public_key().to_z32()).e()?;
+) -> Result<(Label, BTreeMap<RrKey, Arc<RecordSet>>), ProtoError> {
+    let common_zone = Label::from_utf8(&signed_packet.public_key().to_z32())?;
     let mut message = signed_packet_to_hickory_message(signed_packet)?;
     let answers = message.take_answers();
     let mut output: BTreeMap<RrKey, Arc<RecordSet>> = BTreeMap::new();
@@ -111,7 +127,7 @@ pub fn signed_packet_to_hickory_records_without_origin(
         if name.num_labels() < 1 {
             continue;
         }
-        let zone = name.iter().next_back().unwrap().into_label().e()?;
+        let zone = name.iter().next_back().unwrap().into_label()?;
         if zone != common_zone {
             continue;
         }
@@ -120,7 +136,7 @@ pub fn signed_packet_to_hickory_records_without_origin(
         }
 
         let name_without_zone =
-            Name::from_labels(name.iter().take(name.num_labels() as usize - 1)).e()?;
+            Name::from_labels(name.iter().take(name.num_labels() as usize - 1))?;
         record.set_name(name_without_zone);
 
         let rrkey = RrKey::new(record.name().into(), record.record_type());
@@ -144,8 +160,8 @@ pub fn record_set_append_origin(
     input: &RecordSet,
     origin: &Name,
     serial: u32,
-) -> Result<RecordSet> {
-    let new_name = input.name().clone().append_name(origin).e()?;
+) -> Result<RecordSet, ProtoError> {
+    let new_name = input.name().clone().append_name(origin)?;
     let mut output = RecordSet::new(new_name.clone(), input.record_type(), serial);
     // TODO: less clones
     for record in input.records_without_rrsigs() {

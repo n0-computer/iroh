@@ -6,8 +6,8 @@ use std::{
     task::{Context, Poll},
 };
 
+use n0_error::{ensure, stack_error};
 use n0_future::{FutureExt, Sink, Stream, ready, time};
-use snafu::{Backtrace, Snafu};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::instrument;
 
@@ -75,14 +75,17 @@ impl RelayedStream {
 }
 
 /// Relay send errors
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum SendError {
-    #[snafu(transparent)]
-    StreamError { source: StreamError },
-    #[snafu(display("Packet exceeds max packet size"))]
+    #[error(transparent)]
+    StreamError {
+        #[error(from, std_err)]
+        source: StreamError,
+    },
+    #[error("Packet exceeds max packet size")]
     ExceedsMaxPacketSize { size: usize },
-    #[snafu(display("Attempted to send empty packet"))]
+    #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
 
@@ -95,9 +98,12 @@ impl Sink<RelayToClientMsg> for RelayedStream {
 
     fn start_send(mut self: Pin<&mut Self>, item: RelayToClientMsg) -> Result<(), Self::Error> {
         let size = item.encoded_len();
-        snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
+        ensure!(
+            size <= MAX_PACKET_SIZE,
+            SendError::ExceedsMaxPacketSize { size }
+        );
         if let RelayToClientMsg::Datagrams { datagrams, .. } = &item {
-            snafu::ensure!(!datagrams.contents.is_empty(), EmptyPacketSnafu);
+            ensure!(!datagrams.contents.is_empty(), SendError::EmptyPacket);
         }
 
         Pin::new(&mut self.inner)
@@ -115,13 +121,16 @@ impl Sink<RelayToClientMsg> for RelayedStream {
 }
 
 /// Relay receive errors
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum RecvError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Proto { source: ProtoError },
-    #[snafu(transparent)]
-    StreamError { source: StreamError },
+    #[error(transparent)]
+    StreamError {
+        #[error(std_err)]
+        source: StreamError,
+    },
 }
 
 impl Stream for RelayedStream {
@@ -278,11 +287,8 @@ struct Bucket {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 pub struct InvalidBucketConfig {
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
     max: i64,
     bytes_per_second: i64,
     refill_period: time::Duration,
@@ -296,13 +302,13 @@ impl Bucket {
     ) -> Result<Self, InvalidBucketConfig> {
         // milliseconds is the tokio timer resolution
         let refill = bytes_per_second.saturating_mul(refill_period.as_millis() as i64) / 1000;
-        snafu::ensure!(
+        ensure!(
             max > 0 && bytes_per_second > 0 && refill_period.as_millis() as u32 > 0 && refill > 0,
-            InvalidBucketConfigSnafu {
+            InvalidBucketConfig {
                 max,
                 bytes_per_second,
-                refill_period,
-            },
+                refill_period
+            }
         );
         Ok(Self {
             fill: max,
@@ -480,8 +486,8 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for RateLimited<S> {
 mod tests {
     use std::sync::Arc;
 
+    use n0_error::{Result, StdResultExt};
     use n0_future::time;
-    use n0_snafu::{Result, ResultExt};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tracing_test::traced_test;
 
@@ -521,7 +527,7 @@ mod tests {
             },
         )
         .await
-        .e()?;
+        .anyerr()?;
 
         let duration = time::Instant::now().duration_since(before);
         assert_ne!(duration.as_millis(), 0);
