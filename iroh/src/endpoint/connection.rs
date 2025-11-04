@@ -588,11 +588,16 @@ impl OutgoingZeroRttConnection {
     /// the handshake will error and any data sent should be re-sent on a
     /// new stream.
     ///
-    /// This may fail if the other side doesn't use the right TLS authentication,
-    /// which usually every iroh endpoint uses and requires.
+    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// some general failure with the connection, such as a network timeout since
+    /// we initiated the connection.
     ///
-    /// In practice this should only fail if someone connects to you with a modified iroh endpoint
-    /// or with a plain QUIC client.
+    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// doesn't use the right TLS authentication, which usually every iroh endpoint
+    /// uses and requires.
+    ///
+    /// Thus, those errors should only occur if someone connects to you with a
+    /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(self) -> Result<ZeroRttStatus, AuthenticationError> {
         let accepted = self.accepted.await;
         let conn = conn_from_quinn_conn(self.inner)?;
@@ -899,11 +904,16 @@ pub struct IncomingZeroRttConnection {
 impl IncomingZeroRttConnection {
     /// Waits until the full handshake occurs and then returns a [`Connection`].
     ///
-    /// This may fail if the connecting side doesn't actually use TLS client authentication,
-    /// which usually every iroh endpoint uses and requires.
+    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// some general failure with the connection, such as a network timeout since
+    /// we accepted the connection.
     ///
-    /// In practice this should only fail if someone connects to you with a modified iroh endpoint
-    /// or with a plain QUIC client.
+    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// doesn't use the right TLS authentication, which usually every iroh endpoint
+    /// uses and requires.
+    ///
+    /// Thus, those errors should only occur if someone connects to you with a
+    /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(self) -> Result<Connection, AuthenticationError> {
         self.accepted.await;
         conn_from_quinn_conn(self.inner)
