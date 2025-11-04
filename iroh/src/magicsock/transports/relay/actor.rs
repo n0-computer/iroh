@@ -855,8 +855,8 @@ impl RelayActor {
     pub(super) fn new(
         config: Config,
         relay_datagram_recv_queue: mpsc::Sender<RelayRecvDatagram>,
+        cancel_token: CancellationToken,
     ) -> Self {
-        let cancel_token = CancellationToken::new();
         Self {
             config,
             relay_datagram_recv_queue,
