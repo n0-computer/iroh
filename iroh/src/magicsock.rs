@@ -149,8 +149,8 @@ pub(crate) struct Handle {
     msock: Arc<MagicSock>,
     // empty when shutdown
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
-    /// Token to cancel the actor task.
-    actor_token: CancellationToken,
+    /// Token to cancel the actor task and shutdown the relay transport.
+    shutdown_token: CancellationToken,
     // quinn endpoint
     endpoint: quinn::Endpoint,
 }
@@ -1392,17 +1392,22 @@ impl Handle {
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
 
-        let relay_transport = RelayTransport::new(RelayActorConfig {
-            my_relay: my_relay.clone(),
-            secret_key: secret_key.clone(),
-            #[cfg(not(wasm_browser))]
-            dns_resolver: dns_resolver.clone(),
-            proxy_url: proxy_url.clone(),
-            ipv6_reported: ipv6_reported.clone(),
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
-            metrics: metrics.magicsock.clone(),
-        });
+        let shutdown_token = CancellationToken::new();
+
+        let relay_transport = RelayTransport::new(
+            RelayActorConfig {
+                my_relay: my_relay.clone(),
+                secret_key: secret_key.clone(),
+                #[cfg(not(wasm_browser))]
+                dns_resolver: dns_resolver.clone(),
+                proxy_url: proxy_url.clone(),
+                ipv6_reported: ipv6_reported.clone(),
+                #[cfg(any(test, feature = "test-utils"))]
+                insecure_skip_relay_cert_verify,
+                metrics: metrics.magicsock.clone(),
+            },
+            shutdown_token.child_token(),
+        );
         let relay_transports = vec![relay_transport];
 
         let secret_encryption_key = secret_ed_box(&secret_key);
@@ -1531,12 +1536,9 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         actor.update_direct_addresses(None);
 
-        let actor_token = CancellationToken::new();
-        let token = actor_token.clone();
-
         let actor_task = task::spawn(
             actor
-                .run(token, local_addrs_watch, sender)
+                .run(shutdown_token.child_token(), local_addrs_watch, sender)
                 .instrument(info_span!("actor")),
         );
 
@@ -1546,7 +1548,7 @@ impl Handle {
             msock,
             actor_task,
             endpoint,
-            actor_token,
+            shutdown_token,
         })
     }
 
@@ -1587,7 +1589,7 @@ impl Handle {
             return;
         }
         self.msock.closing.store(true, Ordering::Relaxed);
-        self.actor_token.cancel();
+        self.shutdown_token.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
