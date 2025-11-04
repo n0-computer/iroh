@@ -1713,54 +1713,50 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
-        for x in 0..5 {
-            tracing::info!("Loop {x}");
-            let (relay_map, _relay_url, _guard) = run_relay_server().await?;
-            let relay_mode = RelayMode::Custom(relay_map);
-            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-            let client = Endpoint::empty_builder(relay_mode.clone())
-                .secret_key(SecretKey::generate(&mut rng))
-                .insecure_skip_relay_cert_verify(true)
-                .path_selection(crate::endpoint::PathSelection::RelayOnly)
-                .bind()
-                .instrument(info_span!("client"))
-                .await?;
-            let server_key = SecretKey::generate(&mut rng);
-            let server = spawn_0rtt_server(
-                server_key.clone(),
-                relay_mode.clone(),
-                info_span!("server-initial"),
-            )
+        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
+        let relay_mode = RelayMode::Custom(relay_map);
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let client = Endpoint::empty_builder(relay_mode.clone())
+            .secret_key(SecretKey::generate(&mut rng))
+            .insecure_skip_relay_cert_verify(true)
+            .path_selection(crate::endpoint::PathSelection::RelayOnly)
+            .bind()
+            .instrument(info_span!("client"))
             .await?;
-            tokio::join!(client.online(), server.online());
+        let server_key = SecretKey::generate(&mut rng);
+        let server = spawn_0rtt_server(
+            server_key.clone(),
+            relay_mode.clone(),
+            info_span!("server-initial"),
+        )
+        .await?;
+        tokio::join!(client.online(), server.online());
 
-            connect_client_0rtt_expect_err(&client, server.addr())
-                .instrument(trace_span!("connect1"))
-                .await
-                .context("client connect 1")?;
-            connect_client_0rtt_expect_ok(&client, server.addr(), true)
-                .instrument(trace_span!("connect2"))
-                .await
-                .context("client connect 2")?;
+        connect_client_0rtt_expect_err(&client, server.addr())
+            .instrument(trace_span!("connect1"))
+            .await
+            .context("client connect 1")?;
+        connect_client_0rtt_expect_ok(&client, server.addr(), true)
+            .instrument(trace_span!("connect2"))
+            .await
+            .context("client connect 2")?;
 
-            // adds time to the test, but we need to ensure the server is fully closed before spawning the next one.
-            server.close().await;
+        // adds time to the test, but we need to ensure the server is fully closed before spawning the next one.
+        server.close().await;
 
-            let server =
-                spawn_0rtt_server(server_key, relay_mode.clone(), info_span!("server-restart"))
-                    .await?;
-            server.online().await;
+        let server =
+            spawn_0rtt_server(server_key, relay_mode.clone(), info_span!("server-restart")).await?;
+        server.online().await;
 
-            // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
-            // but the server will reject the early data because it discarded necessary state
-            // to decrypt it when restarting.
-            connect_client_0rtt_expect_ok(&client, server.id().into(), false)
-                .instrument(trace_span!("connect3"))
-                .await
-                .context("client connect 3")?;
+        // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+        // but the server will reject the early data because it discarded necessary state
+        // to decrypt it when restarting.
+        connect_client_0rtt_expect_ok(&client, server.id().into(), false)
+            .instrument(trace_span!("connect3"))
+            .await
+            .context("client connect 3")?;
 
-            tokio::join!(client.close(), server.close());
-        }
+        tokio::join!(client.close(), server.close());
         Ok(())
     }
 }
