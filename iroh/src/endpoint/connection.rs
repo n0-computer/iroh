@@ -1507,7 +1507,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, ZeroRttStatus},
+        endpoint::{ConnectOptions, Incoming, ZeroRttStatus},
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -1520,6 +1520,34 @@ mod tests {
             .instrument(log_span.clone())
             .await?;
 
+        async fn handle_incoming(incoming: Incoming) -> Result {
+            let accepting = incoming
+                .accept()
+                .std_context("Failed to accept incoming connection")?;
+
+            // accept a possible 0-RTT connection
+            let zrtt_conn = accepting.into_0rtt();
+
+            let (mut send, mut recv) = zrtt_conn
+                .accept_bi()
+                .await
+                .std_context("failed to accept bi stream")?;
+
+            let data = recv
+                .read_to_end(10_000_000)
+                .await
+                .std_context("Failed to read data")?;
+
+            send.write_all(&data)
+                .await
+                .std_context("Failed to write data")?;
+            send.finish().std_context("Failed to finish send")?;
+
+            // Stay alive until the other side closes the connection.
+            zrtt_conn.closed().await;
+            Ok(())
+        }
+
         // Gets aborted via the endpoint closing causing an `Err`
         // a simple echo server
         tokio::spawn({
@@ -1529,46 +1557,9 @@ mod tests {
                 while let Some(incoming) = server.accept().await {
                     tracing::trace!("Server received incoming connection");
                     // Handle connection errors gracefully instead of exiting the task
-                    let connecting = match incoming.accept() {
-                        Ok(c) => c,
-                        Err(e) => {
-                            tracing::warn!("Failed to accept incoming connection: {e:?}");
-                            continue;
-                        }
-                    };
-
-                    // accept the 0-RTT connection
-                    let z_rtt = connecting.into_0rtt();
-
-                    // Handle stream errors gracefully
-                    let (mut send, mut recv) = match z_rtt.accept_bi().await {
-                        Ok(s) => s,
-                        Err(e) => {
-                            tracing::warn!("Failed to accept bi stream: {e:?}");
-                            continue;
-                        }
-                    };
-
-                    let data = match recv.read_to_end(10_000_000).await {
-                        Ok(d) => d,
-                        Err(e) => {
-                            tracing::warn!("Failed to read data: {e:?}");
-                            continue;
-                        }
-                    };
-
-                    if let Err(e) = send.write_all(&data).await {
-                        tracing::warn!("Failed to write data: {e:?}");
-                        continue;
+                    if let Err(e) = handle_incoming(incoming).await {
+                        tracing::warn!("Failure while handling connection: {e:#}");
                     }
-
-                    if let Err(e) = send.finish() {
-                        tracing::warn!("Failed to finish send: {e:?}");
-                        continue;
-                    }
-
-                    // Stay alive until the other side closes the connection.
-                    z_rtt.closed().await;
                     tracing::trace!("Connection closed, ready for next");
                 }
                 tracing::trace!("Server accept loop exiting");
