@@ -1508,20 +1508,14 @@ mod tests {
     use crate::{
         RelayMode,
         endpoint::{ConnectOptions, ZeroRttStatus},
-        test_utils::run_relay_server,
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
-    async fn spawn_0rtt_server(
-        secret_key: SecretKey,
-        relay_mode: RelayMode,
-        log_span: tracing::Span,
-    ) -> Result<Endpoint> {
-        let server = Endpoint::empty_builder(relay_mode)
+    async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
+        let server = Endpoint::empty_builder(RelayMode::Disabled)
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
-            .insecure_skip_relay_cert_verify(true)
             .bind()
             .instrument(log_span.clone())
             .await?;
@@ -1656,12 +1650,7 @@ mod tests {
     async fn test_0rtt() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server = spawn_0rtt_server(
-            SecretKey::generate(&mut rng),
-            RelayMode::Disabled,
-            info_span!("server"),
-        )
-        .await?;
+        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
         // The second 0rtt attempt should work
@@ -1681,23 +1670,14 @@ mod tests {
     async fn test_0rtt_non_consecutive() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
-        let server = spawn_0rtt_server(
-            SecretKey::generate(&mut rng),
-            RelayMode::Disabled,
-            info_span!("server"),
-        )
-        .await?;
+        let server = spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("server")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr()).await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
-        let another = spawn_0rtt_server(
-            SecretKey::generate(&mut rng),
-            RelayMode::Disabled,
-            info_span!("another"),
-        )
-        .await?;
+        let another =
+            spawn_0rtt_server(SecretKey::generate(&mut rng), info_span!("another")).await?;
         connect_client_0rtt_expect_err(&client, another.addr()).await?;
         another.close().await;
 
@@ -1713,24 +1693,13 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_0rtt_after_server_restart() -> Result {
-        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
-        let relay_mode = RelayMode::Custom(relay_map);
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let client = Endpoint::empty_builder(relay_mode.clone())
-            .secret_key(SecretKey::generate(&mut rng))
-            .insecure_skip_relay_cert_verify(true)
-            .path_selection(crate::endpoint::PathSelection::RelayOnly)
+        let client = Endpoint::empty_builder(RelayMode::Disabled)
             .bind()
             .instrument(info_span!("client"))
             .await?;
         let server_key = SecretKey::generate(&mut rng);
-        let server = spawn_0rtt_server(
-            server_key.clone(),
-            relay_mode.clone(),
-            info_span!("server-initial"),
-        )
-        .await?;
-        tokio::join!(client.online(), server.online());
+        let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
         connect_client_0rtt_expect_err(&client, server.addr())
             .instrument(trace_span!("connect1"))
@@ -1744,14 +1713,12 @@ mod tests {
         // adds time to the test, but we need to ensure the server is fully closed before spawning the next one.
         server.close().await;
 
-        let server =
-            spawn_0rtt_server(server_key, relay_mode.clone(), info_span!("server-restart")).await?;
-        server.online().await;
+        let server = spawn_0rtt_server(server_key, info_span!("server-restart")).await?;
 
         // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
         // but the server will reject the early data because it discarded necessary state
         // to decrypt it when restarting.
-        connect_client_0rtt_expect_ok(&client, server.id().into(), false)
+        connect_client_0rtt_expect_ok(&client, server.addr(), false)
             .instrument(trace_span!("connect3"))
             .await
             .context("client connect 3")?;
