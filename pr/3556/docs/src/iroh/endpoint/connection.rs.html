@@ -1711,55 +1711,56 @@
 <a href=#1711 id=1711 data-nosnippet>1711</a>
 <a href=#1712 id=1712 data-nosnippet>1712</a>    <span class="comment">// Test whether 0-RTT is possible after a restart:
 <a href=#1713 id=1713 data-nosnippet>1713</a>    </span><span class="attr">#[tokio::test]
-<a href=#1714 id=1714 data-nosnippet>1714</a>    </span><span class="comment">// #[traced_test]
+<a href=#1714 id=1714 data-nosnippet>1714</a>    #[traced_test]
 <a href=#1715 id=1715 data-nosnippet>1715</a>    </span><span class="kw">async fn </span>test_0rtt_after_server_restart() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1716 id=1716 data-nosnippet>1716</a>        <span class="kw">for _ in </span><span class="number">0</span>..<span class="number">5 </span>{
-<a href=#1717 id=1717 data-nosnippet>1717</a>            <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1718 id=1718 data-nosnippet>1718</a>            <span class="kw">let </span>relay_mode = RelayMode::Custom(relay_map);
-<a href=#1719 id=1719 data-nosnippet>1719</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-<a href=#1720 id=1720 data-nosnippet>1720</a>            <span class="kw">let </span>client = Endpoint::empty_builder(relay_mode.clone())
-<a href=#1721 id=1721 data-nosnippet>1721</a>                .secret_key(SecretKey::generate(<span class="kw-2">&amp;mut </span>rng))
-<a href=#1722 id=1722 data-nosnippet>1722</a>                .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-<a href=#1723 id=1723 data-nosnippet>1723</a>                .path_selection(<span class="kw">crate</span>::endpoint::PathSelection::RelayOnly)
-<a href=#1724 id=1724 data-nosnippet>1724</a>                .bind()
-<a href=#1725 id=1725 data-nosnippet>1725</a>                .instrument(<span class="macro">info_span!</span>(<span class="string">"client"</span>))
-<a href=#1726 id=1726 data-nosnippet>1726</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1727 id=1727 data-nosnippet>1727</a>            <span class="kw">let </span>server_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#1728 id=1728 data-nosnippet>1728</a>            <span class="kw">let </span>server = spawn_0rtt_server(
-<a href=#1729 id=1729 data-nosnippet>1729</a>                server_key.clone(),
-<a href=#1730 id=1730 data-nosnippet>1730</a>                relay_mode.clone(),
-<a href=#1731 id=1731 data-nosnippet>1731</a>                <span class="macro">info_span!</span>(<span class="string">"server-initial"</span>),
-<a href=#1732 id=1732 data-nosnippet>1732</a>            )
-<a href=#1733 id=1733 data-nosnippet>1733</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1734 id=1734 data-nosnippet>1734</a>            <span class="macro">tokio::join!</span>(client.online(), server.online());
-<a href=#1735 id=1735 data-nosnippet>1735</a>
-<a href=#1736 id=1736 data-nosnippet>1736</a>            connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.addr())
-<a href=#1737 id=1737 data-nosnippet>1737</a>                .instrument(<span class="macro">trace_span!</span>(<span class="string">"connect1"</span>))
-<a href=#1738 id=1738 data-nosnippet>1738</a>                .<span class="kw">await
-<a href=#1739 id=1739 data-nosnippet>1739</a>                </span>.context(<span class="string">"client connect 1"</span>)<span class="question-mark">?</span>;
-<a href=#1740 id=1740 data-nosnippet>1740</a>            connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.addr(), <span class="bool-val">true</span>)
-<a href=#1741 id=1741 data-nosnippet>1741</a>                .instrument(<span class="macro">trace_span!</span>(<span class="string">"connect2"</span>))
-<a href=#1742 id=1742 data-nosnippet>1742</a>                .<span class="kw">await
-<a href=#1743 id=1743 data-nosnippet>1743</a>                </span>.context(<span class="string">"client connect 2"</span>)<span class="question-mark">?</span>;
-<a href=#1744 id=1744 data-nosnippet>1744</a>
-<a href=#1745 id=1745 data-nosnippet>1745</a>            <span class="comment">// adds time to the test, but we need to ensure the server is fully closed before spawning the next one.
-<a href=#1746 id=1746 data-nosnippet>1746</a>            </span>server.close().<span class="kw">await</span>;
-<a href=#1747 id=1747 data-nosnippet>1747</a>
-<a href=#1748 id=1748 data-nosnippet>1748</a>            <span class="kw">let </span>server =
-<a href=#1749 id=1749 data-nosnippet>1749</a>                spawn_0rtt_server(server_key, relay_mode.clone(), <span class="macro">info_span!</span>(<span class="string">"server-restart"</span>))
-<a href=#1750 id=1750 data-nosnippet>1750</a>                    .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1751 id=1751 data-nosnippet>1751</a>            server.online().<span class="kw">await</span>;
-<a href=#1752 id=1752 data-nosnippet>1752</a>
-<a href=#1753 id=1753 data-nosnippet>1753</a>            <span class="comment">// we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
-<a href=#1754 id=1754 data-nosnippet>1754</a>            // but the server will reject the early data because it discarded necessary state
-<a href=#1755 id=1755 data-nosnippet>1755</a>            // to decrypt it when restarting.
-<a href=#1756 id=1756 data-nosnippet>1756</a>            </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.id().into(), <span class="bool-val">false</span>)
-<a href=#1757 id=1757 data-nosnippet>1757</a>                .instrument(<span class="macro">trace_span!</span>(<span class="string">"connect3"</span>))
-<a href=#1758 id=1758 data-nosnippet>1758</a>                .<span class="kw">await
-<a href=#1759 id=1759 data-nosnippet>1759</a>                </span>.context(<span class="string">"client connect 3"</span>)<span class="question-mark">?</span>;
-<a href=#1760 id=1760 data-nosnippet>1760</a>
-<a href=#1761 id=1761 data-nosnippet>1761</a>            <span class="macro">tokio::join!</span>(client.close(), server.close());
-<a href=#1762 id=1762 data-nosnippet>1762</a>        }
-<a href=#1763 id=1763 data-nosnippet>1763</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1764 id=1764 data-nosnippet>1764</a>    }
-<a href=#1765 id=1765 data-nosnippet>1765</a>}</code></pre></div></section></main></body></html>
+<a href=#1716 id=1716 data-nosnippet>1716</a>        <span class="kw">for </span>x <span class="kw">in </span><span class="number">0</span>..<span class="number">5 </span>{
+<a href=#1717 id=1717 data-nosnippet>1717</a>            <span class="macro">tracing::info!</span>(<span class="string">"Loop {x}"</span>);
+<a href=#1718 id=1718 data-nosnippet>1718</a>            <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1719 id=1719 data-nosnippet>1719</a>            <span class="kw">let </span>relay_mode = RelayMode::Custom(relay_map);
+<a href=#1720 id=1720 data-nosnippet>1720</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
+<a href=#1721 id=1721 data-nosnippet>1721</a>            <span class="kw">let </span>client = Endpoint::empty_builder(relay_mode.clone())
+<a href=#1722 id=1722 data-nosnippet>1722</a>                .secret_key(SecretKey::generate(<span class="kw-2">&amp;mut </span>rng))
+<a href=#1723 id=1723 data-nosnippet>1723</a>                .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+<a href=#1724 id=1724 data-nosnippet>1724</a>                .path_selection(<span class="kw">crate</span>::endpoint::PathSelection::RelayOnly)
+<a href=#1725 id=1725 data-nosnippet>1725</a>                .bind()
+<a href=#1726 id=1726 data-nosnippet>1726</a>                .instrument(<span class="macro">info_span!</span>(<span class="string">"client"</span>))
+<a href=#1727 id=1727 data-nosnippet>1727</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1728 id=1728 data-nosnippet>1728</a>            <span class="kw">let </span>server_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#1729 id=1729 data-nosnippet>1729</a>            <span class="kw">let </span>server = spawn_0rtt_server(
+<a href=#1730 id=1730 data-nosnippet>1730</a>                server_key.clone(),
+<a href=#1731 id=1731 data-nosnippet>1731</a>                relay_mode.clone(),
+<a href=#1732 id=1732 data-nosnippet>1732</a>                <span class="macro">info_span!</span>(<span class="string">"server-initial"</span>),
+<a href=#1733 id=1733 data-nosnippet>1733</a>            )
+<a href=#1734 id=1734 data-nosnippet>1734</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1735 id=1735 data-nosnippet>1735</a>            <span class="macro">tokio::join!</span>(client.online(), server.online());
+<a href=#1736 id=1736 data-nosnippet>1736</a>
+<a href=#1737 id=1737 data-nosnippet>1737</a>            connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.addr())
+<a href=#1738 id=1738 data-nosnippet>1738</a>                .instrument(<span class="macro">trace_span!</span>(<span class="string">"connect1"</span>))
+<a href=#1739 id=1739 data-nosnippet>1739</a>                .<span class="kw">await
+<a href=#1740 id=1740 data-nosnippet>1740</a>                </span>.context(<span class="string">"client connect 1"</span>)<span class="question-mark">?</span>;
+<a href=#1741 id=1741 data-nosnippet>1741</a>            connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.addr(), <span class="bool-val">true</span>)
+<a href=#1742 id=1742 data-nosnippet>1742</a>                .instrument(<span class="macro">trace_span!</span>(<span class="string">"connect2"</span>))
+<a href=#1743 id=1743 data-nosnippet>1743</a>                .<span class="kw">await
+<a href=#1744 id=1744 data-nosnippet>1744</a>                </span>.context(<span class="string">"client connect 2"</span>)<span class="question-mark">?</span>;
+<a href=#1745 id=1745 data-nosnippet>1745</a>
+<a href=#1746 id=1746 data-nosnippet>1746</a>            <span class="comment">// adds time to the test, but we need to ensure the server is fully closed before spawning the next one.
+<a href=#1747 id=1747 data-nosnippet>1747</a>            </span>server.close().<span class="kw">await</span>;
+<a href=#1748 id=1748 data-nosnippet>1748</a>
+<a href=#1749 id=1749 data-nosnippet>1749</a>            <span class="kw">let </span>server =
+<a href=#1750 id=1750 data-nosnippet>1750</a>                spawn_0rtt_server(server_key, relay_mode.clone(), <span class="macro">info_span!</span>(<span class="string">"server-restart"</span>))
+<a href=#1751 id=1751 data-nosnippet>1751</a>                    .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1752 id=1752 data-nosnippet>1752</a>            server.online().<span class="kw">await</span>;
+<a href=#1753 id=1753 data-nosnippet>1753</a>
+<a href=#1754 id=1754 data-nosnippet>1754</a>            <span class="comment">// we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
+<a href=#1755 id=1755 data-nosnippet>1755</a>            // but the server will reject the early data because it discarded necessary state
+<a href=#1756 id=1756 data-nosnippet>1756</a>            // to decrypt it when restarting.
+<a href=#1757 id=1757 data-nosnippet>1757</a>            </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.id().into(), <span class="bool-val">false</span>)
+<a href=#1758 id=1758 data-nosnippet>1758</a>                .instrument(<span class="macro">trace_span!</span>(<span class="string">"connect3"</span>))
+<a href=#1759 id=1759 data-nosnippet>1759</a>                .<span class="kw">await
+<a href=#1760 id=1760 data-nosnippet>1760</a>                </span>.context(<span class="string">"client connect 3"</span>)<span class="question-mark">?</span>;
+<a href=#1761 id=1761 data-nosnippet>1761</a>
+<a href=#1762 id=1762 data-nosnippet>1762</a>            <span class="macro">tokio::join!</span>(client.close(), server.close());
+<a href=#1763 id=1763 data-nosnippet>1763</a>        }
+<a href=#1764 id=1764 data-nosnippet>1764</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1765 id=1765 data-nosnippet>1765</a>    }
+<a href=#1766 id=1766 data-nosnippet>1766</a>}</code></pre></div></section></main></body></html>
