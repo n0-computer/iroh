@@ -2523,7 +2523,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, PublicKey, TransportAddr};
-    use n0_error::{Result, StdResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{StreamExt, time};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
@@ -2706,8 +2706,8 @@ mod tests {
         info!("accepting conn");
         let conn = ep.endpoint.accept().await.expect("no conn");
 
-        info!("connecting");
-        let conn = conn.await.std_context("connecting")?;
+        info!("accepting");
+        let conn = conn.await.context("accepting")?;
         info!("accepting bi");
         let (mut send_bi, mut recv_bi) = conn.accept_bi().await.std_context("accept bi")?;
 
@@ -3195,7 +3195,7 @@ mod tests {
                     .accept()
                     .std_context("accept")?
                     .await
-                    .std_context("connecting")?;
+                    .std_context("accepting")?;
 
                 // Keep this connection alive for a while
                 tokio::time::sleep(Duration::from_secs(10)).await;

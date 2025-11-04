@@ -220,8 +220,8 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
     // Handle only the expected amount of clients
     for _ in 0..opt.clients {
         let incoming = endpoint.accept().await.unwrap();
-        let connecting = match incoming.accept() {
-            Ok(connecting) => connecting,
+        let accepting = match incoming.accept() {
+            Ok(accepting) => accepting,
             Err(err) => {
                 warn!("incoming connection failed: {err:#}");
                 // we can carry on in these cases:
@@ -229,7 +229,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 continue;
             }
         };
-        let connection = connecting.await.std_context("handshake failed")?;
+        let connection = accepting.await.std_context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {
             loop {

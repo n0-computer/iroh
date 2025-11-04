@@ -14,7 +14,7 @@ use std::sync::{
 
 use iroh::{
     Endpoint, EndpointAddr,
-    endpoint::{Connecting, Connection},
+    endpoint::{Accepting, Connection},
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 use n0_error::{Result, StdResultExt, e};
@@ -100,10 +100,10 @@ struct ScreenedEcho {
 }
 
 impl ProtocolHandler for ScreenedEcho {
-    /// `on_connecting` allows us to intercept a connection as it's being formed,
+    /// `on_accepting` allows us to intercept a connection as it's being formed,
     /// which is the right place to cut off a connection as early as possible.
     /// This is an optional method on the ProtocolHandler trait.
-    async fn on_connecting(&self, connecting: Connecting) -> Result<Connection, AcceptError> {
+    async fn on_accepting(&self, accepting: Accepting) -> Result<Connection, AcceptError> {
         self.conn_attempt_count.fetch_add(1, Ordering::Relaxed);
         let count = self.conn_attempt_count.load(Ordering::Relaxed);
 
@@ -113,8 +113,8 @@ impl ProtocolHandler for ScreenedEcho {
             return Err(e!(AcceptError::NotAllowed));
         }
 
-        // To allow normal connection construction, await the connecting future & return
-        let conn = connecting.await?;
+        // To allow normal connection construction, await the accepting future & return
+        let conn = accepting.await?;
         Ok(conn)
     }
 
@@ -125,7 +125,7 @@ impl ProtocolHandler for ScreenedEcho {
     /// the connection lasts.
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // We can get the remote's endpoint id from the connection.
-        let endpoint_id = connection.remote_id()?;
+        let endpoint_id = connection.remote_id();
         println!("accepted connection from {endpoint_id}");
 
         // Our protocol is a simple request-response protocol, so we expect the

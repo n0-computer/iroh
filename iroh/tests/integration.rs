@@ -61,8 +61,8 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
         async move {
             while let Some(incoming) = server.accept().await {
                 tracing::info!("accepting connection");
-                let conn = incoming.await.anyerr()?;
-                let endpoint_id = conn.remote_id()?;
+                let conn = incoming.await?;
+                let endpoint_id = conn.remote_id();
                 tracing::info!(endpoint_id = %endpoint_id.fmt_short(), "Accepted connection");
 
                 let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
