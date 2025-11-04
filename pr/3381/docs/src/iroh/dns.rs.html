@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#19 id=19 data-nosnippet>19</a>
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">use </span><span class="kw">super</span>::DnsResolver;
-<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::NA_RELAY_HOSTNAME;
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging::NA_EAST_RELAY_HOSTNAME;
 <a href=#22 id=22 data-nosnippet>22</a>
 <a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">const </span>TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
 <a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">const </span>STAGGERING_DELAYS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
@@ -28,7 +28,7 @@
 <a href=#28 id=28 data-nosnippet>28</a>    </span><span class="kw">async fn </span>test_dns_lookup_ipv4_ipv6() {
 <a href=#29 id=29 data-nosnippet>29</a>        <span class="kw">let </span>resolver = DnsResolver::new();
 <a href=#30 id=30 data-nosnippet>30</a>        <span class="kw">let </span>res: Vec&lt;<span class="kw">_</span>&gt; = resolver
-<a href=#31 id=31 data-nosnippet>31</a>            .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
+<a href=#31 id=31 data-nosnippet>31</a>            .lookup_ipv4_ipv6_staggered(NA_EAST_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
 <a href=#32 id=32 data-nosnippet>32</a>            .<span class="kw">await
 <a href=#33 id=33 data-nosnippet>33</a>            </span>.unwrap()
 <a href=#34 id=34 data-nosnippet>34</a>            .collect();

@@ -113,7 +113,7 @@
 <a href=#113 id=113 data-nosnippet>113</a>            <span class="kw">let </span>endpoint_info = resolver
 <a href=#114 id=114 data-nosnippet>114</a>                .lookup_endpoint_by_id_staggered(<span class="kw-2">&amp;</span>endpoint_id, <span class="kw-2">&amp;</span>origin_domain, DNS_STAGGERING_MS)
 <a href=#115 id=115 data-nosnippet>115</a>                .<span class="kw">await
-<a href=#116 id=116 data-nosnippet>116</a>                </span>.map_err(|e| DiscoveryError::from_err(<span class="string">"dns"</span>, e))<span class="question-mark">?</span>;
+<a href=#116 id=116 data-nosnippet>116</a>                </span>.map_err(|e| DiscoveryError::from_err_any(<span class="string">"dns"</span>, e))<span class="question-mark">?</span>;
 <a href=#117 id=117 data-nosnippet>117</a>            <span class="prelude-val">Ok</span>(DiscoveryItem::new(endpoint_info, <span class="string">"dns"</span>, <span class="prelude-val">None</span>))
 <a href=#118 id=118 data-nosnippet>118</a>        };
 <a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span>stream = n0_future::stream::once_future(fut);

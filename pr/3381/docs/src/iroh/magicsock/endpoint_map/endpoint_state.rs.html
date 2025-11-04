@@ -6,17 +6,17 @@
 <a href=#6 id=6 data-nosnippet>6</a>};
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>n0_future::{
-<a href=#10 id=10 data-nosnippet>10</a>    MergeUnbounded, Stream, StreamExt,
-<a href=#11 id=11 data-nosnippet>11</a>    task::{<span class="self">self</span>, AbortOnDropHandle},
-<a href=#12 id=12 data-nosnippet>12</a>    time::{<span class="self">self</span>, Duration, Instant},
-<a href=#13 id=13 data-nosnippet>13</a>};
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>n0_watcher::{Watchable, Watcher};
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>quinn::WeakConnectionHandle;
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>quinn_proto::{PathError, PathEvent, PathId, PathStatus};
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>rustc_hash::FxHashMap;
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>serde::{Deserialize, Serialize};
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>snafu::{ResultExt, Whatever};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>n0_error::StdResultExt;
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>n0_future::{
+<a href=#11 id=11 data-nosnippet>11</a>    MergeUnbounded, Stream, StreamExt,
+<a href=#12 id=12 data-nosnippet>12</a>    task::{<span class="self">self</span>, AbortOnDropHandle},
+<a href=#13 id=13 data-nosnippet>13</a>    time::{<span class="self">self</span>, Duration, Instant},
+<a href=#14 id=14 data-nosnippet>14</a>};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>n0_watcher::{Watchable, Watcher};
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>quinn::WeakConnectionHandle;
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>quinn_proto::{PathError, PathEvent, PathId, PathStatus};
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>rustc_hash::FxHashMap;
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <a href=#21 id=21 data-nosnippet>21</a><span class="kw">use </span>tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span>tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
@@ -204,7 +204,7 @@
 <a href=#204 id=204 data-nosnippet>204</a>    </span><span class="kw">async fn </span>run(
 <a href=#205 id=205 data-nosnippet>205</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#206 id=206 data-nosnippet>206</a>        <span class="kw-2">mut </span>inbox: mpsc::Receiver&lt;EndpointStateMessage&gt;,
-<a href=#207 id=207 data-nosnippet>207</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Whatever&gt; {
+<a href=#207 id=207 data-nosnippet>207</a>    ) -&gt; n0_error::Result&lt;()&gt; {
 <a href=#208 id=208 data-nosnippet>208</a>        <span class="macro">trace!</span>(<span class="string">"actor started"</span>);
 <a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">loop </span>{
 <a href=#210 id=210 data-nosnippet>210</a>            <span class="kw">let </span>scheduled_path_open = <span class="kw">match </span><span class="self">self</span>.scheduled_open_path {
@@ -255,7 +255,7 @@
 <a href=#255 id=255 data-nosnippet>255</a>    ///
 <a href=#256 id=256 data-nosnippet>256</a>    /// Error returns are fatal and kill the actor.
 <a href=#257 id=257 data-nosnippet>257</a>    </span><span class="attr">#[instrument(skip(<span class="self">self</span>))]
-<a href=#258 id=258 data-nosnippet>258</a>    </span><span class="kw">async fn </span>handle_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: EndpointStateMessage) -&gt; <span class="prelude-ty">Result</span>&lt;(), Whatever&gt; {
+<a href=#258 id=258 data-nosnippet>258</a>    </span><span class="kw">async fn </span>handle_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: EndpointStateMessage) -&gt; n0_error::Result&lt;()&gt; {
 <a href=#259 id=259 data-nosnippet>259</a>        <span class="comment">// trace!("handling message");
 <a href=#260 id=260 data-nosnippet>260</a>        </span><span class="kw">match </span>msg {
 <a href=#261 id=261 data-nosnippet>261</a>            EndpointStateMessage::SendDatagram(transmit) =&gt; {
@@ -289,13 +289,13 @@
 <a href=#289 id=289 data-nosnippet>289</a>    <span class="doccomment">/// Handles [`EndpointStateMessage::SendDatagram`].
 <a href=#290 id=290 data-nosnippet>290</a>    ///
 <a href=#291 id=291 data-nosnippet>291</a>    /// Error returns are fatal and kill the actor.
-<a href=#292 id=292 data-nosnippet>292</a>    </span><span class="kw">async fn </span>handle_msg_send_datagram(<span class="kw-2">&amp;mut </span><span class="self">self</span>, transmit: OwnedTransmit) -&gt; <span class="prelude-ty">Result</span>&lt;(), Whatever&gt; {
+<a href=#292 id=292 data-nosnippet>292</a>    </span><span class="kw">async fn </span>handle_msg_send_datagram(<span class="kw-2">&amp;mut </span><span class="self">self</span>, transmit: OwnedTransmit) -&gt; n0_error::Result&lt;()&gt; {
 <a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>addr) = <span class="self">self</span>.selected_path {
 <a href=#294 id=294 data-nosnippet>294</a>            <span class="macro">trace!</span>(<span class="question-mark">?</span>addr, <span class="string">"sending datagram to selected path"</span>);
 <a href=#295 id=295 data-nosnippet>295</a>            <span class="self">self</span>.transports_sender
 <a href=#296 id=296 data-nosnippet>296</a>                .send((addr.clone(), transmit).into())
 <a href=#297 id=297 data-nosnippet>297</a>                .<span class="kw">await
-<a href=#298 id=298 data-nosnippet>298</a>                </span>.whatever_context(<span class="string">"TransportSenderActor stopped"</span>)<span class="question-mark">?</span>;
+<a href=#298 id=298 data-nosnippet>298</a>                </span>.std_context(<span class="string">"TransportSenderActor stopped"</span>)<span class="question-mark">?</span>;
 <a href=#299 id=299 data-nosnippet>299</a>        } <span class="kw">else </span>{
 <a href=#300 id=300 data-nosnippet>300</a>            <span class="macro">trace!</span>(
 <a href=#301 id=301 data-nosnippet>301</a>                paths = <span class="question-mark">?</span><span class="self">self</span>.paths.keys().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
@@ -305,7 +305,7 @@
 <a href=#305 id=305 data-nosnippet>305</a>                <span class="self">self</span>.transports_sender
 <a href=#306 id=306 data-nosnippet>306</a>                    .send((addr.clone(), transmit.clone()).into())
 <a href=#307 id=307 data-nosnippet>307</a>                    .<span class="kw">await
-<a href=#308 id=308 data-nosnippet>308</a>                    </span>.whatever_context(<span class="string">"TransportSenerActor stopped"</span>)<span class="question-mark">?</span>;
+<a href=#308 id=308 data-nosnippet>308</a>                    </span>.std_context(<span class="string">"TransportSenerActor stopped"</span>)<span class="question-mark">?</span>;
 <a href=#309 id=309 data-nosnippet>309</a>            }
 <a href=#310 id=310 data-nosnippet>310</a>            <span class="comment">// This message is received *before* a connection is added.  So we do
 <a href=#311 id=311 data-nosnippet>311</a>            // not yet have a connection to holepunch.  Instead we trigger

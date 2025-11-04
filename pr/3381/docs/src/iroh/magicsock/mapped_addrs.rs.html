@@ -15,8 +15,8 @@
 <a href=#15 id=15 data-nosnippet>15</a>};
 <a href=#16 id=16 data-nosnippet>16</a>
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>iroh_base::{EndpointId, RelayUrl};
-<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>rustc_hash::FxHashMap;
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>snafu::Snafu;
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>n0_error::{e, stack_error};
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>rustc_hash::FxHashMap;
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">use </span>tracing::{error, trace};
 <a href=#21 id=21 data-nosnippet>21</a>
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use </span><span class="kw">super</span>::transports;
@@ -178,13 +178,13 @@
 <a href=#178 id=178 data-nosnippet>178</a>        {
 <a href=#179 id=179 data-nosnippet>179</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">Self</span>(value));
 <a href=#180 id=180 data-nosnippet>180</a>        }
-<a href=#181 id=181 data-nosnippet>181</a>        <span class="prelude-val">Err</span>(EndpointIdMappedAddrError)
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="prelude-val">Err</span>(<span class="macro">e!</span>(EndpointIdMappedAddrError))
 <a href=#182 id=182 data-nosnippet>182</a>    }
 <a href=#183 id=183 data-nosnippet>183</a>}
 <a href=#184 id=184 data-nosnippet>184</a>
 <a href=#185 id=185 data-nosnippet>185</a><span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`EndpointIdMappedAddr`]
-<a href=#186 id=186 data-nosnippet>186</a></span><span class="attr">#[derive(Debug, Snafu)]
-<a href=#187 id=187 data-nosnippet>187</a>#[snafu(display(<span class="string">"Failed to convert"</span>))]
+<a href=#186 id=186 data-nosnippet>186</a></span><span class="attr">#[stack_error(derive, add_meta)]
+<a href=#187 id=187 data-nosnippet>187</a>#[error(<span class="string">"Failed to convert"</span>)]
 <a href=#188 id=188 data-nosnippet>188</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>EndpointIdMappedAddrError;
 <a href=#189 id=189 data-nosnippet>189</a>
 <a href=#190 id=190 data-nosnippet>190</a><span class="doccomment">/// An Ipv6 ULA address, identifying a relay path for a [`EndpointId`].
@@ -236,13 +236,13 @@
 <a href=#236 id=236 data-nosnippet>236</a>        {
 <a href=#237 id=237 data-nosnippet>237</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="self">Self</span>(value));
 <a href=#238 id=238 data-nosnippet>238</a>        }
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="prelude-val">Err</span>(RelayMappedAddrError)
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="prelude-val">Err</span>(<span class="macro">e!</span>(RelayMappedAddrError))
 <a href=#240 id=240 data-nosnippet>240</a>    }
 <a href=#241 id=241 data-nosnippet>241</a>}
 <a href=#242 id=242 data-nosnippet>242</a>
 <a href=#243 id=243 data-nosnippet>243</a><span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
-<a href=#244 id=244 data-nosnippet>244</a></span><span class="attr">#[derive(Debug, Snafu)]
-<a href=#245 id=245 data-nosnippet>245</a>#[snafu(display(<span class="string">"Failed to convert"</span>))]
+<a href=#244 id=244 data-nosnippet>244</a></span><span class="attr">#[stack_error(derive, add_meta)]
+<a href=#245 id=245 data-nosnippet>245</a>#[error(<span class="string">"Failed to convert"</span>)]
 <a href=#246 id=246 data-nosnippet>246</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelayMappedAddrError;
 <a href=#247 id=247 data-nosnippet>247</a>
 <a href=#248 id=248 data-nosnippet>248</a><span class="kw">impl </span>std::fmt::Display <span class="kw">for </span>RelayMappedAddr {
