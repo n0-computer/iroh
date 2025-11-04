@@ -855,8 +855,8 @@
 <a href=#855 id=855 data-nosnippet>855</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
 <a href=#856 id=856 data-nosnippet>856</a>        config: Config,
 <a href=#857 id=857 data-nosnippet>857</a>        relay_datagram_recv_queue: mpsc::Sender&lt;RelayRecvDatagram&gt;,
-<a href=#858 id=858 data-nosnippet>858</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#859 id=859 data-nosnippet>859</a>        <span class="kw">let </span>cancel_token = CancellationToken::new();
+<a href=#858 id=858 data-nosnippet>858</a>        cancel_token: CancellationToken,
+<a href=#859 id=859 data-nosnippet>859</a>    ) -&gt; <span class="self">Self </span>{
 <a href=#860 id=860 data-nosnippet>860</a>        <span class="self">Self </span>{
 <a href=#861 id=861 data-nosnippet>861</a>            config,
 <a href=#862 id=862 data-nosnippet>862</a>            relay_datagram_recv_queue,
