@@ -225,10 +225,10 @@
 <a href=#225 id=225 data-nosnippet>225</a>/// Returns a [`AuthenticationError`] if the handshake data has
 <a href=#226 id=226 data-nosnippet>226</a>/// not completed, or if no alpn was set by the remote node.
 <a href=#227 id=227 data-nosnippet>227</a></span><span class="kw">fn </span>conn_from_quinn_conn(conn: quinn::Connection) -&gt; <span class="prelude-ty">Result</span>&lt;Connection, AuthenticationError&gt; {
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(reason) = conn.close_reason() {
-<a href=#229 id=229 data-nosnippet>229</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(AuthenticationError::ConnectionError { source: reason }));
-<a href=#230 id=230 data-nosnippet>230</a>    }
-<a href=#231 id=231 data-nosnippet>231</a>    <span class="prelude-val">Ok</span>(Connection {
+<a href=#228 id=228 data-nosnippet>228</a>    <span class="comment">// if let Some(reason) = conn.close_reason() {
+<a href=#229 id=229 data-nosnippet>229</a>    //     return Err(e!(AuthenticationError::ConnectionError { source: reason }));
+<a href=#230 id=230 data-nosnippet>230</a>    // }
+<a href=#231 id=231 data-nosnippet>231</a>    </span><span class="prelude-val">Ok</span>(Connection {
 <a href=#232 id=232 data-nosnippet>232</a>        remote_id: remote_id_from_quinn_conn(<span class="kw-2">&amp;</span>conn)<span class="question-mark">?</span>,
 <a href=#233 id=233 data-nosnippet>233</a>        alpn: alpn_from_quinn_conn(<span class="kw-2">&amp;</span>conn).ok_or_else(|| <span class="macro">e!</span>(AuthenticationError::NoAlpn))<span class="question-mark">?</span>,
 <a href=#234 id=234 data-nosnippet>234</a>        inner: conn,
