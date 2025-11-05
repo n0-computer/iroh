@@ -1426,7 +1426,7 @@
 <a href=#1426 id=1426 data-nosnippet>1426</a>
 <a href=#1427 id=1427 data-nosnippet>1427</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
 <a href=#1428 id=1428 data-nosnippet>1428</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt};
-<a href=#1429 id=1429 data-nosnippet>1429</a>    <span class="kw">use </span>n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle, time};
+<a href=#1429 id=1429 data-nosnippet>1429</a>    <span class="kw">use </span>n0_future::{BufferedStreamExt, StreamExt, stream, time};
 <a href=#1430 id=1430 data-nosnippet>1430</a>    <span class="kw">use </span>n0_watcher::Watcher;
 <a href=#1431 id=1431 data-nosnippet>1431</a>    <span class="kw">use </span>quinn::ConnectionError;
 <a href=#1432 id=1432 data-nosnippet>1432</a>    <span class="kw">use </span>rand::SeedableRng;
@@ -1438,7 +1438,7 @@
 <a href=#1438 id=1438 data-nosnippet>1438</a>    <span class="kw">use crate</span>::{
 <a href=#1439 id=1439 data-nosnippet>1439</a>        RelayMap, RelayMode,
 <a href=#1440 id=1440 data-nosnippet>1440</a>        discovery::static_provider::StaticProvider,
-<a href=#1441 id=1441 data-nosnippet>1441</a>        endpoint::{ConnectOptions, Connection, ConnectionType},
+<a href=#1441 id=1441 data-nosnippet>1441</a>        endpoint::{ConnectOptions, Connection},
 <a href=#1442 id=1442 data-nosnippet>1442</a>        protocol::{AcceptError, ProtocolHandler, Router},
 <a href=#1443 id=1443 data-nosnippet>1443</a>        test_utils::{run_relay_server, run_relay_server_with},
 <a href=#1444 id=1444 data-nosnippet>1444</a>    };
@@ -1775,9 +1775,9 @@
 <a href=#1775 id=1775 data-nosnippet>1775</a>
 <a href=#1776 id=1776 data-nosnippet>1776</a>    <span class="attr">#[tokio::test]
 <a href=#1777 id=1777 data-nosnippet>1777</a>    #[traced_test]
-<a href=#1778 id=1778 data-nosnippet>1778</a>    </span><span class="kw">async fn </span>endpoint_two_relay_only() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#1778 id=1778 data-nosnippet>1778</a>    </span><span class="kw">async fn </span>endpoint_two_relay_only_becomes_direct() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1779 id=1779 data-nosnippet>1779</a>        <span class="comment">// Connect two endpoints on the same network, via a relay server, without
-<a href=#1780 id=1780 data-nosnippet>1780</a>        // discovery.
+<a href=#1780 id=1780 data-nosnippet>1780</a>        // discovery.  Wait until there is a direct connection.
 <a href=#1781 id=1781 data-nosnippet>1781</a>        </span><span class="kw">let </span>(relay_map, _relay_url, _relay_server_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1782 id=1782 data-nosnippet>1782</a>        <span class="kw">let </span>(node_addr_tx, node_addr_rx) = oneshot::channel();
 <a href=#1783 id=1783 data-nosnippet>1783</a>
@@ -2182,383 +2182,297 @@
 <a href=#2182 id=2182 data-nosnippet>2182</a>
 <a href=#2183 id=2183 data-nosnippet>2183</a>    <span class="attr">#[tokio::test]
 <a href=#2184 id=2184 data-nosnippet>2184</a>    #[traced_test]
-<a href=#2185 id=2185 data-nosnippet>2185</a>    </span><span class="kw">async fn </span>endpoint_conn_type_becomes_direct() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2186 id=2186 data-nosnippet>2186</a>        <span class="kw">const </span>TIMEOUT: Duration = std::time::Duration::from_secs(<span class="number">15</span>);
-<a href=#2187 id=2187 data-nosnippet>2187</a>        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2188 id=2188 data-nosnippet>2188</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
-<a href=#2189 id=2189 data-nosnippet>2189</a>        <span class="kw">let </span>ep1_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#2190 id=2190 data-nosnippet>2190</a>        <span class="kw">let </span>ep2_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#2191 id=2191 data-nosnippet>2191</a>        <span class="kw">let </span>ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#2192 id=2192 data-nosnippet>2192</a>            .secret_key(ep1_secret_key)
-<a href=#2193 id=2193 data-nosnippet>2193</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-<a href=#2194 id=2194 data-nosnippet>2194</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2195 id=2195 data-nosnippet>2195</a>            .bind()
-<a href=#2196 id=2196 data-nosnippet>2196</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2197 id=2197 data-nosnippet>2197</a>        <span class="kw">let </span>ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-<a href=#2198 id=2198 data-nosnippet>2198</a>            .secret_key(ep2_secret_key)
-<a href=#2199 id=2199 data-nosnippet>2199</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-<a href=#2200 id=2200 data-nosnippet>2200</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2201 id=2201 data-nosnippet>2201</a>            .bind()
-<a href=#2202 id=2202 data-nosnippet>2202</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2203 id=2203 data-nosnippet>2203</a>
-<a href=#2204 id=2204 data-nosnippet>2204</a>        <span class="kw">async fn </span>wait_for_conn_type_direct(ep: <span class="kw-2">&amp;</span>Endpoint, endpoint_id: EndpointId) -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2205 id=2205 data-nosnippet>2205</a>            <span class="kw">let </span><span class="kw-2">mut </span>stream = ep
-<a href=#2206 id=2206 data-nosnippet>2206</a>                .conn_type(endpoint_id)
-<a href=#2207 id=2207 data-nosnippet>2207</a>                .expect(<span class="string">"connection exists"</span>)
-<a href=#2208 id=2208 data-nosnippet>2208</a>                .stream();
-<a href=#2209 id=2209 data-nosnippet>2209</a>            <span class="kw">let </span>src = ep.id().fmt_short();
-<a href=#2210 id=2210 data-nosnippet>2210</a>            <span class="kw">let </span>dst = endpoint_id.fmt_short();
-<a href=#2211 id=2211 data-nosnippet>2211</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(conn_type) = stream.next().<span class="kw">await </span>{
-<a href=#2212 id=2212 data-nosnippet>2212</a>                <span class="macro">tracing::info!</span>(me = %src, dst = %dst, conn_type = <span class="question-mark">?</span>conn_type);
-<a href=#2213 id=2213 data-nosnippet>2213</a>                <span class="kw">if </span><span class="macro">matches!</span>(conn_type, ConnectionType::Direct(<span class="kw">_</span>)) {
-<a href=#2214 id=2214 data-nosnippet>2214</a>                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#2215 id=2215 data-nosnippet>2215</a>                }
-<a href=#2216 id=2216 data-nosnippet>2216</a>            }
-<a href=#2217 id=2217 data-nosnippet>2217</a>            <span class="macro">n0_error::bail_any!</span>(<span class="string">"conn_type stream ended before `ConnectionType::Direct`"</span>);
-<a href=#2218 id=2218 data-nosnippet>2218</a>        }
+<a href=#2185 id=2185 data-nosnippet>2185</a>    </span><span class="kw">async fn </span>test_direct_addresses_no_qad_relay() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2186 id=2186 data-nosnippet>2186</a>        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="bool-val">false</span>).<span class="kw">await</span>.unwrap();
+<a href=#2187 id=2187 data-nosnippet>2187</a>
+<a href=#2188 id=2188 data-nosnippet>2188</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+<a href=#2189 id=2189 data-nosnippet>2189</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+<a href=#2190 id=2190 data-nosnippet>2190</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+<a href=#2191 id=2191 data-nosnippet>2191</a>            .bind()
+<a href=#2192 id=2192 data-nosnippet>2192</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2193 id=2193 data-nosnippet>2193</a>
+<a href=#2194 id=2194 data-nosnippet>2194</a>        <span class="macro">assert!</span>(ep.addr().ip_addrs().count() &gt; <span class="number">0</span>);
+<a href=#2195 id=2195 data-nosnippet>2195</a>
+<a href=#2196 id=2196 data-nosnippet>2196</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2197 id=2197 data-nosnippet>2197</a>    }
+<a href=#2198 id=2198 data-nosnippet>2198</a>
+<a href=#2199 id=2199 data-nosnippet>2199</a>    <span class="attr">#[cfg_attr(target_os = <span class="string">"windows"</span>, ignore = <span class="string">"flaky"</span>)]
+<a href=#2200 id=2200 data-nosnippet>2200</a>    #[tokio::test]
+<a href=#2201 id=2201 data-nosnippet>2201</a>    #[traced_test]
+<a href=#2202 id=2202 data-nosnippet>2202</a>    </span><span class="kw">async fn </span>graceful_close() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2203 id=2203 data-nosnippet>2203</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2204 id=2204 data-nosnippet>2204</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#2205 id=2205 data-nosnippet>2205</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+<a href=#2206 id=2206 data-nosnippet>2206</a>            .bind()
+<a href=#2207 id=2207 data-nosnippet>2207</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2208 id=2208 data-nosnippet>2208</a>        <span class="kw">let </span>server_addr = server.addr();
+<a href=#2209 id=2209 data-nosnippet>2209</a>        <span class="kw">let </span>server_task = tokio::spawn(<span class="kw">async move </span>{
+<a href=#2210 id=2210 data-nosnippet>2210</a>            <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2211 id=2211 data-nosnippet>2211</a>            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2212 id=2212 data-nosnippet>2212</a>            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2213 id=2213 data-nosnippet>2213</a>            <span class="kw">let </span>msg = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2214 id=2214 data-nosnippet>2214</a>            send.write_all(<span class="kw-2">&amp;</span>msg).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2215 id=2215 data-nosnippet>2215</a>            send.finish().anyerr()<span class="question-mark">?</span>;
+<a href=#2216 id=2216 data-nosnippet>2216</a>            <span class="kw">let </span>close_reason = conn.closed().<span class="kw">await</span>;
+<a href=#2217 id=2217 data-nosnippet>2217</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(close_reason)
+<a href=#2218 id=2218 data-nosnippet>2218</a>        });
 <a href=#2219 id=2219 data-nosnippet>2219</a>
-<a href=#2220 id=2220 data-nosnippet>2220</a>        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
-<a href=#2221 id=2221 data-nosnippet>2221</a>            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.expect(<span class="string">"ep closed"</span>);
-<a href=#2222 id=2222 data-nosnippet>2222</a>            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2223 id=2223 data-nosnippet>2223</a>            <span class="kw">let </span>endpoint_id = conn.remote_id();
-<a href=#2224 id=2224 data-nosnippet>2224</a>            <span class="macro">tracing::info!</span>(endpoint_id=%endpoint_id.fmt_short(), <span class="string">"accepted connection"</span>);
-<a href=#2225 id=2225 data-nosnippet>2225</a>            <span class="prelude-val">Ok</span>(conn)
-<a href=#2226 id=2226 data-nosnippet>2226</a>        }
+<a href=#2220 id=2220 data-nosnippet>2220</a>        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2221 id=2221 data-nosnippet>2221</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2222 id=2222 data-nosnippet>2222</a>        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2223 id=2223 data-nosnippet>2223</a>        send.finish().anyerr()<span class="question-mark">?</span>;
+<a href=#2224 id=2224 data-nosnippet>2224</a>        recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2225 id=2225 data-nosnippet>2225</a>        conn.close(<span class="number">42u32</span>.into(), <span class="string">b"thanks, bye!"</span>);
+<a href=#2226 id=2226 data-nosnippet>2226</a>        client.close().<span class="kw">await</span>;
 <a href=#2227 id=2227 data-nosnippet>2227</a>
-<a href=#2228 id=2228 data-nosnippet>2228</a>        <span class="kw">let </span>ep1_endpointid = ep1.id();
-<a href=#2229 id=2229 data-nosnippet>2229</a>        <span class="kw">let </span>ep2_endpointid = ep2.id();
-<a href=#2230 id=2230 data-nosnippet>2230</a>
-<a href=#2231 id=2231 data-nosnippet>2231</a>        <span class="kw">let </span>ep1_endpointaddr = ep1.addr();
-<a href=#2232 id=2232 data-nosnippet>2232</a>        <span class="macro">tracing::info!</span>(
-<a href=#2233 id=2233 data-nosnippet>2233</a>            <span class="string">"endpoint id 1 {ep1_endpointid}, relay URL {:?}"</span>,
-<a href=#2234 id=2234 data-nosnippet>2234</a>            ep1_endpointaddr.relay_urls().next()
-<a href=#2235 id=2235 data-nosnippet>2235</a>        );
-<a href=#2236 id=2236 data-nosnippet>2236</a>        <span class="macro">tracing::info!</span>(<span class="string">"endpoint id 2 {ep2_endpointid}"</span>);
-<a href=#2237 id=2237 data-nosnippet>2237</a>
-<a href=#2238 id=2238 data-nosnippet>2238</a>        <span class="kw">let </span>ep1_side = tokio::time::timeout(TIMEOUT, <span class="kw">async move </span>{
-<a href=#2239 id=2239 data-nosnippet>2239</a>            <span class="kw">let </span>conn = accept(<span class="kw-2">&amp;</span>ep1).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2240 id=2240 data-nosnippet>2240</a>            <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2241 id=2241 data-nosnippet>2241</a>            wait_for_conn_type_direct(<span class="kw-2">&amp;</span>ep1, ep2_endpointid).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2242 id=2242 data-nosnippet>2242</a>            send.write_all(<span class="string">b"Conn is direct"</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2243 id=2243 data-nosnippet>2243</a>            send.finish().anyerr()<span class="question-mark">?</span>;
-<a href=#2244 id=2244 data-nosnippet>2244</a>            conn.closed().<span class="kw">await</span>;
-<a href=#2245 id=2245 data-nosnippet>2245</a>            <span class="prelude-val">Ok</span>::&lt;(), Error&gt;(())
-<a href=#2246 id=2246 data-nosnippet>2246</a>        });
-<a href=#2247 id=2247 data-nosnippet>2247</a>
-<a href=#2248 id=2248 data-nosnippet>2248</a>        <span class="kw">let </span>ep2_side = tokio::time::timeout(TIMEOUT, <span class="kw">async move </span>{
-<a href=#2249 id=2249 data-nosnippet>2249</a>            <span class="kw">let </span>conn = ep2.connect(ep1_endpointaddr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2250 id=2250 data-nosnippet>2250</a>            <span class="kw">let </span><span class="kw-2">mut </span>recv = conn.accept_uni().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2251 id=2251 data-nosnippet>2251</a>            wait_for_conn_type_direct(<span class="kw-2">&amp;</span>ep2, ep1_endpointid).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2252 id=2252 data-nosnippet>2252</a>            <span class="kw">let </span>read = recv.read_to_end(<span class="number">100</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2253 id=2253 data-nosnippet>2253</a>            <span class="macro">assert_eq!</span>(read, <span class="string">b"Conn is direct"</span>.to_vec());
-<a href=#2254 id=2254 data-nosnippet>2254</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#2255 id=2255 data-nosnippet>2255</a>            conn.closed().<span class="kw">await</span>;
-<a href=#2256 id=2256 data-nosnippet>2256</a>            <span class="prelude-val">Ok</span>::&lt;(), Error&gt;(())
-<a href=#2257 id=2257 data-nosnippet>2257</a>        });
-<a href=#2258 id=2258 data-nosnippet>2258</a>
-<a href=#2259 id=2259 data-nosnippet>2259</a>        <span class="kw">let </span>res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
-<a href=#2260 id=2260 data-nosnippet>2260</a>        <span class="kw">let </span>res_ep2 = AbortOnDropHandle::new(tokio::spawn(ep2_side));
-<a href=#2261 id=2261 data-nosnippet>2261</a>
-<a href=#2262 id=2262 data-nosnippet>2262</a>        <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(res_ep1, res_ep2).anyerr()<span class="question-mark">?</span>;
-<a href=#2263 id=2263 data-nosnippet>2263</a>        r1.anyerr()<span class="question-mark">??</span>;
-<a href=#2264 id=2264 data-nosnippet>2264</a>        r2.anyerr()<span class="question-mark">??</span>;
-<a href=#2265 id=2265 data-nosnippet>2265</a>
-<a href=#2266 id=2266 data-nosnippet>2266</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2267 id=2267 data-nosnippet>2267</a>    }
-<a href=#2268 id=2268 data-nosnippet>2268</a>
-<a href=#2269 id=2269 data-nosnippet>2269</a>    <span class="attr">#[tokio::test]
-<a href=#2270 id=2270 data-nosnippet>2270</a>    #[traced_test]
-<a href=#2271 id=2271 data-nosnippet>2271</a>    </span><span class="kw">async fn </span>test_direct_addresses_no_qad_relay() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2272 id=2272 data-nosnippet>2272</a>        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="bool-val">false</span>).<span class="kw">await</span>.unwrap();
-<a href=#2273 id=2273 data-nosnippet>2273</a>
-<a href=#2274 id=2274 data-nosnippet>2274</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-<a href=#2275 id=2275 data-nosnippet>2275</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2276 id=2276 data-nosnippet>2276</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-<a href=#2277 id=2277 data-nosnippet>2277</a>            .bind()
-<a href=#2278 id=2278 data-nosnippet>2278</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2279 id=2279 data-nosnippet>2279</a>
-<a href=#2280 id=2280 data-nosnippet>2280</a>        <span class="macro">assert!</span>(ep.addr().ip_addrs().count() &gt; <span class="number">0</span>);
-<a href=#2281 id=2281 data-nosnippet>2281</a>
-<a href=#2282 id=2282 data-nosnippet>2282</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2283 id=2283 data-nosnippet>2283</a>    }
-<a href=#2284 id=2284 data-nosnippet>2284</a>
-<a href=#2285 id=2285 data-nosnippet>2285</a>    <span class="attr">#[cfg_attr(target_os = <span class="string">"windows"</span>, ignore = <span class="string">"flaky"</span>)]
-<a href=#2286 id=2286 data-nosnippet>2286</a>    #[tokio::test]
-<a href=#2287 id=2287 data-nosnippet>2287</a>    #[traced_test]
-<a href=#2288 id=2288 data-nosnippet>2288</a>    </span><span class="kw">async fn </span>graceful_close() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2289 id=2289 data-nosnippet>2289</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2290 id=2290 data-nosnippet>2290</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Disabled)
-<a href=#2291 id=2291 data-nosnippet>2291</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2292 id=2292 data-nosnippet>2292</a>            .bind()
-<a href=#2293 id=2293 data-nosnippet>2293</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2294 id=2294 data-nosnippet>2294</a>        <span class="kw">let </span>server_addr = server.addr();
-<a href=#2295 id=2295 data-nosnippet>2295</a>        <span class="kw">let </span>server_task = tokio::spawn(<span class="kw">async move </span>{
-<a href=#2296 id=2296 data-nosnippet>2296</a>            <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2297 id=2297 data-nosnippet>2297</a>            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2298 id=2298 data-nosnippet>2298</a>            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2299 id=2299 data-nosnippet>2299</a>            <span class="kw">let </span>msg = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2300 id=2300 data-nosnippet>2300</a>            send.write_all(<span class="kw-2">&amp;</span>msg).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2301 id=2301 data-nosnippet>2301</a>            send.finish().anyerr()<span class="question-mark">?</span>;
-<a href=#2302 id=2302 data-nosnippet>2302</a>            <span class="kw">let </span>close_reason = conn.closed().<span class="kw">await</span>;
-<a href=#2303 id=2303 data-nosnippet>2303</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(close_reason)
-<a href=#2304 id=2304 data-nosnippet>2304</a>        });
-<a href=#2305 id=2305 data-nosnippet>2305</a>
-<a href=#2306 id=2306 data-nosnippet>2306</a>        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2307 id=2307 data-nosnippet>2307</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2308 id=2308 data-nosnippet>2308</a>        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2309 id=2309 data-nosnippet>2309</a>        send.finish().anyerr()<span class="question-mark">?</span>;
-<a href=#2310 id=2310 data-nosnippet>2310</a>        recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2311 id=2311 data-nosnippet>2311</a>        conn.close(<span class="number">42u32</span>.into(), <span class="string">b"thanks, bye!"</span>);
-<a href=#2312 id=2312 data-nosnippet>2312</a>        client.close().<span class="kw">await</span>;
-<a href=#2313 id=2313 data-nosnippet>2313</a>
-<a href=#2314 id=2314 data-nosnippet>2314</a>        <span class="kw">let </span>close_err = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
-<a href=#2315 id=2315 data-nosnippet>2315</a>        <span class="kw">let </span>ConnectionError::ApplicationClosed(app_close) = close_err <span class="kw">else </span>{
-<a href=#2316 id=2316 data-nosnippet>2316</a>            <span class="macro">panic!</span>(<span class="string">"Unexpected close reason: {close_err:?}"</span>);
-<a href=#2317 id=2317 data-nosnippet>2317</a>        };
-<a href=#2318 id=2318 data-nosnippet>2318</a>
-<a href=#2319 id=2319 data-nosnippet>2319</a>        <span class="macro">assert_eq!</span>(app_close.error_code, <span class="number">42u32</span>.into());
-<a href=#2320 id=2320 data-nosnippet>2320</a>        <span class="macro">assert_eq!</span>(app_close.reason.as_ref(), <span class="string">b"thanks, bye!"</span>);
-<a href=#2321 id=2321 data-nosnippet>2321</a>
-<a href=#2322 id=2322 data-nosnippet>2322</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2323 id=2323 data-nosnippet>2323</a>    }
-<a href=#2324 id=2324 data-nosnippet>2324</a>
-<a href=#2325 id=2325 data-nosnippet>2325</a>    <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-<a href=#2326 id=2326 data-nosnippet>2326</a>    #[tokio::test]
-<a href=#2327 id=2327 data-nosnippet>2327</a>    #[traced_test]
-<a href=#2328 id=2328 data-nosnippet>2328</a>    </span><span class="kw">async fn </span>metrics_smoke() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2329 id=2329 data-nosnippet>2329</a>        <span class="kw">use </span>iroh_metrics::{MetricsSource, Registry};
-<a href=#2330 id=2330 data-nosnippet>2330</a>
-<a href=#2331 id=2331 data-nosnippet>2331</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
-<a href=#2332 id=2332 data-nosnippet>2332</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Disabled)
-<a href=#2333 id=2333 data-nosnippet>2333</a>            .secret_key(secret_key)
-<a href=#2334 id=2334 data-nosnippet>2334</a>            .bind()
-<a href=#2335 id=2335 data-nosnippet>2335</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2336 id=2336 data-nosnippet>2336</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
-<a href=#2337 id=2337 data-nosnippet>2337</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Disabled)
-<a href=#2338 id=2338 data-nosnippet>2338</a>            .secret_key(secret_key)
-<a href=#2339 id=2339 data-nosnippet>2339</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2340 id=2340 data-nosnippet>2340</a>            .bind()
-<a href=#2341 id=2341 data-nosnippet>2341</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2342 id=2342 data-nosnippet>2342</a>        <span class="kw">let </span>server_addr = server.addr();
-<a href=#2343 id=2343 data-nosnippet>2343</a>        <span class="kw">let </span>server_task = tokio::task::spawn(<span class="kw">async move </span>{
-<a href=#2344 id=2344 data-nosnippet>2344</a>            <span class="kw">let </span>conn = server.accept().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2345 id=2345 data-nosnippet>2345</a>            <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.accept_uni().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2346 id=2346 data-nosnippet>2346</a>            uni.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2347 id=2347 data-nosnippet>2347</a>            drop(conn);
-<a href=#2348 id=2348 data-nosnippet>2348</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(server)
-<a href=#2349 id=2349 data-nosnippet>2349</a>        });
-<a href=#2350 id=2350 data-nosnippet>2350</a>        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2351 id=2351 data-nosnippet>2351</a>        <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.open_uni().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2352 id=2352 data-nosnippet>2352</a>        uni.write_all(<span class="string">b"helloworld"</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2353 id=2353 data-nosnippet>2353</a>        uni.finish().anyerr()<span class="question-mark">?</span>;
-<a href=#2354 id=2354 data-nosnippet>2354</a>        conn.closed().<span class="kw">await</span>;
-<a href=#2355 id=2355 data-nosnippet>2355</a>        drop(conn);
-<a href=#2356 id=2356 data-nosnippet>2356</a>        <span class="kw">let </span>server = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
-<a href=#2357 id=2357 data-nosnippet>2357</a>
-<a href=#2358 id=2358 data-nosnippet>2358</a>        <span class="kw">let </span>m = client.metrics();
-<a href=#2359 id=2359 data-nosnippet>2359</a>        <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
-<a href=#2360 id=2360 data-nosnippet>2360</a>        <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
-<a href=#2361 id=2361 data-nosnippet>2361</a>        <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
-<a href=#2362 id=2362 data-nosnippet>2362</a>        <span class="macro">assert_eq!</span>(m.magicsock.endpoints_contacted_directly.get(), <span class="number">1</span>);
-<a href=#2363 id=2363 data-nosnippet>2363</a>        <span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
-<a href=#2364 id=2364 data-nosnippet>2364</a>
-<a href=#2365 id=2365 data-nosnippet>2365</a>        <span class="kw">let </span>m = server.metrics();
-<a href=#2366 id=2366 data-nosnippet>2366</a>        <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
-<a href=#2367 id=2367 data-nosnippet>2367</a>        <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
-<a href=#2368 id=2368 data-nosnippet>2368</a>        <span class="macro">assert_eq!</span>(m.magicsock.endpoints_contacted_directly.get(), <span class="number">1</span>);
-<a href=#2369 id=2369 data-nosnippet>2369</a>        <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
-<a href=#2370 id=2370 data-nosnippet>2370</a>        <span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
-<a href=#2371 id=2371 data-nosnippet>2371</a>
-<a href=#2372 id=2372 data-nosnippet>2372</a>        <span class="comment">// test openmetrics encoding with labeled subregistries per endpoint
-<a href=#2373 id=2373 data-nosnippet>2373</a>        </span><span class="kw">fn </span>register_endpoint(registry: <span class="kw-2">&amp;mut </span>Registry, endpoint: <span class="kw-2">&amp;</span>Endpoint) {
-<a href=#2374 id=2374 data-nosnippet>2374</a>            <span class="kw">let </span>id = endpoint.id().fmt_short();
-<a href=#2375 id=2375 data-nosnippet>2375</a>            <span class="kw">let </span>sub_registry = registry.sub_registry_with_label(<span class="string">"id"</span>, id.to_string());
-<a href=#2376 id=2376 data-nosnippet>2376</a>            sub_registry.register_all(endpoint.metrics());
-<a href=#2377 id=2377 data-nosnippet>2377</a>        }
-<a href=#2378 id=2378 data-nosnippet>2378</a>        <span class="kw">let </span><span class="kw-2">mut </span>registry = Registry::default();
-<a href=#2379 id=2379 data-nosnippet>2379</a>        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>client);
-<a href=#2380 id=2380 data-nosnippet>2380</a>        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>server);
-<a href=#2381 id=2381 data-nosnippet>2381</a>        <span class="kw">let </span>s = registry.encode_openmetrics_to_string().anyerr()<span class="question-mark">?</span>;
-<a href=#2382 id=2382 data-nosnippet>2382</a>        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#</span>));
-<a href=#2383 id=2383 data-nosnippet>2383</a>        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#</span>));
-<a href=#2384 id=2384 data-nosnippet>2384</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2385 id=2385 data-nosnippet>2385</a>    }
-<a href=#2386 id=2386 data-nosnippet>2386</a>
-<a href=#2387 id=2387 data-nosnippet>2387</a>    <span class="doccomment">/// Configures the accept side to take `accept_alpns` ALPNs, then connects to it with `primary_connect_alpn`
-<a href=#2388 id=2388 data-nosnippet>2388</a>    /// with `secondary_connect_alpns` set, and finally returns the negotiated ALPN.
-<a href=#2389 id=2389 data-nosnippet>2389</a>    </span><span class="kw">async fn </span>alpn_connection_test(
-<a href=#2390 id=2390 data-nosnippet>2390</a>        accept_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
-<a href=#2391 id=2391 data-nosnippet>2391</a>        primary_connect_alpn: <span class="kw-2">&amp;</span>[u8],
-<a href=#2392 id=2392 data-nosnippet>2392</a>        secondary_connect_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
-<a href=#2393 id=2393 data-nosnippet>2393</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;&gt; {
-<a href=#2394 id=2394 data-nosnippet>2394</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2395 id=2395 data-nosnippet>2395</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Disabled)
-<a href=#2396 id=2396 data-nosnippet>2396</a>            .alpns(accept_alpns)
-<a href=#2397 id=2397 data-nosnippet>2397</a>            .bind()
-<a href=#2398 id=2398 data-nosnippet>2398</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2399 id=2399 data-nosnippet>2399</a>        <span class="kw">let </span>server_addr = server.addr();
-<a href=#2400 id=2400 data-nosnippet>2400</a>        <span class="kw">let </span>server_task = tokio::spawn({
-<a href=#2401 id=2401 data-nosnippet>2401</a>            <span class="kw">let </span>server = server.clone();
-<a href=#2402 id=2402 data-nosnippet>2402</a>            <span class="kw">async move </span>{
-<a href=#2403 id=2403 data-nosnippet>2403</a>                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2404 id=2404 data-nosnippet>2404</a>                <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2405 id=2405 data-nosnippet>2405</a>                conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye!"</span>);
-<a href=#2406 id=2406 data-nosnippet>2406</a>                n0_error::Ok(conn.alpn().to_vec())
-<a href=#2407 id=2407 data-nosnippet>2407</a>            }
-<a href=#2408 id=2408 data-nosnippet>2408</a>        });
-<a href=#2409 id=2409 data-nosnippet>2409</a>
-<a href=#2410 id=2410 data-nosnippet>2410</a>        <span class="kw">let </span>conn = client
-<a href=#2411 id=2411 data-nosnippet>2411</a>            .connect_with_opts(
-<a href=#2412 id=2412 data-nosnippet>2412</a>                server_addr,
-<a href=#2413 id=2413 data-nosnippet>2413</a>                primary_connect_alpn,
-<a href=#2414 id=2414 data-nosnippet>2414</a>                ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
-<a href=#2415 id=2415 data-nosnippet>2415</a>            )
-<a href=#2416 id=2416 data-nosnippet>2416</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2417 id=2417 data-nosnippet>2417</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2418 id=2418 data-nosnippet>2418</a>        <span class="kw">let </span>client_alpn = conn.alpn();
-<a href=#2419 id=2419 data-nosnippet>2419</a>        conn.closed().<span class="kw">await</span>;
-<a href=#2420 id=2420 data-nosnippet>2420</a>        client.close().<span class="kw">await</span>;
-<a href=#2421 id=2421 data-nosnippet>2421</a>        server.close().<span class="kw">await</span>;
-<a href=#2422 id=2422 data-nosnippet>2422</a>
-<a href=#2423 id=2423 data-nosnippet>2423</a>        <span class="kw">let </span>server_alpn = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
-<a href=#2424 id=2424 data-nosnippet>2424</a>
-<a href=#2425 id=2425 data-nosnippet>2425</a>        <span class="macro">assert_eq!</span>(client_alpn, server_alpn);
-<a href=#2426 id=2426 data-nosnippet>2426</a>
-<a href=#2427 id=2427 data-nosnippet>2427</a>        <span class="prelude-val">Ok</span>(server_alpn.to_vec())
-<a href=#2428 id=2428 data-nosnippet>2428</a>    }
-<a href=#2429 id=2429 data-nosnippet>2429</a>
-<a href=#2430 id=2430 data-nosnippet>2430</a>    <span class="attr">#[tokio::test]
-<a href=#2431 id=2431 data-nosnippet>2431</a>    #[traced_test]
-<a href=#2432 id=2432 data-nosnippet>2432</a>    </span><span class="kw">async fn </span>connect_multiple_alpn_negotiated() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2433 id=2433 data-nosnippet>2433</a>        <span class="kw">const </span>ALPN_ONE: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/1"</span>;
-<a href=#2434 id=2434 data-nosnippet>2434</a>        <span class="kw">const </span>ALPN_TWO: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/2"</span>;
-<a href=#2435 id=2435 data-nosnippet>2435</a>
-<a href=#2436 id=2436 data-nosnippet>2436</a>        <span class="macro">assert_eq!</span>(
-<a href=#2437 id=2437 data-nosnippet>2437</a>            alpn_connection_test(
-<a href=#2438 id=2438 data-nosnippet>2438</a>                <span class="comment">// Prefer version 2 over version 1 on the accept side
-<a href=#2439 id=2439 data-nosnippet>2439</a>                </span><span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
-<a href=#2440 id=2440 data-nosnippet>2440</a>                ALPN_TWO,
-<a href=#2441 id=2441 data-nosnippet>2441</a>                <span class="macro">vec!</span>[ALPN_ONE.to_vec()],
-<a href=#2442 id=2442 data-nosnippet>2442</a>            )
-<a href=#2443 id=2443 data-nosnippet>2443</a>            .<span class="kw">await</span><span class="question-mark">?</span>,
-<a href=#2444 id=2444 data-nosnippet>2444</a>            ALPN_TWO.to_vec(),
-<a href=#2445 id=2445 data-nosnippet>2445</a>            <span class="string">"accept side prefers version 2 over 1"
-<a href=#2446 id=2446 data-nosnippet>2446</a>        </span>);
-<a href=#2447 id=2447 data-nosnippet>2447</a>
-<a href=#2448 id=2448 data-nosnippet>2448</a>        <span class="macro">assert_eq!</span>(
-<a href=#2449 id=2449 data-nosnippet>2449</a>            alpn_connection_test(
-<a href=#2450 id=2450 data-nosnippet>2450</a>                <span class="comment">// Only support the old version
-<a href=#2451 id=2451 data-nosnippet>2451</a>                </span><span class="macro">vec!</span>[ALPN_ONE.to_vec()],
-<a href=#2452 id=2452 data-nosnippet>2452</a>                ALPN_TWO,
-<a href=#2453 id=2453 data-nosnippet>2453</a>                <span class="macro">vec!</span>[ALPN_ONE.to_vec()],
-<a href=#2454 id=2454 data-nosnippet>2454</a>            )
-<a href=#2455 id=2455 data-nosnippet>2455</a>            .<span class="kw">await</span><span class="question-mark">?</span>,
-<a href=#2456 id=2456 data-nosnippet>2456</a>            ALPN_ONE.to_vec(),
-<a href=#2457 id=2457 data-nosnippet>2457</a>            <span class="string">"accept side only supports the old version"
-<a href=#2458 id=2458 data-nosnippet>2458</a>        </span>);
-<a href=#2459 id=2459 data-nosnippet>2459</a>
-<a href=#2460 id=2460 data-nosnippet>2460</a>        <span class="macro">assert_eq!</span>(
-<a href=#2461 id=2461 data-nosnippet>2461</a>            alpn_connection_test(
-<a href=#2462 id=2462 data-nosnippet>2462</a>                <span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
-<a href=#2463 id=2463 data-nosnippet>2463</a>                ALPN_ONE,
-<a href=#2464 id=2464 data-nosnippet>2464</a>                <span class="macro">vec!</span>[ALPN_TWO.to_vec()],
-<a href=#2465 id=2465 data-nosnippet>2465</a>            )
-<a href=#2466 id=2466 data-nosnippet>2466</a>            .<span class="kw">await</span><span class="question-mark">?</span>,
-<a href=#2467 id=2467 data-nosnippet>2467</a>            ALPN_TWO.to_vec(),
-<a href=#2468 id=2468 data-nosnippet>2468</a>            <span class="string">"connect side ALPN order doesn't matter"
-<a href=#2469 id=2469 data-nosnippet>2469</a>        </span>);
-<a href=#2470 id=2470 data-nosnippet>2470</a>
-<a href=#2471 id=2471 data-nosnippet>2471</a>        <span class="macro">assert_eq!</span>(
-<a href=#2472 id=2472 data-nosnippet>2472</a>            alpn_connection_test(<span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()], ALPN_ONE, <span class="macro">vec!</span>[],)
-<a href=#2473 id=2473 data-nosnippet>2473</a>                .<span class="kw">await</span><span class="question-mark">?</span>,
-<a href=#2474 id=2474 data-nosnippet>2474</a>            ALPN_ONE.to_vec(),
-<a href=#2475 id=2475 data-nosnippet>2475</a>            <span class="string">"connect side only supports the old version"
-<a href=#2476 id=2476 data-nosnippet>2476</a>        </span>);
-<a href=#2477 id=2477 data-nosnippet>2477</a>
-<a href=#2478 id=2478 data-nosnippet>2478</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2479 id=2479 data-nosnippet>2479</a>    }
-<a href=#2480 id=2480 data-nosnippet>2480</a>
-<a href=#2481 id=2481 data-nosnippet>2481</a>    <span class="attr">#[tokio::test]
-<a href=#2482 id=2482 data-nosnippet>2482</a>    #[traced_test]
-<a href=#2483 id=2483 data-nosnippet>2483</a>    </span><span class="kw">async fn </span>watch_net_report() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2484 id=2484 data-nosnippet>2484</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder(RelayMode::Staging).bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2485 id=2485 data-nosnippet>2485</a>
-<a href=#2486 id=2486 data-nosnippet>2486</a>        <span class="comment">// can get a first report
-<a href=#2487 id=2487 data-nosnippet>2487</a>        </span>endpoint.net_report().updated().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2488 id=2488 data-nosnippet>2488</a>
-<a href=#2489 id=2489 data-nosnippet>2489</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2490 id=2490 data-nosnippet>2490</a>    }
-<a href=#2491 id=2491 data-nosnippet>2491</a>
-<a href=#2492 id=2492 data-nosnippet>2492</a>    <span class="doccomment">/// Tests that initial connection establishment isn't extremely slow compared
-<a href=#2493 id=2493 data-nosnippet>2493</a>    /// to subsequent connections.
-<a href=#2494 id=2494 data-nosnippet>2494</a>    ///
-<a href=#2495 id=2495 data-nosnippet>2495</a>    /// This is a time based test, but uses a very large ratio to reduce flakiness.
-<a href=#2496 id=2496 data-nosnippet>2496</a>    /// It also does a number of connections to average out any anomalies.
-<a href=#2497 id=2497 data-nosnippet>2497</a>    </span><span class="attr">#[tokio::test]
-<a href=#2498 id=2498 data-nosnippet>2498</a>    #[traced_test]
-<a href=#2499 id=2499 data-nosnippet>2499</a>    </span><span class="kw">async fn </span>connect_multi_time() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2500 id=2500 data-nosnippet>2500</a>        <span class="kw">let </span>n = <span class="number">32</span>;
-<a href=#2501 id=2501 data-nosnippet>2501</a>
-<a href=#2502 id=2502 data-nosnippet>2502</a>        <span class="kw">const </span>NOOP_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"noop"</span>;
-<a href=#2503 id=2503 data-nosnippet>2503</a>
-<a href=#2504 id=2504 data-nosnippet>2504</a>        <span class="attr">#[derive(Debug, Clone)]
-<a href=#2505 id=2505 data-nosnippet>2505</a>        </span><span class="kw">struct </span>Noop;
-<a href=#2506 id=2506 data-nosnippet>2506</a>
-<a href=#2507 id=2507 data-nosnippet>2507</a>        <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>Noop {
-<a href=#2508 id=2508 data-nosnippet>2508</a>            <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
-<a href=#2509 id=2509 data-nosnippet>2509</a>                connection.closed().<span class="kw">await</span>;
-<a href=#2510 id=2510 data-nosnippet>2510</a>                <span class="prelude-val">Ok</span>(())
-<a href=#2511 id=2511 data-nosnippet>2511</a>            }
-<a href=#2512 id=2512 data-nosnippet>2512</a>        }
-<a href=#2513 id=2513 data-nosnippet>2513</a>
-<a href=#2514 id=2514 data-nosnippet>2514</a>        <span class="kw">async fn </span>noop_server() -&gt; <span class="prelude-ty">Result</span>&lt;(Router, EndpointAddr)&gt; {
-<a href=#2515 id=2515 data-nosnippet>2515</a>            <span class="kw">let </span>endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-<a href=#2516 id=2516 data-nosnippet>2516</a>                .bind()
-<a href=#2517 id=2517 data-nosnippet>2517</a>                .<span class="kw">await
-<a href=#2518 id=2518 data-nosnippet>2518</a>                </span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2519 id=2519 data-nosnippet>2519</a>            <span class="kw">let </span>addr = endpoint.addr();
-<a href=#2520 id=2520 data-nosnippet>2520</a>            <span class="kw">let </span>router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
-<a href=#2521 id=2521 data-nosnippet>2521</a>            <span class="prelude-val">Ok</span>((router, addr))
-<a href=#2522 id=2522 data-nosnippet>2522</a>        }
-<a href=#2523 id=2523 data-nosnippet>2523</a>
-<a href=#2524 id=2524 data-nosnippet>2524</a>        <span class="kw">let </span>routers = stream::iter(<span class="number">0</span>..n)
-<a href=#2525 id=2525 data-nosnippet>2525</a>            .map(|<span class="kw">_</span>| noop_server())
-<a href=#2526 id=2526 data-nosnippet>2526</a>            .buffered_unordered(<span class="number">32</span>)
-<a href=#2527 id=2527 data-nosnippet>2527</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#2528 id=2528 data-nosnippet>2528</a>            .<span class="kw">await
-<a href=#2529 id=2529 data-nosnippet>2529</a>            </span>.into_iter()
-<a href=#2530 id=2530 data-nosnippet>2530</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#2531 id=2531 data-nosnippet>2531</a>            .anyerr()<span class="question-mark">?</span>;
-<a href=#2532 id=2532 data-nosnippet>2532</a>
-<a href=#2533 id=2533 data-nosnippet>2533</a>        <span class="kw">let </span>addrs = routers
-<a href=#2534 id=2534 data-nosnippet>2534</a>            .iter()
-<a href=#2535 id=2535 data-nosnippet>2535</a>            .map(|(<span class="kw">_</span>, addr)| addr.clone())
-<a href=#2536 id=2536 data-nosnippet>2536</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#2537 id=2537 data-nosnippet>2537</a>        <span class="kw">let </span>ids = addrs.iter().map(|addr| addr.id).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#2538 id=2538 data-nosnippet>2538</a>        <span class="kw">let </span>discovery = StaticProvider::from_endpoint_info(addrs);
-<a href=#2539 id=2539 data-nosnippet>2539</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-<a href=#2540 id=2540 data-nosnippet>2540</a>            .discovery(discovery)
-<a href=#2541 id=2541 data-nosnippet>2541</a>            .bind()
-<a href=#2542 id=2542 data-nosnippet>2542</a>            .<span class="kw">await
-<a href=#2543 id=2543 data-nosnippet>2543</a>            </span>.anyerr()<span class="question-mark">?</span>;
-<a href=#2544 id=2544 data-nosnippet>2544</a>        <span class="comment">// wait for the endpoint to be initialized. This should not be needed,
-<a href=#2545 id=2545 data-nosnippet>2545</a>        // but we don't want to measure endpoint init time but connection time
-<a href=#2546 id=2546 data-nosnippet>2546</a>        // from a fully initialized endpoint.
-<a href=#2547 id=2547 data-nosnippet>2547</a>        </span>endpoint.addr();
-<a href=#2548 id=2548 data-nosnippet>2548</a>        <span class="kw">let </span>t0 = Instant::now();
-<a href=#2549 id=2549 data-nosnippet>2549</a>        <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>ids {
-<a href=#2550 id=2550 data-nosnippet>2550</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2551 id=2551 data-nosnippet>2551</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#2552 id=2552 data-nosnippet>2552</a>        }
-<a href=#2553 id=2553 data-nosnippet>2553</a>        <span class="kw">let </span>dt0 = t0.elapsed().as_secs_f64();
-<a href=#2554 id=2554 data-nosnippet>2554</a>        <span class="kw">let </span>t1 = Instant::now();
-<a href=#2555 id=2555 data-nosnippet>2555</a>        <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>ids {
-<a href=#2556 id=2556 data-nosnippet>2556</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2557 id=2557 data-nosnippet>2557</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#2558 id=2558 data-nosnippet>2558</a>        }
-<a href=#2559 id=2559 data-nosnippet>2559</a>        <span class="kw">let </span>dt1 = t1.elapsed().as_secs_f64();
-<a href=#2560 id=2560 data-nosnippet>2560</a>
-<a href=#2561 id=2561 data-nosnippet>2561</a>        <span class="macro">assert!</span>(dt0 / dt1 &lt; <span class="number">20.0</span>, <span class="string">"First round: {dt0}s, second round {dt1}s"</span>);
-<a href=#2562 id=2562 data-nosnippet>2562</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2563 id=2563 data-nosnippet>2563</a>    }
-<a href=#2564 id=2564 data-nosnippet>2564</a>}</code></pre></div></section></main></body></html>
+<a href=#2228 id=2228 data-nosnippet>2228</a>        <span class="kw">let </span>close_err = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
+<a href=#2229 id=2229 data-nosnippet>2229</a>        <span class="kw">let </span>ConnectionError::ApplicationClosed(app_close) = close_err <span class="kw">else </span>{
+<a href=#2230 id=2230 data-nosnippet>2230</a>            <span class="macro">panic!</span>(<span class="string">"Unexpected close reason: {close_err:?}"</span>);
+<a href=#2231 id=2231 data-nosnippet>2231</a>        };
+<a href=#2232 id=2232 data-nosnippet>2232</a>
+<a href=#2233 id=2233 data-nosnippet>2233</a>        <span class="macro">assert_eq!</span>(app_close.error_code, <span class="number">42u32</span>.into());
+<a href=#2234 id=2234 data-nosnippet>2234</a>        <span class="macro">assert_eq!</span>(app_close.reason.as_ref(), <span class="string">b"thanks, bye!"</span>);
+<a href=#2235 id=2235 data-nosnippet>2235</a>
+<a href=#2236 id=2236 data-nosnippet>2236</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2237 id=2237 data-nosnippet>2237</a>    }
+<a href=#2238 id=2238 data-nosnippet>2238</a>
+<a href=#2239 id=2239 data-nosnippet>2239</a>    <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+<a href=#2240 id=2240 data-nosnippet>2240</a>    #[tokio::test]
+<a href=#2241 id=2241 data-nosnippet>2241</a>    #[traced_test]
+<a href=#2242 id=2242 data-nosnippet>2242</a>    </span><span class="kw">async fn </span>metrics_smoke() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2243 id=2243 data-nosnippet>2243</a>        <span class="kw">use </span>iroh_metrics::{MetricsSource, Registry};
+<a href=#2244 id=2244 data-nosnippet>2244</a>
+<a href=#2245 id=2245 data-nosnippet>2245</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
+<a href=#2246 id=2246 data-nosnippet>2246</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#2247 id=2247 data-nosnippet>2247</a>            .secret_key(secret_key)
+<a href=#2248 id=2248 data-nosnippet>2248</a>            .bind()
+<a href=#2249 id=2249 data-nosnippet>2249</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2250 id=2250 data-nosnippet>2250</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
+<a href=#2251 id=2251 data-nosnippet>2251</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#2252 id=2252 data-nosnippet>2252</a>            .secret_key(secret_key)
+<a href=#2253 id=2253 data-nosnippet>2253</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+<a href=#2254 id=2254 data-nosnippet>2254</a>            .bind()
+<a href=#2255 id=2255 data-nosnippet>2255</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2256 id=2256 data-nosnippet>2256</a>        <span class="kw">let </span>server_addr = server.addr();
+<a href=#2257 id=2257 data-nosnippet>2257</a>        <span class="kw">let </span>server_task = tokio::task::spawn(<span class="kw">async move </span>{
+<a href=#2258 id=2258 data-nosnippet>2258</a>            <span class="kw">let </span>conn = server.accept().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2259 id=2259 data-nosnippet>2259</a>            <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.accept_uni().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2260 id=2260 data-nosnippet>2260</a>            uni.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2261 id=2261 data-nosnippet>2261</a>            drop(conn);
+<a href=#2262 id=2262 data-nosnippet>2262</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(server)
+<a href=#2263 id=2263 data-nosnippet>2263</a>        });
+<a href=#2264 id=2264 data-nosnippet>2264</a>        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2265 id=2265 data-nosnippet>2265</a>        <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.open_uni().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2266 id=2266 data-nosnippet>2266</a>        uni.write_all(<span class="string">b"helloworld"</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2267 id=2267 data-nosnippet>2267</a>        uni.finish().anyerr()<span class="question-mark">?</span>;
+<a href=#2268 id=2268 data-nosnippet>2268</a>        conn.closed().<span class="kw">await</span>;
+<a href=#2269 id=2269 data-nosnippet>2269</a>        drop(conn);
+<a href=#2270 id=2270 data-nosnippet>2270</a>        <span class="kw">let </span>server = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
+<a href=#2271 id=2271 data-nosnippet>2271</a>
+<a href=#2272 id=2272 data-nosnippet>2272</a>        <span class="kw">let </span>m = client.metrics();
+<a href=#2273 id=2273 data-nosnippet>2273</a>        <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
+<a href=#2274 id=2274 data-nosnippet>2274</a>        <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
+<a href=#2275 id=2275 data-nosnippet>2275</a>        <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
+<a href=#2276 id=2276 data-nosnippet>2276</a>        <span class="macro">assert_eq!</span>(m.magicsock.endpoints_contacted_directly.get(), <span class="number">1</span>);
+<a href=#2277 id=2277 data-nosnippet>2277</a>        <span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
+<a href=#2278 id=2278 data-nosnippet>2278</a>
+<a href=#2279 id=2279 data-nosnippet>2279</a>        <span class="kw">let </span>m = server.metrics();
+<a href=#2280 id=2280 data-nosnippet>2280</a>        <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
+<a href=#2281 id=2281 data-nosnippet>2281</a>        <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
+<a href=#2282 id=2282 data-nosnippet>2282</a>        <span class="macro">assert_eq!</span>(m.magicsock.endpoints_contacted_directly.get(), <span class="number">1</span>);
+<a href=#2283 id=2283 data-nosnippet>2283</a>        <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
+<a href=#2284 id=2284 data-nosnippet>2284</a>        <span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
+<a href=#2285 id=2285 data-nosnippet>2285</a>
+<a href=#2286 id=2286 data-nosnippet>2286</a>        <span class="comment">// test openmetrics encoding with labeled subregistries per endpoint
+<a href=#2287 id=2287 data-nosnippet>2287</a>        </span><span class="kw">fn </span>register_endpoint(registry: <span class="kw-2">&amp;mut </span>Registry, endpoint: <span class="kw-2">&amp;</span>Endpoint) {
+<a href=#2288 id=2288 data-nosnippet>2288</a>            <span class="kw">let </span>id = endpoint.id().fmt_short();
+<a href=#2289 id=2289 data-nosnippet>2289</a>            <span class="kw">let </span>sub_registry = registry.sub_registry_with_label(<span class="string">"id"</span>, id.to_string());
+<a href=#2290 id=2290 data-nosnippet>2290</a>            sub_registry.register_all(endpoint.metrics());
+<a href=#2291 id=2291 data-nosnippet>2291</a>        }
+<a href=#2292 id=2292 data-nosnippet>2292</a>        <span class="kw">let </span><span class="kw-2">mut </span>registry = Registry::default();
+<a href=#2293 id=2293 data-nosnippet>2293</a>        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>client);
+<a href=#2294 id=2294 data-nosnippet>2294</a>        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>server);
+<a href=#2295 id=2295 data-nosnippet>2295</a>        <span class="kw">let </span>s = registry.encode_openmetrics_to_string().anyerr()<span class="question-mark">?</span>;
+<a href=#2296 id=2296 data-nosnippet>2296</a>        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#</span>));
+<a href=#2297 id=2297 data-nosnippet>2297</a>        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#</span>));
+<a href=#2298 id=2298 data-nosnippet>2298</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2299 id=2299 data-nosnippet>2299</a>    }
+<a href=#2300 id=2300 data-nosnippet>2300</a>
+<a href=#2301 id=2301 data-nosnippet>2301</a>    <span class="doccomment">/// Configures the accept side to take `accept_alpns` ALPNs, then connects to it with `primary_connect_alpn`
+<a href=#2302 id=2302 data-nosnippet>2302</a>    /// with `secondary_connect_alpns` set, and finally returns the negotiated ALPN.
+<a href=#2303 id=2303 data-nosnippet>2303</a>    </span><span class="kw">async fn </span>alpn_connection_test(
+<a href=#2304 id=2304 data-nosnippet>2304</a>        accept_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
+<a href=#2305 id=2305 data-nosnippet>2305</a>        primary_connect_alpn: <span class="kw-2">&amp;</span>[u8],
+<a href=#2306 id=2306 data-nosnippet>2306</a>        secondary_connect_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
+<a href=#2307 id=2307 data-nosnippet>2307</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;&gt; {
+<a href=#2308 id=2308 data-nosnippet>2308</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Disabled).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2309 id=2309 data-nosnippet>2309</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#2310 id=2310 data-nosnippet>2310</a>            .alpns(accept_alpns)
+<a href=#2311 id=2311 data-nosnippet>2311</a>            .bind()
+<a href=#2312 id=2312 data-nosnippet>2312</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2313 id=2313 data-nosnippet>2313</a>        <span class="kw">let </span>server_addr = server.addr();
+<a href=#2314 id=2314 data-nosnippet>2314</a>        <span class="kw">let </span>server_task = tokio::spawn({
+<a href=#2315 id=2315 data-nosnippet>2315</a>            <span class="kw">let </span>server = server.clone();
+<a href=#2316 id=2316 data-nosnippet>2316</a>            <span class="kw">async move </span>{
+<a href=#2317 id=2317 data-nosnippet>2317</a>                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2318 id=2318 data-nosnippet>2318</a>                <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2319 id=2319 data-nosnippet>2319</a>                conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye!"</span>);
+<a href=#2320 id=2320 data-nosnippet>2320</a>                n0_error::Ok(conn.alpn().to_vec())
+<a href=#2321 id=2321 data-nosnippet>2321</a>            }
+<a href=#2322 id=2322 data-nosnippet>2322</a>        });
+<a href=#2323 id=2323 data-nosnippet>2323</a>
+<a href=#2324 id=2324 data-nosnippet>2324</a>        <span class="kw">let </span>conn = client
+<a href=#2325 id=2325 data-nosnippet>2325</a>            .connect_with_opts(
+<a href=#2326 id=2326 data-nosnippet>2326</a>                server_addr,
+<a href=#2327 id=2327 data-nosnippet>2327</a>                primary_connect_alpn,
+<a href=#2328 id=2328 data-nosnippet>2328</a>                ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
+<a href=#2329 id=2329 data-nosnippet>2329</a>            )
+<a href=#2330 id=2330 data-nosnippet>2330</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2331 id=2331 data-nosnippet>2331</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2332 id=2332 data-nosnippet>2332</a>        <span class="kw">let </span>client_alpn = conn.alpn();
+<a href=#2333 id=2333 data-nosnippet>2333</a>        conn.closed().<span class="kw">await</span>;
+<a href=#2334 id=2334 data-nosnippet>2334</a>        client.close().<span class="kw">await</span>;
+<a href=#2335 id=2335 data-nosnippet>2335</a>        server.close().<span class="kw">await</span>;
+<a href=#2336 id=2336 data-nosnippet>2336</a>
+<a href=#2337 id=2337 data-nosnippet>2337</a>        <span class="kw">let </span>server_alpn = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
+<a href=#2338 id=2338 data-nosnippet>2338</a>
+<a href=#2339 id=2339 data-nosnippet>2339</a>        <span class="macro">assert_eq!</span>(client_alpn, server_alpn);
+<a href=#2340 id=2340 data-nosnippet>2340</a>
+<a href=#2341 id=2341 data-nosnippet>2341</a>        <span class="prelude-val">Ok</span>(server_alpn.to_vec())
+<a href=#2342 id=2342 data-nosnippet>2342</a>    }
+<a href=#2343 id=2343 data-nosnippet>2343</a>
+<a href=#2344 id=2344 data-nosnippet>2344</a>    <span class="attr">#[tokio::test]
+<a href=#2345 id=2345 data-nosnippet>2345</a>    #[traced_test]
+<a href=#2346 id=2346 data-nosnippet>2346</a>    </span><span class="kw">async fn </span>connect_multiple_alpn_negotiated() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2347 id=2347 data-nosnippet>2347</a>        <span class="kw">const </span>ALPN_ONE: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/1"</span>;
+<a href=#2348 id=2348 data-nosnippet>2348</a>        <span class="kw">const </span>ALPN_TWO: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/2"</span>;
+<a href=#2349 id=2349 data-nosnippet>2349</a>
+<a href=#2350 id=2350 data-nosnippet>2350</a>        <span class="macro">assert_eq!</span>(
+<a href=#2351 id=2351 data-nosnippet>2351</a>            alpn_connection_test(
+<a href=#2352 id=2352 data-nosnippet>2352</a>                <span class="comment">// Prefer version 2 over version 1 on the accept side
+<a href=#2353 id=2353 data-nosnippet>2353</a>                </span><span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+<a href=#2354 id=2354 data-nosnippet>2354</a>                ALPN_TWO,
+<a href=#2355 id=2355 data-nosnippet>2355</a>                <span class="macro">vec!</span>[ALPN_ONE.to_vec()],
+<a href=#2356 id=2356 data-nosnippet>2356</a>            )
+<a href=#2357 id=2357 data-nosnippet>2357</a>            .<span class="kw">await</span><span class="question-mark">?</span>,
+<a href=#2358 id=2358 data-nosnippet>2358</a>            ALPN_TWO.to_vec(),
+<a href=#2359 id=2359 data-nosnippet>2359</a>            <span class="string">"accept side prefers version 2 over 1"
+<a href=#2360 id=2360 data-nosnippet>2360</a>        </span>);
+<a href=#2361 id=2361 data-nosnippet>2361</a>
+<a href=#2362 id=2362 data-nosnippet>2362</a>        <span class="macro">assert_eq!</span>(
+<a href=#2363 id=2363 data-nosnippet>2363</a>            alpn_connection_test(
+<a href=#2364 id=2364 data-nosnippet>2364</a>                <span class="comment">// Only support the old version
+<a href=#2365 id=2365 data-nosnippet>2365</a>                </span><span class="macro">vec!</span>[ALPN_ONE.to_vec()],
+<a href=#2366 id=2366 data-nosnippet>2366</a>                ALPN_TWO,
+<a href=#2367 id=2367 data-nosnippet>2367</a>                <span class="macro">vec!</span>[ALPN_ONE.to_vec()],
+<a href=#2368 id=2368 data-nosnippet>2368</a>            )
+<a href=#2369 id=2369 data-nosnippet>2369</a>            .<span class="kw">await</span><span class="question-mark">?</span>,
+<a href=#2370 id=2370 data-nosnippet>2370</a>            ALPN_ONE.to_vec(),
+<a href=#2371 id=2371 data-nosnippet>2371</a>            <span class="string">"accept side only supports the old version"
+<a href=#2372 id=2372 data-nosnippet>2372</a>        </span>);
+<a href=#2373 id=2373 data-nosnippet>2373</a>
+<a href=#2374 id=2374 data-nosnippet>2374</a>        <span class="macro">assert_eq!</span>(
+<a href=#2375 id=2375 data-nosnippet>2375</a>            alpn_connection_test(
+<a href=#2376 id=2376 data-nosnippet>2376</a>                <span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+<a href=#2377 id=2377 data-nosnippet>2377</a>                ALPN_ONE,
+<a href=#2378 id=2378 data-nosnippet>2378</a>                <span class="macro">vec!</span>[ALPN_TWO.to_vec()],
+<a href=#2379 id=2379 data-nosnippet>2379</a>            )
+<a href=#2380 id=2380 data-nosnippet>2380</a>            .<span class="kw">await</span><span class="question-mark">?</span>,
+<a href=#2381 id=2381 data-nosnippet>2381</a>            ALPN_TWO.to_vec(),
+<a href=#2382 id=2382 data-nosnippet>2382</a>            <span class="string">"connect side ALPN order doesn't matter"
+<a href=#2383 id=2383 data-nosnippet>2383</a>        </span>);
+<a href=#2384 id=2384 data-nosnippet>2384</a>
+<a href=#2385 id=2385 data-nosnippet>2385</a>        <span class="macro">assert_eq!</span>(
+<a href=#2386 id=2386 data-nosnippet>2386</a>            alpn_connection_test(<span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()], ALPN_ONE, <span class="macro">vec!</span>[],)
+<a href=#2387 id=2387 data-nosnippet>2387</a>                .<span class="kw">await</span><span class="question-mark">?</span>,
+<a href=#2388 id=2388 data-nosnippet>2388</a>            ALPN_ONE.to_vec(),
+<a href=#2389 id=2389 data-nosnippet>2389</a>            <span class="string">"connect side only supports the old version"
+<a href=#2390 id=2390 data-nosnippet>2390</a>        </span>);
+<a href=#2391 id=2391 data-nosnippet>2391</a>
+<a href=#2392 id=2392 data-nosnippet>2392</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2393 id=2393 data-nosnippet>2393</a>    }
+<a href=#2394 id=2394 data-nosnippet>2394</a>
+<a href=#2395 id=2395 data-nosnippet>2395</a>    <span class="attr">#[tokio::test]
+<a href=#2396 id=2396 data-nosnippet>2396</a>    #[traced_test]
+<a href=#2397 id=2397 data-nosnippet>2397</a>    </span><span class="kw">async fn </span>watch_net_report() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2398 id=2398 data-nosnippet>2398</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder(RelayMode::Staging).bind().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2399 id=2399 data-nosnippet>2399</a>
+<a href=#2400 id=2400 data-nosnippet>2400</a>        <span class="comment">// can get a first report
+<a href=#2401 id=2401 data-nosnippet>2401</a>        </span>endpoint.net_report().updated().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2402 id=2402 data-nosnippet>2402</a>
+<a href=#2403 id=2403 data-nosnippet>2403</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2404 id=2404 data-nosnippet>2404</a>    }
+<a href=#2405 id=2405 data-nosnippet>2405</a>
+<a href=#2406 id=2406 data-nosnippet>2406</a>    <span class="doccomment">/// Tests that initial connection establishment isn't extremely slow compared
+<a href=#2407 id=2407 data-nosnippet>2407</a>    /// to subsequent connections.
+<a href=#2408 id=2408 data-nosnippet>2408</a>    ///
+<a href=#2409 id=2409 data-nosnippet>2409</a>    /// This is a time based test, but uses a very large ratio to reduce flakiness.
+<a href=#2410 id=2410 data-nosnippet>2410</a>    /// It also does a number of connections to average out any anomalies.
+<a href=#2411 id=2411 data-nosnippet>2411</a>    </span><span class="attr">#[tokio::test]
+<a href=#2412 id=2412 data-nosnippet>2412</a>    #[traced_test]
+<a href=#2413 id=2413 data-nosnippet>2413</a>    </span><span class="kw">async fn </span>connect_multi_time() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2414 id=2414 data-nosnippet>2414</a>        <span class="kw">let </span>n = <span class="number">32</span>;
+<a href=#2415 id=2415 data-nosnippet>2415</a>
+<a href=#2416 id=2416 data-nosnippet>2416</a>        <span class="kw">const </span>NOOP_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"noop"</span>;
+<a href=#2417 id=2417 data-nosnippet>2417</a>
+<a href=#2418 id=2418 data-nosnippet>2418</a>        <span class="attr">#[derive(Debug, Clone)]
+<a href=#2419 id=2419 data-nosnippet>2419</a>        </span><span class="kw">struct </span>Noop;
+<a href=#2420 id=2420 data-nosnippet>2420</a>
+<a href=#2421 id=2421 data-nosnippet>2421</a>        <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>Noop {
+<a href=#2422 id=2422 data-nosnippet>2422</a>            <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
+<a href=#2423 id=2423 data-nosnippet>2423</a>                connection.closed().<span class="kw">await</span>;
+<a href=#2424 id=2424 data-nosnippet>2424</a>                <span class="prelude-val">Ok</span>(())
+<a href=#2425 id=2425 data-nosnippet>2425</a>            }
+<a href=#2426 id=2426 data-nosnippet>2426</a>        }
+<a href=#2427 id=2427 data-nosnippet>2427</a>
+<a href=#2428 id=2428 data-nosnippet>2428</a>        <span class="kw">async fn </span>noop_server() -&gt; <span class="prelude-ty">Result</span>&lt;(Router, EndpointAddr)&gt; {
+<a href=#2429 id=2429 data-nosnippet>2429</a>            <span class="kw">let </span>endpoint = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#2430 id=2430 data-nosnippet>2430</a>                .bind()
+<a href=#2431 id=2431 data-nosnippet>2431</a>                .<span class="kw">await
+<a href=#2432 id=2432 data-nosnippet>2432</a>                </span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2433 id=2433 data-nosnippet>2433</a>            <span class="kw">let </span>addr = endpoint.addr();
+<a href=#2434 id=2434 data-nosnippet>2434</a>            <span class="kw">let </span>router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
+<a href=#2435 id=2435 data-nosnippet>2435</a>            <span class="prelude-val">Ok</span>((router, addr))
+<a href=#2436 id=2436 data-nosnippet>2436</a>        }
+<a href=#2437 id=2437 data-nosnippet>2437</a>
+<a href=#2438 id=2438 data-nosnippet>2438</a>        <span class="kw">let </span>routers = stream::iter(<span class="number">0</span>..n)
+<a href=#2439 id=2439 data-nosnippet>2439</a>            .map(|<span class="kw">_</span>| noop_server())
+<a href=#2440 id=2440 data-nosnippet>2440</a>            .buffered_unordered(<span class="number">32</span>)
+<a href=#2441 id=2441 data-nosnippet>2441</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#2442 id=2442 data-nosnippet>2442</a>            .<span class="kw">await
+<a href=#2443 id=2443 data-nosnippet>2443</a>            </span>.into_iter()
+<a href=#2444 id=2444 data-nosnippet>2444</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#2445 id=2445 data-nosnippet>2445</a>            .anyerr()<span class="question-mark">?</span>;
+<a href=#2446 id=2446 data-nosnippet>2446</a>
+<a href=#2447 id=2447 data-nosnippet>2447</a>        <span class="kw">let </span>addrs = routers
+<a href=#2448 id=2448 data-nosnippet>2448</a>            .iter()
+<a href=#2449 id=2449 data-nosnippet>2449</a>            .map(|(<span class="kw">_</span>, addr)| addr.clone())
+<a href=#2450 id=2450 data-nosnippet>2450</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#2451 id=2451 data-nosnippet>2451</a>        <span class="kw">let </span>ids = addrs.iter().map(|addr| addr.id).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#2452 id=2452 data-nosnippet>2452</a>        <span class="kw">let </span>discovery = StaticProvider::from_endpoint_info(addrs);
+<a href=#2453 id=2453 data-nosnippet>2453</a>        <span class="kw">let </span>endpoint = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#2454 id=2454 data-nosnippet>2454</a>            .discovery(discovery)
+<a href=#2455 id=2455 data-nosnippet>2455</a>            .bind()
+<a href=#2456 id=2456 data-nosnippet>2456</a>            .<span class="kw">await
+<a href=#2457 id=2457 data-nosnippet>2457</a>            </span>.anyerr()<span class="question-mark">?</span>;
+<a href=#2458 id=2458 data-nosnippet>2458</a>        <span class="comment">// wait for the endpoint to be initialized. This should not be needed,
+<a href=#2459 id=2459 data-nosnippet>2459</a>        // but we don't want to measure endpoint init time but connection time
+<a href=#2460 id=2460 data-nosnippet>2460</a>        // from a fully initialized endpoint.
+<a href=#2461 id=2461 data-nosnippet>2461</a>        </span>endpoint.addr();
+<a href=#2462 id=2462 data-nosnippet>2462</a>        <span class="kw">let </span>t0 = Instant::now();
+<a href=#2463 id=2463 data-nosnippet>2463</a>        <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>ids {
+<a href=#2464 id=2464 data-nosnippet>2464</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2465 id=2465 data-nosnippet>2465</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+<a href=#2466 id=2466 data-nosnippet>2466</a>        }
+<a href=#2467 id=2467 data-nosnippet>2467</a>        <span class="kw">let </span>dt0 = t0.elapsed().as_secs_f64();
+<a href=#2468 id=2468 data-nosnippet>2468</a>        <span class="kw">let </span>t1 = Instant::now();
+<a href=#2469 id=2469 data-nosnippet>2469</a>        <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>ids {
+<a href=#2470 id=2470 data-nosnippet>2470</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2471 id=2471 data-nosnippet>2471</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+<a href=#2472 id=2472 data-nosnippet>2472</a>        }
+<a href=#2473 id=2473 data-nosnippet>2473</a>        <span class="kw">let </span>dt1 = t1.elapsed().as_secs_f64();
+<a href=#2474 id=2474 data-nosnippet>2474</a>
+<a href=#2475 id=2475 data-nosnippet>2475</a>        <span class="macro">assert!</span>(dt0 / dt1 &lt; <span class="number">20.0</span>, <span class="string">"First round: {dt0}s, second round {dt1}s"</span>);
+<a href=#2476 id=2476 data-nosnippet>2476</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2477 id=2477 data-nosnippet>2477</a>    }
+<a href=#2478 id=2478 data-nosnippet>2478</a>}</code></pre></div></section></main></body></html>
