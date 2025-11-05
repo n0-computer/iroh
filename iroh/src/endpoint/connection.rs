@@ -631,9 +631,7 @@ impl OutgoingZeroRttConnection {
     ///
     /// Thus, those errors should only occur if someone connects to you with a
     /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn into_handshaked_connection(
-        &self,
-    ) -> Result<ZeroRttConnection, AuthenticationError> {
+    pub async fn to_handshaked_connection(&self) -> Result<ZeroRttConnection, AuthenticationError> {
         let accepted = self.accepted.clone().await;
         let conn = conn_from_quinn_conn(self.inner.clone())?;
 
@@ -1668,7 +1666,7 @@ mod tests {
         send.finish().anyerr()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
-        let zrtt_res = zrtt_conn.into_handshaked_connection().await;
+        let zrtt_res = zrtt_conn.to_handshaked_connection().await;
         tracing::trace!(?zrtt_res, "Server responded to 0-RTT");
         let zrtt_res = zrtt_res.context("handshake completed")?;
         let conn = match zrtt_res {

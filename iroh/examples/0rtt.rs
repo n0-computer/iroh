@@ -93,7 +93,7 @@ async fn connect(args: Args) -> Result<()> {
                     let (send, recv) = zrtt_connection.open_bi().await.anyerr()?;
                     // before we get the full handshake, attempt to send 0-RTT data
                     let zrtt_task = tokio::spawn(ping(send, i));
-                    match zrtt_connection.into_handshaked_connection().await? {
+                    match zrtt_connection.to_handshaked_connection().await? {
                         ZeroRttConnection::Accepted(conn) => {
                             let _ = zrtt_task.await.anyerr()?;
                             pong(recv, i).await?;
