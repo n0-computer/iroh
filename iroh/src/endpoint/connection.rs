@@ -643,9 +643,7 @@ impl OutgoingZeroRttConnection {
 
     /// Waits until the full handshake occurs and returns whether the server accepted 0-RTT data.
     ///
-    /// If this returns `false`, the 0-RTT data was rejected, and any streams that were created
-    /// before the handshake was completed will error and any data that was previously sent on
-    /// those streams will need to be resent.
+    /// Returns a future that resolves to [`ZeroRttStatus`].
     pub async fn handshake_completed(&self) -> HandshakeCompleted {
         HandshakeCompleted {
             accepted: self.accepted.clone(),
