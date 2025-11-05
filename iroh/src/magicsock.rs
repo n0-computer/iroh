@@ -55,8 +55,8 @@ use self::{
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-#[cfg(any(test, feature = "test-utils"))]
-use crate::endpoint::PathSelection;
+// #[cfg(any(test, feature = "test-utils"))]
+// use crate::endpoint::PathSelection;
 #[cfg(not(wasm_browser))]
 use crate::net_report::QuicConfig;
 use crate::{
@@ -143,10 +143,9 @@ pub(crate) struct Options {
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
 
-    /// Configuration for what path selection to use
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) path_selection: PathSelection,
-
+    // /// Configuration for what path selection to use
+    // #[cfg(any(test, feature = "test-utils"))]
+    // pub(crate) path_selection: PathSelection,
     pub(crate) metrics: EndpointMetrics,
 }
 
@@ -968,7 +967,7 @@ impl Handle {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
-            path_selection,
+            // path_selection,
             metrics,
         } = opts;
 
@@ -1018,8 +1017,8 @@ impl Handle {
             let sender = transports.create_sender();
             EndpointMap::new(
                 secret_key.public(),
-                #[cfg(any(test, feature = "test-utils"))]
-                path_selection,
+                // #[cfg(any(test, feature = "test-utils"))]
+                // path_selection,
                 metrics.magicsock.clone(),
                 sender,
                 direct_addrs.addrs.watch(),
@@ -1917,10 +1916,13 @@ mod tests {
 
     use super::{EndpointIdMappedAddr, Options, endpoint_map::Source, mapped_addrs::MappedAddr};
     use crate::{
-        Endpoint, RelayMap, RelayMode, SecretKey,
+        Endpoint,
+        RelayMap,
+        RelayMode,
+        SecretKey,
         discovery::static_provider::StaticProvider,
         dns::DnsResolver,
-        endpoint::PathSelection,
+        // endpoint::PathSelection,
         magicsock::{Handle, MagicSock},
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
@@ -1941,7 +1943,7 @@ mod tests {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             #[cfg(any(test, feature = "test-utils"))]
-            path_selection: PathSelection::default(),
+            // path_selection: PathSelection::default(),
             discovery_user_data: None,
             metrics: Default::default(),
         }
@@ -2374,7 +2376,7 @@ mod tests {
             proxy_url: None,
             server_config,
             insecure_skip_relay_cert_verify: false,
-            path_selection: PathSelection::default(),
+            // path_selection: PathSelection::default(),
             metrics: Default::default(),
         };
         let msock = MagicSock::spawn(opts).await?;

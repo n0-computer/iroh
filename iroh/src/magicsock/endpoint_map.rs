@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
@@ -7,22 +7,19 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_future::task::{self, AbortOnDropHandle};
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{Instrument, error, info_span, trace, warn};
 
-#[cfg(any(test, feature = "test-utils"))]
-use super::transports::TransportsSender;
-#[cfg(not(any(test, feature = "test-utils")))]
-use super::transports::TransportsSender;
 use super::{
     DirectAddr, DiscoState, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr},
-    transports::{self, OwnedTransmit},
+    transports::{self, OwnedTransmit, TransportsSender},
 };
 use crate::disco::{self};
-#[cfg(any(test, feature = "test-utils"))]
-use crate::endpoint::PathSelection;
+// #[cfg(any(test, feature = "test-utils"))]
+// use crate::endpoint::PathSelection;
 
 mod endpoint_state;
 mod path_state;
@@ -44,104 +41,52 @@ use endpoint_state::{EndpointStateActor, EndpointStateHandle};
 ///   addressing space that is used by Quinn.
 #[derive(Debug)]
 pub(crate) struct EndpointMap {
-    /// The endpoint ID of the local endpoint.
-    local_endpoint_id: EndpointId,
-    inner: Mutex<EndpointMapInner>,
+    //
+    // State we keep about remote endpoints.
+    //
+    /// The actors tracking each remote endpoint.
+    actor_handles: Mutex<FxHashMap<EndpointId, EndpointStateHandle>>,
     /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
     pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-}
 
-#[derive(Debug)]
-pub(super) struct EndpointMapInner {
+    //
+    // State needed to start a new EndpointStateHandle.
+    //
+    /// The endpoint ID of the local endpoint.
+    local_endpoint_id: EndpointId,
     metrics: Arc<MagicsockMetrics>,
     /// Handle to an actor that can send over the transports.
     transports_handle: TransportsSenderHandle,
     local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     disco: DiscoState,
-    #[cfg(any(test, feature = "test-utils"))]
-    path_selection: PathSelection,
-    /// The [`EndpointStateActor`] for each remote endpoint.
-    ///
-    /// [`EndpointStateActor`]: endpoint_state::EndpointStateActor
-    endpoint_states: HashMap<EndpointId, EndpointStateHandle>,
-}
-
-/// The origin or *source* through which an address associated with a remote endpoint
-/// was discovered.
-///
-/// An aggregate of the [`Source`]s of all the addresses of an endpoint describe the
-/// [`Source`]s of the endpoint itself.
-///
-/// A [`Source`] helps track how and where an address was learned. Multiple
-/// sources can be associated with a single address, if we have discovered this
-/// address through multiple means.
-#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
-#[strum(serialize_all = "kebab-case")]
-pub enum Source {
-    /// Address was loaded from the fs.
-    Saved,
-    /// An endpoint communicated with us first via UDP.
-    Udp,
-    /// An endpoint communicated with us first via relay.
-    Relay,
-    /// Application layer added the address directly.
-    App,
-    /// The address was discovered by a discovery service.
-    #[strum(serialize = "{name}")]
-    Discovery {
-        /// The name of the discovery service that discovered the address.
-        name: String,
-    },
-    /// Application layer with a specific name added the endpoint directly.
-    #[strum(serialize = "{name}")]
-    NamedApp {
-        /// The name of the application that added the endpoint
-        name: String,
-    },
-    /// The address was advertised by a call-me-maybe DISCO message.
-    CallMeMaybe,
-    /// We received a ping on the path.
-    Ping,
-    /// We established a connection on this address.
-    ///
-    /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
-    /// was added to the `EndpointStateActor`.
-    ///
-    /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
-    Connection,
 }
 
 impl EndpointMap {
     /// Creates a new [`EndpointMap`].
     pub(super) fn new(
         local_endpoint_id: EndpointId,
-        #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
+        // TODO:
+        // #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
     ) -> Self {
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let inner = EndpointMapInner::new(metrics, sender, local_addrs, disco);
-
-        #[cfg(any(test, feature = "test-utils"))]
-        let inner = {
-            let mut inner = EndpointMapInner::new(metrics, sender, local_addrs, disco);
-            inner.path_selection = path_selection;
-            inner
-        };
-
         Self {
-            local_endpoint_id,
-            inner: Mutex::new(inner),
+            actor_handles: Mutex::new(FxHashMap::default()),
             endpoint_mapped_addrs: Default::default(),
             relay_mapped_addrs: Default::default(),
+            local_endpoint_id,
+            metrics,
+            transports_handle: TransportsSenderActor::new(sender).start(),
+            local_addrs,
+            disco,
         }
     }
 
-    /// Adds addresses where a endpoint might be contactable.
+    /// Adds addresses where an endpoint might be contactable.
     pub(super) async fn add_endpoint_addr(&self, endpoint_addr: EndpointAddr, source: Source) {
         for url in endpoint_addr.relay_urls() {
             // Ensure we have a RelayMappedAddress.
@@ -185,9 +130,9 @@ impl EndpointMap {
     /// the `endpoint_id`
     pub(super) fn conn_type(
         &self,
-        endpoint_id: EndpointId,
+        _endpoint_id: EndpointId,
     ) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.inner.lock().expect("poisoned").conn_type(endpoint_id)
+        todo!();
     }
 
     /// Returns the sender for the [`EndpointStateActor`].
@@ -199,15 +144,15 @@ impl EndpointMap {
         &self,
         eid: EndpointId,
     ) -> mpsc::Sender<EndpointStateMessage> {
-        let mut inner = self.inner.lock().expect("poisoned");
-        match inner.endpoint_states.get(&eid) {
+        let mut handles = self.actor_handles.lock().expect("poisoned");
+        match handles.get(&eid) {
             Some(handle) => handle.sender.clone(),
             None => {
                 // Create a new EndpointStateActor and insert it into the endpoint map.
-                let sender = inner.transports_handle.inbox.clone();
-                let local_addrs = inner.local_addrs.clone();
-                let disco = inner.disco.clone();
-                let metrics = inner.metrics.clone();
+                let sender = self.transports_handle.inbox.clone();
+                let local_addrs = self.local_addrs.clone();
+                let disco = self.disco.clone();
+                let metrics = self.metrics.clone();
                 let actor = EndpointStateActor::new(
                     eid,
                     self.local_endpoint_id,
@@ -219,7 +164,7 @@ impl EndpointMap {
                 );
                 let handle = actor.start();
                 let sender = handle.sender.clone();
-                inner.endpoint_states.insert(eid, handle);
+                handles.insert(eid, handle);
 
                 // Ensure there is a EndpointMappedAddr for this EndpointId.
                 self.endpoint_mapped_addrs.get(&eid);
@@ -269,42 +214,49 @@ impl EndpointMap {
     }
 }
 
-impl EndpointMapInner {
-    fn new(
-        metrics: Arc<MagicsockMetrics>,
-        sender: TransportsSender,
-        local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        disco: DiscoState,
-    ) -> Self {
-        let transports_handle = Self::start_transports_sender(sender);
-        Self {
-            metrics,
-            transports_handle,
-            local_addrs,
-            disco,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection: Default::default(),
-            endpoint_states: Default::default(),
-        }
-    }
-
-    fn start_transports_sender(sender: TransportsSender) -> TransportsSenderHandle {
-        let actor = TransportsSenderActor::new(sender);
-        actor.start()
-    }
-
-    /// Returns a stream of [`ConnectionType`].
+/// The origin or *source* through which an address associated with a remote endpoint
+/// was discovered.
+///
+/// An aggregate of the [`Source`]s of all the addresses of an endpoint describe the
+/// [`Source`]s of the endpoint itself.
+///
+/// A [`Source`] helps track how and where an address was learned. Multiple
+/// sources can be associated with a single address, if we have discovered this
+/// address through multiple means.
+#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
+#[strum(serialize_all = "kebab-case")]
+pub enum Source {
+    /// Address was loaded from the fs.
+    Saved,
+    /// An endpoint communicated with us first via UDP.
+    Udp,
+    /// An endpoint communicated with us first via relay.
+    Relay,
+    /// Application layer added the address directly.
+    App,
+    /// The address was discovered by a discovery service.
+    #[strum(serialize = "{name}")]
+    Discovery {
+        /// The name of the discovery service that discovered the address.
+        name: String,
+    },
+    /// Application layer with a specific name added the endpoint directly.
+    #[strum(serialize = "{name}")]
+    NamedApp {
+        /// The name of the application that added the endpoint
+        name: String,
+    },
+    /// The address was advertised by a call-me-maybe DISCO message.
+    CallMeMaybe,
+    /// We received a ping on the path.
+    Ping,
+    /// We established a connection on this address.
     ///
-    /// Sends the current [`ConnectionType`] whenever any changes to the
-    /// connection type for `public_key` has occurred.
+    /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
+    /// was added to the `EndpointStateActor`.
     ///
-    /// # Errors
-    ///
-    /// Will return `None` if there is not an entry in the [`EndpointMap`] for
-    /// the `public_key`
-    fn conn_type(&self, _eid: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        todo!();
-    }
+    /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
+    Connection,
 }
 
 /// An (Ip, Port) pair.

@@ -205,8 +205,8 @@ impl Builder {
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection: self.path_selection,
+            // #[cfg(any(test, feature = "test-utils"))]
+            // path_selection: self.path_selection,
             metrics,
         };
 
