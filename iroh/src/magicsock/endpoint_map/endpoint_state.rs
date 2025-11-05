@@ -713,19 +713,44 @@ impl EndpointState {
             });
         }
 
+        // Capture the prospective current send address before taking a mutable borrow
+        let current_addr_before = self.udp_paths.send_addr(have_ipv6).get_addr();
+        // Collect the iterator so we can use it both for updates and membership checks
+        let new_addrs_list: Vec<SocketAddr> = new_addrs.collect();
+
         let mut access = self.udp_paths.access_mut(now);
-        let mut new_addrs_list = Vec::new();
-        for addr in new_addrs {
+        for addr in &new_addrs_list {
             access
                 .paths()
-                .entry(addr.into())
+                .entry((*addr).into())
                 .and_modify(|path_state| {
                     path_state.add_source(source.clone(), now);
                 })
                 .or_insert_with(|| {
-                    PathState::new(self.endpoint_id, SendAddr::from(addr), source.clone(), now)
+                    PathState::new(self.endpoint_id, SendAddr::from(*addr), source.clone(), now)
                 });
-            new_addrs_list.push(addr);
+        }
+
+        // If the application explicitly provided a new set of direct addresses and
+        // the currently selected UDP send address is not in that set, immediately
+        // invalidate trust for old paths so we prefer the newly provided addresses
+        // without waiting for TRUST_UDP_ADDR_DURATION to expire.
+        let should_prefer_app_addrs = matches!(
+            source,
+            super::Source::App | super::Source::NamedApp { .. }
+        );
+        if should_prefer_app_addrs {
+            use std::collections::HashSet;
+            let new_set: HashSet<SocketAddr> = new_addrs_list.iter().copied().collect();
+            if let Some(current_addr) = current_addr_before {
+                if !new_set.contains(&current_addr) {
+                    for state in access.paths().values_mut() {
+                        state.clear();
+                    }
+                    // Clear last_call_me_maybe so we will trigger discovery immediately.
+                    self.last_call_me_maybe = None;
+                }
+            }
         }
         drop(access);
         let paths = summarize_endpoint_paths(self.udp_paths.paths());
