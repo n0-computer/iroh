@@ -157,7 +157,7 @@ struct PublicKeyShort([u8; 5]);
 
 impl Display for PublicKeyShort {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        data_encoding::HEXLOWER.encode_write(&self.0, f)
+        data_encoding::BASE32_NOPAD_NOCASE.encode_write(&self.0, f)
     }
 }
 
@@ -188,17 +188,22 @@ impl AsRef<[u8]> for PublicKey {
 
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "PublicKey({})",
-            data_encoding::HEXLOWER.encode(self.as_bytes())
-        )
+        let display = self.to_string();
+        write!(f, "PublicKey({display})",)
     }
 }
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", data_encoding::HEXLOWER.encode(self.as_bytes()))
+        let short = &self.as_slice()[0..5];
+        let rest = &self.as_slice()[5..];
+
+        write!(
+            f,
+            "{}-{}",
+            data_encoding::BASE32_NOPAD_NOCASE.encode(short),
+            data_encoding::BASE32_NOPAD_NOCASE.encode(rest)
+        )
     }
 }
 
@@ -225,7 +230,6 @@ impl FromStr for PublicKey {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let bytes = decode_base32_hex(s)?;
-
         Self::from_bytes(&bytes)
     }
 }
@@ -421,6 +425,10 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
     let res = if s.len() == PublicKey::LENGTH * 2 {
         // hex
         data_encoding::HEXLOWER.decode_mut(s.as_bytes(), &mut bytes)
+    } else if s.len() == 53 {
+        // the length of base32_nopad for 32bit values are always 52, so 53 is including the short-long separator
+        let s = s.replace("-", "");
+        data_encoding::BASE32_NOPAD_NOCASE.decode_mut(s.as_bytes(), &mut bytes)
     } else {
         let input = s.to_ascii_uppercase();
         let input = input.as_bytes();
@@ -444,10 +452,92 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use data_encoding::HEXLOWER;
     use rand::SeedableRng;
 
-    use super::*;
+    fn generate_random_id() -> EndpointId {
+        let mut rng = rand::rng();
+        let key = SecretKey::generate(&mut rng);
+        let id = key.public();
+        id
+    }
+
+    #[test]
+    /// Basic requirement for any serialization/deserialization
+    fn test_endpoint_id_display_and_parse_roundtrip() {
+        for _ in 0..100 {
+            let id = generate_random_id();
+            let s = id.to_string();
+            let parsed = EndpointId::from_str(&s).unwrap();
+            assert_eq!(id, parsed, "roundtrip failed for {}", s);
+        }
+    }
+
+    #[test]
+    /// URL is a very common denominator, and thus we should make sure that the
+    /// standard formatting is URL-Safe
+    fn test_endpoint_id_is_url_safe() {
+        let id = generate_random_id();
+        let s = id.to_string();
+        assert!(
+            s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'),
+            "non-URL-safe char in {}",
+            s
+        );
+    }
+
+    #[test]
+    /// To be able to scan the short-form length in tables or logs, having it being fixed length
+    /// makes sure its easily formatted and when searching for it in logs, easily identified
+    fn test_endpoint_id_have_fixed_short_form_length() {
+        for _ in 0..100 {
+            let id = generate_random_id();
+            let short = id.fmt_short().to_string();
+            assert_eq!(short.len(), 8, "short form should be exactly 8 chars");
+        }
+    }
+
+    #[test]
+    /// Common addressing schemes (IPv4, IPv6, UUID, MAC addr) are usually visually distinct
+    /// and thus easily identified by developers and sysadmins when encountered in config files or APIs
+    fn test_enpoint_id_is_visually_distinct() {
+        let id = generate_random_id();
+        let string = id.to_string();
+        let mut split = string.split("-");
+
+        assert_eq!(
+            2,
+            split.clone().count(),
+            "it should be visibly distinct by consisting of exactly two parts separated by an \'-\' char"
+        );
+        assert_eq!(
+            split.next().unwrap().len(),
+            8,
+            "short form should be exactly 8 chars"
+        );
+        assert_eq!(
+            split.next().unwrap().len(),
+            44,
+            "the second part form should be exactly 44 chars"
+        );
+    }
+
+    #[test]
+    /// almost any addressing scheme ends up in a DNS call one way or another, to make it easier, we should
+    /// make sure that the default serialization is DNS label compatible and can fit in a subdomain
+    fn test_endpoint_id_dns_label_compatibility() {
+        for _ in 0..100 {
+            let id = generate_random_id();
+            let s = id.to_string();
+            assert!(
+                s.len() < 64,
+                "Serialized form too long to fit in a subdomain ({} chars): {}",
+                s.len(),
+                s
+            );
+        }
+    }
 
     #[test]
     fn test_public_key_postcard() {
