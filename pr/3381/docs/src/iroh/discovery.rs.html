@@ -643,7 +643,7 @@
 <a href=#643 id=643 data-nosnippet>643</a>    };
 <a href=#644 id=644 data-nosnippet>644</a>
 <a href=#645 id=645 data-nosnippet>645</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-<a href=#646 id=646 data-nosnippet>646</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StdResultExt};
+<a href=#646 id=646 data-nosnippet>646</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StackResultExt};
 <a href=#647 id=647 data-nosnippet>647</a>    <span class="kw">use </span>quinn::{IdleTimeout, TransportConfig};
 <a href=#648 id=648 data-nosnippet>648</a>    <span class="kw">use </span>rand::{CryptoRng, Rng, SeedableRng};
 <a href=#649 id=649 data-nosnippet>649</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
@@ -819,7 +819,7 @@
 <a href=#819 id=819 data-nosnippet>819</a>        <span class="kw">let </span>_conn = ep2
 <a href=#820 id=820 data-nosnippet>820</a>            .connect(ep1_addr, TEST_ALPN)
 <a href=#821 id=821 data-nosnippet>821</a>            .<span class="kw">await
-<a href=#822 id=822 data-nosnippet>822</a>            </span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#822 id=822 data-nosnippet>822</a>            </span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
 <a href=#823 id=823 data-nosnippet>823</a>        <span class="prelude-val">Ok</span>(())
 <a href=#824 id=824 data-nosnippet>824</a>    }
 <a href=#825 id=825 data-nosnippet>825</a>
@@ -934,9 +934,9 @@
 <a href=#934 id=934 data-nosnippet>934</a>                <span class="comment">// Keep connections alive until the task is dropped.
 <a href=#935 id=935 data-nosnippet>935</a>                </span><span class="kw">let </span><span class="kw-2">mut </span>connections = Vec::new();
 <a href=#936 id=936 data-nosnippet>936</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
-<a href=#937 id=937 data-nosnippet>937</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+<a href=#937 id=937 data-nosnippet>937</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(accepting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
 <a href=#938 id=938 data-nosnippet>938</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
-<a href=#939 id=939 data-nosnippet>939</a>                    </span><span class="kw">let </span>conn = connecting.<span class="kw">await</span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#939 id=939 data-nosnippet>939</a>                    </span><span class="kw">let </span>conn = accepting.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#940 id=940 data-nosnippet>940</a>                    connections.push(conn);
 <a href=#941 id=941 data-nosnippet>941</a>                }
 <a href=#942 id=942 data-nosnippet>942</a>
@@ -963,7 +963,7 @@
 <a href=#963 id=963 data-nosnippet>963</a></span><span class="kw">mod </span>test_dns_pkarr {
 <a href=#964 id=964 data-nosnippet>964</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, SecretKey, TransportAddr};
 <a href=#965 id=965 data-nosnippet>965</a>    <span class="kw">use </span>iroh_relay::{RelayMap, endpoint_info::UserData};
-<a href=#966 id=966 data-nosnippet>966</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
+<a href=#966 id=966 data-nosnippet>966</a>    <span class="kw">use </span>n0_error::{AnyError <span class="kw">as </span>Error, <span class="prelude-ty">Result</span>, StackResultExt};
 <a href=#967 id=967 data-nosnippet>967</a>    <span class="kw">use </span>n0_future::time::Duration;
 <a href=#968 id=968 data-nosnippet>968</a>    <span class="kw">use </span>rand::{CryptoRng, SeedableRng};
 <a href=#969 id=969 data-nosnippet>969</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
@@ -1096,8 +1096,8 @@
 <a href=#1096 id=1096 data-nosnippet>1096</a>            <span class="kw">let </span>ep = ep.clone();
 <a href=#1097 id=1097 data-nosnippet>1097</a>            <span class="kw">async move </span>{
 <a href=#1098 id=1098 data-nosnippet>1098</a>                <span class="comment">// we skip accept() errors, they can be caused by retransmits
-<a href=#1099 id=1099 data-nosnippet>1099</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
-<a href=#1100 id=1100 data-nosnippet>1100</a>                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#1099 id=1099 data-nosnippet>1099</a>                </span><span class="kw">while let </span><span class="prelude-val">Some</span>(accepting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
+<a href=#1100 id=1100 data-nosnippet>1100</a>                    <span class="kw">let </span>_conn = accepting.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#1101 id=1101 data-nosnippet>1101</a>                    <span class="comment">// Just accept incoming connections, but don't do anything with them.
 <a href=#1102 id=1102 data-nosnippet>1102</a>                </span>}
 <a href=#1103 id=1103 data-nosnippet>1103</a>

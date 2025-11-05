@@ -77,7 +77,7 @@
 <a href=#77 id=77 data-nosnippet>77</a><span class="kw">use </span>mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
 <a href=#78 id=78 data-nosnippet>78</a>
 <a href=#79 id=79 data-nosnippet>79</a><span class="kw">pub use </span><span class="self">self</span>::{
-<a href=#80 id=80 data-nosnippet>80</a>    endpoint_map::{ConnectionType, PathInfo},
+<a href=#80 id=80 data-nosnippet>80</a>    endpoint_map::{ConnectionType, PathInfo, PathsInfo},
 <a href=#81 id=81 data-nosnippet>81</a>    metrics::Metrics,
 <a href=#82 id=82 data-nosnippet>82</a>};
 <a href=#83 id=83 data-nosnippet>83</a>
@@ -275,7 +275,7 @@
 <a href=#275 id=275 data-nosnippet>275</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#276 id=276 data-nosnippet>276</a>        remote: EndpointId,
 <a href=#277 id=277 data-nosnippet>277</a>        conn: <span class="kw-2">&amp;</span>quinn::Connection,
-<a href=#278 id=278 data-nosnippet>278</a>        paths_info: n0_watcher::Watchable&lt;HashMap&lt;TransportAddr, PathInfo&gt;&gt;,
+<a href=#278 id=278 data-nosnippet>278</a>        paths_info: n0_watcher::Watchable&lt;PathsInfo&gt;,
 <a href=#279 id=279 data-nosnippet>279</a>    ) {
 <a href=#280 id=280 data-nosnippet>280</a>        <span class="comment">// TODO: Spawning tasks like this is obviously bad.  But it is solvable:
 <a href=#281 id=281 data-nosnippet>281</a>        //   - This is only called from inside Connection::new.
@@ -1908,7 +1908,7 @@
 <a href=#1908 id=1908 data-nosnippet>1908</a>
 <a href=#1909 id=1909 data-nosnippet>1909</a>    <span class="kw">use </span>data_encoding::HEXLOWER;
 <a href=#1910 id=1910 data-nosnippet>1910</a>    <span class="kw">use </span>iroh_base::{EndpointAddr, EndpointId, TransportAddr};
-<a href=#1911 id=1911 data-nosnippet>1911</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
+<a href=#1911 id=1911 data-nosnippet>1911</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#1912 id=1912 data-nosnippet>1912</a>    <span class="kw">use </span>n0_future::{MergeBounded, StreamExt, time};
 <a href=#1913 id=1913 data-nosnippet>1913</a>    <span class="kw">use </span>n0_watcher::Watcher;
 <a href=#1914 id=1914 data-nosnippet>1914</a>    <span class="kw">use </span>quinn::ServerConfig;
@@ -1964,8 +1964,8 @@
 <a href=#1964 id=1964 data-nosnippet>1964</a>        <span class="macro">info!</span>(<span class="string">"accepting conn"</span>);
 <a href=#1965 id=1965 data-nosnippet>1965</a>        <span class="kw">let </span>conn = ep.accept().<span class="kw">await</span>.expect(<span class="string">"no conn"</span>);
 <a href=#1966 id=1966 data-nosnippet>1966</a>
-<a href=#1967 id=1967 data-nosnippet>1967</a>        <span class="macro">info!</span>(<span class="string">"connecting"</span>);
-<a href=#1968 id=1968 data-nosnippet>1968</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#1967 id=1967 data-nosnippet>1967</a>        <span class="macro">info!</span>(<span class="string">"accepting"</span>);
+<a href=#1968 id=1968 data-nosnippet>1968</a>        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#1969 id=1969 data-nosnippet>1969</a>        <span class="macro">info!</span>(<span class="string">"accepting bi"</span>);
 <a href=#1970 id=1970 data-nosnippet>1970</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.accept_bi().<span class="kw">await</span>.std_context(<span class="string">"accept bi"</span>)<span class="question-mark">?</span>;
 <a href=#1971 id=1971 data-nosnippet>1971</a>
@@ -2481,7 +2481,7 @@
 <a href=#2481 id=2481 data-nosnippet>2481</a>                    .accept()
 <a href=#2482 id=2482 data-nosnippet>2482</a>                    .std_context(<span class="string">"accept"</span>)<span class="question-mark">?
 <a href=#2483 id=2483 data-nosnippet>2483</a>                    </span>.<span class="kw">await
-<a href=#2484 id=2484 data-nosnippet>2484</a>                    </span>.std_context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
+<a href=#2484 id=2484 data-nosnippet>2484</a>                    </span>.std_context(<span class="string">"accepting"</span>)<span class="question-mark">?</span>;
 <a href=#2485 id=2485 data-nosnippet>2485</a>
 <a href=#2486 id=2486 data-nosnippet>2486</a>                <span class="comment">// Keep this connection alive for a while
 <a href=#2487 id=2487 data-nosnippet>2487</a>                </span>tokio::time::sleep(Duration::from_secs(<span class="number">10</span>)).<span class="kw">await</span>;
