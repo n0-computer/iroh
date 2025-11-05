@@ -2,7 +2,7 @@ use std::{env, str::FromStr, time::Instant};
 
 use clap::Parser;
 use data_encoding::HEXLOWER;
-use iroh::{EndpointId, SecretKey, discovery::Discovery, endpoint::ZeroRttConnection};
+use iroh::{EndpointId, SecretKey, discovery::Discovery, endpoint::ZeroRttStatus};
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::StreamExt;
 use quinn::{RecvStream, SendStream};
@@ -93,13 +93,13 @@ async fn connect(args: Args) -> Result<()> {
                     let (send, recv) = zrtt_connection.open_bi().await.anyerr()?;
                     // before we get the full handshake, attempt to send 0-RTT data
                     let zrtt_task = tokio::spawn(ping(send, i));
-                    match zrtt_connection.to_handshaked_connection().await? {
-                        ZeroRttConnection::Accepted(conn) => {
+                    match zrtt_connection.handshake_completed().await? {
+                        ZeroRttStatus::Accepted(conn) => {
                             let _ = zrtt_task.await.anyerr()?;
                             pong(recv, i).await?;
                             conn
                         }
-                        ZeroRttConnection::Rejected(conn) => {
+                        ZeroRttStatus::Rejected(conn) => {
                             zrtt_task.abort();
                             let (send, recv) = conn.open_bi().await.anyerr()?;
                             pingpong(send, recv, i).await?;
