@@ -26,6 +26,7 @@ use std::{
 };
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
+use futures_util::{FutureExt, future::Shared};
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
 use n0_future::time::Duration;
@@ -396,7 +397,8 @@ impl Connecting {
                     accepted: ZeroRttAccepted {
                         inner: zrtt_accepted,
                         _discovery_drop_guard: self._discovery_drop_guard,
-                    },
+                    }
+                    .shared(),
                 })
             }
             Err(inner) => Err(Self {
@@ -524,6 +526,7 @@ impl Future for Accepting {
         }
     }
 }
+
 /// Future that completes when a connection is fully established.
 ///
 /// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
@@ -549,6 +552,24 @@ impl Future for ZeroRttAccepted {
     }
 }
 
+/// Future returned from [`OutgoingZeroRttConnection::handshake_completed`].
+#[derive(Debug, Clone)]
+pub struct HandshakeCompleted {
+    accepted: Shared<ZeroRttAccepted>,
+}
+
+impl Future for HandshakeCompleted {
+    type Output = ZeroRttStatus;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let accepted = std::task::ready!(self.accepted.poll_unpin(cx));
+        Poll::Ready(match accepted {
+            true => ZeroRttStatus::Accepted,
+            false => ZeroRttStatus::Rejected,
+        })
+    }
+}
+
 /// The client side of a 0-RTT connection.
 ///
 /// This is created using [`Connecting::into_0rtt`].
@@ -560,15 +581,15 @@ impl Future for ZeroRttAccepted {
 ///
 /// Look at the [`OutgoingZeroRttConnection::handshake_completed`] method for
 /// more details.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OutgoingZeroRttConnection {
     inner: quinn::Connection,
-    accepted: ZeroRttAccepted,
+    accepted: Shared<ZeroRttAccepted>,
 }
 
-/// Returned from a `OutgoingZeroRttConnection::handshake_complete` method.
+/// Returned from [`OutgoingZeroRttConnection::into_handshaked_connection`].
 #[derive(Debug)]
-pub enum ZeroRttStatus {
+pub enum ZeroRttConnection {
     /// If the 0-RTT data was accepted, you can continue to use any streams
     /// that were created before the handshake was completed.
     Accepted(Connection),
@@ -578,13 +599,25 @@ pub enum ZeroRttStatus {
     Rejected(Connection),
 }
 
+/// Returned from [`OutgoingZeroRttConnection::handshake_completed`].
+#[derive(Debug)]
+pub enum ZeroRttStatus {
+    /// If the 0-RTT data was accepted, you can continue to use any streams
+    /// that were created before the handshake was completed.
+    Accepted,
+    /// If the 0-RTT data was rejected, any streams that were created before
+    /// the handshake was completed will error and any data that was
+    /// previously sent on those streams will need to be resent.
+    Rejected,
+}
+
 impl OutgoingZeroRttConnection {
-    /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
+    /// Waits until the full handshake occurs and returns a [`ZeroRttConnection`].
     ///
-    /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
+    /// If `ZeroRttConnection::Accepted` is returned, than any streams created before
     /// the handshake has completed can still be used.
     ///
-    /// If `ZeroRttStatus::Rejected` is returned, than any streams created before
+    /// If `ZeroRttConnection::Rejected` is returned, than any streams created before
     /// the handshake will error and any data sent should be re-sent on a
     /// new stream.
     ///
@@ -598,14 +631,27 @@ impl OutgoingZeroRttConnection {
     ///
     /// Thus, those errors should only occur if someone connects to you with a
     /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn handshake_completed(self) -> Result<ZeroRttStatus, AuthenticationError> {
-        let accepted = self.accepted.await;
-        let conn = conn_from_quinn_conn(self.inner)?;
+    pub async fn into_handshaked_connection(
+        &self,
+    ) -> Result<ZeroRttConnection, AuthenticationError> {
+        let accepted = self.accepted.clone().await;
+        let conn = conn_from_quinn_conn(self.inner.clone())?;
 
         Ok(match accepted {
-            true => ZeroRttStatus::Accepted(conn),
-            false => ZeroRttStatus::Rejected(conn),
+            true => ZeroRttConnection::Accepted(conn),
+            false => ZeroRttConnection::Rejected(conn),
         })
+    }
+
+    /// Waits until the full handshake occurs and returns whether the server accepted 0-RTT data.
+    ///
+    /// If this returns `false`, the 0-RTT data was rejected, and any streams that were created
+    /// before the handshake was completed will error and any data that was previously sent on
+    /// those streams will need to be resent.
+    pub async fn handshake_completed(&self) -> HandshakeCompleted {
+        HandshakeCompleted {
+            accepted: self.accepted.clone(),
+        }
     }
 
     /// Initiates a new outgoing unidirectional stream.
@@ -1517,7 +1563,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, ZeroRttStatus},
+        endpoint::{ConnectOptions, Incoming, connection::ZeroRttConnection},
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -1622,15 +1668,15 @@ mod tests {
         send.finish().anyerr()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
-        let zrtt_res = zrtt_conn.handshake_completed().await;
+        let zrtt_res = zrtt_conn.into_handshaked_connection().await;
         tracing::trace!(?zrtt_res, "Server responded to 0-RTT");
         let zrtt_res = zrtt_res.context("handshake completed")?;
         let conn = match zrtt_res {
-            ZeroRttStatus::Accepted(conn) => {
+            ZeroRttConnection::Accepted(conn) => {
                 assert!(expect_server_accepts);
                 conn
             }
-            ZeroRttStatus::Rejected(conn) => {
+            ZeroRttConnection::Rejected(conn) => {
                 assert!(!expect_server_accepts);
                 // in this case we need to re-send data by re-creating the stream.
                 let (mut send, r) = conn.open_bi().await.anyerr()?;
