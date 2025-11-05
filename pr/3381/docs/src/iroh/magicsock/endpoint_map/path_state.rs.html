@@ -12,14 +12,15 @@
 <a href=#12 id=12 data-nosnippet>12</a>/// Each path is identified by the destination [`transports::Addr`] and they are stored in
 <a href=#13 id=13 data-nosnippet>13</a>/// the [`EndpointStateActor::paths`] map.
 <a href=#14 id=14 data-nosnippet>14</a>///
-<a href=#15 id=15 data-nosnippet>15</a>/// [`EndpointStateActor::paths`]: super::endpoint_state::EndpointStateActor
-<a href=#16 id=16 data-nosnippet>16</a></span><span class="attr">#[derive(Debug, Default)]
-<a href=#17 id=17 data-nosnippet>17</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PathState {
-<a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// How we learned about this path, and when.
-<a href=#19 id=19 data-nosnippet>19</a>    ///
-<a href=#20 id=20 data-nosnippet>20</a>    /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
-<a href=#21 id=21 data-nosnippet>21</a>    /// of the map of sources down to one entry per type of source.
-<a href=#22 id=22 data-nosnippet>22</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) sources: HashMap&lt;Source, Instant&gt;,
-<a href=#23 id=23 data-nosnippet>23</a>    <span class="doccomment">/// The last ping sent on this path.
-<a href=#24 id=24 data-nosnippet>24</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) ping_sent: <span class="prelude-ty">Option</span>&lt;TransactionId&gt;,
-<a href=#25 id=25 data-nosnippet>25</a>}</code></pre></div></section></main></body></html>
+<a href=#15 id=15 data-nosnippet>15</a>/// [`transports::Addr`]: super::transports::Addr
+<a href=#16 id=16 data-nosnippet>16</a>/// [`EndpointStateActor::paths`]: super::endpoint_state::EndpointStateActor
+<a href=#17 id=17 data-nosnippet>17</a></span><span class="attr">#[derive(Debug, Default)]
+<a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PathState {
+<a href=#19 id=19 data-nosnippet>19</a>    <span class="doccomment">/// How we learned about this path, and when.
+<a href=#20 id=20 data-nosnippet>20</a>    ///
+<a href=#21 id=21 data-nosnippet>21</a>    /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
+<a href=#22 id=22 data-nosnippet>22</a>    /// of the map of sources down to one entry per type of source.
+<a href=#23 id=23 data-nosnippet>23</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) sources: HashMap&lt;Source, Instant&gt;,
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="doccomment">/// The last ping sent on this path.
+<a href=#25 id=25 data-nosnippet>25</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) ping_sent: <span class="prelude-ty">Option</span>&lt;TransactionId&gt;,
+<a href=#26 id=26 data-nosnippet>26</a>}</code></pre></div></section></main></body></html>
