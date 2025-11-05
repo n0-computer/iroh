@@ -1520,7 +1520,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, connection::ZeroRttStatus},
+        endpoint::{ConnectOptions, Incoming, ZeroRttStatus},
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
