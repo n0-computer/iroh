@@ -2,7 +2,44 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.94.0](https://github.com/n0-computer/iroh/compare/v0.93.2..0.94.0) - 2025-10-21
+## [0.95.0](https://github.com/n0-computer/iroh/compare/v0.94.1..0.95.0) - 2025-11-04
+
+### ⛰️  Features
+
+- *(iroh-relay)* Allow for extension of `RelayMap`s ([#3575](https://github.com/n0-computer/iroh/issues/3575)) - ([45e1f48](https://github.com/n0-computer/iroh/commit/45e1f4895f2cc4bb74ebd442f153f5f6c03058bb))
+- Add new NA west default relay ([#3599](https://github.com/n0-computer/iroh/issues/3599)) - ([828789a](https://github.com/n0-computer/iroh/commit/828789af1f538781eebb8c40805043d1e70f75ea))
+- Make `Connection::remote_id` and `Connection::alpn` infallible ([#3556](https://github.com/n0-computer/iroh/issues/3556)) - ([e2dc591](https://github.com/n0-computer/iroh/commit/e2dc59107e350d07b86b77ae678d2a76edb6f6b7))
+
+### 🐛 Bug Fixes
+
+- Remove "https" from NA west url ([#3600](https://github.com/n0-computer/iroh/issues/3600)) - ([c2bdbe2](https://github.com/n0-computer/iroh/commit/c2bdbe25f85dfb1180bc842996c3934519deaa62))
+- Stop relay actor on endpoint close ([#3601](https://github.com/n0-computer/iroh/issues/3601)) - ([30c23e8](https://github.com/n0-computer/iroh/commit/30c23e8dbaa02d17ab57ba41f0aa5271b0a411dc))
+
+### 🚜 Refactor
+
+- [**breaking**] Convert from snafu to n0-error ([#3561](https://github.com/n0-computer/iroh/issues/3561)) - ([7b9c95b](https://github.com/n0-computer/iroh/commit/7b9c95b7a12415ded937a62858c72337d3e731a9))
+
+### 📚 Documentation
+
+- *(iroh)* Fix documentation on endpoint::Builder::empty ([#3592](https://github.com/n0-computer/iroh/issues/3592)) - ([71d5136](https://github.com/n0-computer/iroh/commit/71d5136962b6fb7b56c2ddb7789dfe9edaab7414))
+- *(iroh)* Clarify ProtocolHandler::accept ([#3567](https://github.com/n0-computer/iroh/issues/3567)) - ([406bfde](https://github.com/n0-computer/iroh/commit/406bfde94c00f45037a9a98c808629ecb35e8b11))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(iroh)* Update wasm-bindgen version to fix CI ([#3589](https://github.com/n0-computer/iroh/issues/3589)) - ([0f4c15c](https://github.com/n0-computer/iroh/commit/0f4c15cbcad1fac13b3b60aba825d975a8843e46))
+- [**breaking**] Update redb to version 3 ([#3562](https://github.com/n0-computer/iroh/issues/3562)) - ([b057b91](https://github.com/n0-computer/iroh/commit/b057b91b26162b6e6aadac48eb82e6567acf7ef3))
+
+## [0.94.1](https://github.com/n0-computer/iroh/compare/v0.94.0..v0.94.1) - 2025-10-22
+
+### 🐛 Bug Fixes
+
+- *(iroh-base)* Add serde support for Signature ([#3568](https://github.com/n0-computer/iroh/issues/3568)) - ([ad23e1a](https://github.com/n0-computer/iroh/commit/ad23e1aa6b0c5e92b5a6e66f3e26c3dd0946379e))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([edd4fc7](https://github.com/n0-computer/iroh/commit/edd4fc749921d979170c236f668fe93d9d844fd9))
+
+## [0.94.0](https://github.com/n0-computer/iroh/compare/v0.93.2..v0.94.0) - 2025-10-21
 
 ### ⛰️  Features
 
@@ -39,6 +76,7 @@ All notable changes to iroh will be documented in this file.
 - *(dpes)* Bump iroh-relay deps ([#3547](https://github.com/n0-computer/iroh/issues/3547)) - ([4ed700e](https://github.com/n0-computer/iroh/commit/4ed700e8da8daf6bb3d897ceadea52a4dad6952c))
 - Update copyright dates ([#3543](https://github.com/n0-computer/iroh/issues/3543)) - ([5eaf52a](https://github.com/n0-computer/iroh/commit/5eaf52adc4097894dc3f6f08c23cfcdfef024fab))
 - Update deps & remove unused deps ([#3564](https://github.com/n0-computer/iroh/issues/3564)) - ([a63bcfd](https://github.com/n0-computer/iroh/commit/a63bcfdfe588fb9a9682a26a2f4c5e2ae2ce8a97))
+- Release - ([dd99737](https://github.com/n0-computer/iroh/commit/dd99737c12c553ece2607e5e74d605751a637397))
 
 ## [0.93.2](https://github.com/n0-computer/iroh/compare/v0.93.1..v0.93.2) - 2025-10-13
 

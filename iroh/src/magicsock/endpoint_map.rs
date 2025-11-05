@@ -28,7 +28,7 @@ mod endpoint_state;
 mod path_state;
 
 pub(super) use endpoint_state::EndpointStateMessage;
-pub use endpoint_state::{ConnectionType, PathInfo};
+pub use endpoint_state::{ConnectionType, PathInfo, PathsInfo};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
 
 // TODO: use this

@@ -76,6 +76,9 @@ type PathEvents = MergeUnbounded<
     >,
 >;
 
+/// Information about currently open paths.
+pub type PathsInfo = HashMap<TransportAddr, PathInfo>;
+
 /// The state we need to know about a single remote endpoint.
 ///
 /// This actor manages all connections to the remote endpoint.  It will trigger holepunching
@@ -320,7 +323,7 @@ impl EndpointStateActor {
     async fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        paths_info: Watchable<HashMap<TransportAddr, PathInfo>>,
+        paths_info: Watchable<PathsInfo>,
     ) {
         if let Some(conn) = handle.upgrade() {
             // Remove any conflicting stable_ids from the local state.
@@ -996,10 +999,7 @@ pub(crate) enum EndpointStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(
-        WeakConnectionHandle,
-        Watchable<HashMap<TransportAddr, PathInfo>>,
-    ),
+    AddConnection(WeakConnectionHandle, Watchable<PathsInfo>),
     /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
     AddEndpointAddr(EndpointAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
@@ -1084,7 +1084,7 @@ struct ConnectionState {
     /// Weak handle to the connection.
     handle: WeakConnectionHandle,
     /// The information we publish to users about the paths used in this connection.
-    pub_path_info: Watchable<HashMap<TransportAddr, PathInfo>>,
+    pub_path_info: Watchable<PathsInfo>,
     /// The paths that exist on this connection.
     ///
     /// This could be in any state, e.g. while still validating the path or already closed

@@ -62,8 +62,8 @@ async fn main() -> Result<()> {
     // accept incoming connections, returns a normal QUIC connection
 
     while let Some(incoming) = endpoint.accept().await {
-        let mut connecting = match incoming.accept() {
-            Ok(connecting) => connecting,
+        let mut accepting = match incoming.accept() {
+            Ok(accepting) => accepting,
             Err(err) => {
                 warn!("incoming connection failed: {err:#}");
                 // we can carry on in these cases:
@@ -71,9 +71,9 @@ async fn main() -> Result<()> {
                 continue;
             }
         };
-        let alpn = connecting.alpn().await?;
-        let conn = connecting.await.anyerr()?;
-        let endpoint_id = conn.remote_id()?;
+        let alpn = accepting.alpn().await?;
+        let conn = accepting.await?;
+        let endpoint_id = conn.remote_id();
         info!(
             "new (unreliable) connection from {endpoint_id} with ALPN {}",
             String::from_utf8_lossy(&alpn),

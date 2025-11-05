@@ -77,7 +77,7 @@ pub(crate) mod transports;
 use mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
 
 pub use self::{
-    endpoint_map::{ConnectionType, PathInfo},
+    endpoint_map::{ConnectionType, PathInfo, PathsInfo},
     metrics::Metrics,
 };
 
@@ -275,7 +275,7 @@ impl MagicSock {
         &self,
         remote: EndpointId,
         conn: &quinn::Connection,
-        paths_info: n0_watcher::Watchable<HashMap<TransportAddr, PathInfo>>,
+        paths_info: n0_watcher::Watchable<PathsInfo>,
     ) {
         // TODO: Spawning tasks like this is obviously bad.  But it is solvable:
         //   - This is only called from inside Connection::new.
@@ -1908,7 +1908,7 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
-    use n0_error::{Result, StdResultExt};
+    use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
@@ -1964,8 +1964,8 @@ mod tests {
         info!("accepting conn");
         let conn = ep.accept().await.expect("no conn");
 
-        info!("connecting");
-        let conn = conn.await.std_context("connecting")?;
+        info!("accepting");
+        let conn = conn.await.context("accepting")?;
         info!("accepting bi");
         let (mut send_bi, mut recv_bi) = conn.accept_bi().await.std_context("accept bi")?;
 
@@ -2481,7 +2481,7 @@ mod tests {
                     .accept()
                     .std_context("accept")?
                     .await
-                    .std_context("connecting")?;
+                    .std_context("accepting")?;
 
                 // Keep this connection alive for a while
                 tokio::time::sleep(Duration::from_secs(10)).await;

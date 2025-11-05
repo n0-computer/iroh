@@ -78,8 +78,8 @@ async fn chat_server(args: Args) -> Result<()> {
     println!("pkarr z32: {zid}");
     println!("see https://app.pkarr.org/?pk={zid}");
     while let Some(incoming) = endpoint.accept().await {
-        let connecting = match incoming.accept() {
-            Ok(connecting) => connecting,
+        let accepting = match incoming.accept() {
+            Ok(accepting) => accepting,
             Err(err) => {
                 warn!("incoming connection failed: {err:#}");
                 // we can carry on in these cases:
@@ -88,8 +88,8 @@ async fn chat_server(args: Args) -> Result<()> {
             }
         };
         tokio::spawn(async move {
-            let connection = connecting.await.anyerr()?;
-            let remote_endpoint_id = connection.remote_id()?;
+            let connection = accepting.await?;
+            let remote_endpoint_id = connection.remote_id();
             println!("got connection from {remote_endpoint_id}");
             // just leave the tasks hanging. this is just an example.
             let (mut writer, mut reader) = connection.accept_bi().await.anyerr()?;

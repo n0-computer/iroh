@@ -643,7 +643,7 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use n0_error::{AnyError as Error, Result, StdResultExt};
+    use n0_error::{AnyError as Error, Result, StackResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
@@ -819,7 +819,7 @@ mod tests {
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
-            .std_context("connecting")?;
+            .context("connecting")?;
         Ok(())
     }
 
@@ -934,9 +934,9 @@ mod tests {
                 // Keep connections alive until the task is dropped.
                 let mut connections = Vec::new();
                 // we skip accept() errors, they can be caused by retransmits
-                while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
+                while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     // Just accept incoming connections, but don't do anything with them.
-                    let conn = connecting.await.std_context("connecting")?;
+                    let conn = accepting.await.context("accepting")?;
                     connections.push(conn);
                 }
 
@@ -963,7 +963,7 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
-    use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
+    use n0_error::{AnyError as Error, Result, StackResultExt};
     use n0_future::time::Duration;
     use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
@@ -1096,8 +1096,8 @@ mod test_dns_pkarr {
             let ep = ep.clone();
             async move {
                 // we skip accept() errors, they can be caused by retransmits
-                while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await.std_context("connecting")?;
+                while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
+                    let _conn = accepting.await.context("accepting")?;
                     // Just accept incoming connections, but don't do anything with them.
                 }
 
