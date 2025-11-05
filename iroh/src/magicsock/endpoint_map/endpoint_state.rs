@@ -1073,8 +1073,8 @@ pub enum ConnectionType {
 
 /// Newtype to track Connections.
 ///
-/// The wrapped value is the [`Connection::stable_id`] value, and is thus only valid for
-/// active connections.
+/// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
+/// for active connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ConnId(usize);
 
@@ -1129,6 +1129,8 @@ impl ConnectionState {
     }
 
     /// Sets the new [`PathInfo`] structs for the public [`Connection`].
+    ///
+    /// [`Connection`]: crate::endpoint::Connection
     fn update_pub_path_info(&self) {
         let new = self
             .open_paths

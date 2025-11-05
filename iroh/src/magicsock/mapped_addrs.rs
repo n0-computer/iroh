@@ -152,7 +152,7 @@ impl MappedAddr for EndpointIdMappedAddr {
 
     /// Returns a consistent [`SocketAddr`] for the [`EndpointIdMappedAddr`].
     ///
-    /// This socket address does not have a routable IP address.
+    /// This socket address does not have a routable IP address and port.
     ///
     /// This uses a made-up port number, since the port does not play a role in the
     /// addressing.  This socket address is only to be used to pass into Quinn.
@@ -215,11 +215,10 @@ impl MappedAddr for RelayMappedAddr {
 
     /// Returns a consistent [`SocketAddr`] for the [`RelayMappedAddr`].
     ///
-    /// This does not have a routable IP address.
+    /// This socket address does not have a routable IP address and port.
     ///
-    /// This uses a made-up, but fixed port number.  The [`RelayAddrMap`] creates a unique
-    /// [`RelayMappedAddr`] for each `(EndpointId, RelayUrl)` pair and thus does not use the
-    /// port to map back to the original [`SocketAddr`].
+    /// This uses a made-up port number, since the port does not play a role in the
+    /// addressing.  This socket address is only to be used to pass into Quinn.
     fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
     }

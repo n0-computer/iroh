@@ -265,12 +265,10 @@ impl MagicSock {
         self.local_addrs_watch.clone().get()
     }
 
-    /// Registers the connection in the [`EndpointStateActor`].
+    /// Registers the connection in the `EndpointStateActor`.
     ///
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
-    ///
-    /// [`EndpointStateActor`]: crate::magicsock::endpoint_map::endpoint_state::EndpointStateActor
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
@@ -431,7 +429,7 @@ impl MagicSock {
         self.endpoint_map.endpoint_mapped_addr(eid)
     }
 
-    /// Add potential addresses for a endpoint to the [`EndpointStateActor`].
+    /// Add potential addresses for a endpoint to the `EndpointStateActor`.
     ///
     /// This is used to add possible paths that the remote endpoint might be reachable on.  They
     /// will be used when there is no active connection to the endpoint to attempt to establish

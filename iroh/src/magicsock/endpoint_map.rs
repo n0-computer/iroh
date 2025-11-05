@@ -36,7 +36,12 @@ use endpoint_state::{EndpointStateActor, EndpointStateHandle};
 // /// periodically via [`NodeMap::prune_inactive`].
 // const MAX_INACTIVE_NODES: usize = 30;
 
-/// Map of the [`EndpointState`] information for all the known endpoints.
+/// Map containing all the state for endpoints.
+///
+/// - Has actors which each manage all the connection state for a remote endpoint.
+///
+/// - Has the mapped addresses we use to refer to non-IP transports destinations into IPv6
+///   addressing space that is used by Quinn.
 #[derive(Debug)]
 pub(crate) struct EndpointMap {
     /// The endpoint ID of the local endpoint.

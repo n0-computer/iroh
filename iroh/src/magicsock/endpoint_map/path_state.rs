@@ -12,6 +12,7 @@ use crate::disco::TransactionId;
 /// Each path is identified by the destination [`transports::Addr`] and they are stored in
 /// the [`EndpointStateActor::paths`] map.
 ///
+/// [`transports::Addr`]: super::transports::Addr
 /// [`EndpointStateActor::paths`]: super::endpoint_state::EndpointStateActor
 #[derive(Debug, Default)]
 pub(super) struct PathState {

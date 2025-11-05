@@ -179,7 +179,7 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
             Poll::Ready(Ok(inner)) => {
-                let conn = match conn_from_quinn_conn(inner, &this.ep) {
+                let conn = match conn_from_quinn_conn(inner, this.ep) {
                     Ok(conn) => conn,
                     Err(err) => return Poll::Ready(Err(err.into())),
                 };
@@ -468,7 +468,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
             Poll::Ready(Ok(inner)) => {
-                let conn = match conn_from_quinn_conn(inner, &this.ep) {
+                let conn = match conn_from_quinn_conn(inner, this.ep) {
                     Ok(conn) => conn,
                     Err(err) => {
                         return Poll::Ready(Err(err.into()));
@@ -548,7 +548,7 @@ impl Future for Accepting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
             Poll::Ready(Ok(inner)) => {
-                let conn = match conn_from_quinn_conn(inner, &this.ep) {
+                let conn = match conn_from_quinn_conn(inner, this.ep) {
                     Ok(conn) => conn,
                     Err(err) => return Poll::Ready(Err(err.into())),
                 };
