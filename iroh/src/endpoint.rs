@@ -1426,7 +1426,7 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle, time};
+    use n0_future::{BufferedStreamExt, StreamExt, stream, time};
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
@@ -1438,7 +1438,7 @@ mod tests {
     use crate::{
         RelayMap, RelayMode,
         discovery::static_provider::StaticProvider,
-        endpoint::{ConnectOptions, Connection, ConnectionType},
+        endpoint::{ConnectOptions, Connection},
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{run_relay_server, run_relay_server_with},
     };
@@ -1775,9 +1775,9 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_two_relay_only() -> Result {
+    async fn endpoint_two_relay_only_becomes_direct() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
-        // discovery.
+        // discovery.  Wait until there is a direct connection.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
 
@@ -2176,92 +2176,6 @@ mod tests {
         p2_accept.await.anyerr()??;
         p1_connect.await.anyerr()??;
         p2_connect.await.anyerr()??;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn endpoint_conn_type_becomes_direct() -> Result {
-        const TIMEOUT: Duration = std::time::Duration::from_secs(15);
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let ep1_secret_key = SecretKey::generate(&mut rng);
-        let ep2_secret_key = SecretKey::generate(&mut rng);
-        let ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .secret_key(ep1_secret_key)
-            .insecure_skip_relay_cert_verify(true)
-            .alpns(vec![TEST_ALPN.to_vec()])
-            .bind()
-            .await?;
-        let ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-            .secret_key(ep2_secret_key)
-            .insecure_skip_relay_cert_verify(true)
-            .alpns(vec![TEST_ALPN.to_vec()])
-            .bind()
-            .await?;
-
-        async fn wait_for_conn_type_direct(ep: &Endpoint, endpoint_id: EndpointId) -> Result {
-            let mut stream = ep
-                .conn_type(endpoint_id)
-                .expect("connection exists")
-                .stream();
-            let src = ep.id().fmt_short();
-            let dst = endpoint_id.fmt_short();
-            while let Some(conn_type) = stream.next().await {
-                tracing::info!(me = %src, dst = %dst, conn_type = ?conn_type);
-                if matches!(conn_type, ConnectionType::Direct(_)) {
-                    return Ok(());
-                }
-            }
-            n0_error::bail_any!("conn_type stream ended before `ConnectionType::Direct`");
-        }
-
-        async fn accept(ep: &Endpoint) -> Result<Connection> {
-            let incoming = ep.accept().await.expect("ep closed");
-            let conn = incoming.await.anyerr()?;
-            let endpoint_id = conn.remote_id();
-            tracing::info!(endpoint_id=%endpoint_id.fmt_short(), "accepted connection");
-            Ok(conn)
-        }
-
-        let ep1_endpointid = ep1.id();
-        let ep2_endpointid = ep2.id();
-
-        let ep1_endpointaddr = ep1.addr();
-        tracing::info!(
-            "endpoint id 1 {ep1_endpointid}, relay URL {:?}",
-            ep1_endpointaddr.relay_urls().next()
-        );
-        tracing::info!("endpoint id 2 {ep2_endpointid}");
-
-        let ep1_side = tokio::time::timeout(TIMEOUT, async move {
-            let conn = accept(&ep1).await?;
-            let mut send = conn.open_uni().await.anyerr()?;
-            wait_for_conn_type_direct(&ep1, ep2_endpointid).await?;
-            send.write_all(b"Conn is direct").await.anyerr()?;
-            send.finish().anyerr()?;
-            conn.closed().await;
-            Ok::<(), Error>(())
-        });
-
-        let ep2_side = tokio::time::timeout(TIMEOUT, async move {
-            let conn = ep2.connect(ep1_endpointaddr, TEST_ALPN).await?;
-            let mut recv = conn.accept_uni().await.anyerr()?;
-            wait_for_conn_type_direct(&ep2, ep1_endpointid).await?;
-            let read = recv.read_to_end(100).await.anyerr()?;
-            assert_eq!(read, b"Conn is direct".to_vec());
-            conn.close(0u32.into(), b"done");
-            conn.closed().await;
-            Ok::<(), Error>(())
-        });
-
-        let res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
-        let res_ep2 = AbortOnDropHandle::new(tokio::spawn(ep2_side));
-
-        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).anyerr()?;
-        r1.anyerr()??;
-        r2.anyerr()??;
 
         Ok(())
     }
