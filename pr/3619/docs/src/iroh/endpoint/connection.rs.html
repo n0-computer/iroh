@@ -1514,7 +1514,7 @@
 <a href=#1514 id=1514 data-nosnippet>1514</a><span class="kw">impl </span>Connection&lt;HandshakeCompleted&gt; {
 <a href=#1515 id=1515 data-nosnippet>1515</a>    <span class="doccomment">/// Extracts the ALPN protocol from the peer's handshake data.
 <a href=#1516 id=1516 data-nosnippet>1516</a>    </span><span class="kw">pub fn </span>alpn(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u8] {
-<a href=#1517 id=1517 data-nosnippet>1517</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.info.as_ref().unwrap().<span class="number">1
+<a href=#1517 id=1517 data-nosnippet>1517</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.info.as_ref().expect(<span class="string">"handshake not complete"</span>).<span class="number">1
 <a href=#1518 id=1518 data-nosnippet>1518</a>    </span>}
 <a href=#1519 id=1519 data-nosnippet>1519</a>
 <a href=#1520 id=1520 data-nosnippet>1520</a>    <span class="doccomment">/// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -1526,7 +1526,7 @@
 <a href=#1526 id=1526 data-nosnippet>1526</a>    ///
 <a href=#1527 id=1527 data-nosnippet>1527</a>    /// [`PublicKey`]: iroh_base::PublicKey
 <a href=#1528 id=1528 data-nosnippet>1528</a>    </span><span class="kw">pub fn </span>remote_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; EndpointId {
-<a href=#1529 id=1529 data-nosnippet>1529</a>        <span class="self">self</span>.info.as_ref().unwrap().<span class="number">0
+<a href=#1529 id=1529 data-nosnippet>1529</a>        <span class="self">self</span>.info.as_ref().expect(<span class="string">"handshake not complete"</span>).<span class="number">0
 <a href=#1530 id=1530 data-nosnippet>1530</a>    </span>}
 <a href=#1531 id=1531 data-nosnippet>1531</a>}
 <a href=#1532 id=1532 data-nosnippet>1532</a>
