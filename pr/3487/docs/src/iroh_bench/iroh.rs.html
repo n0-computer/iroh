@@ -1,14 +1,14 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/bench/src/iroh.rs`."><title>iroh.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-6c3ea77c.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh_bench" data-themes="" data-resource-suffix="" data-rustdoc-version="1.87.0-nightly (f280acf4c 2025-02-19)" data-channel="nightly" data-search-js="search-f7327375.js" data-settings-js="settings-6dad6058.js" ><script src="../../static.files/storage-3a5871a4.js"></script><script defer src="../../static.files/src-script-b8d3f215.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-5332ae0c.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_bench/</div>iroh.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>std::{
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/bench/src/iroh.rs`."><title>iroh.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="iroh_bench" data-themes="" data-resource-suffix="" data-rustdoc-version="1.92.0-nightly (b6f0945e4 2025-10-08)" data-channel="nightly" data-search-js="search-8d3311b9.js" data-stringdex-js="stringdex-828709d0.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-ce535bd0.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_bench/</div>iroh.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-3"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="kw">use </span>std::{
 <a href=#2 id=2 data-nosnippet>2</a>    net::SocketAddr,
 <a href=#3 id=3 data-nosnippet>3</a>    time::{Duration, Instant},
 <a href=#4 id=4 data-nosnippet>4</a>};
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>bytes::Bytes;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>iroh::{
-<a href=#8 id=8 data-nosnippet>8</a>    Endpoint, NodeAddr, RelayMode, RelayUrl, Watcher <span class="kw">as _</span>,
+<a href=#8 id=8 data-nosnippet>8</a>    Endpoint, EndpointAddr, RelayMode, RelayUrl,
 <a href=#9 id=9 data-nosnippet>9</a>    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
 <a href=#10 id=10 data-nosnippet>10</a>};
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tracing::{trace, warn};
 <a href=#13 id=13 data-nosnippet>13</a>
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use crate</span>::{
@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a>    rt: <span class="kw-2">&amp;</span>tokio::runtime::Runtime,
 <a href=#23 id=23 data-nosnippet>23</a>    relay_url: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#24 id=24 data-nosnippet>24</a>    opt: <span class="kw-2">&amp;</span>Opt,
-<a href=#25 id=25 data-nosnippet>25</a>) -&gt; (NodeAddr, Endpoint) {
+<a href=#25 id=25 data-nosnippet>25</a>) -&gt; (EndpointAddr, Endpoint) {
 <a href=#26 id=26 data-nosnippet>26</a>    <span class="kw">let </span>_guard = rt.enter();
 <a href=#27 id=27 data-nosnippet>27</a>    rt.block_on(<span class="kw">async move </span>{
 <a href=#28 id=28 data-nosnippet>28</a>        <span class="kw">let </span>relay_mode = relay_url
@@ -49,12 +49,12 @@
 <a href=#49 id=49 data-nosnippet>49</a>            </span>.unwrap();
 <a href=#50 id=50 data-nosnippet>50</a>
 <a href=#51 id=51 data-nosnippet>51</a>        <span class="kw">if </span>relay_url.is_some() {
-<a href=#52 id=52 data-nosnippet>52</a>            ep.home_relay().initialized().<span class="kw">await</span>;
+<a href=#52 id=52 data-nosnippet>52</a>            ep.online().<span class="kw">await</span>;
 <a href=#53 id=53 data-nosnippet>53</a>        }
 <a href=#54 id=54 data-nosnippet>54</a>
 <a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">let </span>addr = ep.bound_sockets();
 <a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>addr = SocketAddr::new(<span class="string">"127.0.0.1"</span>.parse().unwrap(), addr[<span class="number">0</span>].port());
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
+<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = EndpointAddr::new(ep.id()).with_ip_addr(addr);
 <a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = relay_url {
 <a href=#59 id=59 data-nosnippet>59</a>            addr = addr.with_relay_url(relay_url.clone());
 <a href=#60 id=60 data-nosnippet>60</a>        }
@@ -64,7 +64,7 @@
 <a href=#64 id=64 data-nosnippet>64</a>
 <a href=#65 id=65 data-nosnippet>65</a><span class="doccomment">/// Create and run a client
 <a href=#66 id=66 data-nosnippet>66</a></span><span class="kw">pub async fn </span>client(
-<a href=#67 id=67 data-nosnippet>67</a>    server_addr: NodeAddr,
+<a href=#67 id=67 data-nosnippet>67</a>    server_addr: EndpointAddr,
 <a href=#68 id=68 data-nosnippet>68</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#69 id=69 data-nosnippet>69</a>    opt: Opt,
 <a href=#70 id=70 data-nosnippet>70</a>) -&gt; <span class="prelude-ty">Result</span>&lt;ClientStats&gt; {
@@ -83,7 +83,7 @@
 <a href=#83 id=83 data-nosnippet>83</a>
 <a href=#84 id=84 data-nosnippet>84</a><span class="doccomment">/// Create a client endpoint and client connection
 <a href=#85 id=85 data-nosnippet>85</a></span><span class="kw">pub async fn </span>connect_client(
-<a href=#86 id=86 data-nosnippet>86</a>    server_addr: NodeAddr,
+<a href=#86 id=86 data-nosnippet>86</a>    server_addr: EndpointAddr,
 <a href=#87 id=87 data-nosnippet>87</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#88 id=88 data-nosnippet>88</a>    opt: Opt,
 <a href=#89 id=89 data-nosnippet>89</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, Connection)&gt; {
@@ -110,7 +110,7 @@
 <a href=#110 id=110 data-nosnippet>110</a>        </span>.unwrap();
 <a href=#111 id=111 data-nosnippet>111</a>
 <a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">if </span>relay_url.is_some() {
-<a href=#113 id=113 data-nosnippet>113</a>        endpoint.home_relay().initialized().<span class="kw">await</span>;
+<a href=#113 id=113 data-nosnippet>113</a>        endpoint.online().<span class="kw">await</span>;
 <a href=#114 id=114 data-nosnippet>114</a>    }
 <a href=#115 id=115 data-nosnippet>115</a>
 <a href=#116 id=116 data-nosnippet>116</a>    <span class="comment">// TODO: We don't support passing client transport config currently
@@ -154,7 +154,7 @@
 <a href=#154 id=154 data-nosnippet>154</a>    <span class="kw">let </span><span class="kw-2">mut </span>num_chunks: u64 = <span class="number">0</span>;
 <a href=#155 id=155 data-nosnippet>155</a>
 <a href=#156 id=156 data-nosnippet>156</a>    <span class="kw">if </span>read_unordered {
-<a href=#157 id=157 data-nosnippet>157</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
+<a href=#157 id=157 data-nosnippet>157</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">? </span>{
 <a href=#158 id=158 data-nosnippet>158</a>            <span class="kw">if </span>first_byte {
 <a href=#159 id=159 data-nosnippet>159</a>                ttfb = download_start.elapsed();
 <a href=#160 id=160 data-nosnippet>160</a>                first_byte = <span class="bool-val">false</span>;
@@ -176,7 +176,7 @@
 <a href=#176 id=176 data-nosnippet>176</a>            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
 <a href=#177 id=177 data-nosnippet>177</a>        ];
 <a href=#178 id=178 data-nosnippet>178</a>
-<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
+<a href=#179 id=179 data-nosnippet>179</a>        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.anyerr()<span class="question-mark">? </span>{
 <a href=#180 id=180 data-nosnippet>180</a>            <span class="kw">if </span>first_byte {
 <a href=#181 id=181 data-nosnippet>181</a>                ttfb = download_start.elapsed();
 <a href=#182 id=182 data-nosnippet>182</a>                first_byte = <span class="bool-val">false</span>;
@@ -200,21 +200,21 @@
 <a href=#200 id=200 data-nosnippet>200</a>        stream
 <a href=#201 id=201 data-nosnippet>201</a>            .write_chunk(bytes_data.clone())
 <a href=#202 id=202 data-nosnippet>202</a>            .<span class="kw">await
-<a href=#203 id=203 data-nosnippet>203</a>            </span>.context(<span class="string">"failed sending data"</span>)<span class="question-mark">?</span>;
+<a href=#203 id=203 data-nosnippet>203</a>            </span>.std_context(<span class="string">"failed sending data"</span>)<span class="question-mark">?</span>;
 <a href=#204 id=204 data-nosnippet>204</a>    }
 <a href=#205 id=205 data-nosnippet>205</a>
 <a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">if </span>remaining != <span class="number">0 </span>{
 <a href=#207 id=207 data-nosnippet>207</a>        stream
 <a href=#208 id=208 data-nosnippet>208</a>            .write_chunk(bytes_data.slice(<span class="number">0</span>..remaining))
 <a href=#209 id=209 data-nosnippet>209</a>            .<span class="kw">await
-<a href=#210 id=210 data-nosnippet>210</a>            </span>.context(<span class="string">"failed sending data"</span>)<span class="question-mark">?</span>;
+<a href=#210 id=210 data-nosnippet>210</a>            </span>.std_context(<span class="string">"failed sending data"</span>)<span class="question-mark">?</span>;
 <a href=#211 id=211 data-nosnippet>211</a>    }
 <a href=#212 id=212 data-nosnippet>212</a>
-<a href=#213 id=213 data-nosnippet>213</a>    stream.finish().context(<span class="string">"failed finishing stream"</span>)<span class="question-mark">?</span>;
+<a href=#213 id=213 data-nosnippet>213</a>    stream.finish().std_context(<span class="string">"failed finishing stream"</span>)<span class="question-mark">?</span>;
 <a href=#214 id=214 data-nosnippet>214</a>    stream
 <a href=#215 id=215 data-nosnippet>215</a>        .stopped()
 <a href=#216 id=216 data-nosnippet>216</a>        .<span class="kw">await
-<a href=#217 id=217 data-nosnippet>217</a>        </span>.context(<span class="string">"failed to wait for stream to be stopped"</span>)<span class="question-mark">?</span>;
+<a href=#217 id=217 data-nosnippet>217</a>        </span>.std_context(<span class="string">"failed to wait for stream to be stopped"</span>)<span class="question-mark">?</span>;
 <a href=#218 id=218 data-nosnippet>218</a>
 <a href=#219 id=219 data-nosnippet>219</a>    <span class="prelude-val">Ok</span>(())
 <a href=#220 id=220 data-nosnippet>220</a>}
@@ -229,7 +229,7 @@
 <a href=#229 id=229 data-nosnippet>229</a>    <span class="kw">let </span>(<span class="kw-2">mut </span>send_stream, <span class="kw-2">mut </span>recv_stream) = connection
 <a href=#230 id=230 data-nosnippet>230</a>        .open_bi()
 <a href=#231 id=231 data-nosnippet>231</a>        .<span class="kw">await
-<a href=#232 id=232 data-nosnippet>232</a>        </span>.context(<span class="string">"failed to open stream"</span>)<span class="question-mark">?</span>;
+<a href=#232 id=232 data-nosnippet>232</a>        </span>.std_context(<span class="string">"failed to open stream"</span>)<span class="question-mark">?</span>;
 <a href=#233 id=233 data-nosnippet>233</a>
 <a href=#234 id=234 data-nosnippet>234</a>    send_data_on_stream(<span class="kw-2">&amp;mut </span>send_stream, upload_size).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#235 id=235 data-nosnippet>235</a>
@@ -249,8 +249,8 @@
 <a href=#249 id=249 data-nosnippet>249</a>    <span class="comment">// Handle only the expected amount of clients
 <a href=#250 id=250 data-nosnippet>250</a>    </span><span class="kw">for _ in </span><span class="number">0</span>..opt.clients {
 <a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>incoming = endpoint.accept().<span class="kw">await</span>.unwrap();
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>connecting = <span class="kw">match </span>incoming.accept() {
-<a href=#253 id=253 data-nosnippet>253</a>            <span class="prelude-val">Ok</span>(connecting) =&gt; connecting,
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>accepting = <span class="kw">match </span>incoming.accept() {
+<a href=#253 id=253 data-nosnippet>253</a>            <span class="prelude-val">Ok</span>(accepting) =&gt; accepting,
 <a href=#254 id=254 data-nosnippet>254</a>            <span class="prelude-val">Err</span>(err) =&gt; {
 <a href=#255 id=255 data-nosnippet>255</a>                <span class="macro">warn!</span>(<span class="string">"incoming connection failed: {err:#}"</span>);
 <a href=#256 id=256 data-nosnippet>256</a>                <span class="comment">// we can carry on in these cases:
@@ -258,7 +258,7 @@
 <a href=#258 id=258 data-nosnippet>258</a>                </span><span class="kw">continue</span>;
 <a href=#259 id=259 data-nosnippet>259</a>            }
 <a href=#260 id=260 data-nosnippet>260</a>        };
-<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span>connection = connecting.<span class="kw">await</span>.context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
+<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span>connection = accepting.<span class="kw">await</span>.context(<span class="string">"handshake failed"</span>)<span class="question-mark">?</span>;
 <a href=#262 id=262 data-nosnippet>262</a>
 <a href=#263 id=263 data-nosnippet>263</a>        server_tasks.push(tokio::spawn(<span class="kw">async move </span>{
 <a href=#264 id=264 data-nosnippet>264</a>            <span class="kw">loop </span>{
@@ -275,7 +275,7 @@
 <a href=#275 id=275 data-nosnippet>275</a>                tokio::spawn(<span class="kw">async move </span>{
 <a href=#276 id=276 data-nosnippet>276</a>                    drain_stream(<span class="kw-2">&amp;mut </span>recv_stream, opt.read_unordered).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#277 id=277 data-nosnippet>277</a>                    send_data_on_stream(<span class="kw-2">&amp;mut </span>send_stream, opt.download_size).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#278 id=278 data-nosnippet>278</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::Error&gt;(())
+<a href=#278 id=278 data-nosnippet>278</a>                    n0_error::Ok(())
 <a href=#279 id=279 data-nosnippet>279</a>                });
 <a href=#280 id=280 data-nosnippet>280</a>            }
 <a href=#281 id=281 data-nosnippet>281</a>
