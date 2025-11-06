@@ -65,7 +65,7 @@ sha1 = "0.11.0-rc.2"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 url = { version = "2.5.3", features = ["serde"] }
-webpki-roots = "1.0.3"
+webpki-roots = "1.0.4"
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 data-encoding = "2.6.0"
 lru = "0.16"
