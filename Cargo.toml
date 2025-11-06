@@ -43,10 +43,10 @@ unused-async = "warn"
 
 
 [patch.crates-io]
-netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "feat-multipath" }
-portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "feat-multipath" }
+iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
+iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
+iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
 
-[patch."https://github.com/n0-computer/quinn"]
 # iroh-quinn = { path = "../iroh-quinn/quinn" }
 # iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }
 # iroh-quinn-udp = { path = "../iroh-quinn/quinn-udp" }
