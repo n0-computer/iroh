@@ -27,6 +27,7 @@ use std::{
 };
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
+use futures_util::{FutureExt, future::Shared};
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
 use n0_future::time::Duration;
@@ -431,7 +432,8 @@ impl Connecting {
                     accepted: ZeroRttAccepted {
                         inner: zrtt_accepted,
                         _discovery_drop_guard: self._discovery_drop_guard,
-                    },
+                    }
+                    .shared(),
                 })
             }
             Err(inner) => Err(Self {
@@ -558,6 +560,7 @@ impl Future for Accepting {
         }
     }
 }
+
 /// Future that completes when a connection is fully established.
 ///
 /// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
@@ -594,14 +597,14 @@ impl Future for ZeroRttAccepted {
 ///
 /// Look at the [`OutgoingZeroRttConnection::handshake_completed`] method for
 /// more details.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OutgoingZeroRttConnection {
     inner: quinn::Connection,
-    accepted: ZeroRttAccepted,
+    accepted: Shared<ZeroRttAccepted>,
     ep: Endpoint,
 }
 
-/// Returned from a `OutgoingZeroRttConnection::handshake_complete` method.
+/// Returned from [`OutgoingZeroRttConnection::handshake_completed`].
 #[derive(Debug)]
 pub enum ZeroRttStatus {
     /// If the 0-RTT data was accepted, you can continue to use any streams
@@ -634,8 +637,8 @@ impl OutgoingZeroRttConnection {
     /// Thus, those errors should only occur if someone connects to you with a
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(self) -> Result<ZeroRttStatus, AuthenticationError> {
-        let accepted = self.accepted.await;
-        let conn = conn_from_quinn_conn(self.inner, &self.ep)?;
+        let accepted = self.accepted.clone().await;
+        let conn = conn_from_quinn_conn(self.inner.clone(), &self.ep)?;
 
         Ok(match accepted {
             true => ZeroRttStatus::Accepted(conn),
