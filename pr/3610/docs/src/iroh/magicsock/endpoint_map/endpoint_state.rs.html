@@ -1073,8 +1073,8 @@
 <a href=#1073 id=1073 data-nosnippet>1073</a>
 <a href=#1074 id=1074 data-nosnippet>1074</a><span class="doccomment">/// Newtype to track Connections.
 <a href=#1075 id=1075 data-nosnippet>1075</a>///
-<a href=#1076 id=1076 data-nosnippet>1076</a>/// The wrapped value is the [`Connection::stable_id`] value, and is thus only valid for
-<a href=#1077 id=1077 data-nosnippet>1077</a>/// active connections.
+<a href=#1076 id=1076 data-nosnippet>1076</a>/// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
+<a href=#1077 id=1077 data-nosnippet>1077</a>/// for active connections.
 <a href=#1078 id=1078 data-nosnippet>1078</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 <a href=#1079 id=1079 data-nosnippet>1079</a></span><span class="kw">struct </span>ConnId(usize);
 <a href=#1080 id=1080 data-nosnippet>1080</a>
@@ -1129,52 +1129,54 @@
 <a href=#1129 id=1129 data-nosnippet>1129</a>    }
 <a href=#1130 id=1130 data-nosnippet>1130</a>
 <a href=#1131 id=1131 data-nosnippet>1131</a>    <span class="doccomment">/// Sets the new [`PathInfo`] structs for the public [`Connection`].
-<a href=#1132 id=1132 data-nosnippet>1132</a>    </span><span class="kw">fn </span>update_pub_path_info(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#1133 id=1133 data-nosnippet>1133</a>        <span class="kw">let </span>new = <span class="self">self
-<a href=#1134 id=1134 data-nosnippet>1134</a>            </span>.open_paths
-<a href=#1135 id=1135 data-nosnippet>1135</a>            .iter()
-<a href=#1136 id=1136 data-nosnippet>1136</a>            .map(|(path_id, remote)| {
-<a href=#1137 id=1137 data-nosnippet>1137</a>                <span class="kw">let </span>remote = TransportAddr::from(remote.clone());
-<a href=#1138 id=1138 data-nosnippet>1138</a>                (
-<a href=#1139 id=1139 data-nosnippet>1139</a>                    remote.clone(),
-<a href=#1140 id=1140 data-nosnippet>1140</a>                    PathInfo {
-<a href=#1141 id=1141 data-nosnippet>1141</a>                        remote: remote.clone(),
-<a href=#1142 id=1142 data-nosnippet>1142</a>                        path_id: <span class="kw-2">*</span>path_id,
-<a href=#1143 id=1143 data-nosnippet>1143</a>                    },
-<a href=#1144 id=1144 data-nosnippet>1144</a>                )
-<a href=#1145 id=1145 data-nosnippet>1145</a>            })
-<a href=#1146 id=1146 data-nosnippet>1146</a>            .collect::&lt;HashMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;();
-<a href=#1147 id=1147 data-nosnippet>1147</a>
-<a href=#1148 id=1148 data-nosnippet>1148</a>        <span class="self">self</span>.pub_path_info.set(new).ok();
-<a href=#1149 id=1149 data-nosnippet>1149</a>    }
-<a href=#1150 id=1150 data-nosnippet>1150</a>}
-<a href=#1151 id=1151 data-nosnippet>1151</a>
-<a href=#1152 id=1152 data-nosnippet>1152</a><span class="doccomment">/// Information about a network path used by a [`Connection`].
-<a href=#1153 id=1153 data-nosnippet>1153</a>///
-<a href=#1154 id=1154 data-nosnippet>1154</a>/// [`Connection`]: crate::endpoint::Connection
-<a href=#1155 id=1155 data-nosnippet>1155</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-<a href=#1156 id=1156 data-nosnippet>1156</a></span><span class="kw">pub struct </span>PathInfo {
-<a href=#1157 id=1157 data-nosnippet>1157</a>    <span class="doccomment">/// The remote transport address used by this network path.
-<a href=#1158 id=1158 data-nosnippet>1158</a>    </span><span class="kw">pub </span>remote: TransportAddr,
-<a href=#1159 id=1159 data-nosnippet>1159</a>    <span class="doccomment">/// The internal path identifier for the [`Connection`]
-<a href=#1160 id=1160 data-nosnippet>1160</a>    ///
-<a href=#1161 id=1161 data-nosnippet>1161</a>    /// This is unique for the lifetime of the connection.  Can be used to look up the path
-<a href=#1162 id=1162 data-nosnippet>1162</a>    /// statistics in the [`ConnectionStats::paths`], returned by [`Connection::stats`].
-<a href=#1163 id=1163 data-nosnippet>1163</a>    ///
-<a href=#1164 id=1164 data-nosnippet>1164</a>    /// [`Connection`]: crate::endpoint::Connection
-<a href=#1165 id=1165 data-nosnippet>1165</a>    /// [`Connection::stats`]: crate::endpoint::Connection::stats
-<a href=#1166 id=1166 data-nosnippet>1166</a>    /// [`ConnectionStats::paths`]: crate::endpoint::ConnectionStats::paths
-<a href=#1167 id=1167 data-nosnippet>1167</a>    </span><span class="comment">// TODO: Decide if exposing this is a good idea.  Maybe we should just hide this
-<a href=#1168 id=1168 data-nosnippet>1168</a>    //    entirely try to provide Self::stats().  But that would mean this needs to have a
-<a href=#1169 id=1169 data-nosnippet>1169</a>    //    WeakConnectionHandle.
-<a href=#1170 id=1170 data-nosnippet>1170</a>    </span><span class="kw">pub </span>path_id: PathId,
-<a href=#1171 id=1171 data-nosnippet>1171</a>}
-<a href=#1172 id=1172 data-nosnippet>1172</a>
-<a href=#1173 id=1173 data-nosnippet>1173</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
-<a href=#1174 id=1174 data-nosnippet>1174</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
-<a href=#1175 id=1175 data-nosnippet>1175</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
-<a href=#1176 id=1176 data-nosnippet>1176</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
-<a href=#1177 id=1177 data-nosnippet>1177</a>        std::task::Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
-<a href=#1178 id=1178 data-nosnippet>1178</a>        std::task::Poll::Pending =&gt; <span class="prelude-val">None</span>,
-<a href=#1179 id=1179 data-nosnippet>1179</a>    }
-<a href=#1180 id=1180 data-nosnippet>1180</a>}</code></pre></div></section></main></body></html>
+<a href=#1132 id=1132 data-nosnippet>1132</a>    ///
+<a href=#1133 id=1133 data-nosnippet>1133</a>    /// [`Connection`]: crate::endpoint::Connection
+<a href=#1134 id=1134 data-nosnippet>1134</a>    </span><span class="kw">fn </span>update_pub_path_info(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+<a href=#1135 id=1135 data-nosnippet>1135</a>        <span class="kw">let </span>new = <span class="self">self
+<a href=#1136 id=1136 data-nosnippet>1136</a>            </span>.open_paths
+<a href=#1137 id=1137 data-nosnippet>1137</a>            .iter()
+<a href=#1138 id=1138 data-nosnippet>1138</a>            .map(|(path_id, remote)| {
+<a href=#1139 id=1139 data-nosnippet>1139</a>                <span class="kw">let </span>remote = TransportAddr::from(remote.clone());
+<a href=#1140 id=1140 data-nosnippet>1140</a>                (
+<a href=#1141 id=1141 data-nosnippet>1141</a>                    remote.clone(),
+<a href=#1142 id=1142 data-nosnippet>1142</a>                    PathInfo {
+<a href=#1143 id=1143 data-nosnippet>1143</a>                        remote: remote.clone(),
+<a href=#1144 id=1144 data-nosnippet>1144</a>                        path_id: <span class="kw-2">*</span>path_id,
+<a href=#1145 id=1145 data-nosnippet>1145</a>                    },
+<a href=#1146 id=1146 data-nosnippet>1146</a>                )
+<a href=#1147 id=1147 data-nosnippet>1147</a>            })
+<a href=#1148 id=1148 data-nosnippet>1148</a>            .collect::&lt;HashMap&lt;<span class="kw">_</span>, <span class="kw">_</span>&gt;&gt;();
+<a href=#1149 id=1149 data-nosnippet>1149</a>
+<a href=#1150 id=1150 data-nosnippet>1150</a>        <span class="self">self</span>.pub_path_info.set(new).ok();
+<a href=#1151 id=1151 data-nosnippet>1151</a>    }
+<a href=#1152 id=1152 data-nosnippet>1152</a>}
+<a href=#1153 id=1153 data-nosnippet>1153</a>
+<a href=#1154 id=1154 data-nosnippet>1154</a><span class="doccomment">/// Information about a network path used by a [`Connection`].
+<a href=#1155 id=1155 data-nosnippet>1155</a>///
+<a href=#1156 id=1156 data-nosnippet>1156</a>/// [`Connection`]: crate::endpoint::Connection
+<a href=#1157 id=1157 data-nosnippet>1157</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<a href=#1158 id=1158 data-nosnippet>1158</a></span><span class="kw">pub struct </span>PathInfo {
+<a href=#1159 id=1159 data-nosnippet>1159</a>    <span class="doccomment">/// The remote transport address used by this network path.
+<a href=#1160 id=1160 data-nosnippet>1160</a>    </span><span class="kw">pub </span>remote: TransportAddr,
+<a href=#1161 id=1161 data-nosnippet>1161</a>    <span class="doccomment">/// The internal path identifier for the [`Connection`]
+<a href=#1162 id=1162 data-nosnippet>1162</a>    ///
+<a href=#1163 id=1163 data-nosnippet>1163</a>    /// This is unique for the lifetime of the connection.  Can be used to look up the path
+<a href=#1164 id=1164 data-nosnippet>1164</a>    /// statistics in the [`ConnectionStats::paths`], returned by [`Connection::stats`].
+<a href=#1165 id=1165 data-nosnippet>1165</a>    ///
+<a href=#1166 id=1166 data-nosnippet>1166</a>    /// [`Connection`]: crate::endpoint::Connection
+<a href=#1167 id=1167 data-nosnippet>1167</a>    /// [`Connection::stats`]: crate::endpoint::Connection::stats
+<a href=#1168 id=1168 data-nosnippet>1168</a>    /// [`ConnectionStats::paths`]: crate::endpoint::ConnectionStats::paths
+<a href=#1169 id=1169 data-nosnippet>1169</a>    </span><span class="comment">// TODO: Decide if exposing this is a good idea.  Maybe we should just hide this
+<a href=#1170 id=1170 data-nosnippet>1170</a>    //    entirely try to provide Self::stats().  But that would mean this needs to have a
+<a href=#1171 id=1171 data-nosnippet>1171</a>    //    WeakConnectionHandle.
+<a href=#1172 id=1172 data-nosnippet>1172</a>    </span><span class="kw">pub </span>path_id: PathId,
+<a href=#1173 id=1173 data-nosnippet>1173</a>}
+<a href=#1174 id=1174 data-nosnippet>1174</a>
+<a href=#1175 id=1175 data-nosnippet>1175</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
+<a href=#1176 id=1176 data-nosnippet>1176</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+<a href=#1177 id=1177 data-nosnippet>1177</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
+<a href=#1178 id=1178 data-nosnippet>1178</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
+<a href=#1179 id=1179 data-nosnippet>1179</a>        std::task::Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
+<a href=#1180 id=1180 data-nosnippet>1180</a>        std::task::Poll::Pending =&gt; <span class="prelude-val">None</span>,
+<a href=#1181 id=1181 data-nosnippet>1181</a>    }
+<a href=#1182 id=1182 data-nosnippet>1182</a>}</code></pre></div></section></main></body></html>
