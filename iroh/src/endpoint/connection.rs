@@ -230,9 +230,12 @@ fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, Authentic
         return Err(e!(AuthenticationError::ConnectionError { source: reason }));
     }
     Ok(Connection {
-        remote_id: remote_id_from_quinn_conn(&conn)?,
-        alpn: alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?,
+        info: Some((
+            remote_id_from_quinn_conn(&conn)?,
+            alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?,
+        )),
         inner: conn,
+        _p: std::marker::PhantomData,
     })
 }
 
@@ -393,7 +396,11 @@ impl Connecting {
                 // after all.
                 try_send_rtt_msg(&inner, &self.ep, self.remote_endpoint_id);
                 Ok(OutgoingZeroRttConnection {
-                    inner,
+                    inner: Connection {
+                        info: None,
+                        inner,
+                        _p: std::marker::PhantomData,
+                    },
                     accepted: ZeroRttAccepted {
                         inner: zrtt_accepted,
                         _discovery_drop_guard: self._discovery_drop_guard,
@@ -491,7 +498,11 @@ impl Accepting {
                 inner: accepted,
                 _discovery_drop_guard: None,
             },
-            inner,
+            inner: Connection {
+                info: None,
+                inner,
+                _p: std::marker::PhantomData,
+            },
         }
     }
 
@@ -565,7 +576,7 @@ impl Future for ZeroRttAccepted {
 /// more details.
 #[derive(Debug, Clone)]
 pub struct OutgoingZeroRttConnection {
-    inner: quinn::Connection,
+    inner: Connection<OutgoingZeroRtt>,
     accepted: Shared<ZeroRttAccepted>,
 }
 
@@ -582,6 +593,11 @@ pub enum ZeroRttStatus {
 }
 
 impl OutgoingZeroRttConnection {
+    /// Returns a reference to the underlying [`Connection`].
+    pub fn connection(&self) -> &Connection<OutgoingZeroRtt> {
+        &self.inner
+    }
+
     /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
     ///
     /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
@@ -603,7 +619,7 @@ impl OutgoingZeroRttConnection {
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, AuthenticationError> {
         let accepted = self.accepted.clone().await;
-        let conn = conn_from_quinn_conn(self.inner.clone())?;
+        let conn = conn_from_quinn_conn(self.inner.inner.clone())?;
 
         Ok(match accepted {
             true => ZeroRttStatus::Accepted(conn),
@@ -800,7 +816,7 @@ impl OutgoingZeroRttConnection {
 
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> Option<Vec<u8>> {
-        alpn_from_quinn_conn(&self.inner)
+        alpn_from_quinn_conn(&self.inner.inner)
     }
 
     /// Cryptographic identity of the peer.
@@ -825,7 +841,7 @@ impl OutgoingZeroRttConnection {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+        remote_id_from_quinn_conn(&self.inner.inner)
     }
 
     /// A stable identifier for this connection.
@@ -900,11 +916,16 @@ impl OutgoingZeroRttConnection {
 /// [`EndpointId`] of the remote endpoint.
 #[derive(Debug)]
 pub struct IncomingZeroRttConnection {
-    inner: quinn::Connection,
+    inner: Connection<IncomingZeroRtt>,
     accepted: ZeroRttAccepted,
 }
 
 impl IncomingZeroRttConnection {
+    /// Returns a reference to the underlying [`Connection`].
+    pub fn connection(&self) -> &Connection<IncomingZeroRtt> {
+        &self.inner
+    }
+
     /// Waits until the full handshake occurs and then returns a [`Connection`].
     ///
     /// This may fail with [`AuthenticationError::ConnectionError`], if there was
@@ -919,7 +940,7 @@ impl IncomingZeroRttConnection {
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(self) -> Result<Connection, AuthenticationError> {
         self.accepted.await;
-        conn_from_quinn_conn(self.inner)
+        conn_from_quinn_conn(self.inner.inner)
     }
 
     /// Initiates a new outgoing unidirectional stream.
@@ -1111,7 +1132,7 @@ impl IncomingZeroRttConnection {
 
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> Option<Vec<u8>> {
-        alpn_from_quinn_conn(&self.inner)
+        alpn_from_quinn_conn(&self.inner.inner)
     }
 
     /// Cryptographic identity of the peer.
@@ -1136,7 +1157,7 @@ impl IncomingZeroRttConnection {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+        remote_id_from_quinn_conn(&self.inner.inner)
     }
 
     /// A stable identifier for this connection.
@@ -1205,18 +1226,35 @@ impl IncomingZeroRttConnection {
 ///
 /// May be cloned to obtain another handle to the same connection.
 #[derive(derive_more::Debug, Clone)]
-pub struct Connection {
+pub struct Connection<State: ConnectionState = HandshakeCompleted> {
     inner: quinn::Connection,
-    remote_id: EndpointId,
-    alpn: Vec<u8>,
+    /// Remote endpoint id and alpn, cached for performance.
+    /// This will always be `Some` for `HandshakeCompleted` connections.
+    info: Option<(EndpointId, Vec<u8>)>,
+    _p: std::marker::PhantomData<State>,
 }
+
+pub trait ConnectionState {}
+
+#[derive(Debug, Clone)]
+pub struct HandshakeCompleted;
+
+#[derive(Debug, Clone)]
+pub struct IncomingZeroRtt;
+
+#[derive(Debug, Clone)]
+pub struct OutgoingZeroRtt;
+
+impl ConnectionState for HandshakeCompleted {}
+impl ConnectionState for IncomingZeroRtt {}
+impl ConnectionState for OutgoingZeroRtt {}
 
 #[allow(missing_docs)]
 #[stack_error(add_meta, derive)]
 #[error("Protocol error: no remote id available")]
 pub struct RemoteEndpointIdError;
 
-impl Connection {
+impl<T: ConnectionState> Connection<T> {
     fn quinn_connection(&self) -> &quinn::Connection {
         &self.inner
     }
@@ -1408,11 +1446,6 @@ impl Connection {
         self.inner.handshake_data()
     }
 
-    /// Extracts the ALPN protocol from the peer's handshake data.
-    pub fn alpn(&self) -> &[u8] {
-        &self.alpn
-    }
-
     /// Cryptographic identity of the peer.
     ///
     /// The dynamic type returned is determined by the configured [`Session`]. For the
@@ -1424,18 +1457,6 @@ impl Connection {
     #[inline]
     pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
         self.inner.peer_identity()
-    }
-
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
-    ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
-    /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
-    /// connection.
-    ///
-    /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> EndpointId {
-        self.remote_id
     }
 
     /// A stable identifier for this connection.
@@ -1487,6 +1508,39 @@ impl Connection {
     #[inline]
     pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
         self.inner.set_max_concurrent_bi_streams(count)
+    }
+}
+
+impl Connection<HandshakeCompleted> {
+    /// Extracts the ALPN protocol from the peer's handshake data.
+    pub fn alpn(&self) -> &[u8] {
+        &self.info.as_ref().unwrap().1
+    }
+
+    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    ///
+    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// included in the TLS certificate presented during the handshake when connecting.
+    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// connection.
+    ///
+    /// [`PublicKey`]: iroh_base::PublicKey
+    pub fn remote_id(&self) -> EndpointId {
+        self.info.as_ref().unwrap().0
+    }
+}
+
+impl Connection<IncomingZeroRtt> {
+    /// Extracts the ALPN protocol from the peer's handshake data.
+    pub fn alpn(&self) -> Option<Vec<u8>> {
+        alpn_from_quinn_conn(&self.inner)
+    }
+}
+
+impl Connection<OutgoingZeroRtt> {
+    /// Extracts the ALPN protocol from the peer's handshake data.
+    pub fn alpn(&self) -> Option<Vec<u8>> {
+        alpn_from_quinn_conn(&self.inner)
     }
 }
 
