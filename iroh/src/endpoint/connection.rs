@@ -1608,6 +1608,14 @@ impl ConnectionInfo {
     pub fn side(&self) -> Side {
         self.side
     }
+
+    /// Waits for the connection to be closed, and returns the close reason and final connection stats.
+    ///
+    /// Returns `None` if the connection has been dropped already before this call.
+    pub async fn closed(&self) -> Option<(ConnectionError, ConnectionStats)> {
+        let fut = self.inner.upgrade()?.on_closed();
+        Some(fut.await)
+    }
 }
 
 #[cfg(test)]

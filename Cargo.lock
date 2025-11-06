@@ -2008,6 +2008,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "identity-hash"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfdd7caa900436d8f13b2346fe10257e0c05c1f1f9e351f4f5d57c03bd5f45da"
+
+[[package]]
 name = "idna"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2322,7 +2328,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#bc99406e75d2b56db4de3c1bbe301203a625277f"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fon_closed#b8594b8fe1c0f9b1f1b50f5fceb8d6e243c82cfa"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2342,11 +2348,12 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#bc99406e75d2b56db4de3c1bbe301203a625277f"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fon_closed#b8594b8fe1c0f9b1f1b50f5fceb8d6e243c82cfa"
 dependencies = [
  "bytes",
  "fastbloom",
  "getrandom 0.3.4",
+ "identity-hash",
  "lru-slab",
  "rand",
  "ring",
@@ -2364,14 +2371,14 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.12"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#bc99406e75d2b56db4de3c1bbe301203a625277f"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fon_closed#b8594b8fe1c0f9b1f1b50f5fceb8d6e243c82cfa"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2808,7 +2815,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#a7c39abc893c27e2e1411f75196cd4f3134fb3c8"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando%2Fon_closed#4ae9290d864e57fdf9f3bb37d40e2b995eddaa33"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3183,7 +3190,7 @@ checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 [[package]]
 name = "portmapper"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#a7c39abc893c27e2e1411f75196cd4f3134fb3c8"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando%2Fon_closed#4ae9290d864e57fdf9f3bb37d40e2b995eddaa33"
 dependencies = [
  "base64",
  "bytes",
