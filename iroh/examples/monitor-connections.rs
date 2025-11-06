@@ -6,7 +6,10 @@ use iroh::{
 };
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::task::AbortOnDropHandle;
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::{
+    sync::mpsc::{UnboundedReceiver, UnboundedSender},
+    task::JoinSet,
+};
 use tracing::{Instrument, info, info_span};
 
 const ALPN: &[u8] = b"iroh/test";
@@ -101,14 +104,31 @@ impl Monitor {
     }
 
     async fn run(mut rx: UnboundedReceiver<ConnectionInfo>) {
+        let mut tasks = JoinSet::new();
         loop {
             tokio::select! {
                 Some(conn) = rx.recv() => {
                     let alpn = String::from_utf8_lossy(conn.alpn()).to_string();
                     let remote = conn.remote_id().fmt_short();
                     info!(%remote, %alpn, rtt=?conn.rtt(), "new connection");
+                    tasks.spawn(async move {
+                        match conn.closed().await {
+                            Some((close_reason, stats)) => {
+                                // We have access to the final stats of the connection!
+                                info!(%remote, %alpn, ?close_reason, udp_rx=stats.udp_rx.bytes, udp_tx=stats.udp_tx.bytes, "connection closed");
+                            }
+                            None => {
+                                // The connection was closed before we could register our stats-on-close listener.
+                                info!(%remote, %alpn, "connection closed before tracking started");
+                            }
+                        }
+                    }.instrument(tracing::Span::current()));
                 }
+                Some(res) = tasks.join_next(), if !tasks.is_empty() => res.expect("conn close task panicked"),
                 else => break,
+            }
+            while let Some(res) = tasks.join_next().await {
+                res.expect("conn close task panicked");
             }
         }
     }
