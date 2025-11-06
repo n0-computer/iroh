@@ -35,7 +35,7 @@ pkarr = { version = "5", features = ["relays", "dht"], default-features = false 
 rcgen = "0.14"
 redb = "3.1.0"
 regex = "1.10.3"
-rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
+rustls = { version = "0.23.35", default-features = false, features = ["ring"] }
 rustls-pemfile = { version = "2.1" }
 serde = { version = "1", features = ["derive"] }
 struct_iterable = "0.1.1"

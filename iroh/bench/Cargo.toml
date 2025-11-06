@@ -15,7 +15,7 @@ n0-error = "0.1.0"
 quinn = { package = "iroh-quinn", version = "0.14" }
 rand = "0.9.2"
 rcgen = "0.14"
-rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
+rustls = { version = "0.23.35", default-features = false, features = ["ring"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "sync"] }
 tracing = "0.1"
