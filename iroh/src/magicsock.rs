@@ -63,7 +63,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
-    endpoint::ConnectionInfo,
+    endpoint::{ConnectionInfo, ConnectionMonitor},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
@@ -148,6 +148,8 @@ pub(crate) struct Options {
     // #[cfg(any(test, feature = "test-utils"))]
     // pub(crate) path_selection: PathSelection,
     pub(crate) metrics: EndpointMetrics,
+    #[debug("{}", connection_monitor.as_ref().map(|_| "Some(Box<dyn ConnectionMonitor>)").unwrap_or("None"))]
+    pub(crate) connection_monitor: Option<Box<dyn ConnectionMonitor>>,
 }
 
 /// Handle for [`MagicSock`].
@@ -219,6 +221,9 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
+
+    #[debug("{}", connection_monitor.as_ref().map(|_| "Some(Box<dyn ConnectionMonitor>)").unwrap_or("None"))]
+    connection_monitor: Option<Box<dyn ConnectionMonitor>>,
 }
 
 #[allow(missing_docs)]
@@ -274,6 +279,11 @@ impl MagicSock {
         conn: ConnectionInfo,
         paths_info: n0_watcher::Watchable<PathsInfo>,
     ) {
+        // Inform the monitor about the new connection.
+        if let Some(monitor) = self.connection_monitor.as_ref() {
+            monitor.on_connection(conn.clone());
+        }
+
         // TODO: Spawning tasks like this is obviously bad.  But it is solvable:
         //   - This is only called from inside Connection::new.
         //   - Connection::new is called from:
@@ -942,6 +952,7 @@ impl Handle {
             // #[cfg(any(test, feature = "test-utils"))]
             // path_selection,
             metrics,
+            connection_monitor,
         } = opts;
 
         let discovery = ConcurrentDiscovery::default();
@@ -1018,6 +1029,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            connection_monitor,
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -1919,6 +1931,7 @@ mod tests {
             // path_selection: PathSelection::default(),
             discovery_user_data: None,
             metrics: Default::default(),
+            connection_monitor: None,
         }
     }
 
@@ -2351,6 +2364,7 @@ mod tests {
             insecure_skip_relay_cert_verify: false,
             // path_selection: PathSelection::default(),
             metrics: Default::default(),
+            connection_monitor: None,
         };
         let msock = MagicSock::spawn(opts).await?;
         Ok(msock)

@@ -117,6 +117,8 @@ pub struct Builder {
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
     max_tls_tickets: usize,
+    #[debug("{}", connection_monitor.as_ref().map(|_| "Some(Box<dyn ConnectionMonitor>)").unwrap_or("None"))]
+    connection_monitor: Option<Box<dyn ConnectionMonitor>>,
 }
 
 impl Builder {
@@ -158,6 +160,7 @@ impl Builder {
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
+            connection_monitor: None,
         }
     }
 
@@ -208,6 +211,7 @@ impl Builder {
             // #[cfg(any(test, feature = "test-utils"))]
             // path_selection: self.path_selection,
             metrics,
+            connection_monitor: self.connection_monitor,
         };
 
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
@@ -431,6 +435,44 @@ impl Builder {
     pub fn max_tls_tickets(mut self, n: usize) -> Self {
         self.max_tls_tickets = n;
         self
+    }
+
+    // TODO docs
+    /// Register a handler that is invoked for each connection the endpoint accepts or initiates.
+    ///
+    /// The [`ConnectionMonitor::on_connection`] method is invoked synchronosuly, from within a tokio
+    /// context. So you can spawn tasks if needed.
+    /// Make sure that whatever you do with the connection info here is non-blocking.
+    /// Usually you'd want to send the info over a broadcast or unbounded channel,
+    /// or insert it into some persistent datastructure.
+    ///
+    /// The `ConnectionInfo` internally contains a weak reference to the connection,
+    /// so keeping the struct alive does not keep the connection alive.
+    /// Note however that `ConnectionInfo` does keep an allocation per connection alive
+    /// so to not leak memory you should drop the `ConnectionInfo` eventually
+    ///
+    /// [`ConnectionMonitor`] is implemented for `Fn(ConnectionInfo)`, so you can
+    /// also pass a closure that takes [`ConnectionInfo`] to this function.
+    pub fn monitor_connections(mut self, monitor: impl ConnectionMonitor) -> Self {
+        self.connection_monitor = Some(Box::new(monitor));
+        self
+    }
+}
+
+/// Monitor each connection accepted or initiated by the endpoint.
+pub trait ConnectionMonitor: Send + Sync + 'static {
+    /// Called for each new connection the endpoint accepts or initiates.
+    ///
+    /// This is only called when a connection is fully established.
+    fn on_connection(&self, connection: ConnectionInfo);
+}
+
+impl<T> ConnectionMonitor for T
+where
+    T: Fn(ConnectionInfo) + Send + Sync + 'static,
+{
+    fn on_connection(&self, connection: ConnectionInfo) {
+        (self)(connection)
     }
 }
 
