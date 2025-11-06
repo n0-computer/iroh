@@ -90,7 +90,7 @@ async fn connect(args: Args) -> Result<()> {
             match connecting.into_0rtt() {
                 Ok(zrtt_connection) => {
                     trace!("0-RTT possible from our side");
-                    let (send, recv) = zrtt_connection.open_bi().await.anyerr()?;
+                    let (send, recv) = zrtt_connection.connection().open_bi().await.anyerr()?;
                     // before we get the full handshake, attempt to send 0-RTT data
                     let zrtt_task = tokio::spawn(ping(send, i));
                     match zrtt_connection.handshake_completed().await? {
@@ -144,13 +144,13 @@ async fn accept(_args: Args) -> Result<()> {
             tokio::spawn(async move {
                 let accepting = incoming.accept().anyerr()?;
                 let connection = accepting.into_0rtt();
-                let (mut send, mut recv) = connection.accept_bi().await.anyerr()?;
+                let (mut send, mut recv) = connection.connection().accept_bi().await.anyerr()?;
                 trace!("recv.is_0rtt: {}", recv.is_0rtt());
                 let data = recv.read_to_end(8).await.anyerr()?;
                 trace!("recv: {}", data.len());
                 send.write_all(&data).await.anyerr()?;
                 send.finish().anyerr()?;
-                connection.closed().await;
+                connection.connection().closed().await;
                 n0_error::Ok(())
             });
         }
