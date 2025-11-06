@@ -35,7 +35,7 @@ use n0_watcher::{Watchable, Watcher};
 use pin_project::pin_project;
 use quinn::{
     AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
-    RetryError, SendDatagramError, ServerConfig, VarInt,
+    RetryError, SendDatagramError, ServerConfig, Side, VarInt, WeakConnectionHandle,
 };
 use quinn_proto::PathId;
 use tracing::warn;
@@ -241,15 +241,16 @@ fn conn_from_quinn_conn(
     let alpn = alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
     let paths_info_watchable = init_paths_info_watcher(&conn, ep);
     let paths_info = paths_info_watchable.watch();
-    // Register this connection with the magicsock.
-    ep.msock
-        .register_connection(remote_id, &conn, paths_info_watchable.clone());
-    Ok(Connection {
+    let conn = Connection {
         remote_id,
         alpn,
         inner: conn,
         paths_info,
-    })
+    };
+    let info = conn.to_info();
+    // Register this connection with the magicsock.
+    ep.msock.register_connection(info, paths_info_watchable);
+    Ok(conn)
 }
 
 fn init_paths_info_watcher(conn: &quinn::Connection, ep: &Endpoint) -> Watchable<PathsInfo> {
@@ -1529,6 +1530,83 @@ impl Connection {
     #[inline]
     pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
         self.inner.set_max_concurrent_bi_streams(count)
+    }
+
+    /// Returns the side of the connection (client or server).
+    pub fn side(&self) -> Side {
+        self.inner.side()
+    }
+
+    /// Returns a [`ConnectionInfo`], which is a weak handle to the connection
+    /// that does not keep the connection alive, but does allow to access some information
+    /// about the connection, and allows to wait for the connection to be closed.
+    pub fn to_info(&self) -> ConnectionInfo {
+        ConnectionInfo {
+            alpn: self.alpn.clone(),
+            remote_id: self.remote_id,
+            inner: self.inner.weak_handle(),
+            paths_info: self.paths_info.clone(),
+            side: self.side(),
+        }
+    }
+}
+
+/// A [`ConnectionInfo`] is a weak handle to a connection that exposes some information about the connection,
+/// but does not keep the connection alive.
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    pub(crate) side: Side,
+    pub(crate) alpn: Vec<u8>,
+    pub(crate) remote_id: EndpointId,
+    pub(crate) inner: WeakConnectionHandle,
+    pub(crate) paths_info: n0_watcher::Direct<PathsInfo>,
+}
+
+#[allow(missing_docs)]
+impl ConnectionInfo {
+    pub fn alpn(&self) -> &[u8] {
+        &self.alpn
+    }
+
+    pub fn remote_id(&self) -> &EndpointId {
+        &self.remote_id
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.inner.upgrade().is_some()
+    }
+
+    /// Returns information about the network paths in use by this connection.
+    ///
+    /// A connection can have several network paths to the remote endpoint, commonly there
+    /// will be a path via the relay server and a holepunched path.  This returns all the
+    /// paths in use by this connection.
+    pub fn paths_info(&self) -> &impl Watcher<Value = PathsInfo> {
+        &self.paths_info
+    }
+
+    // We could add such util methods here, not sure.
+    pub fn has_direct_path(&mut self) -> bool {
+        self.paths_info.get().keys().any(|addr| addr.is_ip())
+    }
+
+    /// Current best estimate of this connection's latency (round-trip-time)
+    ///
+    /// Returns `None` if the connection has been dropped.
+    pub fn rtt(&self) -> Option<Duration> {
+        self.inner.upgrade().map(|conn| conn.rtt())
+    }
+
+    /// Returns connection statistics.
+    ///
+    /// Returns `None` if the connection has been dropped.
+    pub fn stats(&self) -> Option<ConnectionStats> {
+        self.inner.upgrade().map(|conn| conn.stats())
+    }
+
+    /// Returns the side of the connection (client or server).
+    pub fn side(&self) -> Side {
+        self.side
     }
 }
 

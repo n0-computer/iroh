@@ -17,7 +17,7 @@ use super::{
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr},
     transports::{self, OwnedTransmit, TransportsSender},
 };
-use crate::disco::{self};
+use crate::disco;
 // #[cfg(any(test, feature = "test-utils"))]
 // use crate::endpoint::PathSelection;
 
@@ -25,7 +25,7 @@ mod endpoint_state;
 mod path_state;
 
 pub(super) use endpoint_state::EndpointStateMessage;
-pub use endpoint_state::{ConnectionType, PathInfo, PathsInfo};
+pub use endpoint_state::{ConnectionType, PathInfo, PathsInfo, RemoteInfo};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
 
 // TODO: use this
@@ -122,17 +122,23 @@ impl EndpointMap {
         }
     }
 
-    /// Returns a [`n0_watcher::Direct`] for given endpoint's [`ConnectionType`].
-    ///
-    /// # Errors
-    ///
-    /// Will return `None` if there is not an entry in the [`EndpointMap`] for
-    /// the `endpoint_id`
-    pub(super) fn conn_type(
-        &self,
-        _endpoint_id: EndpointId,
-    ) -> Option<n0_watcher::Direct<ConnectionType>> {
-        todo!();
+    pub(crate) fn remote_info(&self, eid: EndpointId) -> Option<RemoteInfo> {
+        self.actor_handles
+            .lock()
+            .expect("poisoned")
+            .get(&eid)
+            .map(|handle| RemoteInfo::new(eid, handle.sender.clone(), handle.selected_path.watch()))
+    }
+
+    pub(crate) fn remotes(&self) -> Vec<RemoteInfo> {
+        self.actor_handles
+            .lock()
+            .expect("poisoned")
+            .iter()
+            .map(|(eid, handle)| {
+                RemoteInfo::new(*eid, handle.sender.clone(), handle.selected_path.watch())
+            })
+            .collect()
     }
 
     /// Returns the sender for the [`EndpointStateActor`].
