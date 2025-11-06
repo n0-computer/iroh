@@ -966,7 +966,7 @@ impl Handle {
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
-            #[cfg(any(test, feature = "test-utils"))]
+            // #[cfg(any(test, feature = "test-utils"))]
             // path_selection,
             metrics,
         } = opts;
