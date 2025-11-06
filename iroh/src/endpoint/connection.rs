@@ -1514,7 +1514,7 @@ impl<T: ConnectionState> Connection<T> {
 impl Connection<HandshakeCompleted> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> &[u8] {
-        &self.info.as_ref().unwrap().1
+        &self.info.as_ref().expect("handshake not complete").1
     }
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -1526,7 +1526,7 @@ impl Connection<HandshakeCompleted> {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> EndpointId {
-        self.info.as_ref().unwrap().0
+        self.info.as_ref().expect("handshake not complete").0
     }
 }
 
