@@ -26,7 +26,7 @@ use url::Url;
 
 pub use super::magicsock::{
     AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType, PathInfo, PathsInfo,
-    endpoint_map::Source,
+    RemoteInfo, endpoint_map::Source,
 };
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
@@ -55,8 +55,8 @@ pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
     ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
-    SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
-    WeakConnectionHandle, WriteError,
+    SendDatagramError, SendStream, ServerConfig, Side, StoppedError, StreamId, TransportConfig,
+    VarInt, WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
     FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
@@ -69,8 +69,8 @@ pub use quinn_proto::{
 
 pub use self::connection::{
     Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-    Incoming, IncomingZeroRttConnection, OutgoingZeroRttConnection, RemoteEndpointIdError,
-    ZeroRttStatus,
+    ConnectionInfo, Incoming, IncomingZeroRttConnection, OutgoingZeroRttConnection,
+    RemoteEndpointIdError, ZeroRttStatus,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -98,7 +98,7 @@ pub enum PathSelection {
 /// new [`EndpointId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
     relay_mode: RelayMode,
@@ -963,38 +963,24 @@ impl Endpoint {
     //
     // Partially they return things passed into the builder.
 
-    /// Returns a [`Watcher`] that reports the current connection type and any changes for
-    /// given remote endpoint.
+    /// Information about a remote endpoint.
     ///
-    /// This watcher allows observing a stream of [`ConnectionType`] items by calling
-    /// [`Watcher::stream()`]. If the underlying connection to a remote endpoint changes, it will
-    /// yield a new item.  These connection changes are when the connection switches between
-    /// using the Relay server and a direct connection.
+    /// From the [`RemoteInfo`] you can watch which path is selected, get the current
+    /// round-trip time (latency), and get a list of [`ConnectionInfo`].
     ///
-    /// Note that this does not guarantee each connection change is yielded in the stream.
-    /// If the connection type changes several times before this stream is polled, only the
-    /// last recorded state is returned.  This can be observed e.g. right at the start of a
-    /// connection when the switch from a relayed to a direct connection can be so fast that
-    /// the relayed state is never exposed.
-    ///
-    /// If there is currently a connection with the remote endpoint, then using [`Watcher::get`]
-    /// will immediately return either [`ConnectionType::Relay`], [`ConnectionType::Direct`]
-    /// or [`ConnectionType::Mixed`].
-    ///
-    /// It is possible for the connection type to be [`ConnectionType::None`] if you've
-    /// recently connected to this endpoint id but previous methods of reaching the endpoint have
-    /// become inaccessible.
-    ///
-    /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub fn conn_type(&self, endpoint_id: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.msock.conn_type(endpoint_id)
+    /// Returns `None` if we don't have any state for this remote.
+    pub fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+        self.msock.endpoint_map.remote_info(endpoint_id)
     }
 
-    /// Returns the currently lowest latency for this endpoint.
+    /// Returns a list of all remote endpoints that this endpoint is dealing with.
     ///
-    /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub async fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
-        self.msock.latency(endpoint_id).await
+    /// This includes all endpoints to which we have active connections. It also may include endpoints
+    /// to which we are in the process of connecting, or have recently been connected to.
+    ///
+    /// TODO: Expand docs.
+    pub fn remotes(&self) -> Vec<RemoteInfo> {
+        self.msock.endpoint_map.remotes()
     }
 
     /// Returns the DNS resolver used in this [`Endpoint`].

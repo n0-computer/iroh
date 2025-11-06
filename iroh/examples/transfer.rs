@@ -522,13 +522,21 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
 }
 
 fn watch_conn_type(endpoint: &Endpoint, endpoint_id: EndpointId) -> AbortOnDropHandle<()> {
-    let mut stream = endpoint.conn_type(endpoint_id).unwrap().stream();
+    let info = endpoint.remote_info(endpoint_id).unwrap();
+    let mut stream = info.selected_path().stream();
     let task = tokio::task::spawn(async move {
-        while let Some(conn_type) = stream.next().await {
-            println!(
-                "[{}] Connection type changed to: {conn_type}",
-                endpoint_id.fmt_short()
-            );
+        while let Some(selected_path) = stream.next().await {
+            if let Some(selected_path) = selected_path {
+                let label = match selected_path {
+                    TransportAddr::Ip(addr) => format!("direct ({addr})"),
+                    TransportAddr::Relay(url) => format!("relay ({url})"),
+                    _ => format!("unknown transport"),
+                };
+                println!(
+                    "[{}] Connection type changed to: {label}",
+                    endpoint_id.fmt_short()
+                );
+            }
         }
     });
     AbortOnDropHandle::new(task)

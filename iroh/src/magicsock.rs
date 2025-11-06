@@ -63,6 +63,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
+    endpoint::ConnectionInfo,
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
@@ -77,7 +78,7 @@ pub(crate) mod transports;
 use mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
 
 pub use self::{
-    endpoint_map::{ConnectionType, PathInfo, PathsInfo},
+    endpoint_map::{ConnectionType, PathInfo, PathsInfo, RemoteInfo},
     metrics::Metrics,
 };
 
@@ -174,7 +175,7 @@ pub(crate) struct Handle {
 /// It is usually only necessary to use a single [`MagicSock`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about endpoints as
 /// possible.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub(crate) struct MagicSock {
     /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
@@ -270,8 +271,7 @@ impl MagicSock {
     /// connection.
     pub(crate) fn register_connection(
         &self,
-        remote: EndpointId,
-        conn: &quinn::Connection,
+        conn: ConnectionInfo,
         paths_info: n0_watcher::Watchable<PathsInfo>,
     ) {
         // TODO: Spawning tasks like this is obviously bad.  But it is solvable:
@@ -289,9 +289,8 @@ impl MagicSock {
         // have a ZrttConnection::into_connection() function which can be async and actually
         // send this.  Before the handshake has completed we don't have anything useful to
         // do with this connection inside of the EndpointStateActor anyway.
-        let weak_handle = conn.weak_handle();
-        let endpoint_state = self.endpoint_map.endpoint_state_actor(remote);
-        let msg = EndpointStateMessage::AddConnection(weak_handle, paths_info);
+        let endpoint_state = self.endpoint_map.endpoint_state_actor(conn.remote_id);
+        let msg = EndpointStateMessage::AddConnection(conn, paths_info);
 
         task::spawn(async move {
             endpoint_state.send(msg).await.ok();
@@ -395,32 +394,6 @@ impl MagicSock {
                 })
                 .collect()
         })
-    }
-
-    /// Returns a [`n0_watcher::Direct`] that reports the [`ConnectionType`] we have to the
-    /// given `endpoint_id`.
-    ///
-    /// This gets us a copy of the [`n0_watcher::Direct`] for the [`Watchable`] with a
-    /// [`ConnectionType`] that the `EndpointMap` stores for each `endpoint_id`'s endpoint.
-    ///
-    /// # Errors
-    ///
-    /// Will return `None` if there is no address information known about the
-    /// given `endpoint_id`.
-    pub(crate) fn conn_type(&self, eid: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.endpoint_map.conn_type(eid)
-    }
-
-    // TODO: Build better info to expose to the user about remote nodes.  We probably want
-    // to expose this as part of path information instead.
-    pub(crate) async fn latency(&self, eid: EndpointId) -> Option<Duration> {
-        let endpoint_state = self.endpoint_map.endpoint_state_actor(eid);
-        let (tx, rx) = oneshot::channel();
-        endpoint_state
-            .send(EndpointStateMessage::Latency(tx))
-            .await
-            .ok();
-        rx.await.unwrap_or_default()
     }
 
     /// Returns the socket address which can be used by the QUIC layer to dial this endpoint.

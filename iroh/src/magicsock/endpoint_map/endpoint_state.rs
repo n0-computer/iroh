@@ -13,7 +13,7 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use quinn::WeakConnectionHandle;
+use quinn::{Side, WeakConnectionHandle};
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,7 @@ use super::{Source, TransportsSenderMessage, path_state::PathState};
 // use crate::endpoint::PathSelection;
 use crate::{
     disco::{self},
-    endpoint::DirectAddr,
+    endpoint::{ConnectionInfo, DirectAddr},
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, MappedAddr, MultipathMappedAddr, RelayMappedAddr},
@@ -131,6 +131,7 @@ pub(super) struct EndpointStateActor {
     ///
     /// We only select a path once the path is functional in Quinn.
     selected_path: Option<transports::Addr>,
+    pub_selected_path: Watchable<Option<TransportAddr>>,
     /// Time at which we should schedule the next holepunch attempt.
     scheduled_holepunch: Option<Instant>,
     /// When to next attempt opening paths in [`Self::pending_open_paths`].
@@ -167,6 +168,7 @@ impl EndpointStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
+            pub_selected_path: Default::default(),
         }
     }
 
@@ -174,6 +176,7 @@ impl EndpointStateActor {
         let (tx, rx) = mpsc::channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
+        let selected_path = self.pub_selected_path.clone();
 
         // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
         // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
@@ -195,6 +198,7 @@ impl EndpointStateActor {
         );
         EndpointStateHandle {
             sender: tx,
+            selected_path,
             _task: AbortOnDropHandle::new(task),
         }
     }
@@ -264,8 +268,8 @@ impl EndpointStateActor {
             EndpointStateMessage::SendDatagram(transmit) => {
                 self.handle_msg_send_datagram(transmit).await?;
             }
-            EndpointStateMessage::AddConnection(handle, paths_info) => {
-                self.handle_msg_add_connection(handle, paths_info).await;
+            EndpointStateMessage::AddConnection(info, paths_info) => {
+                self.handle_msg_add_connection(info, paths_info).await;
             }
             EndpointStateMessage::AddEndpointAddr(addr, source) => {
                 self.handle_msg_add_endpoint_addr(addr, source);
@@ -284,6 +288,9 @@ impl EndpointStateActor {
             }
             EndpointStateMessage::Latency(tx) => {
                 self.handle_msg_latency(tx);
+            }
+            EndpointStateMessage::ConnectionInfos(tx) => {
+                self.handle_msg_connection_infos(tx);
             }
         }
         Ok(())
@@ -322,10 +329,10 @@ impl EndpointStateActor {
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_add_connection(
         &mut self,
-        handle: WeakConnectionHandle,
+        info: ConnectionInfo,
         paths_info: Watchable<PathsInfo>,
     ) {
-        if let Some(conn) = handle.upgrade() {
+        if let Some(conn) = info.inner.upgrade() {
             // Remove any conflicting stable_ids from the local state.
             let conn_id = ConnId(conn.stable_id());
             self.connections.remove(&conn_id);
@@ -340,7 +347,9 @@ impl EndpointStateActor {
             self.connections.insert(
                 conn_id,
                 ConnectionState {
-                    handle: handle.clone(),
+                    handle: info.inner.clone(),
+                    alpn: info.alpn,
+                    side: info.side,
                     pub_path_info: paths_info,
                     paths: Default::default(),
                     open_paths: Default::default(),
@@ -350,7 +359,10 @@ impl EndpointStateActor {
 
             // Store PathId(0), set path_status and select best path, check if holepunching
             // is needed.
-            if let Some(conn) = handle.upgrade() {
+            // TODO(frando): The code here upgraded the handle again (which we already upgraded a couple of lines above)
+            // Was there a reason for that?
+            // if let Some(conn) = handle.upgrade() {
+            {
                 if let Some(path) = conn.path(PathId::ZERO) {
                     if let Some(path_remote) = path
                         .remote_address()
@@ -515,17 +527,32 @@ impl EndpointStateActor {
                 if !conn_state.open_paths.contains_key(path_id) {
                     continue;
                 }
-                if let Some(stats) = conn_state
+                if let Some(rtt) = conn_state
                     .handle
                     .upgrade()
-                    .and_then(|conn| conn.stats().paths.get(path_id).copied())
+                    .and_then(|conn| conn.stats().paths.get(path_id).map(|stats| stats.rtt))
                 {
-                    return Some(stats.rtt);
+                    return Some(rtt);
                 }
             }
             None
         });
         tx.send(rtt).ok();
+    }
+
+    fn handle_msg_connection_infos(&self, tx: oneshot::Sender<Vec<ConnectionInfo>>) {
+        let infos: Vec<ConnectionInfo> = self
+            .connections
+            .values()
+            .map(|state| ConnectionInfo {
+                remote_id: self.endpoint_id,
+                alpn: state.alpn.clone(),
+                side: state.side,
+                inner: state.handle.clone(),
+                paths_info: state.pub_path_info.watch(),
+            })
+            .collect();
+        tx.send(infos).ok();
     }
 
     /// Triggers holepunching to the remote endpoint.
@@ -934,6 +961,7 @@ impl EndpointStateActor {
             }
             self.open_path(addr);
             self.close_redundant_paths(addr);
+            self.pub_selected_path.set(Some(addr.clone().into())).ok();
         }
     }
 
@@ -999,7 +1027,7 @@ pub(crate) enum EndpointStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, Watchable<PathsInfo>),
+    AddConnection(ConnectionInfo, Watchable<PathsInfo>),
     /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
     AddEndpointAddr(EndpointAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
@@ -1020,6 +1048,9 @@ pub(crate) enum EndpointStateMessage {
     /// TODO: This is more of a placeholder message currently.  Check MagicSock::latency.
     #[debug("Latency(..)")]
     Latency(oneshot::Sender<Option<Duration>>),
+    /// Returns info about currently open connections to the remote endpoint.
+    #[debug("Latency(..)")]
+    ConnectionInfos(oneshot::Sender<Vec<ConnectionInfo>>),
 }
 
 /// A handle to a [`EndpointStateActor`].
@@ -1028,6 +1059,7 @@ pub(crate) enum EndpointStateMessage {
 #[derive(Debug)]
 pub(super) struct EndpointStateHandle {
     pub(super) sender: mpsc::Sender<EndpointStateMessage>,
+    pub(super) selected_path: Watchable<Option<TransportAddr>>,
     _task: AbortOnDropHandle<()>,
 }
 
@@ -1085,6 +1117,14 @@ struct ConnectionState {
     handle: WeakConnectionHandle,
     /// The information we publish to users about the paths used in this connection.
     pub_path_info: Watchable<PathsInfo>,
+    /// The ALPN of the connection.
+    ///
+    /// We store this to be able to create a [`ConnectionInfo`] from the [`ConnectionState`].
+    alpn: Vec<u8>,
+    /// The side (client or server)
+    ///
+    /// We store this to be able to create a [`ConnectionInfo`] from the [`ConnectionState`].
+    side: Side,
     /// The paths that exist on this connection.
     ///
     /// This could be in any state, e.g. while still validating the path or already closed
@@ -1178,5 +1218,67 @@ fn now_or_never<T, F: Future<Output = T>>(fut: F) -> Option<T> {
     match fut.poll(&mut std::task::Context::from_waker(std::task::Waker::noop())) {
         std::task::Poll::Ready(res) => Some(res),
         std::task::Poll::Pending => None,
+    }
+}
+
+/// Information about a remote endpoint.
+#[derive(derive_more::Debug, Clone)]
+pub struct RemoteInfo {
+    endpoint_id: EndpointId,
+    #[debug("Sender<EndpointStateMessage>")]
+    handle: mpsc::Sender<EndpointStateMessage>,
+    selected_path: n0_watcher::Direct<Option<TransportAddr>>,
+}
+
+impl RemoteInfo {
+    pub(crate) fn new(
+        endpoint_id: EndpointId,
+        handle: mpsc::Sender<EndpointStateMessage>,
+        selected_path: n0_watcher::Direct<Option<TransportAddr>>,
+    ) -> Self {
+        Self {
+            endpoint_id,
+            handle,
+            selected_path,
+        }
+    }
+
+    /// Returns the endpoint id of the remote.
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint_id
+    }
+
+    /// Returns the round-trip time of the currently selected path.
+    ///
+    /// Returns `None` if no path is active.
+    pub async fn rtt(&self) -> Option<Duration> {
+        let (tx, rx) = oneshot::channel();
+        if let Err(_) = self.handle.send(EndpointStateMessage::Latency(tx)).await {
+            return None;
+        };
+        rx.await.ok()?
+    }
+
+    /// Returns a list of connections that are active with this remote endpoint.
+    pub async fn connections(&self) -> Vec<ConnectionInfo> {
+        let (tx, rx) = oneshot::channel();
+        if let Err(_) = self
+            .handle
+            .send(EndpointStateMessage::ConnectionInfos(tx))
+            .await
+        {
+            return Vec::new();
+        };
+        rx.await.ok().unwrap_or_default()
+    }
+
+    /// Returns a watcher over the currently selected main path to the remote.
+    ///
+    /// TODO: More docs.
+    /// * `get` and `stream`
+    /// * None means no currently active path
+    /// * Check TransportAddr::is_ip / TransportAddr::is_relay to see if the path is direct or relayed
+    pub fn selected_path(&self) -> impl Watcher<Value = Option<TransportAddr>> + use<> {
+        self.selected_path.clone()
     }
 }
