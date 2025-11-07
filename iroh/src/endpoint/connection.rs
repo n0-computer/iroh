@@ -230,7 +230,7 @@ fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, Authentic
         return Err(e!(AuthenticationError::ConnectionError { source: reason }));
     }
     Ok(Connection {
-        info: ConnectionStateData::HandshakeCompleted {
+        info: HandshakeCompletedData {
             endpoint_id: remote_id_from_quinn_conn(&conn)?,
             alpn: alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?,
         },
@@ -401,7 +401,7 @@ impl Connecting {
                 // after all.
                 try_send_rtt_msg(&inner, &self.ep, self.remote_endpoint_id);
                 Ok(Connection {
-                    info: ConnectionStateData::OutgoingZeroRtt { accepted },
+                    info: OutgoingZeroRttData { accepted },
                     inner,
                     _p: std::marker::PhantomData,
                 })
@@ -497,7 +497,7 @@ impl Accepting {
         }
         .shared();
         Connection {
-            info: ConnectionStateData::IncomingZeroRtt { accepted },
+            info: IncomingZeroRttData { accepted },
             inner,
             _p: std::marker::PhantomData,
         }
@@ -622,25 +622,28 @@ pub type IncomingZeroRttConnection = Connection<IncomingZeroRtt>;
 pub struct Connection<State: ConnectionState = HandshakeCompleted> {
     inner: quinn::Connection,
     /// State-specific information
-    info: ConnectionStateData,
+    info: State::Data,
     _p: std::marker::PhantomData<State>,
 }
 
 #[derive(Debug, Clone)]
-enum ConnectionStateData {
-    HandshakeCompleted {
-        endpoint_id: EndpointId,
-        alpn: Vec<u8>,
-    },
-    IncomingZeroRtt {
-        accepted: Shared<ZeroRttAccepted>,
-    },
-    OutgoingZeroRtt {
-        accepted: Shared<ZeroRttAccepted>,
-    },
+pub struct HandshakeCompletedData {
+    endpoint_id: EndpointId,
+    alpn: Vec<u8>,
 }
 
-pub trait ConnectionState {}
+#[derive(Debug, Clone)]
+pub struct IncomingZeroRttData {
+    accepted: Shared<ZeroRttAccepted>,
+}
+#[derive(Debug, Clone)]
+pub struct OutgoingZeroRttData {
+    accepted: Shared<ZeroRttAccepted>,
+}
+
+pub trait ConnectionState {
+    type Data: std::fmt::Debug + Clone;
+}
 
 #[derive(Debug, Clone)]
 pub struct HandshakeCompleted;
@@ -651,9 +654,15 @@ pub struct IncomingZeroRtt;
 #[derive(Debug, Clone)]
 pub struct OutgoingZeroRtt;
 
-impl ConnectionState for HandshakeCompleted {}
-impl ConnectionState for IncomingZeroRtt {}
-impl ConnectionState for OutgoingZeroRtt {}
+impl ConnectionState for HandshakeCompleted {
+    type Data = HandshakeCompletedData;
+}
+impl ConnectionState for IncomingZeroRtt {
+    type Data = IncomingZeroRttData;
+}
+impl ConnectionState for OutgoingZeroRtt {
+    type Data = OutgoingZeroRttData;
+}
 
 #[allow(missing_docs)]
 #[stack_error(add_meta, derive)]
@@ -920,10 +929,7 @@ impl<T: ConnectionState> Connection<T> {
 impl Connection<HandshakeCompleted> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> &[u8] {
-        let ConnectionStateData::HandshakeCompleted { alpn, .. } = &self.info else {
-            unreachable!("handshake not complete");
-        };
-        alpn
+        &self.info.alpn
     }
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -935,10 +941,7 @@ impl Connection<HandshakeCompleted> {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> EndpointId {
-        let ConnectionStateData::HandshakeCompleted { endpoint_id, .. } = &self.info else {
-            unreachable!("handshake not complete");
-        };
-        *endpoint_id
+        self.info.endpoint_id
     }
 }
 
@@ -961,10 +964,7 @@ impl Connection<IncomingZeroRtt> {
     /// Thus, those errors should only occur if someone connects to you with a
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(self) -> Result<Connection, AuthenticationError> {
-        let ConnectionStateData::IncomingZeroRtt { accepted } = &self.info else {
-            unreachable!("handshake not complete");
-        };
-        let _ = accepted.clone().await;
+        let _ = self.info.accepted.clone().await;
         conn_from_quinn_conn(self.inner)
     }
 }
@@ -995,10 +995,7 @@ impl Connection<OutgoingZeroRtt> {
     /// Thus, those errors should only occur if someone connects to you with a
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, AuthenticationError> {
-        let ConnectionStateData::OutgoingZeroRtt { accepted } = &self.info else {
-            unreachable!("handshake not complete");
-        };
-        let accepted = accepted.clone().await;
+        let accepted = self.info.accepted.clone().await;
         let conn = conn_from_quinn_conn(self.inner.clone())?;
 
         Ok(match accepted {
