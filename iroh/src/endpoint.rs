@@ -26,7 +26,7 @@ use url::Url;
 
 pub use super::magicsock::{
     AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType, PathInfo,
-    endpoint_map::{PathList, Source},
+    endpoint_map::{PathInfoList, Source},
 };
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;

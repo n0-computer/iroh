@@ -1175,10 +1175,10 @@ impl PathsWatchable {
             })
     }
 
-    pub(crate) fn watch(&self) -> impl Watcher<Value = PathList> {
+    pub(crate) fn watch(&self) -> impl Watcher<Value = PathInfoList> {
         let watcher = (self.open_paths.watch(), self.selected_path.watch());
         watcher.map(move |(map, selected)| {
-            PathList(
+            PathInfoList(
                 map.into_iter()
                     .map(|(addr, _path_id)| PathInfo {
                         is_selected: Some(&addr) == selected.as_ref(),
@@ -1197,9 +1197,9 @@ impl PathsWatchable {
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(derive_more::Debug, derive_more::IntoIterator, Eq, PartialEq, Clone)]
 #[debug("{_0:?}")]
-pub struct PathList(SmallVec<[PathInfo; 4]>);
+pub struct PathInfoList(SmallVec<[PathInfo; 4]>);
 
-impl PathList {
+impl PathInfoList {
     /// Returns an iterator over the path infos.
     pub fn iter(&self) -> impl Iterator<Item = &PathInfo> {
         self.0.iter()

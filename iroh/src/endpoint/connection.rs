@@ -43,7 +43,7 @@ use crate::{
     discovery::DiscoveryTask,
     magicsock::{
         PathInfo,
-        endpoint_map::{PathList, PathsWatchable},
+        endpoint_map::{PathInfoList, PathsWatchable},
     },
 };
 
@@ -1464,7 +1464,7 @@ impl Connection {
     /// A connection can have several network paths to the remote endpoint, commonly there
     /// will be a path via the relay server and a holepunched path.  This returns a watcher
     /// over the paths in use by this connection.
-    pub fn paths(&self) -> impl Watcher<Value = PathList> {
+    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> {
         self.paths.watch()
     }
 
