@@ -341,16 +341,17 @@ impl EndpointStateActor {
             let events = BroadcastStream::new(conn.path_events());
             let stream = events.map(move |evt| (conn_id, evt));
             self.path_events.push(Box::pin(stream));
-            self.connections.insert(
-                conn_id,
-                ConnectionState {
+            let conn_state = self
+                .connections
+                .entry(conn_id)
+                .insert_entry(ConnectionState {
                     handle: handle.clone(),
                     pub_open_paths: paths_watchable,
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
-                },
-            );
+                })
+                .into_mut();
 
             // Store PathId(0), set path_status and select best path, check if holepunching
             // is needed.
@@ -364,7 +365,6 @@ impl EndpointStateActor {
                     transports::Addr::Relay(_, _) => PathStatus::Backup,
                 };
                 path.set_status(status).ok();
-                let conn_state = self.connections.get_mut(&conn_id).expect("inserted above");
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
                 self.paths
                     .entry(path_remote)
