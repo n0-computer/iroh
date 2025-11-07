@@ -65,7 +65,7 @@
 <a href=#65 id=65 data-nosnippet>65</a>    disco::{<span class="self">self</span>, SendAddr},
 <a href=#66 id=66 data-nosnippet>66</a>    discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
 <a href=#67 id=67 data-nosnippet>67</a>    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
-<a href=#68 id=68 data-nosnippet>68</a>    magicsock::endpoint_map::{PathAddrMap, PathsWatchable},
+<a href=#68 id=68 data-nosnippet>68</a>    magicsock::endpoint_map::{PathAddrList, PathsWatchable},
 <a href=#69 id=69 data-nosnippet>69</a>    metrics::EndpointMetrics,
 <a href=#70 id=70 data-nosnippet>70</a>    net_report::{<span class="self">self</span>, IfStateDetails, Report},
 <a href=#71 id=71 data-nosnippet>71</a>};
@@ -276,7 +276,7 @@
 <a href=#276 id=276 data-nosnippet>276</a>        conn: <span class="kw-2">&amp;</span>quinn::Connection,
 <a href=#277 id=277 data-nosnippet>277</a>    ) -&gt; PathsWatchable {
 <a href=#278 id=278 data-nosnippet>278</a>        <span class="comment">// Init the open paths watchable.
-<a href=#279 id=279 data-nosnippet>279</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>open_paths: PathAddrMap = Default::default();
+<a href=#279 id=279 data-nosnippet>279</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>open_paths: PathAddrList = Default::default();
 <a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(path0) = conn.path(PathId::ZERO) {
 <a href=#281 id=281 data-nosnippet>281</a>            <span class="comment">// This all is supposed to be infallible, but anyway.
 <a href=#282 id=282 data-nosnippet>282</a>            </span><span class="kw">if let </span><span class="prelude-val">Ok</span>(remote) = path0.remote_address() {
