@@ -400,15 +400,10 @@ impl Connecting {
                 // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
                 // after all.
                 try_send_rtt_msg(&inner, &self.ep, self.remote_endpoint_id);
-                Ok(OutgoingZeroRttConnection {
-                    inner: Connection {
-                        info: ConnectionStateData::OutgoingZeroRtt {
-                            accepted: accepted.clone(),
-                        },
-                        inner,
-                        _p: std::marker::PhantomData,
-                    },
-                    accepted,
+                Ok(Connection {
+                    info: ConnectionStateData::OutgoingZeroRtt { accepted },
+                    inner,
+                    _p: std::marker::PhantomData,
                 })
             }
             Err(inner) => Err(Self {
@@ -501,13 +496,10 @@ impl Accepting {
             _discovery_drop_guard: None,
         }
         .shared();
-        IncomingZeroRttConnection {
-            accepted: accepted.clone(),
-            inner: Connection {
-                info: ConnectionStateData::IncomingZeroRtt { accepted },
-                inner,
-                _p: std::marker::PhantomData,
-            },
+        Connection {
+            info: ConnectionStateData::IncomingZeroRtt { accepted },
+            inner,
+            _p: std::marker::PhantomData,
         }
     }
 
@@ -579,11 +571,7 @@ impl Future for ZeroRttAccepted {
 ///
 /// Look at the [`OutgoingZeroRttConnection::handshake_completed`] method for
 /// more details.
-#[derive(Debug, Clone)]
-pub struct OutgoingZeroRttConnection {
-    inner: Connection<OutgoingZeroRtt>,
-    accepted: Shared<ZeroRttAccepted>,
-}
+pub type OutgoingZeroRttConnection = Connection<OutgoingZeroRtt>;
 
 /// Returned from [`OutgoingZeroRttConnection::handshake_completed`].
 #[derive(Debug)]
@@ -595,42 +583,6 @@ pub enum ZeroRttStatus {
     /// the handshake was completed will error and any data that was
     /// previously sent on those streams will need to be resent.
     Rejected(Connection),
-}
-
-impl OutgoingZeroRttConnection {
-    /// Returns a reference to the underlying [`Connection`].
-    pub fn connection(&self) -> &Connection<OutgoingZeroRtt> {
-        &self.inner
-    }
-
-    /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
-    ///
-    /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
-    /// the handshake has completed can still be used.
-    ///
-    /// If `ZeroRttStatus::Rejected` is returned, than any streams created before
-    /// the handshake will error and any data sent should be re-sent on a
-    /// new stream.
-    ///
-    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
-    /// some general failure with the connection, such as a network timeout since
-    /// we initiated the connection.
-    ///
-    /// This may fail with other [`AuthenticationError`]s, if the other side
-    /// doesn't use the right TLS authentication, which usually every iroh endpoint
-    /// uses and requires.
-    ///
-    /// Thus, those errors should only occur if someone connects to you with a
-    /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, AuthenticationError> {
-        let accepted = self.accepted.clone().await;
-        let conn = conn_from_quinn_conn(self.inner.inner.clone())?;
-
-        Ok(match accepted {
-            true => ZeroRttStatus::Accepted(conn),
-            false => ZeroRttStatus::Rejected(conn),
-        })
-    }
 }
 
 /// A QUIC connection on the server-side that can possibly accept 0-RTT data.
@@ -651,35 +603,7 @@ impl OutgoingZeroRttConnection {
 /// `IncomingZeroRttConnection`. This waits until 0-RTT connection has completed
 /// the handshake and can now confidently derive the ALPN and the
 /// [`EndpointId`] of the remote endpoint.
-#[derive(Debug)]
-pub struct IncomingZeroRttConnection {
-    inner: Connection<IncomingZeroRtt>,
-    accepted: Shared<ZeroRttAccepted>,
-}
-
-impl IncomingZeroRttConnection {
-    /// Returns a reference to the underlying [`Connection`].
-    pub fn connection(&self) -> &Connection<IncomingZeroRtt> {
-        &self.inner
-    }
-
-    /// Waits until the full handshake occurs and then returns a [`Connection`].
-    ///
-    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
-    /// some general failure with the connection, such as a network timeout since
-    /// we accepted the connection.
-    ///
-    /// This may fail with other [`AuthenticationError`]s, if the other side
-    /// doesn't use the right TLS authentication, which usually every iroh endpoint
-    /// uses and requires.
-    ///
-    /// Thus, those errors should only occur if someone connects to you with a
-    /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn handshake_completed(self) -> Result<Connection, AuthenticationError> {
-        self.accepted.await;
-        conn_from_quinn_conn(self.inner.inner)
-    }
-}
+pub type IncomingZeroRttConnection = Connection<IncomingZeroRtt>;
 
 /// A QUIC connection.
 ///
@@ -999,7 +923,7 @@ impl Connection<HandshakeCompleted> {
         let ConnectionStateData::HandshakeCompleted { alpn, .. } = &self.info else {
             unreachable!("handshake not complete");
         };
-        &alpn
+        alpn
     }
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -1023,12 +947,64 @@ impl Connection<IncomingZeroRtt> {
     pub fn alpn(&self) -> Option<Vec<u8>> {
         alpn_from_quinn_conn(&self.inner)
     }
+
+    /// Waits until the full handshake occurs and then returns a [`Connection`].
+    ///
+    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// some general failure with the connection, such as a network timeout since
+    /// we accepted the connection.
+    ///
+    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// doesn't use the right TLS authentication, which usually every iroh endpoint
+    /// uses and requires.
+    ///
+    /// Thus, those errors should only occur if someone connects to you with a
+    /// modified iroh endpoint or with a plain QUIC client.
+    pub async fn handshake_completed(self) -> Result<Connection, AuthenticationError> {
+        let ConnectionStateData::IncomingZeroRtt { accepted } = &self.info else {
+            unreachable!("handshake not complete");
+        };
+        let _ = accepted.clone().await;
+        conn_from_quinn_conn(self.inner)
+    }
 }
 
 impl Connection<OutgoingZeroRtt> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> Option<Vec<u8>> {
         alpn_from_quinn_conn(&self.inner)
+    }
+
+    /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
+    ///
+    /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
+    /// the handshake has completed can still be used.
+    ///
+    /// If `ZeroRttStatus::Rejected` is returned, than any streams created before
+    /// the handshake will error and any data sent should be re-sent on a
+    /// new stream.
+    ///
+    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// some general failure with the connection, such as a network timeout since
+    /// we initiated the connection.
+    ///
+    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// doesn't use the right TLS authentication, which usually every iroh endpoint
+    /// uses and requires.
+    ///
+    /// Thus, those errors should only occur if someone connects to you with a
+    /// modified iroh endpoint or with a plain QUIC client.
+    pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, AuthenticationError> {
+        let ConnectionStateData::OutgoingZeroRtt { accepted } = &self.info else {
+            unreachable!("handshake not complete");
+        };
+        let accepted = accepted.clone().await;
+        let conn = conn_from_quinn_conn(self.inner.clone())?;
+
+        Ok(match accepted {
+            true => ZeroRttStatus::Accepted(conn),
+            false => ZeroRttStatus::Rejected(conn),
+        })
     }
 }
 
@@ -1084,7 +1060,6 @@ mod tests {
             let zrtt_conn = accepting.into_0rtt();
 
             let (mut send, mut recv) = zrtt_conn
-                .connection()
                 .accept_bi()
                 .await
                 .std_context("failed to accept bi stream")?;
@@ -1100,7 +1075,7 @@ mod tests {
             send.finish().std_context("Failed to finish send")?;
 
             // Stay alive until the other side closes the connection.
-            zrtt_conn.connection().closed().await;
+            zrtt_conn.closed().await;
             Ok(())
         }
 
@@ -1163,7 +1138,7 @@ mod tests {
 
         tracing::trace!("Client established 0-RTT connection");
         // This is how we send data in 0-RTT:
-        let (mut send, mut recv) = zrtt_conn.connection().open_bi().await.anyerr()?;
+        let (mut send, mut recv) = zrtt_conn.open_bi().await.anyerr()?;
         send.write_all(b"hello").await.anyerr()?;
         send.finish().anyerr()?;
         tracing::trace!("Client sent 0-RTT data, waiting for server response");
