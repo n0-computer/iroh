@@ -1219,11 +1219,6 @@ impl PathInfoList {
         self.0.iter()
     }
 
-    /// Returns the [`PathInfo`] for a transport address.
-    pub fn get(&self, addr: &TransportAddr) -> Option<&PathInfo> {
-        self.0.iter().find(|info| info.remote_addr() == addr)
-    }
-
     /// Returns `true` if the list is empty.
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
