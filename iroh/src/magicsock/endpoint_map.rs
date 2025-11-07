@@ -159,7 +159,7 @@ impl EndpointMap {
         eid: EndpointId,
     ) -> (
         mpsc::Sender<EndpointStateMessage>,
-        Watchable<Option<TransportAddr>>,
+        Watchable<Option<transports::Addr>>,
     ) {
         self.endpoint_state_actor_inner(eid, |handle| {
             (handle.sender.clone(), handle.selected_path.clone())

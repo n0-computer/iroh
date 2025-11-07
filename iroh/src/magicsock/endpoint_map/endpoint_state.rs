@@ -131,7 +131,7 @@ pub(super) struct EndpointStateActor {
     /// holepunching regularly.
     ///
     /// We only select a path once the path is functional in Quinn.
-    selected_path: Watchable<Option<TransportAddr>>,
+    selected_path: Watchable<Option<transports::Addr>>,
     /// Time at which we should schedule the next holepunch attempt.
     scheduled_holepunch: Option<Instant>,
     /// When to next attempt opening paths in [`Self::pending_open_paths`].
@@ -298,10 +298,9 @@ impl EndpointStateActor {
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> n0_error::Result<()> {
         if let Some(addr) = self.selected_path.get() {
-            let addr = transports::Addr::from_transport_addr(self.endpoint_id, addr);
             trace!(?addr, "sending datagram to selected path");
             self.transports_sender
-                .send((addr.clone(), transmit).into())
+                .send((addr, transmit).into())
                 .await
                 .std_context("TransportSenderActor stopped")?;
         } else {
@@ -513,7 +512,6 @@ impl EndpointStateActor {
     /// Handles [`EndpointStateMessage::Latency`].
     fn handle_msg_latency(&self, tx: oneshot::Sender<Option<Duration>>) {
         let rtt = self.selected_path.get().and_then(|addr| {
-            let addr = transports::Addr::from_transport_addr(self.endpoint_id, addr);
             for conn_state in self.connections.values() {
                 let Some(path_id) = conn_state.path_ids.get(&addr) else {
                     continue;
@@ -950,13 +948,7 @@ impl EndpointStateActor {
     //    paths and immediately call this.  But the new paths are probably not yet open on
     //    all connections.
     fn close_redundant_paths(&mut self, selected_path: &transports::Addr) {
-        debug_assert_eq!(
-            self.selected_path
-                .get()
-                .map(|addr| transports::Addr::from_transport_addr(self.endpoint_id, addr))
-                .as_ref(),
-            Some(selected_path),
-        );
+        debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path),);
 
         for (conn_id, conn_state) in self.connections.iter() {
             for (path_id, path_remote) in conn_state
@@ -1043,7 +1035,7 @@ pub(super) struct EndpointStateHandle {
     /// Watchable for the selected transmission path.
     ///
     /// This should only be read or watched. It is set from within the actro.
-    pub(super) selected_path: Watchable<Option<TransportAddr>>,
+    pub(super) selected_path: Watchable<Option<transports::Addr>>,
     _task: AbortOnDropHandle<()>,
 }
 
@@ -1169,13 +1161,13 @@ pub(crate) struct PathsWatchable {
     /// Watchable for the open paths (in this connection).
     open_paths: Watchable<PathAddrList>,
     /// Watchable for the selected transmission path (global for this remote endpoint).
-    selected_path: Watchable<Option<TransportAddr>>,
+    selected_path: Watchable<Option<transports::Addr>>,
 }
 
 impl PathsWatchable {
     pub(crate) fn new(
         open_paths: Watchable<PathAddrList>,
-        selected_path: Watchable<Option<TransportAddr>>,
+        selected_path: Watchable<Option<transports::Addr>>,
     ) -> Self {
         Self {
             open_paths,
@@ -1184,7 +1176,7 @@ impl PathsWatchable {
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (PathId, PathInfo)> {
-        let selected_path = self.selected_path.get();
+        let selected_path: Option<TransportAddr> = self.selected_path.get().map(Into::into);
         self.open_paths
             .get()
             .into_iter()
@@ -1202,9 +1194,10 @@ impl PathsWatchable {
     pub(crate) fn watch(&self) -> impl Watcher<Value = PathInfoList> {
         let joined_watcher = (self.open_paths.watch(), self.selected_path.watch());
         joined_watcher.map(move |(open_paths, selected_path)| {
+            let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
             let list = open_paths
                 .into_iter()
-                .map(|(remote, _path_id)| PathInfo::new(remote, selected_path.as_ref()))
+                .map(move |(remote, _path_id)| PathInfo::new(remote, selected_path.as_ref()))
                 .collect();
             PathInfoList(list)
         })
