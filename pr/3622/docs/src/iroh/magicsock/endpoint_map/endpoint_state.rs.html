@@ -1175,10 +1175,10 @@
 <a href=#1175 id=1175 data-nosnippet>1175</a>            })
 <a href=#1176 id=1176 data-nosnippet>1176</a>    }
 <a href=#1177 id=1177 data-nosnippet>1177</a>
-<a href=#1178 id=1178 data-nosnippet>1178</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = PathList&gt; {
+<a href=#1178 id=1178 data-nosnippet>1178</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = PathInfoList&gt; {
 <a href=#1179 id=1179 data-nosnippet>1179</a>        <span class="kw">let </span>watcher = (<span class="self">self</span>.open_paths.watch(), <span class="self">self</span>.selected_path.watch());
 <a href=#1180 id=1180 data-nosnippet>1180</a>        watcher.map(<span class="kw">move </span>|(map, selected)| {
-<a href=#1181 id=1181 data-nosnippet>1181</a>            PathList(
+<a href=#1181 id=1181 data-nosnippet>1181</a>            PathInfoList(
 <a href=#1182 id=1182 data-nosnippet>1182</a>                map.into_iter()
 <a href=#1183 id=1183 data-nosnippet>1183</a>                    .map(|(addr, _path_id)| PathInfo {
 <a href=#1184 id=1184 data-nosnippet>1184</a>                        is_selected: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>addr) == selected.as_ref(),
@@ -1197,9 +1197,9 @@
 <a href=#1197 id=1197 data-nosnippet>1197</a>/// [`Connection`]: crate::endpoint::Connection
 <a href=#1198 id=1198 data-nosnippet>1198</a></span><span class="attr">#[derive(derive_more::Debug, derive_more::IntoIterator, Eq, PartialEq, Clone)]
 <a href=#1199 id=1199 data-nosnippet>1199</a>#[debug(<span class="string">"{_0:?}"</span>)]
-<a href=#1200 id=1200 data-nosnippet>1200</a></span><span class="kw">pub struct </span>PathList(SmallVec&lt;[PathInfo; <span class="number">4</span>]&gt;);
+<a href=#1200 id=1200 data-nosnippet>1200</a></span><span class="kw">pub struct </span>PathInfoList(SmallVec&lt;[PathInfo; <span class="number">4</span>]&gt;);
 <a href=#1201 id=1201 data-nosnippet>1201</a>
-<a href=#1202 id=1202 data-nosnippet>1202</a><span class="kw">impl </span>PathList {
+<a href=#1202 id=1202 data-nosnippet>1202</a><span class="kw">impl </span>PathInfoList {
 <a href=#1203 id=1203 data-nosnippet>1203</a>    <span class="doccomment">/// Returns an iterator over the path infos.
 <a href=#1204 id=1204 data-nosnippet>1204</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>PathInfo&gt; {
 <a href=#1205 id=1205 data-nosnippet>1205</a>        <span class="self">self</span>.<span class="number">0</span>.iter()
