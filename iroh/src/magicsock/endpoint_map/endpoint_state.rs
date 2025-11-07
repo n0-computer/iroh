@@ -1165,32 +1165,21 @@ pub(crate) struct PathsWatchable {
 
 impl PathsWatchable {
     pub(crate) fn iter(&self) -> impl Iterator<Item = (PathId, PathInfo)> {
-        let selected = self.selected_path.get();
+        let selected_path = self.selected_path.get();
         self.open_paths
             .get()
             .into_iter()
-            .map(move |(addr, path_id)| {
-                (
-                    path_id,
-                    PathInfo {
-                        is_selected: Some(&addr) == selected.as_ref(),
-                        remote: addr,
-                    },
-                )
-            })
+            .map(move |(remote, path_id)| (path_id, PathInfo::new(remote, selected_path.as_ref())))
     }
 
     pub(crate) fn watch(&self) -> impl Watcher<Value = PathInfoList> {
-        let watcher = (self.open_paths.watch(), self.selected_path.watch());
-        watcher.map(move |(map, selected)| {
-            PathInfoList(
-                map.into_iter()
-                    .map(|(addr, _path_id)| PathInfo {
-                        is_selected: Some(&addr) == selected.as_ref(),
-                        remote: addr,
-                    })
-                    .collect(),
-            )
+        let joined_watcher = (self.open_paths.watch(), self.selected_path.watch());
+        joined_watcher.map(move |(open_paths, selected_path)| {
+            let list = open_paths
+                .into_iter()
+                .map(|(remote, _path_id)| PathInfo::new(remote, selected_path.as_ref()))
+                .collect();
+            PathInfoList(list)
         })
     }
 }
@@ -1239,6 +1228,13 @@ pub struct PathInfo {
 }
 
 impl PathInfo {
+    fn new(remote: TransportAddr, selected_path: Option<&TransportAddr>) -> Self {
+        Self {
+            is_selected: Some(&remote) == selected_path,
+            remote,
+        }
+    }
+
     /// The remote transport address used by this network path.
     pub fn remote_addr(&self) -> &TransportAddr {
         &self.remote

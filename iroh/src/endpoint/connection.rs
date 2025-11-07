@@ -1472,12 +1472,13 @@ impl Connection {
     ///
     /// Use [`Self::paths`] to get a list of paths and their addresses, and then pass
     /// the address to this function to get the round-trip latency and other stats for this path.
-    pub fn path_stats(&self, addr: &TransportAddr) -> Option<PathStats> {
-        let path_map = self.paths.open_paths.get();
-        let path_id = path_map
+    pub fn path_stats(&self, remote_addr: &TransportAddr) -> Option<PathStats> {
+        self.paths
+            .open_paths
+            .get()
             .iter()
-            .find_map(|(path_addr, path_id)| (path_addr == addr).then_some(*path_id))?;
-        self.inner.path_stats(path_id)
+            .find(|(addr, _)| addr == remote_addr)
+            .and_then(|(_, path_id)| self.inner.path_stats(*path_id))
     }
 
     /// Returns an iterator over the statistics for all networks path used by this connection.
