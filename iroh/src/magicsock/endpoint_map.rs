@@ -149,6 +149,11 @@ impl EndpointMap {
         self.endpoint_state_actor_inner(eid, |handle| handle.sender.clone())
     }
 
+    /// Returns the sender and selected path watchable for the [`EndpointStateActor`].
+    ///
+    /// If needed a new actor is started on demand.
+    ///
+    /// [`EndpointStateActor`]: endpoint_state::EndpointStateActor
     pub(super) fn endpoint_state_actor_with_selected_path(
         &self,
         eid: EndpointId,
@@ -161,6 +166,11 @@ impl EndpointMap {
         })
     }
 
+    /// Returns data from the handle to an [`EndpointStateActor`].
+    ///
+    /// If needed a new actor is started on demand.
+    ///
+    /// The callback gets a [`EndpointStateHandle`] and can clone out the data to be returned.
     fn endpoint_state_actor_inner<R>(
         &self,
         eid: EndpointId,

@@ -311,10 +311,7 @@ impl MagicSock {
         task::spawn(async move {
             sender.send(msg).await.ok();
         });
-        PathsWatchable {
-            open_paths,
-            selected_path,
-        }
+        PathsWatchable::new(open_paths, selected_path)
     }
 
     #[cfg(not(wasm_browser))]

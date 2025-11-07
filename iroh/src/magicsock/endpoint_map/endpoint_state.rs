@@ -77,7 +77,7 @@ type PathEvents = MergeUnbounded<
     >,
 >;
 
-/// Information about currently open paths.
+/// List of addrs and path ids for open paths in a connection.
 pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
 
 /// The state we need to know about a single remote endpoint.
@@ -1038,7 +1038,11 @@ pub(crate) enum EndpointStateMessage {
 /// Dropping this will stop the actor.
 #[derive(Debug)]
 pub(super) struct EndpointStateHandle {
+    /// Sender for the channel into the [`EndpointStateActor`].
     pub(super) sender: mpsc::Sender<EndpointStateMessage>,
+    /// Watchable for the selected transmission path.
+    ///
+    /// This should only be read or watched. It is set from within the actro.
     pub(super) selected_path: Watchable<Option<TransportAddr>>,
     _task: AbortOnDropHandle<()>,
 }
@@ -1157,19 +1161,42 @@ impl ConnectionState {
     }
 }
 
+/// Watchables for the open paths and selected transmission path in a connection.
+///
+/// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct PathsWatchable {
-    pub(crate) open_paths: Watchable<PathAddrList>,
-    pub(crate) selected_path: Watchable<Option<TransportAddr>>,
+    /// Watchable for the open paths (in this connection).
+    open_paths: Watchable<PathAddrList>,
+    /// Watchable for the selected transmission path (global for this remote endpoint).
+    selected_path: Watchable<Option<TransportAddr>>,
 }
 
 impl PathsWatchable {
+    pub(crate) fn new(
+        open_paths: Watchable<PathAddrList>,
+        selected_path: Watchable<Option<TransportAddr>>,
+    ) -> Self {
+        Self {
+            open_paths,
+            selected_path,
+        }
+    }
+
     pub(crate) fn iter(&self) -> impl Iterator<Item = (PathId, PathInfo)> {
         let selected_path = self.selected_path.get();
         self.open_paths
             .get()
             .into_iter()
             .map(move |(remote, path_id)| (path_id, PathInfo::new(remote, selected_path.as_ref())))
+    }
+
+    pub(crate) fn path_id(&self, remote_addr: &TransportAddr) -> Option<PathId> {
+        self.open_paths
+            .get()
+            .iter()
+            .find(|(addr, _)| addr == remote_addr)
+            .map(|(_, path_id)| *path_id)
     }
 
     pub(crate) fn watch(&self) -> impl Watcher<Value = PathInfoList> {

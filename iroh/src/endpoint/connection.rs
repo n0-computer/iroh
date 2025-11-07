@@ -1459,11 +1459,17 @@ impl Connection {
         self.inner.stable_id()
     }
 
-    /// Returns information about the network paths in use by this connection.
+    /// Returns a [`Watcher`] for the network paths of this connection.
     ///
     /// A connection can have several network paths to the remote endpoint, commonly there
-    /// will be a path via the relay server and a holepunched path.  This returns a watcher
-    /// over the paths in use by this connection.
+    /// will be a path via the relay server and a holepunched path.
+    ///
+    /// This returns a [`Watcher`] over [`PathInfoList`], which is a list of [`PathInfo`] for each
+    /// currently open path. The watcher is updated whenever a path is opened or closed,
+    /// or when the path selected for transmission changes (see [`PathInfo::is_selected`]).
+    ///
+    /// To get the latency (rount-trip time) or other stats for a path, use [`Self::path_stats`]
+    /// with [`PathInfo::remote_address`], or [`Self::path_stats_iter`].
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> {
         self.paths.watch()
     }
@@ -1474,14 +1480,11 @@ impl Connection {
     /// the address to this function to get the round-trip latency and other stats for this path.
     pub fn path_stats(&self, remote_addr: &TransportAddr) -> Option<PathStats> {
         self.paths
-            .open_paths
-            .get()
-            .iter()
-            .find(|(addr, _)| addr == remote_addr)
-            .and_then(|(_, path_id)| self.inner.path_stats(*path_id))
+            .path_id(remote_addr)
+            .and_then(|path_id| self.inner.path_stats(path_id))
     }
 
-    /// Returns an iterator over the statistics for all networks path used by this connection.
+    /// Returns an iterator over information and statistics for all open networks in this connection.
     pub fn path_stats_iter(&self) -> impl Iterator<Item = (PathInfo, PathStats)> {
         self.paths
             .iter()
