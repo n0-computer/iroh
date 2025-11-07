@@ -354,47 +354,44 @@ impl EndpointStateActor {
 
             // Store PathId(0), set path_status and select best path, check if holepunching
             // is needed.
-            if let Some(conn) = handle.upgrade() {
-                if let Some(path) = conn.path(PathId::ZERO) {
-                    if let Some(path_remote) = path
-                        .remote_address()
-                        .map_or(None, |remote| Some(MultipathMappedAddr::from(remote)))
-                        .and_then(|mmaddr| mmaddr.to_transport_addr(&self.relay_mapped_addrs))
-                    {
-                        trace!(?path_remote, "added new connection");
-                        let path_remote_is_ip = path_remote.is_ip();
-                        let status = match path_remote {
-                            transports::Addr::Ip(_) => PathStatus::Available,
-                            transports::Addr::Relay(_, _) => PathStatus::Backup,
-                        };
-                        path.set_status(status).ok();
-                        let conn_state =
-                            self.connections.get_mut(&conn_id).expect("inserted above");
-                        conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
-                        self.paths
-                            .entry(path_remote)
-                            .or_default()
-                            .sources
-                            .insert(Source::Connection, Instant::now());
-                        self.select_path();
+            if let Some(path) = conn.path(PathId::ZERO) {
+                if let Some(path_remote) = path
+                    .remote_address()
+                    .map_or(None, |remote| Some(MultipathMappedAddr::from(remote)))
+                    .and_then(|mmaddr| mmaddr.to_transport_addr(&self.relay_mapped_addrs))
+                {
+                    trace!(?path_remote, "added new connection");
+                    let path_remote_is_ip = path_remote.is_ip();
+                    let status = match path_remote {
+                        transports::Addr::Ip(_) => PathStatus::Available,
+                        transports::Addr::Relay(_, _) => PathStatus::Backup,
+                    };
+                    path.set_status(status).ok();
+                    let conn_state = self.connections.get_mut(&conn_id).expect("inserted above");
+                    conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
+                    self.paths
+                        .entry(path_remote)
+                        .or_default()
+                        .sources
+                        .insert(Source::Connection, Instant::now());
+                    self.select_path();
 
-                        if path_remote_is_ip {
-                            // We may have raced this with a relay address.  Try and add any
-                            // relay addresses we have back.
-                            let relays = self
-                                .paths
-                                .keys()
-                                .filter(|a| a.is_relay())
-                                .cloned()
-                                .collect::<Vec<_>>();
-                            for remote in relays {
-                                self.open_path(&remote);
-                            }
+                    if path_remote_is_ip {
+                        // We may have raced this with a relay address.  Try and add any
+                        // relay addresses we have back.
+                        let relays = self
+                            .paths
+                            .keys()
+                            .filter(|a| a.is_relay())
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        for remote in relays {
+                            self.open_path(&remote);
                         }
                     }
                 }
-                self.trigger_holepunching().await;
             }
+            self.trigger_holepunching().await;
         }
     }
 
