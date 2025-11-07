@@ -179,7 +179,6 @@ impl EndpointStateActor {
         let (tx, rx) = mpsc::channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
-        let selected_path = self.selected_path.clone();
 
         // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
         // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
@@ -201,7 +200,6 @@ impl EndpointStateActor {
         );
         EndpointStateHandle {
             sender: tx,
-            selected_path,
             _task: AbortOnDropHandle::new(task),
         }
     }
@@ -274,9 +272,8 @@ impl EndpointStateActor {
             EndpointStateMessage::SendDatagram(transmit) => {
                 self.handle_msg_send_datagram(transmit).await?;
             }
-            EndpointStateMessage::AddConnection(handle, paths_watchable) => {
-                self.handle_msg_add_connection(handle, paths_watchable)
-                    .await;
+            EndpointStateMessage::AddConnection(handle, tx) => {
+                self.handle_msg_add_connection(handle, tx).await;
             }
             EndpointStateMessage::AddEndpointAddr(addr, source) => {
                 self.handle_msg_add_endpoint_addr(addr, source);
@@ -334,8 +331,9 @@ impl EndpointStateActor {
     async fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        paths_watchable: Watchable<PathAddrList>,
+        tx: oneshot::Sender<PathsWatchable>,
     ) {
+        let pub_open_paths = Watchable::default();
         if let Some(conn) = handle.upgrade() {
             // Remove any conflicting stable_ids from the local state.
             let conn_id = ConnId(conn.stable_id());
@@ -351,7 +349,7 @@ impl EndpointStateActor {
                 .entry(conn_id)
                 .insert_entry(ConnectionState {
                     handle: handle.clone(),
-                    pub_open_paths: paths_watchable,
+                    pub_open_paths: pub_open_paths.clone(),
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
@@ -395,6 +393,11 @@ impl EndpointStateActor {
             }
             self.trigger_holepunching().await;
         }
+        tx.send(PathsWatchable {
+            open_paths: pub_open_paths,
+            selected_path: self.selected_path.clone(),
+        })
+        .ok();
     }
 
     /// Handles [`EndpointStateMessage::AddEndpointAddr`].
@@ -993,7 +996,7 @@ pub(crate) enum EndpointStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, Watchable<PathAddrList>),
+    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatchable>),
     /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
     AddEndpointAddr(EndpointAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
@@ -1023,10 +1026,6 @@ pub(crate) enum EndpointStateMessage {
 pub(super) struct EndpointStateHandle {
     /// Sender for the channel into the [`EndpointStateActor`].
     pub(super) sender: mpsc::Sender<EndpointStateMessage>,
-    /// Watchable for the selected transmission path.
-    ///
-    /// This should only be read or watched. It is set from within the actro.
-    pub(super) selected_path: Watchable<Option<transports::Addr>>,
     _task: AbortOnDropHandle<()>,
 }
 
@@ -1158,16 +1157,6 @@ pub(crate) struct PathsWatchable {
 }
 
 impl PathsWatchable {
-    pub(crate) fn new(
-        open_paths: Watchable<PathAddrList>,
-        selected_path: Watchable<Option<transports::Addr>>,
-    ) -> Self {
-        Self {
-            open_paths,
-            selected_path,
-        }
-    }
-
     pub(crate) fn watch(
         &self,
         conn_handle: WeakConnectionHandle,

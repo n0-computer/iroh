@@ -29,7 +29,7 @@ use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
-use n0_future::time::Duration;
+use n0_future::{boxed::BoxFuture, time::Duration};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use quinn::{
@@ -153,38 +153,20 @@ impl IntoFuture for Incoming {
     type IntoFuture = IncomingFuture;
 
     fn into_future(self) -> Self::IntoFuture {
-        IncomingFuture {
-            inner: self.inner.into_future(),
-            ep: self.ep,
-        }
+        IncomingFuture(Box::pin(establish(self.ep, self.inner.into_future())))
     }
 }
 
 /// Adaptor to let [`Incoming`] be `await`ed like a [`Connecting`].
-#[derive(Debug)]
-#[pin_project]
-pub struct IncomingFuture {
-    #[pin]
-    inner: quinn::IncomingFuture,
-    ep: Endpoint,
-}
+#[derive(derive_more::Debug)]
+#[debug("IncomingFuture")]
+pub struct IncomingFuture(EstablishFuture);
 
 impl Future for IncomingFuture {
     type Output = Result<Connection, ConnectingError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this.inner.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
-            Poll::Ready(Ok(inner)) => {
-                let conn = match conn_from_quinn_conn(inner, this.ep) {
-                    Ok(conn) => conn,
-                    Err(err) => return Poll::Ready(Err(err.into())),
-                };
-                Poll::Ready(Ok(conn))
-            }
-        }
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        self.0.poll_unpin(cx)
     }
 }
 /// Extracts the ALPN protocol from the peer's handshake data.
@@ -220,6 +202,30 @@ pub enum AuthenticationError {
         #[error(std_err)]
         source: ConnectionError,
     },
+    #[error("endpoint state actor stopped")]
+    EndpointStateActorStopped,
+}
+
+type EstablishFuture = n0_future::boxed::BoxFuture<Result<Connection, ConnectingError>>;
+
+async fn establish(
+    ep: Endpoint,
+    fut: impl Future<Output = Result<quinn::Connection, ConnectionError>>,
+) -> Result<Connection, ConnectingError> {
+    let conn = fut.await?;
+    let conn = conn_from_quinn_conn(conn, &ep).await?;
+    Ok(conn)
+}
+
+fn conn_from_quinn_conn_boxed(
+    conn: quinn::Connection,
+    ep: Endpoint,
+) -> BoxFuture<Result<Connection, ConnectingError>> {
+    Box::pin(async move {
+        conn_from_quinn_conn(conn, &ep)
+            .await
+            .map_err(ConnectingError::from)
+    })
 }
 
 /// Converts a `quinn::Connection` to a `Connection`.
@@ -228,7 +234,7 @@ pub enum AuthenticationError {
 ///
 /// Returns a [`AuthenticationError`] if the handshake data has
 /// not completed, or if no alpn was set by the remote node.
-fn conn_from_quinn_conn(
+async fn conn_from_quinn_conn(
     conn: quinn::Connection,
     ep: &Endpoint,
 ) -> Result<Connection, AuthenticationError> {
@@ -238,7 +244,11 @@ fn conn_from_quinn_conn(
     let remote_id = remote_id_from_quinn_conn(&conn)?;
     let alpn = alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
     // Register this connection with the magicsock.
-    let paths = ep.msock.register_connection(remote_id, &conn);
+    let paths = ep
+        .msock
+        .register_connection(remote_id, &conn)
+        .await
+        .map_err(|_| e!(AuthenticationError::EndpointStateActorStopped))?;
     Ok(Connection {
         remote_id,
         alpn,
@@ -297,6 +307,8 @@ fn remote_id_from_quinn_conn(
 pub struct Connecting {
     #[pin]
     inner: quinn::Connecting,
+    #[debug("{:?}", register_fut.as_ref().map(|_| "RegisterFuture"))]
+    register_fut: Option<BoxFuture<Result<Connection, ConnectingError>>>,
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
     remote_endpoint_id: EndpointId,
@@ -307,10 +319,10 @@ pub struct Connecting {
 
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
-#[pin_project]
 pub struct Accepting {
-    #[pin]
     inner: quinn::Connecting,
+    #[debug("{:?}", register_fut.as_ref().map(|_| "RegisterFuture"))]
+    register_fut: Option<BoxFuture<Result<Connection, ConnectingError>>>,
     ep: Endpoint,
 }
 
@@ -353,6 +365,7 @@ impl Connecting {
             inner,
             ep,
             remote_endpoint_id,
+            register_fut: None,
             _discovery_drop_guard,
         }
     }
@@ -415,6 +428,7 @@ impl Connecting {
             Err(inner) => Err(Self {
                 inner,
                 ep: self.ep,
+                register_fut: None,
                 remote_endpoint_id: self.remote_endpoint_id,
                 _discovery_drop_guard: self._discovery_drop_guard,
             }),
@@ -441,19 +455,16 @@ impl Future for Connecting {
     type Output = Result<Connection, ConnectingError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this.inner.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
-            Poll::Ready(Ok(inner)) => {
-                let conn = match conn_from_quinn_conn(inner, this.ep) {
-                    Ok(conn) => conn,
-                    Err(err) => {
-                        return Poll::Ready(Err(err.into()));
-                    }
-                };
-
-                Poll::Ready(Ok(conn))
+        let this = self.get_mut();
+        loop {
+            if let Some(fut) = &mut this.register_fut {
+                return fut.poll_unpin(cx);
+            }
+            match std::task::ready!(this.inner.poll_unpin(cx)) {
+                Err(err) => return Poll::Ready(Err(err.into())),
+                Ok(conn) => {
+                    this.register_fut = Some(conn_from_quinn_conn_boxed(conn, this.ep.clone()));
+                }
             }
         }
     }
@@ -461,7 +472,11 @@ impl Future for Connecting {
 
 impl Accepting {
     pub(crate) fn new(inner: quinn::Connecting, ep: Endpoint) -> Self {
-        Self { inner, ep }
+        Self {
+            inner,
+            ep,
+            register_fut: None,
+        }
     }
 
     /// Converts this [`Accepting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
@@ -521,17 +536,16 @@ impl Future for Accepting {
     type Output = Result<Connection, ConnectingError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this.inner.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
-            Poll::Ready(Ok(inner)) => {
-                let conn = match conn_from_quinn_conn(inner, this.ep) {
-                    Ok(conn) => conn,
-                    Err(err) => return Poll::Ready(Err(err.into())),
-                };
-
-                Poll::Ready(Ok(conn))
+        let this = self.get_mut();
+        loop {
+            if let Some(fut) = &mut this.register_fut {
+                return fut.poll_unpin(cx);
+            }
+            match std::task::ready!(this.inner.poll_unpin(cx)) {
+                Err(err) => return Poll::Ready(Err(err.into())),
+                Ok(conn) => {
+                    this.register_fut = Some(conn_from_quinn_conn_boxed(conn, this.ep.clone()));
+                }
             }
         }
     }
@@ -614,7 +628,7 @@ impl OutgoingZeroRttConnection {
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(self) -> Result<ZeroRttStatus, AuthenticationError> {
         let accepted = self.accepted.clone().await;
-        let conn = conn_from_quinn_conn(self.inner.clone(), &self.ep)?;
+        let conn = conn_from_quinn_conn(self.inner.clone(), &self.ep).await?;
 
         Ok(match accepted {
             true => ZeroRttStatus::Accepted(conn),
@@ -931,7 +945,7 @@ impl IncomingZeroRttConnection {
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(self) -> Result<Connection, AuthenticationError> {
         self.accepted.await;
-        conn_from_quinn_conn(self.inner, &self.ep)
+        conn_from_quinn_conn(self.inner, &self.ep).await
     }
 
     /// Initiates a new outgoing unidirectional stream.

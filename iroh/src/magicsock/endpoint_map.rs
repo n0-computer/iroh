@@ -5,17 +5,16 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
 use n0_future::task::{self, AbortOnDropHandle};
-use n0_watcher::Watchable;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{Instrument, error, info_span, trace, warn};
+use tracing::{Instrument, info_span, trace, warn};
 
 use super::{
     DirectAddr, DiscoState, MagicsockMetrics,
-    mapped_addrs::{AddrMap, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr},
+    mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
     transports::{self, OwnedTransmit, TransportsSender},
 };
 use crate::disco::{self};
@@ -26,9 +25,9 @@ mod endpoint_state;
 mod path_state;
 
 pub(super) use endpoint_state::EndpointStateMessage;
+pub(crate) use endpoint_state::PathsWatchable;
 pub use endpoint_state::{ConnectionType, PathInfo, PathInfoList};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
-pub(crate) use endpoint_state::{PathAddrList, PathsWatchable};
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
@@ -109,21 +108,6 @@ impl EndpointMap {
         self.endpoint_mapped_addrs.get(&eid)
     }
 
-    /// Converts a mapped address as we use them inside Quinn.
-    pub(crate) fn transport_addr_from_mapped(&self, mapped: SocketAddr) -> Option<TransportAddr> {
-        match MultipathMappedAddr::from(mapped) {
-            MultipathMappedAddr::Mixed(_) => None,
-            MultipathMappedAddr::Relay(addr) => match self.relay_mapped_addrs.lookup(&addr) {
-                Some((url, _)) => Some(TransportAddr::Relay(url)),
-                None => {
-                    error!("Unknown RelayMappedAddr");
-                    None
-                }
-            },
-            MultipathMappedAddr::Ip(addr) => Some(TransportAddr::Ip(addr)),
-        }
-    }
-
     /// Returns a [`n0_watcher::Direct`] for given endpoint's [`ConnectionType`].
     ///
     /// # Errors
@@ -146,39 +130,9 @@ impl EndpointMap {
         &self,
         eid: EndpointId,
     ) -> mpsc::Sender<EndpointStateMessage> {
-        self.endpoint_state_actor_inner(eid, |handle| handle.sender.clone())
-    }
-
-    /// Returns the sender and selected path watchable for the [`EndpointStateActor`].
-    ///
-    /// If needed a new actor is started on demand.
-    ///
-    /// [`EndpointStateActor`]: endpoint_state::EndpointStateActor
-    pub(super) fn endpoint_state_actor_with_selected_path(
-        &self,
-        eid: EndpointId,
-    ) -> (
-        mpsc::Sender<EndpointStateMessage>,
-        Watchable<Option<transports::Addr>>,
-    ) {
-        self.endpoint_state_actor_inner(eid, |handle| {
-            (handle.sender.clone(), handle.selected_path.clone())
-        })
-    }
-
-    /// Returns data from the handle to an [`EndpointStateActor`].
-    ///
-    /// If needed a new actor is started on demand.
-    ///
-    /// The callback gets a [`EndpointStateHandle`] and can clone out the data to be returned.
-    fn endpoint_state_actor_inner<R>(
-        &self,
-        eid: EndpointId,
-        f: impl FnOnce(&EndpointStateHandle) -> R,
-    ) -> R {
         let mut handles = self.actor_handles.lock().expect("poisoned");
         match handles.get(&eid) {
-            Some(handle) => f(handle),
+            Some(handle) => handle.sender.clone(),
             None => {
                 // Create a new EndpointStateActor and insert it into the endpoint map.
                 let sender = self.transports_handle.inbox.clone();
@@ -195,12 +149,12 @@ impl EndpointMap {
                     metrics,
                 );
                 let handle = actor.start();
-                let ret = f(&handle);
+                let sender = handle.sender.clone();
                 handles.insert(eid, handle);
 
                 // Ensure there is a EndpointMappedAddr for this EndpointId.
                 self.endpoint_mapped_addrs.get(&eid);
-                ret
+                sender
             }
         }
     }
