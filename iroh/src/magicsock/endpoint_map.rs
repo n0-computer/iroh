@@ -178,7 +178,7 @@ impl EndpointMap {
     ) -> R {
         let mut handles = self.actor_handles.lock().expect("poisoned");
         match handles.get(&eid) {
-            Some(handle) => f(&handle),
+            Some(handle) => f(handle),
             None => {
                 // Create a new EndpointStateActor and insert it into the endpoint map.
                 let sender = self.transports_handle.inbox.clone();

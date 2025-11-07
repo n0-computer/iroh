@@ -931,7 +931,7 @@ impl EndpointStateActor {
                 .min()
         });
         if let Some((rtt, addr)) = selected_path {
-            let prev = self.selected_path.set(Some(addr.clone().into()));
+            let prev = self.selected_path.set(Some(addr.clone()));
             if prev.is_ok() {
                 debug!(?addr, ?rtt, ?prev, "selected new path");
             }
