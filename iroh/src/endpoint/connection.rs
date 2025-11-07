@@ -41,7 +41,10 @@ use tracing::warn;
 use crate::{
     Endpoint,
     discovery::DiscoveryTask,
-    magicsock::{PathInfo, endpoint_map::PathsWatchable},
+    magicsock::{
+        PathInfo,
+        endpoint_map::{PathList, PathsWatchable},
+    },
 };
 
 /// Future produced by [`Endpoint::accept`].
@@ -1461,7 +1464,7 @@ impl Connection {
     /// A connection can have several network paths to the remote endpoint, commonly there
     /// will be a path via the relay server and a holepunched path.  This returns a watcher
     /// over the paths in use by this connection.
-    pub fn paths(&self) -> impl Watcher<Value = impl IntoIterator<Item = PathInfo>> {
+    pub fn paths(&self) -> impl Watcher<Value = PathList> {
         self.paths.watch()
     }
 
@@ -1475,6 +1478,14 @@ impl Connection {
             .iter()
             .find_map(|(path_addr, path_id)| (path_addr == addr).then_some(*path_id))?;
         self.inner.path_stats(path_id)
+    }
+
+    /// Returns an iterator over the statistics for all networks path used by this connection.
+    pub fn path_stats_iter(&self) -> impl Iterator<Item = (PathInfo, PathStats)> {
+        self.paths.iter().flat_map(|info| {
+            self.path_stats(info.remote_addr())
+                .map(|stats| (info, stats))
+        })
     }
 
     /// Derives keying material from this connection's TLS session secrets.

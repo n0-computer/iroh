@@ -26,7 +26,7 @@ use url::Url;
 
 pub use super::magicsock::{
     AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType, PathInfo,
-    endpoint_map::Source,
+    endpoint_map::{PathList, Source},
 };
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
@@ -1802,11 +1802,11 @@ mod tests {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.anyerr()?;
             send.write_all(b"hello").await.anyerr()?;
-            let mut paths = conn.paths_info().stream();
+            let mut paths = conn.paths().stream();
             info!("Waiting for direct connection");
             while let Some(infos) = paths.next().await {
                 info!(?infos, "new PathInfos");
-                if infos.keys().any(|addr| addr.is_ip()) {
+                if infos.iter().any(|info| info.is_ip()) {
                     break;
                 }
             }
@@ -1893,15 +1893,15 @@ mod tests {
 
             // We should be connected via IP, because it is faster than the relay server.
             // TODO: Maybe not panic if this is not true?
-            let path_info = conn.paths_info().get();
+            let path_info = conn.paths().get();
             assert_eq!(path_info.len(), 1);
-            assert!(path_info.keys().next().unwrap().is_ip());
+            assert!(path_info.iter().next().unwrap().is_ip());
 
-            let mut paths = conn.paths_info().stream();
+            let mut paths = conn.paths().stream();
             time::timeout(Duration::from_secs(5), async move {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
-                    if infos.keys().any(|a| a.is_relay()) {
+                    if infos.iter().any(|info| info.is_relay()) {
                         break;
                     }
                 }
@@ -1942,11 +1942,11 @@ mod tests {
             // Wait for a relay connection to be added.  Client does all the asserting here,
             // we just want to wait so we get to see all the mechanics of the connection
             // being added on this side too.
-            let mut paths = conn.paths_info().stream();
+            let mut paths = conn.paths().stream();
             time::timeout(Duration::from_secs(5), async move {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
-                    if infos.keys().any(|a| a.is_relay()) {
+                    if infos.iter().any(|path| path.is_relay()) {
                         break;
                     }
                 }

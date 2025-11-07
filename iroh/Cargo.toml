@@ -26,14 +26,7 @@ backon = { version = "1.4" }
 bytes = "1.7"
 crypto_box = { version = "0.10.0-pre.0", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
-derive_more = { version = "2.0.1", features = [
-    "debug",
-    "display",
-    "from",
-    "try_into",
-    "deref",
-    "from_str"
-] }
+derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_into", "deref", "from_str", "into_iterator"] }
 ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
 iroh-base = { version = "0.95.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }

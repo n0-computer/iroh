@@ -1163,16 +1163,60 @@ pub(crate) struct PathsWatchable {
 }
 
 impl PathsWatchable {
-    pub(crate) fn watch(&self) -> impl Watcher<Value = impl IntoIterator<Item = PathInfo>> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = PathInfo> {
+        let selected = self.selected_path.get();
+        self.open_paths
+            .get()
+            .into_iter()
+            .map(move |(addr, _path_id)| PathInfo {
+                is_selected: Some(&addr) == selected.as_ref(),
+                remote: addr,
+            })
+    }
+
+    pub(crate) fn watch(&self) -> impl Watcher<Value = PathList> {
         let watcher = (self.open_paths.watch(), self.selected_path.watch());
         watcher.map(move |(map, selected)| {
-            map.into_iter()
-                .map(|(addr, _path_id)| PathInfo {
-                    is_selected: Some(&addr) == selected.as_ref(),
-                    remote: addr,
-                })
-                .collect::<SmallVec<[_; 4]>>()
+            PathList(
+                map.into_iter()
+                    .map(|(addr, _path_id)| PathInfo {
+                        is_selected: Some(&addr) == selected.as_ref(),
+                        remote: addr,
+                    })
+                    .collect(),
+            )
         })
+    }
+}
+
+/// List of [`PathInfo`] for the network paths of a [`Connection`].
+///
+/// This struct implements [`IntoIterator`].
+///
+/// [`Connection`]: crate::endpoint::Connection
+#[derive(derive_more::Debug, derive_more::IntoIterator, Eq, PartialEq, Clone)]
+#[debug("{_0:?}")]
+pub struct PathList(SmallVec<[PathInfo; 4]>);
+
+impl PathList {
+    /// Returns an iterator over the path infos.
+    pub fn iter(&self) -> impl Iterator<Item = &PathInfo> {
+        self.0.iter()
+    }
+
+    /// Returns the [`PathInfo`] for a transport address.
+    pub fn get(&self, addr: &TransportAddr) -> Option<&PathInfo> {
+        self.0.iter().find(|info| info.remote_addr() == addr)
+    }
+
+    /// Returns `true` if the list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the number of paths.
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
@@ -1199,6 +1243,16 @@ impl PathInfo {
     /// [`Connection`]: crate::endpoint::Connection
     pub fn is_selected(&self) -> bool {
         self.is_selected
+    }
+
+    /// Whether this is an IP transport address.
+    pub fn is_ip(&self) -> bool {
+        self.remote.is_ip()
+    }
+
+    /// Whether this is a transport address via a relay server.
+    pub fn is_relay(&self) -> bool {
+        self.remote.is_relay()
     }
 }
 
