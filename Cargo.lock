@@ -2185,6 +2185,7 @@ dependencies = [
  "strum",
  "swarm-discovery",
  "time",
+ "tinyvec",
  "tokio",
  "tokio-stream",
  "tokio-util",
@@ -2739,8 +2740,7 @@ dependencies = [
 [[package]]
 name = "n0-watcher"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38acf13c1ddafc60eb7316d52213467f8ccb70b6f02b65e7d97f7799b1f50be4"
+source = "git+https://github.com/n0-computer/n0-watcher?branch=feat-get-ref#128b41ed530115eeb9a992cfd600248066a764b5"
 dependencies = [
  "derive_more 2.0.1",
  "n0-error",

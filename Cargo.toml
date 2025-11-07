@@ -43,11 +43,20 @@ unused-async = "warn"
 
 
 [patch.crates-io]
+n0-watcher = { git = "https://github.com/n0-computer/n0-watcher", branch = "feat-get-ref" }
+
 iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
 iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
 iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
 
 netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
+
+# iroh-quinn = { path = "../iroh-quinn/quinn" }
+# iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }
+# iroh-quinn-udp = { path = "../iroh-quinn/quinn-udp" }
+
+
+[patch."https://github.com/n0-computer/quinn"]
 
 # iroh-quinn = { path = "../iroh-quinn/quinn" }
 # iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }
