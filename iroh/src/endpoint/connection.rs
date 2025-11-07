@@ -1482,10 +1482,9 @@ impl Connection {
 
     /// Returns an iterator over the statistics for all networks path used by this connection.
     pub fn path_stats_iter(&self) -> impl Iterator<Item = (PathInfo, PathStats)> {
-        self.paths.iter().flat_map(|info| {
-            self.path_stats(info.remote_addr())
-                .map(|stats| (info, stats))
-        })
+        self.paths
+            .iter()
+            .flat_map(|(path_id, info)| self.inner.path_stats(path_id).map(|stats| (info, stats)))
     }
 
     /// Derives keying material from this connection's TLS session secrets.

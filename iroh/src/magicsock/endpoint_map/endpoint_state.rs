@@ -1164,14 +1164,19 @@ pub(crate) struct PathsWatchable {
 }
 
 impl PathsWatchable {
-    pub(crate) fn iter(&self) -> impl Iterator<Item = PathInfo> {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (PathId, PathInfo)> {
         let selected = self.selected_path.get();
         self.open_paths
             .get()
             .into_iter()
-            .map(move |(addr, _path_id)| PathInfo {
-                is_selected: Some(&addr) == selected.as_ref(),
-                remote: addr,
+            .map(move |(addr, path_id)| {
+                (
+                    path_id,
+                    PathInfo {
+                        is_selected: Some(&addr) == selected.as_ref(),
+                        remote: addr,
+                    },
+                )
             })
     }
 
