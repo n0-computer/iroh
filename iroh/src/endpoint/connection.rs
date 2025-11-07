@@ -27,24 +27,21 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
-use iroh_base::{EndpointId, TransportAddr};
+use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use quinn::{
-    AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, PathStats,
-    ReadDatagram, RetryError, SendDatagramError, ServerConfig, VarInt,
+    AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
+    RetryError, SendDatagramError, ServerConfig, VarInt,
 };
 use tracing::warn;
 
 use crate::{
     Endpoint,
     discovery::DiscoveryTask,
-    magicsock::{
-        PathInfo,
-        endpoint_map::{PathInfoList, PathsWatchable},
-    },
+    magicsock::endpoint_map::{PathInfoList, PathsWatchable},
 };
 
 /// Future produced by [`Endpoint::accept`].
@@ -1464,31 +1461,13 @@ impl Connection {
     /// A connection can have several network paths to the remote endpoint, commonly there
     /// will be a path via the relay server and a holepunched path.
     ///
-    /// This returns a [`Watcher`] over [`PathInfoList`], which is a list of [`PathInfo`] for each
-    /// currently open path. The watcher is updated whenever a path is opened or closed,
-    /// or when the path selected for transmission changes (see [`PathInfo::is_selected`]).
+    /// The watcher is updated whenever a path is opened or closed, or when the path selected
+    /// for transmission changes (see [`PathInfo::is_selected`]).
     ///
-    /// To get the latency (rount-trip time) or other stats for a path, use [`Self::path_stats`]
-    /// with [`PathInfo::remote_address`], or [`Self::path_stats_iter`].
+    /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
+    /// transmission path.
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> {
-        self.paths.watch()
-    }
-
-    /// Returns statistics about a network path used by this connection.
-    ///
-    /// Use [`Self::paths`] to get a list of paths and their addresses, and then pass
-    /// the address to this function to get the round-trip latency and other stats for this path.
-    pub fn path_stats(&self, remote_addr: &TransportAddr) -> Option<PathStats> {
-        self.paths
-            .path_id(remote_addr)
-            .and_then(|path_id| self.inner.path_stats(path_id))
-    }
-
-    /// Returns an iterator over information and statistics for all open networks in this connection.
-    pub fn path_stats_iter(&self) -> impl Iterator<Item = (PathInfo, PathStats)> {
-        self.paths
-            .iter()
-            .flat_map(|(path_id, info)| self.inner.path_stats(path_id).map(|stats| (info, stats)))
+        self.paths.watch(self.inner.weak_handle())
     }
 
     /// Derives keying material from this connection's TLS session secrets.
