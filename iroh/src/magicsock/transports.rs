@@ -3,7 +3,7 @@ use std::{
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -34,7 +34,8 @@ pub(crate) struct Transports {
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
 
-    poll_recv_counter: AtomicUsize,
+    poll_recv_counter: usize,
+    source_addrs: tinyvec::TinyVec<[Addr; 4]>, // cache for source addrs
 }
 
 #[cfg(not(wasm_browser))]
@@ -69,6 +70,7 @@ impl Transports {
             ip,
             relay,
             poll_recv_counter: Default::default(),
+            source_addrs: Default::default(),
         }
     }
 
@@ -84,11 +86,11 @@ impl Transports {
             return Poll::Pending;
         }
 
-        let mut source_addrs = vec![Addr::default(); metas.len()];
-        match self.inner_poll_recv(cx, bufs, metas, &mut source_addrs)? {
+        self.source_addrs.resize_with(metas.len(), Addr::default);
+        match self.inner_poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => Poll::Pending,
             Poll::Ready(n) => {
-                msock.process_datagrams(&mut bufs[..n], &mut metas[..n], &source_addrs[..n]);
+                msock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.source_addrs[..n]);
                 Poll::Ready(Ok(n))
             }
         }
@@ -100,13 +102,12 @@ impl Transports {
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
-        source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
         macro_rules! poll_transport {
             ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, source_addrs)? {
+                match $socket.poll_recv(cx, bufs, metas, &mut self.source_addrs)? {
                     Poll::Pending | Poll::Ready(0) => {}
                     Poll::Ready(n) => {
                         return Poll::Ready(Ok(n));
@@ -117,9 +118,7 @@ impl Transports {
 
         // To improve fairness, every other call reverses the ordering of polling.
 
-        let counter = self
-            .poll_recv_counter
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let counter = self.poll_recv_counter.wrapping_add(1);
 
         if counter % 2 == 0 {
             #[cfg(not(wasm_browser))]
