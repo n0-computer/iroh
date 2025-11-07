@@ -1224,10 +1224,7 @@ impl PathInfoList {
 
 /// Information about a network path used by a [`Connection`].
 ///
-/// To get further information, like the latency, use [`Connection::path_stats`].
-///
 /// [`Connection`]: crate::endpoint::Connection
-/// [`Connection::path_stats`]: crate::endpoint::Connection::path_stats
 #[derive(derive_more::Debug, Clone)]
 pub struct PathInfo {
     path_id: PathId,

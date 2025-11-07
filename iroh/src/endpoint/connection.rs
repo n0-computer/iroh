@@ -1466,6 +1466,9 @@ impl Connection {
     ///
     /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
     /// transmission path.
+    ///
+    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
+    /// [`PathInfo`]: crate::magicsock::PathInfo
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> {
         self.paths.watch(self.inner.weak_handle())
     }
