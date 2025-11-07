@@ -39,6 +39,7 @@ use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::ServerConfig;
+use quinn_proto::PathId;
 use rand::Rng;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -64,6 +65,7 @@ use crate::{
     disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
+    magicsock::endpoint_map::{PathAddrList, PathsWatchable},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -77,7 +79,7 @@ pub(crate) mod transports;
 use mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
 
 pub use self::{
-    endpoint_map::{ConnectionType, PathInfo, PathsInfo},
+    endpoint_map::{ConnectionType, PathInfo},
     metrics::Metrics,
 };
 
@@ -272,8 +274,19 @@ impl MagicSock {
         &self,
         remote: EndpointId,
         conn: &quinn::Connection,
-        paths_info: n0_watcher::Watchable<PathsInfo>,
-    ) {
+    ) -> PathsWatchable {
+        // Init the open paths watchable.
+        let mut open_paths: PathAddrList = Default::default();
+        if let Some(path0) = conn.path(PathId::ZERO) {
+            // This all is supposed to be infallible, but anyway.
+            if let Ok(remote) = path0.remote_address() {
+                if let Some(remote) = self.endpoint_map.transport_addr_from_mapped(remote) {
+                    open_paths.push((remote.clone(), PathId::ZERO));
+                }
+            }
+        }
+        let open_paths = n0_watcher::Watchable::new(open_paths);
+
         // TODO: Spawning tasks like this is obviously bad.  But it is solvable:
         //   - This is only called from inside Connection::new.
         //   - Connection::new is called from:
@@ -290,12 +303,15 @@ impl MagicSock {
         // send this.  Before the handshake has completed we don't have anything useful to
         // do with this connection inside of the EndpointStateActor anyway.
         let weak_handle = conn.weak_handle();
-        let endpoint_state = self.endpoint_map.endpoint_state_actor(remote);
-        let msg = EndpointStateMessage::AddConnection(weak_handle, paths_info);
+        let (sender, selected_path) = self
+            .endpoint_map
+            .endpoint_state_actor_with_selected_path(remote);
+        let msg = EndpointStateMessage::AddConnection(weak_handle, open_paths.clone());
 
         task::spawn(async move {
-            endpoint_state.send(msg).await.ok();
+            sender.send(msg).await.ok();
         });
+        PathsWatchable::new(open_paths, selected_path)
     }
 
     #[cfg(not(wasm_browser))]
@@ -1988,10 +2004,11 @@ mod tests {
         info!("stats: {:#?}", stats);
         // TODO: ensure panics in this function are reported ok
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for (id, path) in &stats.paths {
+            for info in conn.paths().get().iter() {
                 assert!(
-                    path.lost_packets < 10,
-                    "[receiver] path {id:?} should not loose many packets",
+                    info.stats().lost_packets < 10,
+                    "[receiver] path {:?} should not loose many packets",
+                    info.remote_addr()
                 );
             }
         }
@@ -2041,10 +2058,11 @@ mod tests {
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for (id, path) in &stats.paths {
+            for info in conn.paths().get() {
                 assert!(
-                    path.lost_packets < 10,
-                    "[sender] path {id:?} should not loose many packets",
+                    info.stats().lost_packets < 10,
+                    "[sender] path {:?} should not loose many packets",
+                    info.remote_addr()
                 );
             }
         }

@@ -18,7 +18,6 @@
 //! [module docs]: crate
 use std::{
     any::Any,
-    collections::HashMap,
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -31,19 +30,18 @@ use futures_util::{FutureExt, future::Shared};
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
 use n0_future::time::Duration;
-use n0_watcher::{Watchable, Watcher};
+use n0_watcher::Watcher;
 use pin_project::pin_project;
 use quinn::{
     AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
     RetryError, SendDatagramError, ServerConfig, VarInt,
 };
-use quinn_proto::PathId;
 use tracing::warn;
 
 use crate::{
     Endpoint,
     discovery::DiscoveryTask,
-    magicsock::{PathInfo, PathsInfo},
+    magicsock::endpoint_map::{PathInfoList, PathsWatchable},
 };
 
 /// Future produced by [`Endpoint::accept`].
@@ -239,36 +237,14 @@ fn conn_from_quinn_conn(
     }
     let remote_id = remote_id_from_quinn_conn(&conn)?;
     let alpn = alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
-    let paths_info_watchable = init_paths_info_watcher(&conn, ep);
-    let paths_info = paths_info_watchable.watch();
     // Register this connection with the magicsock.
-    ep.msock
-        .register_connection(remote_id, &conn, paths_info_watchable.clone());
+    let paths = ep.msock.register_connection(remote_id, &conn);
     Ok(Connection {
         remote_id,
         alpn,
         inner: conn,
-        paths_info,
+        paths,
     })
-}
-
-fn init_paths_info_watcher(conn: &quinn::Connection, ep: &Endpoint) -> Watchable<PathsInfo> {
-    let mut paths_info = HashMap::with_capacity(5);
-    if let Some(path0) = conn.path(PathId::ZERO) {
-        // This all is supposed to be infallible, but anyway.
-        if let Ok(remote) = path0.remote_address() {
-            if let Some(remote) = ep.msock.endpoint_map.transport_addr_from_mapped(remote) {
-                paths_info.insert(
-                    remote.clone(),
-                    PathInfo {
-                        remote,
-                        path_id: PathId::ZERO,
-                    },
-                );
-            }
-        }
-    }
-    n0_watcher::Watchable::new(paths_info)
 }
 
 /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -1245,7 +1221,7 @@ pub struct Connection {
     inner: quinn::Connection,
     remote_id: EndpointId,
     alpn: Vec<u8>,
-    paths_info: n0_watcher::Direct<PathsInfo>,
+    paths: PathsWatchable,
 }
 
 #[allow(missing_docs)]
@@ -1480,13 +1456,21 @@ impl Connection {
         self.inner.stable_id()
     }
 
-    /// Returns information about the network paths in use by this connection.
+    /// Returns a [`Watcher`] for the network paths of this connection.
     ///
     /// A connection can have several network paths to the remote endpoint, commonly there
-    /// will be a path via the relay server and a holepunched path.  This returns all the
-    /// paths in use by this connection.
-    pub fn paths_info(&self) -> impl Watcher<Value = PathsInfo> {
-        self.paths_info.clone()
+    /// will be a path via the relay server and a holepunched path.
+    ///
+    /// The watcher is updated whenever a path is opened or closed, or when the path selected
+    /// for transmission changes (see [`PathInfo::is_selected`]).
+    ///
+    /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
+    /// transmission path.
+    ///
+    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
+    /// [`PathInfo`]: crate::magicsock::PathInfo
+    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> {
+        self.paths.watch(self.inner.weak_handle())
     }
 
     /// Derives keying material from this connection's TLS session secrets.
