@@ -133,10 +133,9 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig
     config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
     config.initial_mtu(initial_mtu);
 
-    // TODO: re-enable when we upgrade quinn version
-    // let mut acks = quinn::AckFrequencyConfig::default();
-    // acks.ack_eliciting_threshold(10u32.into());
-    // config.ack_frequency_config(Some(acks));
+    let mut acks = quinn::AckFrequencyConfig::default();
+    acks.ack_eliciting_threshold(10u32.into());
+    config.ack_frequency_config(Some(acks));
 
     config
 }

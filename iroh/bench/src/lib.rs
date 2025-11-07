@@ -74,6 +74,8 @@ pub struct Opt {
     #[cfg(feature = "local-relay")]
     #[clap(long, default_value_t = false)]
     pub only_relay: bool,
+    #[clap(long, default_value_t = false)]
+    pub use_ipv6: bool,
 }
 
 pub enum EndpointSelector {
