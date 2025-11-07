@@ -7,6 +7,7 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_future::task::{self, AbortOnDropHandle};
+use n0_watcher::Watchable;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -25,8 +26,9 @@ mod endpoint_state;
 mod path_state;
 
 pub(super) use endpoint_state::EndpointStateMessage;
-pub use endpoint_state::{ConnectionType, PathInfo, PathsInfo};
+pub use endpoint_state::{ConnectionType, PathInfo};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
+pub(crate) use endpoint_state::{PathAddrMap, PathsWatchable};
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
@@ -144,9 +146,29 @@ impl EndpointMap {
         &self,
         eid: EndpointId,
     ) -> mpsc::Sender<EndpointStateMessage> {
+        self.endpoint_state_actor_inner(eid, |handle| handle.sender.clone())
+    }
+
+    pub(super) fn endpoint_state_actor_with_selected_path(
+        &self,
+        eid: EndpointId,
+    ) -> (
+        mpsc::Sender<EndpointStateMessage>,
+        Watchable<Option<TransportAddr>>,
+    ) {
+        self.endpoint_state_actor_inner(eid, |handle| {
+            (handle.sender.clone(), handle.selected_path.clone())
+        })
+    }
+
+    fn endpoint_state_actor_inner<R>(
+        &self,
+        eid: EndpointId,
+        f: impl FnOnce(&EndpointStateHandle) -> R,
+    ) -> R {
         let mut handles = self.actor_handles.lock().expect("poisoned");
         match handles.get(&eid) {
-            Some(handle) => handle.sender.clone(),
+            Some(handle) => f(&handle),
             None => {
                 // Create a new EndpointStateActor and insert it into the endpoint map.
                 let sender = self.transports_handle.inbox.clone();
@@ -163,12 +185,12 @@ impl EndpointMap {
                     metrics,
                 );
                 let handle = actor.start();
-                let sender = handle.sender.clone();
+                let ret = f(&handle);
                 handles.insert(eid, handle);
 
                 // Ensure there is a EndpointMappedAddr for this EndpointId.
                 self.endpoint_mapped_addrs.get(&eid);
-                sender
+                ret
             }
         }
     }

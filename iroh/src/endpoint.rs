@@ -25,7 +25,7 @@ use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 pub use super::magicsock::{
-    AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType, PathInfo, PathsInfo,
+    AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType, PathInfo,
     endpoint_map::Source,
 };
 #[cfg(wasm_browser)]
@@ -54,12 +54,12 @@ pub mod presets;
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
-    ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
-    SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
-    WeakConnectionHandle, WriteError,
+    PathStats, ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
+    RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId,
+    TransportConfig, VarInt, WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
-    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
+    FrameStats, TransportError, TransportErrorCode, UdpStats, Written,
     congestion::{Controller, ControllerFactory},
     crypto::{
         AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,

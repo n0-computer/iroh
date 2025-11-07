@@ -387,6 +387,13 @@ impl From<Addr> for TransportAddr {
 }
 
 impl Addr {
+    pub(crate) fn from_transport_addr(endpoint_id: EndpointId, addr: TransportAddr) -> Self {
+        match addr {
+            TransportAddr::Relay(relay_url) => Self::Relay(relay_url, endpoint_id),
+            TransportAddr::Ip(socket_addr) => Self::Ip(socket_addr),
+            _ => unreachable!(),
+        }
+    }
     pub(crate) fn is_relay(&self) -> bool {
         matches!(self, Self::Relay(..))
     }
