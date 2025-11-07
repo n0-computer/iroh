@@ -65,7 +65,7 @@ use crate::{
     disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
-    magicsock::endpoint_map::{PathAddrMap, PathsWatchable},
+    magicsock::endpoint_map::{PathAddrList, PathsWatchable},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -276,7 +276,7 @@ impl MagicSock {
         conn: &quinn::Connection,
     ) -> PathsWatchable {
         // Init the open paths watchable.
-        let mut open_paths: PathAddrMap = Default::default();
+        let mut open_paths: PathAddrList = Default::default();
         if let Some(path0) = conn.path(PathId::ZERO) {
             // This all is supposed to be infallible, but anyway.
             if let Ok(remote) = path0.remote_address() {

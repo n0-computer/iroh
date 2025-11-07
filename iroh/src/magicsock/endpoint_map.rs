@@ -28,7 +28,7 @@ mod path_state;
 pub(super) use endpoint_state::EndpointStateMessage;
 pub use endpoint_state::{ConnectionType, PathInfo, PathList};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
-pub(crate) use endpoint_state::{PathAddrMap, PathsWatchable};
+pub(crate) use endpoint_state::{PathAddrList, PathsWatchable};
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced

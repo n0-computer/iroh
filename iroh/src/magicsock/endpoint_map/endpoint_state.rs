@@ -78,7 +78,7 @@ type PathEvents = MergeUnbounded<
 >;
 
 /// Information about currently open paths.
-pub(crate) type PathAddrMap = SmallVec<[(TransportAddr, PathId); 4]>;
+pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
 
 /// The state we need to know about a single remote endpoint.
 ///
@@ -267,8 +267,9 @@ impl EndpointStateActor {
             EndpointStateMessage::SendDatagram(transmit) => {
                 self.handle_msg_send_datagram(transmit).await?;
             }
-            EndpointStateMessage::AddConnection(handle, paths_info) => {
-                self.handle_msg_add_connection(handle, paths_info).await;
+            EndpointStateMessage::AddConnection(handle, paths_watchable) => {
+                self.handle_msg_add_connection(handle, paths_watchable)
+                    .await;
             }
             EndpointStateMessage::AddEndpointAddr(addr, source) => {
                 self.handle_msg_add_endpoint_addr(addr, source);
@@ -327,7 +328,7 @@ impl EndpointStateActor {
     async fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        paths_info: Watchable<PathAddrMap>,
+        paths_watchable: Watchable<PathAddrList>,
     ) {
         if let Some(conn) = handle.upgrade() {
             // Remove any conflicting stable_ids from the local state.
@@ -345,7 +346,7 @@ impl EndpointStateActor {
                 conn_id,
                 ConnectionState {
                     handle: handle.clone(),
-                    pub_path_info: paths_info,
+                    pub_open_paths: paths_watchable,
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
@@ -1009,7 +1010,7 @@ pub(crate) enum EndpointStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, Watchable<PathAddrMap>),
+    AddConnection(WeakConnectionHandle, Watchable<PathAddrList>),
     /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
     AddEndpointAddr(EndpointAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
@@ -1095,7 +1096,7 @@ struct ConnectionState {
     /// Weak handle to the connection.
     handle: WeakConnectionHandle,
     /// The information we publish to users about the paths used in this connection.
-    pub_path_info: Watchable<PathAddrMap>,
+    pub_open_paths: Watchable<PathAddrList>,
     /// The paths that exist on this connection.
     ///
     /// This could be in any state, e.g. while still validating the path or already closed
@@ -1150,15 +1151,15 @@ impl ConnectionState {
                 let remote = TransportAddr::from(remote.clone());
                 (remote, *path_id)
             })
-            .collect::<PathAddrMap>();
+            .collect::<PathAddrList>();
 
-        self.pub_path_info.set(new).ok();
+        self.pub_open_paths.set(new).ok();
     }
 }
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct PathsWatchable {
-    pub(crate) open_paths: Watchable<PathAddrMap>,
+    pub(crate) open_paths: Watchable<PathAddrList>,
     pub(crate) selected_path: Watchable<Option<TransportAddr>>,
 }
 
