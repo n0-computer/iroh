@@ -1165,108 +1165,104 @@
 <a href=#1165 id=1165 data-nosnippet>1165</a>
 <a href=#1166 id=1166 data-nosnippet>1166</a><span class="kw">impl </span>PathsWatchable {
 <a href=#1167 id=1167 data-nosnippet>1167</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = (PathId, PathInfo)&gt; {
-<a href=#1168 id=1168 data-nosnippet>1168</a>        <span class="kw">let </span>selected = <span class="self">self</span>.selected_path.get();
+<a href=#1168 id=1168 data-nosnippet>1168</a>        <span class="kw">let </span>selected_path = <span class="self">self</span>.selected_path.get();
 <a href=#1169 id=1169 data-nosnippet>1169</a>        <span class="self">self</span>.open_paths
 <a href=#1170 id=1170 data-nosnippet>1170</a>            .get()
 <a href=#1171 id=1171 data-nosnippet>1171</a>            .into_iter()
-<a href=#1172 id=1172 data-nosnippet>1172</a>            .map(<span class="kw">move </span>|(addr, path_id)| {
-<a href=#1173 id=1173 data-nosnippet>1173</a>                (
-<a href=#1174 id=1174 data-nosnippet>1174</a>                    path_id,
-<a href=#1175 id=1175 data-nosnippet>1175</a>                    PathInfo {
-<a href=#1176 id=1176 data-nosnippet>1176</a>                        is_selected: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>addr) == selected.as_ref(),
-<a href=#1177 id=1177 data-nosnippet>1177</a>                        remote: addr,
-<a href=#1178 id=1178 data-nosnippet>1178</a>                    },
-<a href=#1179 id=1179 data-nosnippet>1179</a>                )
-<a href=#1180 id=1180 data-nosnippet>1180</a>            })
-<a href=#1181 id=1181 data-nosnippet>1181</a>    }
-<a href=#1182 id=1182 data-nosnippet>1182</a>
-<a href=#1183 id=1183 data-nosnippet>1183</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = PathInfoList&gt; {
-<a href=#1184 id=1184 data-nosnippet>1184</a>        <span class="kw">let </span>watcher = (<span class="self">self</span>.open_paths.watch(), <span class="self">self</span>.selected_path.watch());
-<a href=#1185 id=1185 data-nosnippet>1185</a>        watcher.map(<span class="kw">move </span>|(map, selected)| {
-<a href=#1186 id=1186 data-nosnippet>1186</a>            PathInfoList(
-<a href=#1187 id=1187 data-nosnippet>1187</a>                map.into_iter()
-<a href=#1188 id=1188 data-nosnippet>1188</a>                    .map(|(addr, _path_id)| PathInfo {
-<a href=#1189 id=1189 data-nosnippet>1189</a>                        is_selected: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>addr) == selected.as_ref(),
-<a href=#1190 id=1190 data-nosnippet>1190</a>                        remote: addr,
-<a href=#1191 id=1191 data-nosnippet>1191</a>                    })
-<a href=#1192 id=1192 data-nosnippet>1192</a>                    .collect(),
-<a href=#1193 id=1193 data-nosnippet>1193</a>            )
-<a href=#1194 id=1194 data-nosnippet>1194</a>        })
-<a href=#1195 id=1195 data-nosnippet>1195</a>    }
-<a href=#1196 id=1196 data-nosnippet>1196</a>}
-<a href=#1197 id=1197 data-nosnippet>1197</a>
-<a href=#1198 id=1198 data-nosnippet>1198</a><span class="doccomment">/// List of [`PathInfo`] for the network paths of a [`Connection`].
-<a href=#1199 id=1199 data-nosnippet>1199</a>///
-<a href=#1200 id=1200 data-nosnippet>1200</a>/// This struct implements [`IntoIterator`].
-<a href=#1201 id=1201 data-nosnippet>1201</a>///
-<a href=#1202 id=1202 data-nosnippet>1202</a>/// [`Connection`]: crate::endpoint::Connection
-<a href=#1203 id=1203 data-nosnippet>1203</a></span><span class="attr">#[derive(derive_more::Debug, derive_more::IntoIterator, Eq, PartialEq, Clone)]
-<a href=#1204 id=1204 data-nosnippet>1204</a>#[debug(<span class="string">"{_0:?}"</span>)]
-<a href=#1205 id=1205 data-nosnippet>1205</a></span><span class="kw">pub struct </span>PathInfoList(SmallVec&lt;[PathInfo; <span class="number">4</span>]&gt;);
+<a href=#1172 id=1172 data-nosnippet>1172</a>            .map(<span class="kw">move </span>|(remote, path_id)| (path_id, PathInfo::new(remote, selected_path.as_ref())))
+<a href=#1173 id=1173 data-nosnippet>1173</a>    }
+<a href=#1174 id=1174 data-nosnippet>1174</a>
+<a href=#1175 id=1175 data-nosnippet>1175</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = PathInfoList&gt; {
+<a href=#1176 id=1176 data-nosnippet>1176</a>        <span class="kw">let </span>joined_watcher = (<span class="self">self</span>.open_paths.watch(), <span class="self">self</span>.selected_path.watch());
+<a href=#1177 id=1177 data-nosnippet>1177</a>        joined_watcher.map(<span class="kw">move </span>|(open_paths, selected_path)| {
+<a href=#1178 id=1178 data-nosnippet>1178</a>            <span class="kw">let </span>list = open_paths
+<a href=#1179 id=1179 data-nosnippet>1179</a>                .into_iter()
+<a href=#1180 id=1180 data-nosnippet>1180</a>                .map(|(remote, _path_id)| PathInfo::new(remote, selected_path.as_ref()))
+<a href=#1181 id=1181 data-nosnippet>1181</a>                .collect();
+<a href=#1182 id=1182 data-nosnippet>1182</a>            PathInfoList(list)
+<a href=#1183 id=1183 data-nosnippet>1183</a>        })
+<a href=#1184 id=1184 data-nosnippet>1184</a>    }
+<a href=#1185 id=1185 data-nosnippet>1185</a>}
+<a href=#1186 id=1186 data-nosnippet>1186</a>
+<a href=#1187 id=1187 data-nosnippet>1187</a><span class="doccomment">/// List of [`PathInfo`] for the network paths of a [`Connection`].
+<a href=#1188 id=1188 data-nosnippet>1188</a>///
+<a href=#1189 id=1189 data-nosnippet>1189</a>/// This struct implements [`IntoIterator`].
+<a href=#1190 id=1190 data-nosnippet>1190</a>///
+<a href=#1191 id=1191 data-nosnippet>1191</a>/// [`Connection`]: crate::endpoint::Connection
+<a href=#1192 id=1192 data-nosnippet>1192</a></span><span class="attr">#[derive(derive_more::Debug, derive_more::IntoIterator, Eq, PartialEq, Clone)]
+<a href=#1193 id=1193 data-nosnippet>1193</a>#[debug(<span class="string">"{_0:?}"</span>)]
+<a href=#1194 id=1194 data-nosnippet>1194</a></span><span class="kw">pub struct </span>PathInfoList(SmallVec&lt;[PathInfo; <span class="number">4</span>]&gt;);
+<a href=#1195 id=1195 data-nosnippet>1195</a>
+<a href=#1196 id=1196 data-nosnippet>1196</a><span class="kw">impl </span>PathInfoList {
+<a href=#1197 id=1197 data-nosnippet>1197</a>    <span class="doccomment">/// Returns an iterator over the path infos.
+<a href=#1198 id=1198 data-nosnippet>1198</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>PathInfo&gt; {
+<a href=#1199 id=1199 data-nosnippet>1199</a>        <span class="self">self</span>.<span class="number">0</span>.iter()
+<a href=#1200 id=1200 data-nosnippet>1200</a>    }
+<a href=#1201 id=1201 data-nosnippet>1201</a>
+<a href=#1202 id=1202 data-nosnippet>1202</a>    <span class="doccomment">/// Returns the [`PathInfo`] for a transport address.
+<a href=#1203 id=1203 data-nosnippet>1203</a>    </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>TransportAddr) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PathInfo&gt; {
+<a href=#1204 id=1204 data-nosnippet>1204</a>        <span class="self">self</span>.<span class="number">0</span>.iter().find(|info| info.remote_addr() == addr)
+<a href=#1205 id=1205 data-nosnippet>1205</a>    }
 <a href=#1206 id=1206 data-nosnippet>1206</a>
-<a href=#1207 id=1207 data-nosnippet>1207</a><span class="kw">impl </span>PathInfoList {
-<a href=#1208 id=1208 data-nosnippet>1208</a>    <span class="doccomment">/// Returns an iterator over the path infos.
-<a href=#1209 id=1209 data-nosnippet>1209</a>    </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>PathInfo&gt; {
-<a href=#1210 id=1210 data-nosnippet>1210</a>        <span class="self">self</span>.<span class="number">0</span>.iter()
-<a href=#1211 id=1211 data-nosnippet>1211</a>    }
-<a href=#1212 id=1212 data-nosnippet>1212</a>
-<a href=#1213 id=1213 data-nosnippet>1213</a>    <span class="doccomment">/// Returns the [`PathInfo`] for a transport address.
-<a href=#1214 id=1214 data-nosnippet>1214</a>    </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>TransportAddr) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>PathInfo&gt; {
-<a href=#1215 id=1215 data-nosnippet>1215</a>        <span class="self">self</span>.<span class="number">0</span>.iter().find(|info| info.remote_addr() == addr)
-<a href=#1216 id=1216 data-nosnippet>1216</a>    }
+<a href=#1207 id=1207 data-nosnippet>1207</a>    <span class="doccomment">/// Returns `true` if the list is empty.
+<a href=#1208 id=1208 data-nosnippet>1208</a>    </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#1209 id=1209 data-nosnippet>1209</a>        <span class="self">self</span>.<span class="number">0</span>.is_empty()
+<a href=#1210 id=1210 data-nosnippet>1210</a>    }
+<a href=#1211 id=1211 data-nosnippet>1211</a>
+<a href=#1212 id=1212 data-nosnippet>1212</a>    <span class="doccomment">/// Returns the number of paths.
+<a href=#1213 id=1213 data-nosnippet>1213</a>    </span><span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#1214 id=1214 data-nosnippet>1214</a>        <span class="self">self</span>.<span class="number">0</span>.len()
+<a href=#1215 id=1215 data-nosnippet>1215</a>    }
+<a href=#1216 id=1216 data-nosnippet>1216</a>}
 <a href=#1217 id=1217 data-nosnippet>1217</a>
-<a href=#1218 id=1218 data-nosnippet>1218</a>    <span class="doccomment">/// Returns `true` if the list is empty.
-<a href=#1219 id=1219 data-nosnippet>1219</a>    </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#1220 id=1220 data-nosnippet>1220</a>        <span class="self">self</span>.<span class="number">0</span>.is_empty()
-<a href=#1221 id=1221 data-nosnippet>1221</a>    }
-<a href=#1222 id=1222 data-nosnippet>1222</a>
-<a href=#1223 id=1223 data-nosnippet>1223</a>    <span class="doccomment">/// Returns the number of paths.
-<a href=#1224 id=1224 data-nosnippet>1224</a>    </span><span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#1225 id=1225 data-nosnippet>1225</a>        <span class="self">self</span>.<span class="number">0</span>.len()
-<a href=#1226 id=1226 data-nosnippet>1226</a>    }
-<a href=#1227 id=1227 data-nosnippet>1227</a>}
-<a href=#1228 id=1228 data-nosnippet>1228</a>
-<a href=#1229 id=1229 data-nosnippet>1229</a><span class="doccomment">/// Information about a network path used by a [`Connection`].
-<a href=#1230 id=1230 data-nosnippet>1230</a>///
-<a href=#1231 id=1231 data-nosnippet>1231</a>/// To get further information, like the latency, use [`Connection::path_stats`].
-<a href=#1232 id=1232 data-nosnippet>1232</a>///
-<a href=#1233 id=1233 data-nosnippet>1233</a>/// [`Connection`]: crate::endpoint::Connection
-<a href=#1234 id=1234 data-nosnippet>1234</a>/// [`Connection::path_stats`]: crate::endpoint::Connection::path_stats
-<a href=#1235 id=1235 data-nosnippet>1235</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-<a href=#1236 id=1236 data-nosnippet>1236</a></span><span class="kw">pub struct </span>PathInfo {
-<a href=#1237 id=1237 data-nosnippet>1237</a>    remote: TransportAddr,
-<a href=#1238 id=1238 data-nosnippet>1238</a>    is_selected: bool,
-<a href=#1239 id=1239 data-nosnippet>1239</a>}
-<a href=#1240 id=1240 data-nosnippet>1240</a>
-<a href=#1241 id=1241 data-nosnippet>1241</a><span class="kw">impl </span>PathInfo {
-<a href=#1242 id=1242 data-nosnippet>1242</a>    <span class="doccomment">/// The remote transport address used by this network path.
-<a href=#1243 id=1243 data-nosnippet>1243</a>    </span><span class="kw">pub fn </span>remote_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>TransportAddr {
-<a href=#1244 id=1244 data-nosnippet>1244</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.remote
-<a href=#1245 id=1245 data-nosnippet>1245</a>    }
-<a href=#1246 id=1246 data-nosnippet>1246</a>
-<a href=#1247 id=1247 data-nosnippet>1247</a>    <span class="doccomment">/// Returns `true` if this path is currently the main transmission path for this [`Connection`].
-<a href=#1248 id=1248 data-nosnippet>1248</a>    ///
-<a href=#1249 id=1249 data-nosnippet>1249</a>    /// [`Connection`]: crate::endpoint::Connection
-<a href=#1250 id=1250 data-nosnippet>1250</a>    </span><span class="kw">pub fn </span>is_selected(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#1251 id=1251 data-nosnippet>1251</a>        <span class="self">self</span>.is_selected
-<a href=#1252 id=1252 data-nosnippet>1252</a>    }
-<a href=#1253 id=1253 data-nosnippet>1253</a>
-<a href=#1254 id=1254 data-nosnippet>1254</a>    <span class="doccomment">/// Whether this is an IP transport address.
-<a href=#1255 id=1255 data-nosnippet>1255</a>    </span><span class="kw">pub fn </span>is_ip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#1256 id=1256 data-nosnippet>1256</a>        <span class="self">self</span>.remote.is_ip()
-<a href=#1257 id=1257 data-nosnippet>1257</a>    }
-<a href=#1258 id=1258 data-nosnippet>1258</a>
-<a href=#1259 id=1259 data-nosnippet>1259</a>    <span class="doccomment">/// Whether this is a transport address via a relay server.
-<a href=#1260 id=1260 data-nosnippet>1260</a>    </span><span class="kw">pub fn </span>is_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#1261 id=1261 data-nosnippet>1261</a>        <span class="self">self</span>.remote.is_relay()
-<a href=#1262 id=1262 data-nosnippet>1262</a>    }
-<a href=#1263 id=1263 data-nosnippet>1263</a>}
-<a href=#1264 id=1264 data-nosnippet>1264</a>
-<a href=#1265 id=1265 data-nosnippet>1265</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
-<a href=#1266 id=1266 data-nosnippet>1266</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
-<a href=#1267 id=1267 data-nosnippet>1267</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
-<a href=#1268 id=1268 data-nosnippet>1268</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
-<a href=#1269 id=1269 data-nosnippet>1269</a>        std::task::Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
-<a href=#1270 id=1270 data-nosnippet>1270</a>        std::task::Poll::Pending =&gt; <span class="prelude-val">None</span>,
-<a href=#1271 id=1271 data-nosnippet>1271</a>    }
-<a href=#1272 id=1272 data-nosnippet>1272</a>}</code></pre></div></section></main></body></html>
+<a href=#1218 id=1218 data-nosnippet>1218</a><span class="doccomment">/// Information about a network path used by a [`Connection`].
+<a href=#1219 id=1219 data-nosnippet>1219</a>///
+<a href=#1220 id=1220 data-nosnippet>1220</a>/// To get further information, like the latency, use [`Connection::path_stats`].
+<a href=#1221 id=1221 data-nosnippet>1221</a>///
+<a href=#1222 id=1222 data-nosnippet>1222</a>/// [`Connection`]: crate::endpoint::Connection
+<a href=#1223 id=1223 data-nosnippet>1223</a>/// [`Connection::path_stats`]: crate::endpoint::Connection::path_stats
+<a href=#1224 id=1224 data-nosnippet>1224</a></span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
+<a href=#1225 id=1225 data-nosnippet>1225</a></span><span class="kw">pub struct </span>PathInfo {
+<a href=#1226 id=1226 data-nosnippet>1226</a>    remote: TransportAddr,
+<a href=#1227 id=1227 data-nosnippet>1227</a>    is_selected: bool,
+<a href=#1228 id=1228 data-nosnippet>1228</a>}
+<a href=#1229 id=1229 data-nosnippet>1229</a>
+<a href=#1230 id=1230 data-nosnippet>1230</a><span class="kw">impl </span>PathInfo {
+<a href=#1231 id=1231 data-nosnippet>1231</a>    <span class="kw">fn </span>new(remote: TransportAddr, selected_path: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>TransportAddr&gt;) -&gt; <span class="self">Self </span>{
+<a href=#1232 id=1232 data-nosnippet>1232</a>        <span class="self">Self </span>{
+<a href=#1233 id=1233 data-nosnippet>1233</a>            is_selected: <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>remote) == selected_path,
+<a href=#1234 id=1234 data-nosnippet>1234</a>            remote,
+<a href=#1235 id=1235 data-nosnippet>1235</a>        }
+<a href=#1236 id=1236 data-nosnippet>1236</a>    }
+<a href=#1237 id=1237 data-nosnippet>1237</a>
+<a href=#1238 id=1238 data-nosnippet>1238</a>    <span class="doccomment">/// The remote transport address used by this network path.
+<a href=#1239 id=1239 data-nosnippet>1239</a>    </span><span class="kw">pub fn </span>remote_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>TransportAddr {
+<a href=#1240 id=1240 data-nosnippet>1240</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.remote
+<a href=#1241 id=1241 data-nosnippet>1241</a>    }
+<a href=#1242 id=1242 data-nosnippet>1242</a>
+<a href=#1243 id=1243 data-nosnippet>1243</a>    <span class="doccomment">/// Returns `true` if this path is currently the main transmission path for this [`Connection`].
+<a href=#1244 id=1244 data-nosnippet>1244</a>    ///
+<a href=#1245 id=1245 data-nosnippet>1245</a>    /// [`Connection`]: crate::endpoint::Connection
+<a href=#1246 id=1246 data-nosnippet>1246</a>    </span><span class="kw">pub fn </span>is_selected(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#1247 id=1247 data-nosnippet>1247</a>        <span class="self">self</span>.is_selected
+<a href=#1248 id=1248 data-nosnippet>1248</a>    }
+<a href=#1249 id=1249 data-nosnippet>1249</a>
+<a href=#1250 id=1250 data-nosnippet>1250</a>    <span class="doccomment">/// Whether this is an IP transport address.
+<a href=#1251 id=1251 data-nosnippet>1251</a>    </span><span class="kw">pub fn </span>is_ip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#1252 id=1252 data-nosnippet>1252</a>        <span class="self">self</span>.remote.is_ip()
+<a href=#1253 id=1253 data-nosnippet>1253</a>    }
+<a href=#1254 id=1254 data-nosnippet>1254</a>
+<a href=#1255 id=1255 data-nosnippet>1255</a>    <span class="doccomment">/// Whether this is a transport address via a relay server.
+<a href=#1256 id=1256 data-nosnippet>1256</a>    </span><span class="kw">pub fn </span>is_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#1257 id=1257 data-nosnippet>1257</a>        <span class="self">self</span>.remote.is_relay()
+<a href=#1258 id=1258 data-nosnippet>1258</a>    }
+<a href=#1259 id=1259 data-nosnippet>1259</a>}
+<a href=#1260 id=1260 data-nosnippet>1260</a>
+<a href=#1261 id=1261 data-nosnippet>1261</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
+<a href=#1262 id=1262 data-nosnippet>1262</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+<a href=#1263 id=1263 data-nosnippet>1263</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
+<a href=#1264 id=1264 data-nosnippet>1264</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
+<a href=#1265 id=1265 data-nosnippet>1265</a>        std::task::Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
+<a href=#1266 id=1266 data-nosnippet>1266</a>        std::task::Poll::Pending =&gt; <span class="prelude-val">None</span>,
+<a href=#1267 id=1267 data-nosnippet>1267</a>    }
+<a href=#1268 id=1268 data-nosnippet>1268</a>}</code></pre></div></section></main></body></html>
