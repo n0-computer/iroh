@@ -230,10 +230,10 @@ fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, Authentic
         return Err(e!(AuthenticationError::ConnectionError { source: reason }));
     }
     Ok(Connection {
-        info: Some((
-            remote_id_from_quinn_conn(&conn)?,
-            alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?,
-        )),
+        info: ConnectionStateData::HandshakeCompleted {
+            endpoint_id: remote_id_from_quinn_conn(&conn)?,
+            alpn: alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?,
+        },
         inner: conn,
         _p: std::marker::PhantomData,
     })
@@ -388,6 +388,11 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<OutgoingZeroRttConnection, Connecting> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
+                let accepted = ZeroRttAccepted {
+                    inner: zrtt_accepted,
+                    _discovery_drop_guard: self._discovery_drop_guard,
+                }
+                .shared();
                 // This call is why `self.remote_endpoint_id` was introduced.
                 // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
                 // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
@@ -397,15 +402,13 @@ impl Connecting {
                 try_send_rtt_msg(&inner, &self.ep, self.remote_endpoint_id);
                 Ok(OutgoingZeroRttConnection {
                     inner: Connection {
-                        info: None,
+                        info: ConnectionStateData::OutgoingZeroRtt {
+                            accepted: accepted.clone(),
+                        },
                         inner,
                         _p: std::marker::PhantomData,
                     },
-                    accepted: ZeroRttAccepted {
-                        inner: zrtt_accepted,
-                        _discovery_drop_guard: self._discovery_drop_guard,
-                    }
-                    .shared(),
+                    accepted,
                 })
             }
             Err(inner) => Err(Self {
@@ -493,13 +496,15 @@ impl Accepting {
             .inner
             .into_0rtt()
             .expect("incoming connections can always be converted to 0-RTT");
+        let accepted = ZeroRttAccepted {
+            inner: accepted,
+            _discovery_drop_guard: None,
+        }
+        .shared();
         IncomingZeroRttConnection {
-            accepted: ZeroRttAccepted {
-                inner: accepted,
-                _discovery_drop_guard: None,
-            },
+            accepted: accepted.clone(),
             inner: Connection {
-                info: None,
+                info: ConnectionStateData::IncomingZeroRtt { accepted },
                 inner,
                 _p: std::marker::PhantomData,
             },
@@ -649,7 +654,7 @@ impl OutgoingZeroRttConnection {
 #[derive(Debug)]
 pub struct IncomingZeroRttConnection {
     inner: Connection<IncomingZeroRtt>,
-    accepted: ZeroRttAccepted,
+    accepted: Shared<ZeroRttAccepted>,
 }
 
 impl IncomingZeroRttConnection {
@@ -692,10 +697,23 @@ impl IncomingZeroRttConnection {
 #[derive(derive_more::Debug, Clone)]
 pub struct Connection<State: ConnectionState = HandshakeCompleted> {
     inner: quinn::Connection,
-    /// Remote endpoint id and alpn, cached for performance.
-    /// This will always be `Some` for `HandshakeCompleted` connections.
-    info: Option<(EndpointId, Vec<u8>)>,
+    /// State-specific information
+    info: ConnectionStateData,
     _p: std::marker::PhantomData<State>,
+}
+
+#[derive(Debug, Clone)]
+enum ConnectionStateData {
+    HandshakeCompleted {
+        endpoint_id: EndpointId,
+        alpn: Vec<u8>,
+    },
+    IncomingZeroRtt {
+        accepted: Shared<ZeroRttAccepted>,
+    },
+    OutgoingZeroRtt {
+        accepted: Shared<ZeroRttAccepted>,
+    },
 }
 
 pub trait ConnectionState {}
@@ -978,7 +996,10 @@ impl<T: ConnectionState> Connection<T> {
 impl Connection<HandshakeCompleted> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> &[u8] {
-        &self.info.as_ref().expect("handshake not complete").1
+        let ConnectionStateData::HandshakeCompleted { alpn, .. } = &self.info else {
+            unreachable!("handshake not complete");
+        };
+        &alpn
     }
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -990,7 +1011,10 @@ impl Connection<HandshakeCompleted> {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> EndpointId {
-        self.info.as_ref().expect("handshake not complete").0
+        let ConnectionStateData::HandshakeCompleted { endpoint_id, .. } = &self.info else {
+            unreachable!("handshake not complete");
+        };
+        *endpoint_id
     }
 }
 
