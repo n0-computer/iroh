@@ -26,7 +26,7 @@
 <a href=#26 id=26 data-nosnippet>26</a>
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub use </span><span class="kw">super</span>::magicsock::{
 <a href=#28 id=28 data-nosnippet>28</a>    AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType, PathInfo,
-<a href=#29 id=29 data-nosnippet>29</a>    endpoint_map::Source,
+<a href=#29 id=29 data-nosnippet>29</a>    endpoint_map::{PathList, Source},
 <a href=#30 id=30 data-nosnippet>30</a>};
 <a href=#31 id=31 data-nosnippet>31</a><span class="attr">#[cfg(wasm_browser)]
 <a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::PkarrResolver;
@@ -1802,11 +1802,11 @@
 <a href=#1802 id=1802 data-nosnippet>1802</a>            <span class="kw">let </span>conn = ep.connect(dst, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1803 id=1803 data-nosnippet>1803</a>            <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
 <a href=#1804 id=1804 data-nosnippet>1804</a>            send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#1805 id=1805 data-nosnippet>1805</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = conn.paths_info().stream();
+<a href=#1805 id=1805 data-nosnippet>1805</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = conn.paths().stream();
 <a href=#1806 id=1806 data-nosnippet>1806</a>            <span class="macro">info!</span>(<span class="string">"Waiting for direct connection"</span>);
 <a href=#1807 id=1807 data-nosnippet>1807</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(infos) = paths.next().<span class="kw">await </span>{
 <a href=#1808 id=1808 data-nosnippet>1808</a>                <span class="macro">info!</span>(<span class="question-mark">?</span>infos, <span class="string">"new PathInfos"</span>);
-<a href=#1809 id=1809 data-nosnippet>1809</a>                <span class="kw">if </span>infos.keys().any(|addr| addr.is_ip()) {
+<a href=#1809 id=1809 data-nosnippet>1809</a>                <span class="kw">if </span>infos.iter().any(|info| info.is_ip()) {
 <a href=#1810 id=1810 data-nosnippet>1810</a>                    <span class="kw">break</span>;
 <a href=#1811 id=1811 data-nosnippet>1811</a>                }
 <a href=#1812 id=1812 data-nosnippet>1812</a>            }
@@ -1893,15 +1893,15 @@
 <a href=#1893 id=1893 data-nosnippet>1893</a>
 <a href=#1894 id=1894 data-nosnippet>1894</a>            <span class="comment">// We should be connected via IP, because it is faster than the relay server.
 <a href=#1895 id=1895 data-nosnippet>1895</a>            // TODO: Maybe not panic if this is not true?
-<a href=#1896 id=1896 data-nosnippet>1896</a>            </span><span class="kw">let </span>path_info = conn.paths_info().get();
+<a href=#1896 id=1896 data-nosnippet>1896</a>            </span><span class="kw">let </span>path_info = conn.paths().get();
 <a href=#1897 id=1897 data-nosnippet>1897</a>            <span class="macro">assert_eq!</span>(path_info.len(), <span class="number">1</span>);
-<a href=#1898 id=1898 data-nosnippet>1898</a>            <span class="macro">assert!</span>(path_info.keys().next().unwrap().is_ip());
+<a href=#1898 id=1898 data-nosnippet>1898</a>            <span class="macro">assert!</span>(path_info.iter().next().unwrap().is_ip());
 <a href=#1899 id=1899 data-nosnippet>1899</a>
-<a href=#1900 id=1900 data-nosnippet>1900</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = conn.paths_info().stream();
+<a href=#1900 id=1900 data-nosnippet>1900</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = conn.paths().stream();
 <a href=#1901 id=1901 data-nosnippet>1901</a>            time::timeout(Duration::from_secs(<span class="number">5</span>), <span class="kw">async move </span>{
 <a href=#1902 id=1902 data-nosnippet>1902</a>                <span class="kw">while let </span><span class="prelude-val">Some</span>(infos) = paths.next().<span class="kw">await </span>{
 <a href=#1903 id=1903 data-nosnippet>1903</a>                    <span class="macro">info!</span>(<span class="question-mark">?</span>infos, <span class="string">"new PathInfos"</span>);
-<a href=#1904 id=1904 data-nosnippet>1904</a>                    <span class="kw">if </span>infos.keys().any(|a| a.is_relay()) {
+<a href=#1904 id=1904 data-nosnippet>1904</a>                    <span class="kw">if </span>infos.iter().any(|info| info.is_relay()) {
 <a href=#1905 id=1905 data-nosnippet>1905</a>                        <span class="kw">break</span>;
 <a href=#1906 id=1906 data-nosnippet>1906</a>                    }
 <a href=#1907 id=1907 data-nosnippet>1907</a>                }
@@ -1942,11 +1942,11 @@
 <a href=#1942 id=1942 data-nosnippet>1942</a>            <span class="comment">// Wait for a relay connection to be added.  Client does all the asserting here,
 <a href=#1943 id=1943 data-nosnippet>1943</a>            // we just want to wait so we get to see all the mechanics of the connection
 <a href=#1944 id=1944 data-nosnippet>1944</a>            // being added on this side too.
-<a href=#1945 id=1945 data-nosnippet>1945</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>paths = conn.paths_info().stream();
+<a href=#1945 id=1945 data-nosnippet>1945</a>            </span><span class="kw">let </span><span class="kw-2">mut </span>paths = conn.paths().stream();
 <a href=#1946 id=1946 data-nosnippet>1946</a>            time::timeout(Duration::from_secs(<span class="number">5</span>), <span class="kw">async move </span>{
 <a href=#1947 id=1947 data-nosnippet>1947</a>                <span class="kw">while let </span><span class="prelude-val">Some</span>(infos) = paths.next().<span class="kw">await </span>{
 <a href=#1948 id=1948 data-nosnippet>1948</a>                    <span class="macro">info!</span>(<span class="question-mark">?</span>infos, <span class="string">"new PathInfos"</span>);
-<a href=#1949 id=1949 data-nosnippet>1949</a>                    <span class="kw">if </span>infos.keys().any(|a| a.is_relay()) {
+<a href=#1949 id=1949 data-nosnippet>1949</a>                    <span class="kw">if </span>infos.iter().any(|path| path.is_relay()) {
 <a href=#1950 id=1950 data-nosnippet>1950</a>                        <span class="kw">break</span>;
 <a href=#1951 id=1951 data-nosnippet>1951</a>                    }
 <a href=#1952 id=1952 data-nosnippet>1952</a>                }
