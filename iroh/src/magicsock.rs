@@ -64,7 +64,7 @@ use crate::{
     disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
-    magicsock::endpoint_map::PathsWatchable,
+    magicsock::endpoint_map::PathsWatcher,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -275,14 +275,14 @@ impl MagicSock {
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
     ///
-    /// Returns a future that resolves to [`PathsWatchable`].
+    /// Returns a future that resolves to [`PathsWatcher`].
     ///
     /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
         conn: WeakConnectionHandle,
-    ) -> impl Future<Output = Result<PathsWatchable, EndpointStateActorStoppedError>> + Send + 'static
+    ) -> impl Future<Output = Result<PathsWatcher, EndpointStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
         let sender = self.endpoint_map.endpoint_state_actor(remote);
