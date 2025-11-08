@@ -159,7 +159,21 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     ///
     /// Can be implemented as `async fn on_accepting(&self, accepting: Accepting) -> Result<Connection>`.
     ///
-    /// This enables accepting 0-RTT data from clients, among other things.
+    /// Typically, this method is used as an early interception point to accept
+    /// or reject a connection.
+    ///
+    /// However, this method can also be used to implement the accept side of a
+    /// 0-RTT connection.
+    ///
+    /// ## 0-RTT
+    ///
+    /// `ProtocolHandler::on_accepting` allows you to take over the connection
+    /// state machine early in the handshake processes, by calling [`Accepting::into_0rtt`].
+    ///
+    /// When working with 0-RTT, you may want to implement all of your protocol
+    /// logic in `on_accepting`. This is fine because `on_accepting` can handle
+    /// long-running processes. In this case, the [`ProtocolHandler::accept`] method
+    /// can simply return `Ok(())`.
     fn on_accepting(
         &self,
         accepting: Accepting,

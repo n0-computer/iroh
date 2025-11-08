@@ -91,6 +91,7 @@ impl EndpointSelector {
             #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
             EndpointSelector::Quinn(endpoint) => {
                 endpoint.close(0u32.into(), b"");
+                endpoint.wait_idle().await;
             }
         }
     }

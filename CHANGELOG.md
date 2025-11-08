@@ -2,7 +2,13 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.95.0](https://github.com/n0-computer/iroh/compare/v0.94.1..0.95.0) - 2025-11-04
+## [0.95.1](https://github.com/n0-computer/iroh/compare/v0.95.0..0.95.1) - 2025-11-05
+
+### 🚜 Refactor
+
+- [**breaking**] Make `OutgoingZeroRttConnection` implement `Clone` ([#3607](https://github.com/n0-computer/iroh/issues/3607)) - ([721bd2d](https://github.com/n0-computer/iroh/commit/721bd2d9cf386807a750a7d5abe42d8aed5aacc6))
+
+## [0.95.0](https://github.com/n0-computer/iroh/compare/v0.94.1..v0.95.0) - 2025-11-04
 
 ### ⛰️  Features
 
@@ -28,6 +34,7 @@ All notable changes to iroh will be documented in this file.
 
 - *(iroh)* Update wasm-bindgen version to fix CI ([#3589](https://github.com/n0-computer/iroh/issues/3589)) - ([0f4c15c](https://github.com/n0-computer/iroh/commit/0f4c15cbcad1fac13b3b60aba825d975a8843e46))
 - [**breaking**] Update redb to version 3 ([#3562](https://github.com/n0-computer/iroh/issues/3562)) - ([b057b91](https://github.com/n0-computer/iroh/commit/b057b91b26162b6e6aadac48eb82e6567acf7ef3))
+- Release - ([238925a](https://github.com/n0-computer/iroh/commit/238925a339b3747dd4e4cb207d6dd3e82aae4b5c))
 
 ## [0.94.1](https://github.com/n0-computer/iroh/compare/v0.94.0..v0.94.1) - 2025-10-22
 
