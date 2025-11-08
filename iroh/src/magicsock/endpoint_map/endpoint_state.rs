@@ -331,9 +331,10 @@ impl EndpointStateActor {
     async fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        tx: oneshot::Sender<PathsWatchable>,
+        tx: oneshot::Sender<PathsWatcher>,
     ) {
         let pub_open_paths = Watchable::default();
+
         if let Some(conn) = handle.upgrade() {
             // Remove any conflicting stable_ids from the local state.
             let conn_id = ConnId(conn.stable_id());
@@ -393,11 +394,12 @@ impl EndpointStateActor {
             }
             self.trigger_holepunching().await;
         }
-        tx.send(PathsWatchable {
-            open_paths: pub_open_paths,
-            selected_path: self.selected_path.clone(),
-        })
-        .ok();
+
+        // Create a watcher over the open path and the selected path and pass it back
+        // to the Connection.
+        let paths_watcher =
+            paths_watcher(handle, pub_open_paths.watch(), self.selected_path.watch());
+        tx.send(paths_watcher).ok();
     }
 
     /// Handles [`EndpointStateMessage::AddEndpointAddr`].
@@ -996,7 +998,7 @@ pub(crate) enum EndpointStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatchable>),
+    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatcher>),
     /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
     AddEndpointAddr(EndpointAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
@@ -1143,30 +1145,30 @@ impl ConnectionState {
     }
 }
 
-/// Watchables for the open paths and selected transmission path in a connection.
-///
-/// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
-///
-/// [`Connection`]: crate::endpoint::Connection
-#[derive(Debug, Default, Clone)]
-pub(crate) struct PathsWatchable {
-    /// Watchable for the open paths (in this connection).
-    open_paths: Watchable<PathAddrList>,
-    /// Watchable for the selected transmission path (global for this remote endpoint).
-    selected_path: Watchable<Option<transports::Addr>>,
-}
+/// Watcher over [`PathInfoList`].
+pub(crate) type PathsWatcher = n0_watcher::Map<
+    (
+        n0_watcher::Direct<PathAddrList>,
+        n0_watcher::Direct<Option<transports::Addr>>,
+    ),
+    PathInfoList,
+>;
 
-impl PathsWatchable {
-    pub(crate) fn watch(
-        &self,
-        conn_handle: WeakConnectionHandle,
-    ) -> impl Watcher<Value = PathInfoList> {
-        let joined_watcher = (self.open_paths.watch(), self.selected_path.watch());
-        joined_watcher.map(move |(open_paths, selected_path)| {
-            let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
+/// Combines the open_paths and selected_path watchers into a watcher over [`PathInfoList`].
+///
+/// Takes a [`WeakConnectionHandle`] which is used to populate the stats in [`PathInfo`] when the list updates.
+fn paths_watcher(
+    conn_handle: WeakConnectionHandle,
+    open_paths_watcher: n0_watcher::Direct<PathAddrList>,
+    selected_path_watcher: n0_watcher::Direct<Option<transports::Addr>>,
+) -> PathsWatcher {
+    open_paths_watcher
+        .or(selected_path_watcher)
+        .map(move |(open_paths, selected_path)| {
             let Some(conn) = conn_handle.upgrade() else {
                 return PathInfoList(Default::default());
             };
+            let selected_path = selected_path.map(TransportAddr::from);
             let list = open_paths
                 .into_iter()
                 .flat_map(move |(remote, path_id)| {
@@ -1175,7 +1177,6 @@ impl PathsWatchable {
                 .collect();
             PathInfoList(list)
         })
-    }
 }
 
 /// List of [`PathInfo`] for the network paths of a [`Connection`].
@@ -1210,10 +1211,10 @@ impl PathInfoList {
 #[derive(derive_more::Debug, Clone)]
 pub struct PathInfo {
     path_id: PathId,
+    remote: TransportAddr,
     #[debug(skip)]
     handle: WeakConnectionHandle,
     stats: PathStats,
-    remote: TransportAddr,
     is_selected: bool,
 }
 
@@ -1222,6 +1223,7 @@ impl PartialEq for PathInfo {
         self.path_id == other.path_id
             && self.remote == other.remote
             && self.is_selected == other.is_selected
+            && self.stats == other.stats
     }
 }
 
