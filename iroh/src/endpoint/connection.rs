@@ -176,6 +176,7 @@ impl Future for IncomingFuture {
         self.0.poll_unpin(cx)
     }
 }
+
 /// Extracts the ALPN protocol from the peer's handshake data.
 fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
     let data = conn.handshake_data()?;
@@ -304,12 +305,10 @@ fn remote_id_from_quinn_conn(
 ///
 /// This future resolves to a [`Connection`] once the handshake completes.
 #[derive(derive_more::Debug)]
-#[pin_project]
 pub struct Connecting {
-    #[pin]
     inner: quinn::Connecting,
-    #[debug("{:?}", register_fut.as_ref().map(|_| "RegisterFuture"))]
-    register_fut: Option<BoxFuture<Result<Connection, EndpointStateActorStoppedError>>>,
+    #[debug("RegisterFut")]
+    register_fut: RegisterFut,
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
     remote_endpoint_id: EndpointId,
@@ -318,12 +317,14 @@ pub struct Connecting {
     _discovery_drop_guard: Option<DiscoveryTask>,
 }
 
+type RegisterFut = Option<BoxFuture<Result<Connection, EndpointStateActorStoppedError>>>;
+
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
 pub struct Accepting {
     inner: quinn::Connecting,
-    #[debug("{:?}", register_fut.as_ref().map(|_| "RegisterFuture"))]
-    register_fut: Option<BoxFuture<Result<Connection, EndpointStateActorStoppedError>>>,
+    #[debug("RegisterFut")]
+    register_fut: RegisterFut,
     ep: Endpoint,
 }
 
@@ -427,13 +428,7 @@ impl Connecting {
                     handshake_completed_fut: handshake_completed_fut.shared(),
                 })
             }
-            Err(inner) => Err(Self {
-                inner,
-                ep: self.ep,
-                register_fut: None,
-                remote_endpoint_id: self.remote_endpoint_id,
-                _discovery_drop_guard: self._discovery_drop_guard,
-            }),
+            Err(inner) => Err(Self { inner, ..self }),
         }
     }
 
@@ -458,22 +453,7 @@ impl Future for Connecting {
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        loop {
-            if let Some(fut) = &mut this.register_fut {
-                return fut.poll_unpin(cx).map_err(Into::into);
-            }
-            match this.inner.poll_unpin(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err.into())),
-                Poll::Ready(Ok(quinn_conn)) => {
-                    let fut = match conn_from_quinn_conn(quinn_conn, &this.ep) {
-                        Ok(fut) => fut,
-                        Err(err) => return Poll::Ready(Err(err.into())),
-                    };
-                    this.register_fut = Some(Box::pin(fut.err_into()));
-                }
-            }
-        }
+        poll_connecting(&mut this.inner, &mut this.register_fut, &this.ep, cx)
     }
 }
 
@@ -519,10 +499,10 @@ impl Accepting {
             .into_0rtt()
             .expect("incoming connections can always be converted to 0-RTT");
         let handshake_completed_fut: BoxFuture<_> = Box::pin({
-            let inner = quinn_conn.clone();
+            let quinn_conn = quinn_conn.clone();
             async move {
                 zrtt_accepted.await;
-                let conn = conn_from_quinn_conn(inner, &self.ep)?.await?;
+                let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
                 Ok(conn)
             }
         });
@@ -548,21 +528,26 @@ impl Future for Accepting {
 
     fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
-        loop {
-            if let Some(fut) = &mut this.register_fut {
-                return fut.poll_unpin(cx).map_err(Into::into);
-            }
-            match this.inner.poll_unpin(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(err)) => return Poll::Ready(Err(err.into())),
-                Poll::Ready(Ok(quinn_conn)) => {
-                    let fut = match conn_from_quinn_conn(quinn_conn, &this.ep) {
-                        Ok(fut) => fut,
-                        Err(err) => return Poll::Ready(Err(err.into())),
-                    };
-                    this.register_fut = Some(Box::pin(fut.err_into()));
-                }
-            }
+        poll_connecting(&mut this.inner, &mut this.register_fut, &this.ep, cx)
+    }
+}
+
+fn poll_connecting(
+    connecting: &mut quinn::Connecting,
+    register_fut: &mut RegisterFut,
+    ep: &Endpoint,
+    cx: &mut std::task::Context<'_>,
+) -> Poll<Result<Connection, ConnectingError>> {
+    loop {
+        if let Some(fut) = register_fut {
+            return fut.poll_unpin(cx).map_err(Into::into);
+        } else {
+            let quinn_conn = std::task::ready!(connecting.poll_unpin(cx)?);
+            let fut = match conn_from_quinn_conn(quinn_conn, &ep) {
+                Ok(fut) => fut.err_into(),
+                Err(err) => return Poll::Ready(Err(err.into())),
+            };
+            *register_fut = Some(Box::pin(fut));
         }
     }
 }
