@@ -38,7 +38,7 @@ use n0_watcher::{self, Watchable, Watcher};
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
-use quinn::ServerConfig;
+use quinn::{ServerConfig, WeakConnectionHandle};
 use rand::Rng;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -273,20 +273,22 @@ impl MagicSock {
     ///
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
-    pub(crate) async fn register_connection(
+    pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
-        conn: &quinn::Connection,
-    ) -> Result<PathsWatchable, EndpointStateActorStoppedError> {
-        let weak_handle = conn.weak_handle();
+        conn: WeakConnectionHandle,
+    ) -> impl Future<Output = Result<PathsWatchable, EndpointStateActorStoppedError>> + Send + 'static
+    {
         let (tx, rx) = oneshot::channel();
         let sender = self.endpoint_map.endpoint_state_actor(remote);
-        let msg = EndpointStateMessage::AddConnection(weak_handle, tx);
-        sender
-            .send(msg)
-            .await
-            .map_err(|_| EndpointStateActorStoppedError)?;
-        rx.await.map_err(|_| EndpointStateActorStoppedError)
+        let msg = EndpointStateMessage::AddConnection(conn, tx);
+        async move {
+            sender
+                .send(msg)
+                .await
+                .map_err(|_| EndpointStateActorStoppedError)?;
+            rx.await.map_err(|_| EndpointStateActorStoppedError)
+        }
     }
 
     #[cfg(not(wasm_browser))]
