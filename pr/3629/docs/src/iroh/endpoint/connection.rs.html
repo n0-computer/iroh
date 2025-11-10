@@ -29,7 +29,7 @@
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>futures_util::{FutureExt, future::Shared};
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>iroh_base::EndpointId;
 <a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>n0_error::{e, stack_error};
-<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>n0_future::{TryFutureExt, boxed::BoxFuture, time::Duration};
+<a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>n0_future::{TryFutureExt, future::Boxed <span class="kw">as </span>BoxFuture, time::Duration};
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>n0_watcher::Watcher;
 <a href=#34 id=34 data-nosnippet>34</a><span class="kw">use </span>pin_project::pin_project;
 <a href=#35 id=35 data-nosnippet>35</a><span class="kw">use </span>quinn::{
