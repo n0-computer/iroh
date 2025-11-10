@@ -641,8 +641,12 @@ pub struct OutgoingZeroRttData {
     accepted: Shared<ZeroRttAccepted>,
 }
 
+mod sealed {
+    pub trait Sealed {}
+}
+
 /// Trait to track the state of a [`Connection`] at compile time.
-pub trait ConnectionState {
+pub trait ConnectionState: sealed::Sealed {
     /// State-specific data stored in the [`Connection`].
     type Data: std::fmt::Debug + Clone;
 }
@@ -659,12 +663,15 @@ pub struct IncomingZeroRtt;
 #[derive(Debug, Clone)]
 pub struct OutgoingZeroRtt;
 
+impl sealed::Sealed for HandshakeCompleted {}
 impl ConnectionState for HandshakeCompleted {
     type Data = HandshakeCompletedData;
 }
+impl sealed::Sealed for IncomingZeroRtt {}
 impl ConnectionState for IncomingZeroRtt {
     type Data = IncomingZeroRttData;
 }
+impl sealed::Sealed for OutgoingZeroRtt {}
 impl ConnectionState for OutgoingZeroRtt {
     type Data = OutgoingZeroRttData;
 }
