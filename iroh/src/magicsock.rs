@@ -38,8 +38,7 @@ use n0_watcher::{self, Watchable, Watcher};
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
-use quinn::ServerConfig;
-use quinn_proto::PathId;
+use quinn::{ServerConfig, WeakConnectionHandle};
 use rand::Rng;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -65,7 +64,7 @@ use crate::{
     disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
-    magicsock::endpoint_map::{PathAddrList, PathsWatchable},
+    magicsock::endpoint_map::PathsWatchable,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -104,6 +103,11 @@ pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 ///
 /// Pretty arbitrary and high right now.
 pub(crate) const MAX_MULTIPATH_PATHS: u32 = 16;
+
+/// Error returned when the endpoint state actor stopped while waiting for a reply.
+#[stack_error(derive)]
+#[error("endpoint state actor stopped")]
+pub(crate) struct EndpointStateActorStoppedError;
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
@@ -270,48 +274,25 @@ impl MagicSock {
     ///
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
+    ///
+    /// Returns a future that resolves to [`PathsWatchable`].
+    ///
+    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
-        conn: &quinn::Connection,
-    ) -> PathsWatchable {
-        // Init the open paths watchable.
-        let mut open_paths: PathAddrList = Default::default();
-        if let Some(path0) = conn.path(PathId::ZERO) {
-            // This all is supposed to be infallible, but anyway.
-            if let Ok(remote) = path0.remote_address() {
-                if let Some(remote) = self.endpoint_map.transport_addr_from_mapped(remote) {
-                    open_paths.push((remote.clone(), PathId::ZERO));
-                }
-            }
+        conn: WeakConnectionHandle,
+    ) -> impl Future<Output = Result<PathsWatchable, EndpointStateActorStoppedError>> + Send + 'static
+    {
+        let (tx, rx) = oneshot::channel();
+        let sender = self.endpoint_map.endpoint_state_actor(remote);
+        async move {
+            sender
+                .send(EndpointStateMessage::AddConnection(conn, tx))
+                .await
+                .map_err(|_| EndpointStateActorStoppedError)?;
+            rx.await.map_err(|_| EndpointStateActorStoppedError)
         }
-        let open_paths = n0_watcher::Watchable::new(open_paths);
-
-        // TODO: Spawning tasks like this is obviously bad.  But it is solvable:
-        //   - This is only called from inside Connection::new.
-        //   - Connection::new is called from:
-        //     - impl Future for IncomingFuture
-        //     - impl Future for Connecting
-        //     - Connecting::into_0rtt()
-        //
-        // The first two can keep returning Pending until this message is also sent.  It'll
-        // require storing the pinned future but it'll work.
-        //
-        // The last one is trickier.  But we can make that function async.  Or more likely
-        // we'll end up changing Connecting::into_0rtt() to return a ZrttConnection.  Then
-        // have a ZrttConnection::into_connection() function which can be async and actually
-        // send this.  Before the handshake has completed we don't have anything useful to
-        // do with this connection inside of the EndpointStateActor anyway.
-        let weak_handle = conn.weak_handle();
-        let (sender, selected_path) = self
-            .endpoint_map
-            .endpoint_state_actor_with_selected_path(remote);
-        let msg = EndpointStateMessage::AddConnection(weak_handle, open_paths.clone());
-
-        task::spawn(async move {
-            sender.send(msg).await.ok();
-        });
-        PathsWatchable::new(open_paths, selected_path)
     }
 
     #[cfg(not(wasm_browser))]
