@@ -275,8 +275,7 @@ impl MagicSock {
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
     ///
-    /// Returns a future that resolves to [`PathsWatcher`], which is a [`Watcher`] over the
-    /// transmission paths for this connection.
+    /// Returns a future that resolves to [`PathsWatchable`].
     ///
     /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
     pub(crate) fn register_connection(
