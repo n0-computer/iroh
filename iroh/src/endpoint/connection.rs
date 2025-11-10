@@ -211,21 +211,21 @@ pub enum AuthenticationError {
         #[error(std_err)]
         source: ConnectionError,
     },
-    #[error("endpoint state actor stopped")]
-    EndpointStateActorStopped,
+    #[error("internal consistency error: EndpointStateActor stopped")]
+    InternalConsistencyError,
 }
 
 impl From<EndpointStateActorStoppedError> for AuthenticationError {
     #[track_caller]
     fn from(_value: EndpointStateActorStoppedError) -> Self {
-        e!(Self::EndpointStateActorStopped)
+        e!(Self::InternalConsistencyError)
     }
 }
 
 impl From<EndpointStateActorStoppedError> for ConnectingError {
     #[track_caller]
     fn from(_value: EndpointStateActorStoppedError) -> Self {
-        e!(AuthenticationError::EndpointStateActorStopped).into()
+        e!(AuthenticationError::InternalConsistencyError).into()
     }
 }
 
