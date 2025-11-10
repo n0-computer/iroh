@@ -64,7 +64,7 @@ use crate::{
     disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
-    magicsock::endpoint_map::PathsWatchable,
+    magicsock::endpoint_map::PathsWatcher,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -279,7 +279,7 @@ impl MagicSock {
         &self,
         remote: EndpointId,
         conn: WeakConnectionHandle,
-    ) -> impl Future<Output = Result<PathsWatchable, EndpointStateActorStoppedError>> + Send + 'static
+    ) -> impl Future<Output = Result<PathsWatcher, EndpointStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
         let sender = self.endpoint_map.endpoint_state_actor(remote);

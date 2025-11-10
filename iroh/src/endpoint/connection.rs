@@ -43,7 +43,7 @@ use crate::{
     discovery::DiscoveryTask,
     magicsock::{
         EndpointStateActorStoppedError,
-        endpoint_map::{PathInfoList, PathsWatchable},
+        endpoint_map::{PathInfoList, PathsWatcher},
     },
 };
 
@@ -1213,7 +1213,7 @@ pub struct Connection {
     inner: quinn::Connection,
     remote_id: EndpointId,
     alpn: Vec<u8>,
-    paths: PathsWatchable,
+    paths: PathsWatcher,
 }
 
 #[allow(missing_docs)]
@@ -1463,7 +1463,7 @@ impl Connection {
     /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
     /// [`PathInfo`]: crate::magicsock::PathInfo
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        self.paths.watch(self.inner.weak_handle())
+        self.paths.clone()
     }
 
     /// Derives keying material from this connection's TLS session secrets.
@@ -1511,16 +1511,21 @@ impl Connection {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use iroh_base::{EndpointAddr, SecretKey};
     use n0_error::{Result, StackResultExt, StdResultExt};
+    use n0_future::StreamExt;
+    use n0_watcher::Watcher;
     use rand::SeedableRng;
-    use tracing::{Instrument, info_span, trace_span};
+    use tracing::{Instrument, error_span, info_span, trace_span};
     use tracing_test::traced_test;
 
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, ZeroRttStatus},
+        endpoint::{ConnectOptions, Incoming, PathInfo, PathInfoList, ZeroRttStatus},
+        test_utils::run_relay_server,
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -1728,6 +1733,96 @@ mod tests {
             .context("client connect 3")?;
 
         tokio::join!(client.close(), server.close());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_paths_watcher() -> Result {
+        tracing_subscriber::fmt::init();
+        const ALPN: &[u8] = b"test";
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let (relay_map, _relay_map, _guard) = run_relay_server().await?;
+        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .secret_key(SecretKey::generate(&mut rng))
+            .insecure_skip_relay_cert_verify(true)
+            .alpns(vec![ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .secret_key(SecretKey::generate(&mut rng))
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .await?;
+
+        server.online().await;
+        let server_addr = server.addr();
+        tracing::info!("server addr: {server_addr:?}");
+
+        let (conn_client, conn_server) = tokio::join!(
+            async { client.connect(server_addr, ALPN).await.unwrap() },
+            async { server.accept().await.unwrap().await.unwrap() }
+        );
+        tracing::info!("connected");
+        let mut paths_client = conn_client.paths().stream();
+        let mut paths_server = conn_server.paths().stream();
+
+        /// Advances the path stream until at least one IP and one relay paths are available.
+        ///
+        /// Panics if the path stream finishes before that happens.
+        async fn wait_for_paths(
+            stream: &mut n0_watcher::Stream<impl n0_watcher::Watcher<Value = PathInfoList> + Unpin>,
+        ) {
+            loop {
+                let paths = stream.next().await.expect("paths stream ended");
+                tracing::info!(?paths, "paths");
+                if paths.len() >= 2
+                    && paths.iter().any(PathInfo::is_relay)
+                    && paths.iter().any(PathInfo::is_ip)
+                {
+                    tracing::info!("break");
+                    return;
+                }
+            }
+        }
+
+        // Verify that both connections are notified of path changes and get an IP and a relay path.
+        tokio::join!(
+            async {
+                tokio::time::timeout(Duration::from_secs(1), wait_for_paths(&mut paths_server))
+                    .instrument(error_span!("paths-server"))
+                    .await
+                    .unwrap()
+            },
+            async {
+                tokio::time::timeout(Duration::from_secs(1), wait_for_paths(&mut paths_client))
+                    .instrument(error_span!("paths-client"))
+                    .await
+                    .unwrap()
+            }
+        );
+
+        // Close the client connection.
+        tracing::info!("close client conn");
+        conn_client.close(0u32.into(), b"");
+
+        // Verify that the path watch streams close.
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), paths_client.next())
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), paths_server.next())
+                .await
+                .unwrap(),
+            None
+        );
+
+        server.close().await;
+        client.close().await;
+
         Ok(())
     }
 }

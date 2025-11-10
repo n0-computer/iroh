@@ -11,22 +11,24 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::warn;
 
+use crate::disco;
+
 use super::{
     DirectAddr, DiscoState, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
     transports::{self, TransportsSender},
 };
-use crate::disco::{self};
+
+use self::endpoint_state::{EndpointStateActor, EndpointStateHandle};
 // #[cfg(any(test, feature = "test-utils"))]
 // use crate::endpoint::PathSelection;
 
+pub(super) use self::endpoint_state::EndpointStateMessage;
+pub(crate) use self::endpoint_state::PathsWatcher;
+pub use self::endpoint_state::{PathInfo, PathInfoList};
+
 mod endpoint_state;
 mod path_state;
-
-pub(super) use endpoint_state::EndpointStateMessage;
-pub(crate) use endpoint_state::PathsWatchable;
-use endpoint_state::{EndpointStateActor, EndpointStateHandle};
-pub use endpoint_state::{PathInfo, PathInfoList};
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
