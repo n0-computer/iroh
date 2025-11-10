@@ -11,21 +11,18 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::disco;
-
+// #[cfg(any(test, feature = "test-utils"))]
+// use crate::endpoint::PathSelection;
+pub(super) use self::endpoint_state::EndpointStateMessage;
+pub(crate) use self::endpoint_state::PathsWatcher;
+use self::endpoint_state::{EndpointStateActor, EndpointStateHandle};
+pub use self::endpoint_state::{PathInfo, PathInfoList};
 use super::{
     DirectAddr, DiscoState, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
     transports::{self, TransportsSender},
 };
-
-use self::endpoint_state::{EndpointStateActor, EndpointStateHandle};
-// #[cfg(any(test, feature = "test-utils"))]
-// use crate::endpoint::PathSelection;
-
-pub(super) use self::endpoint_state::EndpointStateMessage;
-pub(crate) use self::endpoint_state::PathsWatcher;
-pub use self::endpoint_state::{PathInfo, PathInfoList};
+use crate::disco;
 
 mod endpoint_state;
 mod path_state;

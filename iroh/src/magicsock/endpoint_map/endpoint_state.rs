@@ -1140,6 +1140,7 @@ impl ConnectionState {
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(Clone, derive_more::Debug)]
 #[debug("PathsWatcher")]
+#[allow(clippy::type_complexity)]
 pub(crate) struct PathsWatcher(
     Box<
         n0_watcher::Map<
