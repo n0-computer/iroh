@@ -3,12 +3,13 @@ use std::{
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
+    task::Poll,
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_error::StdResultExt;
 use n0_future::{
-    MergeUnbounded, Stream, StreamExt,
+    FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -111,6 +112,8 @@ pub(super) struct EndpointStateActor {
     //
     /// All connections we have to this remote endpoint.
     connections: FxHashMap<ConnId, ConnectionState>,
+    /// Notifications when connections are closed.
+    connections_close: FuturesUnordered<OnClosed>,
     /// Events emitted by Quinn about path changes, for all paths, all connections.
     path_events: PathEvents,
 
@@ -161,6 +164,7 @@ impl EndpointStateActor {
             relay_mapped_addrs,
             disco,
             connections: FxHashMap::default(),
+            connections_close: Default::default(),
             path_events: Default::default(),
             paths: FxHashMap::default(),
             last_holepunch: None,
@@ -233,6 +237,9 @@ impl EndpointStateActor {
                 }
                 Some((id, evt)) = self.path_events.next() => {
                     self.handle_path_event(id, evt);
+                }
+                Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
+                    self.connections.remove(&conn_id);
                 }
                 _ = self.local_addrs.updated() => {
                     trace!("local addrs updated, triggering holepunching");
@@ -334,13 +341,11 @@ impl EndpointStateActor {
             let conn_id = ConnId(conn.stable_id());
             self.connections.remove(&conn_id);
 
-            // This is a good time to clean up connections.
-            self.cleanup_connections();
-
             // Store the connection and hook up paths events stream.
             let events = BroadcastStream::new(conn.path_events());
             let stream = events.map(move |evt| (conn_id, evt));
             self.path_events.push(Box::pin(stream));
+            self.connections_close.push(OnClosed::new(&conn));
             let conn_state = self
                 .connections
                 .entry(conn_id)
@@ -861,12 +866,6 @@ impl EndpointStateActor {
         }
     }
 
-    /// Clean up connections which no longer exist.
-    // TODO: Call this on a schedule.
-    fn cleanup_connections(&mut self) {
-        self.connections.retain(|_, c| c.handle.upgrade().is_some());
-    }
-
     /// Selects the path with the lowest RTT, prefers direct paths.
     ///
     /// If there are direct paths, this selects the direct path with the lowest RTT.  If
@@ -1302,7 +1301,33 @@ fn path_remote(
 fn now_or_never<T, F: Future<Output = T>>(fut: F) -> Option<T> {
     let fut = std::pin::pin!(fut);
     match fut.poll(&mut std::task::Context::from_waker(std::task::Waker::noop())) {
-        std::task::Poll::Ready(res) => Some(res),
-        std::task::Poll::Pending => None,
+        Poll::Ready(res) => Some(res),
+        Poll::Pending => None,
+    }
+}
+
+/// Future that resolves to the `conn_id` once a connection is closed.
+///
+/// This uses [`Connection::on_closed`], which does not keep the connection alive while awaiting the future.
+struct OnClosed {
+    conn_id: ConnId,
+    inner: quinn::OnClosed,
+}
+
+impl OnClosed {
+    fn new(conn: &quinn::Connection) -> Self {
+        Self {
+            conn_id: ConnId(conn.stable_id()),
+            inner: conn.on_closed(),
+        }
+    }
+}
+
+impl Future for OnClosed {
+    type Output = ConnId;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let (_close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
+        Poll::Ready(self.conn_id)
     }
 }
