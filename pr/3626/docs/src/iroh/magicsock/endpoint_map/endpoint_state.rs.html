@@ -356,7 +356,7 @@
 <a href=#356 id=356 data-nosnippet>356</a>            <span class="comment">// Store PathId(0), set path_status and select best path, check if holepunching
 <a href=#357 id=357 data-nosnippet>357</a>            // is needed.
 <a href=#358 id=358 data-nosnippet>358</a>            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(path) = conn.path(PathId::ZERO)
-<a href=#359 id=359 data-nosnippet>359</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(path_remote) = path_addr(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_mapped_addrs, <span class="kw-2">&amp;</span>path)
+<a href=#359 id=359 data-nosnippet>359</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(path_remote) = path_remote(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_mapped_addrs, <span class="kw-2">&amp;</span>path)
 <a href=#360 id=360 data-nosnippet>360</a>            {
 <a href=#361 id=361 data-nosnippet>361</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>path_remote, <span class="string">"added new connection"</span>);
 <a href=#362 id=362 data-nosnippet>362</a>                <span class="kw">let </span>path_remote_is_ip = path_remote.is_ip();
@@ -795,7 +795,7 @@
 <a href=#795 id=795 data-nosnippet>795</a>                </span>path.set_keep_alive_interval(<span class="prelude-val">Some</span>(HEARTBEAT_INTERVAL)).ok();
 <a href=#796 id=796 data-nosnippet>796</a>                path.set_max_idle_timeout(<span class="prelude-val">Some</span>(PATH_MAX_IDLE_TIMEOUT)).ok();
 <a href=#797 id=797 data-nosnippet>797</a>
-<a href=#798 id=798 data-nosnippet>798</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(path_remote) = path_addr(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_mapped_addrs, <span class="kw-2">&amp;</span>path) {
+<a href=#798 id=798 data-nosnippet>798</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(path_remote) = path_remote(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_mapped_addrs, <span class="kw-2">&amp;</span>path) {
 <a href=#799 id=799 data-nosnippet>799</a>                    <span class="macro">event!</span>(
 <a href=#800 id=800 data-nosnippet>800</a>                        target: <span class="string">"iroh::_events::path::open"</span>,
 <a href=#801 id=801 data-nosnippet>801</a>                        Level::DEBUG,
@@ -1287,7 +1287,7 @@
 <a href=#1287 id=1287 data-nosnippet>1287</a>    }
 <a href=#1288 id=1288 data-nosnippet>1288</a>}
 <a href=#1289 id=1289 data-nosnippet>1289</a>
-<a href=#1290 id=1290 data-nosnippet>1290</a><span class="kw">fn </span>path_addr(
+<a href=#1290 id=1290 data-nosnippet>1290</a><span class="kw">fn </span>path_remote(
 <a href=#1291 id=1291 data-nosnippet>1291</a>    relay_mapped_addrs: <span class="kw-2">&amp;</span>AddrMap&lt;(RelayUrl, EndpointId), RelayMappedAddr&gt;,
 <a href=#1292 id=1292 data-nosnippet>1292</a>    path: <span class="kw-2">&amp;</span>quinn::Path,
 <a href=#1293 id=1293 data-nosnippet>1293</a>) -&gt; <span class="prelude-ty">Option</span>&lt;transports::Addr&gt; {
