@@ -270,7 +270,7 @@ impl MagicSock {
         self.local_addrs_watch.clone().get()
     }
 
-    /// Registers the connection in the [`EndpointStateActor`].
+    /// Registers the connection in the `EndpointStateActor`.
     ///
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
@@ -279,8 +279,6 @@ impl MagicSock {
     /// transmission paths for this connection.
     ///
     /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
-    ///
-    /// [`EndpointStateActor`]: self::endpoint_map::EndpointStateActor
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
