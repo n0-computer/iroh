@@ -31,7 +31,7 @@ use crate::{
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
-        mapped_addrs::{AddrMap, MappedAddr, MultipathMappedAddr, RelayMappedAddr},
+        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
         transports::{self, OwnedTransmit},
     },
     util::MaybeFuture,
@@ -341,60 +341,54 @@ impl EndpointStateActor {
             let events = BroadcastStream::new(conn.path_events());
             let stream = events.map(move |evt| (conn_id, evt));
             self.path_events.push(Box::pin(stream));
-            self.connections.insert(
-                conn_id,
-                ConnectionState {
+            let conn_state = self
+                .connections
+                .entry(conn_id)
+                .insert_entry(ConnectionState {
                     handle: handle.clone(),
                     pub_open_paths: paths_watchable,
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
-                },
-            );
+                })
+                .into_mut();
 
             // Store PathId(0), set path_status and select best path, check if holepunching
             // is needed.
-            if let Some(conn) = handle.upgrade() {
-                if let Some(path) = conn.path(PathId::ZERO) {
-                    if let Some(path_remote) = path
-                        .remote_address()
-                        .map_or(None, |remote| Some(MultipathMappedAddr::from(remote)))
-                        .and_then(|mmaddr| mmaddr.to_transport_addr(&self.relay_mapped_addrs))
-                    {
-                        trace!(?path_remote, "added new connection");
-                        let path_remote_is_ip = path_remote.is_ip();
-                        let status = match path_remote {
-                            transports::Addr::Ip(_) => PathStatus::Available,
-                            transports::Addr::Relay(_, _) => PathStatus::Backup,
-                        };
-                        path.set_status(status).ok();
-                        let conn_state =
-                            self.connections.get_mut(&conn_id).expect("inserted above");
-                        conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
-                        self.paths
-                            .entry(path_remote)
-                            .or_default()
-                            .sources
-                            .insert(Source::Connection, Instant::now());
-                        self.select_path();
+            if let Some(path) = conn.path(PathId::ZERO)
+                && let Ok(socketaddr) = path.remote_address()
+                && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
+            {
+                trace!(?path_remote, "added new connection");
+                let path_remote_is_ip = path_remote.is_ip();
+                let status = match path_remote {
+                    transports::Addr::Ip(_) => PathStatus::Available,
+                    transports::Addr::Relay(_, _) => PathStatus::Backup,
+                };
+                path.set_status(status).ok();
+                conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
+                self.paths
+                    .entry(path_remote)
+                    .or_default()
+                    .sources
+                    .insert(Source::Connection, Instant::now());
+                self.select_path();
 
-                        if path_remote_is_ip {
-                            // We may have raced this with a relay address.  Try and add any
-                            // relay addresses we have back.
-                            let relays = self
-                                .paths
-                                .keys()
-                                .filter(|a| a.is_relay())
-                                .cloned()
-                                .collect::<Vec<_>>();
-                            for remote in relays {
-                                self.open_path(&remote);
-                            }
-                        }
+                if path_remote_is_ip {
+                    // We may have raced this with a relay address.  Try and add any
+                    // relay addresses we have back.
+                    let relays = self
+                        .paths
+                        .keys()
+                        .filter(|a| a.is_relay())
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    for remote in relays {
+                        self.open_path(&remote);
                     }
                 }
-                self.trigger_holepunching().await;
             }
+            self.trigger_holepunching().await;
         }
     }
 
@@ -802,10 +796,8 @@ impl EndpointStateActor {
                 path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
                 path.set_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT)).ok();
 
-                if let Some(path_remote) = path
-                    .remote_address()
-                    .map_or(None, |remote| Some(MultipathMappedAddr::from(remote)))
-                    .and_then(|mmaddr| mmaddr.to_transport_addr(&self.relay_mapped_addrs))
+                if let Ok(socketaddr) = path.remote_address()
+                    && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
                 {
                     event!(
                         target: "iroh::_events::path::open",
@@ -1156,6 +1148,8 @@ impl ConnectionState {
 /// Watchables for the open paths and selected transmission path in a connection.
 ///
 /// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
+///
+/// [`Connection`]: crate::endpoint::Connection
 #[derive(Debug, Default, Clone)]
 pub(crate) struct PathsWatchable {
     /// Watchable for the open paths (in this connection).

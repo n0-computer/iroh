@@ -95,28 +95,6 @@ impl From<SocketAddr> for MultipathMappedAddr {
     }
 }
 
-impl MultipathMappedAddr {
-    pub(super) fn to_transport_addr(
-        &self,
-        relay_mapped_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    ) -> Option<transports::Addr> {
-        match self {
-            Self::Mixed(_) => {
-                error!("Mixed addr has no transports::Addr");
-                None
-            }
-            Self::Relay(mapped) => match relay_mapped_addrs.lookup(mapped) {
-                Some(parts) => Some(transports::Addr::from(parts)),
-                None => {
-                    error!("Unknown RelayMappedAddr");
-                    None
-                }
-            },
-            Self::Ip(addr) => Some(transports::Addr::from(*addr)),
-        }
-    }
-}
-
 /// An address used to address a endpoint on any or all paths.
 ///
 /// This is only used for initially connecting to a remote endpoint.  We instruct Quinn to
@@ -304,6 +282,46 @@ impl<K, V> Default for AddrMapInner<K, V> {
         Self {
             addrs: Default::default(),
             lookup: Default::default(),
+        }
+    }
+}
+
+/// Functions for the relay mapped address map.
+impl AddrMap<(RelayUrl, EndpointId), RelayMappedAddr> {
+    /// Converts a mapped socket address to a transport address.
+    ///
+    /// This takes a socket address, converts it into a [`MultipathMappedAddr`] and then tries
+    /// to convert the mapped address into a [`transports::Addr`].
+    ///
+    /// Returns `Some` with the transport address for IP mapped addresses and for relay mapped
+    /// addresses if an entry for the mapped address exists in `self`.
+    ///
+    /// Returns `None` and emits an error log if the mapped address is a [`MultipathMappedAddr::Mixed`],
+    /// or if the mapped address is a [`MultipathMappedAddr::Relay`] and `self` does not contain the
+    /// mapped address.
+    pub(crate) fn to_transport_addr(
+        &self,
+        addr: impl Into<MultipathMappedAddr>,
+    ) -> Option<transports::Addr> {
+        match addr.into() {
+            MultipathMappedAddr::Mixed(_) => {
+                error!(
+                    "Failed to convert addr to transport addr: Mixed mapped addr has no transport address"
+                );
+                None
+            }
+            MultipathMappedAddr::Relay(relay_mapped_addr) => {
+                match self.lookup(&relay_mapped_addr) {
+                    Some(parts) => Some(transports::Addr::from(parts)),
+                    None => {
+                        error!(
+                            "Failed to convert addr to transport addr: Unknown relay mapped addr"
+                        );
+                        None
+                    }
+                }
+            }
+            MultipathMappedAddr::Ip(addr) => Some(transports::Addr::from(addr)),
         }
     }
 }
