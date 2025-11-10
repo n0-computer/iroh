@@ -356,7 +356,7 @@ impl EndpointStateActor {
             // Store PathId(0), set path_status and select best path, check if holepunching
             // is needed.
             if let Some(path) = conn.path(PathId::ZERO)
-                && let Some(path_remote) = path_addr(&self.relay_mapped_addrs, &path)
+                && let Some(path_remote) = path_remote(&self.relay_mapped_addrs, &path)
             {
                 trace!(?path_remote, "added new connection");
                 let path_remote_is_ip = path_remote.is_ip();
@@ -795,7 +795,7 @@ impl EndpointStateActor {
                 path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
                 path.set_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT)).ok();
 
-                if let Some(path_remote) = path_addr(&self.relay_mapped_addrs, &path) {
+                if let Some(path_remote) = path_remote(&self.relay_mapped_addrs, &path) {
                     event!(
                         target: "iroh::_events::path::open",
                         Level::DEBUG,
@@ -1287,7 +1287,7 @@ impl PathInfo {
     }
 }
 
-fn path_addr(
+fn path_remote(
     relay_mapped_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     path: &quinn::Path,
 ) -> Option<transports::Addr> {
