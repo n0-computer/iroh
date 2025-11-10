@@ -1985,7 +1985,7 @@ mod tests {
         info!("stats: {:#?}", stats);
         // TODO: ensure panics in this function are reported ok
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            for info in conn.paths().get().iter() {
+            for info in conn.paths().get() {
                 assert!(
                     info.stats().lost_packets < 10,
                     "[receiver] path {:?} should not loose many packets",

@@ -26,7 +26,7 @@ mod path_state;
 
 pub(super) use endpoint_state::EndpointStateMessage;
 pub(crate) use endpoint_state::PathsWatcher;
-pub use endpoint_state::{ConnectionType, PathInfo, PathInfoList};
+pub use endpoint_state::{ConnectionType, PathInfo, PathInfoIter};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
 
 // TODO: use this
