@@ -285,6 +285,9 @@ impl PathValidity {
 
         let quality = state.congestion_metrics.quality_score();
         metrics.path_quality_score.observe(quality);
+
+        let latency_ms = state.latency.as_secs_f64() * 1000.0;
+        metrics.connection_latency_ms.observe(latency_ms);
     }
 }
 
@@ -394,5 +397,37 @@ mod tests {
         // Quality should be penalized due to high variance
         let quality = validity.quality_score();
         assert!(quality < 0.9); // Should be penalized
+    }
+
+    #[tokio::test]
+    async fn test_connection_latency_histogram() {
+        use crate::magicsock::Metrics as MagicsockMetrics;
+
+        let metrics = MagicsockMetrics::default();
+        let mut validity = PathValidity::new(Instant::now(), Duration::from_millis(10));
+
+        validity.record_metrics(&metrics);
+        assert_eq!(metrics.connection_latency_ms.count(), 1);
+
+        validity.update_pong(Instant::now(), Duration::from_millis(25));
+        validity.record_metrics(&metrics);
+        assert_eq!(metrics.connection_latency_ms.count(), 2);
+
+        validity.update_pong(Instant::now(), Duration::from_millis(50));
+        validity.record_metrics(&metrics);
+        assert_eq!(metrics.connection_latency_ms.count(), 3);
+
+        validity.update_pong(Instant::now(), Duration::from_millis(100));
+        validity.record_metrics(&metrics);
+        assert_eq!(metrics.connection_latency_ms.count(), 4);
+
+        let buckets = metrics.connection_latency_ms.buckets();
+        assert!(!buckets.is_empty());
+
+        let p50 = metrics.connection_latency_ms.percentile(0.5);
+        assert!(p50 > 10.0 && p50 < 100.0);
+
+        let p95 = metrics.connection_latency_ms.percentile(0.95);
+        assert!(p95 >= p50);
     }
 }
