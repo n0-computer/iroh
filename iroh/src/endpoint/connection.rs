@@ -235,7 +235,6 @@ fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, Authentic
             alpn: alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?,
         },
         inner: conn,
-        _p: std::marker::PhantomData,
     })
 }
 
@@ -403,7 +402,6 @@ impl Connecting {
                 Ok(Connection {
                     info: OutgoingZeroRttData { accepted },
                     inner,
-                    _p: std::marker::PhantomData,
                 })
             }
             Err(inner) => Err(Self {
@@ -499,7 +497,6 @@ impl Accepting {
         Connection {
             info: IncomingZeroRttData { accepted },
             inner,
-            _p: std::marker::PhantomData,
         }
     }
 
@@ -623,7 +620,6 @@ pub struct Connection<State: ConnectionState = HandshakeCompleted> {
     inner: quinn::Connection,
     /// State-specific information
     info: State::Data,
-    _p: std::marker::PhantomData<State>,
 }
 
 #[doc(hidden)]
