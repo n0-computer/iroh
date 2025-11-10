@@ -286,30 +286,37 @@ impl<K, V> Default for AddrMapInner<K, V> {
     }
 }
 
-/// Methods for the relay mapped address map.
+/// Functions for the relay mapped address map.
 impl AddrMap<(RelayUrl, EndpointId), RelayMappedAddr> {
     /// Converts a mapped socket address to a transport address.
     ///
-    /// To map to a [`transports::Addr`] only the [`RelayMappedAddr`] needs to be able to be
-    /// looked up.  So we can have this as a helper here.
+    /// This takes a socket address, converts it into a [`MultipathMappedAddr`] and then tries
+    /// to convert the mapped address into a [`transports::Addr`].
     ///
-    /// Returns `None` if the mapped address is a [`MultipathMappedAddr::Mixed`], or if the mapped
-    /// address is a [`MultipathMappedAddr::Relay`] and `self` does not contain the mapped address.
+    /// Returns `Some` with the transport address for IP mapped addresses and for relay mapped
+    /// addresses if an entry for the mapped address exists in `self`.
+    ///
+    /// Returns `None` and emits an error log if the mapped address is a [`MultipathMappedAddr::Mixed`],
+    /// or if the mapped address is a [`MultipathMappedAddr::Relay`] and `self` does not contain the
+    /// mapped address.
     pub(crate) fn to_transport_addr(
         &self,
         addr: impl Into<MultipathMappedAddr>,
     ) -> Option<transports::Addr> {
-        let mapped_addr = addr.into();
-        match mapped_addr {
+        match addr.into() {
             MultipathMappedAddr::Mixed(_) => {
-                error!("Mixed addr has no transports::Addr");
+                error!(
+                    "Failed to convert addr to transport addr: Mixed mapped addr has no transport address"
+                );
                 None
             }
             MultipathMappedAddr::Relay(relay_mapped_addr) => {
                 match self.lookup(&relay_mapped_addr) {
                     Some(parts) => Some(transports::Addr::from(parts)),
                     None => {
-                        error!("Unknown RelayMappedAddr");
+                        error!(
+                            "Failed to convert addr to transport addr: Unknown relay mapped addr"
+                        );
                         None
                     }
                 }
