@@ -64,7 +64,7 @@
 <a href=#64 id=64 data-nosnippet>64</a>    disco::{<span class="self">self</span>, SendAddr},
 <a href=#65 id=65 data-nosnippet>65</a>    discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
 <a href=#66 id=66 data-nosnippet>66</a>    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
-<a href=#67 id=67 data-nosnippet>67</a>    magicsock::endpoint_map::PathsWatcher,
+<a href=#67 id=67 data-nosnippet>67</a>    magicsock::endpoint_map::PathsWatchable,
 <a href=#68 id=68 data-nosnippet>68</a>    metrics::EndpointMetrics,
 <a href=#69 id=69 data-nosnippet>69</a>    net_report::{<span class="self">self</span>, IfStateDetails, Report},
 <a href=#70 id=70 data-nosnippet>70</a>};
@@ -283,7 +283,7 @@
 <a href=#283 id=283 data-nosnippet>283</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#284 id=284 data-nosnippet>284</a>        remote: EndpointId,
 <a href=#285 id=285 data-nosnippet>285</a>        conn: WeakConnectionHandle,
-<a href=#286 id=286 data-nosnippet>286</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;PathsWatcher, EndpointStateActorStoppedError&gt;&gt; + Send + <span class="lifetime">'static
+<a href=#286 id=286 data-nosnippet>286</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;PathsWatchable, EndpointStateActorStoppedError&gt;&gt; + Send + <span class="lifetime">'static
 <a href=#287 id=287 data-nosnippet>287</a>    </span>{
 <a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>(tx, rx) = oneshot::channel();
 <a href=#289 id=289 data-nosnippet>289</a>        <span class="kw">let </span>sender = <span class="self">self</span>.endpoint_map.endpoint_state_actor(remote);
