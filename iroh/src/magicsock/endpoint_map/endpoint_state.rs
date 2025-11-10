@@ -1145,6 +1145,8 @@ impl ConnectionState {
 /// Watchables for the open paths and selected transmission path in a connection.
 ///
 /// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
+///
+/// [`Connection`]: crate::endpoint::Connection
 #[derive(Debug, Default, Clone)]
 pub(crate) struct PathsWatchable {
     /// Watchable for the open paths (in this connection).
@@ -1293,7 +1295,7 @@ fn path_remote(
 ) -> Option<transports::Addr> {
     path.remote_address()
         .map_or(None, |remote| Some(MultipathMappedAddr::from(remote)))
-        .and_then(|mmaddr| mmaddr.to_transport_addr(&relay_mapped_addrs))
+        .and_then(|mmaddr| mmaddr.to_transport_addr(relay_mapped_addrs))
 }
 
 /// Poll a future once, like n0_future::future::poll_once but sync.
