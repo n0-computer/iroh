@@ -29,7 +29,7 @@ use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
-use n0_future::{TryFutureExt, boxed::BoxFuture, time::Duration};
+use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use quinn::{
