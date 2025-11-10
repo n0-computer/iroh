@@ -43,7 +43,7 @@ use crate::{
     discovery::DiscoveryTask,
     magicsock::{
         EndpointStateActorStoppedError,
-        endpoint_map::{PathInfoList, PathsWatcher},
+        endpoint_map::{PathInfoList, PathsWatchable},
     },
 };
 
@@ -1213,7 +1213,7 @@ pub struct Connection {
     inner: quinn::Connection,
     remote_id: EndpointId,
     alpn: Vec<u8>,
-    paths: PathsWatcher,
+    paths: PathsWatchable,
 }
 
 #[allow(missing_docs)]
@@ -1463,7 +1463,7 @@ impl Connection {
     /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
     /// [`PathInfo`]: crate::magicsock::PathInfo
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> {
-        self.paths.clone()
+        self.paths.watch(self.inner.weak_handle())
     }
 
     /// Derives keying material from this connection's TLS session secrets.
