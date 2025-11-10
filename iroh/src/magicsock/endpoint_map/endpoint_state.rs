@@ -1133,6 +1133,10 @@ impl ConnectionState {
 ///
 /// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
 ///
+/// Internally, this contains a boxed-mapped-joined watcher over the open paths in the connection and the
+/// selected path to the remote endpoint. The watcher is boxed because the mapped-joined watcher with
+/// `SmallVec<PathInfoList>` has a size of over 800 bytes, which we don't want to put upon the [`Connection`].
+///
 /// [`Connection`]: crate::endpoint::Connection
 #[derive(Clone, derive_more::Debug)]
 #[debug("PathsWatcher")]
@@ -1140,7 +1144,7 @@ pub(crate) struct PathsWatcher(
     Box<
         n0_watcher::Map<
             (
-                n0_watcher::Direct<SmallVec<[(TransportAddr, PathId); 4]>>,
+                n0_watcher::Direct<PathAddrList>,
                 n0_watcher::Direct<Option<transports::Addr>>,
             ),
             PathInfoList,
