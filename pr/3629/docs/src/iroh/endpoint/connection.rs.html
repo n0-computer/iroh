@@ -211,21 +211,21 @@
 <a href=#211 id=211 data-nosnippet>211</a>        <span class="attr">#[error(std_err)]
 <a href=#212 id=212 data-nosnippet>212</a>        </span>source: ConnectionError,
 <a href=#213 id=213 data-nosnippet>213</a>    },
-<a href=#214 id=214 data-nosnippet>214</a>    <span class="attr">#[error(<span class="string">"endpoint state actor stopped"</span>)]
-<a href=#215 id=215 data-nosnippet>215</a>    </span>EndpointStateActorStopped,
+<a href=#214 id=214 data-nosnippet>214</a>    <span class="attr">#[error(<span class="string">"internal consistency error: EndpointStateActor stopped"</span>)]
+<a href=#215 id=215 data-nosnippet>215</a>    </span>InternalConsistencyError,
 <a href=#216 id=216 data-nosnippet>216</a>}
 <a href=#217 id=217 data-nosnippet>217</a>
 <a href=#218 id=218 data-nosnippet>218</a><span class="kw">impl </span>From&lt;EndpointStateActorStoppedError&gt; <span class="kw">for </span>AuthenticationError {
 <a href=#219 id=219 data-nosnippet>219</a>    <span class="attr">#[track_caller]
 <a href=#220 id=220 data-nosnippet>220</a>    </span><span class="kw">fn </span>from(_value: EndpointStateActorStoppedError) -&gt; <span class="self">Self </span>{
-<a href=#221 id=221 data-nosnippet>221</a>        <span class="macro">e!</span>(<span class="self">Self</span>::EndpointStateActorStopped)
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="macro">e!</span>(<span class="self">Self</span>::InternalConsistencyError)
 <a href=#222 id=222 data-nosnippet>222</a>    }
 <a href=#223 id=223 data-nosnippet>223</a>}
 <a href=#224 id=224 data-nosnippet>224</a>
 <a href=#225 id=225 data-nosnippet>225</a><span class="kw">impl </span>From&lt;EndpointStateActorStoppedError&gt; <span class="kw">for </span>ConnectingError {
 <a href=#226 id=226 data-nosnippet>226</a>    <span class="attr">#[track_caller]
 <a href=#227 id=227 data-nosnippet>227</a>    </span><span class="kw">fn </span>from(_value: EndpointStateActorStoppedError) -&gt; <span class="self">Self </span>{
-<a href=#228 id=228 data-nosnippet>228</a>        <span class="macro">e!</span>(AuthenticationError::EndpointStateActorStopped).into()
+<a href=#228 id=228 data-nosnippet>228</a>        <span class="macro">e!</span>(AuthenticationError::InternalConsistencyError).into()
 <a href=#229 id=229 data-nosnippet>229</a>    }
 <a href=#230 id=230 data-nosnippet>230</a>}
 <a href=#231 id=231 data-nosnippet>231</a>
