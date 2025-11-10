@@ -231,10 +231,14 @@ impl From<EndpointStateActorStoppedError> for ConnectingError {
 
 /// Converts a `quinn::Connection` to a `Connection`.
 ///
-/// ## Errors
+/// Returns a [`AuthenticationError`] if the handshake data has not completed,
+/// or if no alpn was set by the remote node.
 ///
-/// Returns a [`AuthenticationError`] if the handshake data has
-/// not completed, or if no alpn was set by the remote node.
+/// Otherwise returns a future that completes once the connection has been registered with the
+/// magicsock. This future can return an [`EndpointStateActorStoppedError`], which will only be
+/// emitted if the endpoint is closing.
+///
+/// The returned future is `'static`, so it can be stored without being lifetime-bound on `&ep`.
 fn conn_from_quinn_conn(
     conn: quinn::Connection,
     ep: &Endpoint,
@@ -250,8 +254,9 @@ fn conn_from_quinn_conn(
     // Register this connection with the magicsock.
     let fut = ep.msock.register_connection(remote_id, conn.weak_handle());
     Ok(async move {
+        let paths = fut.await?;
         Ok(Connection {
-            paths: fut.await?,
+            paths,
             remote_id,
             alpn,
             inner: conn,
@@ -307,8 +312,12 @@ fn remote_id_from_quinn_conn(
 #[derive(derive_more::Debug)]
 pub struct Connecting {
     inner: quinn::Connecting,
-    #[debug("RegisterFut")]
-    register_fut: RegisterFut,
+    /// Future to register the connection with the magicsock.
+    ///
+    /// This is set and polled after `inner` completes. We are using an option instead of an enum
+    /// because we need infallible access to `inner` in some methods.
+    #[debug("{}", register_with_magicsock.as_ref().map(|_| "Some(RegisterWithMagicsockFut)").unwrap_or("None"))]
+    register_with_magicsock: Option<RegisterWithMagicsockFut>,
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
     remote_endpoint_id: EndpointId,
@@ -317,14 +326,18 @@ pub struct Connecting {
     _discovery_drop_guard: Option<DiscoveryTask>,
 }
 
-type RegisterFut = Option<BoxFuture<Result<Connection, EndpointStateActorStoppedError>>>;
+type RegisterWithMagicsockFut = BoxFuture<Result<Connection, EndpointStateActorStoppedError>>;
 
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
 pub struct Accepting {
     inner: quinn::Connecting,
-    #[debug("RegisterFut")]
-    register_fut: RegisterFut,
+    /// Future to register the connection with the magicsock.
+    ///
+    /// This is set and polled after `inner` completes. We are using an option instead of an enum
+    /// because we need infallible access to `inner` in some methods.
+    #[debug("{}", register_with_magicsock.as_ref().map(|_| "Some(RegisterWithMagicsockFut)").unwrap_or("None"))]
+    register_with_magicsock: Option<RegisterWithMagicsockFut>,
     ep: Endpoint,
 }
 
@@ -367,7 +380,7 @@ impl Connecting {
             inner,
             ep,
             remote_endpoint_id,
-            register_fut: None,
+            register_with_magicsock: None,
             _discovery_drop_guard,
         }
     }
@@ -451,9 +464,18 @@ impl Connecting {
 impl Future for Connecting {
     type Output = Result<Connection, ConnectingError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        poll_connecting(&mut this.inner, &mut this.register_fut, &this.ep, cx)
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        loop {
+            if let Some(fut) = &mut self.register_with_magicsock {
+                return fut.poll_unpin(cx).map_err(Into::into);
+            } else {
+                let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
+                match conn_from_quinn_conn(quinn_conn, &self.ep) {
+                    Err(err) => return Poll::Ready(Err(err.into())),
+                    Ok(fut) => self.register_with_magicsock = Some(Box::pin(fut.err_into())),
+                };
+            }
+        }
     }
 }
 
@@ -462,7 +484,7 @@ impl Accepting {
         Self {
             inner,
             ep,
-            register_fut: None,
+            register_with_magicsock: None,
         }
     }
 
@@ -526,28 +548,17 @@ impl Accepting {
 impl Future for Accepting {
     type Output = Result<Connection, ConnectingError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        poll_connecting(&mut this.inner, &mut this.register_fut, &this.ep, cx)
-    }
-}
-
-fn poll_connecting(
-    connecting: &mut quinn::Connecting,
-    register_fut: &mut RegisterFut,
-    ep: &Endpoint,
-    cx: &mut std::task::Context<'_>,
-) -> Poll<Result<Connection, ConnectingError>> {
-    loop {
-        if let Some(fut) = register_fut {
-            return fut.poll_unpin(cx).map_err(Into::into);
-        } else {
-            let quinn_conn = std::task::ready!(connecting.poll_unpin(cx)?);
-            let fut = match conn_from_quinn_conn(quinn_conn, &ep) {
-                Ok(fut) => fut.err_into(),
-                Err(err) => return Poll::Ready(Err(err.into())),
-            };
-            *register_fut = Some(Box::pin(fut));
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        loop {
+            if let Some(fut) = &mut self.register_with_magicsock {
+                return fut.poll_unpin(cx).map_err(Into::into);
+            } else {
+                let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
+                match conn_from_quinn_conn(quinn_conn, &self.ep) {
+                    Err(err) => return Poll::Ready(Err(err.into())),
+                    Ok(fut) => self.register_with_magicsock = Some(Box::pin(fut.err_into())),
+                };
+            }
         }
     }
 }

@@ -104,6 +104,7 @@ pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 /// Pretty arbitrary and high right now.
 pub(crate) const MAX_MULTIPATH_PATHS: u32 = 16;
 
+/// Error returned when the endpoint state actor stopped while waiting for a reply.
 #[stack_error(derive)]
 #[error("endpoint state actor stopped")]
 pub(crate) struct EndpointStateActorStoppedError;
@@ -269,10 +270,17 @@ impl MagicSock {
         self.local_addrs_watch.clone().get()
     }
 
-    /// Registers the connection in the `EndpointStateActor`.
+    /// Registers the connection in the [`EndpointStateActor`].
     ///
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
+    ///
+    /// Returns a future that resolves to [`PathsWatcher`], which is a [`Watcher`] over the
+    /// transmission paths for this connection.
+    ///
+    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
+    ///
+    /// [`EndpointStateActor`]: self::endpoint_map::EndpointStateActor
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
@@ -281,10 +289,9 @@ impl MagicSock {
     {
         let (tx, rx) = oneshot::channel();
         let sender = self.endpoint_map.endpoint_state_actor(remote);
-        let msg = EndpointStateMessage::AddConnection(conn, tx);
         async move {
             sender
-                .send(msg)
+                .send(EndpointStateMessage::AddConnection(conn, tx))
                 .await
                 .map_err(|_| EndpointStateActorStoppedError)?;
             rx.await.map_err(|_| EndpointStateActorStoppedError)
