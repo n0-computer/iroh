@@ -1,8 +1,9 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, hash_map},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
@@ -28,6 +29,9 @@ pub(super) use endpoint_state::EndpointStateMessage;
 pub(crate) use endpoint_state::PathsWatchable;
 pub use endpoint_state::{ConnectionType, PathInfo, PathInfoList};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
+
+/// Interval in which [`EndpointMap::remove_endpoint_state_actors`] is called.
+pub(super) const ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(30);
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
@@ -121,6 +125,15 @@ impl EndpointMap {
         todo!();
     }
 
+    /// Removes the handles for closed [`EndpointStateActor`]s from the endpoint map.
+    ///
+    /// This should be called periodically to remove handles to endpoint state actors
+    /// that have shutdown after their idle timeout expired.
+    pub(super) fn remove_closed_endpoint_state_actors(&self) {
+        let mut handles = self.actor_handles.lock().expect("poisoned");
+        handles.retain(|_eid, handle| !handle.is_closed())
+    }
+
     /// Returns the sender for the [`EndpointStateActor`].
     ///
     /// If needed a new actor is started on demand.
@@ -131,30 +144,39 @@ impl EndpointMap {
         eid: EndpointId,
     ) -> mpsc::Sender<EndpointStateMessage> {
         let mut handles = self.actor_handles.lock().expect("poisoned");
-        match handles.get(&eid) {
-            Some(handle) => handle.sender.clone(),
-            None => {
-                // Create a new EndpointStateActor and insert it into the endpoint map.
-                let sender = self.transports_handle.inbox.clone();
-                let local_addrs = self.local_addrs.clone();
-                let disco = self.disco.clone();
-                let metrics = self.metrics.clone();
-                let actor = EndpointStateActor::new(
-                    eid,
-                    self.local_endpoint_id,
-                    sender,
-                    local_addrs,
-                    disco,
-                    self.relay_mapped_addrs.clone(),
-                    metrics,
-                );
-                let handle = actor.start();
-                let sender = handle.sender.clone();
-                handles.insert(eid, handle);
-
-                // Ensure there is a EndpointMappedAddr for this EndpointId.
-                self.endpoint_mapped_addrs.get(&eid);
-                sender
+        loop {
+            match handles.entry(eid) {
+                hash_map::Entry::Occupied(entry) => {
+                    let sender = entry.get().sender();
+                    // Check if the EndpointStateActor's inbox closed before we cloned out the sender.
+                    // The EndpointStateActor will only close if there are no cloned-out senders, so if this check here succeeds,
+                    // we know that it won't close until this sender is dropped.
+                    // If it did close, remove the handle and start a new actor.
+                    if sender.is_closed() {
+                        entry.remove();
+                        continue;
+                    } else {
+                        return sender;
+                    }
+                }
+                hash_map::Entry::Vacant(entry) => {
+                    // Ensure there is a EndpointMappedAddr for this EndpointId.
+                    self.endpoint_mapped_addrs.get(&eid);
+                    // Start a new EndpointStateActor and insert it into the endpoint map.
+                    let actor = EndpointStateActor::new(
+                        eid,
+                        self.local_endpoint_id,
+                        self.transports_handle.inbox.clone(),
+                        self.local_addrs.clone(),
+                        self.disco.clone(),
+                        self.relay_mapped_addrs.clone(),
+                        self.metrics.clone(),
+                    );
+                    let handle = actor.start();
+                    let sender = handle.sender();
+                    entry.insert(handle);
+                    return sender;
+                }
             }
         }
     }

@@ -68,6 +68,14 @@ use crate::{
 // TODO: Quinn should just do this.  Also, I made this value up.
 const APPLICATION_ABANDON_PATH: u8 = 30;
 
+/// The time after which an idle [`EndpointStateActor`] stops.
+///
+/// The actor only enters the idle state if no connections are active and no inbox senders exist
+/// apart from the one stored in the endpoint map. Stopping and restarting the actor in this state
+/// is not an issue; a small timeout here serves the purpose of not stopping-and-recreating actors
+/// in a high frequency.
+const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// A stream of events from all paths for all connections.
 ///
 /// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
@@ -214,6 +222,8 @@ impl EndpointStateActor {
         mut inbox: mpsc::Receiver<EndpointStateMessage>,
     ) -> n0_error::Result<()> {
         trace!("actor started");
+        let idle_timeout = MaybeFuture::None;
+        tokio::pin!(idle_timeout);
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -256,8 +266,30 @@ impl EndpointStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching().await;
                 }
+                _ = &mut idle_timeout => {
+                    if self.connections.is_empty() && inbox.is_empty() && inbox.sender_strong_count() == 1 {
+                        trace!("actor terminating: connections empty and no inbox senders remain");
+                        break;
+                    } else {
+                        idle_timeout.as_mut().set_none();
+                    }
+                }
+            }
+
+            // Check if the actor should be closed. We close if there's no active connections,
+            // no pending messages are in the inbox, and no senders to the inbox exist apart from
+            // the handle stored in the endpoint map.
+            if self.connections.is_empty() && inbox.is_empty() && inbox.sender_strong_count() == 1 {
+                if idle_timeout.is_none() {
+                    idle_timeout
+                        .as_mut()
+                        .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
+                }
+            } else if idle_timeout.is_some() {
+                idle_timeout.as_mut().set_none();
             }
         }
+        inbox.close();
         trace!("actor terminating");
         Ok(())
     }
@@ -316,7 +348,7 @@ impl EndpointStateActor {
                 self.transports_sender
                     .send((addr.clone(), transmit.clone()).into())
                     .await
-                    .std_context("TransportSenerActor stopped")?;
+                    .std_context("TransportSenderActor stopped")?;
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger
@@ -1021,12 +1053,23 @@ pub(crate) enum EndpointStateMessage {
 
 /// A handle to a [`EndpointStateActor`].
 ///
-/// Dropping this will stop the actor.
+/// Dropping this will stop the actor. The actor will also stop if it has no connections, an empty inbox,
+/// and no other senders than the one stored in the endpoint map. This means: You need
 #[derive(Debug)]
 pub(super) struct EndpointStateHandle {
     /// Sender for the channel into the [`EndpointStateActor`].
-    pub(super) sender: mpsc::Sender<EndpointStateMessage>,
+    sender: mpsc::Sender<EndpointStateMessage>,
     _task: AbortOnDropHandle<()>,
+}
+
+impl EndpointStateHandle {
+    pub(super) fn sender(&self) -> mpsc::Sender<EndpointStateMessage> {
+        self.sender.clone()
+    }
+
+    pub(super) fn is_closed(&self) -> bool {
+        self.sender.is_closed()
+    }
 }
 
 /// Information about a holepunch attempt.
