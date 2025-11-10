@@ -31,7 +31,7 @@ use crate::{
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
-        mapped_addrs::{AddrMap, MappedAddr, MultipathMappedAddr, RelayMappedAddr},
+        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
         transports::{self, OwnedTransmit},
     },
     util::MaybeFuture,
@@ -356,7 +356,8 @@ impl EndpointStateActor {
             // Store PathId(0), set path_status and select best path, check if holepunching
             // is needed.
             if let Some(path) = conn.path(PathId::ZERO)
-                && let Some(path_remote) = path_remote(&self.relay_mapped_addrs, &path)
+                && let Ok(socketaddr) = path.remote_address()
+                && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
             {
                 trace!(?path_remote, "added new connection");
                 let path_remote_is_ip = path_remote.is_ip();
@@ -795,7 +796,9 @@ impl EndpointStateActor {
                 path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
                 path.set_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT)).ok();
 
-                if let Some(path_remote) = path_remote(&self.relay_mapped_addrs, &path) {
+                if let Ok(socketaddr) = path.remote_address()
+                    && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
+                {
                     event!(
                         target: "iroh::_events::path::open",
                         Level::DEBUG,
@@ -1287,15 +1290,6 @@ impl PathInfo {
     pub fn rtt(&self) -> Duration {
         self.stats().rtt
     }
-}
-
-fn path_remote(
-    relay_mapped_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    path: &quinn::Path,
-) -> Option<transports::Addr> {
-    path.remote_address()
-        .map_or(None, |remote| Some(MultipathMappedAddr::from(remote)))
-        .and_then(|mmaddr| mmaddr.to_transport_addr(relay_mapped_addrs))
 }
 
 /// Poll a future once, like n0_future::future::poll_once but sync.
