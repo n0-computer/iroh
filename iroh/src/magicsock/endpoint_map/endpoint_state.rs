@@ -1308,7 +1308,8 @@ fn now_or_never<T, F: Future<Output = T>>(fut: F) -> Option<T> {
 
 /// Future that resolves to the `conn_id` once a connection is closed.
 ///
-/// This uses [`Connection::on_closed`], which does not keep the connection alive while awaiting the future.
+/// This uses [`quinn::Connection::on_closed`], which does not keep the connection alive
+/// while awaiting the future.
 struct OnClosed {
     conn_id: ConnId,
     inner: quinn::OnClosed,
