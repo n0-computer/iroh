@@ -626,31 +626,40 @@ pub struct Connection<State: ConnectionState = HandshakeCompleted> {
     _p: std::marker::PhantomData<State>,
 }
 
+#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct HandshakeCompletedData {
     endpoint_id: EndpointId,
     alpn: Vec<u8>,
 }
 
+#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct IncomingZeroRttData {
     accepted: Shared<ZeroRttAccepted>,
 }
+
+#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct OutgoingZeroRttData {
     accepted: Shared<ZeroRttAccepted>,
 }
 
+/// Trait to track the state of a [`Connection`] at compile time.
 pub trait ConnectionState {
+    /// State-specific data stored in the [`Connection`].
     type Data: std::fmt::Debug + Clone;
 }
 
+/// Marker type for a connection that has completed the handshake.
 #[derive(Debug, Clone)]
 pub struct HandshakeCompleted;
 
+/// Marker type for a connection that is in the incoming 0-RTT state.
 #[derive(Debug, Clone)]
 pub struct IncomingZeroRtt;
 
+/// Marker type for a connection that is in the outgoing 0-RTT state.
 #[derive(Debug, Clone)]
 pub struct OutgoingZeroRtt;
 
