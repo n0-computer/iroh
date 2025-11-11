@@ -125,7 +125,7 @@ impl EndpointMap {
         todo!();
     }
 
-    /// Removes the handles for closed [`EndpointStateActor`]s from the endpoint map.
+    /// Removes the handles for terminated [`EndpointStateActor`]s from the endpoint map.
     ///
     /// This should be called periodically to remove handles to endpoint state actors
     /// that have shutdown after their idle timeout expired.
@@ -147,16 +147,15 @@ impl EndpointMap {
         loop {
             match handles.entry(eid) {
                 hash_map::Entry::Occupied(entry) => {
-                    let sender = entry.get().sender();
-                    // Check if the EndpointStateActor's inbox closed before we cloned out the sender.
-                    // The EndpointStateActor will only close if there are no cloned-out senders, so if this check here succeeds,
-                    // we know that it won't close until this sender is dropped.
-                    // If it did close, remove the handle and start a new actor.
-                    if sender.is_closed() {
+                    let handle = entry.get();
+                    // Checks if the actor is alive, and if not, remove the handle to the terminated actor and start a
+                    // new actor in the next loop iteration.
+                    if let Some(sender) = handle.sender() {
+                        return sender;
+                    } else {
+                        // The actor is dead: Remove the handle, and create a new actor in the next loop.
                         entry.remove();
                         continue;
-                    } else {
-                        return sender;
                     }
                 }
                 hash_map::Entry::Vacant(entry) => {
@@ -173,7 +172,8 @@ impl EndpointMap {
                         self.metrics.clone(),
                     );
                     let handle = actor.start();
-                    let sender = handle.sender();
+                    // We know that the actor hasn't terminated yet because it will at least await its idle timeout.
+                    let sender = handle.sender().expect("just created");
                     entry.insert(handle);
                     return sender;
                 }

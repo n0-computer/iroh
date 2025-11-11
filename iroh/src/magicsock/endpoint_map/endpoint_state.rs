@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeSet, VecDeque},
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::Poll,
 };
 
@@ -72,9 +72,9 @@ const APPLICATION_ABANDON_PATH: u8 = 30;
 ///
 /// The actor only enters the idle state if no connections are active and no inbox senders exist
 /// apart from the one stored in the endpoint map. Stopping and restarting the actor in this state
-/// is not an issue; a small timeout here serves the purpose of not stopping-and-recreating actors
-/// in a high frequency.
-const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(1);
+/// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
+/// in a high frequency, and to keep data about previous path around for subsequent connections.
+const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A stream of events from all paths for all connections.
 ///
@@ -151,6 +151,12 @@ pub(super) struct EndpointStateActor {
     ///
     /// They failed to open because we did not have enough CIDs issued by the remote.
     pending_open_paths: VecDeque<transports::Addr>,
+    /// A mutex to define a critical section around stopping the actor.
+    ///
+    /// The lock is held while checking the inbox's sender count. Likewise, the handle acquires the lock
+    /// before checking if the inbox is live and cloning out a new sender. This prevents a race condition
+    /// where the handle would clone out a new sender right after the actor decided to terminate.
+    close_lock: Arc<Mutex<()>>,
 }
 
 impl EndpointStateActor {
@@ -180,6 +186,7 @@ impl EndpointStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
+            close_lock: Default::default(),
         }
     }
 
@@ -187,6 +194,7 @@ impl EndpointStateActor {
         let (tx, rx) = mpsc::channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
+        let close_lock = self.close_lock.clone();
 
         // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
         // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
@@ -208,6 +216,7 @@ impl EndpointStateActor {
         );
         EndpointStateHandle {
             sender: tx,
+            close_lock,
             _task: AbortOnDropHandle::new(task),
         }
     }
@@ -267,31 +276,39 @@ impl EndpointStateActor {
                     self.trigger_holepunching().await;
                 }
                 _ = &mut idle_timeout => {
-                    if self.connections.is_empty() && inbox.is_empty() && inbox.sender_strong_count() == 1 {
-                        trace!("actor terminating: connections empty and no inbox senders remain");
+                    // Enter critical section
+                    let _guard = self.close_lock.lock().expect("poisoned");
+                    // Check is_idle and if true close the inbox while the close_lock is held.
+                    if self.is_idle(&inbox) {
+                        inbox.close();
+                        trace!("idle timeout expired and still idle: terminate actor");
                         break;
                     } else {
-                        idle_timeout.as_mut().set_none();
+                        drop(_guard);
                     }
                 }
             }
 
-            // Check if the actor should be closed. We close if there's no active connections,
-            // no pending messages are in the inbox, and no senders to the inbox exist apart from
-            // the handle stored in the endpoint map.
-            if self.connections.is_empty() && inbox.is_empty() && inbox.sender_strong_count() == 1 {
-                if idle_timeout.is_none() {
-                    idle_timeout
-                        .as_mut()
-                        .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
-                }
+            if self.is_idle(&inbox) && idle_timeout.is_none() {
+                trace!("start idle timeout");
+                idle_timeout
+                    .as_mut()
+                    .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
             } else if idle_timeout.is_some() {
-                idle_timeout.as_mut().set_none();
+                trace!("abort idle timeout");
+                idle_timeout.as_mut().set_none()
             }
         }
-        inbox.close();
         trace!("actor terminating");
         Ok(())
+    }
+
+    /// Checks if the actor is idle and can terminate without interrupting ongoing work.
+    ///
+    /// Returns `true` if there are no active connections, no pending messages in the inbox,
+    /// and no senders to the inbox exist apart from the handle stored in the endpoint map.
+    fn is_idle(&self, inbox: &mpsc::Receiver<EndpointStateMessage>) -> bool {
+        self.connections.is_empty() && inbox.is_empty() && inbox.sender_strong_count() == 1
     }
 
     /// Handles an actor message.
@@ -1053,20 +1070,36 @@ pub(crate) enum EndpointStateMessage {
 
 /// A handle to a [`EndpointStateActor`].
 ///
-/// Dropping this will stop the actor. The actor will also stop if it has no connections, an empty inbox,
-/// and no other senders than the one stored in the endpoint map. This means: You need
+/// Dropping this will stop the actor. The actor will also stop after an idle timeout
+/// if it has no connections, an empty inbox, and no other senders than the one stored
+/// in the endpoint map exist.
 #[derive(Debug)]
 pub(super) struct EndpointStateHandle {
     /// Sender for the channel into the [`EndpointStateActor`].
     sender: mpsc::Sender<EndpointStateMessage>,
+    /// Lock shared with the actor to define a critical section for checking the actor liveness when
+    /// creating a new sender.
+    close_lock: Arc<Mutex<()>>,
     _task: AbortOnDropHandle<()>,
 }
 
 impl EndpointStateHandle {
-    pub(super) fn sender(&self) -> mpsc::Sender<EndpointStateMessage> {
-        self.sender.clone()
+    /// Returns a sender for the channel into the [`EndpointStateActor`].
+    ///
+    /// Returns `None` if the actor is terminating. This is race-free because a lock shared with the actor
+    /// is used to ensure that once we cloned the sender, the actor won't close until the sender is dropped.
+    pub(super) fn sender(&self) -> Option<mpsc::Sender<EndpointStateMessage>> {
+        let _guard = self.close_lock.lock().expect("poisoned");
+        if self.sender.is_closed() {
+            None
+        } else {
+            Some(self.sender.clone())
+        }
     }
 
+    /// Returns `true` if the endpoint actor has terminated.
+    ///
+    /// We check if the actor's inbox has been closed, which only happens once the actor loop terminates.
     pub(super) fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }
