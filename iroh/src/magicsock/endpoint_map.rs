@@ -6,16 +6,15 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
-use n0_future::task::{self, AbortOnDropHandle};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{Instrument, info_span, trace, warn};
+use tracing::warn;
 
 use super::{
     DirectAddr, DiscoState, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
-    transports::{self, OwnedTransmit, TransportsSender},
+    transports::{self, TransportsSender},
 };
 use crate::disco::{self};
 // #[cfg(any(test, feature = "test-utils"))]
@@ -58,10 +57,9 @@ pub(crate) struct EndpointMap {
     /// The endpoint ID of the local endpoint.
     local_endpoint_id: EndpointId,
     metrics: Arc<MagicsockMetrics>,
-    /// Handle to an actor that can send over the transports.
-    transports_handle: TransportsSenderHandle,
     local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     disco: DiscoState,
+    sender: TransportsSender,
 }
 
 impl EndpointMap {
@@ -71,9 +69,10 @@ impl EndpointMap {
         // TODO:
         // #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
-        sender: TransportsSender,
+
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
+        sender: TransportsSender,
     ) -> Self {
         Self {
             actor_handles: Mutex::new(FxHashMap::default()),
@@ -81,9 +80,9 @@ impl EndpointMap {
             relay_mapped_addrs: Default::default(),
             local_endpoint_id,
             metrics,
-            transports_handle: TransportsSenderActor::new(sender).start(),
             local_addrs,
             disco,
+            sender,
         }
     }
 
@@ -135,18 +134,17 @@ impl EndpointMap {
             Some(handle) => handle.sender.clone(),
             None => {
                 // Create a new EndpointStateActor and insert it into the endpoint map.
-                let sender = self.transports_handle.inbox.clone();
                 let local_addrs = self.local_addrs.clone();
                 let disco = self.disco.clone();
                 let metrics = self.metrics.clone();
                 let actor = EndpointStateActor::new(
                     eid,
                     self.local_endpoint_id,
-                    sender,
                     local_addrs,
                     disco,
                     self.relay_mapped_addrs.clone(),
                     metrics,
+                    self.sender.clone(),
                 );
                 let handle = actor.start();
                 let sender = handle.sender.clone();
@@ -279,79 +277,6 @@ impl IpPort {
 
     pub fn port(&self) -> u16 {
         self.port
-    }
-}
-
-/// An actor that can send datagrams onto iroh transports.
-///
-/// The [`EndpointStateActor`]s want to be able to send datagrams.  Because we can not create
-/// [`TransportsSender`]s on demand we must share one for the entire [`EndpointMap`], which
-/// lives in this actor.
-///
-/// [`EndpointStateActor`]: endpoint_state::EndpointStateActor
-#[derive(Debug)]
-struct TransportsSenderActor {
-    sender: TransportsSender,
-}
-
-impl TransportsSenderActor {
-    fn new(sender: TransportsSender) -> Self {
-        Self { sender }
-    }
-
-    fn start(self) -> TransportsSenderHandle {
-        // This actor gets an inbox size of exactly 1.  This is the same as if they had the
-        // underlying sender directly: either you can send or not, or you await until you
-        // can.  No need to introduce extra buffering.
-        let (tx, rx) = mpsc::channel(1);
-
-        let task = task::spawn(
-            async move {
-                self.run(rx).await;
-            }
-            .instrument(info_span!("TransportsSenderActor")),
-        );
-        TransportsSenderHandle {
-            inbox: tx,
-            _task: AbortOnDropHandle::new(task),
-        }
-    }
-
-    async fn run(self, mut inbox: mpsc::Receiver<TransportsSenderMessage>) {
-        use TransportsSenderMessage::SendDatagram;
-
-        while let Some(SendDatagram(dst, owned_transmit)) = inbox.recv().await {
-            let transmit = transports::Transmit {
-                ecn: owned_transmit.ecn,
-                contents: owned_transmit.contents.as_ref(),
-                segment_size: owned_transmit.segment_size,
-            };
-            let len = transmit.contents.len();
-            match self.sender.send(&dst, None, &transmit).await {
-                Ok(()) => {}
-                Err(err) => {
-                    trace!(?dst, %len, "transmit failed to send: {err:#}");
-                }
-            };
-        }
-        trace!("actor terminating");
-    }
-}
-
-#[derive(Debug)]
-struct TransportsSenderHandle {
-    inbox: mpsc::Sender<TransportsSenderMessage>,
-    _task: AbortOnDropHandle<()>,
-}
-
-#[derive(Debug)]
-enum TransportsSenderMessage {
-    SendDatagram(transports::Addr, OwnedTransmit),
-}
-
-impl From<(transports::Addr, OwnedTransmit)> for TransportsSenderMessage {
-    fn from(source: (transports::Addr, OwnedTransmit)) -> Self {
-        Self::SendDatagram(source.0, source.1)
     }
 }
 
