@@ -80,7 +80,7 @@
 <a href=#80 id=80 data-nosnippet>80</a>        msock: <span class="kw-2">&amp;</span>MagicSock,
 <a href=#81 id=81 data-nosnippet>81</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
 <a href=#82 id=82 data-nosnippet>82</a>        <span class="macro">debug_assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
-<a href=#83 id=83 data-nosnippet>83</a>        <span class="kw">if </span>msock.is_closed() {
+<a href=#83 id=83 data-nosnippet>83</a>        <span class="kw">if </span>msock.is_closing() {
 <a href=#84 id=84 data-nosnippet>84</a>            <span class="kw">return </span>Poll::Pending;
 <a href=#85 id=85 data-nosnippet>85</a>        }
 <a href=#86 id=86 data-nosnippet>86</a>
@@ -412,7 +412,7 @@
 <a href=#412 id=412 data-nosnippet>412</a>}
 <a href=#413 id=413 data-nosnippet>413</a>
 <a href=#414 id=414 data-nosnippet>414</a><span class="doccomment">/// A sender that sends to all our transports.
-<a href=#415 id=415 data-nosnippet>415</a></span><span class="attr">#[derive(Debug)]
+<a href=#415 id=415 data-nosnippet>415</a></span><span class="attr">#[derive(Debug, Clone)]
 <a href=#416 id=416 data-nosnippet>416</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>TransportsSender {
 <a href=#417 id=417 data-nosnippet>417</a>    <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#418 id=418 data-nosnippet>418</a>    </span>ip: Vec&lt;IpSender&gt;,
@@ -602,131 +602,129 @@
 <a href=#602 id=602 data-nosnippet>602</a>/// This is special in that it handles [`MultipathMappedAddr::Mixed`] by delegating to the
 <a href=#603 id=603 data-nosnippet>603</a>/// [`MagicSock`] which expands it back to one or more [`Addr`]s and sends it
 <a href=#604 id=604 data-nosnippet>604</a>/// using the underlying [`Transports`].
-<a href=#605 id=605 data-nosnippet>605</a></span><span class="comment">// TODO: Can I just send the TransportsSender along in the NodeStateMessage::SendDatagram
-<a href=#606 id=606 data-nosnippet>606</a>// message??  That way you don't have to hook up the sender into the NodeMap!
-<a href=#607 id=607 data-nosnippet>607</a></span><span class="attr">#[derive(Debug)]
-<a href=#608 id=608 data-nosnippet>608</a>#[pin_project::pin_project]
-<a href=#609 id=609 data-nosnippet>609</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>MagicSender {
-<a href=#610 id=610 data-nosnippet>610</a>    msock: Arc&lt;MagicSock&gt;,
-<a href=#611 id=611 data-nosnippet>611</a>    <span class="attr">#[pin]
-<a href=#612 id=612 data-nosnippet>612</a>    </span>sender: TransportsSender,
-<a href=#613 id=613 data-nosnippet>613</a>}
-<a href=#614 id=614 data-nosnippet>614</a>
-<a href=#615 id=615 data-nosnippet>615</a><span class="kw">impl </span>MagicSender {
-<a href=#616 id=616 data-nosnippet>616</a>    <span class="doccomment">/// Extracts the right [`Addr`] from the [`quinn_udp::Transmit`].
-<a href=#617 id=617 data-nosnippet>617</a>    ///
-<a href=#618 id=618 data-nosnippet>618</a>    /// Because Quinn does only know about IP transports we map other transports to private
-<a href=#619 id=619 data-nosnippet>619</a>    /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
-<a href=#620 id=620 data-nosnippet>620</a>    /// transmit's destination.
-<a href=#621 id=621 data-nosnippet>621</a>    </span><span class="kw">fn </span>mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;MultipathMappedAddr&gt; {
-<a href=#622 id=622 data-nosnippet>622</a>        <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
-<a href=#623 id=623 data-nosnippet>623</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
-<a href=#624 id=624 data-nosnippet>624</a>                io::ErrorKind::NotConnected,
-<a href=#625 id=625 data-nosnippet>625</a>                <span class="string">"connection closed"</span>,
-<a href=#626 id=626 data-nosnippet>626</a>            ));
-<a href=#627 id=627 data-nosnippet>627</a>        }
-<a href=#628 id=628 data-nosnippet>628</a>
-<a href=#629 id=629 data-nosnippet>629</a>        <span class="prelude-val">Ok</span>(MultipathMappedAddr::from(transmit.destination))
-<a href=#630 id=630 data-nosnippet>630</a>    }
-<a href=#631 id=631 data-nosnippet>631</a>}
-<a href=#632 id=632 data-nosnippet>632</a>
-<a href=#633 id=633 data-nosnippet>633</a><span class="kw">impl </span>quinn::UdpSender <span class="kw">for </span>MagicSender {
-<a href=#634 id=634 data-nosnippet>634</a>    <span class="kw">fn </span>poll_send(
-<a href=#635 id=635 data-nosnippet>635</a>        <span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-<a href=#636 id=636 data-nosnippet>636</a>        quinn_transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit,
-<a href=#637 id=637 data-nosnippet>637</a>        cx: <span class="kw-2">&amp;mut </span>Context,
-<a href=#638 id=638 data-nosnippet>638</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-<a href=#639 id=639 data-nosnippet>639</a>        <span class="comment">// On errors this methods prefers returning Ok(()) to Quinn.  Returning an error
-<a href=#640 id=640 data-nosnippet>640</a>        // should only happen if the error is permanent and fatal and it will never be
-<a href=#641 id=641 data-nosnippet>641</a>        // possible to send anything again.  Doing so kills the Quinn EndpointDriver.  Most
-<a href=#642 id=642 data-nosnippet>642</a>        // send errors are intermittent errors, returning Ok(()) in those cases will mean
-<a href=#643 id=643 data-nosnippet>643</a>        // Quinn eventually considers the packets that had send errors as lost and will try
-<a href=#644 id=644 data-nosnippet>644</a>        // and re-send them.
-<a href=#645 id=645 data-nosnippet>645</a>        </span><span class="kw">let </span>mapped_addr = <span class="self">self</span>.mapped_addr(quinn_transmit)<span class="question-mark">?</span>;
-<a href=#646 id=646 data-nosnippet>646</a>
-<a href=#647 id=647 data-nosnippet>647</a>        <span class="kw">let </span>transport_addr = <span class="kw">match </span>mapped_addr {
-<a href=#648 id=648 data-nosnippet>648</a>            MultipathMappedAddr::Mixed(mapped_addr) =&gt; {
-<a href=#649 id=649 data-nosnippet>649</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = <span class="self">self
-<a href=#650 id=650 data-nosnippet>650</a>                    </span>.msock
-<a href=#651 id=651 data-nosnippet>651</a>                    .endpoint_map
-<a href=#652 id=652 data-nosnippet>652</a>                    .endpoint_mapped_addrs
-<a href=#653 id=653 data-nosnippet>653</a>                    .lookup(<span class="kw-2">&amp;</span>mapped_addr)
-<a href=#654 id=654 data-nosnippet>654</a>                <span class="kw">else </span>{
-<a href=#655 id=655 data-nosnippet>655</a>                    <span class="macro">error!</span>(dst = <span class="question-mark">?</span>mapped_addr, <span class="string">"unknown NodeIdMappedAddr, dropped transmit"</span>);
-<a href=#656 id=656 data-nosnippet>656</a>                    <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(()));
-<a href=#657 id=657 data-nosnippet>657</a>                };
-<a href=#658 id=658 data-nosnippet>658</a>
-<a href=#659 id=659 data-nosnippet>659</a>                <span class="comment">// Note we drop the src_ip set in the Quinn Transmit.  This is only the
-<a href=#660 id=660 data-nosnippet>660</a>                // Initial packet we are sending, so we do not yet have an src address we
-<a href=#661 id=661 data-nosnippet>661</a>                // need to respond from.
-<a href=#662 id=662 data-nosnippet>662</a>                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(src_ip) = quinn_transmit.src_ip {
-<a href=#663 id=663 data-nosnippet>663</a>                    <span class="macro">warn!</span>(dst = <span class="question-mark">?</span>mapped_addr, <span class="question-mark">?</span>src_ip, dst_node = %node_id.fmt_short(),
-<a href=#664 id=664 data-nosnippet>664</a>                        <span class="string">"oops, flub didn't think this would happen"</span>);
-<a href=#665 id=665 data-nosnippet>665</a>                }
-<a href=#666 id=666 data-nosnippet>666</a>
-<a href=#667 id=667 data-nosnippet>667</a>                <span class="kw">let </span>sender = <span class="self">self</span>.msock.endpoint_map.endpoint_state_actor(node_id);
-<a href=#668 id=668 data-nosnippet>668</a>                <span class="kw">let </span>transmit = OwnedTransmit::from(quinn_transmit);
-<a href=#669 id=669 data-nosnippet>669</a>                <span class="kw">return match </span>sender.try_send(EndpointStateMessage::SendDatagram(transmit)) {
-<a href=#670 id=670 data-nosnippet>670</a>                    <span class="prelude-val">Ok</span>(()) =&gt; {
-<a href=#671 id=671 data-nosnippet>671</a>                        <span class="macro">trace!</span>(dst = <span class="question-mark">?</span>mapped_addr, dst_node = %node_id.fmt_short(), <span class="string">"sent transmit"</span>);
-<a href=#672 id=672 data-nosnippet>672</a>                        Poll::Ready(<span class="prelude-val">Ok</span>(()))
-<a href=#673 id=673 data-nosnippet>673</a>                    }
-<a href=#674 id=674 data-nosnippet>674</a>                    <span class="prelude-val">Err</span>(err) =&gt; {
-<a href=#675 id=675 data-nosnippet>675</a>                        <span class="comment">// We do not want to block the next send which might be on a
-<a href=#676 id=676 data-nosnippet>676</a>                        // different transport.  Instead we let Quinn handle this as
-<a href=#677 id=677 data-nosnippet>677</a>                        // a lost datagram.
-<a href=#678 id=678 data-nosnippet>678</a>                        // TODO: Revisit this: we might want to do something better.
-<a href=#679 id=679 data-nosnippet>679</a>                        </span><span class="macro">debug!</span>(dst = <span class="question-mark">?</span>mapped_addr, dst_node = %node_id.fmt_short(),
-<a href=#680 id=680 data-nosnippet>680</a>                            <span class="string">"EndpointStateActor inbox {err:#}, dropped transmit"</span>);
-<a href=#681 id=681 data-nosnippet>681</a>                        Poll::Ready(<span class="prelude-val">Ok</span>(()))
-<a href=#682 id=682 data-nosnippet>682</a>                    }
-<a href=#683 id=683 data-nosnippet>683</a>                };
-<a href=#684 id=684 data-nosnippet>684</a>            }
-<a href=#685 id=685 data-nosnippet>685</a>            MultipathMappedAddr::Relay(relay_mapped_addr) =&gt; {
-<a href=#686 id=686 data-nosnippet>686</a>                <span class="kw">match </span><span class="self">self
-<a href=#687 id=687 data-nosnippet>687</a>                    </span>.msock
-<a href=#688 id=688 data-nosnippet>688</a>                    .endpoint_map
-<a href=#689 id=689 data-nosnippet>689</a>                    .relay_mapped_addrs
-<a href=#690 id=690 data-nosnippet>690</a>                    .lookup(<span class="kw-2">&amp;</span>relay_mapped_addr)
-<a href=#691 id=691 data-nosnippet>691</a>                {
-<a href=#692 id=692 data-nosnippet>692</a>                    <span class="prelude-val">Some</span>((relay_url, endpoint_id)) =&gt; Addr::Relay(relay_url, endpoint_id),
-<a href=#693 id=693 data-nosnippet>693</a>                    <span class="prelude-val">None </span>=&gt; {
-<a href=#694 id=694 data-nosnippet>694</a>                        <span class="macro">error!</span>(<span class="string">"unknown RelayMappedAddr, dropped transmit"</span>);
-<a href=#695 id=695 data-nosnippet>695</a>                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(()));
-<a href=#696 id=696 data-nosnippet>696</a>                    }
-<a href=#697 id=697 data-nosnippet>697</a>                }
-<a href=#698 id=698 data-nosnippet>698</a>            }
-<a href=#699 id=699 data-nosnippet>699</a>            MultipathMappedAddr::Ip(socket_addr) =&gt; Addr::Ip(socket_addr),
-<a href=#700 id=700 data-nosnippet>700</a>        };
-<a href=#701 id=701 data-nosnippet>701</a>
-<a href=#702 id=702 data-nosnippet>702</a>        <span class="kw">let </span>transmit = Transmit {
-<a href=#703 id=703 data-nosnippet>703</a>            ecn: quinn_transmit.ecn,
-<a href=#704 id=704 data-nosnippet>704</a>            contents: quinn_transmit.contents,
-<a href=#705 id=705 data-nosnippet>705</a>            segment_size: quinn_transmit.segment_size,
-<a href=#706 id=706 data-nosnippet>706</a>        };
-<a href=#707 id=707 data-nosnippet>707</a>        <span class="kw">let </span>this = <span class="self">self</span>.project();
-<a href=#708 id=708 data-nosnippet>708</a>
-<a href=#709 id=709 data-nosnippet>709</a>        <span class="kw">match </span>this
-<a href=#710 id=710 data-nosnippet>710</a>            .sender
-<a href=#711 id=711 data-nosnippet>711</a>            .inner_poll_send(cx, <span class="kw-2">&amp;</span>transport_addr, quinn_transmit.src_ip, <span class="kw-2">&amp;</span>transmit)
-<a href=#712 id=712 data-nosnippet>712</a>        {
-<a href=#713 id=713 data-nosnippet>713</a>            Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
-<a href=#714 id=714 data-nosnippet>714</a>            Poll::Ready(<span class="prelude-val">Err</span>(<span class="kw-2">ref </span>err)) =&gt; {
-<a href=#715 id=715 data-nosnippet>715</a>                <span class="macro">warn!</span>(<span class="string">"dropped transmit: {err:#}"</span>);
-<a href=#716 id=716 data-nosnippet>716</a>                Poll::Ready(<span class="prelude-val">Ok</span>(()))
-<a href=#717 id=717 data-nosnippet>717</a>            }
-<a href=#718 id=718 data-nosnippet>718</a>            Poll::Pending =&gt; {
-<a href=#719 id=719 data-nosnippet>719</a>                <span class="comment">// We do not want to block the next send which might be on a
-<a href=#720 id=720 data-nosnippet>720</a>                // different transport.  Instead we let Quinn handle this as a lost
-<a href=#721 id=721 data-nosnippet>721</a>                // datagram.
-<a href=#722 id=722 data-nosnippet>722</a>                // TODO: Revisit this: we might want to do something better.
-<a href=#723 id=723 data-nosnippet>723</a>                </span><span class="macro">trace!</span>(<span class="string">"transport pending, dropped transmit"</span>);
-<a href=#724 id=724 data-nosnippet>724</a>                Poll::Ready(<span class="prelude-val">Ok</span>(()))
-<a href=#725 id=725 data-nosnippet>725</a>            }
-<a href=#726 id=726 data-nosnippet>726</a>        }
-<a href=#727 id=727 data-nosnippet>727</a>    }
-<a href=#728 id=728 data-nosnippet>728</a>
-<a href=#729 id=729 data-nosnippet>729</a>    <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#730 id=730 data-nosnippet>730</a>        <span class="self">self</span>.sender.max_transmit_segments
-<a href=#731 id=731 data-nosnippet>731</a>    }
-<a href=#732 id=732 data-nosnippet>732</a>}</code></pre></div></section></main></body></html>
+<a href=#605 id=605 data-nosnippet>605</a></span><span class="attr">#[derive(Debug)]
+<a href=#606 id=606 data-nosnippet>606</a>#[pin_project::pin_project]
+<a href=#607 id=607 data-nosnippet>607</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>MagicSender {
+<a href=#608 id=608 data-nosnippet>608</a>    msock: Arc&lt;MagicSock&gt;,
+<a href=#609 id=609 data-nosnippet>609</a>    <span class="attr">#[pin]
+<a href=#610 id=610 data-nosnippet>610</a>    </span>sender: TransportsSender,
+<a href=#611 id=611 data-nosnippet>611</a>}
+<a href=#612 id=612 data-nosnippet>612</a>
+<a href=#613 id=613 data-nosnippet>613</a><span class="kw">impl </span>MagicSender {
+<a href=#614 id=614 data-nosnippet>614</a>    <span class="doccomment">/// Extracts the right [`Addr`] from the [`quinn_udp::Transmit`].
+<a href=#615 id=615 data-nosnippet>615</a>    ///
+<a href=#616 id=616 data-nosnippet>616</a>    /// Because Quinn does only know about IP transports we map other transports to private
+<a href=#617 id=617 data-nosnippet>617</a>    /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
+<a href=#618 id=618 data-nosnippet>618</a>    /// transmit's destination.
+<a href=#619 id=619 data-nosnippet>619</a>    </span><span class="kw">fn </span>mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;MultipathMappedAddr&gt; {
+<a href=#620 id=620 data-nosnippet>620</a>        <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
+<a href=#621 id=621 data-nosnippet>621</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
+<a href=#622 id=622 data-nosnippet>622</a>                io::ErrorKind::NotConnected,
+<a href=#623 id=623 data-nosnippet>623</a>                <span class="string">"connection closed"</span>,
+<a href=#624 id=624 data-nosnippet>624</a>            ));
+<a href=#625 id=625 data-nosnippet>625</a>        }
+<a href=#626 id=626 data-nosnippet>626</a>
+<a href=#627 id=627 data-nosnippet>627</a>        <span class="prelude-val">Ok</span>(MultipathMappedAddr::from(transmit.destination))
+<a href=#628 id=628 data-nosnippet>628</a>    }
+<a href=#629 id=629 data-nosnippet>629</a>}
+<a href=#630 id=630 data-nosnippet>630</a>
+<a href=#631 id=631 data-nosnippet>631</a><span class="kw">impl </span>quinn::UdpSender <span class="kw">for </span>MagicSender {
+<a href=#632 id=632 data-nosnippet>632</a>    <span class="kw">fn </span>poll_send(
+<a href=#633 id=633 data-nosnippet>633</a>        <span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+<a href=#634 id=634 data-nosnippet>634</a>        quinn_transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit,
+<a href=#635 id=635 data-nosnippet>635</a>        cx: <span class="kw-2">&amp;mut </span>Context,
+<a href=#636 id=636 data-nosnippet>636</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+<a href=#637 id=637 data-nosnippet>637</a>        <span class="comment">// On errors this methods prefers returning Ok(()) to Quinn.  Returning an error
+<a href=#638 id=638 data-nosnippet>638</a>        // should only happen if the error is permanent and fatal and it will never be
+<a href=#639 id=639 data-nosnippet>639</a>        // possible to send anything again.  Doing so kills the Quinn EndpointDriver.  Most
+<a href=#640 id=640 data-nosnippet>640</a>        // send errors are intermittent errors, returning Ok(()) in those cases will mean
+<a href=#641 id=641 data-nosnippet>641</a>        // Quinn eventually considers the packets that had send errors as lost and will try
+<a href=#642 id=642 data-nosnippet>642</a>        // and re-send them.
+<a href=#643 id=643 data-nosnippet>643</a>        </span><span class="kw">let </span>mapped_addr = <span class="self">self</span>.mapped_addr(quinn_transmit)<span class="question-mark">?</span>;
+<a href=#644 id=644 data-nosnippet>644</a>
+<a href=#645 id=645 data-nosnippet>645</a>        <span class="kw">let </span>transport_addr = <span class="kw">match </span>mapped_addr {
+<a href=#646 id=646 data-nosnippet>646</a>            MultipathMappedAddr::Mixed(mapped_addr) =&gt; {
+<a href=#647 id=647 data-nosnippet>647</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = <span class="self">self
+<a href=#648 id=648 data-nosnippet>648</a>                    </span>.msock
+<a href=#649 id=649 data-nosnippet>649</a>                    .endpoint_map
+<a href=#650 id=650 data-nosnippet>650</a>                    .endpoint_mapped_addrs
+<a href=#651 id=651 data-nosnippet>651</a>                    .lookup(<span class="kw-2">&amp;</span>mapped_addr)
+<a href=#652 id=652 data-nosnippet>652</a>                <span class="kw">else </span>{
+<a href=#653 id=653 data-nosnippet>653</a>                    <span class="macro">error!</span>(dst = <span class="question-mark">?</span>mapped_addr, <span class="string">"unknown NodeIdMappedAddr, dropped transmit"</span>);
+<a href=#654 id=654 data-nosnippet>654</a>                    <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(()));
+<a href=#655 id=655 data-nosnippet>655</a>                };
+<a href=#656 id=656 data-nosnippet>656</a>
+<a href=#657 id=657 data-nosnippet>657</a>                <span class="comment">// Note we drop the src_ip set in the Quinn Transmit.  This is only the
+<a href=#658 id=658 data-nosnippet>658</a>                // Initial packet we are sending, so we do not yet have an src address we
+<a href=#659 id=659 data-nosnippet>659</a>                // need to respond from.
+<a href=#660 id=660 data-nosnippet>660</a>                </span><span class="kw">if let </span><span class="prelude-val">Some</span>(src_ip) = quinn_transmit.src_ip {
+<a href=#661 id=661 data-nosnippet>661</a>                    <span class="macro">warn!</span>(dst = <span class="question-mark">?</span>mapped_addr, <span class="question-mark">?</span>src_ip, dst_node = %node_id.fmt_short(),
+<a href=#662 id=662 data-nosnippet>662</a>                        <span class="string">"oops, flub didn't think this would happen"</span>);
+<a href=#663 id=663 data-nosnippet>663</a>                }
+<a href=#664 id=664 data-nosnippet>664</a>
+<a href=#665 id=665 data-nosnippet>665</a>                <span class="kw">let </span>sender = <span class="self">self</span>.msock.endpoint_map.endpoint_state_actor(node_id);
+<a href=#666 id=666 data-nosnippet>666</a>                <span class="kw">let </span>transmit = OwnedTransmit::from(quinn_transmit);
+<a href=#667 id=667 data-nosnippet>667</a>                <span class="kw">return match </span>sender.try_send(EndpointStateMessage::SendDatagram(transmit)) {
+<a href=#668 id=668 data-nosnippet>668</a>                    <span class="prelude-val">Ok</span>(()) =&gt; {
+<a href=#669 id=669 data-nosnippet>669</a>                        <span class="macro">trace!</span>(dst = <span class="question-mark">?</span>mapped_addr, dst_node = %node_id.fmt_short(), <span class="string">"sent transmit"</span>);
+<a href=#670 id=670 data-nosnippet>670</a>                        Poll::Ready(<span class="prelude-val">Ok</span>(()))
+<a href=#671 id=671 data-nosnippet>671</a>                    }
+<a href=#672 id=672 data-nosnippet>672</a>                    <span class="prelude-val">Err</span>(err) =&gt; {
+<a href=#673 id=673 data-nosnippet>673</a>                        <span class="comment">// We do not want to block the next send which might be on a
+<a href=#674 id=674 data-nosnippet>674</a>                        // different transport.  Instead we let Quinn handle this as
+<a href=#675 id=675 data-nosnippet>675</a>                        // a lost datagram.
+<a href=#676 id=676 data-nosnippet>676</a>                        // TODO: Revisit this: we might want to do something better.
+<a href=#677 id=677 data-nosnippet>677</a>                        </span><span class="macro">debug!</span>(dst = <span class="question-mark">?</span>mapped_addr, dst_node = %node_id.fmt_short(),
+<a href=#678 id=678 data-nosnippet>678</a>                            <span class="string">"EndpointStateActor inbox {err:#}, dropped transmit"</span>);
+<a href=#679 id=679 data-nosnippet>679</a>                        Poll::Ready(<span class="prelude-val">Ok</span>(()))
+<a href=#680 id=680 data-nosnippet>680</a>                    }
+<a href=#681 id=681 data-nosnippet>681</a>                };
+<a href=#682 id=682 data-nosnippet>682</a>            }
+<a href=#683 id=683 data-nosnippet>683</a>            MultipathMappedAddr::Relay(relay_mapped_addr) =&gt; {
+<a href=#684 id=684 data-nosnippet>684</a>                <span class="kw">match </span><span class="self">self
+<a href=#685 id=685 data-nosnippet>685</a>                    </span>.msock
+<a href=#686 id=686 data-nosnippet>686</a>                    .endpoint_map
+<a href=#687 id=687 data-nosnippet>687</a>                    .relay_mapped_addrs
+<a href=#688 id=688 data-nosnippet>688</a>                    .lookup(<span class="kw-2">&amp;</span>relay_mapped_addr)
+<a href=#689 id=689 data-nosnippet>689</a>                {
+<a href=#690 id=690 data-nosnippet>690</a>                    <span class="prelude-val">Some</span>((relay_url, endpoint_id)) =&gt; Addr::Relay(relay_url, endpoint_id),
+<a href=#691 id=691 data-nosnippet>691</a>                    <span class="prelude-val">None </span>=&gt; {
+<a href=#692 id=692 data-nosnippet>692</a>                        <span class="macro">error!</span>(<span class="string">"unknown RelayMappedAddr, dropped transmit"</span>);
+<a href=#693 id=693 data-nosnippet>693</a>                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(()));
+<a href=#694 id=694 data-nosnippet>694</a>                    }
+<a href=#695 id=695 data-nosnippet>695</a>                }
+<a href=#696 id=696 data-nosnippet>696</a>            }
+<a href=#697 id=697 data-nosnippet>697</a>            MultipathMappedAddr::Ip(socket_addr) =&gt; Addr::Ip(socket_addr),
+<a href=#698 id=698 data-nosnippet>698</a>        };
+<a href=#699 id=699 data-nosnippet>699</a>
+<a href=#700 id=700 data-nosnippet>700</a>        <span class="kw">let </span>transmit = Transmit {
+<a href=#701 id=701 data-nosnippet>701</a>            ecn: quinn_transmit.ecn,
+<a href=#702 id=702 data-nosnippet>702</a>            contents: quinn_transmit.contents,
+<a href=#703 id=703 data-nosnippet>703</a>            segment_size: quinn_transmit.segment_size,
+<a href=#704 id=704 data-nosnippet>704</a>        };
+<a href=#705 id=705 data-nosnippet>705</a>        <span class="kw">let </span>this = <span class="self">self</span>.project();
+<a href=#706 id=706 data-nosnippet>706</a>
+<a href=#707 id=707 data-nosnippet>707</a>        <span class="kw">match </span>this
+<a href=#708 id=708 data-nosnippet>708</a>            .sender
+<a href=#709 id=709 data-nosnippet>709</a>            .inner_poll_send(cx, <span class="kw-2">&amp;</span>transport_addr, quinn_transmit.src_ip, <span class="kw-2">&amp;</span>transmit)
+<a href=#710 id=710 data-nosnippet>710</a>        {
+<a href=#711 id=711 data-nosnippet>711</a>            Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
+<a href=#712 id=712 data-nosnippet>712</a>            Poll::Ready(<span class="prelude-val">Err</span>(<span class="kw-2">ref </span>err)) =&gt; {
+<a href=#713 id=713 data-nosnippet>713</a>                <span class="macro">warn!</span>(<span class="string">"dropped transmit: {err:#}"</span>);
+<a href=#714 id=714 data-nosnippet>714</a>                Poll::Ready(<span class="prelude-val">Ok</span>(()))
+<a href=#715 id=715 data-nosnippet>715</a>            }
+<a href=#716 id=716 data-nosnippet>716</a>            Poll::Pending =&gt; {
+<a href=#717 id=717 data-nosnippet>717</a>                <span class="comment">// We do not want to block the next send which might be on a
+<a href=#718 id=718 data-nosnippet>718</a>                // different transport.  Instead we let Quinn handle this as a lost
+<a href=#719 id=719 data-nosnippet>719</a>                // datagram.
+<a href=#720 id=720 data-nosnippet>720</a>                // TODO: Revisit this: we might want to do something better.
+<a href=#721 id=721 data-nosnippet>721</a>                </span><span class="macro">trace!</span>(<span class="string">"transport pending, dropped transmit"</span>);
+<a href=#722 id=722 data-nosnippet>722</a>                Poll::Ready(<span class="prelude-val">Ok</span>(()))
+<a href=#723 id=723 data-nosnippet>723</a>            }
+<a href=#724 id=724 data-nosnippet>724</a>        }
+<a href=#725 id=725 data-nosnippet>725</a>    }
+<a href=#726 id=726 data-nosnippet>726</a>
+<a href=#727 id=727 data-nosnippet>727</a>    <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#728 id=728 data-nosnippet>728</a>        <span class="self">self</span>.sender.max_transmit_segments
+<a href=#729 id=729 data-nosnippet>729</a>    }
+<a href=#730 id=730 data-nosnippet>730</a>}</code></pre></div></section></main></body></html>
