@@ -1063,7 +1063,7 @@ pub(crate) enum EndpointStateMessage {
 pub(super) struct EndpointStateHandle {
     /// Sender for the channel into the [`EndpointStateActor`].
     ///
-    /// This is a [`GuardedSender`], from which we can get an [`mpsc::Sender`] but only if the receiver
+    /// This is a [`GuardedSender`], from which we can get a sender but only if the receiver
     /// hasn't been closed.
     pub(super) sender: GuardedSender<EndpointStateMessage>,
     _task: AbortOnDropHandle<()>,
