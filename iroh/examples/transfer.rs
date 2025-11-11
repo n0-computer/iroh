@@ -20,7 +20,6 @@ use iroh::{
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
-use n0_watcher::Watcher as _;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
@@ -338,7 +337,6 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             }
         };
         // spawn a task to handle reading and writing off of the connection
-        let endpoint_clone = endpoint.clone();
         tokio::spawn(async move {
             let conn = accepting.await.anyerr()?;
             let endpoint_id = conn.remote_id();
@@ -526,23 +524,31 @@ fn watch_conn_type(
     endpoint_id: EndpointId,
     paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
 ) -> AbortOnDropHandle<()> {
-    let id = endpoint.fmt_short();
+    let id = endpoint_id.fmt_short();
     let task = tokio::task::spawn(async move {
         let mut stream = paths_watcher.stream();
+        let mut previous = None;
         while let Some(paths) = stream.next().await {
             if let Some(path) = paths.iter().find(|p| p.is_selected()) {
+                // We can get path updates without the selected path changing. We don't want to log again in that case.
+                if Some(path) == previous.as_ref() {
+                    continue;
+                }
                 println!(
                     "[{id}] Connection type changed to: {:?} (RTT: {:?})",
                     path.remote_addr(),
                     path.rtt()
                 );
+                previous = Some(path.clone());
             } else if !paths.is_empty() {
                 println!(
                     "[{id}] Connection type changed to: mixed ({} paths)",
                     paths.len()
                 );
+                previous = None;
             } else {
                 println!("[{id}] Connection type changed to none (no active transmission paths)",);
+                previous = None;
             }
         }
     });
