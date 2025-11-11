@@ -30,8 +30,8 @@ pub(crate) use endpoint_state::PathsWatchable;
 pub use endpoint_state::{ConnectionType, PathInfo, PathInfoList};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
 
-/// Interval in which [`EndpointMap::remove_endpoint_state_actors`] is called.
-pub(super) const ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(30);
+/// Interval in which handles to closed [`EndpointStateActor`]s should be removed.
+pub(super) const ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
