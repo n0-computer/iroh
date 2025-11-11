@@ -218,9 +218,6 @@ impl EndpointStateActor {
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
     /// discipline is needed to not turn pending for a long time.
-    ///
-    /// The `inbox_sender_guard` may only be used to set it to `None` once the actor is shutting down.
-    /// It may not be used to send messages to ourselves because that could deadlock.
     async fn run(
         &mut self,
         mut inbox: GuardedReceiver<EndpointStateMessage>,
@@ -1059,8 +1056,8 @@ pub(crate) enum EndpointStateMessage {
 pub(super) struct EndpointStateHandle {
     /// Sender for the channel into the [`EndpointStateActor`].
     ///
-    /// It is wrapped in a mutex. The actor sets it to `None` once it is shutting down.
-    /// In that case, this handle is dead and a new actor should be spawned instead.
+    /// This is a [`GuardedSender`], from which we can get an [`mpsc::Sender`] but only if the receiver
+    /// hasn't been closed.
     sender: GuardedSender<EndpointStateMessage>,
     _task: AbortOnDropHandle<()>,
 }
@@ -1074,9 +1071,7 @@ impl EndpointStateHandle {
         self.sender.get()
     }
 
-    /// Returns `true` if the endpoint actor has terminated.
-    ///
-    /// We check if the actor's inbox has been closed, which only happens once the actor loop terminates.
+    /// Returns `true` if the endpoint actor channel is closed (i.e. if the actor has terminated).
     pub(super) fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }
