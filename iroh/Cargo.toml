@@ -37,9 +37,9 @@ n0-watcher = "0.5"
 netwatch = { version = "0.12" }
 pin-project = "1"
 pkarr = { version = "5", default-features = false, features = ["relays"] }
-quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "main-iroh", default-features = false, features = ["rustls-ring"] }
-quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
-quinn-udp = { package = "iroh-quinn-udp", git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
+quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "Frando/panic-abandon-path", default-features = false, features = ["rustls-ring"] }
+quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/n0-computer/quinn", branch = "Frando/panic-abandon-path" }
+quinn-udp = { package = "iroh-quinn-udp", git = "https://github.com/n0-computer/quinn", branch = "Frando/panic-abandon-path" }
 rand = "0.9.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
@@ -83,7 +83,7 @@ hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.38.1" }
 portmapper = { version = "0.12", default-features = false }
-quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "main-iroh", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "Frando/panic-abandon-path", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",

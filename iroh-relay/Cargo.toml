@@ -42,8 +42,8 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
-quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "main-iroh", default-features = false, features = ["rustls-ring"] }
-quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
+quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "Frando/panic-abandon-path", default-features = false, features = ["rustls-ring"] }
+quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/n0-computer/quinn", branch = "Frando/panic-abandon-path" }
 rand = "0.9.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
