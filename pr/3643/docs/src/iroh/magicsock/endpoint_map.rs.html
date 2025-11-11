@@ -30,8 +30,8 @@
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">pub use </span>endpoint_state::{ConnectionType, PathInfo, PathInfoList};
 <a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>endpoint_state::{EndpointStateActor, EndpointStateHandle};
 <a href=#32 id=32 data-nosnippet>32</a>
-<a href=#33 id=33 data-nosnippet>33</a><span class="doccomment">/// Interval in which [`EndpointMap::remove_endpoint_state_actors`] is called.
-<a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(<span class="number">30</span>);
+<a href=#33 id=33 data-nosnippet>33</a><span class="doccomment">/// Interval in which handles to closed [`EndpointStateActor`]s should be removed.
+<a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(<span class="number">60</span>);
 <a href=#35 id=35 data-nosnippet>35</a>
 <a href=#36 id=36 data-nosnippet>36</a><span class="comment">// TODO: use this
 <a href=#37 id=37 data-nosnippet>37</a>// /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
