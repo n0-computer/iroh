@@ -77,10 +77,7 @@ pub(crate) mod transports;
 
 use mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
 
-pub use self::{
-    endpoint_map::{ConnectionType, PathInfo},
-    metrics::Metrics,
-};
+pub use self::{endpoint_map::PathInfo, metrics::Metrics};
 
 // TODO: Use this
 // /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically

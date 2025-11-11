@@ -526,22 +526,24 @@ fn watch_conn_type(
     endpoint_id: EndpointId,
     paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
 ) -> AbortOnDropHandle<()> {
+    let id = endpoint.fmt_short();
     let task = tokio::task::spawn(async move {
         let mut stream = paths_watcher.stream();
         while let Some(paths) = stream.next().await {
-            let conn_type = if paths.iter().any(|p| p.is_ip() && p.is_selected()) {
-                "direct"
-            } else if paths.iter().any(|p| p.is_relay() && p.is_selected()) {
-                "relay"
+            if let Some(path) = paths.iter().find(|p| p.is_selected()) {
+                println!(
+                    "[{id}] Connection type changed to: {:?} (RTT: {:?})",
+                    path.remote_addr(),
+                    path.rtt()
+                );
             } else if !paths.is_empty() {
-                "mixed"
+                println!(
+                    "[{id}] Connection type changed to: mixed ({} paths)",
+                    paths.len()
+                );
             } else {
-                "none"
-            };
-            println!(
-                "[{}] Connection type changed to: {conn_type}",
-                endpoint_id.fmt_short()
-            );
+                println!("[{id}] Connection type changed to none (no active transmission paths)",);
+            }
         }
     });
     AbortOnDropHandle::new(task)

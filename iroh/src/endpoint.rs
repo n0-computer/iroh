@@ -25,7 +25,7 @@ use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 pub use super::magicsock::{
-    AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType, PathInfo,
+    AddEndpointAddrError, DirectAddr, DirectAddrType, PathInfo,
     endpoint_map::{PathInfoList, Source},
 };
 #[cfg(wasm_browser)]
