@@ -1455,7 +1455,7 @@
 <a href=#1455 id=1455 data-nosnippet>1455</a>    ///
 <a href=#1456 id=1456 data-nosnippet>1456</a>    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
 <a href=#1457 id=1457 data-nosnippet>1457</a>    /// [`PathInfo`]: crate::magicsock::PathInfo
-<a href=#1458 id=1458 data-nosnippet>1458</a>    </span><span class="kw">pub fn </span>paths(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = PathInfoList&gt; {
+<a href=#1458 id=1458 data-nosnippet>1458</a>    </span><span class="kw">pub fn </span>paths(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = PathInfoList&gt; + Unpin + Send + Sync + <span class="lifetime">'static </span>{
 <a href=#1459 id=1459 data-nosnippet>1459</a>        <span class="self">self</span>.paths.watch(<span class="self">self</span>.inner.weak_handle())
 <a href=#1460 id=1460 data-nosnippet>1460</a>    }
 <a href=#1461 id=1461 data-nosnippet>1461</a>
