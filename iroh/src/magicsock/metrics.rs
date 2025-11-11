@@ -77,6 +77,9 @@ pub struct Metrics {
     pub connection_handshake_success: Counter,
     /// Number of connections with a successful handshake that became direct.
     pub connection_became_direct: Counter,
+    /// Histogram of connection latency in milliseconds across all endpoint connections.
+    #[default(Histogram::new(vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, f64::INFINITY]))]
+    pub connection_latency_ms: Histogram,
 
     /*
      * Path Congestion Metrics
