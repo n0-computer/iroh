@@ -143,7 +143,7 @@ pub(super) struct EndpointStateActor {
     pending_open_paths: VecDeque<transports::Addr>,
     discovery: ConcurrentDiscovery,
     discovery_stream: DiscoveryStream,
-    pending_can_send: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
+    pending_want_connect: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
 }
 
 type DiscoveryStream = Either<
@@ -181,7 +181,7 @@ impl EndpointStateActor {
             sender,
             discovery,
             discovery_stream: Either::Left(n0_future::stream::pending()),
-            pending_can_send: VecDeque::new(),
+            pending_want_connect: VecDeque::new(),
         }
     }
 
@@ -298,7 +298,7 @@ impl EndpointStateActor {
                 self.handle_msg_pong_received(pong, src);
             }
             EndpointStateMessage::WantConnect(addr, tx) => {
-                self.handle_msg_can_send(addr, tx);
+                self.handle_msg_want_connect(addr, tx);
             }
             EndpointStateMessage::Latency(tx) => {
                 self.handle_msg_latency(tx);
@@ -419,8 +419,13 @@ impl EndpointStateActor {
     }
 
     /// Handles [`EndpointStateMessage::AddEndpointAddr`].
-    fn handle_msg_add_endpoint_addr(&mut self, addr: EndpointAddr, source: Source) {
+    fn add_endpoint_addr(&mut self, addr: EndpointAddr, source: Source) {
+        let local_addrs = self.local_addrs.get();
         for sockaddr in addr.ip_addrs() {
+            if local_addrs.iter().any(|a| a.addr == *sockaddr) {
+                warn!(endpoint_id=%addr.id.fmt_short(), %sockaddr, "not adding our addr for endpoint");
+                continue;
+            }
             let addr = transports::Addr::from(sockaddr);
             self.paths
                 .entry(addr)
@@ -525,18 +530,18 @@ impl EndpointStateActor {
         self.open_path(&src);
     }
 
-    /// Handles [`EndpointStateMessage::CanSend`].
-    fn handle_msg_can_send(
+    /// Handles [`EndpointStateMessage::WantConnect`].
+    fn handle_msg_want_connect(
         &mut self,
         addr: EndpointAddr,
         tx: oneshot::Sender<Result<(), DiscoveryError>>,
     ) {
-        self.handle_msg_add_endpoint_addr(addr, Source::App);
-        let can_send = !self.paths.is_empty();
-        if can_send {
+        self.add_endpoint_addr(addr, Source::App);
+        let has_paths = !self.paths.is_empty();
+        if has_paths {
             tx.send(Ok(())).ok();
         } else {
-            self.pending_can_send.push_back(tx);
+            self.pending_want_connect.push_back(tx);
         }
         if self.selected_path.get().is_none() {
             self.start_discovery();
@@ -566,8 +571,8 @@ impl EndpointStateActor {
         tx.send(rtt).ok();
     }
 
-    fn emit_pending_can_send(&mut self, error: Option<DiscoveryError>) {
-        if self.pending_can_send.is_empty() {
+    fn emit_pending_want_connect(&mut self, error: Option<DiscoveryError>) {
+        if self.pending_want_connect.is_empty() {
             return;
         }
         let result = if self.paths.is_empty() {
@@ -579,7 +584,7 @@ impl EndpointStateActor {
         } else {
             Ok(())
         };
-        for tx in self.pending_can_send.drain(..) {
+        for tx in self.pending_want_connect.drain(..) {
             tx.send(result.clone()).ok();
         }
     }
@@ -588,20 +593,20 @@ impl EndpointStateActor {
         match item {
             None => {
                 self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.emit_pending_can_send(None);
+                self.emit_pending_want_connect(None);
             }
             Some(Err(err)) => {
                 warn!("Discovery failed: {err:#}");
                 self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.emit_pending_can_send(Some(err));
+                self.emit_pending_want_connect(Some(err));
             }
             Some(Ok(item)) => {
                 let source = Source::Discovery {
                     name: item.provenance().to_string(),
                 };
                 let addr = item.to_endpoint_addr();
-                self.handle_msg_add_endpoint_addr(addr, source);
-                self.emit_pending_can_send(None);
+                self.add_endpoint_addr(addr, source);
+                self.emit_pending_want_connect(None);
             }
         }
     }

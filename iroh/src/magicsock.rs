@@ -294,16 +294,8 @@ impl MagicSock {
     /// Returns `Ok` if we have at least one candidate address where we can send packets to.
     pub(crate) async fn want_connect(
         &self,
-        mut addr: EndpointAddr,
+        addr: EndpointAddr,
     ) -> Result<EndpointIdMappedAddr, DiscoveryError> {
-        // Prune our own addreses from the endpoint address.
-        // TODO: Move this somewhere else?
-        for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.addrs.remove(&TransportAddr::Ip(my_addr)) {
-                warn!(endpoint_id=%addr.id.fmt_short(), %my_addr, "not adding our addr for endpoint");
-            }
-        }
-
         let eid = addr.id;
         let actor = self.endpoint_map.endpoint_state_actor(eid);
         let (tx, rx) = oneshot::channel();

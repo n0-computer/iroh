@@ -528,18 +528,6 @@ pub enum BindError {
     },
 }
 
-// #[allow(missing_docs)]
-// #[stack_error(derive, add_meta)]
-// #[non_exhaustive]
-// pub enum GetMappingAddressError {
-//     #[error("Discovery service required due to missing addressing information")]
-//     DiscoveryStart { source: DiscoveryError },
-//     #[error("Discovery service failed")]
-//     Discover { source: DiscoveryError },
-//     #[error("No addressing information found")]
-//     NoAddress,
-// }
-
 impl Endpoint {
     // The ordering of public methods is reflected directly in the documentation.  This is
     // roughly ordered by what is most commonly needed by users, but grouped in similar
