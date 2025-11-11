@@ -21,11 +21,8 @@ use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
-use self::util::{GuardedReceiver, GuardedSender, guarded_channel};
+use self::guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel};
 use super::{Source, path_state::PathState};
-// TODO: Use this
-// #[cfg(any(test, feature = "test-utils"))]
-// use crate::endpoint::PathSelection;
 use crate::{
     disco::{self},
     endpoint::DirectAddr,
@@ -38,7 +35,11 @@ use crate::{
     util::MaybeFuture,
 };
 
-mod util;
+// TODO: Use this
+// #[cfg(any(test, feature = "test-utils"))]
+// use crate::endpoint::PathSelection;
+
+mod guarded_channel;
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.

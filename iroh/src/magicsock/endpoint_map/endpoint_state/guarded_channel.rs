@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 /// Creates a new [`mpsc`] channel where the receiver can only close if there are no active senders.
-pub(crate) fn guarded_channel<T>(cap: usize) -> (GuardedSender<T>, GuardedReceiver<T>) {
+pub(super) fn guarded_channel<T>(cap: usize) -> (GuardedSender<T>, GuardedReceiver<T>) {
     let (tx, rx) = mpsc::channel(cap);
     let tx = Arc::new(Mutex::new(Some(tx)));
     (GuardedSender { tx: tx.clone() }, GuardedReceiver { tx, rx })
@@ -31,7 +31,7 @@ impl<T> GuardedSender<T> {
 }
 
 #[derive(Debug)]
-pub(crate) struct GuardedReceiver<T> {
+pub(super) struct GuardedReceiver<T> {
     rx: mpsc::Receiver<T>,
     tx: Arc<Mutex<Option<mpsc::Sender<T>>>>,
 }
@@ -40,20 +40,23 @@ impl<T> GuardedReceiver<T> {
     /// Receives the next value for this receiver.
     ///
     /// See [`mpsc::Receiver::recv`].
-    pub(crate) async fn recv(&mut self) -> Option<T> {
+    pub(super) async fn recv(&mut self) -> Option<T> {
         self.rx.recv().await
     }
 
     /// Returns `true` if the inbox is empty and no senders to the inbox exist.
-    pub(crate) fn is_idle(&self) -> bool {
+    pub(super) fn is_idle(&self) -> bool {
         self.rx.is_empty() && self.rx.sender_strong_count() <= 1
     }
 
     /// Closes the channel if the channel is idle.
     ///
+    /// Returns `true` if the channel is idle and has now been closed, and `false` if the channel
+    /// is not idle and therefore has not been not closed.
+    ///
     /// Uses a lock internally to make sure that there cannot be a race condition between
     /// calling this and a new sender being created.
-    pub(crate) fn close_if_idle(&mut self) -> bool {
+    pub(super) fn close_if_idle(&mut self) -> bool {
         let mut guard = self.tx.lock().expect("poisoned");
         if self.is_idle() {
             *guard = None;
