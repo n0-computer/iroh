@@ -23,6 +23,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+use self::util::{GuardedReceiver, GuardedSender, guarded_channel};
 use super::{Source, TransportsSenderMessage, path_state::PathState};
 // TODO: Use this
 // #[cfg(any(test, feature = "test-utils"))]
@@ -37,8 +38,6 @@ use crate::{
     },
     util::MaybeFuture,
 };
-
-use self::util::{GuardedReceiver, GuardedSender, guarded_channel};
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
