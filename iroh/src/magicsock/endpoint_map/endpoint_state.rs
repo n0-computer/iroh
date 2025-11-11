@@ -151,12 +151,6 @@ pub(super) struct EndpointStateActor {
     ///
     /// They failed to open because we did not have enough CIDs issued by the remote.
     pending_open_paths: VecDeque<transports::Addr>,
-    /// A mutex to define a critical section around stopping the actor.
-    ///
-    /// The lock is held while checking the inbox's sender count. Likewise, the handle acquires the lock
-    /// before checking if the inbox is live and cloning out a new sender. This prevents a race condition
-    /// where the handle would clone out a new sender right after the actor decided to terminate.
-    close_lock: Arc<Mutex<()>>,
 }
 
 impl EndpointStateActor {
@@ -186,7 +180,6 @@ impl EndpointStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            close_lock: Default::default(),
         }
     }
 
@@ -194,16 +187,21 @@ impl EndpointStateActor {
         let (tx, rx) = mpsc::channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
-        let close_lock = self.close_lock.clone();
+
+        // We wrap the inbox sender in a mutex. A clone is moved into the actor's run function,
+        // so that it can lock and remove the sender when it shuts down. This prevents the handle
+        // from creating senders to a shutting-down actor.
+        let tx = Arc::new(Mutex::new(Some(tx)));
 
         // Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
         // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
         // we don't explicitly set a span we get the spans from whatever call happens to
         // first create the actor, which is often very confusing as it then keeps those
         // spans for all logging of the actor.
+        let tx_guard = tx.clone();
         let task = task::spawn(
             async move {
-                if let Err(err) = self.run(rx).await {
+                if let Err(err) = self.run(rx, tx_guard).await {
                     error!("actor failed: {err:#}");
                 }
             }
@@ -216,7 +214,6 @@ impl EndpointStateActor {
         );
         EndpointStateHandle {
             sender: tx,
-            close_lock,
             _task: AbortOnDropHandle::new(task),
         }
     }
@@ -226,9 +223,13 @@ impl EndpointStateActor {
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
     /// discipline is needed to not turn pending for a long time.
+    ///
+    /// The `inbox_sender_guard` may only be used to set it to `None` once the actor is shutting down.
+    /// It may not be used to send messages to ourselves because that could deadlock.
     async fn run(
         &mut self,
         mut inbox: mpsc::Receiver<EndpointStateMessage>,
+        inbox_sender_guard: Arc<Mutex<Option<mpsc::Sender<EndpointStateMessage>>>>,
     ) -> n0_error::Result<()> {
         trace!("actor started");
         let idle_timeout = MaybeFuture::None;
@@ -277,14 +278,15 @@ impl EndpointStateActor {
                 }
                 _ = &mut idle_timeout => {
                     // Enter critical section
-                    let _guard = self.close_lock.lock().expect("poisoned");
+                    let mut inbox_sender_guard = inbox_sender_guard.lock().expect("poisoned");
                     // Check is_idle and if true close the inbox while the close_lock is held.
                     if self.is_idle(&inbox) {
                         inbox.close();
+                        *inbox_sender_guard = None;
                         trace!("idle timeout expired and still idle: terminate actor");
                         break;
                     } else {
-                        drop(_guard);
+                        drop(inbox_sender_guard);
                     }
                 }
             }
@@ -1076,10 +1078,10 @@ pub(crate) enum EndpointStateMessage {
 #[derive(Debug)]
 pub(super) struct EndpointStateHandle {
     /// Sender for the channel into the [`EndpointStateActor`].
-    sender: mpsc::Sender<EndpointStateMessage>,
-    /// Lock shared with the actor to define a critical section for checking the actor liveness when
-    /// creating a new sender.
-    close_lock: Arc<Mutex<()>>,
+    ///
+    /// It is wrapped in a mutex. The actor sets it to `None` once it is shutting down.
+    /// In that case, this handle is dead and a new actor should be spawned instead.
+    sender: Arc<Mutex<Option<mpsc::Sender<EndpointStateMessage>>>>,
     _task: AbortOnDropHandle<()>,
 }
 
@@ -1089,19 +1091,14 @@ impl EndpointStateHandle {
     /// Returns `None` if the actor is terminating. This is race-free because a lock shared with the actor
     /// is used to ensure that once we cloned the sender, the actor won't close until the sender is dropped.
     pub(super) fn sender(&self) -> Option<mpsc::Sender<EndpointStateMessage>> {
-        let _guard = self.close_lock.lock().expect("poisoned");
-        if self.sender.is_closed() {
-            None
-        } else {
-            Some(self.sender.clone())
-        }
+        self.sender.lock().expect("poisoned").clone()
     }
 
     /// Returns `true` if the endpoint actor has terminated.
     ///
     /// We check if the actor's inbox has been closed, which only happens once the actor loop terminates.
     pub(super) fn is_closed(&self) -> bool {
-        self.sender.is_closed()
+        self.sender.lock().expect("poisoned").is_none()
     }
 }
 
