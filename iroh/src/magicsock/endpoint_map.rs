@@ -209,9 +209,8 @@ impl EndpointMap {
 /// address through multiple means.
 #[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
 #[strum(serialize_all = "kebab-case")]
+#[allow(private_interfaces)]
 pub enum Source {
-    /// Address was loaded from the fs.
-    Saved,
     /// An endpoint communicated with us first via UDP.
     Udp,
     /// An endpoint communicated with us first via relay.
@@ -231,17 +230,33 @@ pub enum Source {
         name: String,
     },
     /// The address was advertised by a call-me-maybe DISCO message.
-    CallMeMaybe,
+    #[strum(serialize = "CallMeMaybe")]
+    CallMeMaybe {
+        /// private marker
+        _0: Private,
+    },
     /// We received a ping on the path.
-    Ping,
+    #[strum(serialize = "Ping")]
+    Ping {
+        /// private marker
+        _0: Private,
+    },
     /// We established a connection on this address.
     ///
     /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
     /// was added to the `EndpointStateActor`.
     ///
     /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
-    Connection,
+    #[strum(serialize = "Connection")]
+    Connection {
+        /// private marker
+        _0: Private,
+    },
 }
+
+/// Helper to ensure certain `Source` variants can not be constructed externally.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
+struct Private;
 
 /// An (Ip, Port) pair.
 ///

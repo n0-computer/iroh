@@ -31,6 +31,7 @@ use crate::{
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
+        endpoint_map::Private,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -378,7 +379,7 @@ impl EndpointStateActor {
                     .entry(path_remote)
                     .or_default()
                     .sources
-                    .insert(Source::Connection, Instant::now());
+                    .insert(Source::Connection { _0: Private }, Instant::now());
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -439,7 +440,8 @@ impl EndpointStateActor {
             let ping = disco::Ping::new(self.local_endpoint_id);
 
             let path = self.paths.entry(dst.clone()).or_default();
-            path.sources.insert(Source::CallMeMaybe, now);
+            path.sources
+                .insert(Source::CallMeMaybe { _0: Private }, now);
             path.ping_sent = Some(ping.tx_id);
 
             event!(
@@ -481,7 +483,8 @@ impl EndpointStateActor {
             .await;
 
         let path = self.paths.entry(src).or_default();
-        path.sources.insert(Source::Ping, Instant::now());
+        path.sources
+            .insert(Source::Ping { _0: Private }, Instant::now());
 
         trace!("ping received, triggering holepunching");
         self.trigger_holepunching().await;
@@ -621,12 +624,12 @@ impl EndpointStateActor {
             .filter_map(|(addr, state)| {
                 if state
                     .sources
-                    .get(&Source::CallMeMaybe)
+                    .get(&Source::CallMeMaybe { _0: Private })
                     .map(|when| when.elapsed() <= CALL_ME_MAYBE_VALIDITY)
                     .unwrap_or_default()
                     || state
                         .sources
-                        .get(&Source::Ping)
+                        .get(&Source::Ping { _0: Private })
                         .map(|when| when.elapsed() <= CALL_ME_MAYBE_VALIDITY)
                         .unwrap_or_default()
                 {
@@ -824,7 +827,7 @@ impl EndpointStateActor {
                         .entry(path_remote.clone())
                         .or_default()
                         .sources
-                        .insert(Source::Connection, Instant::now());
+                        .insert(Source::Connection { _0: Private }, Instant::now());
                 }
 
                 self.select_path();
