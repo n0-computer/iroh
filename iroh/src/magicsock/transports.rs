@@ -602,8 +602,6 @@ impl quinn::AsyncUdpSocket for MagicTransport {
 /// This is special in that it handles [`MultipathMappedAddr::Mixed`] by delegating to the
 /// [`MagicSock`] which expands it back to one or more [`Addr`]s and sends it
 /// using the underlying [`Transports`].
-// TODO: Can I just send the TransportsSender along in the EndpointStateMessage::SendDatagram
-// message??  That way you don't have to hook up the sender into the EndpointMap!
 #[derive(Debug)]
 #[pin_project::pin_project]
 pub(crate) struct MagicSender {
