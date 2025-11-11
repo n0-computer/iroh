@@ -16,7 +16,6 @@ use n0_watcher::{Watchable, Watcher};
 use quinn::{PathStats, WeakConnectionHandle};
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
@@ -32,6 +31,7 @@ use crate::{
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
+        endpoint_map::Private,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -407,7 +407,7 @@ impl EndpointStateActor {
                     .entry(path_remote)
                     .or_default()
                     .sources
-                    .insert(Source::Connection, Instant::now());
+                    .insert(Source::Connection { _0: Private }, Instant::now());
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -468,7 +468,8 @@ impl EndpointStateActor {
             let ping = disco::Ping::new(self.local_endpoint_id);
 
             let path = self.paths.entry(dst.clone()).or_default();
-            path.sources.insert(Source::CallMeMaybe, now);
+            path.sources
+                .insert(Source::CallMeMaybe { _0: Private }, now);
             path.ping_sent = Some(ping.tx_id);
 
             event!(
@@ -510,7 +511,8 @@ impl EndpointStateActor {
             .await;
 
         let path = self.paths.entry(src).or_default();
-        path.sources.insert(Source::Ping, Instant::now());
+        path.sources
+            .insert(Source::Ping { _0: Private }, Instant::now());
 
         trace!("ping received, triggering holepunching");
         self.trigger_holepunching().await;
@@ -650,12 +652,12 @@ impl EndpointStateActor {
             .filter_map(|(addr, state)| {
                 if state
                     .sources
-                    .get(&Source::CallMeMaybe)
+                    .get(&Source::CallMeMaybe { _0: Private })
                     .map(|when| when.elapsed() <= CALL_ME_MAYBE_VALIDITY)
                     .unwrap_or_default()
                     || state
                         .sources
-                        .get(&Source::Ping)
+                        .get(&Source::Ping { _0: Private })
                         .map(|when| when.elapsed() <= CALL_ME_MAYBE_VALIDITY)
                         .unwrap_or_default()
                 {
@@ -853,7 +855,7 @@ impl EndpointStateActor {
                         .entry(path_remote.clone())
                         .or_default()
                         .sources
-                        .insert(Source::Connection, Instant::now());
+                        .insert(Source::Connection { _0: Private }, Instant::now());
                 }
 
                 self.select_path();
@@ -1086,27 +1088,6 @@ struct HolepunchAttempt {
     remote_addrs: BTreeSet<SocketAddr>,
 }
 
-/// The type of connection we have to the endpoint.
-#[derive(derive_more::Display, Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub enum ConnectionType {
-    /// Direct UDP connection
-    #[display("direct({_0})")]
-    Direct(SocketAddr),
-    /// Relay connection over relay
-    #[display("relay({_0})")]
-    Relay(RelayUrl),
-    /// Both a UDP and a relay connection are used.
-    ///
-    /// This is the case if we do have a UDP address, but are missing a recent confirmation that
-    /// the address works.
-    #[display("mixed(udp: {_0}, relay: {_1})")]
-    Mixed(SocketAddr, RelayUrl),
-    /// We have no verified connection to this PublicKey
-    #[default]
-    #[display("none")]
-    None,
-}
-
 /// Newtype to track Connections.
 ///
 /// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
@@ -1198,7 +1179,7 @@ impl PathsWatchable {
     pub(crate) fn watch(
         &self,
         conn_handle: WeakConnectionHandle,
-    ) -> impl Watcher<Value = PathInfoList> {
+    ) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
         let joined_watcher = (self.open_paths.watch(), self.selected_path.watch());
         joined_watcher.map(move |(open_paths, selected_path)| {
             let selected_path: Option<TransportAddr> = selected_path.map(Into::into);

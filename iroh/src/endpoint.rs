@@ -25,7 +25,7 @@ use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 pub use super::magicsock::{
-    AddEndpointAddrError, ConnectionType, DirectAddr, DirectAddrType, PathInfo,
+    AddEndpointAddrError, DirectAddr, DirectAddrType, PathInfo,
     endpoint_map::{PathInfoList, Source},
 };
 #[cfg(wasm_browser)]
@@ -962,33 +962,6 @@ impl Endpoint {
     // # Methods for less common getters.
     //
     // Partially they return things passed into the builder.
-
-    /// Returns a [`Watcher`] that reports the current connection type and any changes for
-    /// given remote endpoint.
-    ///
-    /// This watcher allows observing a stream of [`ConnectionType`] items by calling
-    /// [`Watcher::stream()`]. If the underlying connection to a remote endpoint changes, it will
-    /// yield a new item.  These connection changes are when the connection switches between
-    /// using the Relay server and a direct connection.
-    ///
-    /// Note that this does not guarantee each connection change is yielded in the stream.
-    /// If the connection type changes several times before this stream is polled, only the
-    /// last recorded state is returned.  This can be observed e.g. right at the start of a
-    /// connection when the switch from a relayed to a direct connection can be so fast that
-    /// the relayed state is never exposed.
-    ///
-    /// If there is currently a connection with the remote endpoint, then using [`Watcher::get`]
-    /// will immediately return either [`ConnectionType::Relay`], [`ConnectionType::Direct`]
-    /// or [`ConnectionType::Mixed`].
-    ///
-    /// It is possible for the connection type to be [`ConnectionType::None`] if you've
-    /// recently connected to this endpoint id but previous methods of reaching the endpoint have
-    /// become inaccessible.
-    ///
-    /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub fn conn_type(&self, endpoint_id: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.msock.conn_type(endpoint_id)
-    }
 
     /// Returns the currently lowest latency for this endpoint.
     ///
