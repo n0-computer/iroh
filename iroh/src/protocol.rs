@@ -123,10 +123,19 @@ pub enum AcceptError {
 
 impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
+    // TODO(Frando): Rename to `from_std`
     #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
         e!(AcceptError::User {
             source: AnyError::from_std(value)
+        })
+    }
+
+    /// Creates a new user error from an arbitrary boxed error.
+    #[track_caller]
+    pub fn from_boxed(value: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        e!(AcceptError::User {
+            source: AnyError::from_std_box(value)
         })
     }
 }
