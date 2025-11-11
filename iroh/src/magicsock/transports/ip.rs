@@ -101,12 +101,10 @@ impl IpTransport {
     }
 
     pub(super) fn create_sender(&self) -> IpSender {
-        let socket = self.socket.clone();
-        let sender = socket.clone().create_sender();
+        let sender = self.socket.clone().create_sender();
         IpSender {
             bind_addr: self.bind_addr,
             sender,
-            socket,
             metrics: self.metrics.clone(),
         }
     }
@@ -134,25 +132,13 @@ impl IpNetworkChangeSender {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[pin_project]
 pub(super) struct IpSender {
     bind_addr: SocketAddr,
-    socket: Arc<UdpSocket>,
     #[pin]
     sender: UdpSender,
     metrics: Arc<MagicsockMetrics>,
-}
-
-impl Clone for IpSender {
-    fn clone(&self) -> Self {
-        Self {
-            bind_addr: self.bind_addr,
-            socket: self.socket.clone(),
-            sender: self.socket.clone().create_sender(),
-            metrics: self.metrics.clone(),
-        }
-    }
 }
 
 impl IpSender {
