@@ -2271,8 +2271,8 @@ mod tests {
         let mut registry = Registry::default();
         register_endpoint(&mut registry, &client);
         register_endpoint(&mut registry, &server);
-        let s = registry.encode_openmetrics_to_string().anyerr()?;
         // TODO(multipath-tests): Support these again.
+        // let s = registry.encode_openmetrics_to_string().anyerr()?;
         // assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#));
         // assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#));
         Ok(())
