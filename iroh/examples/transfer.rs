@@ -10,12 +10,13 @@ use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
+    Watcher,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-    endpoint::ConnectionError,
+    endpoint::{ConnectionError, PathInfoList},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
@@ -350,7 +351,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             println!("[{remote}] Connected");
 
             // Spawn a background task that prints connection type changes. Will be aborted on drop.
-            let _guard = watch_conn_type(&endpoint_clone, endpoint_id);
+            let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
@@ -404,7 +405,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
     println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(&endpoint, remote_id);
+    let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
     // Use the Quinn API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
@@ -521,10 +522,22 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
     cfg.parse_size(s)
 }
 
-fn watch_conn_type(endpoint: &Endpoint, endpoint_id: EndpointId) -> AbortOnDropHandle<()> {
-    let mut stream = endpoint.conn_type(endpoint_id).unwrap().stream();
+fn watch_conn_type(
+    endpoint_id: EndpointId,
+    paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
+) -> AbortOnDropHandle<()> {
     let task = tokio::task::spawn(async move {
-        while let Some(conn_type) = stream.next().await {
+        let mut stream = paths_watcher.stream();
+        while let Some(paths) = stream.next().await {
+            let conn_type = if paths.iter().any(|p| p.is_ip() && p.is_selected()) {
+                "direct"
+            } else if paths.iter().any(|p| p.is_relay() && p.is_selected()) {
+                "relay"
+            } else if !paths.is_empty() {
+                "mixed"
+            } else {
+                "none"
+            };
             println!(
                 "[{}] Connection type changed to: {conn_type}",
                 endpoint_id.fmt_short()

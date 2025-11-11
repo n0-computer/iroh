@@ -1462,7 +1462,7 @@ impl Connection {
     ///
     /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
     /// [`PathInfo`]: crate::magicsock::PathInfo
-    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> {
+    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
         self.paths.watch(self.inner.weak_handle())
     }
 

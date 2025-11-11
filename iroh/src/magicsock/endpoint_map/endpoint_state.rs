@@ -1160,7 +1160,7 @@ impl PathsWatchable {
     pub(crate) fn watch(
         &self,
         conn_handle: WeakConnectionHandle,
-    ) -> impl Watcher<Value = PathInfoList> {
+    ) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
         let joined_watcher = (self.open_paths.watch(), self.selected_path.watch());
         joined_watcher.map(move |(open_paths, selected_path)| {
             let selected_path: Option<TransportAddr> = selected_path.map(Into::into);

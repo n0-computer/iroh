@@ -108,19 +108,6 @@ impl EndpointMap {
         self.endpoint_mapped_addrs.get(&eid)
     }
 
-    /// Returns a [`n0_watcher::Direct`] for given endpoint's [`ConnectionType`].
-    ///
-    /// # Errors
-    ///
-    /// Will return `None` if there is not an entry in the [`EndpointMap`] for
-    /// the `endpoint_id`
-    pub(super) fn conn_type(
-        &self,
-        _endpoint_id: EndpointId,
-    ) -> Option<n0_watcher::Direct<ConnectionType>> {
-        todo!();
-    }
-
     /// Returns the sender for the [`EndpointStateActor`].
     ///
     /// If needed a new actor is started on demand.
