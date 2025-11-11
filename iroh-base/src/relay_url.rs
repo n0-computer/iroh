@@ -6,34 +6,22 @@ use url::Url;
 
 /// A URL identifying a relay server.
 ///
-/// It is cheaply clonable, as the underlying type is wrapped into an `Arc`.
-/// The main type under the hood though is [`Url`], with a few custom tweaks:
-///
-/// - A relay URL is never a relative URL, so an implicit `.` is added at the end of the
-///   domain name if missing.
-///
-/// - [`fmt::Debug`] is implemented so it prints the URL rather than the URL struct fields.
-///   Useful when logging e.g. `Option<RelayUrl>`.
+/// It is cheaply clonable, as the underlying type is wrapped into an `Arc`.  The main type
+/// under the hood though is [`Url`].
 ///
 /// To create a [`RelayUrl`] use the `From<Url>` implementation.
+///
+/// It is encouraged to use a fully-qualified DNS domain name in the URL.  Meaning a DNS
+/// name which ends in a `.`, e.g, in `relay.example.com.`.  Otherwise the DNS resolution of
+/// your local host or network could interpret the DNS name as relative and in some
+/// configurations might cause additional delays or even connection problems.
 #[derive(
     Clone, derive_more::Display, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
 )]
 pub struct RelayUrl(Arc<Url>);
 
 impl From<Url> for RelayUrl {
-    fn from(mut url: Url) -> Self {
-        if let Some(domain) = url.domain() {
-            if !domain.ends_with('.') {
-                let domain = String::from(domain) + ".";
-
-                // This can fail, though it is unlikely the resulting URL is usable as a
-                // relay URL, probably it has the wrong scheme or is not a base URL or the
-                // like.  We don't do full URL validation however, so just silently leave
-                // this bad URL in place.  Something will fail later.
-                url.set_host(Some(&domain)).ok();
-            }
-        }
+    fn from(url: Url) -> Self {
         Self(Arc::new(url))
     }
 }
@@ -105,24 +93,24 @@ mod tests {
     fn test_relay_url_debug_display() {
         let url = RelayUrl::from(Url::parse("https://example.com").unwrap());
 
-        assert_eq!(format!("{url:?}"), r#"RelayUrl("https://example.com./")"#);
+        assert_eq!(format!("{url:?}"), r#"RelayUrl("https://example.com/")"#);
 
-        assert_eq!(format!("{url}"), "https://example.com./");
+        assert_eq!(format!("{url}"), "https://example.com/");
     }
 
     #[test]
     fn test_relay_url_absolute() {
         let url = RelayUrl::from(Url::parse("https://example.com").unwrap());
 
-        assert_eq!(url.domain(), Some("example.com."));
+        assert_eq!(url.domain(), Some("example.com"));
 
         let url1 = RelayUrl::from(Url::parse("https://example.com.").unwrap());
-        assert_eq!(url, url1);
+        assert_eq!(url1.domain(), Some("example.com."));
 
         let url2 = RelayUrl::from(Url::parse("https://example.com./").unwrap());
-        assert_eq!(url, url2);
+        assert_eq!(url2.domain(), Some("example.com."));
 
         let url3 = RelayUrl::from(Url::parse("https://example.com/").unwrap());
-        assert_eq!(url, url3);
+        assert_eq!(url3.domain(), Some("example.com"));
     }
 }

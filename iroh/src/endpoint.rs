@@ -809,7 +809,7 @@ impl Endpoint {
     }
 
     /// Returns the current [`EndpointAddr`].
-    /// As long as the endpoint was able to binde to a network interfaces, some
+    /// As long as the endpoint was able to bind to a network interface, some
     /// local addresses will be available.
     ///
     /// The state of other fields depends on the state of networking and connectivity.

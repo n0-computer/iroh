@@ -80,7 +80,7 @@ impl Transports {
         msock: &MagicSock,
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        if msock.is_closed() {
+        if msock.is_closing() {
             return Poll::Pending;
         }
 
