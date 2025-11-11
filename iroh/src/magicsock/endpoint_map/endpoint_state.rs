@@ -335,7 +335,7 @@ impl EndpointStateActor {
     async fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        tx: oneshot::Sender<PathsWatchable>,
+        tx: oneshot::Sender<PathsWatcher>,
     ) {
         let pub_open_paths = Watchable::default();
         if let Some(conn) = handle.upgrade() {
@@ -397,10 +397,11 @@ impl EndpointStateActor {
             }
             self.trigger_holepunching().await;
         }
-        tx.send(PathsWatchable {
-            open_paths: pub_open_paths,
-            selected_path: self.selected_path.clone(),
-        })
+        tx.send(PathsWatcher::new(
+            pub_open_paths.watch(),
+            self.selected_path.watch(),
+            handle,
+        ))
         .ok();
     }
 
@@ -1002,7 +1003,7 @@ pub(crate) enum EndpointStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatchable>),
+    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatcher>),
     /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
     AddEndpointAddr(EndpointAddr, Source),
     /// Process a received DISCO CallMeMaybe message.
@@ -1128,38 +1129,70 @@ impl ConnectionState {
     }
 }
 
-/// Watchables for the open paths and selected transmission path in a connection.
+/// Watcher for the open paths and selected transmission path in a connection.
 ///
 /// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
 ///
+/// Internally, this contains a boxed-mapped-joined watcher over the open paths in the connection and the
+/// selected path to the remote endpoint. The watcher is boxed because the mapped-joined watcher with
+/// `SmallVec<PathInfoList>` has a size of over 800 bytes, which we don't want to put upon the [`Connection`].
+///
 /// [`Connection`]: crate::endpoint::Connection
-#[derive(Debug, Default, Clone)]
-pub(crate) struct PathsWatchable {
-    /// Watchable for the open paths (in this connection).
-    open_paths: Watchable<PathAddrList>,
-    /// Watchable for the selected transmission path (global for this remote endpoint).
-    selected_path: Watchable<Option<transports::Addr>>,
+#[derive(Clone, derive_more::Debug)]
+#[debug("PathsWatcher")]
+#[allow(clippy::type_complexity)]
+pub(crate) struct PathsWatcher(
+    Box<
+        n0_watcher::Map<
+            (
+                n0_watcher::Direct<PathAddrList>,
+                n0_watcher::Direct<Option<transports::Addr>>,
+            ),
+            PathInfoList,
+        >,
+    >,
+);
+
+impl n0_watcher::Watcher for PathsWatcher {
+    type Value = PathInfoList;
+
+    fn get(&mut self) -> Self::Value {
+        self.0.get()
+    }
+
+    fn is_connected(&self) -> bool {
+        self.0.is_connected()
+    }
+
+    fn poll_updated(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<Self::Value, n0_watcher::Disconnected>> {
+        self.0.poll_updated(cx)
+    }
 }
 
-impl PathsWatchable {
-    pub(crate) fn watch(
-        &self,
+impl PathsWatcher {
+    fn new(
+        open_paths: n0_watcher::Direct<PathAddrList>,
+        selected_path: n0_watcher::Direct<Option<transports::Addr>>,
         conn_handle: WeakConnectionHandle,
-    ) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        let joined_watcher = (self.open_paths.watch(), self.selected_path.watch());
-        joined_watcher.map(move |(open_paths, selected_path)| {
-            let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
-            let Some(conn) = conn_handle.upgrade() else {
-                return PathInfoList(Default::default());
-            };
-            let list = open_paths
-                .into_iter()
-                .flat_map(move |(remote, path_id)| {
-                    PathInfo::new(path_id, &conn, remote, selected_path.as_ref())
-                })
-                .collect();
-            PathInfoList(list)
-        })
+    ) -> Self {
+        Self(Box::new(open_paths.or(selected_path).map(
+            move |(open_paths, selected_path)| {
+                let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
+                let Some(conn) = conn_handle.upgrade() else {
+                    return PathInfoList(Default::default());
+                };
+                let list = open_paths
+                    .into_iter()
+                    .flat_map(move |(remote, path_id)| {
+                        PathInfo::new(path_id, &conn, remote, selected_path.as_ref())
+                    })
+                    .collect();
+                PathInfoList(list)
+            },
+        )))
     }
 }
 
