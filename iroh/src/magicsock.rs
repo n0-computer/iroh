@@ -1011,15 +1011,14 @@ impl Handle {
         let (disco, disco_receiver) = DiscoState::new(&secret_key);
 
         let endpoint_map = {
-            let sender = transports.create_sender();
             EndpointMap::new(
                 secret_key.public(),
                 // #[cfg(any(test, feature = "test-utils"))]
                 // path_selection,
                 metrics.magicsock.clone(),
-                sender,
                 direct_addrs.addrs.watch(),
                 disco.clone(),
+                transports.create_sender(),
             )
         };
 

@@ -132,7 +132,7 @@ impl IpNetworkChangeSender {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[pin_project]
 pub(super) struct IpSender {
     bind_addr: SocketAddr,

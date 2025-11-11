@@ -7,7 +7,6 @@ use std::{
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
-use n0_error::StdResultExt;
 use n0_future::{
     FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     task::{self, AbortOnDropHandle},
@@ -19,10 +18,12 @@ use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+use self::util::{GuardedReceiver, GuardedSender, guarded_channel};
+use super::{Source, path_state::PathState};
 // TODO: Use this
 // #[cfg(any(test, feature = "test-utils"))]
 // use crate::endpoint::PathSelection;
@@ -32,14 +33,10 @@ use crate::{
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
-        transports::{self, OwnedTransmit},
+        transports::{self, OwnedTransmit, TransportsSender},
     },
     util::MaybeFuture,
 };
-
-use super::{Source, TransportsSenderMessage, path_state::PathState};
-
-use self::util::{GuardedReceiver, GuardedSender, guarded_channel};
 
 mod util;
 
@@ -108,10 +105,7 @@ pub(super) struct EndpointStateActor {
     //
     /// Metrics.
     metrics: Arc<MagicsockMetrics>,
-    /// Allowing us to directly send datagrams.
-    ///
-    /// Used for handling [`EndpointStateMessage::SendDatagram`] messages.
-    transports_sender: mpsc::Sender<TransportsSenderMessage>,
+    sender: TransportsSender,
     /// Our local addresses.
     ///
     /// These are our local addresses and any reflexive transport addresses.
@@ -162,17 +156,16 @@ impl EndpointStateActor {
     pub(super) fn new(
         endpoint_id: EndpointId,
         local_endpoint_id: EndpointId,
-        transports_sender: mpsc::Sender<TransportsSenderMessage>,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
+        sender: TransportsSender,
     ) -> Self {
         Self {
             endpoint_id,
             local_endpoint_id,
             metrics,
-            transports_sender,
             local_addrs,
             relay_mapped_addrs,
             disco,
@@ -185,6 +178,7 @@ impl EndpointStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
+            sender,
         }
     }
 
@@ -328,26 +322,34 @@ impl EndpointStateActor {
         Ok(())
     }
 
+    async fn send_datagram(
+        &self,
+        dst: transports::Addr,
+        owned_transmit: OwnedTransmit,
+    ) -> n0_error::Result<()> {
+        let transmit = transports::Transmit {
+            ecn: owned_transmit.ecn,
+            contents: owned_transmit.contents.as_ref(),
+            segment_size: owned_transmit.segment_size,
+        };
+        self.sender.send(&dst, None, &transmit).await?;
+        Ok(())
+    }
+
     /// Handles [`EndpointStateMessage::SendDatagram`].
     ///
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> n0_error::Result<()> {
         if let Some(addr) = self.selected_path.get() {
             trace!(?addr, "sending datagram to selected path");
-            self.transports_sender
-                .send((addr, transmit).into())
-                .await
-                .std_context("TransportSenderActor stopped")?;
+            self.send_datagram(addr, transmit).await?;
         } else {
             trace!(
                 paths = ?self.paths.keys().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
             );
             for addr in self.paths.keys() {
-                self.transports_sender
-                    .send((addr.clone(), transmit.clone()).into())
-                    .await
-                    .std_context("TransportSenderActor stopped")?;
+                self.send_datagram(addr.clone(), transmit.clone()).await?;
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger
@@ -742,7 +744,7 @@ impl EndpointStateActor {
             transports::Addr::Ip(_) => &self.metrics.send_disco_udp,
             transports::Addr::Relay(_, _) => &self.metrics.send_disco_relay,
         };
-        match self.transports_sender.send((dst, transmit).into()).await {
+        match self.send_datagram(dst, transmit).await {
             Ok(()) => {
                 trace!("sent");
                 counter.inc();
