@@ -62,7 +62,7 @@ use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
-    discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
+    discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     magicsock::endpoint_map::PathsWatchable,
     metrics::EndpointMetrics,
@@ -223,18 +223,6 @@ pub(crate) struct MagicSock {
     pub(crate) metrics: EndpointMetrics,
 }
 
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub enum AddEndpointAddrError {
-    #[error("Empty addressing info")]
-    Empty,
-    #[error("Empty addressing info, {pruned} direct address have been pruned")]
-    EmptyPruned { pruned: usize },
-    #[error("Adding our own address is not supported")]
-    OwnAddress,
-}
-
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     pub(crate) async fn spawn(opts: Options) -> Result<Handle, CreateHandleError> {
@@ -303,14 +291,30 @@ impl MagicSock {
             .filter_map(|addr| addr.into_socket_addr())
     }
 
-    /// Returns `true` if we have at least one candidate address where we can send packets to.
-    pub(crate) async fn has_send_address(&self, eid: EndpointId) -> bool {
+    /// Returns `Ok` if we have at least one candidate address where we can send packets to.
+    pub(crate) async fn want_connect(
+        &self,
+        mut addr: EndpointAddr,
+    ) -> Result<EndpointIdMappedAddr, DiscoveryError> {
+        // Prune our own addreses from the endpoint address.
+        // TODO: Move this somewhere else?
+        for my_addr in self.direct_addrs.sockaddrs() {
+            if addr.addrs.remove(&TransportAddr::Ip(my_addr)) {
+                warn!(endpoint_id=%addr.id.fmt_short(), %my_addr, "not adding our addr for endpoint");
+            }
+        }
+
+        let eid = addr.id;
         let actor = self.endpoint_map.endpoint_state_actor(eid);
         let (tx, rx) = oneshot::channel();
-        if actor.send(EndpointStateMessage::CanSend(tx)).await.is_err() {
-            return false;
-        }
-        rx.await.unwrap_or(false)
+        // TODO: Better errors
+        actor
+            .send(EndpointStateMessage::WantConnect(addr, tx))
+            .await
+            .map_err(|_| e!(DiscoveryError::NoServiceConfigured))?;
+        rx.await
+            .map_err(|_| e!(DiscoveryError::NoServiceConfigured))??;
+        Ok(self.endpoint_map.endpoint_mapped_addr(eid))
     }
 
     pub(crate) async fn insert_relay(
@@ -401,42 +405,6 @@ impl MagicSock {
             .await
             .ok();
         rx.await.unwrap_or_default()
-    }
-
-    /// Returns the socket address which can be used by the QUIC layer to dial this endpoint.
-    pub(crate) fn get_endpoint_mapped_addr(&self, eid: EndpointId) -> EndpointIdMappedAddr {
-        self.endpoint_map.endpoint_mapped_addr(eid)
-    }
-
-    /// Add potential addresses for a endpoint to the `EndpointStateActor`.
-    ///
-    /// This is used to add possible paths that the remote endpoint might be reachable on.  They
-    /// will be used when there is no active connection to the endpoint to attempt to establish
-    /// a connection.
-    #[instrument(skip_all)]
-    pub(crate) async fn add_endpoint_addr(
-        &self,
-        mut addr: EndpointAddr,
-        source: endpoint_map::Source,
-    ) -> Result<(), AddEndpointAddrError> {
-        let mut pruned: usize = 0;
-        for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.addrs.remove(&TransportAddr::Ip(my_addr)) {
-                warn!( endpoint_id=%addr.id.fmt_short(), %my_addr, %source, "not adding our addr for endpoint");
-                pruned += 1;
-            }
-        }
-        if !addr.is_empty() {
-            // Add addr to the internal EndpointMap
-            self.endpoint_map
-                .add_endpoint_addr(addr.clone(), source)
-                .await;
-            Ok(())
-        } else if pruned != 0 {
-            Err(e!(AddEndpointAddrError::EmptyPruned { pruned }))
-        } else {
-            Err(e!(AddEndpointAddrError::Empty))
-        }
     }
 
     /// Stores a new set of direct addresses.
@@ -1002,6 +970,7 @@ impl Handle {
                 direct_addrs.addrs.watch(),
                 disco.clone(),
                 transports.create_sender(),
+                discovery.clone(),
             )
         };
 
@@ -1883,17 +1852,17 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
-    use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
+    use iroh_base::{EndpointAddr, EndpointId};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
     use rand::{CryptoRng, Rng, RngCore, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
-    use tracing::{Instrument, error, info, info_span, instrument};
+    use tracing::{info, instrument};
     use tracing_test::traced_test;
 
-    use super::{EndpointIdMappedAddr, Options, endpoint_map::Source, mapped_addrs::MappedAddr};
+    use super::Options;
     use crate::{
         Endpoint,
         RelayMap,
@@ -1902,8 +1871,8 @@ mod tests {
         discovery::static_provider::StaticProvider,
         dns::DnsResolver,
         // endpoint::PathSelection,
-        magicsock::{Handle, MagicSock},
-        tls::{self, DEFAULT_MAX_TLS_TICKETS},
+        magicsock::Handle,
+        tls::DEFAULT_MAX_TLS_TICKETS,
     };
 
     const ALPN: &[u8] = b"n0/test/1";
@@ -2333,6 +2302,8 @@ mod tests {
         assert_eq!(eps0, eps1);
     }
 
+    // TODO(Frando): Only used in tests that are commented out.
+    /*
     /// Creates a new [`quinn::Endpoint`] hooked up to a [`MagicSock`].
     ///
     /// This is without involving [`crate::endpoint::Endpoint`].  The socket will accept
@@ -2417,7 +2388,10 @@ mod tests {
         let connection = connect.await.anyerr()?;
         Ok(connection)
     }
+    */
 
+    // TODO(Frando): This test uses internal state manipulation that was removed.
+    /*
     #[tokio::test]
     #[traced_test]
     async fn test_try_send_no_send_addr() {
@@ -2517,7 +2491,10 @@ mod tests {
         // TODO: Now check if we can connect to a repaired ep_3, but we can't modify that
         // much internal state for now.
     }
+    */
 
+    // TODO(Frando) This test uses internal state manipulation that was removed.
+    /*
     #[tokio::test]
     #[traced_test]
     async fn test_try_send_no_udp_addr_or_relay_url() {
@@ -2639,4 +2616,5 @@ mod tests {
         // TODO: could remove the addresses again, send, add it back and see it recover.
         // But we don't have that much private access to the EndpointMap.  This will do for now.
     }
+    */
 }

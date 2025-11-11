@@ -40,7 +40,6 @@ use tracing::warn;
 
 use crate::{
     Endpoint,
-    discovery::DiscoveryTask,
     magicsock::{
         EndpointStateActorStoppedError,
         endpoint_map::{PathInfoList, PathsWatchable},
@@ -321,9 +320,6 @@ pub struct Connecting {
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
     remote_endpoint_id: EndpointId,
-    /// We run discovery as long as we haven't established a connection yet.
-    #[debug("Option<DiscoveryTask>")]
-    _discovery_drop_guard: Option<DiscoveryTask>,
 }
 
 type RegisterWithMagicsockFut = BoxFuture<Result<Connection, EndpointStateActorStoppedError>>;
@@ -374,14 +370,12 @@ impl Connecting {
         inner: quinn::Connecting,
         ep: Endpoint,
         remote_endpoint_id: EndpointId,
-        _discovery_drop_guard: Option<DiscoveryTask>,
     ) -> Self {
         Self {
             inner,
             ep,
             remote_endpoint_id,
             register_with_magicsock: None,
-            _discovery_drop_guard,
         }
     }
 
@@ -429,7 +423,6 @@ impl Connecting {
                     async move {
                         let accepted = zrtt_accepted.await;
                         let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
-                        drop(self._discovery_drop_guard);
                         Ok(match accepted {
                             true => ZeroRttStatus::Accepted(conn),
                             false => ZeroRttStatus::Rejected(conn),
