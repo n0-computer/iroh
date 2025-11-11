@@ -23,8 +23,6 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
-use self::util::{GuardedReceiver, GuardedSender, guarded_channel};
-use super::{Source, TransportsSenderMessage, path_state::PathState};
 // TODO: Use this
 // #[cfg(any(test, feature = "test-utils"))]
 // use crate::endpoint::PathSelection;
@@ -38,6 +36,12 @@ use crate::{
     },
     util::MaybeFuture,
 };
+
+use super::{Source, TransportsSenderMessage, path_state::PathState};
+
+use self::util::{GuardedReceiver, GuardedSender, guarded_channel};
+
+mod util;
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
@@ -268,7 +272,6 @@ impl EndpointStateActor {
                     self.trigger_holepunching().await;
                 }
                 _ = &mut idle_timeout => {
-                    // Check is_idle and if true close the inbox while the close_lock is held.
                     if self.connections.is_empty() && inbox.close_if_idle() {
                         trace!("idle timeout expired and still idle: terminate actor");
                         break;
@@ -1058,23 +1061,8 @@ pub(super) struct EndpointStateHandle {
     ///
     /// This is a [`GuardedSender`], from which we can get an [`mpsc::Sender`] but only if the receiver
     /// hasn't been closed.
-    sender: GuardedSender<EndpointStateMessage>,
+    pub(super) sender: GuardedSender<EndpointStateMessage>,
     _task: AbortOnDropHandle<()>,
-}
-
-impl EndpointStateHandle {
-    /// Returns a sender for the channel into the [`EndpointStateActor`].
-    ///
-    /// Returns `None` if the actor is terminating. This is race-free because a lock shared with the actor
-    /// is used to ensure that once we cloned the sender, the actor won't close until the sender is dropped.
-    pub(super) fn sender(&self) -> Option<mpsc::Sender<EndpointStateMessage>> {
-        self.sender.get()
-    }
-
-    /// Returns `true` if the endpoint actor channel is closed (i.e. if the actor has terminated).
-    pub(super) fn is_closed(&self) -> bool {
-        self.sender.is_closed()
-    }
 }
 
 /// Information about a holepunch attempt.
@@ -1361,83 +1349,5 @@ impl Future for OnClosed {
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let (_close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
         Poll::Ready(self.conn_id)
-    }
-}
-
-mod util {
-    use std::sync::{Arc, Mutex};
-
-    use tokio::sync::mpsc;
-
-    /// Creates a new [`mpsc`] channel where the receiver can only close if there are no active senders.
-    pub(super) fn guarded_channel<T>(cap: usize) -> (GuardedSender<T>, GuardedReceiver<T>) {
-        let (tx, rx) = mpsc::channel(cap);
-        let tx = Arc::new(Mutex::new(Some(tx)));
-        (GuardedSender { tx: tx.clone() }, GuardedReceiver { tx, rx })
-    }
-
-    #[derive(Debug)]
-    pub(super) struct GuardedSender<T> {
-        tx: Arc<Mutex<Option<mpsc::Sender<T>>>>,
-    }
-
-    impl<T> GuardedSender<T> {
-        /// Returns a sender to the channel.
-        ///
-        /// Returns a new sender if the channel is not closed. It is guaranteed that
-        /// [`GuardedReceiver::close_if_idle`] will not return `true` until the sender is dropped.
-        /// Returns `None` if the channel has been closed.
-        pub(super) fn get(&self) -> Option<mpsc::Sender<T>> {
-            self.tx.lock().expect("poisoned").clone()
-        }
-
-        /// Returns `true` if the channel has been closed.
-        pub(super) fn is_closed(&self) -> bool {
-            self.tx.lock().expect("poisoned").is_none()
-        }
-    }
-
-    #[derive(Debug)]
-    pub(super) struct GuardedReceiver<T> {
-        rx: mpsc::Receiver<T>,
-        tx: Arc<Mutex<Option<mpsc::Sender<T>>>>,
-    }
-
-    impl<T> GuardedReceiver<T> {
-        /// Receives the next value for this receiver.
-        ///
-        /// See [`mpsc::Receiver::recv`].
-        pub(super) async fn recv(&mut self) -> Option<T> {
-            self.rx.recv().await
-        }
-
-        /// Returns `true` if the inbox is empty and no senders to the inbox exist.
-        pub(super) fn is_idle(&self) -> bool {
-            self.rx.is_empty() && self.rx.sender_strong_count() <= 1
-        }
-
-        /// Closes the channel if the channel is idle.
-        ///
-        /// Uses a lock internally to make sure that there cannot be a race condition between
-        /// calling this and a new sender being created.
-        pub(super) fn close_if_idle(&mut self) -> bool {
-            let mut guard = self.tx.lock().expect("poisoned");
-            if self.is_idle() {
-                *guard = None;
-                self.rx.close();
-                true
-            } else {
-                false
-            }
-        }
-    }
-
-    impl<T> Drop for GuardedReceiver<T> {
-        fn drop(&mut self) {
-            let mut guard = self.tx.lock().expect("poisoned");
-            *guard = None;
-            self.rx.close();
-            drop(guard)
-        }
     }
 }

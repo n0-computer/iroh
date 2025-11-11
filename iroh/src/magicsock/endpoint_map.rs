@@ -131,7 +131,7 @@ impl EndpointMap {
     /// that have shutdown after their idle timeout expired.
     pub(super) fn remove_closed_endpoint_state_actors(&self) {
         let mut handles = self.actor_handles.lock().expect("poisoned");
-        handles.retain(|_eid, handle| !handle.is_closed())
+        handles.retain(|_eid, handle| !handle.sender.is_closed())
     }
 
     /// Returns the sender for the [`EndpointStateActor`].
@@ -144,41 +144,47 @@ impl EndpointMap {
         eid: EndpointId,
     ) -> mpsc::Sender<EndpointStateMessage> {
         let mut handles = self.actor_handles.lock().expect("poisoned");
-        loop {
-            match handles.entry(eid) {
-                hash_map::Entry::Occupied(entry) => {
-                    let handle = entry.get();
-                    // Checks if the actor is alive, and if not, remove the handle to the terminated actor and start a
-                    // new actor in the next loop iteration.
-                    if let Some(sender) = handle.sender() {
-                        return sender;
-                    } else {
-                        // The actor is dead: Remove the handle, and create a new actor in the next loop.
-                        entry.remove();
-                        continue;
-                    }
-                }
-                hash_map::Entry::Vacant(entry) => {
-                    // Ensure there is a EndpointMappedAddr for this EndpointId.
-                    self.endpoint_mapped_addrs.get(&eid);
-                    // Start a new EndpointStateActor and insert it into the endpoint map.
-                    let actor = EndpointStateActor::new(
-                        eid,
-                        self.local_endpoint_id,
-                        self.transports_handle.inbox.clone(),
-                        self.local_addrs.clone(),
-                        self.disco.clone(),
-                        self.relay_mapped_addrs.clone(),
-                        self.metrics.clone(),
-                    );
-                    let handle = actor.start();
-                    // We know that the actor hasn't terminated yet because it will at least await its idle timeout.
-                    let sender = handle.sender().expect("just created");
+        match handles.entry(eid) {
+            hash_map::Entry::Occupied(mut entry) => {
+                if let Some(sender) = entry.get().sender.get() {
+                    sender
+                } else {
+                    // The actor is dead: Start a new actor.
+                    let (handle, sender) = self.start_endpoint_state_actor(eid);
                     entry.insert(handle);
-                    return sender;
+                    sender
                 }
             }
+            hash_map::Entry::Vacant(entry) => {
+                let (handle, sender) = self.start_endpoint_state_actor(eid);
+                entry.insert(handle);
+                sender
+            }
         }
+    }
+
+    /// Starts a new endpoint state actor and returns a handle and a sender.
+    ///
+    /// The handle is not inserted into the endpoint map, this must be done by the caller of this function.
+    fn start_endpoint_state_actor(
+        &self,
+        eid: EndpointId,
+    ) -> (EndpointStateHandle, mpsc::Sender<EndpointStateMessage>) {
+        // Ensure there is a EndpointMappedAddr for this EndpointId.
+        self.endpoint_mapped_addrs.get(&eid);
+        // Start a new EndpointStateActor and insert it into the endpoint map.
+        let actor = EndpointStateActor::new(
+            eid,
+            self.local_endpoint_id,
+            self.transports_handle.inbox.clone(),
+            self.local_addrs.clone(),
+            self.disco.clone(),
+            self.relay_mapped_addrs.clone(),
+            self.metrics.clone(),
+        );
+        let handle = actor.start();
+        let sender = handle.sender.get().expect("just created");
+        (handle, sender)
     }
 
     pub(super) fn handle_ping(&self, msg: disco::Ping, sender: EndpointId, src: transports::Addr) {
