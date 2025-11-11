@@ -80,7 +80,7 @@
 <a href=#80 id=80 data-nosnippet>80</a>        msock: <span class="kw-2">&amp;</span>MagicSock,
 <a href=#81 id=81 data-nosnippet>81</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
 <a href=#82 id=82 data-nosnippet>82</a>        <span class="macro">debug_assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
-<a href=#83 id=83 data-nosnippet>83</a>        <span class="kw">if </span>msock.is_closed() {
+<a href=#83 id=83 data-nosnippet>83</a>        <span class="kw">if </span>msock.is_closing() {
 <a href=#84 id=84 data-nosnippet>84</a>            <span class="kw">return </span>Poll::Pending;
 <a href=#85 id=85 data-nosnippet>85</a>        }
 <a href=#86 id=86 data-nosnippet>86</a>
