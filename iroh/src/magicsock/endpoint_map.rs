@@ -25,8 +25,8 @@ mod path_state;
 
 pub(super) use endpoint_state::EndpointStateMessage;
 pub(crate) use endpoint_state::PathsWatchable;
-pub use endpoint_state::{ConnectionType, PathInfo, PathInfoList};
 use endpoint_state::{EndpointStateActor, EndpointStateHandle};
+pub use endpoint_state::{PathInfo, PathInfoList};
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
@@ -105,19 +105,6 @@ impl EndpointMap {
 
     pub(super) fn endpoint_mapped_addr(&self, eid: EndpointId) -> EndpointIdMappedAddr {
         self.endpoint_mapped_addrs.get(&eid)
-    }
-
-    /// Returns a [`n0_watcher::Direct`] for given endpoint's [`ConnectionType`].
-    ///
-    /// # Errors
-    ///
-    /// Will return `None` if there is not an entry in the [`EndpointMap`] for
-    /// the `endpoint_id`
-    pub(super) fn conn_type(
-        &self,
-        _endpoint_id: EndpointId,
-    ) -> Option<n0_watcher::Direct<ConnectionType>> {
-        todo!();
     }
 
     /// Returns the sender for the [`EndpointStateActor`].

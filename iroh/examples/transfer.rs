@@ -10,16 +10,16 @@ use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
+    Watcher,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-    endpoint::ConnectionError,
+    endpoint::{ConnectionError, PathInfoList},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
-use n0_watcher::Watcher as _;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
@@ -337,7 +337,6 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             }
         };
         // spawn a task to handle reading and writing off of the connection
-        let endpoint_clone = endpoint.clone();
         tokio::spawn(async move {
             let conn = accepting.await.anyerr()?;
             let endpoint_id = conn.remote_id();
@@ -350,7 +349,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             println!("[{remote}] Connected");
 
             // Spawn a background task that prints connection type changes. Will be aborted on drop.
-            let _guard = watch_conn_type(&endpoint_clone, endpoint_id);
+            let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
@@ -404,7 +403,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
     println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(&endpoint, remote_id);
+    let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
     // Use the Quinn API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
@@ -521,14 +520,36 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
     cfg.parse_size(s)
 }
 
-fn watch_conn_type(endpoint: &Endpoint, endpoint_id: EndpointId) -> AbortOnDropHandle<()> {
-    let mut stream = endpoint.conn_type(endpoint_id).unwrap().stream();
+fn watch_conn_type(
+    endpoint_id: EndpointId,
+    paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
+) -> AbortOnDropHandle<()> {
+    let id = endpoint_id.fmt_short();
     let task = tokio::task::spawn(async move {
-        while let Some(conn_type) = stream.next().await {
-            println!(
-                "[{}] Connection type changed to: {conn_type}",
-                endpoint_id.fmt_short()
-            );
+        let mut stream = paths_watcher.stream();
+        let mut previous = None;
+        while let Some(paths) = stream.next().await {
+            if let Some(path) = paths.iter().find(|p| p.is_selected()) {
+                // We can get path updates without the selected path changing. We don't want to log again in that case.
+                if Some(path) == previous.as_ref() {
+                    continue;
+                }
+                println!(
+                    "[{id}] Connection type changed to: {:?} (RTT: {:?})",
+                    path.remote_addr(),
+                    path.rtt()
+                );
+                previous = Some(path.clone());
+            } else if !paths.is_empty() {
+                println!(
+                    "[{id}] Connection type changed to: mixed ({} paths)",
+                    paths.len()
+                );
+                previous = None;
+            } else {
+                println!("[{id}] Connection type changed to none (no active transmission paths)",);
+                previous = None;
+            }
         }
     });
     AbortOnDropHandle::new(task)

@@ -16,7 +16,6 @@ use n0_watcher::{Watchable, Watcher};
 use quinn::{PathStats, WeakConnectionHandle};
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
@@ -1055,27 +1054,6 @@ struct HolepunchAttempt {
     remote_addrs: BTreeSet<SocketAddr>,
 }
 
-/// The type of connection we have to the endpoint.
-#[derive(derive_more::Display, Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub enum ConnectionType {
-    /// Direct UDP connection
-    #[display("direct({_0})")]
-    Direct(SocketAddr),
-    /// Relay connection over relay
-    #[display("relay({_0})")]
-    Relay(RelayUrl),
-    /// Both a UDP and a relay connection are used.
-    ///
-    /// This is the case if we do have a UDP address, but are missing a recent confirmation that
-    /// the address works.
-    #[display("mixed(udp: {_0}, relay: {_1})")]
-    Mixed(SocketAddr, RelayUrl),
-    /// We have no verified connection to this PublicKey
-    #[default]
-    #[display("none")]
-    None,
-}
-
 /// Newtype to track Connections.
 ///
 /// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
@@ -1167,7 +1145,7 @@ impl PathsWatchable {
     pub(crate) fn watch(
         &self,
         conn_handle: WeakConnectionHandle,
-    ) -> impl Watcher<Value = PathInfoList> {
+    ) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
         let joined_watcher = (self.open_paths.watch(), self.selected_path.watch());
         joined_watcher.map(move |(open_paths, selected_path)| {
             let selected_path: Option<TransportAddr> = selected_path.map(Into::into);

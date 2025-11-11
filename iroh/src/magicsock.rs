@@ -77,10 +77,7 @@ pub(crate) mod transports;
 
 use mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
 
-pub use self::{
-    endpoint_map::{ConnectionType, PathInfo},
-    metrics::Metrics,
-};
+pub use self::{endpoint_map::PathInfo, metrics::Metrics};
 
 // TODO: Use this
 // /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
@@ -392,20 +389,6 @@ impl MagicSock {
                 })
                 .collect()
         })
-    }
-
-    /// Returns a [`n0_watcher::Direct`] that reports the [`ConnectionType`] we have to the
-    /// given `endpoint_id`.
-    ///
-    /// This gets us a copy of the [`n0_watcher::Direct`] for the [`Watchable`] with a
-    /// [`ConnectionType`] that the `EndpointMap` stores for each `endpoint_id`'s endpoint.
-    ///
-    /// # Errors
-    ///
-    /// Will return `None` if there is no address information known about the
-    /// given `endpoint_id`.
-    pub(crate) fn conn_type(&self, eid: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.endpoint_map.conn_type(eid)
     }
 
     // TODO: Build better info to expose to the user about remote nodes.  We probably want
