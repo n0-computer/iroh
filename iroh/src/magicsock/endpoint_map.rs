@@ -171,8 +171,7 @@ impl EndpointMap {
     ) -> (EndpointStateHandle, mpsc::Sender<EndpointStateMessage>) {
         // Ensure there is a EndpointMappedAddr for this EndpointId.
         self.endpoint_mapped_addrs.get(&eid);
-        // Start a new EndpointStateActor and insert it into the endpoint map.
-        let actor = EndpointStateActor::new(
+        let handle = EndpointStateActor::new(
             eid,
             self.local_endpoint_id,
             self.local_addrs.clone(),
@@ -180,8 +179,8 @@ impl EndpointMap {
             self.relay_mapped_addrs.clone(),
             self.metrics.clone(),
             self.sender.clone(),
-        );
-        let handle = actor.start();
+        )
+        .start();
         let sender = handle.sender.get().expect("just created");
         (handle, sender)
     }
