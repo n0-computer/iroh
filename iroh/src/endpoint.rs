@@ -70,12 +70,6 @@ pub use self::connection::{
     ZeroRttStatus,
 };
 
-/// The delay to fall back to discovery when direct addresses fail.
-///
-/// When a connection is attempted with an [`EndpointAddr`] containing direct addresses the
-/// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
-/// is still no connection the configured [`crate::discovery::Discovery`] will be used however.
-
 /// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
 #[cfg(any(test, feature = "test-utils"))]

@@ -176,6 +176,7 @@ pub(super) struct EndpointStateActor {
 }
 
 impl EndpointStateActor {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         endpoint_id: EndpointId,
         local_endpoint_id: EndpointId,
