@@ -376,7 +376,15 @@ impl EndpointStateActor {
                 paths = ?self.paths.keys().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
             );
+            // TODO(Frando): Use Watcher::peek once available.
+            let local_addrs = self.local_addrs.get();
             for addr in self.paths.keys() {
+                if let transports::Addr::Ip(sockaddr) = addr
+                    && local_addrs.iter().any(|a| a.addr == *sockaddr)
+                {
+                    warn!(%sockaddr, "not sending datagram to our own address");
+                    continue;
+                }
                 self.send_datagram(addr.clone(), transmit.clone()).await?;
             }
             // This message is received *before* a connection is added.  So we do
@@ -460,21 +468,15 @@ impl EndpointStateActor {
 
     /// Adds new [`TransportAddr`] addresses to our list of potential paths.
     fn add_addrs(&mut self, addrs: BTreeSet<TransportAddr>, source: Source) {
-        let local_addrs = self.local_addrs.get();
-
+        use transports::Addr;
         for addr in addrs {
             let addr = match addr {
-                TransportAddr::Relay(relay_url) => {
-                    transports::Addr::from((relay_url.clone(), self.endpoint_id))
+                TransportAddr::Relay(relay_url) => Addr::from((relay_url, self.endpoint_id)),
+                TransportAddr::Ip(sockaddr) => Addr::from(sockaddr),
+                _ => {
+                    warn!(?addr, "Unsupported TransportAddr");
+                    continue;
                 }
-                TransportAddr::Ip(sockaddr) => {
-                    if local_addrs.iter().any(|a| a.addr == sockaddr) {
-                        warn!(%sockaddr, "not adding our addr for endpoint");
-                        continue;
-                    }
-                    transports::Addr::from(sockaddr)
-                }
-                _ => continue,
             };
             self.add_path_entry(addr, source.clone());
         }
