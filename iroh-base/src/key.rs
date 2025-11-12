@@ -45,6 +45,14 @@ impl EndpointId {
     pub fn expect_ed(self) -> PublicKey {
         self.as_ed().expect("not an ed25519 endpoint id")
     }
+
+    /// Format a short representation of this endpoint id.
+    pub fn fmt_short(&self) -> String {
+        match self {
+            EndpointId::Ed25519(key) => key.fmt_short().to_string(),
+            EndpointId::Other(_) => "Other".to_string(),
+        }
+    }
 }
 
 impl From<PublicKey> for EndpointId {

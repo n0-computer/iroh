@@ -46,7 +46,7 @@
 
 use std::sync::Arc;
 
-use iroh_base::{PublicKey, RelayUrl, SecretKey};
+use iroh_base::{EndpointId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
 use n0_error::{e, stack_error};
 use n0_future::{
@@ -510,11 +510,12 @@ impl PkarrResolver {
 impl Discovery for PkarrResolver {
     fn resolve(
         &self,
-        endpoint_id: PublicKey,
+        endpoint_id: EndpointId,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        let public_key = endpoint_id.as_ed()?;
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
-            let signed_packet = pkarr_client.resolve(endpoint_id).await?;
+            let signed_packet = pkarr_client.resolve(public_key).await?;
             let info = EndpointInfo::from_pkarr_signed_packet(&signed_packet)
                 .map_err(|err| DiscoveryError::from_err_any("pkarr", err))?;
             let item = DiscoveryItem::new(info, "pkarr", None);

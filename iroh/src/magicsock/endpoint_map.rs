@@ -377,12 +377,13 @@ impl EndpointMapInner {
     ) {
         let source0 = source.clone();
         let endpoint_id = endpoint_addr.id;
+        let public_key = endpoint_id.expect_ed();
         let relay_url = endpoint_addr.relay_urls().next().cloned();
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
         let endpoint_state =
-            self.get_or_insert_with(EndpointStateKey::EndpointId(endpoint_id), || Options {
-                endpoint_id,
+            self.get_or_insert_with(EndpointStateKey::EndpointId(public_key), || Options {
+                endpoint_id: public_key,
                 relay_url,
                 active: false,
                 source,

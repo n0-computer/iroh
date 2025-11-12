@@ -1,6 +1,6 @@
 //! DNS endpoint discovery for iroh
 
-use iroh_base::PublicKey;
+use iroh_base::EndpointId;
 use iroh_relay::dns::DnsResolver;
 pub use iroh_relay::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
@@ -105,13 +105,14 @@ impl IntoDiscovery for DnsDiscoveryBuilder {
 impl Discovery for DnsDiscovery {
     fn resolve(
         &self,
-        endpoint_id: PublicKey,
+        endpoint_id: EndpointId,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        let public_key = endpoint_id.as_ed()?;
         let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let endpoint_info = resolver
-                .lookup_endpoint_by_id_staggered(&endpoint_id, &origin_domain, DNS_STAGGERING_MS)
+                .lookup_endpoint_by_id_staggered(&public_key, &origin_domain, DNS_STAGGERING_MS)
                 .await
                 .map_err(|e| DiscoveryError::from_err_any("dns", e))?;
             Ok(DiscoveryItem::new(endpoint_info, "dns", None))

@@ -16,7 +16,7 @@ use std::{
     sync::Arc,
 };
 
-use iroh_base::{EndpointAddr, PublicKey, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
@@ -679,6 +679,9 @@ impl Endpoint {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
         }
         let endpoint_id = endpoint_addr.id;
+        let Some(public_key) = endpoint_id.as_ed() else {
+            panic!();
+        };
         let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
         let relay_url = endpoint_addr.relay_urls().next().cloned();
 
@@ -715,7 +718,7 @@ impl Endpoint {
             client_config
         };
 
-        let server_name = &tls::name::encode(endpoint_id);
+        let server_name = &tls::name::encode(public_key);
         let connect = self.msock.endpoint().connect_with(
             client_config,
             mapped_addr.private_socket_addr(),
@@ -725,7 +728,7 @@ impl Endpoint {
         Ok(Connecting::new(
             connect,
             self.clone(),
-            endpoint_id,
+            public_key,
             _discovery_drop_guard,
         ))
     }
@@ -793,8 +796,8 @@ impl Endpoint {
     ///
     /// This ID is the unique addressing information of this endpoint and other peers must know
     /// it to be able to connect to this endpoint.
-    pub fn id(&self) -> PublicKey {
-        self.static_config.tls_config.secret_key.public()
+    pub fn id(&self) -> EndpointId {
+        self.static_config.tls_config.secret_key.public().into()
     }
 
     /// Returns the current [`EndpointAddr`].
@@ -1200,8 +1203,11 @@ impl Endpoint {
     // # Remaining private methods
 
     /// Checks if the given `EndpointId` needs discovery.
-    pub(crate) fn needs_discovery(&self, endpoint_id: PublicKey, max_age: Duration) -> bool {
-        match self.msock.remote_info(endpoint_id) {
+    pub(crate) fn needs_discovery(&self, endpoint_id: EndpointId, max_age: Duration) -> bool {
+        let Some(public_key) = endpoint_id.as_ed() else {
+            return false;
+        };
+        match self.msock.remote_info(public_key) {
             // No info means no path to endpoint -> start discovery.
             None => true,
             Some(info) => {
@@ -1240,11 +1246,14 @@ impl Endpoint {
         endpoint_addr: EndpointAddr,
     ) -> Result<(EndpointIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
         let endpoint_id = endpoint_addr.id;
+        let Some(public_key) = endpoint_id.as_ed() else {
+            return Err(e!(GetMappingAddressError::NoAddress))
+        };
 
         // Only return a mapped addr if we have some way of dialing this endpoint, in other
         // words, we have either a relay URL or at least one direct address.
-        let addr = if self.msock.has_send_address(endpoint_id) {
-            self.msock.get_mapping_addr(endpoint_id)
+        let addr = if self.msock.has_send_address(public_key) {
+            self.msock.get_mapping_addr(public_key)
         } else {
             None
         };
@@ -1276,7 +1285,7 @@ impl Endpoint {
                     .first_arrived()
                     .await
                     .map_err(|err| e!(GetMappingAddressError::Discover, err))?;
-                if let Some(addr) = self.msock.get_mapping_addr(endpoint_id) {
+                if let Some(addr) = self.msock.get_mapping_addr(public_key) {
                     Ok((addr, Some(discovery)))
                 } else {
                     Err(e!(GetMappingAddressError::NoAddress))

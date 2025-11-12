@@ -1233,7 +1233,7 @@ impl From<RemoteInfo> for EndpointAddr {
         }
 
         EndpointAddr {
-            id: info.endpoint_id,
+            id: info.endpoint_id.into(),
             addrs,
         }
     }
