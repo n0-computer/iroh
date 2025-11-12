@@ -169,7 +169,7 @@ pub(super) struct EndpointStateActor {
     pending_open_paths: VecDeque<transports::Addr>,
     /// Discovery service, cloned from the magicsock.
     discovery: ConcurrentDiscovery,
-    /// Stream of discovery results (always pending if discovery is not running)
+    /// Stream of discovery results, or always pending if discovery is not running.
     discovery_stream: DiscoveryStream,
     /// Pending requests from [`EndpointStateMessage::ResolveRemote`].
     pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
@@ -564,7 +564,7 @@ impl EndpointStateActor {
         self.open_path(&src);
     }
 
-    /// Handles [`EndpointStateMessage::WantConnect`].
+    /// Handles [`EndpointStateMessage::ResolveRemote`].
     fn handle_msg_resolve_remote(
         &mut self,
         addrs: BTreeSet<TransportAddr>,
@@ -577,9 +577,7 @@ impl EndpointStateActor {
             self.pending_resolve_requests.push_back(tx);
         }
         // Start discovery if we have no selected path.
-        if self.selected_path.get().is_none() {
-            self.trigger_discovery();
-        }
+        self.trigger_discovery();
     }
 
     /// Handles [`EndpointStateMessage::Latency`].
