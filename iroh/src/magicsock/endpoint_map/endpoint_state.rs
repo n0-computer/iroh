@@ -22,10 +22,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, ReceiverStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+use self::guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel};
 use super::{Source, path_state::PathState};
-// TODO: Use this
-// #[cfg(any(test, feature = "test-utils"))]
-// use crate::endpoint::PathSelection;
 use crate::{
     disco::{self},
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
@@ -38,6 +36,12 @@ use crate::{
     },
     util::MaybeFuture,
 };
+
+// TODO: Use this
+// #[cfg(any(test, feature = "test-utils"))]
+// use crate::endpoint::PathSelection;
+
+mod guarded_channel;
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
@@ -68,6 +72,14 @@ use crate::{
 /// The value which we close paths.
 // TODO: Quinn should just do this.  Also, I made this value up.
 const APPLICATION_ABANDON_PATH: u8 = 30;
+
+/// The time after which an idle [`EndpointStateActor`] stops.
+///
+/// The actor only enters the idle state if no connections are active and no inbox senders exist
+/// apart from the one stored in the endpoint map. Stopping and restarting the actor in this state
+/// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
+/// in a high frequency, and to keep data about previous path around for subsequent connections.
+const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A stream of events from all paths for all connections.
 ///
@@ -186,7 +198,7 @@ impl EndpointStateActor {
     }
 
     pub(super) fn start(self) -> EndpointStateHandle {
-        let (tx, rx) = mpsc::channel(16);
+        let (tx, rx) = guarded_channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
 
@@ -221,9 +233,11 @@ impl EndpointStateActor {
     /// discipline is needed to not turn pending for a long time.
     async fn run(
         mut self,
-        mut inbox: mpsc::Receiver<EndpointStateMessage>,
+        mut inbox: GuardedReceiver<EndpointStateMessage>,
     ) -> n0_error::Result<()> {
         trace!("actor started");
+        let idle_timeout = MaybeFuture::None;
+        tokio::pin!(idle_timeout);
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -269,6 +283,22 @@ impl EndpointStateActor {
                 item = self.discovery_stream.next() => {
                     self.handle_discovery_item(item);
                 }
+                _ = &mut idle_timeout => {
+                    if self.connections.is_empty() && inbox.close_if_idle() {
+                        trace!("idle timeout expired and still idle: terminate actor");
+                        break;
+                    }
+                }
+            }
+
+            if self.connections.is_empty() && inbox.is_idle() && idle_timeout.is_none() {
+                trace!("start idle timeout");
+                idle_timeout
+                    .as_mut()
+                    .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
+            } else if idle_timeout.is_some() {
+                trace!("abort idle timeout");
+                idle_timeout.as_mut().set_none()
             }
         }
         trace!("actor terminating");
@@ -349,7 +379,7 @@ impl EndpointStateActor {
     async fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        tx: oneshot::Sender<PathsWatchable>,
+        tx: oneshot::Sender<PathsWatcher>,
     ) {
         let pub_open_paths = Watchable::default();
         if let Some(conn) = handle.upgrade() {
@@ -411,10 +441,11 @@ impl EndpointStateActor {
             }
             self.trigger_holepunching().await;
         }
-        tx.send(PathsWatchable {
-            open_paths: pub_open_paths,
-            selected_path: self.selected_path.clone(),
-        })
+        tx.send(PathsWatcher::new(
+            pub_open_paths.watch(),
+            self.selected_path.watch(),
+            handle,
+        ))
         .ok();
     }
 
@@ -1098,7 +1129,7 @@ pub(crate) enum EndpointStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatchable>),
+    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatcher>),
     /// Process a received DISCO CallMeMaybe message.
     CallMeMaybeReceived(disco::CallMeMaybe),
     /// Process a received DISCO Ping message.
@@ -1123,11 +1154,16 @@ pub(crate) enum EndpointStateMessage {
 
 /// A handle to a [`EndpointStateActor`].
 ///
-/// Dropping this will stop the actor.
+/// Dropping this will stop the actor. The actor will also stop after an idle timeout
+/// if it has no connections, an empty inbox, and no other senders than the one stored
+/// in the endpoint map exist.
 #[derive(Debug)]
 pub(super) struct EndpointStateHandle {
     /// Sender for the channel into the [`EndpointStateActor`].
-    pub(super) sender: mpsc::Sender<EndpointStateMessage>,
+    ///
+    /// This is a [`GuardedSender`], from which we can get a sender but only if the receiver
+    /// hasn't been closed.
+    pub(super) sender: GuardedSender<EndpointStateMessage>,
     _task: AbortOnDropHandle<()>,
 }
 
@@ -1224,38 +1260,70 @@ impl ConnectionState {
     }
 }
 
-/// Watchables for the open paths and selected transmission path in a connection.
+/// Watcher for the open paths and selected transmission path in a connection.
 ///
 /// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
 ///
+/// Internally, this contains a boxed-mapped-joined watcher over the open paths in the connection and the
+/// selected path to the remote endpoint. The watcher is boxed because the mapped-joined watcher with
+/// `SmallVec<PathInfoList>` has a size of over 800 bytes, which we don't want to put upon the [`Connection`].
+///
 /// [`Connection`]: crate::endpoint::Connection
-#[derive(Debug, Default, Clone)]
-pub(crate) struct PathsWatchable {
-    /// Watchable for the open paths (in this connection).
-    open_paths: Watchable<PathAddrList>,
-    /// Watchable for the selected transmission path (global for this remote endpoint).
-    selected_path: Watchable<Option<transports::Addr>>,
+#[derive(Clone, derive_more::Debug)]
+#[debug("PathsWatcher")]
+#[allow(clippy::type_complexity)]
+pub(crate) struct PathsWatcher(
+    Box<
+        n0_watcher::Map<
+            (
+                n0_watcher::Direct<PathAddrList>,
+                n0_watcher::Direct<Option<transports::Addr>>,
+            ),
+            PathInfoList,
+        >,
+    >,
+);
+
+impl n0_watcher::Watcher for PathsWatcher {
+    type Value = PathInfoList;
+
+    fn get(&mut self) -> Self::Value {
+        self.0.get()
+    }
+
+    fn is_connected(&self) -> bool {
+        self.0.is_connected()
+    }
+
+    fn poll_updated(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<Self::Value, n0_watcher::Disconnected>> {
+        self.0.poll_updated(cx)
+    }
 }
 
-impl PathsWatchable {
-    pub(crate) fn watch(
-        &self,
+impl PathsWatcher {
+    fn new(
+        open_paths: n0_watcher::Direct<PathAddrList>,
+        selected_path: n0_watcher::Direct<Option<transports::Addr>>,
         conn_handle: WeakConnectionHandle,
-    ) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        let joined_watcher = (self.open_paths.watch(), self.selected_path.watch());
-        joined_watcher.map(move |(open_paths, selected_path)| {
-            let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
-            let Some(conn) = conn_handle.upgrade() else {
-                return PathInfoList(Default::default());
-            };
-            let list = open_paths
-                .into_iter()
-                .flat_map(move |(remote, path_id)| {
-                    PathInfo::new(path_id, &conn, remote, selected_path.as_ref())
-                })
-                .collect();
-            PathInfoList(list)
-        })
+    ) -> Self {
+        Self(Box::new(open_paths.or(selected_path).map(
+            move |(open_paths, selected_path)| {
+                let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
+                let Some(conn) = conn_handle.upgrade() else {
+                    return PathInfoList(Default::default());
+                };
+                let list = open_paths
+                    .into_iter()
+                    .flat_map(move |(remote, path_id)| {
+                        PathInfo::new(path_id, &conn, remote, selected_path.as_ref())
+                    })
+                    .collect();
+                PathInfoList(list)
+            },
+        )))
     }
 }
 

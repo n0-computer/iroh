@@ -64,7 +64,7 @@ use crate::{
     disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
-    magicsock::endpoint_map::PathsWatchable,
+    magicsock::endpoint_map::PathsWatcher,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -260,14 +260,14 @@ impl MagicSock {
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
     ///
-    /// Returns a future that resolves to [`PathsWatchable`].
+    /// Returns a future that resolves to [`PathsWatcher`].
     ///
     /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
     pub(crate) fn register_connection(
         &self,
         remote: EndpointId,
         conn: WeakConnectionHandle,
-    ) -> impl Future<Output = Result<PathsWatchable, EndpointStateActorStoppedError>> + Send + 'static
+    ) -> impl Future<Output = Result<PathsWatcher, EndpointStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
         let sender = self.endpoint_map.endpoint_state_actor(remote);
@@ -1349,6 +1349,9 @@ impl Actor {
         // ensure we are doing an initial publish of our addresses
         self.msock.publish_my_addr();
 
+        // Interval timer to remove closed `EndpointStateActor` handles from the endpoint map.
+        let mut endpoint_map_gc = time::interval(endpoint_map::ENDPOINT_MAP_GC_INTERVAL);
+
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1459,6 +1462,9 @@ impl Actor {
                     if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
                         warn!(%dst, endpoint = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
                     }
+                }
+                _ = endpoint_map_gc.tick() => {
+                    self.msock.endpoint_map.remove_closed_endpoint_state_actors();
                 }
             }
         }

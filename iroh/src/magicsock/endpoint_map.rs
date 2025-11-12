@@ -1,8 +1,9 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, hash_map},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use iroh_base::{EndpointId, RelayUrl};
@@ -11,6 +12,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::warn;
 
+pub(super) use self::endpoint_state::EndpointStateMessage;
+pub(crate) use self::endpoint_state::PathsWatcher;
+use self::endpoint_state::{EndpointStateActor, EndpointStateHandle};
+pub use self::endpoint_state::{PathInfo, PathInfoList};
 use super::{
     DirectAddr, DiscoState, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
@@ -20,16 +25,15 @@ use crate::{
     disco::{self},
     discovery::ConcurrentDiscovery,
 };
+
 // #[cfg(any(test, feature = "test-utils"))]
 // use crate::endpoint::PathSelection;
 
 mod endpoint_state;
 mod path_state;
 
-pub(super) use endpoint_state::EndpointStateMessage;
-pub(crate) use endpoint_state::PathsWatchable;
-use endpoint_state::{EndpointStateActor, EndpointStateHandle};
-pub use endpoint_state::{PathInfo, PathInfoList};
+/// Interval in which handles to closed [`EndpointStateActor`]s should be removed.
+pub(super) const ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
@@ -96,6 +100,15 @@ impl EndpointMap {
         self.endpoint_mapped_addrs.get(&eid)
     }
 
+    /// Removes the handles for terminated [`EndpointStateActor`]s from the endpoint map.
+    ///
+    /// This should be called periodically to remove handles to endpoint state actors
+    /// that have shutdown after their idle timeout expired.
+    pub(super) fn remove_closed_endpoint_state_actors(&self) {
+        let mut handles = self.actor_handles.lock().expect("poisoned");
+        handles.retain(|_eid, handle| !handle.sender.is_closed())
+    }
+
     /// Returns the sender for the [`EndpointStateActor`].
     ///
     /// If needed a new actor is started on demand.
@@ -106,32 +119,47 @@ impl EndpointMap {
         eid: EndpointId,
     ) -> mpsc::Sender<EndpointStateMessage> {
         let mut handles = self.actor_handles.lock().expect("poisoned");
-        match handles.get(&eid) {
-            Some(handle) => handle.sender.clone(),
-            None => {
-                // Create a new EndpointStateActor and insert it into the endpoint map.
-                let local_addrs = self.local_addrs.clone();
-                let disco = self.disco.clone();
-                let metrics = self.metrics.clone();
-                let actor = EndpointStateActor::new(
-                    eid,
-                    self.local_endpoint_id,
-                    local_addrs,
-                    disco,
-                    self.relay_mapped_addrs.clone(),
-                    metrics,
-                    self.sender.clone(),
-                    self.discovery.clone(),
-                );
-                let handle = actor.start();
-                let sender = handle.sender.clone();
-                handles.insert(eid, handle);
-
-                // Ensure there is a EndpointMappedAddr for this EndpointId.
-                self.endpoint_mapped_addrs.get(&eid);
+        match handles.entry(eid) {
+            hash_map::Entry::Occupied(mut entry) => {
+                if let Some(sender) = entry.get().sender.get() {
+                    sender
+                } else {
+                    // The actor is dead: Start a new actor.
+                    let (handle, sender) = self.start_endpoint_state_actor(eid);
+                    entry.insert(handle);
+                    sender
+                }
+            }
+            hash_map::Entry::Vacant(entry) => {
+                let (handle, sender) = self.start_endpoint_state_actor(eid);
+                entry.insert(handle);
                 sender
             }
         }
+    }
+
+    /// Starts a new endpoint state actor and returns a handle and a sender.
+    ///
+    /// The handle is not inserted into the endpoint map, this must be done by the caller of this function.
+    fn start_endpoint_state_actor(
+        &self,
+        eid: EndpointId,
+    ) -> (EndpointStateHandle, mpsc::Sender<EndpointStateMessage>) {
+        // Ensure there is a EndpointMappedAddr for this EndpointId.
+        self.endpoint_mapped_addrs.get(&eid);
+        let handle = EndpointStateActor::new(
+            eid,
+            self.local_endpoint_id,
+            self.local_addrs.clone(),
+            self.disco.clone(),
+            self.relay_mapped_addrs.clone(),
+            self.metrics.clone(),
+            self.sender.clone(),
+            self.discovery.clone(),
+        )
+        .start();
+        let sender = handle.sender.get().expect("just created");
+        (handle, sender)
     }
 
     pub(super) fn handle_ping(&self, msg: disco::Ping, sender: EndpointId, src: transports::Addr) {
