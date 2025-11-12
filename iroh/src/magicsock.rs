@@ -1388,6 +1388,9 @@ impl Actor {
         // ensure we are doing an initial publish of our addresses
         self.msock.publish_my_addr();
 
+        // Interval timer to remove closed `EndpointStateActor` handles from the endpoint map.
+        let mut endpoint_map_gc = time::interval(endpoint_map::ENDPOINT_MAP_GC_INTERVAL);
+
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1498,6 +1501,9 @@ impl Actor {
                     if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
                         warn!(%dst, endpoint = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
                     }
+                }
+                _ = endpoint_map_gc.tick() => {
+                    self.msock.endpoint_map.remove_closed_endpoint_state_actors();
                 }
             }
         }

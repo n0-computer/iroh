@@ -17,14 +17,12 @@ use quinn::{PathStats, WeakConnectionHandle};
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+use self::guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel};
 use super::{Source, path_state::PathState};
-// TODO: Use this
-// #[cfg(any(test, feature = "test-utils"))]
-// use crate::endpoint::PathSelection;
 use crate::{
     disco::{self},
     endpoint::DirectAddr,
@@ -36,6 +34,12 @@ use crate::{
     },
     util::MaybeFuture,
 };
+
+// TODO: Use this
+// #[cfg(any(test, feature = "test-utils"))]
+// use crate::endpoint::PathSelection;
+
+mod guarded_channel;
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
@@ -66,6 +70,14 @@ use crate::{
 /// The value which we close paths.
 // TODO: Quinn should just do this.  Also, I made this value up.
 const APPLICATION_ABANDON_PATH: u8 = 30;
+
+/// The time after which an idle [`EndpointStateActor`] stops.
+///
+/// The actor only enters the idle state if no connections are active and no inbox senders exist
+/// apart from the one stored in the endpoint map. Stopping and restarting the actor in this state
+/// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
+/// in a high frequency, and to keep data about previous path around for subsequent connections.
+const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A stream of events from all paths for all connections.
 ///
@@ -172,7 +184,7 @@ impl EndpointStateActor {
     }
 
     pub(super) fn start(mut self) -> EndpointStateHandle {
-        let (tx, rx) = mpsc::channel(16);
+        let (tx, rx) = guarded_channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
 
@@ -207,9 +219,11 @@ impl EndpointStateActor {
     /// discipline is needed to not turn pending for a long time.
     async fn run(
         &mut self,
-        mut inbox: mpsc::Receiver<EndpointStateMessage>,
+        mut inbox: GuardedReceiver<EndpointStateMessage>,
     ) -> n0_error::Result<()> {
         trace!("actor started");
+        let idle_timeout = MaybeFuture::None;
+        tokio::pin!(idle_timeout);
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -252,6 +266,22 @@ impl EndpointStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching().await;
                 }
+                _ = &mut idle_timeout => {
+                    if self.connections.is_empty() && inbox.close_if_idle() {
+                        trace!("idle timeout expired and still idle: terminate actor");
+                        break;
+                    }
+                }
+            }
+
+            if self.connections.is_empty() && inbox.is_idle() && idle_timeout.is_none() {
+                trace!("start idle timeout");
+                idle_timeout
+                    .as_mut()
+                    .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
+            } else if idle_timeout.is_some() {
+                trace!("abort idle timeout");
+                idle_timeout.as_mut().set_none()
             }
         }
         trace!("actor terminating");
@@ -1028,11 +1058,16 @@ pub(crate) enum EndpointStateMessage {
 
 /// A handle to a [`EndpointStateActor`].
 ///
-/// Dropping this will stop the actor.
+/// Dropping this will stop the actor. The actor will also stop after an idle timeout
+/// if it has no connections, an empty inbox, and no other senders than the one stored
+/// in the endpoint map exist.
 #[derive(Debug)]
 pub(super) struct EndpointStateHandle {
     /// Sender for the channel into the [`EndpointStateActor`].
-    pub(super) sender: mpsc::Sender<EndpointStateMessage>,
+    ///
+    /// This is a [`GuardedSender`], from which we can get a sender but only if the receiver
+    /// hasn't been closed.
+    pub(super) sender: GuardedSender<EndpointStateMessage>,
     _task: AbortOnDropHandle<()>,
 }
 
