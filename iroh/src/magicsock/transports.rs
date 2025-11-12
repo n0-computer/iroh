@@ -560,13 +560,16 @@ impl quinn::AsyncUdpSocket for MagicTransport {
 
     #[cfg(not(wasm_browser))]
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs: Vec<_> = self
-            .transports
-            .local_addrs()
+        let local_addrs = self.transports.local_addrs();
+        let addrs: Vec<_> = local_addrs
             .into_iter()
-            .filter_map(|addr| {
-                let addr: SocketAddr = addr.into_socket_addr()?;
-                Some(addr)
+            .map(|addr| {
+                use crate::magicsock::mapped_addrs::DEFAULT_FAKE_ADDR;
+
+                match addr {
+                    Addr::Ip(addr) => addr,
+                    Addr::Relay(..) => DEFAULT_FAKE_ADDR.into(),
+                }
             })
             .collect();
 
@@ -579,6 +582,12 @@ impl quinn::AsyncUdpSocket for MagicTransport {
             return Ok(SocketAddr::new(ip, addr.port()));
         }
 
+        if !self.transports.relay.is_empty() {
+            // pretend we have an address to make sure things are not too sad during startup
+            use crate::magicsock::mapped_addrs::DEFAULT_FAKE_ADDR;
+
+            return Ok(DEFAULT_FAKE_ADDR.into());
+        }
         Err(io::Error::other("no valid address available"))
     }
 

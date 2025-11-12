@@ -735,7 +735,7 @@ impl OutgoingZeroRttConnection {
 
     // TODO: It seems `SendDatagram` is not yet exposed by quinn.  This has been fixed
     //       upstream and will be in the next release.
-    // /// Transmits `data` as an unreliable, unordered application datagram
+    // /// Transmits `data` as an unreliable, unordered application datagramb
     // ///
     // /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
     // /// conditions, which effectively prioritizes old datagrams over new datagrams.

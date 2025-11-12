@@ -29,7 +29,7 @@ use std::{
 use bytes::Bytes;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{e, stack_error};
+use n0_error::{bail, e, stack_error};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -111,20 +111,11 @@ pub(crate) struct EndpointStateActorStoppedError;
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
 pub(crate) struct Options {
-    /// The IPv4 address to listen on.
-    ///
-    /// If set to `None` it will choose a random port and listen on `0.0.0.0:0`.
-    pub(crate) addr_v4: Option<SocketAddrV4>,
-    /// The IPv6 address to listen on.
-    ///
-    /// If set to `None` it will choose a random port and listen on `[::]:0`.
-    pub(crate) addr_v6: Option<SocketAddrV6>,
+    /// The configuration for the different transports.
+    pub(crate) transports: Vec<TransportConfig>,
 
     /// Secret key for this endpoint.
     pub(crate) secret_key: SecretKey,
-
-    /// The [`RelayMap`] to use, leave empty to not use a relay server.
-    pub(crate) relay_map: RelayMap,
 
     /// Optional user-defined discovery data.
     pub(crate) discovery_user_data: Option<UserData>,
@@ -235,6 +226,38 @@ pub enum AddEndpointAddrError {
     EmptyPruned { pruned: usize },
     #[error("Adding our own address is not supported")]
     OwnAddress,
+}
+
+/// Available transport configurations.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum TransportConfig {
+    /// IP based transport
+    #[cfg(not(wasm_browser))]
+    Ip {
+        /// The address this transport will bind on.
+        bind_addr: SocketAddr,
+    },
+    /// Relay transport
+    Relay {
+        /// The [`RelayMap`] used for this relay.
+        relay_map: RelayMap,
+    },
+}
+impl TransportConfig {
+    /// TODO docs
+    pub fn default_ipv4() -> Self {
+        Self::Ip {
+            bind_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+        }
+    }
+
+    /// TODO docs
+    pub fn default_ipv6() -> Self {
+        Self::Ip {
+            bind_addr: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
+        }
+    }
 }
 
 impl MagicSock {
@@ -930,16 +953,16 @@ pub enum CreateHandleError {
     CreateNetmonMonitor { source: netmon::Error },
     #[error("Failed to subscribe netmon monitor")]
     SubscribeNetmonMonitor { source: netmon::Error },
+    #[error("Invalid transport configuration")]
+    InvalidTransportConfig,
 }
 
 impl Handle {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     async fn new(opts: Options) -> Result<Self, CreateHandleError> {
         let Options {
-            addr_v4,
-            addr_v6,
             secret_key,
-            relay_map,
+            transports: transport_configs,
             discovery_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -953,12 +976,27 @@ impl Handle {
         } = opts;
 
         let discovery = ConcurrentDiscovery::default();
-
-        let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+        #[cfg(not(wasm_browser))]
+        let port_mapper =
+            portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
 
         #[cfg(not(wasm_browser))]
-        let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, &metrics)
+        let ip_transports = bind_ip(&transport_configs, &metrics)
             .map_err(|err| e!(CreateHandleError::BindSockets, err))?;
+
+        #[cfg(not(wasm_browser))]
+        {
+            if let Some(v4) = ip_transports.iter().find(|t| t.is_ipv4()) {
+                let port = v4.local_addr().port();
+                // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
+                match port.try_into() {
+                    Ok(non_zero_port) => {
+                        port_mapper.update_local_port(non_zero_port);
+                    }
+                    Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
+                }
+            }
+        }
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
@@ -967,21 +1005,47 @@ impl Handle {
 
         let shutdown_token = CancellationToken::new();
 
-        let relay_transport = RelayTransport::new(
-            RelayActorConfig {
-                my_relay: my_relay.clone(),
-                secret_key: secret_key.clone(),
-                #[cfg(not(wasm_browser))]
-                dns_resolver: dns_resolver.clone(),
-                proxy_url: proxy_url.clone(),
-                ipv6_reported: ipv6_reported.clone(),
-                #[cfg(any(test, feature = "test-utils"))]
-                insecure_skip_relay_cert_verify,
-                metrics: metrics.magicsock.clone(),
-            },
-            shutdown_token.child_token(),
-        );
-        let relay_transports = vec![relay_transport];
+        let relay_transport_configs: Vec<_> = transport_configs
+            .iter()
+            .filter(|t| matches!(t, TransportConfig::Relay { .. }))
+            .collect();
+
+        // Currently we only support a single relay transport
+        if relay_transport_configs.len() > 1 {
+            dbg!(&transport_configs, &relay_transport_configs);
+            bail!(CreateHandleError::InvalidTransportConfig);
+        }
+        let relay_map = relay_transport_configs
+            .iter()
+            .filter_map(|t| {
+                if let TransportConfig::Relay { relay_map } = t {
+                    Some(relay_map.clone())
+                } else {
+                    None
+                }
+            })
+            .next()
+            .unwrap_or_else(RelayMap::empty);
+
+        let relay_transports = relay_transport_configs
+            .into_iter()
+            .map(|_c| {
+                RelayTransport::new(
+                    RelayActorConfig {
+                        my_relay: my_relay.clone(),
+                        secret_key: secret_key.clone(),
+                        #[cfg(not(wasm_browser))]
+                        dns_resolver: dns_resolver.clone(),
+                        proxy_url: proxy_url.clone(),
+                        ipv6_reported: ipv6_reported.clone(),
+                        #[cfg(any(test, feature = "test-utils"))]
+                        insecure_skip_relay_cert_verify,
+                        metrics: metrics.magicsock.clone(),
+                    },
+                    shutdown_token.child_token(),
+                )
+            })
+            .collect();
 
         #[cfg(not(wasm_browser))]
         let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
@@ -1315,53 +1379,32 @@ struct Actor {
 }
 
 #[cfg(not(wasm_browser))]
-fn bind_ip(
-    addr_v4: SocketAddrV4,
-    addr_v6: Option<SocketAddrV6>,
-    metrics: &EndpointMetrics,
-) -> io::Result<(Vec<IpTransport>, portmapper::Client)> {
-    let port_mapper =
-        portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
-
-    let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4))?);
-    let ip4_port = v4.local_addr()?.port();
-    let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
-
-    let addr_v6 =
-        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
-
-    let v6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
-        Ok(sock) => Some(Arc::new(sock)),
-        Err(err) => {
-            info!("bind ignoring IPv6 bind failure: {:?}", err);
-            None
+fn bind_ip(configs: &[TransportConfig], metrics: &EndpointMetrics) -> io::Result<Vec<IpTransport>> {
+    let mut transports = Vec::new();
+    for config in configs {
+        match config {
+            TransportConfig::Ip { bind_addr } => match bind_with_fallback(*bind_addr) {
+                Ok(socket) => {
+                    let socket = Arc::new(socket);
+                    transports.push(IpTransport::new(
+                        *bind_addr,
+                        socket,
+                        metrics.magicsock.clone(),
+                    ));
+                }
+                Err(err) => {
+                    if bind_addr.is_ipv6() {
+                        info!("bind ignoring IPv6 bind failure: {:?}", err);
+                    } else {
+                        return Err(err);
+                    }
+                }
+            },
+            _ => {}
         }
-    };
-
-    let port = v4.local_addr().map_or(0, |p| p.port());
-
-    let mut ip = vec![IpTransport::new(
-        addr_v4.into(),
-        v4,
-        metrics.magicsock.clone(),
-    )];
-    if let Some(v6) = v6 {
-        ip.push(IpTransport::new(
-            addr_v6.into(),
-            v6,
-            metrics.magicsock.clone(),
-        ))
     }
 
-    // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
-    match port.try_into() {
-        Ok(non_zero_port) => {
-            port_mapper.update_local_port(non_zero_port);
-        }
-        Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
-    }
-
-    Ok((ip, port_mapper))
+    Ok(transports)
 }
 
 impl Actor {
@@ -1903,13 +1946,12 @@ mod tests {
     use super::{EndpointIdMappedAddr, Options, endpoint_map::Source, mapped_addrs::MappedAddr};
     use crate::{
         Endpoint,
-        RelayMap,
         RelayMode,
         SecretKey,
         discovery::static_provider::StaticProvider,
         dns::DnsResolver,
         // endpoint::PathSelection,
-        magicsock::{Handle, MagicSock},
+        magicsock::{Handle, MagicSock, TransportConfig},
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
 
@@ -1919,10 +1961,11 @@ mod tests {
         let secret_key = SecretKey::generate(rng);
         let server_config = make_default_server_config(&secret_key);
         Options {
-            addr_v4: None,
-            addr_v6: None,
+            transports: vec![
+                TransportConfig::default_ipv4(),
+                TransportConfig::default_ipv6(),
+            ],
             secret_key,
-            relay_map: RelayMap::empty(),
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
@@ -2355,10 +2398,11 @@ mod tests {
 
         let dns_resolver = DnsResolver::new();
         let opts = Options {
-            addr_v4: None,
-            addr_v6: None,
+            transports: vec![
+                TransportConfig::default_ipv4(),
+                TransportConfig::default_ipv6(),
+            ],
             secret_key: secret_key.clone(),
-            relay_map: RelayMap::empty(),
             discovery_user_data: None,
             dns_resolver,
             proxy_url: None,
