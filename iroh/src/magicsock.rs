@@ -227,7 +227,7 @@ pub enum AddEndpointAddrError {
 }
 
 impl MagicSock {
-    /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
+    /// Creates a magic [`MagicSock`] listening.
     pub(crate) async fn spawn(opts: Options) -> Result<Handle, CreateHandleError> {
         Handle::new(opts).await
     }
@@ -924,7 +924,7 @@ pub enum CreateHandleError {
 }
 
 impl Handle {
-    /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
+    /// Creates a magic [`MagicSock`].
     async fn new(opts: Options) -> Result<Self, CreateHandleError> {
         let Options {
             secret_key,
