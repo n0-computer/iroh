@@ -73,6 +73,10 @@ impl IpTransport {
         }
     }
 
+    pub(crate) fn local_addr(&self) -> SocketAddr {
+        self.local_addr.get()
+    }
+
     pub(super) fn local_addr_watch(&self) -> n0_watcher::Direct<SocketAddr> {
         self.local_addr.watch()
     }
@@ -91,6 +95,10 @@ impl IpTransport {
 
     pub(crate) fn bind_addr(&self) -> SocketAddr {
         self.bind_addr
+    }
+
+    pub(crate) fn is_ipv4(&self) -> bool {
+        self.bind_addr.is_ipv4()
     }
 
     pub(super) fn create_network_change_sender(&self) -> IpNetworkChangeSender {

@@ -56,7 +56,7 @@ pub use quinn::{
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
     PathStats, ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
     RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId,
-    TransportConfig, VarInt, WeakConnectionHandle, WriteError,
+    TransportConfig as QuinnT, VarInt, WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
     FrameStats, TransportError, TransportErrorCode, UdpStats, Written,
@@ -72,6 +72,7 @@ pub use self::connection::{
     Incoming, IncomingZeroRttConnection, OutgoingZeroRttConnection, RemoteEndpointIdError,
     ZeroRttStatus,
 };
+pub use crate::magicsock::TransportConfig;
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///
@@ -101,7 +102,6 @@ pub enum PathSelection {
 #[derive(Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
-    relay_mode: RelayMode,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: quinn::TransportConfig,
     keylog: bool,
@@ -112,11 +112,25 @@ pub struct Builder {
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
-    addr_v4: Option<SocketAddrV4>,
-    addr_v6: Option<SocketAddrV6>,
+    transports: Vec<TransportConfig>,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
     max_tls_tickets: usize,
+}
+
+impl From<RelayMode> for Option<TransportConfig> {
+    fn from(mode: RelayMode) -> Self {
+        match mode {
+            RelayMode::Disabled => None,
+            RelayMode::Default => Some(TransportConfig::Relay {
+                relay_map: mode.relay_map(),
+            }),
+            RelayMode::Staging => Some(TransportConfig::Relay {
+                relay_map: mode.relay_map(),
+            }),
+            RelayMode::Custom(relay_map) => Some(TransportConfig::Relay { relay_map }),
+        }
+    }
 }
 
 impl Builder {
@@ -140,9 +154,16 @@ impl Builder {
     pub fn empty(relay_mode: RelayMode) -> Self {
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+
+        let mut transports = vec![
+            TransportConfig::default_ipv4(),
+            TransportConfig::default_ipv6(),
+        ];
+        if let Some(relay) = relay_mode.into() {
+            transports.push(relay);
+        }
         Self {
             secret_key: Default::default(),
-            relay_mode,
             alpn_protocols: Default::default(),
             transport_config: quinn::TransportConfig::default(),
             keylog: Default::default(),
@@ -153,11 +174,10 @@ impl Builder {
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            addr_v4: None,
-            addr_v6: None,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
+            transports,
         }
     }
 
@@ -166,7 +186,6 @@ impl Builder {
     /// Binds the magic endpoint.
     pub async fn bind(mut self) -> Result<Endpoint, BindError> {
         let mut rng = rand::rng();
-        let relay_map = self.relay_mode.relay_map();
         let secret_key = self
             .secret_key
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
@@ -194,10 +213,8 @@ impl Builder {
         let metrics = EndpointMetrics::default();
 
         let msock_opts = magicsock::Options {
-            addr_v4: self.addr_v4,
-            addr_v6: self.addr_v6,
+            transports: self.transports,
             secret_key,
-            relay_map,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
@@ -236,8 +253,11 @@ impl Builder {
     /// If the port specified is already in use, it will fallback to choosing a random port.
     ///
     /// By default will use `0.0.0.0:0` to bind to.
-    pub fn bind_addr_v4(mut self, addr: SocketAddrV4) -> Self {
-        self.addr_v4.replace(addr);
+    // TODO: update docs
+    pub fn bind_addr_v4(mut self, bind_addr: SocketAddrV4) -> Self {
+        self.transports.push(TransportConfig::Ip {
+            bind_addr: bind_addr.into(),
+        });
         self
     }
 
@@ -247,8 +267,25 @@ impl Builder {
     /// If the port specified is already in use, it will fallback to choosing a random port.
     ///
     /// By default will use `[::]:0` to bind to.
-    pub fn bind_addr_v6(mut self, addr: SocketAddrV6) -> Self {
-        self.addr_v6.replace(addr);
+    // TODO: update docs
+    pub fn bind_addr_v6(mut self, bind_addr: SocketAddrV6) -> Self {
+        self.transports.push(TransportConfig::Ip {
+            bind_addr: bind_addr.into(),
+        });
+        self
+    }
+
+    /// Removes all IP based transports
+    pub fn disable_ip(mut self) -> Self {
+        self.transports
+            .retain(|t| !matches!(t, TransportConfig::Ip { .. }));
+        self
+    }
+
+    /// Removes all relay based transports
+    pub fn disable_relay(mut self) -> Self {
+        self.transports
+            .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
         self
     }
 
@@ -294,7 +331,24 @@ impl Builder {
     /// [crate docs]: crate
     /// [number 0]: https://n0.computer
     pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
-        self.relay_mode = relay_mode;
+        let transport: Option<_> = relay_mode.into();
+        match transport {
+            Some(transport) => {
+                if let Some(og) = self
+                    .transports
+                    .iter_mut()
+                    .find(|t| matches!(t, TransportConfig::Relay { .. }))
+                {
+                    *og = transport;
+                } else {
+                    self.transports.push(transport);
+                }
+            }
+            None => {
+                self.transports
+                    .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
+            }
+        }
         self
     }
 
@@ -865,8 +919,6 @@ impl Endpoint {
         let endpoint_id = self.id();
 
         watch_addrs.or(watch_relay).map(move |(addrs, relays)| {
-            debug_assert!(!addrs.is_empty(), "direct addresses must never be empty");
-
             EndpointAddr::from_parts(
                 endpoint_id,
                 relays
@@ -1252,7 +1304,7 @@ impl Endpoint {
 /// Options for the [`Endpoint::connect_with_opts`] function.
 #[derive(Default, Debug, Clone)]
 pub struct ConnectOptions {
-    transport_config: Option<Arc<TransportConfig>>,
+    transport_config: Option<Arc<quinn::TransportConfig>>,
     additional_alpns: Vec<Vec<u8>>,
 }
 
@@ -1266,7 +1318,7 @@ impl ConnectOptions {
     }
 
     /// Sets the QUIC transport config options for this connection.
-    pub fn with_transport_config(mut self, transport_config: Arc<TransportConfig>) -> Self {
+    pub fn with_transport_config(mut self, transport_config: Arc<quinn::TransportConfig>) -> Self {
         self.transport_config = Some(transport_config);
         self
     }
@@ -1801,6 +1853,104 @@ mod tests {
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .insecure_skip_relay_cert_verify(true)
                 .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            ep.online().await;
+            let mut node_addr = ep.addr();
+            node_addr.addrs.retain(|addr| addr.is_relay());
+            node_addr_tx.send(node_addr).unwrap();
+
+            info!(me = %ep.id().fmt_short(), "server starting");
+            let conn = ep.accept().await.anyerr()?.await.anyerr()?;
+            // let node_id = conn.remote_node_id()?;
+            // assert_eq!(node_id, src);
+            let mut recv = conn.accept_uni().await.anyerr()?;
+            let mut msg = [0u8; 5];
+            recv.read_exact(&mut msg).await.anyerr()?;
+            assert_eq!(&msg, b"hello");
+            info!("received hello");
+            let msg = recv.read_to_end(100).await.anyerr()?;
+            assert_eq!(msg, b"close please");
+            info!("received 'close please'");
+            // Dropping the connection closes it just fine.
+            Ok(())
+        }
+
+        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
+        let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
+
+        server_task.await.anyerr()??;
+        let conn_closed = dbg!(client_task.await.anyerr()??);
+        assert!(matches!(
+            conn_closed,
+            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_two_relay_only_no_ip() -> Result {
+        // Connect two endpoints on the same network, via a relay server, without
+        // discovery.
+        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
+        let (node_addr_tx, node_addr_rx) = oneshot::channel();
+
+        #[instrument(name = "client", skip_all)]
+        async fn connect(
+            relay_map: RelayMap,
+            node_addr_rx: oneshot::Receiver<EndpointAddr>,
+        ) -> Result<quinn::ConnectionError> {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+            let secret = SecretKey::generate(&mut rng);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .disable_ip() // disable direct
+                .bind()
+                .await?;
+            info!(me = %ep.id().fmt_short(), "client starting");
+            let dst = node_addr_rx.await.anyerr()?;
+
+            info!(me = %ep.id().fmt_short(), "client connecting");
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+            let mut send = conn.open_uni().await.anyerr()?;
+            send.write_all(b"hello").await.anyerr()?;
+            let mut paths = conn.paths().stream();
+            info!("Waiting for connection");
+            'outer: while let Some(infos) = paths.next().await {
+                info!(?infos, "new PathInfos");
+                for info in infos {
+                    if info.is_ip() {
+                        panic!("should not happen: {:?}", info);
+                    }
+                    if info.is_relay() {
+                        break 'outer;
+                    }
+                }
+            }
+            info!("Have direct connection");
+            send.write_all(b"close please").await.anyerr()?;
+            send.finish().anyerr()?;
+            Ok(conn.closed().await)
+        }
+
+        #[instrument(name = "server", skip_all)]
+        async fn accept(
+            relay_map: RelayMap,
+            node_addr_tx: oneshot::Sender<EndpointAddr>,
+        ) -> Result {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
+            let secret = SecretKey::generate(&mut rng);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .disable_ip()
                 .bind()
                 .await?;
             ep.online().await;
