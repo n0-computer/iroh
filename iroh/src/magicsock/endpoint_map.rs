@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
+use iroh_base::{EndpointId, RelayUrl};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -23,7 +23,7 @@ use super::{
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
     transports::{self, TransportsSender},
 };
-use crate::disco;
+use crate::{disco, discovery::ConcurrentDiscovery};
 
 mod endpoint_state;
 mod path_state;
@@ -63,6 +63,7 @@ pub(crate) struct EndpointMap {
     local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     disco: DiscoState,
     sender: TransportsSender,
+    discovery: ConcurrentDiscovery,
 }
 
 impl EndpointMap {
@@ -76,6 +77,7 @@ impl EndpointMap {
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
         sender: TransportsSender,
+        discovery: ConcurrentDiscovery,
     ) -> Self {
         Self {
             actor_handles: Mutex::new(FxHashMap::default()),
@@ -86,24 +88,8 @@ impl EndpointMap {
             local_addrs,
             disco,
             sender,
+            discovery,
         }
-    }
-
-    /// Adds addresses where an endpoint might be contactable.
-    pub(super) async fn add_endpoint_addr(&self, endpoint_addr: EndpointAddr, source: Source) {
-        for url in endpoint_addr.relay_urls() {
-            // Ensure we have a RelayMappedAddress.
-            self.relay_mapped_addrs
-                .get(&(url.clone(), endpoint_addr.id));
-        }
-        let actor = self.endpoint_state_actor(endpoint_addr.id);
-
-        // This only fails if the sender is closed.  That means the EndpointStateActor has
-        // stopped, which only happens during shutdown.
-        actor
-            .send(EndpointStateMessage::AddEndpointAddr(endpoint_addr, source))
-            .await
-            .ok();
     }
 
     pub(super) fn endpoint_mapped_addr(&self, eid: EndpointId) -> EndpointIdMappedAddr {
@@ -165,6 +151,7 @@ impl EndpointMap {
             self.relay_mapped_addrs.clone(),
             self.metrics.clone(),
             self.sender.clone(),
+            self.discovery.clone(),
         )
         .start();
         let sender = handle.sender.get().expect("just created");
