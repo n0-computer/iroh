@@ -156,7 +156,9 @@ impl Builder {
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
         let mut transports = vec![
+            #[cfg(not(wasm_browser))]
             TransportConfig::default_ipv4(),
+            #[cfg(not(wasm_browser))]
             TransportConfig::default_ipv6(),
         ];
         if let Some(relay) = relay_mode.into() {
@@ -254,6 +256,7 @@ impl Builder {
     ///
     /// By default will use `0.0.0.0:0` to bind to.
     // TODO: update docs
+    #[cfg(not(wasm_browser))]
     pub fn bind_addr_v4(mut self, bind_addr: SocketAddrV4) -> Self {
         self.transports.push(TransportConfig::Ip {
             bind_addr: bind_addr.into(),
@@ -268,6 +271,7 @@ impl Builder {
     ///
     /// By default will use `[::]:0` to bind to.
     // TODO: update docs
+    #[cfg(not(wasm_browser))]
     pub fn bind_addr_v6(mut self, bind_addr: SocketAddrV6) -> Self {
         self.transports.push(TransportConfig::Ip {
             bind_addr: bind_addr.into(),
@@ -276,6 +280,7 @@ impl Builder {
     }
 
     /// Removes all IP based transports
+    #[cfg(not(wasm_browser))]
     pub fn disable_ip(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Ip { .. }));
