@@ -1932,7 +1932,7 @@ mod tests {
                     }
                 }
             }
-            info!("Have direct connection");
+            info!("Have relay connection");
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
             Ok(conn.closed().await)
@@ -1954,8 +1954,7 @@ mod tests {
                 .bind()
                 .await?;
             ep.online().await;
-            let mut node_addr = ep.addr();
-            node_addr.addrs.retain(|addr| addr.is_relay());
+            let node_addr = ep.addr();
             node_addr_tx.send(node_addr).unwrap();
 
             info!(me = %ep.id().fmt_short(), "server starting");
