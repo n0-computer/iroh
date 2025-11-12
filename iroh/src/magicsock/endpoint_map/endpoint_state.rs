@@ -1146,20 +1146,21 @@ impl PathsWatchable {
         &self,
         conn_handle: WeakConnectionHandle,
     ) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        let joined_watcher = (self.open_paths.watch(), self.selected_path.watch());
-        joined_watcher.map(move |(open_paths, selected_path)| {
-            let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
-            let Some(conn) = conn_handle.upgrade() else {
-                return PathInfoList(Default::default());
-            };
-            let list = open_paths
-                .into_iter()
-                .flat_map(move |(remote, path_id)| {
-                    PathInfo::new(path_id, &conn, remote, selected_path.as_ref())
-                })
-                .collect();
-            PathInfoList(list)
-        })
+        self.open_paths.watch().or(self.selected_path.watch()).map(
+            move |(open_paths, selected_path)| {
+                let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
+                let Some(conn) = conn_handle.upgrade() else {
+                    return PathInfoList(Default::default());
+                };
+                let list = open_paths
+                    .into_iter()
+                    .flat_map(move |(remote, path_id)| {
+                        PathInfo::new(path_id, &conn, remote, selected_path.as_ref())
+                    })
+                    .collect();
+                PathInfoList(list)
+            },
+        )
     }
 }
 

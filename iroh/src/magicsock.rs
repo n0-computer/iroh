@@ -491,7 +491,7 @@ impl MagicSock {
 
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs = self.local_addrs_watch.get_ref();
+        let addrs = self.local_addrs_watch.peek();
 
         let mut ipv4_addr = None;
         for addr in addrs {
