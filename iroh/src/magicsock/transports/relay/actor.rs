@@ -836,7 +836,7 @@ pub(super) struct RelayActor {
     cancel_token: CancellationToken,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub my_relay: Watchable<Option<RelayUrl>>,
     pub secret_key: SecretKey,

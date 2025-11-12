@@ -72,7 +72,7 @@ pub use self::connection::{
     Incoming, IncomingZeroRttConnection, OutgoingZeroRttConnection, RemoteEndpointIdError,
     ZeroRttStatus,
 };
-pub use crate::magicsock::TransportConfig;
+pub use crate::magicsock::transports::TransportConfig;
 
 /// The delay to fall back to discovery when direct addresses fail.
 ///

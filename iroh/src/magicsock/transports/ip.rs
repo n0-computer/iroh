@@ -9,7 +9,7 @@ use std::{
 use n0_watcher::Watchable;
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use super::{Addr, Transmit};
 use crate::metrics::MagicsockMetrics;
@@ -22,7 +22,36 @@ pub(crate) struct IpTransport {
     metrics: Arc<MagicsockMetrics>,
 }
 
+fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
+    debug!(%addr, "binding");
+
+    // First try binding a preferred port, if specified
+    match netwatch::UdpSocket::bind_full(addr) {
+        Ok(socket) => {
+            let local_addr = socket.local_addr()?;
+            debug!(%addr, %local_addr, "successfully bound");
+            return Ok(socket);
+        }
+        Err(err) => {
+            debug!(%addr, "failed to bind: {err:#}");
+            // If that was already the fallback port, then error out
+            if addr.port() == 0 {
+                return Err(err);
+            }
+        }
+    }
+
+    // Otherwise, try binding with port 0
+    addr.set_port(0);
+    netwatch::UdpSocket::bind_full(addr)
+}
+
 impl IpTransport {
+    pub(crate) fn bind(bind_addr: SocketAddr, metrics: Arc<MagicsockMetrics>) -> io::Result<Self> {
+        let socket = bind_with_fallback(bind_addr)?;
+        Ok(Self::new(bind_addr, Arc::new(socket), metrics.clone()))
+    }
+
     pub(crate) fn new(
         bind_addr: SocketAddr,
         socket: Arc<UdpSocket>,
@@ -73,10 +102,6 @@ impl IpTransport {
         }
     }
 
-    pub(crate) fn local_addr(&self) -> SocketAddr {
-        self.local_addr.get()
-    }
-
     pub(super) fn local_addr_watch(&self) -> n0_watcher::Direct<SocketAddr> {
         self.local_addr.watch()
     }
@@ -95,10 +120,6 @@ impl IpTransport {
 
     pub(crate) fn bind_addr(&self) -> SocketAddr {
         self.bind_addr
-    }
-
-    pub(crate) fn is_ipv4(&self) -> bool {
-        self.bind_addr.is_ipv4()
     }
 
     pub(super) fn create_network_change_sender(&self) -> IpNetworkChangeSender {
