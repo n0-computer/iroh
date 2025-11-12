@@ -249,13 +249,12 @@ impl Builder {
 
     // # The very common methods everyone basically needs.
 
-    /// Sets the IPv4 bind address.
+    /// Adds an IP transport, binding to the provided IPv4 address.
+    ///
+    /// If you want to remove the default transports, make sure to call `clear_ip` first.
     ///
     /// Setting the port to `0` will use a random port.
     /// If the port specified is already in use, it will fallback to choosing a random port.
-    ///
-    /// By default will use `0.0.0.0:0` to bind to.
-    // TODO: update docs
     #[cfg(not(wasm_browser))]
     pub fn bind_addr_v4(mut self, bind_addr: SocketAddrV4) -> Self {
         self.transports.push(TransportConfig::Ip {
@@ -264,13 +263,12 @@ impl Builder {
         self
     }
 
-    /// Sets the IPv6 bind address.
+    /// Adds an IP transport, binding to the provided IPv6 address.
+    ///
+    /// If you want to remove the default transports, make sure to call `clear_ip` first.
     ///
     /// Setting the port to `0` will use a random port.
     /// If the port specified is already in use, it will fallback to choosing a random port.
-    ///
-    /// By default will use `[::]:0` to bind to.
-    // TODO: update docs
     #[cfg(not(wasm_browser))]
     pub fn bind_addr_v6(mut self, bind_addr: SocketAddrV6) -> Self {
         self.transports.push(TransportConfig::Ip {
@@ -281,14 +279,14 @@ impl Builder {
 
     /// Removes all IP based transports
     #[cfg(not(wasm_browser))]
-    pub fn disable_ip(mut self) -> Self {
+    pub fn clear_ip_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Ip { .. }));
         self
     }
 
     /// Removes all relay based transports
-    pub fn disable_relay(mut self) -> Self {
+    pub fn clear_relay_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
         self
@@ -1914,7 +1912,7 @@ mod tests {
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .insecure_skip_relay_cert_verify(true)
                 .relay_mode(RelayMode::Custom(relay_map))
-                .disable_ip() // disable direct
+                .clear_ip_transports() // disable direct
                 .bind()
                 .await?;
             info!(me = %ep.id().fmt_short(), "client starting");
@@ -1955,7 +1953,7 @@ mod tests {
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .insecure_skip_relay_cert_verify(true)
                 .relay_mode(RelayMode::Custom(relay_map))
-                .disable_ip()
+                .clear_ip_transports()
                 .bind()
                 .await?;
             ep.online().await;
