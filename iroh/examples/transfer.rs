@@ -404,7 +404,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
     println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(&endpoint, remote_id);
+    let _guard = watch_conn_type(&endpoint, remote_id.expect_ed());
 
     // Use the Quinn API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;

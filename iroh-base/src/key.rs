@@ -32,6 +32,24 @@ pub enum EndpointId {
     Other([u8; 8]),
 }
 
+impl PartialEq<PublicKey> for EndpointId {
+    fn eq(&self, other: &PublicKey) -> bool {
+        match self {
+            EndpointId::Ed25519(key) => key == other,
+            EndpointId::Other(_) => false,
+        }
+    }
+}
+
+impl Display for EndpointId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EndpointId::Ed25519(key) => write!(f, "Ed25519({})", key),
+            EndpointId::Other(bytes) => write!(f, "Other({})", data_encoding::HEXLOWER.encode(bytes)),
+        }
+    }
+}
+
 impl EndpointId {
     /// If this is an Ed25519 endpoint id, return the public key.
     pub fn as_ed(self) -> Option<PublicKey> {

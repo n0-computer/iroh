@@ -1908,28 +1908,28 @@ mod tests {
             }
         }
 
-        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_endpointid).instrument(
+        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_endpointid.expect_ed()).instrument(
             info_span!(
                 "p1_accept",
                 ep1 = %ep1.id().fmt_short(),
                 dst = %ep2_endpointid.fmt_short(),
             ),
         ));
-        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_endpointid).instrument(
+        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_endpointid.expect_ed()).instrument(
             info_span!(
                 "p2_accept",
                 ep2 = %ep2.id().fmt_short(),
                 dst = %ep1_endpointid.fmt_short(),
             ),
         ));
-        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_endpointid).instrument(
+        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_endpointid.expect_ed()).instrument(
             info_span!(
                 "p1_connect",
                 ep1 = %ep1.id().fmt_short(),
                 dst = %ep2_endpointid.fmt_short(),
             ),
         ));
-        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_endpointid).instrument(
+        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_endpointid.expect_ed()).instrument(
             info_span!(
                 "p2_connect",
                 ep2 = %ep2.id().fmt_short(),
@@ -2003,7 +2003,7 @@ mod tests {
         let ep1_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = accept(&ep1).await?;
             let mut send = conn.open_uni().await.anyerr()?;
-            wait_for_conn_type_direct(&ep1, ep2_endpointid).await?;
+            wait_for_conn_type_direct(&ep1, ep2_endpointid.expect_ed()).await?;
             send.write_all(b"Conn is direct").await.anyerr()?;
             send.finish().anyerr()?;
             conn.closed().await;
@@ -2013,7 +2013,7 @@ mod tests {
         let ep2_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = ep2.connect(ep1_endpointaddr, TEST_ALPN).await?;
             let mut recv = conn.accept_uni().await.anyerr()?;
-            wait_for_conn_type_direct(&ep2, ep1_endpointid).await?;
+            wait_for_conn_type_direct(&ep2, ep1_endpointid.expect_ed()).await?;
             let read = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(read, b"Conn is direct".to_vec());
             conn.close(0u32.into(), b"done");

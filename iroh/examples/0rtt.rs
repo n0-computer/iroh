@@ -60,7 +60,7 @@ async fn pong(mut recv: RecvStream, x: u64) -> Result<()> {
 }
 
 async fn connect(args: Args) -> Result<()> {
-    let remote_id = args.endpoint_id.unwrap();
+    let remote_id = args.endpoint_id.unwrap().into();
     let endpoint = iroh::Endpoint::builder()
         .relay_mode(iroh::RelayMode::Disabled)
         .keylog(true)

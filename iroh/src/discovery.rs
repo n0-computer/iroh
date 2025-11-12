@@ -1017,7 +1017,7 @@ mod test_dns_pkarr {
 
         let resolver = DnsResolver::with_nameserver(nameserver);
         let resolved = resolver
-            .lookup_endpoint_by_id(&endpoint_info.endpoint_id, &origin)
+            .lookup_endpoint_by_id(&endpoint_info.endpoint_id.expect_ed(), &origin)
             .await?;
 
         assert_eq!(resolved, endpoint_info);
@@ -1059,10 +1059,10 @@ mod test_dns_pkarr {
             .await?;
         println!("resolved {resolved:?}");
 
-        let expected_addr = EndpointAddr {
-            id: endpoint_id,
-            addrs: relay_url.into_iter().collect(),
-        };
+        let expected_addr = EndpointAddr::from_parts(
+            endpoint_id,
+            relay_url,
+        );
 
         assert_eq!(resolved.to_endpoint_addr(), expected_addr);
         assert_eq!(resolved.user_data(), Some(&user_data));
@@ -1084,7 +1084,7 @@ mod test_dns_pkarr {
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
-            .on_endpoint(&ep1.id(), PUBLISH_TIMEOUT)
+            .on_endpoint(&ep1.id().expect_ed(), PUBLISH_TIMEOUT)
             .await
             .context("wait for on endpoint update")?;
 

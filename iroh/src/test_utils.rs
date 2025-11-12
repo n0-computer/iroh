@@ -495,7 +495,7 @@ pub(crate) mod pkarr_dns_state {
         ttl: u32,
     ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static {
         let txt_strings = endpoint_info.to_txt_strings();
-        let records = to_hickory_records(txt_strings, endpoint_info.endpoint_id, origin, ttl);
+        let records = to_hickory_records(txt_strings, endpoint_info.endpoint_id.expect_ed(), origin, ttl);
         records.collect::<Vec<_>>().into_iter()
     }
 
