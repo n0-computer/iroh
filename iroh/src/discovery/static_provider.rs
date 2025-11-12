@@ -15,7 +15,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use iroh_base::EndpointId;
+use iroh_base::PublicKey;
 use n0_future::{
     boxed::BoxStream,
     stream::{self, StreamExt},
@@ -67,7 +67,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// [`EndpointTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.EndpointTicket
 #[derive(Debug, Clone)]
 pub struct StaticProvider {
-    endpoints: Arc<RwLock<BTreeMap<EndpointId, StoredEndpointInfo>>>,
+    endpoints: Arc<RwLock<BTreeMap<PublicKey, StoredEndpointInfo>>>,
     provenance: &'static str,
 }
 
@@ -186,7 +186,7 @@ impl StaticProvider {
     }
 
     /// Returns endpoint addressing information for the given endpoint ID.
-    pub fn get_endpoint_info(&self, endpoint_id: EndpointId) -> Option<EndpointInfo> {
+    pub fn get_endpoint_info(&self, endpoint_id: PublicKey) -> Option<EndpointInfo> {
         let guard = self.endpoints.read().expect("poisoned");
         let info = guard.get(&endpoint_id)?;
         Some(EndpointInfo::from_parts(endpoint_id, info.data.clone()))
@@ -195,7 +195,7 @@ impl StaticProvider {
     /// Removes all endpoint addressing information for the given endpoint ID.
     ///
     /// Any removed information is returned.
-    pub fn remove_endpoint_info(&self, endpoint_id: EndpointId) -> Option<EndpointInfo> {
+    pub fn remove_endpoint_info(&self, endpoint_id: PublicKey) -> Option<EndpointInfo> {
         let mut guard = self.endpoints.write().expect("poisoned");
         let info = guard.remove(&endpoint_id)?;
         Some(EndpointInfo::from_parts(endpoint_id, info.data))
@@ -207,7 +207,7 @@ impl Discovery for StaticProvider {
 
     fn resolve(
         &self,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
         let guard = self.endpoints.read().expect("poisoned");
         let info = guard.get(&endpoint_id);

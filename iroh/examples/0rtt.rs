@@ -2,7 +2,7 @@ use std::{env, str::FromStr, time::Instant};
 
 use clap::Parser;
 use data_encoding::HEXLOWER;
-use iroh::{EndpointId, SecretKey, discovery::Discovery, endpoint::ZeroRttStatus};
+use iroh::{PublicKey, SecretKey, discovery::Discovery, endpoint::ZeroRttStatus};
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::StreamExt;
 use quinn::{RecvStream, SendStream};
@@ -13,7 +13,7 @@ const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
 #[derive(Parser)]
 struct Args {
     /// The endpoint id to connect to. If not set, the program will start a server.
-    endpoint_id: Option<EndpointId>,
+    endpoint_id: Option<PublicKey>,
     /// Number of rounds to run.
     #[clap(long, default_value = "100")]
     rounds: u64,

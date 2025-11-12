@@ -2,7 +2,7 @@
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use iroh_base::EndpointId;
+use iroh_base::PublicKey;
 use n0_error::{e, stack_error};
 use n0_future::{SinkExt, StreamExt};
 use rand::Rng;
@@ -31,7 +31,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub(super) struct Packet {
     /// The sender of the packet
-    src: EndpointId,
+    src: PublicKey,
     /// The data packet bytes.
     data: Datagrams,
 }
@@ -39,7 +39,7 @@ pub(super) struct Packet {
 /// Configuration for a [`Client`].
 #[derive(Debug)]
 pub(super) struct Config {
-    pub(super) endpoint_id: EndpointId,
+    pub(super) endpoint_id: PublicKey,
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
@@ -52,7 +52,7 @@ pub(super) struct Config {
 #[derive(Debug)]
 pub(super) struct Client {
     /// Identity of the connected peer.
-    endpoint_id: EndpointId,
+    endpoint_id: PublicKey,
     /// Connection identifier.
     connection_id: u64,
     /// Used to close the connection loop.
@@ -64,7 +64,7 @@ pub(super) struct Client {
     /// Queue of disco packets intended for the client.
     disco_send_queue: mpsc::Sender<Packet>,
     /// Channel to notify the client that a previous sender has disconnected.
-    peer_gone: mpsc::Sender<EndpointId>,
+    peer_gone: mpsc::Sender<PublicKey>,
 }
 
 impl Client {
@@ -147,7 +147,7 @@ impl Client {
 
     pub(super) fn try_send_packet(
         &self,
-        src: EndpointId,
+        src: PublicKey,
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
         self.send_queue.try_send(Packet { src, data })
@@ -155,7 +155,7 @@ impl Client {
 
     pub(super) fn try_send_disco_packet(
         &self,
-        src: EndpointId,
+        src: PublicKey,
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
         self.disco_send_queue.try_send(Packet { src, data })
@@ -163,8 +163,8 @@ impl Client {
 
     pub(super) fn try_send_peer_gone(
         &self,
-        key: EndpointId,
-    ) -> Result<(), TrySendError<EndpointId>> {
+        key: PublicKey,
+    ) -> Result<(), TrySendError<PublicKey>> {
         self.peer_gone.try_send(key)
     }
 }
@@ -261,9 +261,9 @@ struct Actor {
     /// Important packets queued to send to the client
     disco_send_queue: mpsc::Receiver<Packet>,
     /// Notify the client that a previous sender has disconnected
-    endpoint_gone: mpsc::Receiver<EndpointId>,
+    endpoint_gone: mpsc::Receiver<PublicKey>,
     /// [`EndpointId`] of this client
-    endpoint_id: EndpointId,
+    endpoint_id: PublicKey,
     /// Connection identifier.
     connection_id: u64,
     /// Reference to the other connected clients.
@@ -464,7 +464,7 @@ impl Actor {
 
     fn handle_frame_send_packet(
         &self,
-        dst: EndpointId,
+        dst: PublicKey,
         data: Datagrams,
     ) -> Result<(), ForwardPacketError> {
         if disco::looks_like_disco_wrapper(&data.contents) {
@@ -502,7 +502,7 @@ pub struct ForwardPacketError {
 /// Tracks how many unique endpoints have been seen during the last day.
 #[derive(Debug)]
 struct ClientCounter {
-    clients: HashSet<EndpointId>,
+    clients: HashSet<PublicKey>,
     last_clear_date: Date,
 }
 
@@ -525,7 +525,7 @@ impl ClientCounter {
     }
 
     /// Marks this endpoint as seen, returns whether it is new today or not.
-    fn update(&mut self, client: EndpointId) -> bool {
+    fn update(&mut self, client: PublicKey) -> bool {
         self.check_and_clear();
         self.clients.insert(client)
     }

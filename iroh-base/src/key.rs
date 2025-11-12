@@ -23,6 +23,36 @@ use serde::{Deserialize, Serialize, de, ser};
 #[repr(transparent)]
 pub struct PublicKey(CompressedEdwardsY);
 
+/// The identifier for an endpoint in the (iroh) network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum EndpointId {
+    /// An Ed25519 public key.
+    Ed25519(PublicKey),
+    /// Other types of endpoint identifiers.
+    Other([u8; 8]),
+}
+
+impl EndpointId {
+    /// If this is an Ed25519 endpoint id, return the public key.
+    pub fn as_ed(self) -> Option<PublicKey> {
+        match self {
+            EndpointId::Ed25519(key) => Some(key),
+            EndpointId::Other(_) => None,
+        }
+    }
+
+    /// Expect this to be an Ed25519 endpoint id, panic if not.
+    pub fn expect_ed(self) -> PublicKey {
+        self.as_ed().expect("not an ed25519 endpoint id")
+    }
+}
+
+impl From<PublicKey> for EndpointId {
+    fn from(key: PublicKey) -> Self {
+        EndpointId::Ed25519(key)
+    }
+}
+
 impl Borrow<[u8; 32]> for PublicKey {
     fn borrow(&self) -> &[u8; 32] {
         self.as_bytes()
@@ -61,7 +91,6 @@ impl Ord for PublicKey {
 ///
 /// - `encrypt(key: PublicKey)`
 /// - `send_to(endpoint: EndpointId)`
-pub type EndpointId = PublicKey;
 
 impl Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

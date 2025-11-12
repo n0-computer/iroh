@@ -27,7 +27,7 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
-use iroh_base::EndpointId;
+use iroh_base::PublicKey;
 use n0_error::{e, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
@@ -246,7 +246,7 @@ fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, Authentic
 /// [`PublicKey`]: iroh_base::PublicKey
 fn remote_id_from_quinn_conn(
     conn: &quinn::Connection,
-) -> Result<EndpointId, RemoteEndpointIdError> {
+) -> Result<PublicKey, RemoteEndpointIdError> {
     let data = conn.peer_identity();
     match data {
         None => {
@@ -263,7 +263,7 @@ fn remote_id_from_quinn_conn(
                     return Err(RemoteEndpointIdError::new());
                 }
 
-                let peer_id = EndpointId::from_verifying_key(
+                let peer_id = PublicKey::from_verifying_key(
                     VerifyingKey::from_public_key_der(&certs[0])
                         .map_err(|_| RemoteEndpointIdError::new())?,
                 );
@@ -288,7 +288,7 @@ pub struct Connecting {
     inner: quinn::Connecting,
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
-    remote_endpoint_id: EndpointId,
+    remote_endpoint_id: PublicKey,
     /// We run discovery as long as we haven't established a connection yet.
     #[debug("Option<DiscoveryTask>")]
     _discovery_drop_guard: Option<DiscoveryTask>,
@@ -335,7 +335,7 @@ impl Connecting {
     pub(crate) fn new(
         inner: quinn::Connecting,
         ep: Endpoint,
-        remote_endpoint_id: EndpointId,
+        remote_endpoint_id: PublicKey,
         _discovery_drop_guard: Option<DiscoveryTask>,
     ) -> Self {
         Self {
@@ -421,7 +421,7 @@ impl Connecting {
     }
 
     /// Returns the [`EndpointId`] of the endpoint that this connection attempt tries to connect to.
-    pub fn remote_id(&self) -> EndpointId {
+    pub fn remote_id(&self) -> PublicKey {
         self.remote_endpoint_id
     }
 }
@@ -824,7 +824,7 @@ impl OutgoingZeroRttConnection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
+    pub fn remote_id(&self) -> Result<PublicKey, RemoteEndpointIdError> {
         remote_id_from_quinn_conn(&self.inner)
     }
 
@@ -1135,7 +1135,7 @@ impl IncomingZeroRttConnection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
+    pub fn remote_id(&self) -> Result<PublicKey, RemoteEndpointIdError> {
         remote_id_from_quinn_conn(&self.inner)
     }
 
@@ -1207,7 +1207,7 @@ impl IncomingZeroRttConnection {
 #[derive(derive_more::Debug, Clone)]
 pub struct Connection {
     inner: quinn::Connection,
-    remote_id: EndpointId,
+    remote_id: PublicKey,
     alpn: Vec<u8>,
 }
 
@@ -1434,7 +1434,7 @@ impl Connection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> EndpointId {
+    pub fn remote_id(&self) -> PublicKey {
         self.remote_id
     }
 
@@ -1494,7 +1494,7 @@ impl Connection {
 ///
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
-fn try_send_rtt_msg(conn: &quinn::Connection, ep: &Endpoint, remote_id: EndpointId) {
+fn try_send_rtt_msg(conn: &quinn::Connection, ep: &Endpoint, remote_id: PublicKey) {
     let Some(conn_type_changes) = ep.conn_type(remote_id) else {
         warn!(?conn, "failed to create conn_type stream");
         return;

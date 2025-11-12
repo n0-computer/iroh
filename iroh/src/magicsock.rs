@@ -30,7 +30,7 @@ use std::{
 
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{e, stack_error};
 use n0_future::{
@@ -281,7 +281,7 @@ impl MagicSock {
     }
 
     /// Return the [`RemoteInfo`] for a single endpoint in the endpoint map.
-    pub(crate) fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+    pub(crate) fn remote_info(&self, endpoint_id: PublicKey) -> Option<RemoteInfo> {
         self.endpoint_map.remote_info(endpoint_id)
     }
 
@@ -375,17 +375,17 @@ impl MagicSock {
     /// given `endpoint_id`.
     pub(crate) fn conn_type(
         &self,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.endpoint_map.conn_type(endpoint_id)
     }
 
-    pub(crate) fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+    pub(crate) fn latency(&self, endpoint_id: PublicKey) -> Option<Duration> {
         self.endpoint_map.latency(endpoint_id)
     }
 
     /// Returns the socket address which can be used by the QUIC layer to dial this endpoint.
-    pub(crate) fn get_mapping_addr(&self, endpoint_id: EndpointId) -> Option<EndpointIdMappedAddr> {
+    pub(crate) fn get_mapping_addr(&self, endpoint_id: PublicKey) -> Option<EndpointIdMappedAddr> {
         self.endpoint_map
             .get_quic_mapped_addr_for_endpoint_key(endpoint_id)
     }
@@ -842,7 +842,7 @@ impl MagicSock {
     }
 
     /// Handle a ping message.
-    fn handle_ping(&self, dm: disco::Ping, sender: EndpointId, src: &transports::Addr) {
+    fn handle_ping(&self, dm: disco::Ping, sender: PublicKey, src: &transports::Addr) {
         // Insert the ping into the endpoint map, and return whether a ping with this tx_id was already
         // received.
         let addr: SendAddr = src.clone().into();
@@ -1661,8 +1661,8 @@ impl DiscoState {
 
     fn encode_and_seal(
         &self,
-        this_endpoint_id: EndpointId,
-        other_endpoint_id: EndpointId,
+        this_endpoint_id: PublicKey,
+        other_endpoint_id: PublicKey,
         msg: &disco::Message,
     ) -> Bytes {
         let mut seal = msg.as_bytes();
@@ -1769,7 +1769,7 @@ impl AsyncUdpSocket for MagicUdpSocket {
 enum ActorMessage {
     EndpointPingExpired(usize, TransactionId),
     NetworkChange,
-    ScheduleDirectAddrUpdate(UpdateReason, Option<(EndpointId, RelayUrl)>),
+    ScheduleDirectAddrUpdate(UpdateReason, Option<(PublicKey, RelayUrl)>),
     RelayMapChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -2522,7 +2522,7 @@ mod tests {
     use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
-    use iroh_base::{EndpointAddr, EndpointId, PublicKey, TransportAddr};
+    use iroh_base::{EndpointAddr, PublicKey, TransportAddr};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{StreamExt, time};
     use n0_watcher::Watcher;
@@ -3105,7 +3105,7 @@ mod tests {
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
         addr: EndpointIdMappedAddr,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Result<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
@@ -3131,7 +3131,7 @@ mod tests {
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
         mapped_addr: EndpointIdMappedAddr,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         transport_config: Arc<quinn::TransportConfig>,
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];

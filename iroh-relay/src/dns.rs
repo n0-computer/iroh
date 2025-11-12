@@ -12,7 +12,7 @@ use hickory_resolver::{
     config::{ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
 };
-use iroh_base::EndpointId;
+use iroh_base::PublicKey;
 use n0_error::{StackError, e, stack_error};
 use n0_future::{
     StreamExt,
@@ -388,7 +388,7 @@ impl DnsResolver {
     /// pass [`N0_DNS_ENDPOINT_ORIGIN_PROD`] as `origin`.
     pub async fn lookup_endpoint_by_id(
         &self,
-        endpoint_id: &EndpointId,
+        endpoint_id: &PublicKey,
         origin: &str,
     ) -> Result<EndpointInfo, LookupError> {
         let name = endpoint_info::endpoint_domain(endpoint_id, origin);
@@ -432,7 +432,7 @@ impl DnsResolver {
     /// summary of all errors otherwise.
     pub async fn lookup_endpoint_by_id_staggered(
         &self,
-        endpoint_id: &EndpointId,
+        endpoint_id: &PublicKey,
         origin: &str,
         delays_ms: &[u64],
     ) -> Result<EndpointInfo, StaggeredError<LookupError>> {

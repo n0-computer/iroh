@@ -112,7 +112,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use iroh_base::{EndpointAddr, EndpointId};
+use iroh_base::{EndpointAddr, PublicKey};
 use n0_error::{AnyError, e, ensure, stack_error};
 use n0_future::{
     boxed::BoxStream,
@@ -223,7 +223,7 @@ pub enum DiscoveryError {
     #[error("No discovery service configured")]
     NoServiceConfigured,
     #[error("Discovery produced no results for {}", endpoint_id.fmt_short())]
-    NoResults { endpoint_id: EndpointId },
+    NoResults { endpoint_id: PublicKey },
     #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
@@ -298,7 +298,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     /// work.
     fn resolve(
         &self,
-        _endpoint_id: EndpointId,
+        _endpoint_id: PublicKey,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         None
     }
@@ -311,7 +311,7 @@ impl<T: Discovery> Discovery for Arc<T> {
 
     fn resolve(
         &self,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         self.as_ref().resolve(endpoint_id)
     }
@@ -355,7 +355,7 @@ impl DiscoveryItem {
     }
 
     /// Returns the endpoint id of the discovered endpoint.
-    pub fn endpoint_id(&self) -> EndpointId {
+    pub fn endpoint_id(&self) -> PublicKey {
         self.endpoint_info.endpoint_id
     }
 
@@ -491,7 +491,7 @@ impl Discovery for ConcurrentDiscovery {
 
     fn resolve(
         &self,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let services = self.services.read().expect("poisoned");
         let streams = services
@@ -515,7 +515,7 @@ pub(super) struct DiscoveryTask {
 
 impl DiscoveryTask {
     /// Starts a discovery task.
-    pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
+    pub(super) fn start(ep: Endpoint, endpoint_id: PublicKey) -> Result<Self, DiscoveryError> {
         ensure!(
             !ep.discovery().is_empty(),
             DiscoveryError::NoServiceConfigured
@@ -543,7 +543,7 @@ impl DiscoveryTask {
     /// Otherwise, or if no `delay` is set, the discovery will be started.
     pub(super) fn maybe_start_after_delay(
         ep: &Endpoint,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         delay: Option<Duration>,
     ) -> Result<Option<Self>, DiscoveryError> {
         // If discovery is not needed, don't even spawn a task.
@@ -589,7 +589,7 @@ impl DiscoveryTask {
 
     fn create_stream(
         ep: &Endpoint,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
         ensure!(
             !ep.discovery().is_empty(),
@@ -604,7 +604,7 @@ impl DiscoveryTask {
 
     async fn run(
         ep: Endpoint,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         on_first_tx: oneshot::Sender<Result<(), DiscoveryError>>,
     ) {
         let mut stream = match Self::create_stream(&ep, endpoint_id) {
@@ -668,7 +668,7 @@ mod tests {
     use super::*;
     use crate::{Endpoint, RelayMode, endpoint::ConnectOptions};
 
-    type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
+    type InfoStore = HashMap<PublicKey, (EndpointData, u64)>;
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
@@ -676,7 +676,7 @@ mod tests {
     }
 
     impl TestDiscoveryShared {
-        pub fn create_discovery(&self, endpoint_id: EndpointId) -> TestDiscovery {
+        pub fn create_discovery(&self, endpoint_id: PublicKey) -> TestDiscovery {
             TestDiscovery {
                 endpoint_id,
                 shared: self.clone(),
@@ -686,7 +686,7 @@ mod tests {
             }
         }
 
-        pub fn create_lying_discovery(&self, endpoint_id: EndpointId) -> TestDiscovery {
+        pub fn create_lying_discovery(&self, endpoint_id: PublicKey) -> TestDiscovery {
             TestDiscovery {
                 endpoint_id,
                 shared: self.clone(),
@@ -699,7 +699,7 @@ mod tests {
 
     #[derive(Debug)]
     struct TestDiscovery {
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         shared: TestDiscoveryShared,
         publish: bool,
         resolve_wrong: bool,
@@ -721,7 +721,7 @@ mod tests {
 
         fn resolve(
             &self,
-            endpoint_id: EndpointId,
+            endpoint_id: PublicKey,
         ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             let addr_info = if self.resolve_wrong {
                 let ts = system_time_now() - 100_000;
@@ -767,7 +767,7 @@ mod tests {
 
         fn resolve(
             &self,
-            _endpoint_id: EndpointId,
+            _endpoint_id: PublicKey,
         ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             Some(n0_future::stream::empty().boxed())
         }

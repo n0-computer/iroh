@@ -6,7 +6,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, TransportAddr};
+use iroh_base::{EndpointAddr, PublicKey, RelayUrl, TransportAddr};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -59,7 +59,7 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
         relay_url: RelayUrl,
-        dst_endpoint: EndpointId,
+        dst_endpoint: PublicKey,
     },
     SendPing(SendPing),
 }
@@ -68,7 +68,7 @@ pub(in crate::magicsock) enum PingAction {
 pub(in crate::magicsock) struct SendPing {
     pub id: usize,
     pub dst: SendAddr,
-    pub dst_endpoint: EndpointId,
+    pub dst_endpoint: PublicKey,
     pub tx_id: TransactionId,
     pub purpose: DiscoPingPurpose,
 }
@@ -108,7 +108,7 @@ pub(super) struct EndpointState {
     /// The UDP address used on the QUIC-layer to address this endpoint.
     quic_mapped_addr: EndpointIdMappedAddr,
     /// The global identifier for this endpoint.
-    endpoint_id: EndpointId,
+    endpoint_id: PublicKey,
     /// The last time we pinged all endpoints.
     last_full_ping: Option<Instant>,
     /// The url of relay endpoint that we can relay over to communicate.
@@ -148,7 +148,7 @@ pub(super) struct EndpointState {
 /// Options for creating a new [`EndpointState`].
 #[derive(Debug)]
 pub(super) struct Options {
-    pub(super) endpoint_id: EndpointId,
+    pub(super) endpoint_id: PublicKey,
     pub(super) relay_url: Option<RelayUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
@@ -1082,7 +1082,7 @@ impl EndpointState {
         self.last_used = Some(now);
     }
 
-    pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: EndpointId, now: Instant) {
+    pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: PublicKey, now: Instant) {
         match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
@@ -1384,7 +1384,7 @@ impl From<RelayUrlInfo> for RelayUrl {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RemoteInfo {
     /// The globally unique identifier for this endpoint.
-    pub endpoint_id: EndpointId,
+    pub endpoint_id: PublicKey,
     /// Relay server information, if available.
     pub relay_url: Option<RelayUrlInfo>,
     /// The addresses at which this endpoint might be reachable.
@@ -1463,7 +1463,7 @@ mod tests {
         let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
         let latency = Duration::from_millis(50);
 
-        let relay_and_state = |endpoint_id: EndpointId, url: RelayUrl| {
+        let relay_and_state = |endpoint_id: PublicKey, url: RelayUrl| {
             let relay_state = PathState::with_pong_reply(
                 endpoint_id,
                 PongReply {

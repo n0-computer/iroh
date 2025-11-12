@@ -2,7 +2,7 @@ use std::{net::SocketAddr, str::FromStr};
 
 use clap::{Parser, ValueEnum};
 use iroh::{
-    EndpointId, SecretKey,
+    PublicKey, SecretKey,
     discovery::{
         UserData,
         dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
@@ -140,6 +140,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn fmt_domain(endpoint_id: &EndpointId, origin: &str) -> String {
+fn fmt_domain(endpoint_id: &PublicKey, origin: &str) -> String {
     format!("{IROH_TXT_NAME}.{}.{origin}", endpoint_id.to_z32())
 }

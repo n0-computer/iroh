@@ -38,7 +38,7 @@ use std::{
 };
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
-use iroh_base::{EndpointId, RelayUrl, SecretKey};
+use iroh_base::{PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay, PingTracker,
     client::{Client, ConnectError, RecvError, SendError},
@@ -180,7 +180,7 @@ enum ActiveRelayMessage {
 #[derive(Debug)]
 enum ActiveRelayPrioMessage {
     /// Returns whether or not this relay can reach the EndpointId.
-    HasEndpointRoute(EndpointId, oneshot::Sender<bool>),
+    HasEndpointRoute(PublicKey, oneshot::Sender<bool>),
 }
 
 /// Configuration needed to start an [`ActiveRelayActor`].
@@ -781,12 +781,12 @@ struct ConnectedRelayState {
     /// Tracks pings we have sent, awaits pong replies.
     ping_tracker: PingTracker,
     /// Endpoints which are reachable via this relay server.
-    endpoints_present: BTreeSet<EndpointId>,
+    endpoints_present: BTreeSet<PublicKey>,
     /// The [`EndpointId`] from whom we received the last packet.
     ///
     /// This is to avoid a slower lookup in the [`ConnectedRelayState::endpoints_present`] map
     /// when we are only communicating to a single remote endpoint.
-    last_packet_src: Option<EndpointId>,
+    last_packet_src: Option<PublicKey>,
     /// A pong we need to send ASAP.
     pong_pending: Option<[u8; 8]>,
     /// Whether the connection is to be considered established.
@@ -815,7 +815,7 @@ pub(super) enum RelayActorMessage {
 #[derive(Debug, Clone)]
 pub(crate) struct RelaySendItem {
     /// The destination for the datagrams.
-    pub(crate) remote_endpoint: EndpointId,
+    pub(crate) remote_endpoint: PublicKey,
     /// The home relay of the remote endpoint.
     pub(crate) url: RelayUrl,
     /// One or more datagrams to send.
@@ -1019,7 +1019,7 @@ impl RelayActor {
     async fn active_relay_handle_for_endpoint(
         &mut self,
         url: &RelayUrl,
-        remote_endpoint: &EndpointId,
+        remote_endpoint: &PublicKey,
     ) -> ActiveRelayHandle {
         if let Some(handle) = self.active_relays.get(url) {
             return handle.clone();
@@ -1211,7 +1211,7 @@ struct ActiveRelayHandle {
 #[derive(Debug)]
 pub(crate) struct RelayRecvDatagram {
     pub(crate) url: RelayUrl,
-    pub(crate) src: EndpointId,
+    pub(crate) src: PublicKey,
     pub(crate) datagrams: Datagrams,
 }
 
@@ -1222,7 +1222,7 @@ mod tests {
         time::Duration,
     };
 
-    use iroh_base::{EndpointId, RelayUrl, SecretKey};
+    use iroh_base::{PublicKey, RelayUrl, SecretKey};
     use iroh_relay::{PingTracker, protos::relay::Datagrams};
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
     use tokio::sync::{mpsc, oneshot};
@@ -1274,7 +1274,7 @@ mod tests {
     /// This actor will connect to the relay server, pretending to be an iroh endpoint, and echo
     /// back any datagram it receives from the relay.  This is used by the
     /// [`ActiveRelayActor`] under test to check connectivity works.
-    fn start_echo_endpoint(relay_url: RelayUrl) -> (EndpointId, AbortOnDropHandle<()>) {
+    fn start_echo_endpoint(relay_url: RelayUrl) -> (PublicKey, AbortOnDropHandle<()>) {
         let secret_key = SecretKey::from_bytes(&[8u8; 32]);
         let (recv_datagram_tx, mut recv_datagram_rx) = mpsc::channel(16);
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);

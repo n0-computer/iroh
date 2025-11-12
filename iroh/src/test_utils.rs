@@ -83,7 +83,7 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
 pub(crate) mod dns_and_pkarr_servers {
     use std::{net::SocketAddr, time::Duration};
 
-    use iroh_base::{EndpointId, SecretKey};
+    use iroh_base::{PublicKey, SecretKey};
     use url::Url;
 
     use super::CleanupDropGuard;
@@ -158,7 +158,7 @@ pub(crate) mod dns_and_pkarr_servers {
         /// If `timeout` elapses an error is returned.
         pub async fn on_endpoint(
             &self,
-            endpoint_id: &EndpointId,
+            endpoint_id: &PublicKey,
             timeout: Duration,
         ) -> std::io::Result<()> {
             self.state.on_endpoint(endpoint_id, timeout).await
@@ -346,7 +346,7 @@ pub(crate) mod pkarr_dns_state {
         time::Duration,
     };
 
-    use iroh_base::EndpointId;
+    use iroh_base::PublicKey;
     use iroh_relay::endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME};
     use pkarr::SignedPacket;
     use tracing::debug;
@@ -355,7 +355,7 @@ pub(crate) mod pkarr_dns_state {
 
     #[derive(Debug, Clone)]
     pub struct State {
-        packets: Arc<Mutex<HashMap<EndpointId, SignedPacket>>>,
+        packets: Arc<Mutex<HashMap<PublicKey, SignedPacket>>>,
         origin: String,
         notify: Arc<tokio::sync::Notify>,
     }
@@ -375,7 +375,7 @@ pub(crate) mod pkarr_dns_state {
 
         pub async fn on_endpoint(
             &self,
-            endpoint: &EndpointId,
+            endpoint: &PublicKey,
             timeout: Duration,
         ) -> std::io::Result<()> {
             let timeout = tokio::time::sleep(timeout);
@@ -396,7 +396,7 @@ pub(crate) mod pkarr_dns_state {
         }
 
         pub fn upsert(&self, signed_packet: SignedPacket) -> std::io::Result<bool> {
-            let endpoint_id = EndpointId::from_bytes(&signed_packet.public_key().to_bytes())
+            let endpoint_id = PublicKey::from_bytes(&signed_packet.public_key().to_bytes())
                 .map_err(std::io::Error::other)?;
             let mut map = self.packets.lock().expect("poisoned");
             let updated = match map.entry(endpoint_id) {
@@ -420,7 +420,7 @@ pub(crate) mod pkarr_dns_state {
         }
 
         /// Returns a mutex guard, do not hold over await points
-        pub fn get<F, T>(&self, endpoint_id: &EndpointId, cb: F) -> T
+        pub fn get<F, T>(&self, endpoint_id: &PublicKey, cb: F) -> T
         where
             F: FnOnce(Option<&mut SignedPacket>) -> T,
         {
@@ -477,14 +477,14 @@ pub(crate) mod pkarr_dns_state {
     /// subsequent labels.
     ///
     /// Returns a [`EndpointId`] if parsed successfully, otherwise `None`.
-    fn endpoint_id_from_domain_name(name: &str) -> Option<EndpointId> {
+    fn endpoint_id_from_domain_name(name: &str) -> Option<PublicKey> {
         let mut labels = name.split(".");
         let label = labels.next()?;
         if label != IROH_TXT_NAME {
             return None;
         }
         let label = labels.next()?;
-        let endpoint_id = EndpointId::from_z32(label).ok()?;
+        let endpoint_id = PublicKey::from_z32(label).ok()?;
         Some(endpoint_id)
     }
 
@@ -502,7 +502,7 @@ pub(crate) mod pkarr_dns_state {
     /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
     fn to_hickory_records(
         txt_strings: Vec<String>,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         origin: &str,
         ttl: u32,
     ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
@@ -518,14 +518,14 @@ pub(crate) mod pkarr_dns_state {
 
     #[cfg(test)]
     mod tests {
-        use iroh_base::EndpointId;
+        use iroh_base::PublicKey;
         use n0_error::Result;
 
         #[test]
         fn test_endpoint_id_from_domain_name() -> Result {
             let name = "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.";
             let endpoint_id = super::endpoint_id_from_domain_name(name);
-            let expected: EndpointId =
+            let expected: PublicKey =
                 "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18".parse()?;
             assert_eq!(endpoint_id, Some(expected));
             Ok(())

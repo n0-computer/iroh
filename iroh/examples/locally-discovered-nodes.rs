@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use iroh::{
-    Endpoint, EndpointId,
+    Endpoint, PublicKey,
     discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
     endpoint_info::UserData,
 };
@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
     let ud = user_data.clone();
     let discovery_stream_task = tokio::spawn(async move {
         let mut discovery_stream = mdns.subscribe().await;
-        let mut discovered_endpoints: Vec<EndpointId> = vec![];
+        let mut discovered_endpoints: Vec<PublicKey> = vec![];
         while let Some(event) = discovery_stream.next().await {
             match event {
                 DiscoveryEvent::Discovered { endpoint_info, .. } => {

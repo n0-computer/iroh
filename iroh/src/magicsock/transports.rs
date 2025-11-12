@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use iroh_base::{EndpointId, RelayUrl};
+use iroh_base::{PublicKey, RelayUrl};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use smallvec::SmallVec;
@@ -40,8 +40,8 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     (
         n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
         n0_watcher::Join<
-            Option<(RelayUrl, EndpointId)>,
-            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
+            Option<(RelayUrl, PublicKey)>,
+            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, PublicKey)>>,
         >,
     ),
     Vec<Addr>,
@@ -50,8 +50,8 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
 #[cfg(wasm_browser)]
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     n0_watcher::Join<
-        Option<(RelayUrl, EndpointId)>,
-        n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
+        Option<(RelayUrl, PublicKey)>,
+        n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, PublicKey)>>,
     >,
     Vec<Addr>,
 >;
@@ -304,7 +304,7 @@ pub(crate) struct Transmit<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Addr {
     Ip(SocketAddr),
-    Relay(RelayUrl, EndpointId),
+    Relay(RelayUrl, PublicKey),
 }
 
 impl Default for Addr {
@@ -324,8 +324,8 @@ impl From<SocketAddr> for Addr {
     }
 }
 
-impl From<(RelayUrl, EndpointId)> for Addr {
-    fn from(value: (RelayUrl, EndpointId)) -> Self {
+impl From<(RelayUrl, PublicKey)> for Addr {
+    fn from(value: (RelayUrl, PublicKey)) -> Self {
         Self::Relay(value.0, value.1)
     }
 }

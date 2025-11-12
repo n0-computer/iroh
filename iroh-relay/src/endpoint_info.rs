@@ -40,7 +40,7 @@ use std::{
     str::{FromStr, Utf8Error},
 };
 
-use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use n0_error::{e, ensure, stack_error};
 use url::Url;
 
@@ -89,22 +89,22 @@ pub trait EndpointIdExt {
     /// Parses a [`EndpointId`] from [`z-base-32`] encoding.
     ///
     /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-    fn from_z32(s: &str) -> Result<EndpointId, DecodingError>;
+    fn from_z32(s: &str) -> Result<PublicKey, DecodingError>;
 }
 
-impl EndpointIdExt for EndpointId {
+impl EndpointIdExt for PublicKey {
     fn to_z32(&self) -> String {
         z32::encode(self.as_bytes())
     }
 
-    fn from_z32(s: &str) -> Result<EndpointId, DecodingError> {
+    fn from_z32(s: &str) -> Result<PublicKey, DecodingError> {
         let bytes =
             z32::decode(s.as_bytes()).map_err(|err| e!(DecodingError::InvalidEncodingZ32, err))?;
         let bytes: &[u8; 32] = &bytes
             .try_into()
             .map_err(|_| e!(DecodingError::InvalidLength { len: s.len() }))?;
         let endpoint_id =
-            EndpointId::from_bytes(bytes).map_err(|err| e!(DecodingError::InvalidKey, err))?;
+            PublicKey::from_bytes(bytes).map_err(|err| e!(DecodingError::InvalidKey, err))?;
         Ok(endpoint_id)
     }
 }
@@ -321,7 +321,7 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
         data.set_user_data(user_data);
         data.add_addrs(relay_urls.chain(ip_addrs));
 
-        Self { endpoint_id, data }
+        Self { endpoint_id: endpoint_id.into(), data }
     }
 }
 
@@ -338,16 +338,16 @@ impl From<EndpointAddr> for EndpointInfo {
         info
     }
 }
-
+ 
 impl EndpointInfo {
     /// Creates a new [`EndpointInfo`] with an empty [`EndpointData`].
-    pub fn new(endpoint_id: EndpointId) -> Self {
+    pub fn new(endpoint_id: impl Into<EndpointId>) -> Self {
         Self::from_parts(endpoint_id, Default::default())
     }
 
     /// Creates a new [`EndpointInfo`] from its parts.
-    pub fn from_parts(endpoint_id: EndpointId, data: EndpointData) -> Self {
-        Self { endpoint_id, data }
+    pub fn from_parts(endpoint_id: impl Into<EndpointId>, data: EndpointData) -> Self {
+        Self { endpoint_id: endpoint_id.into(), data }
     }
 
     /// Sets the relay URL and returns the updated endpoint info.
@@ -462,7 +462,7 @@ impl std::ops::DerefMut for EndpointInfo {
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`EndpointId`]. Ignores
 /// subsequent labels.
 #[cfg(not(wasm_browser))]
-fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
+fn endpoint_id_from_txt_name(name: &str) -> Result<PublicKey, ParseError> {
     let num_labels = name.split(".").count();
     if num_labels < 2 {
         return Err(e!(ParseError::NumLabels { num_labels }));
@@ -475,7 +475,7 @@ fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
         }));
     }
     let label = labels.next().expect("checked above");
-    let endpoint_id = EndpointId::from_z32(label)?;
+    let endpoint_id = PublicKey::from_z32(label)?;
     Ok(endpoint_id)
 }
 
@@ -502,7 +502,7 @@ pub(crate) enum IrohAttr {
 /// [`Display`].
 #[derive(Debug)]
 pub(crate) struct TxtAttrs<T> {
-    endpoint_id: EndpointId,
+    endpoint_id: PublicKey,
     attrs: BTreeMap<T, Vec<String>>,
 }
 
@@ -522,14 +522,14 @@ impl From<&EndpointInfo> for TxtAttrs<IrohAttr> {
         if let Some(user_data) = &info.data.user_data {
             attrs.push((IrohAttr::UserData, user_data.to_string()));
         }
-        Self::from_parts(info.endpoint_id, attrs.into_iter())
+        Self::from_parts(info.endpoint_id.expect_ed(), attrs.into_iter())
     }
 }
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates [`TxtAttrs`] from an endpoint id and an iterator of key-value pairs.
     pub(crate) fn from_parts(
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         pairs: impl Iterator<Item = (T, String)>,
     ) -> Self {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
@@ -541,7 +541,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Creates [`TxtAttrs`] from an endpoint id and an iterator of "{key}={value}" strings.
     pub(crate) fn from_strings(
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         strings: impl Iterator<Item = String>,
     ) -> Result<Self, ParseError> {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
@@ -566,7 +566,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Returns the endpoint id.
-    pub(crate) fn endpoint_id(&self) -> EndpointId {
+    pub(crate) fn endpoint_id(&self) -> PublicKey {
         self.endpoint_id
     }
 
@@ -581,7 +581,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let pubkey = packet.public_key();
         let pubkey_z32 = pubkey.to_z32();
         let endpoint_id =
-            EndpointId::from_bytes(&pubkey.verifying_key().to_bytes()).expect("valid key");
+            PublicKey::from_bytes(&pubkey.verifying_key().to_bytes()).expect("valid key");
         let zone = dns::Name::new(&pubkey_z32).expect("z32 encoding is valid");
         let txt_data = packet
             .all_resource_records()
@@ -652,8 +652,8 @@ pub(crate) fn ensure_iroh_txt_label(name: String) -> String {
 }
 
 #[cfg(not(wasm_browser))]
-pub(crate) fn endpoint_domain(endpoint_id: &EndpointId, origin: &str) -> String {
-    format!("{}.{}", EndpointId::to_z32(endpoint_id), origin)
+pub(crate) fn endpoint_domain(endpoint_id: &PublicKey, origin: &str) -> String {
+    format!("{}.{}", PublicKey::to_z32(endpoint_id), origin)
 }
 
 #[cfg(test)]
@@ -671,7 +671,7 @@ mod tests {
             },
         },
     };
-    use iroh_base::{EndpointId, SecretKey, TransportAddr};
+    use iroh_base::{PublicKey, SecretKey, TransportAddr};
     use n0_error::{Result, StdResultExt};
 
     use super::{EndpointData, EndpointIdExt, EndpointInfo};
@@ -684,7 +684,7 @@ mod tests {
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
         ])
         .with_user_data(Some("foobar".parse().unwrap()));
-        let endpoint_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
+        let endpoint_id: PublicKey = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
             .parse()
             .unwrap();
         let expected = EndpointInfo::from_parts(endpoint_id, endpoint_data);
@@ -738,7 +738,7 @@ mod tests {
             Record::from_rdata(
                 Name::from_utf8(format!(
                     "_iroh.{}.dns.iroh.link.",
-                    EndpointId::from_str(
+                    PublicKey::from_str(
                         // Another EndpointId
                         "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
                     )?
@@ -774,7 +774,7 @@ mod tests {
 
         let endpoint_info = EndpointInfo::from_txt_lookup(name.to_string(), lookup)?;
 
-        let expected_endpoint_info = EndpointInfo::new(EndpointId::from_str(
+        let expected_endpoint_info = EndpointInfo::new(PublicKey::from_str(
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",
         )?)
         .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))

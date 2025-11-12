@@ -16,7 +16,7 @@ use std::{
     sync::Arc,
 };
 
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
@@ -793,7 +793,7 @@ impl Endpoint {
     ///
     /// This ID is the unique addressing information of this endpoint and other peers must know
     /// it to be able to connect to this endpoint.
-    pub fn id(&self) -> EndpointId {
+    pub fn id(&self) -> PublicKey {
         self.static_config.tls_config.secret_key.public()
     }
 
@@ -975,14 +975,14 @@ impl Endpoint {
     /// become inaccessible.
     ///
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub fn conn_type(&self, endpoint_id: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
+    pub fn conn_type(&self, endpoint_id: PublicKey) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.msock.conn_type(endpoint_id)
     }
 
     /// Returns the currently lowest latency for this endpoint.
     ///
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+    pub fn latency(&self, endpoint_id: PublicKey) -> Option<Duration> {
         self.msock.latency(endpoint_id)
     }
 
@@ -1200,7 +1200,7 @@ impl Endpoint {
     // # Remaining private methods
 
     /// Checks if the given `EndpointId` needs discovery.
-    pub(crate) fn needs_discovery(&self, endpoint_id: EndpointId, max_age: Duration) -> bool {
+    pub(crate) fn needs_discovery(&self, endpoint_id: PublicKey, max_age: Duration) -> bool {
         match self.msock.remote_info(endpoint_id) {
             // No info means no path to endpoint -> start discovery.
             None => true,
@@ -1443,7 +1443,7 @@ fn is_cgi() -> bool {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
+    use iroh_base::{EndpointAddr, PublicKey, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     use n0_watcher::Watcher;
@@ -1862,7 +1862,7 @@ mod tests {
         eprintln!("endpoint id 1 {ep1_endpointid}");
         eprintln!("endpoint id 2 {ep2_endpointid}");
 
-        async fn connect_hello(ep: Endpoint, dst: EndpointId) -> Result {
+        async fn connect_hello(ep: Endpoint, dst: PublicKey) -> Result {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
             info!("sending hello");
@@ -1875,7 +1875,7 @@ mod tests {
             Ok(())
         }
 
-        async fn accept_world(ep: Endpoint, src: EndpointId) -> Result {
+        async fn accept_world(ep: Endpoint, src: PublicKey) -> Result {
             let incoming = ep.accept().await.anyerr()?;
             let mut iconn = incoming.accept().anyerr()?;
             let alpn = iconn.alpn().await?;
@@ -1957,7 +1957,7 @@ mod tests {
             .bind()
             .await?;
 
-        async fn wait_for_conn_type_direct(ep: &Endpoint, endpoint_id: EndpointId) -> Result {
+        async fn wait_for_conn_type_direct(ep: &Endpoint, endpoint_id: PublicKey) -> Result {
             let mut stream = ep
                 .conn_type(endpoint_id)
                 .expect("connection exists")

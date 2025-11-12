@@ -1,6 +1,6 @@
 //! DNS endpoint discovery for iroh
 
-use iroh_base::EndpointId;
+use iroh_base::PublicKey;
 use iroh_relay::dns::DnsResolver;
 pub use iroh_relay::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
@@ -105,7 +105,7 @@ impl IntoDiscovery for DnsDiscoveryBuilder {
 impl Discovery for DnsDiscovery {
     fn resolve(
         &self,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();

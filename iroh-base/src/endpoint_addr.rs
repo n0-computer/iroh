@@ -59,17 +59,17 @@ impl EndpointAddr {
     ///
     /// This still is usable with e.g. a discovery service to establish a connection,
     /// depending on the situation.
-    pub fn new(id: PublicKey) -> Self {
+    pub fn new(id: impl Into<EndpointId>) -> Self {
         EndpointAddr {
-            id,
+            id: id.into(),
             addrs: Default::default(),
         }
     }
 
     /// Creates a new [`EndpointAddr`] from its parts.
-    pub fn from_parts(id: PublicKey, addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
+    pub fn from_parts(id: impl Into<EndpointId>, addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
         Self {
-            id,
+            id: id.into(),
             addrs: addrs.into_iter().collect(),
         }
     }
@@ -115,6 +115,12 @@ impl EndpointAddr {
             TransportAddr::Relay(url) => Some(url),
             _ => None,
         })
+    }
+}
+
+impl From<PublicKey> for EndpointAddr {
+    fn from(endpoint_id: PublicKey) -> Self {
+        EndpointAddr::new(endpoint_id)
     }
 }
 

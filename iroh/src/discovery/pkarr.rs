@@ -46,7 +46,7 @@
 
 use std::sync::Arc;
 
-use iroh_base::{EndpointId, RelayUrl, SecretKey};
+use iroh_base::{PublicKey, RelayUrl, SecretKey};
 use iroh_relay::endpoint_info::{EncodingError, EndpointInfo};
 use n0_error::{e, stack_error};
 use n0_future::{
@@ -243,7 +243,7 @@ impl IntoDiscovery for PkarrPublisherBuilder {
 /// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
-    endpoint_id: EndpointId,
+    endpoint_id: PublicKey,
     watchable: Watchable<Option<EndpointInfo>>,
     _drop_guard: Arc<AbortOnDropHandle<()>>,
 }
@@ -510,7 +510,7 @@ impl PkarrResolver {
 impl Discovery for PkarrResolver {
     fn resolve(
         &self,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
@@ -559,7 +559,7 @@ impl PkarrRelayClient {
     }
 
     /// Resolves a [`SignedPacket`] for the given [`EndpointId`].
-    pub async fn resolve(&self, endpoint_id: EndpointId) -> Result<SignedPacket, DiscoveryError> {
+    pub async fn resolve(&self, endpoint_id: PublicKey) -> Result<SignedPacket, DiscoveryError> {
         // We map the error to string, as in browsers the error is !Send
         let public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
             .map_err(|err| e!(PkarrError::PublicKey, err))?;
