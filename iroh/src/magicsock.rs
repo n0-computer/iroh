@@ -1841,30 +1841,29 @@ impl Display for DirectAddrType {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{net::SocketAddrV4, sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
-    use iroh_base::{EndpointAddr, EndpointId};
+    use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
     use rand::{CryptoRng, Rng, RngCore, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
-    use tracing::{info, instrument};
+    use tracing::{Instrument, error, info, info_span, instrument};
     use tracing_test::traced_test;
 
     use super::Options;
     use crate::{
-        Endpoint,
-        RelayMap,
-        RelayMode,
-        SecretKey,
+        Endpoint, RelayMap, RelayMode, SecretKey,
         discovery::static_provider::StaticProvider,
         dns::DnsResolver,
-        // endpoint::PathSelection,
-        magicsock::Handle,
-        tls::DEFAULT_MAX_TLS_TICKETS,
+        magicsock::{
+            Handle, MagicSock,
+            mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
+        },
+        tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
 
     const ALPN: &[u8] = b"n0/test/1";
@@ -2294,8 +2293,6 @@ mod tests {
         assert_eq!(eps0, eps1);
     }
 
-    // TODO(Frando): Only used in tests that are commented out.
-    /*
     /// Creates a new [`quinn::Endpoint`] hooked up to a [`MagicSock`].
     ///
     /// This is without involving [`crate::endpoint::Endpoint`].  The socket will accept
@@ -2380,10 +2377,7 @@ mod tests {
         let connection = connect.await.anyerr()?;
         Ok(connection)
     }
-    */
 
-    // TODO(Frando): This test uses internal state manipulation that was removed.
-    /*
     #[tokio::test]
     #[traced_test]
     async fn test_try_send_no_send_addr() {
@@ -2455,16 +2449,7 @@ mod tests {
             id: endpoint_id_2,
             addrs,
         };
-        msock_1
-            .add_endpoint_addr(
-                endpoint_addr_2,
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
-            .await
-            .unwrap();
-        let addr = msock_1.get_endpoint_mapped_addr(endpoint_id_2);
+        let addr = msock_1.want_connect(endpoint_addr_2).await.unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
             magicsock_connect(
@@ -2483,10 +2468,7 @@ mod tests {
         // TODO: Now check if we can connect to a repaired ep_3, but we can't modify that
         // much internal state for now.
     }
-    */
 
-    // TODO(Frando) This test uses internal state manipulation that was removed.
-    /*
     #[tokio::test]
     #[traced_test]
     async fn test_try_send_no_udp_addr_or_relay_url() {
@@ -2527,20 +2509,15 @@ mod tests {
         });
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
-        // Add an empty entry in the EndpointMap of ep_1
-        msock_1
-            .endpoint_map
-            .add_endpoint_addr(
-                EndpointAddr {
-                    id: endpoint_id_2,
-                    addrs: Default::default(),
-                },
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
-            .await;
-        let addr_2 = msock_1.get_endpoint_mapped_addr(endpoint_id_2);
+        // Add an entry in the EndpointMap of ep_1 with an invalid socket address
+        let empty_addr_2 = EndpointAddr::from_parts(
+            endpoint_id_2,
+            [TransportAddr::Ip(
+                // Reserved IP range for documentation (unreachable)
+                SocketAddrV4::new([192, 0, 2, 1].into(), 12345).into(),
+            )],
+        );
+        let addr_2 = msock_1.want_connect(empty_addr_2).await.unwrap();
 
         // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
         // not take forever.  You need to check the log output to verify this is really
@@ -2566,23 +2543,16 @@ mod tests {
         info!("first connect timed out as expected");
 
         // Provide correct addressing information
-        msock_1
-            .endpoint_map
-            .add_endpoint_addr(
-                EndpointAddr {
-                    id: endpoint_id_2,
-                    addrs: msock_2
-                        .ip_addrs()
-                        .get()
-                        .into_iter()
-                        .map(|x| TransportAddr::Ip(x.addr))
-                        .collect(),
-                },
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
-            .await;
+        let correct_addr_2 = EndpointAddr::from_parts(
+            endpoint_id_2,
+            msock_2
+                .ip_addrs()
+                .get()
+                .into_iter()
+                .map(|x| TransportAddr::Ip(x.addr)),
+        );
+        let addr_2a = msock_1.want_connect(correct_addr_2).await.unwrap();
+        assert_eq!(addr_2, addr_2a);
 
         // We can now connect
         tokio::time::timeout(Duration::from_secs(10), async move {
@@ -2608,5 +2578,4 @@ mod tests {
         // TODO: could remove the addresses again, send, add it back and see it recover.
         // But we don't have that much private access to the EndpointMap.  This will do for now.
     }
-    */
 }
