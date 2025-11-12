@@ -6,10 +6,11 @@ use std::{
     task::Poll,
 };
 
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{EndpointId, RelayUrl, TransportAddr};
 use n0_error::e;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
+    boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -18,8 +19,9 @@ use quinn::{PathStats, WeakConnectionHandle};
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use tokio::sync::{mpsc, oneshot};
-use tokio_stream::wrappers::{BroadcastStream, ReceiverStream, errors::BroadcastStreamRecvError};
+use sync_wrapper::SyncStream;
+use tokio::sync::oneshot;
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
 use self::guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel};
@@ -91,6 +93,18 @@ type PathEvents = MergeUnbounded<
     >,
 >;
 
+/// Either a stream of incoming results from [`ConcurrentDiscovery::resolve`] or infinitely pending.
+///
+/// Set to [`Either::Left`] with an always-pending stream while discovery is not running, and to
+/// [`Either::Right`] while discovery is running.
+///
+/// The stream returned from [`ConcurrentDiscovery::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
+/// wrapper to make it `Sync` so that the [`EndpointStateActor::run`] future stays `Send`.
+type DiscoveryStream = Either<
+    n0_future::stream::Pending<Result<DiscoveryItem, DiscoveryError>>,
+    SyncStream<BoxStream<Result<DiscoveryItem, DiscoveryError>>>,
+>;
+
 /// List of addrs and path ids for open paths in a connection.
 pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
 
@@ -153,15 +167,13 @@ pub(super) struct EndpointStateActor {
     ///
     /// They failed to open because we did not have enough CIDs issued by the remote.
     pending_open_paths: VecDeque<transports::Addr>,
+    /// Discovery service, cloned from the magicsock.
     discovery: ConcurrentDiscovery,
+    /// Stream of discovery results (always pending if discovery is not running)
     discovery_stream: DiscoveryStream,
-    pending_want_connect: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
+    /// Pending requests from [`EndpointStateMessage::ResolveRemote`].
+    pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
 }
-
-type DiscoveryStream = Either<
-    n0_future::stream::Pending<Result<DiscoveryItem, DiscoveryError>>,
-    ReceiverStream<Result<DiscoveryItem, DiscoveryError>>, // BoxStream<Result<DiscoveryItem, DiscoveryError>>,
->;
 
 impl EndpointStateActor {
     pub(super) fn new(
@@ -193,7 +205,7 @@ impl EndpointStateActor {
             sender,
             discovery,
             discovery_stream: Either::Left(n0_future::stream::pending()),
-            pending_want_connect: VecDeque::new(),
+            pending_resolve_requests: VecDeque::new(),
         }
     }
 
@@ -327,8 +339,8 @@ impl EndpointStateActor {
             EndpointStateMessage::PongReceived(pong, src) => {
                 self.handle_msg_pong_received(pong, src);
             }
-            EndpointStateMessage::WantConnect(addr, tx) => {
-                self.handle_msg_want_connect(addr, tx);
+            EndpointStateMessage::ResolveRemote(addrs, tx) => {
+                self.handle_msg_resolve_remote(addrs, tx);
             }
             EndpointStateMessage::Latency(tx) => {
                 self.handle_msg_latency(tx);
@@ -418,11 +430,7 @@ impl EndpointStateActor {
                 };
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
-                self.paths
-                    .entry(path_remote)
-                    .or_default()
-                    .sources
-                    .insert(Source::Connection { _0: Private }, Instant::now());
+                self.add_path_entry(path_remote, Source::Connection { _0: Private });
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -449,28 +457,25 @@ impl EndpointStateActor {
         .ok();
     }
 
-    /// Handles [`EndpointStateMessage::AddEndpointAddr`].
-    fn add_endpoint_addr(&mut self, addr: EndpointAddr, source: Source) {
+    /// Adds new [`TransportAddr`] addresses to our list of potential paths.
+    fn add_addrs(&mut self, addrs: BTreeSet<TransportAddr>, source: Source) {
         let local_addrs = self.local_addrs.get();
-        for sockaddr in addr.ip_addrs() {
-            if local_addrs.iter().any(|a| a.addr == *sockaddr) {
-                warn!(endpoint_id=%addr.id.fmt_short(), %sockaddr, "not adding our addr for endpoint");
-                continue;
-            }
-            let addr = transports::Addr::from(sockaddr);
-            self.paths
-                .entry(addr)
-                .or_default()
-                .sources
-                .insert(source.clone(), Instant::now());
-        }
-        for relay_url in addr.relay_urls() {
-            let addr = transports::Addr::from((relay_url.clone(), self.endpoint_id));
-            self.paths
-                .entry(addr)
-                .or_default()
-                .sources
-                .insert(source.clone(), Instant::now());
+
+        for addr in addrs {
+            let addr = match addr {
+                TransportAddr::Relay(relay_url) => {
+                    transports::Addr::from((relay_url.clone(), self.endpoint_id))
+                }
+                TransportAddr::Ip(sockaddr) => {
+                    if local_addrs.iter().any(|a| a.addr == sockaddr) {
+                        warn!(%sockaddr, "not adding our addr for endpoint");
+                        continue;
+                    }
+                    transports::Addr::from(sockaddr)
+                }
+                _ => continue,
+            };
+            self.add_path_entry(addr, source.clone());
         }
         trace!("added addressing information");
     }
@@ -531,9 +536,7 @@ impl EndpointStateActor {
         self.send_disco_message(src.clone(), disco::Message::Pong(pong))
             .await;
 
-        let path = self.paths.entry(src).or_default();
-        path.sources
-            .insert(Source::Ping { _0: Private }, Instant::now());
+        self.add_path_entry(src, Source::Ping { _0: Private });
 
         trace!("ping received, triggering holepunching");
         self.trigger_holepunching().await;
@@ -562,20 +565,20 @@ impl EndpointStateActor {
     }
 
     /// Handles [`EndpointStateMessage::WantConnect`].
-    fn handle_msg_want_connect(
+    fn handle_msg_resolve_remote(
         &mut self,
-        addr: EndpointAddr,
+        addrs: BTreeSet<TransportAddr>,
         tx: oneshot::Sender<Result<(), DiscoveryError>>,
     ) {
-        self.add_endpoint_addr(addr, Source::App);
-        let has_paths = !self.paths.is_empty();
-        if has_paths {
+        self.add_addrs(addrs, Source::App);
+        if !self.paths.is_empty() {
             tx.send(Ok(())).ok();
         } else {
-            self.pending_want_connect.push_back(tx);
+            self.pending_resolve_requests.push_back(tx);
         }
+        // Start discovery if we have no selected path.
         if self.selected_path.get().is_none() {
-            self.start_discovery();
+            self.trigger_discovery();
         }
     }
 
@@ -602,69 +605,67 @@ impl EndpointStateActor {
         tx.send(rtt).ok();
     }
 
-    fn emit_pending_want_connect(&mut self, error: Option<DiscoveryError>) {
-        if self.pending_want_connect.is_empty() {
-            return;
-        }
-        let result = if self.paths.is_empty() {
-            Err(error.unwrap_or_else(|| {
-                e!(DiscoveryError::NoResults {
-                    endpoint_id: self.endpoint_id
-                })
-            }))
-        } else {
-            Ok(())
-        };
-        for tx in self.pending_want_connect.drain(..) {
-            tx.send(result.clone()).ok();
-        }
-    }
-
     fn handle_discovery_item(&mut self, item: Option<Result<DiscoveryItem, DiscoveryError>>) {
         match item {
             None => {
                 self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.emit_pending_want_connect(None);
+                self.emit_pending_resolve_requests(None);
             }
             Some(Err(err)) => {
                 warn!("Discovery failed: {err:#}");
                 self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.emit_pending_want_connect(Some(err));
+                self.emit_pending_resolve_requests(Some(err));
             }
             Some(Ok(item)) => {
-                let source = Source::Discovery {
-                    name: item.provenance().to_string(),
-                };
-                let addr = item.to_endpoint_addr();
-                self.add_endpoint_addr(addr, source);
-                self.emit_pending_want_connect(None);
+                if item.endpoint_id() != self.endpoint_id {
+                    warn!(?item, "Discovery emitted item for wrong remote endpoint");
+                } else {
+                    let source = Source::Discovery {
+                        name: item.provenance().to_string(),
+                    };
+                    let addr = item.into_endpoint_addr();
+                    self.add_addrs(addr.addrs, source);
+                }
             }
         }
     }
 
-    fn start_discovery(&mut self) {
+    /// Replies to all pending requests from [`EndpointStateMessage::ResolveRemote`].
+    ///
+    /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
+    /// otherwise with the provided `discovery_error` or with [`DiscoveryError::NoResults`].
+    fn emit_pending_resolve_requests(&mut self, discovery_error: Option<DiscoveryError>) {
+        if self.pending_resolve_requests.is_empty() {
+            return;
+        }
+        let result = match (self.paths.is_empty(), discovery_error) {
+            (false, _) => Ok(()),
+            (true, Some(err)) => Err(err),
+            (true, None) => Err(e!(DiscoveryError::NoResults {
+                endpoint_id: self.endpoint_id
+            })),
+        };
+        for tx in self.pending_resolve_requests.drain(..) {
+            tx.send(result.clone()).ok();
+        }
+    }
+
+    /// Triggers discovery for the remote endpoint, if needed.
+    ///
+    /// Does not start discovery if se have a selected path or if discovery is currently running.
+    fn trigger_discovery(&mut self) {
+        // Don't start discovery if we have a selected path.
+        if self.selected_path.get().is_none() {
+            return;
+        }
+        // Don't start discovery if it is currently running.
         if matches!(self.discovery_stream, Either::Right(_)) {
             return;
         }
-        let Some(mut stream) = self.discovery.resolve(self.endpoint_id) else {
-            return;
-        };
-
-        // TODO(Frando): This is ugly.
-        // The `BoxStream` retured from `Discovery::resolve` is not `Sync`,
-        // which means we cannot store it on `self` if we have *any* methods that take `&self`,
-        // because that makes the `Self::run` future `!Send`.
-        // I failed to figure out a better solution yet than this hack: We spawn a task and forward
-        // the stream over a channel back into a receiver stream stored on `self`.
-        let (tx, rx) = mpsc::channel(1);
-        n0_future::task::spawn(async move {
-            while let Some(item) = stream.next().await {
-                if tx.send(item).await.is_err() {
-                    break;
-                }
-            }
-        });
-        self.discovery_stream = Either::Right(ReceiverStream::new(rx));
+        match self.discovery.resolve(self.endpoint_id) {
+            Some(stream) => self.discovery_stream = Either::Right(SyncStream::new(stream)),
+            None => self.emit_pending_resolve_requests(None),
+        }
     }
 
     /// Triggers holepunching to the remote endpoint.
@@ -905,6 +906,16 @@ impl EndpointStateActor {
         }
     }
 
+    fn add_path_entry(&mut self, path_remote: transports::Addr, source: Source) {
+        self.paths
+            .entry(path_remote)
+            .or_default()
+            .sources
+            .insert(source, Instant::now());
+        // Now that we have a new potential path: Emit pending resolve requests if there are any.
+        self.emit_pending_resolve_requests(None);
+    }
+
     #[instrument(skip(self))]
     fn handle_path_event(
         &mut self,
@@ -949,11 +960,7 @@ impl EndpointStateActor {
                         ?path_id,
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id);
-                    self.paths
-                        .entry(path_remote.clone())
-                        .or_default()
-                        .sources
-                        .insert(Source::Connection { _0: Private }, Instant::now());
+                    self.add_path_entry(path_remote, Source::Connection { _0: Private });
                 }
 
                 self.select_path();
@@ -1138,13 +1145,19 @@ pub(crate) enum EndpointStateMessage {
     /// Process a received DISCO Pong message.
     #[debug("PongReceived({:?}, src: {_1:?})", _0.tx_id)]
     PongReceived(disco::Pong, transports::Addr),
-    /// Called when a connection is attempted.
+    /// Ensure we have at least one transport address for a remote.
     ///
-    /// Returns `Ok(())`immediately if a known path, otherwise waits for discovery to discover at least one path.
-    /// Returns a `DisocveryError` if discovery failed to find any path.
-    /// Has no guarantee that the known paths actually work.
-    #[debug("CanSend(..)")]
-    WantConnect(EndpointAddr, oneshot::Sender<Result<(), DiscoveryError>>),
+    /// This adds the provided transport addresses to the list of potential paths for this remote
+    /// and starts discovery if needed.
+    ///
+    /// Returns `Ok` immediately if the provided address list is non-empy or we have are other known paths.
+    /// Otherwise returns `Ok` once discovery produces a result, or the discovery error if discovery fails
+    /// or produces no results,
+    #[debug("ResolveRemote(..)")]
+    ResolveRemote(
+        BTreeSet<TransportAddr>,
+        oneshot::Sender<Result<(), DiscoveryError>>,
+    ),
     /// Returns the current latency to the remote endpoint.
     ///
     /// TODO: This is more of a placeholder message currently.  Check MagicSock::latency.

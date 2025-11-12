@@ -50,6 +50,7 @@ rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 smallvec = "1.11.1"
 strum = { version = "0.27", features = ["derive"] }
+sync_wrapper = { version = "1.0.2", features = ["futures"] }
 tokio = { version = "1.44.1", features = [
     "io-util",
     "macros",

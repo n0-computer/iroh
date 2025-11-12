@@ -106,6 +106,12 @@ pub(crate) const MAX_MULTIPATH_PATHS: u32 = 16;
 #[error("endpoint state actor stopped")]
 pub(crate) struct EndpointStateActorStoppedError;
 
+impl From<mpsc::error::SendError<EndpointStateMessage>> for EndpointStateActorStoppedError {
+    fn from(_value: mpsc::error::SendError<EndpointStateMessage>) -> Self {
+        Self
+    }
+}
+
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
 pub(crate) struct Options {
@@ -274,8 +280,7 @@ impl MagicSock {
         async move {
             sender
                 .send(EndpointStateMessage::AddConnection(conn, tx))
-                .await
-                .map_err(|_| EndpointStateActorStoppedError)?;
+                .await?;
             rx.await.map_err(|_| EndpointStateActorStoppedError)
         }
     }
@@ -291,22 +296,37 @@ impl MagicSock {
             .filter_map(|addr| addr.into_socket_addr())
     }
 
-    /// Returns `Ok` if we have at least one candidate address where we can send packets to.
-    pub(crate) async fn want_connect(
+    /// Resolves a [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
+    ///
+    /// This starts an `EndpointStateActor` for the remote if not running already, and then checks
+    /// if the actor has any known paths to the remote. If not, it starts discovery and waits for
+    /// at least one result to arrive.
+    ///
+    /// Returns `Ok(Ok(EndpointIdMappedAddr))` if there is a known path or discovery produced
+    /// at least one result. This does not mean there is a working path, only that we have at least
+    /// one transport address we can try to connect to.
+    ///
+    /// Returns `Ok(Err(discovery_error))` if there are no known paths to the remote and discovery
+    /// failed or produced no results. This means that we don't have any transport address for
+    /// the remote, thus there is no point in trying to connect over the quinn endpoint.
+    ///
+    /// Returns `Err(EndpointStateActorStoppedError)` if the `EndpointStateActor` for the remote has stopped,
+    /// which may never happen and thus is a bug if it does.
+    pub(crate) async fn resolve_remote(
         &self,
         addr: EndpointAddr,
-    ) -> Result<EndpointIdMappedAddr, DiscoveryError> {
-        let eid = addr.id;
-        let actor = self.endpoint_map.endpoint_state_actor(eid);
+    ) -> Result<Result<EndpointIdMappedAddr, DiscoveryError>, EndpointStateActorStoppedError> {
+        let EndpointAddr { id, addrs } = addr;
+        let actor = self.endpoint_map.endpoint_state_actor(id);
         let (tx, rx) = oneshot::channel();
-        // TODO: Better errors
         actor
-            .send(EndpointStateMessage::WantConnect(addr, tx))
-            .await
-            .map_err(|_| e!(DiscoveryError::NoServiceConfigured))?;
-        rx.await
-            .map_err(|_| e!(DiscoveryError::NoServiceConfigured))??;
-        Ok(self.endpoint_map.endpoint_mapped_addr(eid))
+            .send(EndpointStateMessage::ResolveRemote(addrs, tx))
+            .await?;
+        match rx.await {
+            Ok(Ok(())) => Ok(Ok(self.endpoint_map.endpoint_mapped_addr(id))),
+            Ok(Err(err)) => Ok(Err(err)),
+            Err(_) => Err(EndpointStateActorStoppedError),
+        }
     }
 
     pub(crate) async fn insert_relay(
@@ -2455,7 +2475,11 @@ mod tests {
             id: endpoint_id_2,
             addrs,
         };
-        let addr = msock_1.want_connect(endpoint_addr_2).await.unwrap();
+        let addr = msock_1
+            .resolve_remote(endpoint_addr_2)
+            .await
+            .unwrap()
+            .unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
             magicsock_connect(
@@ -2523,7 +2547,7 @@ mod tests {
                 SocketAddrV4::new([192, 0, 2, 1].into(), 12345).into(),
             )],
         );
-        let addr_2 = msock_1.want_connect(empty_addr_2).await.unwrap();
+        let addr_2 = msock_1.resolve_remote(empty_addr_2).await.unwrap().unwrap();
 
         // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
         // not take forever.  You need to check the log output to verify this is really
@@ -2557,7 +2581,11 @@ mod tests {
                 .into_iter()
                 .map(|x| TransportAddr::Ip(x.addr)),
         );
-        let addr_2a = msock_1.want_connect(correct_addr_2).await.unwrap();
+        let addr_2a = msock_1
+            .resolve_remote(correct_addr_2)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(addr_2, addr_2a);
 
         // We can now connect

@@ -36,8 +36,8 @@ use crate::{
     discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
     endpoint::presets::Preset,
     magicsock::{
-        self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT,
-        mapped_addrs::MappedAddr,
+        self, EndpointStateActorStoppedError, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS,
+        PATH_MAX_IDLE_TIMEOUT, mapped_addrs::MappedAddr,
     },
     metrics::EndpointMetrics,
     net_report::Report,
@@ -487,6 +487,7 @@ pub struct Endpoint {
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
+#[allow(private_interfaces)]
 pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
@@ -496,6 +497,10 @@ pub enum ConnectWithOptsError {
     Quinn {
         #[error(std_err)]
         source: quinn_proto::ConnectError,
+    },
+    #[error("internal consistency error: EndpointStateActor stopped")]
+    InternalConsistencyError {
+        source: EndpointStateActorStoppedError,
     },
 }
 
@@ -669,7 +674,7 @@ impl Endpoint {
             "connecting",
         );
 
-        let mapped_addr = self.msock.want_connect(endpoint_addr).await?;
+        let mapped_addr = self.msock.resolve_remote(endpoint_addr).await??;
 
         let transport_config = options
             .transport_config
