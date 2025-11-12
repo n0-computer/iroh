@@ -651,14 +651,9 @@ impl EndpointStateActor {
 
     /// Triggers discovery for the remote endpoint, if needed.
     ///
-    /// Does not start discovery if se have a selected path or if discovery is currently running.
+    /// Does not start discovery if we have a selected path or if discovery is currently running.
     fn trigger_discovery(&mut self) {
-        // Don't start discovery if we have a selected path.
-        if self.selected_path.get().is_none() {
-            return;
-        }
-        // Don't start discovery if it is currently running.
-        if matches!(self.discovery_stream, Either::Right(_)) {
+        if self.selected_path.get().is_some() || matches!(self.discovery_stream, Either::Right(_)) {
             return;
         }
         match self.discovery.resolve(self.endpoint_id) {

@@ -43,7 +43,6 @@ unused-async = "warn"
 
 
 [patch.crates-io]
-n0-error = { git = "https://github.com/n0-computer/n0-error", branch = "main" }
 iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
 iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
 iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
