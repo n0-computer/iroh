@@ -75,7 +75,7 @@ pub enum Error {
 pub enum RelayToClientMsg {
     /// Represents datagrams sent from relays (originally sent to them by another client).
     Datagrams {
-        /// The [`EndpointId`] of the original sender.
+        /// The [`PublicKey`] of the original sender.
         remote_endpoint_id: PublicKey,
         /// The datagrams and related metadata.
         datagrams: Datagrams,

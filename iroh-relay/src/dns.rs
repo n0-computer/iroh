@@ -382,7 +382,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
+    /// Looks up endpoint info by [`PublicKey`] and origin domain name.
     ///
     /// To lookup endpoints that published their endpoint info to the DNS servers run by n0,
     /// pass [`N0_DNS_ENDPOINT_ORIGIN_PROD`] as `origin`.
@@ -424,7 +424,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
+    /// Looks up endpoint info by [`PublicKey`] and origin domain name.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls

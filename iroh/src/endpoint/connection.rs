@@ -27,7 +27,7 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
-use iroh_base::PublicKey;
+use iroh_base::{EndpointId, PublicKey};
 use n0_error::{e, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
@@ -236,11 +236,11 @@ fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, Authentic
     })
 }
 
-/// Returns the [`EndpointId`] from the peer's TLS certificate.
+/// Returns the [`PublicKey`] from the peer's TLS certificate.
 ///
-/// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+/// The [`PublicKey`] of an endpoint is also known as an [`PublicKey`].  This [`PublicKey`] is
 /// included in the TLS certificate presented during the handshake when connecting.
-/// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+/// This function allows you to get the [`PublicKey`] of the remote endpoint of this
 /// connection.
 ///
 /// [`PublicKey`]: iroh_base::PublicKey
@@ -421,8 +421,8 @@ impl Connecting {
     }
 
     /// Returns the [`EndpointId`] of the endpoint that this connection attempt tries to connect to.
-    pub fn remote_id(&self) -> PublicKey {
-        self.remote_endpoint_id
+    pub fn remote_id(&self) -> EndpointId {
+        self.remote_endpoint_id.into()
     }
 }
 
@@ -816,11 +816,11 @@ impl OutgoingZeroRttConnection {
         self.inner.peer_identity()
     }
 
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    /// Returns the [`PublicKey`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// The [`PublicKey`] of an endpoint is also known as an [`PublicKey`].  This [`PublicKey`] is
     /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// This function allows you to get the [`PublicKey`] of the remote endpoint of this
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
@@ -897,7 +897,7 @@ impl OutgoingZeroRttConnection {
 /// Use the [`IncomingZeroRttConnection::handshake_completed`] method to get a [`Connection`] from a
 /// `IncomingZeroRttConnection`. This waits until 0-RTT connection has completed
 /// the handshake and can now confidently derive the ALPN and the
-/// [`EndpointId`] of the remote endpoint.
+/// [`PublicKey`] of the remote endpoint.
 #[derive(Debug)]
 pub struct IncomingZeroRttConnection {
     inner: quinn::Connection,
@@ -1127,11 +1127,11 @@ impl IncomingZeroRttConnection {
         self.inner.peer_identity()
     }
 
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    /// Returns the [`PublicKey`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// The [`PublicKey`] of an endpoint is also known as an [`PublicKey`].  This [`PublicKey`] is
     /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// This function allows you to get the [`PublicKey`] of the remote endpoint of this
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
@@ -1426,11 +1426,11 @@ impl Connection {
         self.inner.peer_identity()
     }
 
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    /// Returns the [`PublicKey`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// The [`PublicKey`] of an endpoint is also known as an [`PublicKey`].  This [`PublicKey`] is
     /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// This function allows you to get the [`PublicKey`] of the remote endpoint of this
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey

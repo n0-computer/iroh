@@ -238,6 +238,7 @@
 //! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
+//! [`EndpointId`]: crate::EndpointId
 //! [`RelayUrl`]: crate::RelayUrl
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
@@ -273,7 +274,7 @@ pub mod protocol;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
-    EndpointAddr, PublicKey, KeyParsingError, RelayUrl, RelayUrlParseError, SecretKey,
+    EndpointAddr, PublicKey, EndpointId, KeyParsingError, RelayUrl, RelayUrlParseError, SecretKey,
     Signature, SignatureError, TransportAddr,
 };
 pub use iroh_relay::{RelayConfig, RelayMap, endpoint_info};
