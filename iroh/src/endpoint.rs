@@ -56,7 +56,7 @@ pub use quinn::{
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
     PathStats, ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
     RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId,
-    TransportConfig as QuinnT, VarInt, WeakConnectionHandle, WriteError,
+    TransportConfig as QuinnTransportConfig, VarInt, WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
     FrameStats, TransportError, TransportErrorCode, UdpStats, Written,

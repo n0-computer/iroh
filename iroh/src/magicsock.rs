@@ -1382,8 +1382,8 @@ struct Actor {
 fn bind_ip(configs: &[TransportConfig], metrics: &EndpointMetrics) -> io::Result<Vec<IpTransport>> {
     let mut transports = Vec::new();
     for config in configs {
-        match config {
-            TransportConfig::Ip { bind_addr } => match bind_with_fallback(*bind_addr) {
+        if let TransportConfig::Ip { bind_addr } = config {
+            match bind_with_fallback(*bind_addr) {
                 Ok(socket) => {
                     let socket = Arc::new(socket);
                     transports.push(IpTransport::new(
@@ -1399,8 +1399,7 @@ fn bind_ip(configs: &[TransportConfig], metrics: &EndpointMetrics) -> io::Result
                         return Err(err);
                     }
                 }
-            },
-            _ => {}
+            }
         }
     }
 
