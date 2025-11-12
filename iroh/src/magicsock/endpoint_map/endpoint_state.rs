@@ -248,6 +248,10 @@ impl EndpointStateActor {
                 }
                 Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
                     self.connections.remove(&conn_id);
+                    if self.connections.is_empty() {
+                        trace!("last connection closed - clearing selected_path");
+                        self.selected_path.set(None).ok();
+                    }
                 }
                 _ = self.local_addrs.updated() => {
                     trace!("local addrs updated, triggering holepunching");
