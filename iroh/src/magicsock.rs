@@ -102,13 +102,15 @@ pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 pub(crate) const MAX_MULTIPATH_PATHS: u32 = 16;
 
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
-#[stack_error(derive)]
+#[stack_error(add_meta, derive)]
 #[error("endpoint state actor stopped")]
+#[derive(Clone)]
 pub(crate) struct EndpointStateActorStoppedError;
 
 impl From<mpsc::error::SendError<EndpointStateMessage>> for EndpointStateActorStoppedError {
+    #[track_caller]
     fn from(_value: mpsc::error::SendError<EndpointStateMessage>) -> Self {
-        Self
+        Self::new()
     }
 }
 
@@ -281,7 +283,7 @@ impl MagicSock {
             sender
                 .send(EndpointStateMessage::AddConnection(conn, tx))
                 .await?;
-            rx.await.map_err(|_| EndpointStateActorStoppedError)
+            rx.await.map_err(|_| EndpointStateActorStoppedError::new())
         }
     }
 
@@ -325,7 +327,7 @@ impl MagicSock {
         match rx.await {
             Ok(Ok(())) => Ok(Ok(self.endpoint_map.endpoint_mapped_addr(id))),
             Ok(Err(err)) => Ok(Err(err)),
-            Err(_) => Err(EndpointStateActorStoppedError),
+            Err(_) => Err(EndpointStateActorStoppedError::new()),
         }
     }
 

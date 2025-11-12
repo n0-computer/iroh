@@ -498,8 +498,9 @@ pub enum ConnectWithOptsError {
         #[error(std_err)]
         source: quinn_proto::ConnectError,
     },
-    #[error("internal consistency error: EndpointStateActor stopped")]
+    #[error("Internal consistency error")]
     InternalConsistencyError {
+        /// Private source type, cannot be accessed publicly.
         source: EndpointStateActorStoppedError,
     },
 }

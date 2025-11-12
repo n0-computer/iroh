@@ -199,6 +199,7 @@ async fn alpn_from_quinn_connecting(conn: &mut quinn::Connecting) -> Result<Vec<
 #[stack_error(add_meta, derive, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
+#[allow(private_interfaces)]
 #[derive(Clone)]
 pub enum AuthenticationError {
     #[error(transparent)]
@@ -210,21 +211,17 @@ pub enum AuthenticationError {
         #[error(std_err)]
         source: ConnectionError,
     },
-    #[error("internal consistency error: EndpointStateActor stopped")]
-    InternalConsistencyError,
-}
-
-impl From<EndpointStateActorStoppedError> for AuthenticationError {
-    #[track_caller]
-    fn from(_value: EndpointStateActorStoppedError) -> Self {
-        e!(Self::InternalConsistencyError)
-    }
+    #[error("Internal consistency error")]
+    InternalConsistencyError {
+        /// Private source type, cannot be accessed publicly.
+        source: EndpointStateActorStoppedError,
+    },
 }
 
 impl From<EndpointStateActorStoppedError> for ConnectingError {
     #[track_caller]
-    fn from(_value: EndpointStateActorStoppedError) -> Self {
-        e!(AuthenticationError::InternalConsistencyError).into()
+    fn from(value: EndpointStateActorStoppedError) -> Self {
+        AuthenticationError::from(value).into()
     }
 }
 
