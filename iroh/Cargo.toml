@@ -70,7 +70,7 @@ webpki = { package = "rustls-webpki", version = "0.103.7", features = ["ring"] }
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 webpki-roots = "1.0.3"
 z32 = "1.0.3"
-pkcs8 = "0.11.0-rc.7"
+pkcs8 = "0.11.0-rc.8"
 rustls-platform-verifier = "0.5.3"
 
 # metrics
