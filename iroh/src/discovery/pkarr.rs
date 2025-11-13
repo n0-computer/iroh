@@ -559,10 +559,10 @@ impl PkarrRelayClient {
         }
     }
 
-    /// Resolves a [`SignedPacket`] for the given [`EndpointId`].
-    pub async fn resolve(&self, endpoint_id: PublicKey) -> Result<SignedPacket, DiscoveryError> {
+    /// Resolves a [`SignedPacket`] for the given [`PublicKey`].
+    pub async fn resolve(&self, public_key: PublicKey) -> Result<SignedPacket, DiscoveryError> {
         // We map the error to string, as in browsers the error is !Send
-        let public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
+        let public_key = pkarr::PublicKey::try_from(public_key.as_bytes())
             .map_err(|err| e!(PkarrError::PublicKey, err))?;
 
         let mut url = self.pkarr_relay_url.clone();

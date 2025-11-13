@@ -8,7 +8,7 @@ use iroh::{
         dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrRelayClient},
     },
-    endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME},
+    endpoint_info::{PublicKeyExt, EndpointInfo, IROH_TXT_NAME},
 };
 use n0_error::{Result, StackResultExt};
 use url::Url;

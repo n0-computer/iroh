@@ -494,6 +494,8 @@ pub enum ConnectWithOptsError {
         #[error(std_err)]
         source: quinn_proto::ConnectError,
     },
+    #[error("Unsupported endpoint type")]
+    UnsupportedEndpointType,
 }
 
 #[allow(missing_docs)]
@@ -680,7 +682,7 @@ impl Endpoint {
         }
         let endpoint_id = endpoint_addr.id;
         let Some(public_key) = endpoint_id.as_ed() else {
-            panic!();
+            return Err(e!(ConnectWithOptsError::UnsupportedEndpointType));
         };
         let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
         let relay_url = endpoint_addr.relay_urls().next().cloned();

@@ -78,9 +78,9 @@ pub enum DecodingError {
     InvalidKey { source: KeyParsingError },
 }
 
-/// Extension methods for [`EndpointId`] to encode to and decode from [`z32`],
+/// Extension methods for [`PublicKey`] to encode to and decode from [`z32`],
 /// which is the encoding used in [`pkarr`] domain names.
-pub trait EndpointIdExt {
+pub trait PublicKeyExt {
     /// Encodes a [`EndpointId`] in [`z-base-32`] encoding.
     ///
     /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
@@ -92,7 +92,7 @@ pub trait EndpointIdExt {
     fn from_z32(s: &str) -> Result<PublicKey, DecodingError>;
 }
 
-impl EndpointIdExt for PublicKey {
+impl PublicKeyExt for PublicKey {
     fn to_z32(&self) -> String {
         z32::encode(self.as_bytes())
     }
@@ -462,7 +462,7 @@ impl std::ops::DerefMut for EndpointInfo {
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`EndpointId`]. Ignores
 /// subsequent labels.
 #[cfg(not(wasm_browser))]
-fn endpoint_id_from_txt_name(name: &str) -> Result<PublicKey, ParseError> {
+fn public_key_from_txt_name(name: &str) -> Result<PublicKey, ParseError> {
     let num_labels = name.split(".").count();
     if num_labels < 2 {
         return Err(e!(ParseError::NumLabels { num_labels }));
@@ -502,7 +502,7 @@ pub(crate) enum IrohAttr {
 /// [`Display`].
 #[derive(Debug)]
 pub(crate) struct TxtAttrs<T> {
-    endpoint_id: PublicKey,
+    public_key: PublicKey,
     attrs: BTreeMap<T, Vec<String>>,
 }
 
@@ -529,19 +529,19 @@ impl From<&EndpointInfo> for TxtAttrs<IrohAttr> {
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates [`TxtAttrs`] from an endpoint id and an iterator of key-value pairs.
     pub(crate) fn from_parts(
-        endpoint_id: PublicKey,
+        public_key: PublicKey,
         pairs: impl Iterator<Item = (T, String)>,
     ) -> Self {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
             attrs.entry(k).or_default().push(v);
         }
-        Self { attrs, endpoint_id }
+        Self { attrs, public_key }
     }
 
     /// Creates [`TxtAttrs`] from an endpoint id and an iterator of "{key}={value}" strings.
     pub(crate) fn from_strings(
-        endpoint_id: PublicKey,
+        public_key: PublicKey,
         strings: impl Iterator<Item = String>,
     ) -> Result<Self, ParseError> {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
@@ -557,7 +557,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             })?;
             attrs.entry(attr).or_default().push(value.to_string());
         }
-        Ok(Self { attrs, endpoint_id })
+        Ok(Self { attrs, public_key })
     }
 
     /// Returns the parsed attributes.
@@ -567,7 +567,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Returns the endpoint id.
     pub(crate) fn endpoint_id(&self) -> PublicKey {
-        self.endpoint_id
+        self.public_key
     }
 
     /// Parses a [`pkarr::SignedPacket`].
@@ -603,7 +603,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         name: String,
         lookup: impl Iterator<Item = crate::dns::TxtRecordData>,
     ) -> Result<Self, ParseError> {
-        let queried_endpoint_id = endpoint_id_from_txt_name(&name)?;
+        let queried_endpoint_id = public_key_from_txt_name(&name)?;
 
         let strings = lookup.map(|record| record.to_string());
         Self::from_strings(queried_endpoint_id, strings)
@@ -674,7 +674,7 @@ mod tests {
     use iroh_base::{PublicKey, SecretKey, TransportAddr};
     use n0_error::{Result, StdResultExt};
 
-    use super::{EndpointData, EndpointIdExt, EndpointInfo};
+    use super::{EndpointData, PublicKeyExt, EndpointInfo};
     use crate::dns::TxtRecordData;
 
     #[test]

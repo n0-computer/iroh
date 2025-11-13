@@ -347,7 +347,7 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::PublicKey;
-    use iroh_relay::endpoint_info::{EndpointIdExt, EndpointInfo, IROH_TXT_NAME};
+    use iroh_relay::endpoint_info::{PublicKeyExt, EndpointInfo, IROH_TXT_NAME};
     use pkarr::SignedPacket;
     use tracing::debug;
 
