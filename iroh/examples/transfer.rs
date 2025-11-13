@@ -9,13 +9,10 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    Endpoint, EndpointAddr, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
-    discovery::{
+    Endpoint, EndpointAddr, EndpointId, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr, discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
-    },
-    dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-    endpoint::ConnectionError,
+    }, dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING}, endpoint::ConnectionError
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
@@ -404,7 +401,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
     println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(&endpoint, remote_id.expect_ed());
+    let _guard = watch_conn_type(&endpoint, remote_id);
 
     // Use the Quinn API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
@@ -521,7 +518,7 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
     cfg.parse_size(s)
 }
 
-fn watch_conn_type(endpoint: &Endpoint, endpoint_id: PublicKey) -> AbortOnDropHandle<()> {
+fn watch_conn_type(endpoint: &Endpoint, endpoint_id: EndpointId) -> AbortOnDropHandle<()> {
     let mut stream = endpoint.conn_type(endpoint_id).unwrap().stream();
     let task = tokio::task::spawn(async move {
         while let Some(conn_type) = stream.next().await {

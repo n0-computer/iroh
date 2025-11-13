@@ -42,7 +42,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use iroh_base::PublicKey;
+use iroh_base::EndpointId;
 use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     join_all,
@@ -558,7 +558,7 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
 pub struct AccessLimit<P: ProtocolHandler + Clone> {
     proto: P,
     #[debug("limiter")]
-    limiter: Arc<dyn Fn(PublicKey) -> bool + Send + Sync + 'static>,
+    limiter: Arc<dyn Fn(EndpointId) -> bool + Send + Sync + 'static>,
 }
 
 impl<P: ProtocolHandler + Clone> AccessLimit<P> {
@@ -568,7 +568,7 @@ impl<P: ProtocolHandler + Clone> AccessLimit<P> {
     /// connect, and `false` otherwise.
     pub fn new<F>(proto: P, limiter: F) -> Self
     where
-        F: Fn(PublicKey) -> bool + Send + Sync + 'static,
+        F: Fn(EndpointId) -> bool + Send + Sync + 'static,
     {
         Self {
             proto,

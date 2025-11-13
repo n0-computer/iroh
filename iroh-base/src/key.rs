@@ -25,18 +25,16 @@ pub struct PublicKey(CompressedEdwardsY);
 
 /// The identifier for an endpoint in the (iroh) network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum EndpointId {
     /// An Ed25519 public key.
     Ed25519(PublicKey),
-    /// Other types of endpoint identifiers.
-    Other([u8; 8]),
 }
 
 impl PartialEq<PublicKey> for EndpointId {
     fn eq(&self, other: &PublicKey) -> bool {
         match self {
             EndpointId::Ed25519(key) => key == other,
-            EndpointId::Other(_) => false,
         }
     }
 }
@@ -45,7 +43,6 @@ impl Display for EndpointId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             EndpointId::Ed25519(key) => write!(f, "Ed25519({})", key),
-            EndpointId::Other(bytes) => write!(f, "Other({})", data_encoding::HEXLOWER.encode(bytes)),
         }
     }
 }
@@ -55,7 +52,6 @@ impl EndpointId {
     pub fn as_ed(self) -> Option<PublicKey> {
         match self {
             EndpointId::Ed25519(key) => Some(key),
-            EndpointId::Other(_) => None,
         }
     }
 
@@ -68,7 +64,6 @@ impl EndpointId {
     pub fn fmt_short(&self) -> String {
         match self {
             EndpointId::Ed25519(key) => key.fmt_short().to_string(),
-            EndpointId::Other(_) => "Other".to_string(),
         }
     }
 }

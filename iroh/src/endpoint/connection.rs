@@ -178,7 +178,7 @@ impl Future for IncomingFuture {
                     Ok(conn) => conn,
                     Err(err) => return Poll::Ready(Err(err.into())),
                 };
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -442,7 +442,7 @@ impl Future for Connecting {
                     }
                 };
 
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -520,7 +520,7 @@ impl Future for Accepting {
                     Err(err) => return Poll::Ready(Err(err.into())),
                 };
 
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -824,8 +824,8 @@ impl OutgoingZeroRttConnection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> Result<PublicKey, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
+        remote_id_from_quinn_conn(&self.inner).map(EndpointId::from)
     }
 
     /// A stable identifier for this connection.
@@ -1135,8 +1135,8 @@ impl IncomingZeroRttConnection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> Result<PublicKey, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
+        remote_id_from_quinn_conn(&self.inner).map(EndpointId::from)
     }
 
     /// A stable identifier for this connection.
@@ -1434,8 +1434,8 @@ impl Connection {
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> PublicKey {
-        self.remote_id
+    pub fn remote_id(&self) -> EndpointId {
+        self.remote_id.into()
     }
 
     /// A stable identifier for this connection.
@@ -1495,7 +1495,7 @@ impl Connection {
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
 fn try_send_rtt_msg(conn: &quinn::Connection, ep: &Endpoint, remote_id: PublicKey) {
-    let Some(conn_type_changes) = ep.conn_type(remote_id) else {
+    let Some(conn_type_changes) = ep.conn_type(remote_id.into()) else {
         warn!(?conn, "failed to create conn_type stream");
         return;
     };

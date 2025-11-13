@@ -16,7 +16,7 @@ use std::{
     sync::Arc,
 };
 
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
@@ -978,15 +978,17 @@ impl Endpoint {
     /// become inaccessible.
     ///
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub fn conn_type(&self, endpoint_id: PublicKey) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.msock.conn_type(endpoint_id)
+    pub fn conn_type(&self, endpoint_id: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
+        let public_key = endpoint_id.as_ed()?;
+        self.msock.conn_type(public_key)
     }
 
     /// Returns the currently lowest latency for this endpoint.
     ///
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub fn latency(&self, endpoint_id: PublicKey) -> Option<Duration> {
-        self.msock.latency(endpoint_id)
+    pub fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+        let public_key = endpoint_id.as_ed()?;
+        self.msock.latency(public_key)
     }
 
     /// Returns the DNS resolver used in this [`Endpoint`].
@@ -1968,7 +1970,7 @@ mod tests {
 
         async fn wait_for_conn_type_direct(ep: &Endpoint, endpoint_id: PublicKey) -> Result {
             let mut stream = ep
-                .conn_type(endpoint_id)
+                .conn_type(endpoint_id.into())
                 .expect("connection exists")
                 .stream();
             let src = ep.id().fmt_short();
