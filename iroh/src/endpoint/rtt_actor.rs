@@ -2,7 +2,7 @@
 
 use std::{pin::Pin, sync::Arc, task::Poll};
 
-use iroh_base::EndpointId;
+use iroh_base::PublicKey;
 use n0_future::{
     MergeUnbounded, Stream, StreamExt,
     task::{self, AbortOnDropHandle},
@@ -49,7 +49,7 @@ pub(super) enum RttMessage {
         /// Path changes for this connection from the magic socket.
         conn_type_changes: n0_watcher::Stream<n0_watcher::Direct<ConnectionType>>,
         /// For reporting-only, the Endpoint ID of this connection.
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     },
 }
 
@@ -68,7 +68,7 @@ struct RttActor {
 #[derive(Debug)]
 struct MappedStream {
     stream: n0_watcher::Stream<n0_watcher::Direct<ConnectionType>>,
-    endpoint_id: EndpointId,
+    endpoint_id: PublicKey,
     /// Reference to the connection.
     connection: quinn::WeakConnectionHandle,
     /// This an indiciator of whether this connection was direct before.
@@ -158,7 +158,7 @@ impl RttActor {
         &mut self,
         connection: quinn::WeakConnectionHandle,
         conn_type_changes: n0_watcher::Stream<n0_watcher::Direct<ConnectionType>>,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) {
         self.connection_events.push(MappedStream {
             stream: conn_type_changes,

@@ -9,7 +9,8 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
+    Endpoint, EndpointAddr, EndpointId, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey,
+    TransportAddr,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
@@ -146,7 +147,7 @@ enum Commands {
     },
     /// Fetch data.
     Fetch {
-        remote_id: EndpointId,
+        remote_id: PublicKey,
         #[clap(long)]
         remote_relay_url: Option<RelayUrl>,
         #[clap(long)]

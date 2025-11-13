@@ -23,6 +23,57 @@ use serde::{Deserialize, Serialize, de, ser};
 #[repr(transparent)]
 pub struct PublicKey(CompressedEdwardsY);
 
+/// The identifier for an endpoint in the (iroh) network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum EndpointId {
+    /// An Ed25519 public key.
+    Ed25519(PublicKey),
+}
+
+impl PartialEq<PublicKey> for EndpointId {
+    fn eq(&self, other: &PublicKey) -> bool {
+        match self {
+            EndpointId::Ed25519(key) => key == other,
+        }
+    }
+}
+
+impl Display for EndpointId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EndpointId::Ed25519(key) => write!(f, "Ed25519({})", key),
+        }
+    }
+}
+
+impl EndpointId {
+    /// If this is an Ed25519 endpoint id, return the public key.
+    pub fn as_ed(self) -> Option<PublicKey> {
+        match self {
+            EndpointId::Ed25519(key) => Some(key),
+        }
+    }
+
+    /// Expect this to be an Ed25519 endpoint id, panic if not.
+    pub fn expect_ed(self) -> PublicKey {
+        self.as_ed().expect("not an ed25519 endpoint id")
+    }
+
+    /// Format a short representation of this endpoint id.
+    pub fn fmt_short(&self) -> String {
+        match self {
+            EndpointId::Ed25519(key) => key.fmt_short().to_string(),
+        }
+    }
+}
+
+impl From<PublicKey> for EndpointId {
+    fn from(key: PublicKey) -> Self {
+        EndpointId::Ed25519(key)
+    }
+}
+
 impl Borrow<[u8; 32]> for PublicKey {
     fn borrow(&self) -> &[u8; 32] {
         self.as_bytes()
@@ -61,8 +112,6 @@ impl Ord for PublicKey {
 ///
 /// - `encrypt(key: PublicKey)`
 /// - `send_to(endpoint: EndpointId)`
-pub type EndpointId = PublicKey;
-
 impl Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);

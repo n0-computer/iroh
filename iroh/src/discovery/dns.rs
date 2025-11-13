@@ -107,11 +107,12 @@ impl Discovery for DnsDiscovery {
         &self,
         endpoint_id: EndpointId,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        let public_key = endpoint_id.as_ed()?;
         let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let endpoint_info = resolver
-                .lookup_endpoint_by_id_staggered(&endpoint_id, &origin_domain, DNS_STAGGERING_MS)
+                .lookup_endpoint_by_id_staggered(&public_key, &origin_domain, DNS_STAGGERING_MS)
                 .await
                 .map_err(|e| DiscoveryError::from_err_any("dns", e))?;
             Ok(DiscoveryItem::new(endpoint_info, "dns", None))

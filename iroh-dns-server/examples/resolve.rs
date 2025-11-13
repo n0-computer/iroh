@@ -1,6 +1,6 @@
 use clap::{Parser, ValueEnum};
 use iroh::{
-    EndpointId,
+    PublicKey,
     discovery::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     dns::DnsResolver,
 };
@@ -34,7 +34,7 @@ enum Command {
     /// Resolve endpoint info by endpoint id.
     Endpoint {
         /// The endpoint id to resolve.
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         /// Use a custom domain when resolving endpoint info via DNS.
         #[clap(long)]
         dns_origin_domain: Option<String>,

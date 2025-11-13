@@ -27,7 +27,7 @@ use std::{
 
 use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
-use iroh_base::EndpointId;
+use iroh_base::{EndpointId, PublicKey};
 use n0_error::{e, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
@@ -178,7 +178,7 @@ impl Future for IncomingFuture {
                     Ok(conn) => conn,
                     Err(err) => return Poll::Ready(Err(err.into())),
                 };
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -236,17 +236,15 @@ fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, Authentic
     })
 }
 
-/// Returns the [`EndpointId`] from the peer's TLS certificate.
+/// Returns the [`PublicKey`] from the peer's TLS certificate.
 ///
-/// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+/// The [`PublicKey`] of an endpoint is also known as an [`PublicKey`].  This [`PublicKey`] is
 /// included in the TLS certificate presented during the handshake when connecting.
-/// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+/// This function allows you to get the [`PublicKey`] of the remote endpoint of this
 /// connection.
 ///
 /// [`PublicKey`]: iroh_base::PublicKey
-fn remote_id_from_quinn_conn(
-    conn: &quinn::Connection,
-) -> Result<EndpointId, RemoteEndpointIdError> {
+fn remote_id_from_quinn_conn(conn: &quinn::Connection) -> Result<PublicKey, RemoteEndpointIdError> {
     let data = conn.peer_identity();
     match data {
         None => {
@@ -263,7 +261,7 @@ fn remote_id_from_quinn_conn(
                     return Err(RemoteEndpointIdError::new());
                 }
 
-                let peer_id = EndpointId::from_verifying_key(
+                let peer_id = PublicKey::from_verifying_key(
                     VerifyingKey::from_public_key_der(&certs[0])
                         .map_err(|_| RemoteEndpointIdError::new())?,
                 );
@@ -288,7 +286,7 @@ pub struct Connecting {
     inner: quinn::Connecting,
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
-    remote_endpoint_id: EndpointId,
+    remote_endpoint_id: PublicKey,
     /// We run discovery as long as we haven't established a connection yet.
     #[debug("Option<DiscoveryTask>")]
     _discovery_drop_guard: Option<DiscoveryTask>,
@@ -335,7 +333,7 @@ impl Connecting {
     pub(crate) fn new(
         inner: quinn::Connecting,
         ep: Endpoint,
-        remote_endpoint_id: EndpointId,
+        remote_endpoint_id: PublicKey,
         _discovery_drop_guard: Option<DiscoveryTask>,
     ) -> Self {
         Self {
@@ -422,7 +420,7 @@ impl Connecting {
 
     /// Returns the [`EndpointId`] of the endpoint that this connection attempt tries to connect to.
     pub fn remote_id(&self) -> EndpointId {
-        self.remote_endpoint_id
+        self.remote_endpoint_id.into()
     }
 }
 
@@ -442,7 +440,7 @@ impl Future for Connecting {
                     }
                 };
 
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -520,7 +518,7 @@ impl Future for Accepting {
                     Err(err) => return Poll::Ready(Err(err.into())),
                 };
 
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
+                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -816,16 +814,16 @@ impl OutgoingZeroRttConnection {
         self.inner.peer_identity()
     }
 
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    /// Returns the [`PublicKey`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// The [`PublicKey`] of an endpoint is also known as an [`PublicKey`].  This [`PublicKey`] is
     /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// This function allows you to get the [`PublicKey`] of the remote endpoint of this
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+        remote_id_from_quinn_conn(&self.inner).map(EndpointId::from)
     }
 
     /// A stable identifier for this connection.
@@ -897,7 +895,7 @@ impl OutgoingZeroRttConnection {
 /// Use the [`IncomingZeroRttConnection::handshake_completed`] method to get a [`Connection`] from a
 /// `IncomingZeroRttConnection`. This waits until 0-RTT connection has completed
 /// the handshake and can now confidently derive the ALPN and the
-/// [`EndpointId`] of the remote endpoint.
+/// [`PublicKey`] of the remote endpoint.
 #[derive(Debug)]
 pub struct IncomingZeroRttConnection {
     inner: quinn::Connection,
@@ -1127,16 +1125,16 @@ impl IncomingZeroRttConnection {
         self.inner.peer_identity()
     }
 
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    /// Returns the [`PublicKey`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// The [`PublicKey`] of an endpoint is also known as an [`PublicKey`].  This [`PublicKey`] is
     /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// This function allows you to get the [`PublicKey`] of the remote endpoint of this
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
+        remote_id_from_quinn_conn(&self.inner).map(EndpointId::from)
     }
 
     /// A stable identifier for this connection.
@@ -1207,7 +1205,7 @@ impl IncomingZeroRttConnection {
 #[derive(derive_more::Debug, Clone)]
 pub struct Connection {
     inner: quinn::Connection,
-    remote_id: EndpointId,
+    remote_id: PublicKey,
     alpn: Vec<u8>,
 }
 
@@ -1426,16 +1424,16 @@ impl Connection {
         self.inner.peer_identity()
     }
 
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    /// Returns the [`PublicKey`] from the peer's TLS certificate.
     ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// The [`PublicKey`] of an endpoint is also known as an [`PublicKey`].  This [`PublicKey`] is
     /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// This function allows you to get the [`PublicKey`] of the remote endpoint of this
     /// connection.
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> EndpointId {
-        self.remote_id
+        self.remote_id.into()
     }
 
     /// A stable identifier for this connection.
@@ -1494,8 +1492,8 @@ impl Connection {
 ///
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
-fn try_send_rtt_msg(conn: &quinn::Connection, ep: &Endpoint, remote_id: EndpointId) {
-    let Some(conn_type_changes) = ep.conn_type(remote_id) else {
+fn try_send_rtt_msg(conn: &quinn::Connection, ep: &Endpoint, remote_id: PublicKey) {
+    let Some(conn_type_changes) = ep.conn_type(remote_id.into()) else {
         warn!(?conn, "failed to create conn_type stream");
         return;
     };

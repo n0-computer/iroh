@@ -30,7 +30,7 @@ use std::{
 
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
-use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{EndpointAddr, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{e, stack_error};
 use n0_future::{
@@ -281,7 +281,7 @@ impl MagicSock {
     }
 
     /// Return the [`RemoteInfo`] for a single endpoint in the endpoint map.
-    pub(crate) fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+    pub(crate) fn remote_info(&self, endpoint_id: PublicKey) -> Option<RemoteInfo> {
         self.endpoint_map.remote_info(endpoint_id)
     }
 
@@ -375,17 +375,17 @@ impl MagicSock {
     /// given `endpoint_id`.
     pub(crate) fn conn_type(
         &self,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.endpoint_map.conn_type(endpoint_id)
     }
 
-    pub(crate) fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+    pub(crate) fn latency(&self, endpoint_id: PublicKey) -> Option<Duration> {
         self.endpoint_map.latency(endpoint_id)
     }
 
     /// Returns the socket address which can be used by the QUIC layer to dial this endpoint.
-    pub(crate) fn get_mapping_addr(&self, endpoint_id: EndpointId) -> Option<EndpointIdMappedAddr> {
+    pub(crate) fn get_mapping_addr(&self, endpoint_id: PublicKey) -> Option<EndpointIdMappedAddr> {
         self.endpoint_map
             .get_quic_mapped_addr_for_endpoint_key(endpoint_id)
     }
@@ -842,7 +842,7 @@ impl MagicSock {
     }
 
     /// Handle a ping message.
-    fn handle_ping(&self, dm: disco::Ping, sender: EndpointId, src: &transports::Addr) {
+    fn handle_ping(&self, dm: disco::Ping, sender: PublicKey, src: &transports::Addr) {
         // Insert the ping into the endpoint map, and return whether a ping with this tx_id was already
         // received.
         let addr: SendAddr = src.clone().into();
@@ -1661,8 +1661,8 @@ impl DiscoState {
 
     fn encode_and_seal(
         &self,
-        this_endpoint_id: EndpointId,
-        other_endpoint_id: EndpointId,
+        this_endpoint_id: PublicKey,
+        other_endpoint_id: PublicKey,
         msg: &disco::Message,
     ) -> Bytes {
         let mut seal = msg.as_bytes();
@@ -1769,7 +1769,7 @@ impl AsyncUdpSocket for MagicUdpSocket {
 enum ActorMessage {
     EndpointPingExpired(usize, TransactionId),
     NetworkChange,
-    ScheduleDirectAddrUpdate(UpdateReason, Option<(EndpointId, RelayUrl)>),
+    ScheduleDirectAddrUpdate(UpdateReason, Option<(PublicKey, RelayUrl)>),
     RelayMapChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -2522,7 +2522,7 @@ mod tests {
     use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
-    use iroh_base::{EndpointAddr, EndpointId, PublicKey, TransportAddr};
+    use iroh_base::{EndpointAddr, PublicKey, TransportAddr};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{StreamExt, time};
     use n0_watcher::Watcher;
@@ -2651,10 +2651,10 @@ mod tests {
                     continue;
                 }
 
-                let addr = EndpointAddr {
-                    id: me.public(),
-                    addrs: new_addrs.iter().copied().map(TransportAddr::Ip).collect(),
-                };
+                let addr = EndpointAddr::from_parts(
+                    me.public(),
+                    new_addrs.iter().copied().map(TransportAddr::Ip),
+                );
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
         }
@@ -2686,7 +2686,7 @@ mod tests {
                     let all_endpoints_meshed = all_endpoint_ids
                         .iter()
                         .filter(|endpoint_id| **endpoint_id != my_endpoint_id)
-                        .all(|endpoint_id| endpoints.contains(endpoint_id));
+                        .all(|endpoint_id| endpoints.contains(&endpoint_id.expect_ed()));
                     ready.push(all_endpoints_meshed);
                 }
                 if ready.iter().all(|meshed| *meshed) {
@@ -2812,7 +2812,7 @@ mod tests {
         info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
 
         let receiver_task = tokio::spawn(echo_receiver(receiver, loss));
-        let sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).await;
+        let sender_res = echo_sender(sender, recv_endpoint_id.expect_ed(), payload, loss).await;
         let sender_is_err = match sender_res {
             Ok(()) => false,
             Err(err) => {
@@ -3105,7 +3105,7 @@ mod tests {
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
         addr: EndpointIdMappedAddr,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
     ) -> Result<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
@@ -3131,7 +3131,7 @@ mod tests {
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
         mapped_addr: EndpointIdMappedAddr,
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         transport_config: Arc<quinn::TransportConfig>,
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
@@ -3216,12 +3216,8 @@ mod tests {
             .ip_addrs()
             .get()
             .into_iter()
-            .map(|x| TransportAddr::Ip(x.addr))
-            .collect();
-        let endpoint_addr_2 = EndpointAddr {
-            id: endpoint_id_2,
-            addrs,
-        };
+            .map(|x| TransportAddr::Ip(x.addr));
+        let endpoint_addr_2 = EndpointAddr::from_parts(endpoint_id_2, addrs);
         msock_1
             .add_endpoint_addr(
                 endpoint_addr_2,
@@ -3292,10 +3288,7 @@ mod tests {
 
         // Add an empty entry in the EndpointMap of ep_1
         msock_1.endpoint_map.add_endpoint_addr(
-            EndpointAddr {
-                id: endpoint_id_2,
-                addrs: Default::default(),
-            },
+            EndpointAddr::from_parts(endpoint_id_2, []),
             Source::NamedApp {
                 name: "test".into(),
             },
@@ -3332,13 +3325,9 @@ mod tests {
             .ip_addrs()
             .get()
             .into_iter()
-            .map(|x| TransportAddr::Ip(x.addr))
-            .collect();
+            .map(|x| TransportAddr::Ip(x.addr));
         msock_1.endpoint_map.add_endpoint_addr(
-            EndpointAddr {
-                id: endpoint_id_2,
-                addrs,
-            },
+            EndpointAddr::from_parts(endpoint_id_2, addrs),
             Source::NamedApp {
                 name: "test".into(),
             },
@@ -3393,12 +3382,10 @@ mod tests {
         );
 
         // relay url only
-        let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
-            addrs: [TransportAddr::Relay("http://my-relay.com".parse().unwrap())]
-                .into_iter()
-                .collect(),
-        };
+        let addr = EndpointAddr::from_parts(
+            SecretKey::generate(&mut rng).public(),
+            [TransportAddr::Relay("http://my-relay.com".parse().unwrap())],
+        );
         stack
             .endpoint
             .magic_sock()
@@ -3406,12 +3393,10 @@ mod tests {
         assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 1);
 
         // addrs only
-        let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
-            addrs: [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())]
-                .into_iter()
-                .collect(),
-        };
+        let addr = EndpointAddr::from_parts(
+            SecretKey::generate(&mut rng).public(),
+            [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())],
+        );
         stack
             .endpoint
             .magic_sock()
@@ -3419,15 +3404,13 @@ mod tests {
         assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 2);
 
         // both
-        let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
-            addrs: [
+        let addr = EndpointAddr::from_parts(
+            SecretKey::generate(&mut rng).public(),
+            [
                 TransportAddr::Relay("http://my-relay.com".parse().unwrap()),
                 TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
-            ]
-            .into_iter()
-            .collect(),
-        };
+            ],
+        );
         stack
             .endpoint
             .magic_sock()

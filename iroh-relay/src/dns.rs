@@ -12,7 +12,7 @@ use hickory_resolver::{
     config::{ResolverConfig, ResolverOpts},
     name_server::TokioConnectionProvider,
 };
-use iroh_base::EndpointId;
+use iroh_base::PublicKey;
 use n0_error::{StackError, e, stack_error};
 use n0_future::{
     StreamExt,
@@ -382,13 +382,13 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
+    /// Looks up endpoint info by [`PublicKey`] and origin domain name.
     ///
     /// To lookup endpoints that published their endpoint info to the DNS servers run by n0,
     /// pass [`N0_DNS_ENDPOINT_ORIGIN_PROD`] as `origin`.
     pub async fn lookup_endpoint_by_id(
         &self,
-        endpoint_id: &EndpointId,
+        endpoint_id: &PublicKey,
         origin: &str,
     ) -> Result<EndpointInfo, LookupError> {
         let name = endpoint_info::endpoint_domain(endpoint_id, origin);
@@ -424,7 +424,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Looks up endpoint info by [`EndpointId`] and origin domain name.
+    /// Looks up endpoint info by [`PublicKey`] and origin domain name.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
@@ -432,7 +432,7 @@ impl DnsResolver {
     /// summary of all errors otherwise.
     pub async fn lookup_endpoint_by_id_staggered(
         &self,
-        endpoint_id: &EndpointId,
+        endpoint_id: &PublicKey,
         origin: &str,
         delays_ms: &[u64],
     ) -> Result<EndpointInfo, StaggeredError<LookupError>> {

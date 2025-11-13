@@ -494,6 +494,8 @@ pub enum ConnectWithOptsError {
         #[error(std_err)]
         source: quinn_proto::ConnectError,
     },
+    #[error("Unsupported endpoint type")]
+    UnsupportedEndpointType,
 }
 
 #[allow(missing_docs)]
@@ -679,6 +681,9 @@ impl Endpoint {
             self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
         }
         let endpoint_id = endpoint_addr.id;
+        let Some(public_key) = endpoint_id.as_ed() else {
+            return Err(e!(ConnectWithOptsError::UnsupportedEndpointType));
+        };
         let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
         let relay_url = endpoint_addr.relay_urls().next().cloned();
 
@@ -715,7 +720,7 @@ impl Endpoint {
             client_config
         };
 
-        let server_name = &tls::name::encode(endpoint_id);
+        let server_name = &tls::name::encode(public_key);
         let connect = self.msock.endpoint().connect_with(
             client_config,
             mapped_addr.private_socket_addr(),
@@ -725,7 +730,7 @@ impl Endpoint {
         Ok(Connecting::new(
             connect,
             self.clone(),
-            endpoint_id,
+            public_key,
             _discovery_drop_guard,
         ))
     }
@@ -794,7 +799,7 @@ impl Endpoint {
     /// This ID is the unique addressing information of this endpoint and other peers must know
     /// it to be able to connect to this endpoint.
     pub fn id(&self) -> EndpointId {
-        self.static_config.tls_config.secret_key.public()
+        self.static_config.tls_config.secret_key.public().into()
     }
 
     /// Returns the current [`EndpointAddr`].
@@ -976,14 +981,16 @@ impl Endpoint {
     ///
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
     pub fn conn_type(&self, endpoint_id: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.msock.conn_type(endpoint_id)
+        let public_key = endpoint_id.as_ed()?;
+        self.msock.conn_type(public_key)
     }
 
     /// Returns the currently lowest latency for this endpoint.
     ///
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
     pub fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
-        self.msock.latency(endpoint_id)
+        let public_key = endpoint_id.as_ed()?;
+        self.msock.latency(public_key)
     }
 
     /// Returns the DNS resolver used in this [`Endpoint`].
@@ -1201,7 +1208,10 @@ impl Endpoint {
 
     /// Checks if the given `EndpointId` needs discovery.
     pub(crate) fn needs_discovery(&self, endpoint_id: EndpointId, max_age: Duration) -> bool {
-        match self.msock.remote_info(endpoint_id) {
+        let Some(public_key) = endpoint_id.as_ed() else {
+            return false;
+        };
+        match self.msock.remote_info(public_key) {
             // No info means no path to endpoint -> start discovery.
             None => true,
             Some(info) => {
@@ -1240,11 +1250,14 @@ impl Endpoint {
         endpoint_addr: EndpointAddr,
     ) -> Result<(EndpointIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
         let endpoint_id = endpoint_addr.id;
+        let Some(public_key) = endpoint_id.as_ed() else {
+            return Err(e!(GetMappingAddressError::NoAddress));
+        };
 
         // Only return a mapped addr if we have some way of dialing this endpoint, in other
         // words, we have either a relay URL or at least one direct address.
-        let addr = if self.msock.has_send_address(endpoint_id) {
-            self.msock.get_mapping_addr(endpoint_id)
+        let addr = if self.msock.has_send_address(public_key) {
+            self.msock.get_mapping_addr(public_key)
         } else {
             None
         };
@@ -1276,7 +1289,7 @@ impl Endpoint {
                     .first_arrived()
                     .await
                     .map_err(|err| e!(GetMappingAddressError::Discover, err))?;
-                if let Some(addr) = self.msock.get_mapping_addr(endpoint_id) {
+                if let Some(addr) = self.msock.get_mapping_addr(public_key) {
                     Ok((addr, Some(discovery)))
                 } else {
                     Err(e!(GetMappingAddressError::NoAddress))
@@ -1443,7 +1456,7 @@ fn is_cgi() -> bool {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
+    use iroh_base::{EndpointAddr, PublicKey, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     use n0_watcher::Watcher;
@@ -1862,7 +1875,7 @@ mod tests {
         eprintln!("endpoint id 1 {ep1_endpointid}");
         eprintln!("endpoint id 2 {ep2_endpointid}");
 
-        async fn connect_hello(ep: Endpoint, dst: EndpointId) -> Result {
+        async fn connect_hello(ep: Endpoint, dst: PublicKey) -> Result {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
             info!("sending hello");
@@ -1875,7 +1888,7 @@ mod tests {
             Ok(())
         }
 
-        async fn accept_world(ep: Endpoint, src: EndpointId) -> Result {
+        async fn accept_world(ep: Endpoint, src: PublicKey) -> Result {
             let incoming = ep.accept().await.anyerr()?;
             let mut iconn = incoming.accept().anyerr()?;
             let alpn = iconn.alpn().await?;
@@ -1899,34 +1912,34 @@ mod tests {
             }
         }
 
-        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_endpointid).instrument(
-            info_span!(
+        let p1_accept = tokio::spawn(
+            accept_world(ep1.clone(), ep2_endpointid.expect_ed()).instrument(info_span!(
                 "p1_accept",
                 ep1 = %ep1.id().fmt_short(),
                 dst = %ep2_endpointid.fmt_short(),
-            ),
-        ));
-        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_endpointid).instrument(
-            info_span!(
+            )),
+        );
+        let p2_accept = tokio::spawn(
+            accept_world(ep2.clone(), ep1_endpointid.expect_ed()).instrument(info_span!(
                 "p2_accept",
                 ep2 = %ep2.id().fmt_short(),
                 dst = %ep1_endpointid.fmt_short(),
-            ),
-        ));
-        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_endpointid).instrument(
-            info_span!(
+            )),
+        );
+        let p1_connect = tokio::spawn(
+            connect_hello(ep1.clone(), ep2_endpointid.expect_ed()).instrument(info_span!(
                 "p1_connect",
                 ep1 = %ep1.id().fmt_short(),
                 dst = %ep2_endpointid.fmt_short(),
-            ),
-        ));
-        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_endpointid).instrument(
-            info_span!(
+            )),
+        );
+        let p2_connect = tokio::spawn(
+            connect_hello(ep2.clone(), ep1_endpointid.expect_ed()).instrument(info_span!(
                 "p2_connect",
                 ep2 = %ep2.id().fmt_short(),
                 dst = %ep1_endpointid.fmt_short(),
-            ),
-        ));
+            )),
+        );
 
         p1_accept.await.anyerr()??;
         p2_accept.await.anyerr()??;
@@ -1957,9 +1970,9 @@ mod tests {
             .bind()
             .await?;
 
-        async fn wait_for_conn_type_direct(ep: &Endpoint, endpoint_id: EndpointId) -> Result {
+        async fn wait_for_conn_type_direct(ep: &Endpoint, endpoint_id: PublicKey) -> Result {
             let mut stream = ep
-                .conn_type(endpoint_id)
+                .conn_type(endpoint_id.into())
                 .expect("connection exists")
                 .stream();
             let src = ep.id().fmt_short();
@@ -1994,7 +2007,7 @@ mod tests {
         let ep1_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = accept(&ep1).await?;
             let mut send = conn.open_uni().await.anyerr()?;
-            wait_for_conn_type_direct(&ep1, ep2_endpointid).await?;
+            wait_for_conn_type_direct(&ep1, ep2_endpointid.expect_ed()).await?;
             send.write_all(b"Conn is direct").await.anyerr()?;
             send.finish().anyerr()?;
             conn.closed().await;
@@ -2004,7 +2017,7 @@ mod tests {
         let ep2_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = ep2.connect(ep1_endpointaddr, TEST_ALPN).await?;
             let mut recv = conn.accept_uni().await.anyerr()?;
-            wait_for_conn_type_direct(&ep2, ep1_endpointid).await?;
+            wait_for_conn_type_direct(&ep2, ep1_endpointid.expect_ed()).await?;
             let read = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(read, b"Conn is direct".to_vec());
             conn.close(0u32.into(), b"done");

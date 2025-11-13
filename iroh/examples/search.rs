@@ -33,7 +33,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use clap::Parser;
 use iroh::{
-    Endpoint, EndpointId,
+    Endpoint, PublicKey,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
@@ -57,7 +57,7 @@ pub enum Command {
     /// Query a remote endpoint for data and print the results.
     Query {
         /// The endpoint id of the endpoint we want to query.
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         /// The text we want to match.
         query: String,
     },
@@ -171,7 +171,7 @@ impl BlobSearch {
     }
 
     /// Query a remote endpoint, download all matching blobs and print the results.
-    pub async fn query_remote(&self, endpoint_id: EndpointId, query: &str) -> Result<u64> {
+    pub async fn query_remote(&self, endpoint_id: PublicKey, query: &str) -> Result<u64> {
         // Establish a connection to our endpoint.
         // We use the default endpoint discovery in iroh, so we can connect by endpoint id without
         // providing further information.

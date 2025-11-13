@@ -23,7 +23,7 @@ use http::{
     response::Builder as ResponseBuilder,
 };
 use hyper::body::Incoming;
-use iroh_base::EndpointId;
+use iroh_base::PublicKey;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use n0_error::{e, stack_error};
@@ -134,12 +134,12 @@ pub enum AccessConfig {
     Everyone,
     /// Only endpoints for which the function returns `Access::Allow`.
     #[debug("restricted")]
-    Restricted(Box<dyn Fn(EndpointId) -> Boxed<Access> + Send + Sync + 'static>),
+    Restricted(Box<dyn Fn(PublicKey) -> Boxed<Access> + Send + Sync + 'static>),
 }
 
 impl AccessConfig {
     /// Is this endpoint allowed?
-    pub async fn is_allowed(&self, endpoint: EndpointId) -> bool {
+    pub async fn is_allowed(&self, endpoint: PublicKey) -> bool {
         match self {
             Self::Everyone => true,
             Self::Restricted(check) => {
@@ -754,7 +754,7 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use http::StatusCode;
-    use iroh_base::{EndpointId, RelayUrl, SecretKey};
+    use iroh_base::{PublicKey, RelayUrl, SecretKey};
     use n0_error::Result;
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use rand::SeedableRng;
@@ -793,7 +793,7 @@ mod tests {
     async fn try_send_recv(
         client_a: &mut crate::client::Client,
         client_b: &mut crate::client::Client,
-        b_key: EndpointId,
+        b_key: PublicKey,
         msg: Datagrams,
     ) -> Result<RelayToClientMsg> {
         // try resend 10 times

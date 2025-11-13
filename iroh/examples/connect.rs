@@ -19,7 +19,7 @@ const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 struct Cli {
     /// The id of the remote endpoint.
     #[clap(long)]
-    endpoint_id: iroh::EndpointId,
+    endpoint_id: iroh::PublicKey,
     /// The list of direct UDP addresses for the remote endpoint.
     #[clap(long, value_parser, num_args = 1.., value_delimiter = ' ')]
     addrs: Vec<SocketAddr>,

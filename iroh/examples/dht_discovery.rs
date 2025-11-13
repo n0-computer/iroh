@@ -11,7 +11,7 @@
 use std::str::FromStr;
 
 use clap::Parser;
-use iroh::{Endpoint, EndpointId};
+use iroh::{Endpoint, PublicKey};
 use n0_error::{Result, StdResultExt};
 use tracing::warn;
 use url::Url;
@@ -21,7 +21,7 @@ const CHAT_ALPN: &[u8] = b"pkarr-discovery-demo-chat";
 #[derive(Parser)]
 struct Args {
     /// The endpoint id to connect to. If not set, the program will start a server.
-    endpoint_id: Option<EndpointId>,
+    endpoint_id: Option<PublicKey>,
     /// Disable using the mainline DHT for discovery and publishing.
     #[clap(long)]
     disable_dht: bool,

@@ -238,6 +238,7 @@
 //! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
+//! [`EndpointId`]: crate::EndpointId
 //! [`RelayUrl`]: crate::RelayUrl
 //! [`discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
