@@ -125,6 +125,7 @@ If you want to use iroh from other languages, make sure to check out [iroh-ffi],
 - [Iroh Documentation][docs]
 - [Iroh Examples]
 - [Iroh Experiments]
+- [Local Relay & QUIC Address Discovery Guide](docs/local-relay-dev.md)
 
 ## Repository Structure
 
