@@ -1059,10 +1059,7 @@ mod test_dns_pkarr {
             .await?;
         println!("resolved {resolved:?}");
 
-        let expected_addr = EndpointAddr::from_parts(
-            endpoint_id,
-            relay_url,
-        );
+        let expected_addr = EndpointAddr::from_parts(endpoint_id, relay_url);
 
         assert_eq!(resolved.to_endpoint_addr(), expected_addr);
         assert_eq!(resolved.user_data(), Some(&user_data));

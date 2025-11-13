@@ -9,10 +9,14 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr, discovery::{
+    Endpoint, EndpointAddr, EndpointId, PublicKey, RelayMap, RelayMode, RelayUrl, SecretKey,
+    TransportAddr,
+    discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
-    }, dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING}, endpoint::ConnectionError
+    },
+    dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
+    endpoint::ConnectionError,
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;

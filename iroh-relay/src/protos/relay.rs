@@ -10,7 +10,7 @@
 use std::num::NonZeroU16;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use iroh_base::{PublicKey, KeyParsingError};
+use iroh_base::{KeyParsingError, PublicKey};
 use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
 

@@ -67,7 +67,10 @@ impl EndpointAddr {
     }
 
     /// Creates a new [`EndpointAddr`] from its parts.
-    pub fn from_parts(id: impl Into<EndpointId>, addrs: impl IntoIterator<Item = TransportAddr>) -> Self {
+    pub fn from_parts(
+        id: impl Into<EndpointId>,
+        addrs: impl IntoIterator<Item = TransportAddr>,
+    ) -> Self {
         Self {
             id: id.into(),
             addrs: addrs.into_iter().collect(),

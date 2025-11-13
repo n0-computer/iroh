@@ -13,6 +13,6 @@ mod relay_url;
 #[cfg(feature = "key")]
 pub use self::endpoint_addr::{EndpointAddr, TransportAddr};
 #[cfg(feature = "key")]
-pub use self::key::{EndpointId, PublicKey, KeyParsingError, SecretKey, Signature, SignatureError};
+pub use self::key::{EndpointId, KeyParsingError, PublicKey, SecretKey, Signature, SignatureError};
 #[cfg(feature = "relay")]
 pub use self::relay_url::{RelayUrl, RelayUrlParseError};

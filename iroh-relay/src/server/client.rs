@@ -161,10 +161,7 @@ impl Client {
         self.disco_send_queue.try_send(Packet { src, data })
     }
 
-    pub(super) fn try_send_peer_gone(
-        &self,
-        key: PublicKey,
-    ) -> Result<(), TrySendError<PublicKey>> {
+    pub(super) fn try_send_peer_gone(&self, key: PublicKey) -> Result<(), TrySendError<PublicKey>> {
         self.peer_gone.try_send(key)
     }
 }

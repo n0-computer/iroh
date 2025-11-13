@@ -3217,10 +3217,7 @@ mod tests {
             .get()
             .into_iter()
             .map(|x| TransportAddr::Ip(x.addr));
-        let endpoint_addr_2 = EndpointAddr::from_parts(
-            endpoint_id_2,
-            addrs,
-        );
+        let endpoint_addr_2 = EndpointAddr::from_parts(endpoint_id_2, addrs);
         msock_1
             .add_endpoint_addr(
                 endpoint_addr_2,
@@ -3291,10 +3288,7 @@ mod tests {
 
         // Add an empty entry in the EndpointMap of ep_1
         msock_1.endpoint_map.add_endpoint_addr(
-            EndpointAddr::from_parts(
-                endpoint_id_2,
-                [],
-            ),
+            EndpointAddr::from_parts(endpoint_id_2, []),
             Source::NamedApp {
                 name: "test".into(),
             },
@@ -3333,10 +3327,7 @@ mod tests {
             .into_iter()
             .map(|x| TransportAddr::Ip(x.addr));
         msock_1.endpoint_map.add_endpoint_addr(
-            EndpointAddr::from_parts(
-                endpoint_id_2,
-                addrs,
-            ),
+            EndpointAddr::from_parts(endpoint_id_2, addrs),
             Source::NamedApp {
                 name: "test".into(),
             },
@@ -3393,7 +3384,7 @@ mod tests {
         // relay url only
         let addr = EndpointAddr::from_parts(
             SecretKey::generate(&mut rng).public(),
-            [TransportAddr::Relay("http://my-relay.com".parse().unwrap())]
+            [TransportAddr::Relay("http://my-relay.com".parse().unwrap())],
         );
         stack
             .endpoint
@@ -3404,7 +3395,7 @@ mod tests {
         // addrs only
         let addr = EndpointAddr::from_parts(
             SecretKey::generate(&mut rng).public(),
-            [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())]
+            [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())],
         );
         stack
             .endpoint
@@ -3418,7 +3409,7 @@ mod tests {
             [
                 TransportAddr::Relay("http://my-relay.com".parse().unwrap()),
                 TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
-            ]
+            ],
         );
         stack
             .endpoint

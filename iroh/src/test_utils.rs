@@ -347,7 +347,7 @@ pub(crate) mod pkarr_dns_state {
     };
 
     use iroh_base::PublicKey;
-    use iroh_relay::endpoint_info::{PublicKeyExt, EndpointInfo, IROH_TXT_NAME};
+    use iroh_relay::endpoint_info::{EndpointInfo, IROH_TXT_NAME, PublicKeyExt};
     use pkarr::SignedPacket;
     use tracing::debug;
 
@@ -495,7 +495,12 @@ pub(crate) mod pkarr_dns_state {
         ttl: u32,
     ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static {
         let txt_strings = endpoint_info.to_txt_strings();
-        let records = to_hickory_records(txt_strings, endpoint_info.endpoint_id.expect_ed(), origin, ttl);
+        let records = to_hickory_records(
+            txt_strings,
+            endpoint_info.endpoint_id.expect_ed(),
+            origin,
+            ttl,
+        );
         records.collect::<Vec<_>>().into_iter()
     }
 

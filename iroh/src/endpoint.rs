@@ -1251,7 +1251,7 @@ impl Endpoint {
     ) -> Result<(EndpointIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
         let endpoint_id = endpoint_addr.id;
         let Some(public_key) = endpoint_id.as_ed() else {
-            return Err(e!(GetMappingAddressError::NoAddress))
+            return Err(e!(GetMappingAddressError::NoAddress));
         };
 
         // Only return a mapped addr if we have some way of dialing this endpoint, in other
@@ -1912,34 +1912,34 @@ mod tests {
             }
         }
 
-        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_endpointid.expect_ed()).instrument(
-            info_span!(
+        let p1_accept = tokio::spawn(
+            accept_world(ep1.clone(), ep2_endpointid.expect_ed()).instrument(info_span!(
                 "p1_accept",
                 ep1 = %ep1.id().fmt_short(),
                 dst = %ep2_endpointid.fmt_short(),
-            ),
-        ));
-        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_endpointid.expect_ed()).instrument(
-            info_span!(
+            )),
+        );
+        let p2_accept = tokio::spawn(
+            accept_world(ep2.clone(), ep1_endpointid.expect_ed()).instrument(info_span!(
                 "p2_accept",
                 ep2 = %ep2.id().fmt_short(),
                 dst = %ep1_endpointid.fmt_short(),
-            ),
-        ));
-        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_endpointid.expect_ed()).instrument(
-            info_span!(
+            )),
+        );
+        let p1_connect = tokio::spawn(
+            connect_hello(ep1.clone(), ep2_endpointid.expect_ed()).instrument(info_span!(
                 "p1_connect",
                 ep1 = %ep1.id().fmt_short(),
                 dst = %ep2_endpointid.fmt_short(),
-            ),
-        ));
-        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_endpointid.expect_ed()).instrument(
-            info_span!(
+            )),
+        );
+        let p2_connect = tokio::spawn(
+            connect_hello(ep2.clone(), ep1_endpointid.expect_ed()).instrument(info_span!(
                 "p2_connect",
                 ep2 = %ep2.id().fmt_short(),
                 dst = %ep1_endpointid.fmt_short(),
-            ),
-        ));
+            )),
+        );
 
         p1_accept.await.anyerr()??;
         p2_accept.await.anyerr()??;

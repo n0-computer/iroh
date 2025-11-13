@@ -98,10 +98,10 @@ pub struct MdnsDiscovery {
 enum Message {
     Discovery(String, Peer),
     Resolve(
-        EndpointId,
+        PublicKey,
         mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>,
     ),
-    Timeout(EndpointId, usize),
+    Timeout(PublicKey, usize),
     Subscribe(mpsc::Sender<DiscoveryEvent>),
 }
 
@@ -190,7 +190,7 @@ impl MdnsDiscoveryBuilder {
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     pub fn build(self, endpoint_id: EndpointId) -> Result<MdnsDiscovery, IntoDiscoveryError> {
-        MdnsDiscovery::new(endpoint_id, self.advertise, self.service_name)
+        MdnsDiscovery::new(endpoint_id.expect_ed(), self.advertise, self.service_name)
     }
 }
 
@@ -241,7 +241,7 @@ impl MdnsDiscovery {
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     fn new(
-        endpoint_id: EndpointId,
+        endpoint_id: PublicKey,
         advertise: bool,
         service_name: String,
     ) -> Result<Self, IntoDiscoveryError> {
@@ -332,7 +332,7 @@ impl MdnsDiscovery {
                             );
                             endpoint_addrs.remove(&discovered_endpoint_id);
                             subscribers.send(DiscoveryEvent::Expired {
-                                endpoint_id: discovered_endpoint_id,
+                                endpoint_id: discovered_endpoint_id.into(),
                             });
                             continue;
                         }
@@ -352,7 +352,8 @@ impl MdnsDiscovery {
                         );
 
                         let mut resolved = false;
-                        let item = peer_to_discovery_item(&peer_info, &discovered_endpoint_id);
+                        let item =
+                            peer_to_discovery_item(&peer_info, &discovered_endpoint_id.into());
                         if let Some(senders) = senders.get(&discovered_endpoint_id) {
                             trace!(?item, senders = senders.len(), "sending DiscoveryItem");
                             resolved = true;
@@ -372,21 +373,21 @@ impl MdnsDiscovery {
                             });
                         }
                     }
-                    Message::Resolve(endpoint_id, sender) => {
+                    Message::Resolve(public_key, sender) => {
                         let id = last_id + 1;
                         last_id = id;
-                        trace!(?endpoint_id, "MdnsDiscovery Message::SendAddrs");
-                        if let Some(peer_info) = endpoint_addrs.get(&endpoint_id) {
-                            let item = peer_to_discovery_item(peer_info, &endpoint_id);
+                        trace!(?public_key, "MdnsDiscovery Message::SendAddrs");
+                        if let Some(peer_info) = endpoint_addrs.get(&public_key) {
+                            let item = peer_to_discovery_item(peer_info, &public_key);
                             debug!(?item, "sending DiscoveryItem");
                             sender.send(Ok(item)).await.ok();
                         }
-                        if let Some(senders_for_endpoint_id) = senders.get_mut(&endpoint_id) {
+                        if let Some(senders_for_endpoint_id) = senders.get_mut(&public_key) {
                             senders_for_endpoint_id.insert(id, sender);
                         } else {
                             let mut senders_for_endpoint_id = HashMap::new();
                             senders_for_endpoint_id.insert(id, sender);
-                            senders.insert(endpoint_id, senders_for_endpoint_id);
+                            senders.insert(public_key, senders_for_endpoint_id);
                         }
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
@@ -398,12 +399,12 @@ impl MdnsDiscovery {
                                 .ok();
                         });
                     }
-                    Message::Timeout(endpoint_id, id) => {
-                        trace!(?endpoint_id, "MdnsDiscovery Message::Timeout");
-                        if let Some(senders_for_endpoint_id) = senders.get_mut(&endpoint_id) {
+                    Message::Timeout(public_key, id) => {
+                        trace!(?public_key, "MdnsDiscovery Message::Timeout");
+                        if let Some(senders_for_endpoint_id) = senders.get_mut(&public_key) {
                             senders_for_endpoint_id.remove(&id);
                             if senders_for_endpoint_id.is_empty() {
-                                senders.remove(&endpoint_id);
+                                senders.remove(&public_key);
                             }
                         }
                     }
@@ -488,7 +489,7 @@ impl MdnsDiscovery {
     }
 }
 
-fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryItem {
+fn peer_to_discovery_item(peer: &Peer, public_key: &PublicKey) -> DiscoveryItem {
     let ip_addrs: BTreeSet<SocketAddr> = peer
         .addrs()
         .iter()
@@ -507,7 +508,7 @@ fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryIte
     } else {
         None
     };
-    let endpoint_info = EndpointInfo::new(*endpoint_id)
+    let endpoint_info = EndpointInfo::new(*public_key)
         .with_ip_addrs(ip_addrs)
         .with_user_data(user_data);
     DiscoveryItem::new(endpoint_info, NAME, None)
@@ -520,11 +521,13 @@ impl Discovery for MdnsDiscovery {
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         use futures_util::FutureExt;
 
+        let public_key = endpoint_id.as_ed()?;
+
         let (send, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
         let stream = async move {
             discovery_sender
-                .send(Message::Resolve(endpoint_id, send))
+                .send(Message::Resolve(public_key, send))
                 .await
                 .ok();
             tokio_stream::wrappers::ReceiverStream::new(recv)
@@ -762,19 +765,19 @@ mod tests {
 
             // Create a discovery service using the default
             // service name
-            let id_a = SecretKey::generate(&mut rng).public();
+            let id_a = SecretKey::generate(&mut rng).public().into();
             let discovery_a = MdnsDiscovery::builder().build(id_a)?;
 
             // Create a discovery service using a custom
             // service name
-            let id_b = SecretKey::generate(&mut rng).public();
+            let id_b = SecretKey::generate(&mut rng).public().into();
             let discovery_b = MdnsDiscovery::builder()
                 .service_name("different.name")
                 .build(id_b)?;
 
             // Create a discovery service using the same
             // custom service name
-            let id_c = SecretKey::generate(&mut rng).public();
+            let id_c = SecretKey::generate(&mut rng).public().into();
             let discovery_c = MdnsDiscovery::builder()
                 .service_name("different.name")
                 .build(id_c)?;
@@ -818,8 +821,8 @@ mod tests {
         fn make_discoverer<R: CryptoRng + ?Sized>(
             rng: &mut R,
             advertise: bool,
-        ) -> Result<(PublicKey, MdnsDiscovery)> {
-            let endpoint_id = SecretKey::generate(rng).public();
+        ) -> Result<(EndpointId, MdnsDiscovery)> {
+            let endpoint_id = SecretKey::generate(rng).public().into();
             Ok((
                 endpoint_id,
                 MdnsDiscovery::builder()

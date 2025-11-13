@@ -55,7 +55,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
 /// discovery.add_endpoint_info(EndpointAddr::from_parts(
 ///     id,
-///     [TransportAddr::Relay("https://example.com".parse()?)]
+///     [TransportAddr::Relay("https://example.com".parse()?)],
 /// ));
 ///
 /// # Ok(())
@@ -248,7 +248,7 @@ mod tests {
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr::from_parts(
             key.public(),
-            [TransportAddr::Relay("https://example.com".parse()?)]
+            [TransportAddr::Relay("https://example.com".parse()?)],
         );
         let user_data = Some("foobar".parse().unwrap());
         let endpoint_info = EndpointInfo::from(addr.clone()).with_user_data(user_data.clone());
@@ -278,7 +278,7 @@ mod tests {
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr::from_parts(
             key.public(),
-            [TransportAddr::Relay("https://example.com".parse()?)]
+            [TransportAddr::Relay("https://example.com".parse()?)],
         );
         discovery.add_endpoint_info(addr);
         let mut stream = discovery.resolve(key.public().into()).unwrap();

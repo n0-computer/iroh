@@ -315,8 +315,9 @@ impl Discovery for DhtDiscovery {
         &self,
         endpoint_id: EndpointId,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        let public_key = endpoint_id.as_ed()?;
         let pkarr_public_key =
-            pkarr::PublicKey::try_from(endpoint_id.as_bytes()).expect("valid public key");
+            pkarr::PublicKey::try_from(public_key.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", endpoint_id, pkarr_public_key.to_z32());
         let discovery = self.0.clone();
         let stream = n0_future::stream::once_future(async move {
@@ -364,7 +365,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 let mut found_relay_urls = BTreeSet::new();
                 let items = discovery
-                    .resolve(secret.public())
+                    .resolve(secret.public().into())
                     .unwrap()
                     .collect::<Vec<_>>()
                     .await;

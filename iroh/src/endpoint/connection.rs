@@ -244,9 +244,7 @@ fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, Authentic
 /// connection.
 ///
 /// [`PublicKey`]: iroh_base::PublicKey
-fn remote_id_from_quinn_conn(
-    conn: &quinn::Connection,
-) -> Result<PublicKey, RemoteEndpointIdError> {
+fn remote_id_from_quinn_conn(conn: &quinn::Connection) -> Result<PublicKey, RemoteEndpointIdError> {
     let data = conn.peer_identity();
     match data {
         None => {

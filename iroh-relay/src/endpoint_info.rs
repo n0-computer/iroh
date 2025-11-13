@@ -40,7 +40,9 @@ use std::{
     str::{FromStr, Utf8Error},
 };
 
-use iroh_base::{EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, SecretKey, TransportAddr};
+use iroh_base::{
+    EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, SecretKey, TransportAddr,
+};
 use n0_error::{e, ensure, stack_error};
 use url::Url;
 
@@ -321,7 +323,10 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
         data.set_user_data(user_data);
         data.add_addrs(relay_urls.chain(ip_addrs));
 
-        Self { endpoint_id: endpoint_id.into(), data }
+        Self {
+            endpoint_id: endpoint_id.into(),
+            data,
+        }
     }
 }
 
@@ -338,7 +343,7 @@ impl From<EndpointAddr> for EndpointInfo {
         info
     }
 }
- 
+
 impl EndpointInfo {
     /// Creates a new [`EndpointInfo`] with an empty [`EndpointData`].
     pub fn new(endpoint_id: impl Into<EndpointId>) -> Self {
@@ -347,7 +352,10 @@ impl EndpointInfo {
 
     /// Creates a new [`EndpointInfo`] from its parts.
     pub fn from_parts(endpoint_id: impl Into<EndpointId>, data: EndpointData) -> Self {
-        Self { endpoint_id: endpoint_id.into(), data }
+        Self {
+            endpoint_id: endpoint_id.into(),
+            data,
+        }
     }
 
     /// Sets the relay URL and returns the updated endpoint info.
@@ -674,7 +682,7 @@ mod tests {
     use iroh_base::{PublicKey, SecretKey, TransportAddr};
     use n0_error::{Result, StdResultExt};
 
-    use super::{EndpointData, PublicKeyExt, EndpointInfo};
+    use super::{EndpointData, EndpointInfo, PublicKeyExt};
     use crate::dns::TxtRecordData;
 
     #[test]
