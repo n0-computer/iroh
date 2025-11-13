@@ -326,7 +326,7 @@
 <a href=#326 id=326 data-nosnippet>326</a>        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).latency(endpoint_id)
 <a href=#327 id=327 data-nosnippet>327</a>    }
 <a href=#328 id=328 data-nosnippet>328</a>
-<a href=#329 id=329 data-nosnippet>329</a>    <span class="doccomment">/// Get the [`RemoteInfo`]s for the endpoint identified by [`EndpointId`].
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="doccomment">/// Get the [`RemoteInfo`]s for the endpoint identified by [`PublicKey`].
 <a href=#330 id=330 data-nosnippet>330</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, endpoint_id: PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
 <a href=#331 id=331 data-nosnippet>331</a>        <span class="self">self</span>.inner
 <a href=#332 id=332 data-nosnippet>332</a>            .lock()

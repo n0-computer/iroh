@@ -782,7 +782,7 @@
 <a href=#782 id=782 data-nosnippet>782</a>    </span>ping_tracker: PingTracker,
 <a href=#783 id=783 data-nosnippet>783</a>    <span class="doccomment">/// Endpoints which are reachable via this relay server.
 <a href=#784 id=784 data-nosnippet>784</a>    </span>endpoints_present: BTreeSet&lt;PublicKey&gt;,
-<a href=#785 id=785 data-nosnippet>785</a>    <span class="doccomment">/// The [`EndpointId`] from whom we received the last packet.
+<a href=#785 id=785 data-nosnippet>785</a>    <span class="doccomment">/// The [`PublicKey`] from whom we received the last packet.
 <a href=#786 id=786 data-nosnippet>786</a>    ///
 <a href=#787 id=787 data-nosnippet>787</a>    /// This is to avoid a slower lookup in the [`ConnectedRelayState::endpoints_present`] map
 <a href=#788 id=788 data-nosnippet>788</a>    /// when we are only communicating to a single remote endpoint.

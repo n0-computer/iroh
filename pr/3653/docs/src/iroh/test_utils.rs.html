@@ -470,13 +470,13 @@
 <a href=#470 id=470 data-nosnippet>470</a>        }
 <a href=#471 id=471 data-nosnippet>471</a>    }
 <a href=#472 id=472 data-nosnippet>472</a>
-<a href=#473 id=473 data-nosnippet>473</a>    <span class="doccomment">/// Parses a [`EndpointId`] from a DNS domain name.
+<a href=#473 id=473 data-nosnippet>473</a>    <span class="doccomment">/// Parses a [`PublicKey`] from a DNS domain name.
 <a href=#474 id=474 data-nosnippet>474</a>    ///
 <a href=#475 id=475 data-nosnippet>475</a>    /// Splits the domain name into labels on each dot. Expects the first label to be
-<a href=#476 id=476 data-nosnippet>476</a>    /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`EndpointId`]. Ignores
+<a href=#476 id=476 data-nosnippet>476</a>    /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`PublicKey`]. Ignores
 <a href=#477 id=477 data-nosnippet>477</a>    /// subsequent labels.
 <a href=#478 id=478 data-nosnippet>478</a>    ///
-<a href=#479 id=479 data-nosnippet>479</a>    /// Returns a [`EndpointId`] if parsed successfully, otherwise `None`.
+<a href=#479 id=479 data-nosnippet>479</a>    /// Returns a [`PublicKey`] if parsed successfully, otherwise `None`.
 <a href=#480 id=480 data-nosnippet>480</a>    </span><span class="kw">fn </span>endpoint_id_from_domain_name(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;PublicKey&gt; {
 <a href=#481 id=481 data-nosnippet>481</a>        <span class="kw">let </span><span class="kw-2">mut </span>labels = name.split(<span class="string">"."</span>);
 <a href=#482 id=482 data-nosnippet>482</a>        <span class="kw">let </span>label = labels.next()<span class="question-mark">?</span>;
