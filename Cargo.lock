@@ -2185,7 +2185,6 @@ dependencies = [
  "strum",
  "swarm-discovery",
  "time",
- "tinyvec",
  "tokio",
  "tokio-stream",
  "tokio-util",

@@ -35,7 +35,8 @@ pub(crate) struct Transports {
     relay: Vec<RelayTransport>,
 
     poll_recv_counter: usize,
-    source_addrs: tinyvec::TinyVec<[Addr; 4]>, // cache for source addrs
+    /// Cache for source addrs, to speed up access
+    source_addrs: [Addr; quinn_udp::BATCH_SIZE],
 }
 
 #[cfg(not(wasm_browser))]
@@ -82,11 +83,11 @@ impl Transports {
         msock: &MagicSock,
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        debug_assert!(bufs.len() <= quinn_udp::BATCH_SIZE, "too many buffers");
         if msock.is_closing() {
             return Poll::Pending;
         }
 
-        self.source_addrs.resize_with(metas.len(), Addr::default);
         match self.inner_poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => Poll::Pending,
             Poll::Ready(n) => {
