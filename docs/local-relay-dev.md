@@ -79,3 +79,35 @@ cargo run -p iroh --example connect-unreliable -- \
 - `iroh.config.toml` is in `.gitignore` to keep local relay preference local; `tmp/` is also ignored.
 - QAD defaults to UDP port 7842 (see `iroh-relay/src/defaults.rs`).
 - If a relay-only transfer fails, check `tmp/relay.log` for QUIC server bind and connection logs, verify cert SANs, and ensure ports are reachable.
+
+## Troubleshooting
+
+| Symptom | Likely Cause | Resolution |
+|---------|--------------|-----------|
+| `certificate unknown` / TLS handshake failure in relay log | Missing or incorrect Subject Alternative Name (SAN) on self-signed cert | Regenerate cert with `-addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:::1"` and restart relay |
+| Client hangs before QAD probes appear | Relay not started with `enable_quic_addr_discovery = true` or wrong config path | Verify relay startup args and that config file path is correct |
+| `address already in use` on relay start | Another process occupying port 7842/3340/9090 | Stop conflicting process or edit config to use alternate ports |
+| No `quic` / `net_report` trace lines despite RUST_LOG set | Shell quoting dropped part of RUST_LOG value | Echo `echo $RUST_LOG` to confirm; wrap the entire value in single quotes |
+| Relay logs show QAD probes but transfer example fails to connect | Client used stale endpoint ID or omitted `--relay-only` flag causing mixed path attempts | Re-run provider, copy fresh ID, ensure both sides use consistent flags |
+| `unsupported certificate version` error earlier | Initial cert generated without SAN extension | Use updated openssl command with SANs (see cert generation section) |
+| Connect-unreliable example prints `No addresses tried` | Missing or malformed `--addrs` value | Provide space-separated address list quoted as one argument |
+| Slow or no datagram exchange | Local firewall or nftables blocking UDP | Temporarily disable or add allow rules for UDP 7842 and dynamic client ports |
+
+### Quick Verification Script
+After generating certs & configs (see helper script), you can verify relay ports:
+
+```
+ss -tulpn | grep -E '(:3340|:7842|:9090)'
+```
+
+### Increasing Detail
+Add `quinn=trace` and `rustls=trace` to RUST_LOG for deep debugging, but expect very verbose output.
+
+### Filing Issues
+When filing an issue about local relay/QAD, include:
+- Relay command line & config snippet
+- `RUST_LOG` value
+- Snippets of relay and client logs around the failure
+- Output of `openssl x509 -in tmp/certs/cert.pem -noout -text | grep -i subjectaltname -A1`
+
+See `scripts/local-relay-setup.sh` (added in follow-up PR) for automated setup.

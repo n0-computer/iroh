@@ -16,6 +16,21 @@ If you found unexpected behavior while using Iroh, please browse our existing [i
 
 If you would like to suggest a new feature in Iroh, [create a new issue][newissue]. This helps have meaningful conversations about design, feasibility, and general expectations of how a feature would work. If you plan to work on this yourself, we ask you to state this as well, so that you receive the guidance you need.
 
+### Reproducing networking / relay issues locally
+
+If your issue involves relay connectivity, QUIC Address Discovery (QAD), NAT traversal, or related logging, please consider reproducing it first with a controlled local relay environment. We provide a step‑by‑step guide and helper script:
+
+- Guide: `docs/local-relay-dev.md`
+- Helper script (generates certs + configs): `scripts/local-relay-setup.sh`
+
+Including in your issue:
+- The relay command line & config snippet
+- Relevant `RUST_LOG` value
+- Snippets of relay + client logs (trim to the failing window)
+- Output of: `openssl x509 -in tmp/certs/cert.pem -noout -text | grep -i subjectaltname -A1`
+
+This context drastically shortens triage time for networking issues.
+
 ## Pull requests
 
 Code contributions to Iroh are greatly appreciated. Here is the general workflow you should follow:
