@@ -112,7 +112,6 @@ impl Ord for PublicKey {
 ///
 /// - `encrypt(key: PublicKey)`
 /// - `send_to(endpoint: EndpointId)`
-
 impl Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);
