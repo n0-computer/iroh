@@ -2651,10 +2651,10 @@ mod tests {
                     continue;
                 }
 
-                let addr = EndpointAddr {
-                    id: me.public(),
-                    addrs: new_addrs.iter().copied().map(TransportAddr::Ip).collect(),
-                };
+                let addr = EndpointAddr::from_parts(
+                    me.public(),
+                    new_addrs.iter().copied().map(TransportAddr::Ip),
+                );
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
         }
@@ -3216,12 +3216,8 @@ mod tests {
             .ip_addrs()
             .get()
             .into_iter()
-            .map(|x| TransportAddr::Ip(x.addr))
-            .collect();
-        let endpoint_addr_2 = EndpointAddr {
-            id: endpoint_id_2,
-            addrs,
-        };
+            .map(|x| TransportAddr::Ip(x.addr));
+        let endpoint_addr_2 = EndpointAddr::from_parts(endpoint_id_2, addrs);
         msock_1
             .add_endpoint_addr(
                 endpoint_addr_2,
@@ -3292,10 +3288,7 @@ mod tests {
 
         // Add an empty entry in the EndpointMap of ep_1
         msock_1.endpoint_map.add_endpoint_addr(
-            EndpointAddr {
-                id: endpoint_id_2,
-                addrs: Default::default(),
-            },
+            EndpointAddr::from_parts(endpoint_id_2, []),
             Source::NamedApp {
                 name: "test".into(),
             },
@@ -3332,13 +3325,9 @@ mod tests {
             .ip_addrs()
             .get()
             .into_iter()
-            .map(|x| TransportAddr::Ip(x.addr))
-            .collect();
+            .map(|x| TransportAddr::Ip(x.addr));
         msock_1.endpoint_map.add_endpoint_addr(
-            EndpointAddr {
-                id: endpoint_id_2,
-                addrs,
-            },
+            EndpointAddr::from_parts(endpoint_id_2, addrs),
             Source::NamedApp {
                 name: "test".into(),
             },
@@ -3393,12 +3382,10 @@ mod tests {
         );
 
         // relay url only
-        let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
-            addrs: [TransportAddr::Relay("http://my-relay.com".parse().unwrap())]
-                .into_iter()
-                .collect(),
-        };
+        let addr = EndpointAddr::from_parts(
+            SecretKey::generate(&mut rng).public(),
+            [TransportAddr::Relay("http://my-relay.com".parse().unwrap())],
+        );
         stack
             .endpoint
             .magic_sock()
@@ -3406,12 +3393,10 @@ mod tests {
         assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 1);
 
         // addrs only
-        let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
-            addrs: [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())]
-                .into_iter()
-                .collect(),
-        };
+        let addr = EndpointAddr::from_parts(
+            SecretKey::generate(&mut rng).public(),
+            [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())],
+        );
         stack
             .endpoint
             .magic_sock()
@@ -3419,15 +3404,13 @@ mod tests {
         assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 2);
 
         // both
-        let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
-            addrs: [
+        let addr = EndpointAddr::from_parts(
+            SecretKey::generate(&mut rng).public(),
+            [
                 TransportAddr::Relay("http://my-relay.com".parse().unwrap()),
                 TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
-            ]
-            .into_iter()
-            .collect(),
-        };
+            ],
+        );
         stack
             .endpoint
             .magic_sock()

@@ -1232,10 +1232,7 @@ impl From<RemoteInfo> for EndpointAddr {
             addrs.insert(TransportAddr::Relay(url.into()));
         }
 
-        EndpointAddr {
-            id: info.endpoint_id,
-            addrs,
-        }
+        EndpointAddr::from_parts(info.endpoint_id, addrs)
     }
 }
 
