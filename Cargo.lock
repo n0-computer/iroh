@@ -2739,8 +2739,9 @@ dependencies = [
 
 [[package]]
 name = "n0-watcher"
-version = "0.5.0"
-source = "git+https://github.com/n0-computer/n0-watcher?branch=feat-get-ref#128b41ed530115eeb9a992cfd600248066a764b5"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba717c22ceec021ace0ff7674bf8fd60c9394605740a8201678fc1cb3a7398f6"
 dependencies = [
  "derive_more 2.0.1",
  "n0-error",
@@ -2815,7 +2816,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#2708e3d7b0a6e1bf3322f71033a4b2002ec2339d"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#0721bbb6a2c4dd487a378d6ef0f56387680649d1"
 dependencies = [
  "atomic-waker",
  "bytes",

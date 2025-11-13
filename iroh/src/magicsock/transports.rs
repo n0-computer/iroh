@@ -40,13 +40,13 @@ pub(crate) struct Transports {
 
 #[cfg(not(wasm_browser))]
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
-    (
+    n0_watcher::Tuple<
         n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
         n0_watcher::Join<
             Option<(RelayUrl, EndpointId)>,
             n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
         >,
-    ),
+    >,
     Vec<Addr>,
 >;
 
@@ -155,7 +155,7 @@ impl Transports {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
 
-        (ips, relays).map(|(ips, relays)| {
+        ips.or(relays).map(|(ips, relays)| {
             ips.into_iter()
                 .map(Addr::from)
                 .chain(
