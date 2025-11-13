@@ -105,7 +105,7 @@ impl Clients {
         }
     }
 
-    /// Attempt to send a packet to client with [`EndpointId`] `dst`.
+    /// Attempt to send a packet to client with [`PublicKey`] `dst`.
     pub(super) fn send_packet(
         &self,
         dst: PublicKey,
@@ -145,7 +145,7 @@ impl Clients {
         }
     }
 
-    /// Attempt to send a disco packet to client with [`EndpointId`] `dst`.
+    /// Attempt to send a disco packet to client with [`PublicKey`] `dst`.
     pub(super) fn send_disco_packet(
         &self,
         dst: PublicKey,

@@ -259,7 +259,7 @@ struct Actor {
     disco_send_queue: mpsc::Receiver<Packet>,
     /// Notify the client that a previous sender has disconnected
     endpoint_gone: mpsc::Receiver<PublicKey>,
-    /// [`EndpointId`] of this client
+    /// [`PublicKey`] of this client
     endpoint_id: PublicKey,
     /// Connection identifier.
     connection_id: u64,

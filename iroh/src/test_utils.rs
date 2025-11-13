@@ -470,13 +470,13 @@ pub(crate) mod pkarr_dns_state {
         }
     }
 
-    /// Parses a [`EndpointId`] from a DNS domain name.
+    /// Parses a [`PublicKey`] from a DNS domain name.
     ///
     /// Splits the domain name into labels on each dot. Expects the first label to be
-    /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`EndpointId`]. Ignores
+    /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`PublicKey`]. Ignores
     /// subsequent labels.
     ///
-    /// Returns a [`EndpointId`] if parsed successfully, otherwise `None`.
+    /// Returns a [`PublicKey`] if parsed successfully, otherwise `None`.
     fn endpoint_id_from_domain_name(name: &str) -> Option<PublicKey> {
         let mut labels = name.split(".");
         let label = labels.next()?;

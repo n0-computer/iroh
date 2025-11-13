@@ -782,7 +782,7 @@ struct ConnectedRelayState {
     ping_tracker: PingTracker,
     /// Endpoints which are reachable via this relay server.
     endpoints_present: BTreeSet<PublicKey>,
-    /// The [`EndpointId`] from whom we received the last packet.
+    /// The [`PublicKey`] from whom we received the last packet.
     ///
     /// This is to avoid a slower lookup in the [`ConnectedRelayState::endpoints_present`] map
     /// when we are only communicating to a single remote endpoint.

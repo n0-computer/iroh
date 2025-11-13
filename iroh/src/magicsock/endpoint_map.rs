@@ -326,7 +326,7 @@ impl EndpointMap {
         self.inner.lock().expect("poisoned").latency(endpoint_id)
     }
 
-    /// Get the [`RemoteInfo`]s for the endpoint identified by [`EndpointId`].
+    /// Get the [`RemoteInfo`]s for the endpoint identified by [`PublicKey`].
     pub(super) fn remote_info(&self, endpoint_id: PublicKey) -> Option<RemoteInfo> {
         self.inner
             .lock()
