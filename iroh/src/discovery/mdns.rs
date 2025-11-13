@@ -352,8 +352,7 @@ impl MdnsDiscovery {
                         );
 
                         let mut resolved = false;
-                        let item =
-                            peer_to_discovery_item(&peer_info, &discovered_endpoint_id);
+                        let item = peer_to_discovery_item(&peer_info, &discovered_endpoint_id);
                         if let Some(senders) = senders.get(&discovered_endpoint_id) {
                             trace!(?item, senders = senders.len(), "sending DiscoveryItem");
                             resolved = true;
