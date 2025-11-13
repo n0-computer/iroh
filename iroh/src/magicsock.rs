@@ -75,9 +75,11 @@ pub(crate) mod endpoint_map;
 pub(crate) mod mapped_addrs;
 pub(crate) mod transports;
 
-use mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
-
 pub use self::{endpoint_map::PathInfo, metrics::Metrics};
+use self::{
+    mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
+    transports::Addr,
+};
 
 // TODO: Use this
 // /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
@@ -489,18 +491,18 @@ impl MagicSock {
 
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs = self.local_addrs_watch.clone().get();
+        let addrs = self.local_addrs_watch.peek();
 
         let mut ipv4_addr = None;
         for addr in addrs {
-            let Some(addr) = addr.into_socket_addr() else {
-                continue;
-            };
-            if addr.is_ipv6() {
-                return Ok(addr);
-            }
-            if addr.is_ipv4() && ipv4_addr.is_none() {
-                ipv4_addr.replace(addr);
+            match addr {
+                Addr::Ip(addr @ SocketAddr::V6(_)) => {
+                    return Ok(*addr);
+                }
+                Addr::Ip(addr @ SocketAddr::V4(_)) if ipv4_addr.is_none() => {
+                    ipv4_addr.replace(*addr);
+                }
+                _ => {}
             }
         }
         match ipv4_addr {
@@ -550,11 +552,12 @@ impl MagicSock {
 
         let mut quic_packets_total = 0;
 
-        for ((quinn_meta, buf), source_addr) in metas
-            .iter_mut()
-            .zip(bufs.iter_mut())
-            .zip(source_addrs.iter())
-        {
+        // zip is slow :(
+        for i in 0..metas.len() {
+            let quinn_meta = &mut metas[i];
+            let buf = &mut bufs[i];
+            let source_addr = &source_addrs[i];
+
             let mut buf_contains_quic_datagrams = false;
             let mut quic_datagram_count = 0;
             if quinn_meta.len > quinn_meta.stride {
@@ -578,11 +581,9 @@ impl MagicSock {
                 // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
                 // which we do in Endpoint::bind.
                 if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
-                    trace!(src = ?source_addr, len = datagram.len(), "UDP recv: DISCO packet");
                     self.handle_disco_message(sender, sealed_box, source_addr);
                     datagram[0] = 0u8;
                 } else {
-                    trace!(src = ?source_addr, len = datagram.len(), "UDP recv: QUIC packet");
                     match source_addr {
                         transports::Addr::Ip(SocketAddr::V4(..)) => {
                             self.metrics

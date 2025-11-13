@@ -1183,10 +1183,10 @@ impl ConnectionState {
 pub(crate) struct PathsWatcher(
     Box<
         n0_watcher::Map<
-            (
+            n0_watcher::Tuple<
                 n0_watcher::Direct<PathAddrList>,
                 n0_watcher::Direct<Option<transports::Addr>>,
-            ),
+            >,
             PathInfoList,
         >,
     >,
@@ -1195,8 +1195,12 @@ pub(crate) struct PathsWatcher(
 impl n0_watcher::Watcher for PathsWatcher {
     type Value = PathInfoList;
 
-    fn get(&mut self) -> Self::Value {
-        self.0.get()
+    fn update(&mut self) -> bool {
+        self.0.update()
+    }
+
+    fn peek(&self) -> &Self::Value {
+        self.0.peek()
     }
 
     fn is_connected(&self) -> bool {
@@ -1206,7 +1210,7 @@ impl n0_watcher::Watcher for PathsWatcher {
     fn poll_updated(
         &mut self,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<Self::Value, n0_watcher::Disconnected>> {
+    ) -> Poll<Result<(), n0_watcher::Disconnected>> {
         self.0.poll_updated(cx)
     }
 }
