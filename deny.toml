@@ -27,4 +27,7 @@ ignore = [
 ]
 
 [sources]
-allow-git = []
+allow-git = [
+  "https://github.com/n0-computer/quinn",
+  "https://github.com/n0-computer/net-tools"
+]

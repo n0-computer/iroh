@@ -288,7 +288,7 @@ impl ClientBuilder {
         let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;
 
         event!(
-            target: "events.net.relay.connected",
+            target: "iroh::_events::net::relay::connected",
             Level::DEBUG,
             url = %self.url,
         );
@@ -343,7 +343,7 @@ impl ClientBuilder {
         let conn = Conn::new(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
 
         event!(
-            target: "events.net.relay.connected",
+            target: "iroh::_events::net::relay::connected",
             Level::DEBUG,
             url = %self.url,
         );

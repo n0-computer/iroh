@@ -24,7 +24,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use iroh_base::{PublicKey, RelayUrl};
+use iroh_base::{EndpointId, PublicKey, RelayUrl};
 use n0_error::{e, ensure, stack_error};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -118,10 +118,48 @@ pub struct Ping {
     /// Random client-generated per-ping transaction ID.
     pub tx_id: TransactionId,
 
-    /// Allegedly the ping sender's wireguard public key.
-    /// It shouldn't be trusted by itself, but can be combined with
-    /// netmap data to reduce the discokey:endpointkey relation from 1:N to 1:1.
+    /// Allegedly the ping sender's public key.
+    ///
+    /// It shouldn't be trusted by itself.
     pub endpoint_key: PublicKey,
+}
+
+impl Ping {
+    /// Creates a ping message to ping `node_id`.
+    ///
+    /// Uses a randomly generated STUN transaction ID.
+    pub(crate) fn new(endpoint_id: EndpointId) -> Self {
+        Self {
+            tx_id: TransactionId::default(),
+            endpoint_key: endpoint_id,
+        }
+    }
+
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
+        // Deliberately lax on longer-than-expected messages, for future compatibility.
+        ensure!(p.len() >= PING_LEN, ParseError::TooShort);
+        let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
+        let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
+        let endpoint_key =
+            PublicKey::try_from(raw_key).map_err(|_| e!(ParseError::InvalidEncoding))?;
+        let tx_id = TransactionId::from(tx_id);
+
+        Ok(Ping {
+            tx_id,
+            endpoint_key,
+        })
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
+        let header = msg_header(MessageType::Ping, V0);
+        let mut out = vec![0u8; PING_LEN + HEADER_LEN];
+
+        out[..HEADER_LEN].copy_from_slice(&header);
+        out[HEADER_LEN..HEADER_LEN + TX_LEN].copy_from_slice(&self.tx_id);
+        out[HEADER_LEN + TX_LEN..].copy_from_slice(self.endpoint_key.as_ref());
+
+        out
+    }
 }
 
 /// A response a Ping.
@@ -143,21 +181,6 @@ pub enum SendAddr {
     Udp(SocketAddr),
     /// Relay Url.
     Relay(RelayUrl),
-}
-
-impl SendAddr {
-    /// Returns if this is a `relay` addr.
-    pub fn is_relay(&self) -> bool {
-        matches!(self, Self::Relay(_))
-    }
-
-    /// Returns the `Some(Url)` if it is a relay addr.
-    pub fn relay_url(&self) -> Option<RelayUrl> {
-        match self {
-            Self::Relay(url) => Some(url.clone()),
-            Self::Udp(_) => None,
-        }
-    }
 }
 
 impl From<transports::Addr> for SendAddr {
@@ -211,34 +234,6 @@ impl Display for SendAddr {
 pub struct CallMeMaybe {
     /// What the peer believes its endpoints are.
     pub my_numbers: Vec<SocketAddr>,
-}
-
-impl Ping {
-    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
-        // Deliberately lax on longer-than-expected messages, for future compatibility.
-        ensure!(p.len() >= PING_LEN, ParseError::TooShort);
-        let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
-        let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
-        let endpoint_key =
-            PublicKey::try_from(raw_key).map_err(|_| e!(ParseError::InvalidEncoding))?;
-        let tx_id = TransactionId::from(tx_id);
-
-        Ok(Ping {
-            tx_id,
-            endpoint_key,
-        })
-    }
-
-    fn as_bytes(&self) -> Vec<u8> {
-        let header = msg_header(MessageType::Ping, V0);
-        let mut out = vec![0u8; PING_LEN + HEADER_LEN];
-
-        out[..HEADER_LEN].copy_from_slice(&header);
-        out[HEADER_LEN..HEADER_LEN + TX_LEN].copy_from_slice(&self.tx_id);
-        out[HEADER_LEN + TX_LEN..].copy_from_slice(self.endpoint_key.as_ref());
-
-        out
-    }
 }
 
 #[allow(missing_docs)]

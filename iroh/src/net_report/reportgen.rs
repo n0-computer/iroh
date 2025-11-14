@@ -47,14 +47,14 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, error, trace, warn, warn_span};
 use url::Host;
 
+#[cfg(not(wasm_browser))]
+use super::defaults::timeouts::DNS_TIMEOUT;
 #[cfg(wasm_browser)]
 use super::portmapper; // We stub the library
 use super::{
     Report,
     probes::{Probe, ProbePlan},
 };
-#[cfg(not(wasm_browser))]
-use super::{defaults::timeouts::DNS_TIMEOUT, ip_mapped_addrs::IpMappedAddresses};
 #[cfg(not(wasm_browser))]
 use crate::discovery::dns::DNS_STAGGERING_MS;
 use crate::{
@@ -110,8 +110,6 @@ pub(crate) struct SocketState {
     pub(crate) quic_client: Option<QuicClient>,
     /// The DNS resolver to use for probes that need to resolve DNS records.
     pub(crate) dns_resolver: DnsResolver,
-    /// Optional [`IpMappedAddresses`] used to enable QAD in iroh
-    pub(crate) ip_mapped_addrs: Option<IpMappedAddresses>,
 }
 
 impl Client {
@@ -199,7 +197,7 @@ pub(super) enum ProbeFinished {
 impl Actor {
     async fn run(self) {
         match time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
-            Ok(()) => debug!("reportgen actor finished"),
+            Ok(()) => trace!("reportgen actor finished"),
             Err(time::Elapsed { .. }) => {
                 warn!("reportgen timed out");
             }
@@ -218,7 +216,7 @@ impl Actor {
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
     async fn run_inner(self) {
-        debug!("reportstate actor starting");
+        trace!("reportgen actor starting");
 
         let mut probes = JoinSet::default();
 
@@ -349,7 +347,7 @@ impl Actor {
         if_state: IfStateDetails,
         probes: &mut JoinSet<ProbeFinished>,
     ) -> CancellationToken {
-        debug!(?if_state, "local interface details");
+        trace!(?if_state, "local interface details");
         let plan = match self.last_report {
             Some(ref report) => {
                 ProbePlan::with_last_report(&self.relay_map, report, &self.protocols)
@@ -519,17 +517,6 @@ impl Probe {
 }
 
 #[cfg(not(wasm_browser))]
-pub(super) fn maybe_to_mapped_addr(
-    ip_mapped_addrs: Option<&IpMappedAddresses>,
-    addr: SocketAddr,
-) -> SocketAddr {
-    if let Some(ip_mapped_addrs) = ip_mapped_addrs {
-        return ip_mapped_addrs.get_or_register(addr).private_socket_addr();
-    }
-    addr
-}
-
-#[cfg(not(wasm_browser))]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 enum CaptivePortalError {
@@ -654,8 +641,11 @@ fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
 pub enum GetRelayAddrError {
     #[error("No valid hostname in the relay URL")]
     InvalidHostname,
-    #[error("No suitable relay address found")]
-    NoAddrFound,
+    #[error("No suitable relay address found for {url} ({addr_type})")]
+    NoAddrFound {
+        url: RelayUrl,
+        addr_type: &'static str,
+    },
     #[error("DNS lookup failed")]
     DnsLookup { source: StaggeredError<DnsError> },
     #[error("Relay is not suitable")]
@@ -708,12 +698,20 @@ async fn relay_lookup_ipv4_staggered(
                         IpAddr::V4(ip) => SocketAddrV4::new(ip, port),
                         IpAddr::V6(_) => unreachable!("bad DNS lookup: {:?}", addr),
                     })
-                    .ok_or_else(|| e!(GetRelayAddrError::NoAddrFound)),
+                    .ok_or_else(|| {
+                        e!(GetRelayAddrError::NoAddrFound {
+                            url: relay.url.clone(),
+                            addr_type: "A",
+                        })
+                    }),
                 Err(err) => Err(e!(GetRelayAddrError::DnsLookup, err)),
             }
         }
         Some(url::Host::Ipv4(addr)) => Ok(SocketAddrV4::new(addr, port)),
-        Some(url::Host::Ipv6(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound)),
+        Some(url::Host::Ipv6(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound {
+            url: relay.url.clone(),
+            addr_type: "A",
+        })),
         None => Err(e!(GetRelayAddrError::InvalidHostname)),
     }
 }
@@ -740,11 +738,19 @@ async fn relay_lookup_ipv6_staggered(
                         IpAddr::V4(_) => unreachable!("bad DNS lookup: {:?}", addr),
                         IpAddr::V6(ip) => SocketAddrV6::new(ip, port, 0, 0),
                     })
-                    .ok_or_else(|| e!(GetRelayAddrError::NoAddrFound)),
+                    .ok_or_else(|| {
+                        e!(GetRelayAddrError::NoAddrFound {
+                            url: relay.url.clone(),
+                            addr_type: "AAAA",
+                        })
+                    }),
                 Err(err) => Err(e!(GetRelayAddrError::DnsLookup, err)),
             }
         }
-        Some(url::Host::Ipv4(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound)),
+        Some(url::Host::Ipv4(_addr)) => Err(e!(GetRelayAddrError::NoAddrFound {
+            url: relay.url.clone(),
+            addr_type: "AAAA",
+        })),
         Some(url::Host::Ipv6(addr)) => Ok(SocketAddrV6::new(addr, port, 0, 0)),
         None => Err(e!(GetRelayAddrError::InvalidHostname)),
     }
@@ -889,7 +895,7 @@ mod tests {
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
         let dns_resolver = DnsResolver::default();
 
-        let (report, conn) = super::super::run_probe_v4(None, relay, quic_client, dns_resolver)
+        let (report, conn) = super::super::run_probe_v4(relay, quic_client, dns_resolver)
             .await
             .unwrap();
 

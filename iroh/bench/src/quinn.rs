@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -32,13 +32,15 @@ pub fn server_endpoint(
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
     server_config.transport = Arc::new(transport_config(opt.max_streams, opt.initial_mtu));
 
+    let addr = if opt.use_ipv6 {
+        IpAddr::V6(Ipv6Addr::LOCALHOST)
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
+
     let endpoint = {
         let _guard = rt.enter();
-        quinn::Endpoint::server(
-            server_config,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-        )
-        .unwrap()
+        quinn::Endpoint::server(server_config, SocketAddr::new(addr, 0)).unwrap()
     };
     let server_addr = endpoint.local_addr().unwrap();
     (server_addr, endpoint)
@@ -69,8 +71,13 @@ pub async fn connect_client(
     server_cert: CertificateDer<'_>,
     opt: Opt,
 ) -> Result<(::quinn::Endpoint, Connection)> {
-    let endpoint =
-        quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    let addr = if opt.use_ipv6 {
+        IpAddr::V6(Ipv6Addr::LOCALHOST)
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
+
+    let endpoint = quinn::Endpoint::client(SocketAddr::new(addr, 0)).unwrap();
 
     let mut roots = RootCertStore::empty();
     roots.add(server_cert).anyerr()?;
@@ -103,11 +110,11 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig
     let mut config = TransportConfig::default();
     config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
     config.initial_mtu(initial_mtu);
+    config.max_concurrent_multipath_paths(16);
 
-    // TODO: re-enable when we upgrade quinn version
-    // let mut acks = quinn::AckFrequencyConfig::default();
-    // acks.ack_eliciting_threshold(10u32.into());
-    // config.ack_frequency_config(Some(acks));
+    let mut acks = quinn::AckFrequencyConfig::default();
+    acks.ack_eliciting_threshold(10u32.into());
+    config.ack_frequency_config(Some(acks));
 
     config
 }
