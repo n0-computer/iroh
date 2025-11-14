@@ -2213,7 +2213,7 @@
 <a href=#2213 id=2213 data-nosnippet>2213</a>    #[tokio::test]
 <a href=#2214 id=2214 data-nosnippet>2214</a>    #[traced_test]
 <a href=#2215 id=2215 data-nosnippet>2215</a>    </span><span class="kw">async fn </span>metrics_smoke() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2216 id=2216 data-nosnippet>2216</a>        <span class="kw">use </span>iroh_metrics::{MetricsSource, Registry};
+<a href=#2216 id=2216 data-nosnippet>2216</a>        <span class="kw">use </span>iroh_metrics::Registry;
 <a href=#2217 id=2217 data-nosnippet>2217</a>
 <a href=#2218 id=2218 data-nosnippet>2218</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
 <a href=#2219 id=2219 data-nosnippet>2219</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Disabled)
