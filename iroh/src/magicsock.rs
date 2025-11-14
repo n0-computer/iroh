@@ -2307,11 +2307,11 @@ mod tests {
     #[traced_test]
     async fn test_two_devices_setup_teardown() -> Result {
         for i in 0..10 {
-            println!("-- round {i}");
-            println!("setting up magic stack");
+            info!("-- round {i}");
+            info!("setting up magic stack");
             let (_guard, m1, m2) = endpoint_pair().await;
 
-            println!("closing endpoints");
+            info!("closing endpoints");
             let msock1 = m1.magic_sock();
             let msock2 = m2.magic_sock();
             m1.close().await;
