@@ -2213,7 +2213,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn metrics_smoke() -> Result {
-        use iroh_metrics::{MetricsSource, Registry};
+        use iroh_metrics::Registry;
 
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
         let client = Endpoint::empty_builder(RelayMode::Disabled)
