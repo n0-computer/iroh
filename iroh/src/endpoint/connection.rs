@@ -648,7 +648,39 @@ mod sealed {
 /// Trait to track the state of a [`Connection`] at compile time.
 pub trait ConnectionState: sealed::Sealed {
     /// State-specific data stored in the [`Connection`].
-    type Data: std::fmt::Debug + Clone;
+    type Data: std::fmt::Debug + Clone + ConnectionInfo;
+}
+
+pub trait ConnectionInfo {
+    fn try_remote_id(&self) -> Option<EndpointId>;
+    fn try_alpn(&self) -> Option<&[u8]>;
+}
+
+impl ConnectionInfo for HandshakeCompletedData {
+    fn try_remote_id(&self) -> Option<EndpointId> {
+        Some(self.endpoint_id)
+    }
+    fn try_alpn(&self) -> Option<&[u8]> {
+        Some(&self.alpn)
+    }
+}
+
+impl ConnectionInfo for IncomingZeroRttData {
+    fn try_remote_id(&self) -> Option<EndpointId> {
+        None
+    }
+    fn try_alpn(&self) -> Option<&[u8]> {
+        None
+    }
+}
+
+impl ConnectionInfo for OutgoingZeroRttData {
+    fn try_remote_id(&self) -> Option<EndpointId> {
+        None
+    }
+    fn try_alpn(&self) -> Option<&[u8]> {
+        None
+    }
 }
 
 /// Marker type for a connection that has completed the handshake.
@@ -935,6 +967,18 @@ impl<T: ConnectionState> Connection<T> {
     #[inline]
     pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
         self.inner.set_max_concurrent_bi_streams(count)
+    }
+}
+
+impl<T: ConnectionState> Connection<T> {
+    /// Tries to get the remote id
+    pub fn try_remote_id(&self) -> Option<EndpointId> {
+        self.info.try_remote_id()
+    }
+
+    /// Tries to get the ALPN if available.
+    pub fn try_alpn(&self) -> Option<&[u8]> {
+        self.info.try_alpn()
     }
 }
 
