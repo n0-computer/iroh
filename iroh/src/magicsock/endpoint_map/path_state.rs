@@ -14,7 +14,7 @@ use crate::disco::TransactionId;
 ///
 /// [`transports::Addr`]: super::transports::Addr
 /// [`EndpointStateActor::paths`]: super::endpoint_state::EndpointStateActor
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(super) struct PathState {
     /// How we learned about this path, and when.
     ///
