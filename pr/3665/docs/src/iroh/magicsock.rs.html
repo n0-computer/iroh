@@ -2307,11 +2307,11 @@
 <a href=#2307 id=2307 data-nosnippet>2307</a>    #[traced_test]
 <a href=#2308 id=2308 data-nosnippet>2308</a>    </span><span class="kw">async fn </span>test_two_devices_setup_teardown() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2309 id=2309 data-nosnippet>2309</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">10 </span>{
-<a href=#2310 id=2310 data-nosnippet>2310</a>            <span class="macro">println!</span>(<span class="string">"-- round {i}"</span>);
-<a href=#2311 id=2311 data-nosnippet>2311</a>            <span class="macro">println!</span>(<span class="string">"setting up magic stack"</span>);
+<a href=#2310 id=2310 data-nosnippet>2310</a>            <span class="macro">info!</span>(<span class="string">"-- round {i}"</span>);
+<a href=#2311 id=2311 data-nosnippet>2311</a>            <span class="macro">info!</span>(<span class="string">"setting up magic stack"</span>);
 <a href=#2312 id=2312 data-nosnippet>2312</a>            <span class="kw">let </span>(_guard, m1, m2) = endpoint_pair().<span class="kw">await</span>;
 <a href=#2313 id=2313 data-nosnippet>2313</a>
-<a href=#2314 id=2314 data-nosnippet>2314</a>            <span class="macro">println!</span>(<span class="string">"closing endpoints"</span>);
+<a href=#2314 id=2314 data-nosnippet>2314</a>            <span class="macro">info!</span>(<span class="string">"closing endpoints"</span>);
 <a href=#2315 id=2315 data-nosnippet>2315</a>            <span class="kw">let </span>msock1 = m1.magic_sock();
 <a href=#2316 id=2316 data-nosnippet>2316</a>            <span class="kw">let </span>msock2 = m2.magic_sock();
 <a href=#2317 id=2317 data-nosnippet>2317</a>            m1.close().<span class="kw">await</span>;
