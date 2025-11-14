@@ -24,6 +24,10 @@ use n0_watcher::Watcher;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+pub use super::magicsock::{
+    AddEndpointAddrError, DirectAddr, DirectAddrType, PathInfo,
+    endpoint_map::{PathInfoList, Source},
+};
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
 #[cfg(not(wasm_browser))]
@@ -34,7 +38,10 @@ use crate::{
         UserData,
     },
     endpoint::presets::Preset,
-    magicsock::{self, EndpointIdMappedAddr, Handle},
+    magicsock::{
+        self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT,
+        mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
+    },
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -42,18 +49,17 @@ use crate::{
 
 mod connection;
 pub mod presets;
-mod rtt_actor;
 
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
-    ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError,
-    SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, TransportConfig, VarInt,
-    WeakConnectionHandle, WriteError,
+    PathStats, ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
+    RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId,
+    TransportConfig, VarInt, WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
-    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
+    FrameStats, TransportError, TransportErrorCode, UdpStats, Written,
     congestion::{Controller, ControllerFactory},
     crypto::{
         AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
@@ -65,10 +71,6 @@ pub use self::connection::{
     Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
     Incoming, IncomingZeroRttConnection, OutgoingZeroRttConnection, RemoteEndpointIdError,
     ZeroRttStatus,
-};
-pub use super::magicsock::{
-    AddEndpointAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
-    Source,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -142,7 +144,7 @@ impl Builder {
             secret_key: Default::default(),
             relay_mode,
             alpn_protocols: Default::default(),
-            transport_config,
+            transport_config: quinn::TransportConfig::default(),
             keylog: Default::default(),
             discovery: Default::default(),
             discovery_user_data: Default::default(),
@@ -162,12 +164,23 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint.
-    pub async fn bind(self) -> Result<Endpoint, BindError> {
+    pub async fn bind(mut self) -> Result<Endpoint, BindError> {
         let mut rng = rand::rng();
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self
             .secret_key
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
+
+        // Override some transport config settings.
+        self.transport_config
+            .keep_alive_interval(Some(HEARTBEAT_INTERVAL));
+        self.transport_config
+            .default_path_keep_alive_interval(Some(HEARTBEAT_INTERVAL));
+        self.transport_config
+            .default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
+        self.transport_config
+            .max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS);
+
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
@@ -192,8 +205,8 @@ impl Builder {
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection: self.path_selection,
+            // #[cfg(any(test, feature = "test-utils"))]
+            // path_selection: self.path_selection,
             metrics,
         };
 
@@ -201,10 +214,8 @@ impl Builder {
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 
-        let metrics = msock.metrics.magicsock.clone();
         let ep = Endpoint {
             msock,
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
             static_config: Arc::new(static_config),
         };
 
@@ -472,9 +483,7 @@ impl StaticConfig {
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     /// Handle to the magicsocket/actor
-    msock: Handle,
-    /// Handle to the actor that resets the quinn RTT estimator
-    rtt_actor: Arc<rtt_actor::RttHandle>,
+    pub(crate) msock: Handle,
     /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     static_config: Arc<StaticConfig>,
 }
@@ -676,16 +685,24 @@ impl Endpoint {
         );
 
         if !endpoint_addr.is_empty() {
-            self.add_endpoint_addr(endpoint_addr.clone(), Source::App)?;
+            self.add_endpoint_addr(endpoint_addr.clone(), Source::App)
+                .await?;
         }
         let endpoint_id = endpoint_addr.id;
         let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
         let relay_url = endpoint_addr.relay_urls().next().cloned();
+        trace!(
+            dst_endpoint_id = %endpoint_id.fmt_short(),
+            ?relay_url,
+            ?ip_addresses,
+            "connecting",
+        );
 
-        // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
-        // address.  Start discovery for this endpoint if it's enabled and we have no valid or
-        // verified address information for this endpoint.  Dropping the discovery cancels any
-        // still running task.
+        // When we start a connection we want to send the QUIC Initial packets on all the
+        // known paths for the remote endpoint.  For this we use an EndpointIdMappedAddr as
+        // destination for Quinn.  Start discovery for this endpoint if it's enabled and we have
+        // no valid or verified address information for this endpoint.  Dropping the discovery
+        // cancels any still running task.
         let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(endpoint_addr)
             .await?;
@@ -697,12 +714,6 @@ impl Endpoint {
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
 
-        debug!(
-            ?mapped_addr,
-            ?ip_addresses,
-            ?relay_url,
-            "Attempting connection..."
-        );
         let client_config = {
             let mut alpn_protocols = vec![alpn.to_vec()];
             alpn_protocols.extend(options.additional_alpns);
@@ -715,12 +726,12 @@ impl Endpoint {
             client_config
         };
 
+        let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(endpoint_id);
-        let connect = self.msock.endpoint().connect_with(
-            client_config,
-            mapped_addr.private_socket_addr(),
-            server_name,
-        )?;
+        let connect = self
+            .msock
+            .endpoint()
+            .connect_with(client_config, dest_addr, server_name)?;
 
         Ok(Connecting::new(
             connect,
@@ -769,7 +780,7 @@ impl Endpoint {
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     /// [`RelayUrl`]: crate::RelayUrl
-    pub(crate) fn add_endpoint_addr(
+    pub(crate) async fn add_endpoint_addr(
         &self,
         endpoint_addr: EndpointAddr,
         source: Source,
@@ -779,7 +790,7 @@ impl Endpoint {
             endpoint_addr.id != self.id(),
             AddEndpointAddrError::OwnAddress
         );
-        self.msock.add_endpoint_addr(endpoint_addr, source)
+        self.msock.add_endpoint_addr(endpoint_addr, source).await
     }
 
     // # Getter methods for properties of this Endpoint itself.
@@ -952,38 +963,11 @@ impl Endpoint {
     //
     // Partially they return things passed into the builder.
 
-    /// Returns a [`Watcher`] that reports the current connection type and any changes for
-    /// given remote endpoint.
-    ///
-    /// This watcher allows observing a stream of [`ConnectionType`] items by calling
-    /// [`Watcher::stream()`]. If the underlying connection to a remote endpoint changes, it will
-    /// yield a new item.  These connection changes are when the connection switches between
-    /// using the Relay server and a direct connection.
-    ///
-    /// Note that this does not guarantee each connection change is yielded in the stream.
-    /// If the connection type changes several times before this stream is polled, only the
-    /// last recorded state is returned.  This can be observed e.g. right at the start of a
-    /// connection when the switch from a relayed to a direct connection can be so fast that
-    /// the relayed state is never exposed.
-    ///
-    /// If there is currently a connection with the remote endpoint, then using [`Watcher::get`]
-    /// will immediately return either [`ConnectionType::Relay`], [`ConnectionType::Direct`]
-    /// or [`ConnectionType::Mixed`].
-    ///
-    /// It is possible for the connection type to be [`ConnectionType::None`] if you've
-    /// recently connected to this endpoint id but previous methods of reaching the endpoint have
-    /// become inaccessible.
-    ///
-    /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub fn conn_type(&self, endpoint_id: EndpointId) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.msock.conn_type(endpoint_id)
-    }
-
     /// Returns the currently lowest latency for this endpoint.
     ///
     /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
-        self.msock.latency(endpoint_id)
+    pub async fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
+        self.msock.latency(endpoint_id).await
     }
 
     /// Returns the DNS resolver used in this [`Endpoint`].
@@ -1199,29 +1183,6 @@ impl Endpoint {
 
     // # Remaining private methods
 
-    /// Checks if the given `EndpointId` needs discovery.
-    pub(crate) fn needs_discovery(&self, endpoint_id: EndpointId, max_age: Duration) -> bool {
-        match self.msock.remote_info(endpoint_id) {
-            // No info means no path to endpoint -> start discovery.
-            None => true,
-            Some(info) => {
-                match (
-                    info.last_received(),
-                    info.relay_url.as_ref().and_then(|r| r.last_alive),
-                ) {
-                    // No path to endpoint -> start discovery.
-                    (None, None) => true,
-                    // If we haven't received on direct addresses or the relay for MAX_AGE,
-                    // start discovery.
-                    (Some(elapsed), Some(elapsed_relay)) => {
-                        elapsed > max_age && elapsed_relay > max_age
-                    }
-                    (Some(elapsed), _) | (_, Some(elapsed)) => elapsed > max_age,
-                }
-            }
-        }
-    }
-
     /// Return the quic mapped address for this `endpoint_id` and possibly start discovery
     /// services if discovery is enabled on this magic endpoint.
     ///
@@ -1243,25 +1204,20 @@ impl Endpoint {
 
         // Only return a mapped addr if we have some way of dialing this endpoint, in other
         // words, we have either a relay URL or at least one direct address.
-        let addr = if self.msock.has_send_address(endpoint_id) {
-            self.msock.get_mapping_addr(endpoint_id)
+        let addr = if self.msock.has_send_address(endpoint_id).await {
+            Some(self.msock.get_endpoint_mapped_addr(endpoint_id))
         } else {
             None
         };
         match addr {
-            Some(addr) => {
-                // We have some way of dialing this endpoint, but that doesn't actually mean
-                // we can actually connect to any of these addresses.
-                // Therefore, we will invoke the discovery service if we haven't received from the
-                // endpoint on any of the existing paths recently.
-                // If the user provided addresses in this connect call, we will add a delay
-                // followed by a recheck before starting the discovery, to give the magicsocket a
-                // chance to test the newly provided addresses.
-                let delay = (!endpoint_addr.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
-                let discovery = DiscoveryTask::maybe_start_after_delay(self, endpoint_id, delay)
-                    .ok()
-                    .flatten();
-                Ok((addr, discovery))
+            Some(maddr) => {
+                // We have some way of dialing this endpoint, but that doesn't mean we can
+                // connect to any of these addresses.  Start discovery after a small delay.
+                let discovery =
+                    DiscoveryTask::start_after_delay(self, endpoint_id, DISCOVERY_WAIT_PERIOD)
+                        .ok()
+                        .flatten();
+                Ok((maddr, discovery))
             }
 
             None => {
@@ -1276,11 +1232,9 @@ impl Endpoint {
                     .first_arrived()
                     .await
                     .map_err(|err| e!(GetMappingAddressError::Discover, err))?;
-                if let Some(addr) = self.msock.get_mapping_addr(endpoint_id) {
-                    Ok((addr, Some(discovery)))
-                } else {
-                    Err(e!(GetMappingAddressError::NoAddress))
-                }
+
+                let addr = self.msock.get_endpoint_mapped_addr(endpoint_id);
+                Ok((addr, Some(discovery)))
             }
         }
     }
@@ -1445,18 +1399,19 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
+    use n0_future::{BufferedStreamExt, StreamExt, stream, time};
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
-    use tracing::{Instrument, error_span, info, info_span};
+    use tokio::sync::oneshot;
+    use tracing::{Instrument, error_span, info, info_span, instrument};
     use tracing_test::traced_test;
 
     use super::Endpoint;
     use crate::{
-        RelayMode,
+        RelayMap, RelayMode,
         discovery::static_provider::StaticProvider,
-        endpoint::{ConnectOptions, Connection, ConnectionType},
+        endpoint::{ConnectOptions, Connection},
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{run_relay_server, run_relay_server_with},
     };
@@ -1476,6 +1431,7 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Connecting to ourself"));
+
         Ok(())
     }
 
@@ -1731,6 +1687,267 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    async fn endpoint_two_direct_only() -> Result {
+        // Connect two endpoints on the same network, without a relay server, without
+        // discovery.
+        let ep1 = {
+            let span = info_span!("server");
+            let _guard = span.enter();
+            Endpoint::builder()
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .relay_mode(RelayMode::Disabled)
+                .bind()
+                .await?
+        };
+        let ep2 = {
+            let span = info_span!("client");
+            let _guard = span.enter();
+            Endpoint::builder()
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .relay_mode(RelayMode::Disabled)
+                .bind()
+                .await?
+        };
+        let ep1_nodeaddr = ep1.addr();
+
+        #[instrument(name = "client", skip_all)]
+        async fn connect(ep: Endpoint, dst: EndpointAddr) -> Result<quinn::ConnectionError> {
+            info!(me = %ep.id().fmt_short(), "client starting");
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+            let mut send = conn.open_uni().await.anyerr()?;
+            send.write_all(b"hello").await.anyerr()?;
+            send.finish().anyerr()?;
+            Ok(conn.closed().await)
+        }
+
+        #[instrument(name = "server", skip_all)]
+        async fn accept(ep: Endpoint, src: EndpointId) -> Result {
+            info!(me = %ep.id().fmt_short(), "server starting");
+            let conn = ep.accept().await.anyerr()?.await.anyerr()?;
+            let node_id = conn.remote_id();
+            assert_eq!(node_id, src);
+            let mut recv = conn.accept_uni().await.anyerr()?;
+            let msg = recv.read_to_end(100).await.anyerr()?;
+            assert_eq!(msg, b"hello");
+            // Dropping the connection closes it just fine.
+            Ok(())
+        }
+
+        let ep1_accept = tokio::spawn(accept(ep1.clone(), ep2.id()));
+        let ep2_connect = tokio::spawn(connect(ep2.clone(), ep1_nodeaddr));
+
+        ep1_accept.await.anyerr()??;
+        let conn_closed = dbg!(ep2_connect.await.anyerr()??);
+        assert!(matches!(
+            conn_closed,
+            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_two_relay_only_becomes_direct() -> Result {
+        // Connect two endpoints on the same network, via a relay server, without
+        // discovery.  Wait until there is a direct connection.
+        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
+        let (node_addr_tx, node_addr_rx) = oneshot::channel();
+
+        #[instrument(name = "client", skip_all)]
+        async fn connect(
+            relay_map: RelayMap,
+            node_addr_rx: oneshot::Receiver<EndpointAddr>,
+        ) -> Result<quinn::ConnectionError> {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+            let secret = SecretKey::generate(&mut rng);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            info!(me = %ep.id().fmt_short(), "client starting");
+            let dst = node_addr_rx.await.anyerr()?;
+
+            info!(me = %ep.id().fmt_short(), "client connecting");
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+            let mut send = conn.open_uni().await.anyerr()?;
+            send.write_all(b"hello").await.anyerr()?;
+            let mut paths = conn.paths().stream();
+            info!("Waiting for direct connection");
+            while let Some(infos) = paths.next().await {
+                info!(?infos, "new PathInfos");
+                if infos.iter().any(|info| info.is_ip()) {
+                    break;
+                }
+            }
+            info!("Have direct connection");
+            send.write_all(b"close please").await.anyerr()?;
+            send.finish().anyerr()?;
+            Ok(conn.closed().await)
+        }
+
+        #[instrument(name = "server", skip_all)]
+        async fn accept(
+            relay_map: RelayMap,
+            node_addr_tx: oneshot::Sender<EndpointAddr>,
+        ) -> Result {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
+            let secret = SecretKey::generate(&mut rng);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            ep.online().await;
+            let mut node_addr = ep.addr();
+            node_addr.addrs.retain(|addr| addr.is_relay());
+            node_addr_tx.send(node_addr).unwrap();
+
+            info!(me = %ep.id().fmt_short(), "server starting");
+            let conn = ep.accept().await.anyerr()?.await.anyerr()?;
+            // let node_id = conn.remote_node_id()?;
+            // assert_eq!(node_id, src);
+            let mut recv = conn.accept_uni().await.anyerr()?;
+            let mut msg = [0u8; 5];
+            recv.read_exact(&mut msg).await.anyerr()?;
+            assert_eq!(&msg, b"hello");
+            info!("received hello");
+            let msg = recv.read_to_end(100).await.anyerr()?;
+            assert_eq!(msg, b"close please");
+            info!("received 'close please'");
+            // Dropping the connection closes it just fine.
+            Ok(())
+        }
+
+        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
+        let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
+
+        server_task.await.anyerr()??;
+        let conn_closed = dbg!(client_task.await.anyerr()??);
+        assert!(matches!(
+            conn_closed,
+            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_two_direct_add_relay() -> Result {
+        // Connect two endpoints on the same network, without relay server and without
+        // discovery.  Add a relay connection later.
+        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
+        let (node_addr_tx, node_addr_rx) = oneshot::channel();
+
+        #[instrument(name = "client", skip_all)]
+        async fn connect(
+            relay_map: RelayMap,
+            node_addr_rx: oneshot::Receiver<EndpointAddr>,
+        ) -> Result<()> {
+            let secret = SecretKey::from([0u8; 32]);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            info!(me = %ep.id().fmt_short(), "client starting");
+            let dst = node_addr_rx.await.anyerr()?;
+
+            info!(me = %ep.id().fmt_short(), "client connecting");
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+
+            // We should be connected via IP, because it is faster than the relay server.
+            // TODO: Maybe not panic if this is not true?
+            let path_info = conn.paths().get();
+            assert_eq!(path_info.len(), 1);
+            assert!(path_info.iter().next().unwrap().is_ip());
+
+            let mut paths = conn.paths().stream();
+            time::timeout(Duration::from_secs(5), async move {
+                while let Some(infos) = paths.next().await {
+                    info!(?infos, "new PathInfos");
+                    if infos.iter().any(|info| info.is_relay()) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .anyerr()?;
+
+            // wait for the server to signal it has the relay connection
+            let mut stream = conn.accept_uni().await.anyerr()?;
+            stream.read_to_end(100).await.anyerr()?;
+
+            info!("client closing");
+            conn.close(0u8.into(), b"");
+            ep.close().await;
+            Ok(())
+        }
+
+        #[instrument(name = "server", skip_all)]
+        async fn accept(
+            relay_map: RelayMap,
+            node_addr_tx: oneshot::Sender<EndpointAddr>,
+        ) -> Result<quinn::ConnectionError> {
+            let secret = SecretKey::from([1u8; 32]);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            ep.online().await;
+            let node_addr = ep.addr();
+            node_addr_tx.send(node_addr).unwrap();
+
+            info!(me = %ep.id().fmt_short(), "server starting");
+            let conn = ep.accept().await.anyerr()?.await.anyerr()?;
+
+            // Wait for a relay connection to be added.  Client does all the asserting here,
+            // we just want to wait so we get to see all the mechanics of the connection
+            // being added on this side too.
+            let mut paths = conn.paths().stream();
+            time::timeout(Duration::from_secs(5), async move {
+                while let Some(infos) = paths.next().await {
+                    info!(?infos, "new PathInfos");
+                    if infos.iter().any(|path| path.is_relay()) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .anyerr()?;
+
+            let mut stream = conn.open_uni().await.anyerr()?;
+            stream.write_all(b"have relay").await.anyerr()?;
+
+            Ok(conn.closed().await)
+        }
+
+        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
+        let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
+
+        client_task.await.anyerr()??;
+        let conn_closed = dbg!(server_task.await.anyerr()??);
+        assert!(matches!(
+            conn_closed,
+            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+        ));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
     async fn endpoint_relay_map_change() -> Result {
         let (relay_map, relay_url, _guard1) = run_relay_server().await?;
         let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
@@ -1932,92 +2149,6 @@ mod tests {
         p2_accept.await.anyerr()??;
         p1_connect.await.anyerr()??;
         p2_connect.await.anyerr()??;
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn endpoint_conn_type_becomes_direct() -> Result {
-        const TIMEOUT: Duration = std::time::Duration::from_secs(15);
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let ep1_secret_key = SecretKey::generate(&mut rng);
-        let ep2_secret_key = SecretKey::generate(&mut rng);
-        let ep1 = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-            .secret_key(ep1_secret_key)
-            .insecure_skip_relay_cert_verify(true)
-            .alpns(vec![TEST_ALPN.to_vec()])
-            .bind()
-            .await?;
-        let ep2 = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-            .secret_key(ep2_secret_key)
-            .insecure_skip_relay_cert_verify(true)
-            .alpns(vec![TEST_ALPN.to_vec()])
-            .bind()
-            .await?;
-
-        async fn wait_for_conn_type_direct(ep: &Endpoint, endpoint_id: EndpointId) -> Result {
-            let mut stream = ep
-                .conn_type(endpoint_id)
-                .expect("connection exists")
-                .stream();
-            let src = ep.id().fmt_short();
-            let dst = endpoint_id.fmt_short();
-            while let Some(conn_type) = stream.next().await {
-                tracing::info!(me = %src, dst = %dst, conn_type = ?conn_type);
-                if matches!(conn_type, ConnectionType::Direct(_)) {
-                    return Ok(());
-                }
-            }
-            n0_error::bail_any!("conn_type stream ended before `ConnectionType::Direct`");
-        }
-
-        async fn accept(ep: &Endpoint) -> Result<Connection> {
-            let incoming = ep.accept().await.expect("ep closed");
-            let conn = incoming.await.anyerr()?;
-            let endpoint_id = conn.remote_id();
-            tracing::info!(endpoint_id=%endpoint_id.fmt_short(), "accepted connection");
-            Ok(conn)
-        }
-
-        let ep1_endpointid = ep1.id();
-        let ep2_endpointid = ep2.id();
-
-        let ep1_endpointaddr = ep1.addr();
-        tracing::info!(
-            "endpoint id 1 {ep1_endpointid}, relay URL {:?}",
-            ep1_endpointaddr.relay_urls().next()
-        );
-        tracing::info!("endpoint id 2 {ep2_endpointid}");
-
-        let ep1_side = tokio::time::timeout(TIMEOUT, async move {
-            let conn = accept(&ep1).await?;
-            let mut send = conn.open_uni().await.anyerr()?;
-            wait_for_conn_type_direct(&ep1, ep2_endpointid).await?;
-            send.write_all(b"Conn is direct").await.anyerr()?;
-            send.finish().anyerr()?;
-            conn.closed().await;
-            Ok::<(), Error>(())
-        });
-
-        let ep2_side = tokio::time::timeout(TIMEOUT, async move {
-            let conn = ep2.connect(ep1_endpointaddr, TEST_ALPN).await?;
-            let mut recv = conn.accept_uni().await.anyerr()?;
-            wait_for_conn_type_direct(&ep2, ep1_endpointid).await?;
-            let read = recv.read_to_end(100).await.anyerr()?;
-            assert_eq!(read, b"Conn is direct".to_vec());
-            conn.close(0u32.into(), b"done");
-            conn.closed().await;
-            Ok::<(), Error>(())
-        });
-
-        let res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
-        let res_ep2 = AbortOnDropHandle::new(tokio::spawn(ep2_side));
-
-        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).anyerr()?;
-        r1.anyerr()??;
-        r2.anyerr()??;
 
         Ok(())
     }

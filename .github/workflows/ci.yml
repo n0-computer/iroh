@@ -338,4 +338,4 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: pip install --user codespell[toml]
-      - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md
+      - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl,keep-alives --skip=CHANGELOG.md
