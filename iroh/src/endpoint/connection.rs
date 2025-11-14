@@ -475,10 +475,8 @@ impl Future for Connecting {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
                 let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                match conn_from_quinn_conn(quinn_conn, &self.ep) {
-                    Err(err) => return Poll::Ready(Err(err)),
-                    Ok(fut) => self.register_with_magicsock = Some(Box::pin(fut.err_into())),
-                };
+                let fut = conn_from_quinn_conn(quinn_conn, &self.ep)?;
+                self.register_with_magicsock = Some(Box::pin(fut.err_into()));
             }
         }
     }
