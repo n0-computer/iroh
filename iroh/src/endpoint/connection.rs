@@ -605,11 +605,11 @@ impl OutgoingZeroRttConnection {
     /// the handshake will error and any data sent should be re-sent on a
     /// new stream.
     ///
-    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// This may fail with [`ConnectingError::ConnectionError`], if there was
     /// some general failure with the connection, such as a network timeout since
     /// we initiated the connection.
     ///
-    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
     /// doesn't use the right TLS authentication, which usually every iroh endpoint
     /// uses and requires.
     ///
@@ -915,11 +915,11 @@ pub struct IncomingZeroRttConnection {
 impl IncomingZeroRttConnection {
     /// Waits until the full handshake occurs and then returns a [`Connection`].
     ///
-    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// This may fail with [`ConnectingError::ConnectionError`], if there was
     /// some general failure with the connection, such as a network timeout since
     /// we accepted the connection.
     ///
-    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
     /// doesn't use the right TLS authentication, which usually every iroh endpoint
     /// uses and requires.
     ///
