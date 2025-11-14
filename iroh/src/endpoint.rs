@@ -1863,6 +1863,7 @@ mod tests {
 
             info!(me = %ep.id().fmt_short(), "client connecting");
             let conn = ep.connect(dst, TEST_ALPN).await?;
+            info!(me = %ep.id().fmt_short(), "client connected");
 
             // We should be connected via IP, because it is faster than the relay server.
             // TODO: Maybe not panic if this is not true?
@@ -1875,6 +1876,7 @@ mod tests {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
                     if infos.iter().any(|info| info.is_relay()) {
+                        info!("client has a relay path");
                         break;
                     }
                 }
@@ -1911,6 +1913,7 @@ mod tests {
 
             info!(me = %ep.id().fmt_short(), "server starting");
             let conn = ep.accept().await.anyerr()?.await.anyerr()?;
+            info!(me = %ep.id().fmt_short(), "server accepted connection");
 
             // Wait for a relay connection to be added.  Client does all the asserting here,
             // we just want to wait so we get to see all the mechanics of the connection
@@ -1920,6 +1923,7 @@ mod tests {
                 while let Some(infos) = paths.next().await {
                     info!(?infos, "new PathInfos");
                     if infos.iter().any(|path| path.is_relay()) {
+                        info!("server has a relay path");
                         break;
                     }
                 }
@@ -1929,6 +1933,8 @@ mod tests {
 
             let mut stream = conn.open_uni().await.anyerr()?;
             stream.write_all(b"have relay").await.anyerr()?;
+            stream.finish().anyerr()?;
+            info!("waiting conn.closed()");
 
             Ok(conn.closed().await)
         }

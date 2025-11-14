@@ -1521,7 +1521,7 @@ mod tests {
     use n0_future::StreamExt;
     use n0_watcher::Watcher;
     use rand::SeedableRng;
-    use tracing::{Instrument, error_span, info_span, trace_span};
+    use tracing::{Instrument, error_span, info, info_span, trace_span};
     use tracing_test::traced_test;
 
     use super::Endpoint;
@@ -1740,8 +1740,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_paths_watcher() -> Result {
-        tracing_subscriber::fmt::init();
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, _relay_map, _guard) = run_relay_server().await?;
@@ -1760,13 +1760,13 @@ mod tests {
 
         server.online().await;
         let server_addr = server.addr();
-        tracing::info!("server addr: {server_addr:?}");
+        info!("server addr: {server_addr:?}");
 
         let (conn_client, conn_server) = tokio::join!(
             async { client.connect(server_addr, ALPN).await.unwrap() },
             async { server.accept().await.unwrap().await.unwrap() }
         );
-        tracing::info!("connected");
+        info!("connected");
         let mut paths_client = conn_client.paths().stream();
         let mut paths_server = conn_server.paths().stream();
 
@@ -1778,12 +1778,12 @@ mod tests {
         ) {
             loop {
                 let paths = stream.next().await.expect("paths stream ended");
-                tracing::info!(?paths, "paths");
+                info!(?paths, "paths");
                 if paths.len() >= 2
                     && paths.iter().any(PathInfo::is_relay)
                     && paths.iter().any(PathInfo::is_ip)
                 {
-                    tracing::info!("break");
+                    info!("break");
                     return;
                 }
             }
@@ -1806,7 +1806,7 @@ mod tests {
         );
 
         // Close the client connection.
-        tracing::info!("close client conn");
+        info!("close client conn");
         conn_client.close(0u32.into(), b"");
 
         // Verify that the path watch streams close.
