@@ -26,7 +26,7 @@ use tracing::{Instrument, Level, debug, error, event, info_span, instrument, tra
 
 use self::{
     guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
-    path_state::RemotePathState,
+    path_state::{PathState, RemotePathState},
 };
 use super::Source;
 use crate::{
@@ -50,15 +50,15 @@ const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 mod guarded_channel;
 mod path_state;
 
-// TODO: use this
-// /// Number of addresses that are not active that we keep around per endpoint.
-// ///
-// /// See [`RemoteState::prune_direct_addresses`].
-// pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
+/// Number of addresses that are not active that we keep around per endpoint.
+///
+/// See [`EndpointState::prune_ip_addresses`].
+pub(super) const MAX_INACTIVE_IP_ADDRESSES: usize = 20;
 
-// TODO: use this
-// /// How long since an endpoint path was last alive before it might be pruned.
-// const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
+/// Max duration of how long ago we learned about this source before we are willing
+/// to prune it, if the path for this ip address is inactive.
+/// TODO(ramfox): fix this comment it's not clear enough
+const LAST_SOURCE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 
 // TODO: use this
 // /// The latency at or under which we don't try to upgrade to a better path.
@@ -1326,4 +1326,84 @@ fn to_transports_addr(
             None
         }
     })
+}
+
+fn prune_paths(
+    paths: &mut FxHashMap<transports::Addr, PathState>,
+    pending: &VecDeque<transports::Addr>,
+    selected_path: &Option<transports::Addr>,
+    open_paths: &Vec<transports::Addr>,
+) {
+    let ip_paths: BTreeSet<_> = paths
+        .keys()
+        .filter(|p| {
+            if p.is_ip() {
+                return true;
+            }
+            return false;
+        })
+        .cloned()
+        .collect();
+    // if the total number of ip paths is less than the allowed number of inactive
+    // paths, just return early;
+    if ip_paths.len() < MAX_INACTIVE_IP_ADDRESSES {
+        return;
+    }
+
+    let mut protected_paths = std::collections::BTreeSet::new();
+    for addr in pending {
+        protected_paths.insert(addr.clone());
+    }
+    if let Some(path) = selected_path {
+        protected_paths.insert(path.clone());
+    }
+    for path in open_paths {
+        protected_paths.insert(path.clone());
+    }
+
+    let inactive_paths: Vec<_> = ip_paths.difference(&protected_paths).collect();
+
+    if inactive_paths.len() < MAX_INACTIVE_IP_ADDRESSES {
+        return;
+    }
+
+    let mut keep_paths = Vec::new();
+    let now = Instant::now();
+    // if the last instance in the source was CONST time ago, it can be pruned
+    for (addr, state) in paths {
+        if inactive_paths.contains(&&addr) {
+            let mut is_expired = true;
+            for (_source, instant) in &state.sources {
+                // it's been less than LAST_SOURCE_PRUNE_DURATION since we
+                // last learned about this source
+                if *instant + LAST_SOURCE_PRUNE_DURATION < now {
+                    is_expired = false;
+                    break;
+                }
+            }
+            if !is_expired {
+                keep_paths.push(addr);
+            }
+            continue;
+        } else {
+            keep_paths.push(addr);
+        }
+    }
+
+    *paths = paths
+        .iter()
+        .to_owned()
+        .filter(|(addr, _)| keep_paths.contains(addr))
+        .map(|(addr, state)| (addr.clone(), state.clone()))
+        .collect();
+}
+
+#[cfg(test)]
+mod tests {
+    use n0_error::Result;
+
+    #[test]
+    fn test_prune_paths() -> Result {
+        todo!();
+    }
 }
