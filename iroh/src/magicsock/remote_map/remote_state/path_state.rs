@@ -10,10 +10,10 @@ use crate::disco::TransactionId;
 /// The state of a single path to the remote endpoint.
 ///
 /// Each path is identified by the destination [`transports::Addr`] and they are stored in
-/// the [`EndpointStateActor::paths`] map.
+/// the [`RemoteStateActor::paths`] map.
 ///
 /// [`transports::Addr`]: super::transports::Addr
-/// [`EndpointStateActor::paths`]: super::endpoint_state::EndpointStateActor
+/// [`RemoteStateActor::paths`]: super::remote_state::RemoteStateActor
 #[derive(Debug, Default)]
 pub(super) struct PathState {
     /// How we learned about this path, and when.
