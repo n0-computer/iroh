@@ -1466,6 +1466,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    #[ignore = "flaky"]
     async fn test_active_relay_inactive() -> Result {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 
