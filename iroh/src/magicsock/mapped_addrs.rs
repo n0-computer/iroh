@@ -7,7 +7,7 @@
 use std::{
     fmt,
     hash::Hash,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -32,6 +32,23 @@ const RELAY_MAPPED_SUBNET: [u8; 2] = [0, 1];
 
 /// The Subnet ID for [`EndpointIdMappedAddr`].
 const ENDPOINT_ID_SUBNET: [u8; 2] = [0; 2];
+
+/// A default fake addr, using the maximum addr that the internal fake addrs could be using.
+pub const DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
+    Ipv6Addr::new(
+        u16::from_be_bytes([ADDR_PREFIXL, 21]),
+        u16::from_be_bytes([7, 10]),
+        u16::from_be_bytes([81, 11]),
+        u16::from_be_bytes([0, 0]),
+        u16::MAX,
+        u16::MAX,
+        u16::MAX,
+        u16::MAX,
+    ),
+    MAPPED_PORT,
+    0,
+    0,
+);
 
 /// The dummy port used for all mapped addresses.
 ///

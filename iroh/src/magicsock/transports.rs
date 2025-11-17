@@ -9,12 +9,14 @@ use std::{
 
 use bytes::Bytes;
 use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{MagicSock, endpoint_map::EndpointStateMessage, mapped_addrs::MultipathMappedAddr};
-use crate::net_report::Report;
+use crate::{metrics::EndpointMetrics, net_report::Report};
 
 #[cfg(not(wasm_browser))]
 mod ip;
@@ -60,19 +62,89 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     Vec<Addr>,
 >;
 
+/// Available transport configurations.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum TransportConfig {
+    /// IP based transport
+    #[cfg(not(wasm_browser))]
+    Ip {
+        /// The address this transport will bind on.
+        bind_addr: SocketAddr,
+    },
+    /// Relay transport
+    Relay {
+        /// The [`RelayMap`] used for this relay.
+        relay_map: RelayMap,
+    },
+}
+impl TransportConfig {
+    /// Configures a default IPv4 transport, listening on `0.0.0.0:0`.
+    #[cfg(not(wasm_browser))]
+    pub fn default_ipv4() -> Self {
+        use std::net::{Ipv4Addr, SocketAddrV4};
+
+        Self::Ip {
+            bind_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+        }
+    }
+
+    /// Configures a default IPv6 transport, listening on `[::]:0`.
+    #[cfg(not(wasm_browser))]
+    pub fn default_ipv6() -> Self {
+        Self::Ip {
+            bind_addr: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
+        }
+    }
+}
+
+#[cfg(not(wasm_browser))]
+fn bind_ip(configs: &[TransportConfig], metrics: &EndpointMetrics) -> io::Result<Vec<IpTransport>> {
+    let mut transports = Vec::new();
+    for config in configs {
+        if let TransportConfig::Ip { bind_addr } = config {
+            match IpTransport::bind(*bind_addr, metrics.magicsock.clone()) {
+                Ok(transport) => {
+                    transports.push(transport);
+                }
+                Err(err) => {
+                    if bind_addr.is_ipv6() {
+                        tracing::info!("bind ignoring IPv6 bind failure: {:?}", err);
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(transports)
+}
+
 impl Transports {
-    /// Creates a new transports structure.
-    pub(crate) fn new(
-        #[cfg(not(wasm_browser))] ip: Vec<IpTransport>,
-        relay: Vec<RelayTransport>,
-    ) -> Self {
-        Self {
+    /// Binds the  transports.
+    pub(crate) fn bind(
+        configs: &[TransportConfig],
+        relay_actor_config: RelayActorConfig,
+        metrics: &EndpointMetrics,
+        shutdown_token: CancellationToken,
+    ) -> io::Result<Self> {
+        #[cfg(not(wasm_browser))]
+        let ip = bind_ip(configs, metrics)?;
+
+        let relay = configs
+            .iter()
+            .filter(|t| matches!(t, TransportConfig::Relay { .. }))
+            .map(|_c| RelayTransport::new(relay_actor_config.clone(), shutdown_token.child_token()))
+            .collect();
+
+        Ok(Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
             poll_recv_counter: Default::default(),
             source_addrs: Default::default(),
-        }
+        })
     }
 
     pub(crate) fn poll_recv(
@@ -560,13 +632,16 @@ impl quinn::AsyncUdpSocket for MagicTransport {
 
     #[cfg(not(wasm_browser))]
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs: Vec<_> = self
-            .transports
-            .local_addrs()
+        let local_addrs = self.transports.local_addrs();
+        let addrs: Vec<_> = local_addrs
             .into_iter()
-            .filter_map(|addr| {
-                let addr: SocketAddr = addr.into_socket_addr()?;
-                Some(addr)
+            .map(|addr| {
+                use crate::magicsock::mapped_addrs::DEFAULT_FAKE_ADDR;
+
+                match addr {
+                    Addr::Ip(addr) => addr,
+                    Addr::Relay(..) => DEFAULT_FAKE_ADDR.into(),
+                }
             })
             .collect();
 
@@ -579,6 +654,12 @@ impl quinn::AsyncUdpSocket for MagicTransport {
             return Ok(SocketAddr::new(ip, addr.port()));
         }
 
+        if !self.transports.relay.is_empty() {
+            // pretend we have an address to make sure things are not too sad during startup
+            use crate::magicsock::mapped_addrs::DEFAULT_FAKE_ADDR;
+
+            return Ok(DEFAULT_FAKE_ADDR.into());
+        }
         Err(io::Error::other("no valid address available"))
     }
 
