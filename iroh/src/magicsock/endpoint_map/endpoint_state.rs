@@ -726,16 +726,7 @@ impl EndpointStateActor {
     /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
     #[instrument(skip_all)]
     async fn do_holepunching(&mut self) {
-        let Some(relay_addr) = self
-            .paths
-            .addrs()
-            .filter_map(|addr| match addr {
-                transports::Addr::Ip(_) => None,
-                transports::Addr::Relay(_, _) => Some(addr),
-            })
-            .next()
-            .cloned()
-        else {
+        let Some(relay_addr) = self.paths.addrs().find(|addr| addr.is_relay()).cloned() else {
             warn!("holepunching requested but have no relay address");
             return;
         };
@@ -1424,7 +1415,7 @@ impl Future for OnClosed {
     }
 }
 
-/// Converts an interator of [`TransportAddr'] into an iterator of [`transports::Addr`].
+/// Converts an iterator of [`TransportAddr'] into an iterator of [`transports::Addr`].
 fn to_transports_addr(
     endpoint_id: EndpointId,
     addrs: impl IntoIterator<Item = TransportAddr>,

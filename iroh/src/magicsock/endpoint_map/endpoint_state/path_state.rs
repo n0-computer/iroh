@@ -117,7 +117,7 @@ impl EndpointPathState {
         self.paths.keys()
     }
 
-    /// Replies to all pending requests from [`EndpointStateMessage::ResolveRemote`].
+    /// Replies to all pending resolve requests.
     ///
     /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
     /// otherwise with the provided `discovery_error` or with [`DiscoveryError::NoResults`].
@@ -139,10 +139,7 @@ impl EndpointPathState {
 /// The state of a single path to the remote endpoint.
 ///
 /// Each path is identified by the destination [`transports::Addr`] and they are stored in
-/// the [`EndpointStateActor::paths`] map.
-///
-/// [`transports::Addr`]: super::transports::Addr
-/// [`EndpointStateActor::paths`]: super::endpoint_state::EndpointStateActor
+/// the [`EndpointPathState::paths`] map.
 #[derive(Debug, Default)]
 pub(super) struct PathState {
     /// How we learned about this path, and when.
