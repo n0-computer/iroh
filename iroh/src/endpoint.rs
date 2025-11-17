@@ -551,7 +551,7 @@ pub enum ConnectWithOptsError {
     },
     #[error("Internal consistency error")]
     InternalConsistencyError {
-        /// Private source type, cannot be accessed publicly.
+        /// Private source type, cannot be created publicly.
         source: EndpointStateActorStoppedError,
     },
 }

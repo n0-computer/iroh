@@ -362,7 +362,7 @@ pub enum ConnectingError {
     HandshakeFailure { source: AuthenticationError },
     #[error("internal consistency error")]
     InternalConsistencyError {
-        /// Private source type, cannot be accessed publicly.
+        /// Private source type, cannot be created publicly.
         source: EndpointStateActorStoppedError,
     },
 }
