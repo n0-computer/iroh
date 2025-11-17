@@ -29,7 +29,7 @@ subsequent discoveries are scheduled to run when the interval has elapsed, start
 last time when MTU discovery completed.</p>
 <p>Since the search space for MTUs is quite big (the smallest possible MTU is 1200, and the highest
 is 65527), Quinn performs a binary search to keep the number of probes as low as possible. The
-lower bound of the search is equal to <a href="struct.TransportConfig.html#method.initial_mtu" title="method iroh::endpoint::TransportConfig::initial_mtu"><code>TransportConfig::initial_mtu</code></a> in the
+lower bound of the search is equal to <a href="struct.QuinnTransportConfig.html#method.initial_mtu" title="method iroh::endpoint::QuinnTransportConfig::initial_mtu"><code>TransportConfig::initial_mtu</code></a> in the
 initial MTU discovery run, and is equal to the currently discovered MTU in subsequent runs. The
 upper bound is determined by the minimum of <a href="struct.MtuDiscoveryConfig.html#method.upper_bound" title="method iroh::endpoint::MtuDiscoveryConfig::upper_bound"><code>MtuDiscoveryConfig::upper_bound</code></a> and the
 <code>max_udp_payload_size</code> transport parameter received from the peer during the handshake.</p>
