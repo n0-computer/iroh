@@ -131,6 +131,8 @@ pub(super) struct EndpointStateActor {
     disco: DiscoState,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// Discovery service, cloned from the magicsock.
+    discovery: ConcurrentDiscovery,
 
     // Internal state - Quinn Connections we are managing.
     //
@@ -167,8 +169,9 @@ pub(super) struct EndpointStateActor {
     ///
     /// They failed to open because we did not have enough CIDs issued by the remote.
     pending_open_paths: VecDeque<transports::Addr>,
-    /// Discovery service, cloned from the magicsock.
-    discovery: ConcurrentDiscovery,
+
+    // Internal state - Discovery
+    //
     /// Stream of discovery results, or always pending if discovery is not running.
     discovery_stream: DiscoveryStream,
     /// Pending requests from [`EndpointStateMessage::ResolveRemote`].
@@ -386,7 +389,7 @@ impl EndpointStateActor {
                 if let transports::Addr::Ip(sockaddr) = addr
                     && self.local_addrs.peek().iter().any(|a| a.addr == *sockaddr)
                 {
-                    warn!(%sockaddr, "not sending datagram to our own address");
+                    trace!(%sockaddr, "not sending datagram to our own address");
                 } else {
                     self.send_datagram(addr.clone(), transmit.clone()).await?;
                 }
@@ -472,11 +475,12 @@ impl EndpointStateActor {
 
     /// Adds new [`TransportAddr`] addresses to our list of potential paths.
     fn add_addrs(&mut self, addrs: BTreeSet<TransportAddr>, source: Source) {
-        use transports::Addr;
         for addr in addrs {
             let addr = match addr {
-                TransportAddr::Relay(relay_url) => Addr::from((relay_url, self.endpoint_id)),
-                TransportAddr::Ip(sockaddr) => Addr::from(sockaddr),
+                TransportAddr::Relay(relay_url) => {
+                    transports::Addr::from((relay_url, self.endpoint_id))
+                }
+                TransportAddr::Ip(sockaddr) => transports::Addr::from(sockaddr),
                 _ => {
                     warn!(?addr, "Unsupported TransportAddr");
                     continue;

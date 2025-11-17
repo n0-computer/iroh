@@ -289,7 +289,7 @@ impl MagicSock {
             .filter_map(|addr| addr.into_socket_addr())
     }
 
-    /// Resolves a [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
+    /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
     ///
     /// This starts an `EndpointStateActor` for the remote if not running already, and then checks
     /// if the actor has any known paths to the remote. If not, it starts discovery and waits for
