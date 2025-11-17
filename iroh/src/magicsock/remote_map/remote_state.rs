@@ -45,6 +45,9 @@ use crate::{
 mod guarded_channel;
 mod path_state;
 
+#[cfg(feature = "metrics")]
+mod metrics;
+
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
 // ///
@@ -82,6 +85,9 @@ const APPLICATION_ABANDON_PATH: u8 = 30;
 /// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
 /// in a high frequency, and to keep data about previous path around for subsequent connections.
 const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Interval in which connection and path metrics are emitted.
+const METRICS_INTERVAL: Duration = Duration::from_secs(10);
 
 /// A stream of events from all paths for all connections.
 ///
@@ -240,8 +246,12 @@ impl RemoteStateActor {
     /// discipline is needed to not turn pending for a long time.
     async fn run(mut self, mut inbox: GuardedReceiver<RemoteStateMessage>) {
         trace!("actor started");
+
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
+
+        let mut metrics_interval = time::interval(METRICS_INTERVAL);
+
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -295,6 +305,9 @@ impl RemoteStateActor {
                 }
                 item = self.discovery_stream.next() => {
                     self.handle_discovery_item(item);
+                }
+                _ = metrics_interval.tick() => {
+                    self.record_metrics();
                 }
                 _ = &mut idle_timeout => {
                     if self.connections.is_empty() && inbox.close_if_idle() {
@@ -430,7 +443,8 @@ impl RemoteStateActor {
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
-                    transport_summary: TransportSummary::default(),
+                    #[cfg(feature = "metrics")]
+                    metrics: Default::default(),
                 })
                 .into_mut();
 
@@ -589,8 +603,10 @@ impl RemoteStateActor {
 
     fn handle_connection_close(&mut self, conn_id: ConnId) {
         if let Some(state) = self.connections.remove(&conn_id) {
-            self.metrics.num_conns_closed.inc();
-            state.transport_summary.record(&self.metrics);
+            #[cfg(feature = "metrics")]
+            state.metrics.record_closed(&self.metrics);
+            #[cfg(not(feature = "metrics"))]
+            let _ = state;
         }
         if self.connections.is_empty() {
             trace!("last connection closed - clearing selected_path");
@@ -1066,6 +1082,13 @@ impl RemoteStateActor {
             }
         }
     }
+
+    fn record_metrics(&mut self) {
+        #[cfg(feature = "metrics")]
+        for state in self.connections.values_mut() {
+            state.record_metrics_periodic(&self.metrics, self.selected_path.get());
+        }
+    }
 }
 
 /// Messages to send to the [`RemoteStateActor`].
@@ -1174,8 +1197,11 @@ struct ConnectionState {
     open_paths: FxHashMap<PathId, transports::Addr>,
     /// Reverse map of [`Self::paths].
     path_ids: FxHashMap<transports::Addr, PathId>,
-    /// Summary over transports used in this connection, for metrics tracking.
-    transport_summary: TransportSummary,
+    /// Tracker for stateful metrics for this connection and its paths
+    ///
+    /// Feature-gated on the `metrics` feature because it increases memory use.
+    #[cfg(feature = "metrics")]
+    metrics: self::metrics::MetricsTracker,
 }
 
 impl ConnectionState {
@@ -1187,7 +1213,8 @@ impl ConnectionState {
 
     /// Tracks an open path for the connection.
     fn add_open_path(&mut self, remote: transports::Addr, path_id: PathId) {
-        self.transport_summary.add_path(&remote);
+        #[cfg(feature = "metrics")]
+        self.metrics.add_path(path_id, &remote);
         self.paths.insert(path_id, remote.clone());
         self.open_paths.insert(path_id, remote.clone());
         self.path_ids.insert(remote, path_id);
@@ -1200,11 +1227,15 @@ impl ConnectionState {
             self.path_ids.remove(&addr);
         }
         self.open_paths.remove(path_id);
+        #[cfg(feature = "metrics")]
+        self.metrics.remove_path(path_id);
     }
 
     /// Removes the path from the open paths.
     fn remove_open_path(&mut self, path_id: &PathId) {
         self.open_paths.remove(path_id);
+        #[cfg(feature = "metrics")]
+        self.metrics.remove_path(path_id);
 
         self.update_pub_path_info();
     }
@@ -1223,6 +1254,19 @@ impl ConnectionState {
             .collect::<PathAddrList>();
 
         self.pub_open_paths.set(new).ok();
+    }
+
+    #[cfg(feature = "metrics")]
+    fn record_metrics_periodic(
+        &mut self,
+        metrics: &MagicsockMetrics,
+        selected_path: Option<transports::Addr>,
+    ) {
+        let Some(conn) = self.handle.upgrade() else {
+            return;
+        };
+        self.metrics
+            .record_periodic(metrics, &conn, &self.open_paths, selected_path);
     }
 }
 
@@ -1432,44 +1476,6 @@ impl Future for OnClosed {
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let (_close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
         Poll::Ready(self.conn_id)
-    }
-}
-
-/// Used for metrics tracking.
-#[derive(Debug, Clone, Copy, Default)]
-enum TransportSummary {
-    #[default]
-    None,
-    IpOnly,
-    RelayOnly,
-    IpAndRelay,
-}
-
-impl TransportSummary {
-    fn add_path(&mut self, addr: &transports::Addr) {
-        use transports::Addr;
-        *self = match (*self, addr) {
-            (TransportSummary::None | TransportSummary::IpOnly, Addr::Ip(_)) => Self::IpOnly,
-            (TransportSummary::None | TransportSummary::RelayOnly, Addr::Relay(_, _)) => {
-                Self::RelayOnly
-            }
-            _ => Self::IpAndRelay,
-        }
-    }
-
-    fn record(&self, metrics: &MagicsockMetrics) {
-        match self {
-            TransportSummary::IpOnly => {
-                metrics.num_conns_transport_ip_only.inc();
-            }
-            TransportSummary::RelayOnly => {
-                metrics.num_conns_transport_relay_only.inc();
-            }
-            TransportSummary::IpAndRelay => {
-                metrics.num_conns_transport_ip_and_relay.inc();
-            }
-            TransportSummary::None => {}
-        }
     }
 }
 
