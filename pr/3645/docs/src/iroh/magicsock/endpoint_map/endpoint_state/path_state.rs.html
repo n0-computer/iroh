@@ -117,7 +117,7 @@
 <a href=#117 id=117 data-nosnippet>117</a>        <span class="self">self</span>.paths.keys()
 <a href=#118 id=118 data-nosnippet>118</a>    }
 <a href=#119 id=119 data-nosnippet>119</a>
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Replies to all pending requests from [`EndpointStateMessage::ResolveRemote`].
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Replies to all pending resolve requests.
 <a href=#121 id=121 data-nosnippet>121</a>    ///
 <a href=#122 id=122 data-nosnippet>122</a>    /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
 <a href=#123 id=123 data-nosnippet>123</a>    /// otherwise with the provided `discovery_error` or with [`DiscoveryError::NoResults`].
@@ -139,17 +139,14 @@
 <a href=#139 id=139 data-nosnippet>139</a><span class="doccomment">/// The state of a single path to the remote endpoint.
 <a href=#140 id=140 data-nosnippet>140</a>///
 <a href=#141 id=141 data-nosnippet>141</a>/// Each path is identified by the destination [`transports::Addr`] and they are stored in
-<a href=#142 id=142 data-nosnippet>142</a>/// the [`EndpointStateActor::paths`] map.
-<a href=#143 id=143 data-nosnippet>143</a>///
-<a href=#144 id=144 data-nosnippet>144</a>/// [`transports::Addr`]: super::transports::Addr
-<a href=#145 id=145 data-nosnippet>145</a>/// [`EndpointStateActor::paths`]: super::endpoint_state::EndpointStateActor
-<a href=#146 id=146 data-nosnippet>146</a></span><span class="attr">#[derive(Debug, Default)]
-<a href=#147 id=147 data-nosnippet>147</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PathState {
-<a href=#148 id=148 data-nosnippet>148</a>    <span class="doccomment">/// How we learned about this path, and when.
-<a href=#149 id=149 data-nosnippet>149</a>    ///
-<a href=#150 id=150 data-nosnippet>150</a>    /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
-<a href=#151 id=151 data-nosnippet>151</a>    /// of the map of sources down to one entry per type of source.
-<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) sources: HashMap&lt;Source, Instant&gt;,
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="doccomment">/// The last ping sent on this path.
-<a href=#154 id=154 data-nosnippet>154</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) ping_sent: <span class="prelude-ty">Option</span>&lt;TransactionId&gt;,
-<a href=#155 id=155 data-nosnippet>155</a>}</code></pre></div></section></main></body></html>
+<a href=#142 id=142 data-nosnippet>142</a>/// the [`EndpointPathState::paths`] map.
+<a href=#143 id=143 data-nosnippet>143</a></span><span class="attr">#[derive(Debug, Default)]
+<a href=#144 id=144 data-nosnippet>144</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>PathState {
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="doccomment">/// How we learned about this path, and when.
+<a href=#146 id=146 data-nosnippet>146</a>    ///
+<a href=#147 id=147 data-nosnippet>147</a>    /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
+<a href=#148 id=148 data-nosnippet>148</a>    /// of the map of sources down to one entry per type of source.
+<a href=#149 id=149 data-nosnippet>149</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) sources: HashMap&lt;Source, Instant&gt;,
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="doccomment">/// The last ping sent on this path.
+<a href=#151 id=151 data-nosnippet>151</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) ping_sent: <span class="prelude-ty">Option</span>&lt;TransactionId&gt;,
+<a href=#152 id=152 data-nosnippet>152</a>}</code></pre></div></section></main></body></html>
