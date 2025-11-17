@@ -79,7 +79,7 @@ pub enum TransportConfig {
     },
 }
 impl TransportConfig {
-    /// TODO docs
+    /// Configures a default IPv4 transport, listening on `0.0.0.0:0`.
     #[cfg(not(wasm_browser))]
     pub fn default_ipv4() -> Self {
         use std::net::{Ipv4Addr, SocketAddrV4};
@@ -89,7 +89,7 @@ impl TransportConfig {
         }
     }
 
-    /// TODO docs
+    /// Configures a default IPv6 transport, listening on `[::]:0`.
     #[cfg(not(wasm_browser))]
     pub fn default_ipv6() -> Self {
         Self::Ip {

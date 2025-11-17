@@ -1395,6 +1395,7 @@ fn proxy_url_from_env() -> Option<Url> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayMode {
     /// Disable relay servers completely.
+    /// This means that neither listening nor dialing relays will be available.
     Disabled,
     /// Use the default relay map, with production relay servers from n0.
     ///
