@@ -82,7 +82,7 @@ sync_wrapper = { version = "1.0.2", features = ["futures"] }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
-netdev = { version = "0.38.1" }
+netdev = { version = "0.39.0" }
 portmapper = { version = "0.12", default-features = false }
 quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "main-iroh", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
