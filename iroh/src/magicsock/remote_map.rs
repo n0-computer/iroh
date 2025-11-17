@@ -185,11 +185,6 @@ pub enum Source {
         _0: Private,
     },
     /// We established a connection on this address.
-    ///
-    /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
-    /// was added to the `RemoteStateActor`.
-    ///
-    /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
     #[strum(serialize = "Connection")]
     Connection {
         /// private marker
