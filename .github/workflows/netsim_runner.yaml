@@ -190,7 +190,7 @@ jobs:
 
     - name: Upload report
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       id: upload-report
       with:
         name: netsim-report-${{ env.LAST_COMMIT_SHA }}

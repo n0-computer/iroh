@@ -10,16 +10,16 @@ use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
+    Watcher,
     discovery::{
         dns::DnsDiscovery,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-    endpoint::ConnectionError,
+    endpoint::{ConnectionError, PathInfoList},
 };
+use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
-use n0_snafu::{Result, ResultExt};
-use n0_watcher::Watcher as _;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
@@ -212,7 +212,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                snafu::whatever!(
+                n0_error::bail_any!(
                     "Must have the `test-utils` feature enabled when using the `--env=dev` flag"
                 )
             }
@@ -248,7 +248,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "test-utils"))]
             {
-                snafu::whatever!(
+                n0_error::bail_any!(
                     "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
                 );
             }
@@ -257,9 +257,9 @@ impl EndpointArgs {
         if let Some(host) = self.dns_server {
             let addr = tokio::net::lookup_host(host)
                 .await
-                .context("Failed to resolve DNS server address")?
+                .std_context("Failed to resolve DNS server address")?
                 .next()
-                .context("Failed to resolve DNS server address")?;
+                .std_context("Failed to resolve DNS server address")?;
             builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
         } else if self.env == Env::Dev {
             let addr = DEV_DNS_SERVER.parse().expect("valid addr");
@@ -279,7 +279,7 @@ impl EndpointArgs {
             }
             #[cfg(not(feature = "discovery-local-network"))]
             {
-                snafu::whatever!(
+                n0_error::bail_any!(
                     "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
                 );
             }
@@ -327,8 +327,8 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
-        let connecting = match incoming.accept() {
-            Ok(connecting) => connecting,
+        let accepting = match incoming.accept() {
+            Ok(accepting) => accepting,
             Err(err) => {
                 warn!("incoming connection failed: {err:#}");
                 // we can carry on in these cases:
@@ -337,10 +337,9 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             }
         };
         // spawn a task to handle reading and writing off of the connection
-        let endpoint_clone = endpoint.clone();
         tokio::spawn(async move {
-            let conn = connecting.await.e()?;
-            let endpoint_id = conn.remote_id()?;
+            let conn = accepting.await.anyerr()?;
+            let endpoint_id = conn.remote_id();
             info!(
                 "new connection from {endpoint_id} with ALPN {}",
                 String::from_utf8_lossy(TRANSFER_ALPN),
@@ -350,14 +349,14 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             println!("[{remote}] Connected");
 
             // Spawn a background task that prints connection type changes. Will be aborted on drop.
-            let _guard = watch_conn_type(&endpoint_clone, endpoint_id);
+            let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
-            let (mut send, mut recv) = conn.accept_bi().await.e()?;
+            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             tracing::debug!("accepted bi stream, waiting for data...");
-            let message = recv.read_to_end(100).await.e()?;
-            let message = String::from_utf8(message).e()?;
+            let message = recv.read_to_end(100).await.anyerr()?;
+            let message = String::from_utf8(message).anyerr()?;
             println!("[{remote}] Received: \"{message}\"");
 
             let start = Instant::now();
@@ -386,7 +385,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             } else {
                 println!("[{remote}] Disconnected");
             }
-            Ok::<_, n0_snafu::Error>(())
+            n0_error::Ok(())
         });
     }
 
@@ -404,15 +403,15 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
     println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(&endpoint, remote_id);
+    let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
     // Use the Quinn API to send and recv content.
-    let (mut send, mut recv) = conn.open_bi().await.e()?;
+    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
     let message = format!("{me} is saying hello!");
-    send.write_all(message.as_bytes()).await.e()?;
+    send.write_all(message.as_bytes()).await.anyerr()?;
     // Call `finish` to signal no more data will be sent on this stream.
-    send.finish().e()?;
+    send.finish().anyerr()?;
     println!("Sent: \"{message}\"");
 
     let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false).await?;
@@ -421,7 +420,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     // message to be sent.
     tokio::time::timeout(Duration::from_secs(3), endpoint.close())
         .await
-        .e()?;
+        .anyerr()?;
 
     let duration = start.elapsed();
     println!(
@@ -448,7 +447,7 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.e()? {
+        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
             if first_byte {
                 time_to_first_byte = download_start.elapsed();
                 first_byte = false;
@@ -470,7 +469,7 @@ async fn drain_stream(
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.e()? {
+        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.anyerr()? {
             if first_byte {
                 time_to_first_byte = download_start.elapsed();
                 first_byte = false;
@@ -497,21 +496,21 @@ async fn send_data_on_stream(
         stream
             .write_chunk(bytes_data.clone())
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
     if remaining != 0 {
         stream
             .write_chunk(bytes_data.slice(0..remaining))
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
-    stream.finish().context("failed finishing stream")?;
+    stream.finish().std_context("failed finishing stream")?;
     stream
         .stopped()
         .await
-        .context("failed to wait for stream to be stopped")?;
+        .std_context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }
@@ -521,14 +520,36 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
     cfg.parse_size(s)
 }
 
-fn watch_conn_type(endpoint: &Endpoint, endpoint_id: EndpointId) -> AbortOnDropHandle<()> {
-    let mut stream = endpoint.conn_type(endpoint_id).unwrap().stream();
+fn watch_conn_type(
+    endpoint_id: EndpointId,
+    paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
+) -> AbortOnDropHandle<()> {
+    let id = endpoint_id.fmt_short();
     let task = tokio::task::spawn(async move {
-        while let Some(conn_type) = stream.next().await {
-            println!(
-                "[{}] Connection type changed to: {conn_type}",
-                endpoint_id.fmt_short()
-            );
+        let mut stream = paths_watcher.stream();
+        let mut previous = None;
+        while let Some(paths) = stream.next().await {
+            if let Some(path) = paths.iter().find(|p| p.is_selected()) {
+                // We can get path updates without the selected path changing. We don't want to log again in that case.
+                if Some(path) == previous.as_ref() {
+                    continue;
+                }
+                println!(
+                    "[{id}] Connection type changed to: {:?} (RTT: {:?})",
+                    path.remote_addr(),
+                    path.rtt()
+                );
+                previous = Some(path.clone());
+            } else if !paths.is_empty() {
+                println!(
+                    "[{id}] Connection type changed to: mixed ({} paths)",
+                    paths.len()
+                );
+                previous = None;
+            } else {
+                println!("[{id}] Connection type changed to none (no active transmission paths)",);
+                previous = None;
+            }
         }
     });
     AbortOnDropHandle::new(task)

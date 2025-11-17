@@ -7,7 +7,7 @@
 use std::{
     fmt,
     hash::Hash,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -15,8 +15,8 @@ use std::{
 };
 
 use iroh_base::{EndpointId, RelayUrl};
+use n0_error::{e, stack_error};
 use rustc_hash::FxHashMap;
-use snafu::Snafu;
 use tracing::{error, trace};
 
 use super::transports;
@@ -32,6 +32,23 @@ const RELAY_MAPPED_SUBNET: [u8; 2] = [0, 1];
 
 /// The Subnet ID for [`EndpointIdMappedAddr`].
 const ENDPOINT_ID_SUBNET: [u8; 2] = [0; 2];
+
+/// A default fake addr, using the maximum addr that the internal fake addrs could be using.
+pub const DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
+    Ipv6Addr::new(
+        u16::from_be_bytes([ADDR_PREFIXL, 21]),
+        u16::from_be_bytes([7, 10]),
+        u16::from_be_bytes([81, 11]),
+        u16::from_be_bytes([0, 0]),
+        u16::MAX,
+        u16::MAX,
+        u16::MAX,
+        u16::MAX,
+    ),
+    MAPPED_PORT,
+    0,
+    0,
+);
 
 /// The dummy port used for all mapped addresses.
 ///
@@ -95,28 +112,6 @@ impl From<SocketAddr> for MultipathMappedAddr {
     }
 }
 
-impl MultipathMappedAddr {
-    pub(super) fn to_transport_addr(
-        &self,
-        relay_mapped_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    ) -> Option<transports::Addr> {
-        match self {
-            Self::Mixed(_) => {
-                error!("Mixed addr has no transports::Addr");
-                None
-            }
-            Self::Relay(mapped) => match relay_mapped_addrs.lookup(mapped) {
-                Some(parts) => Some(transports::Addr::from(parts)),
-                None => {
-                    error!("Unknown RelayMappedAddr");
-                    None
-                }
-            },
-            Self::Ip(addr) => Some(transports::Addr::from(*addr)),
-        }
-    }
-}
-
 /// An address used to address a endpoint on any or all paths.
 ///
 /// This is only used for initially connecting to a remote endpoint.  We instruct Quinn to
@@ -152,7 +147,7 @@ impl MappedAddr for EndpointIdMappedAddr {
 
     /// Returns a consistent [`SocketAddr`] for the [`EndpointIdMappedAddr`].
     ///
-    /// This socket address does not have a routable IP address.
+    /// This socket address does not have a routable IP address and port.
     ///
     /// This uses a made-up port number, since the port does not play a role in the
     /// addressing.  This socket address is only to be used to pass into Quinn.
@@ -178,13 +173,13 @@ impl TryFrom<Ipv6Addr> for EndpointIdMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err(EndpointIdMappedAddrError)
+        Err(e!(EndpointIdMappedAddrError))
     }
 }
 
 /// Can occur when converting a [`SocketAddr`] to an [`EndpointIdMappedAddr`]
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to convert"))]
+#[stack_error(derive, add_meta)]
+#[error("Failed to convert")]
 pub(crate) struct EndpointIdMappedAddrError;
 
 /// An Ipv6 ULA address, identifying a relay path for a [`EndpointId`].
@@ -215,11 +210,10 @@ impl MappedAddr for RelayMappedAddr {
 
     /// Returns a consistent [`SocketAddr`] for the [`RelayMappedAddr`].
     ///
-    /// This does not have a routable IP address.
+    /// This socket address does not have a routable IP address and port.
     ///
-    /// This uses a made-up, but fixed port number.  The [`RelayAddrMap`] creates a unique
-    /// [`RelayMappedAddr`] for each `(EndpointId, RelayUrl)` pair and thus does not use the
-    /// port to map back to the original [`SocketAddr`].
+    /// This uses a made-up port number, since the port does not play a role in the
+    /// addressing.  This socket address is only to be used to pass into Quinn.
     fn private_socket_addr(&self) -> SocketAddr {
         SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
     }
@@ -236,13 +230,13 @@ impl TryFrom<Ipv6Addr> for RelayMappedAddr {
         {
             return Ok(Self(value));
         }
-        Err(RelayMappedAddrError)
+        Err(e!(RelayMappedAddrError))
     }
 }
 
 /// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
-#[derive(Debug, Snafu)]
-#[snafu(display("Failed to convert"))]
+#[stack_error(derive, add_meta)]
+#[error("Failed to convert")]
 pub(crate) struct RelayMappedAddrError;
 
 impl std::fmt::Display for RelayMappedAddr {
@@ -305,6 +299,46 @@ impl<K, V> Default for AddrMapInner<K, V> {
         Self {
             addrs: Default::default(),
             lookup: Default::default(),
+        }
+    }
+}
+
+/// Functions for the relay mapped address map.
+impl AddrMap<(RelayUrl, EndpointId), RelayMappedAddr> {
+    /// Converts a mapped socket address to a transport address.
+    ///
+    /// This takes a socket address, converts it into a [`MultipathMappedAddr`] and then tries
+    /// to convert the mapped address into a [`transports::Addr`].
+    ///
+    /// Returns `Some` with the transport address for IP mapped addresses and for relay mapped
+    /// addresses if an entry for the mapped address exists in `self`.
+    ///
+    /// Returns `None` and emits an error log if the mapped address is a [`MultipathMappedAddr::Mixed`],
+    /// or if the mapped address is a [`MultipathMappedAddr::Relay`] and `self` does not contain the
+    /// mapped address.
+    pub(crate) fn to_transport_addr(
+        &self,
+        addr: impl Into<MultipathMappedAddr>,
+    ) -> Option<transports::Addr> {
+        match addr.into() {
+            MultipathMappedAddr::Mixed(_) => {
+                error!(
+                    "Failed to convert addr to transport addr: Mixed mapped addr has no transport address"
+                );
+                None
+            }
+            MultipathMappedAddr::Relay(relay_mapped_addr) => {
+                match self.lookup(&relay_mapped_addr) {
+                    Some(parts) => Some(transports::Addr::from(parts)),
+                    None => {
+                        error!(
+                            "Failed to convert addr to transport addr: Unknown relay mapped addr"
+                        );
+                        None
+                    }
+                }
+            }
+            MultipathMappedAddr::Ip(addr) => Some(transports::Addr::from(addr)),
         }
     }
 }

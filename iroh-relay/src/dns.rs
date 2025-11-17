@@ -13,13 +13,12 @@ use hickory_resolver::{
     name_server::TokioConnectionProvider,
 };
 use iroh_base::EndpointId;
+use n0_error::{StackError, e, stack_error};
 use n0_future::{
     StreamExt,
     boxed::BoxFuture,
     time::{self, Duration},
 };
-use nested_enum_utils::common_fields;
-use snafu::{Backtrace, GenerateImplicitData, OptionExt, ResultExt, Snafu};
 use tokio::sync::RwLock;
 use tracing::debug;
 use url::Url;
@@ -62,77 +61,51 @@ pub trait Resolver: fmt::Debug + Send + Sync + 'static {
 pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 
 /// Potential errors related to dns.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum DnsError {
-    #[snafu(transparent)]
+    #[error(transparent)]
     Timeout { source: tokio::time::error::Elapsed },
-    #[snafu(display("No response"))]
+    #[error("No response")]
     NoResponse {},
-    #[snafu(display("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}"))]
+    #[error("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
     ResolveBoth {
         ipv4: Box<DnsError>,
         ipv6: Box<DnsError>,
     },
-    #[snafu(display("missing host"))]
+    #[error("missing host")]
     MissingHost {},
-    #[snafu(transparent)]
+    #[error(transparent)]
     Resolve {
         source: hickory_resolver::ResolveError,
     },
-    #[snafu(display("invalid DNS response: not a query for _iroh.z32encodedpubkey"))]
+    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
     InvalidResponse {},
 }
 
 #[cfg(not(wasm_browser))]
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum LookupError {
-    #[snafu(display("Malformed txt from lookup"))]
-    ParseError {
-        #[snafu(source(from(ParseError, Box::new)))]
-        source: Box<ParseError>,
-    },
-    #[snafu(display("Failed to resolve TXT record"))]
-    LookupFailed {
-        #[snafu(source(from(DnsError, Box::new)))]
-        source: Box<DnsError>,
-    },
+    #[error("Malformed txt from lookup")]
+    ParseError { source: ParseError },
+    #[error("Failed to resolve TXT record")]
+    LookupFailed { source: DnsError },
 }
 
-/// Error returned when an input value is too long for [`crate::endpoint_info::UserData`].
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[snafu(module)]
-#[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
-pub struct StaggeredError<E: std::fmt::Debug + std::fmt::Display> {
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
+/// Error returned when a staggered call fails.
+#[stack_error(derive, add_meta)]
+#[error("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
+pub struct StaggeredError<E: n0_error::StackError + 'static> {
     errors: Vec<E>,
 }
 
-impl<E: std::fmt::Debug + std::fmt::Display> StaggeredError<E> {
-    pub(crate) fn new(errors: Vec<E>) -> Self {
-        Self {
-            errors,
-            backtrace: GenerateImplicitData::generate(),
-            span_trace: n0_snafu::SpanTrace::generate(),
-        }
+impl<E: StackError + 'static> StaggeredError<E> {
+    /// Returns an iterator over all encountered errors.
+    pub fn iter(&self) -> impl Iterator<Item = &E> {
+        self.errors.iter()
     }
 }
 
@@ -313,11 +286,10 @@ impl DnsResolver {
             (Ok(ipv4), Ok(ipv6)) => Ok(LookupIter::Both(ipv4.chain(ipv6))),
             (Ok(ipv4), Err(_)) => Ok(LookupIter::Ipv4(ipv4)),
             (Err(_), Ok(ipv6)) => Ok(LookupIter::Ipv6(ipv6)),
-            (Err(ipv4_err), Err(ipv6_err)) => Err(ResolveBothSnafu {
+            (Err(ipv4_err), Err(ipv6_err)) => Err(e!(DnsError::ResolveBoth {
                 ipv4: Box::new(ipv4_err),
-                ipv6: Box::new(ipv6_err),
-            }
-            .build()),
+                ipv6: Box::new(ipv6_err)
+            })),
         }
     }
 
@@ -328,7 +300,7 @@ impl DnsResolver {
         prefer_ipv6: bool,
         timeout: Duration,
     ) -> Result<IpAddr, DnsError> {
-        let host = url.host().context(MissingHostSnafu)?;
+        let host = url.host().ok_or_else(|| e!(DnsError::MissingHost))?;
         match host {
             url::Host::Domain(domain) => {
                 // Need to do a DNS lookup
@@ -338,20 +310,19 @@ impl DnsResolver {
                 );
                 let (v4, v6) = match lookup {
                     (Err(ipv4_err), Err(ipv6_err)) => {
-                        return Err(ResolveBothSnafu {
+                        return Err(e!(DnsError::ResolveBoth {
                             ipv4: Box::new(ipv4_err),
-                            ipv6: Box::new(ipv6_err),
-                        }
-                        .build());
+                            ipv6: Box::new(ipv6_err)
+                        }));
                     }
                     (Err(_), Ok(mut v6)) => (None, v6.next()),
                     (Ok(mut v4), Err(_)) => (v4.next(), None),
                     (Ok(mut v4), Ok(mut v6)) => (v4.next(), v6.next()),
                 };
                 if prefer_ipv6 {
-                    v6.or(v4).context(NoResponseSnafu)
+                    v6.or(v4).ok_or_else(|| e!(DnsError::NoResponse))
                 } else {
-                    v4.or(v6).context(NoResponseSnafu)
+                    v4.or(v6).ok_or_else(|| e!(DnsError::NoResponse))
                 }
             }
             url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
@@ -422,11 +393,8 @@ impl DnsResolver {
     ) -> Result<EndpointInfo, LookupError> {
         let name = endpoint_info::endpoint_domain(endpoint_id, origin);
         let name = endpoint_info::ensure_iroh_txt_label(name);
-        let lookup = self
-            .lookup_txt(name.clone(), DNS_TIMEOUT)
-            .await
-            .context(LookupFailedSnafu)?;
-        let info = EndpointInfo::from_txt_lookup(name, lookup).context(ParseSnafu)?;
+        let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
     }
 
@@ -436,11 +404,8 @@ impl DnsResolver {
         name: &str,
     ) -> Result<EndpointInfo, LookupError> {
         let name = endpoint_info::ensure_iroh_txt_label(name.to_string());
-        let lookup = self
-            .lookup_txt(name.clone(), DNS_TIMEOUT)
-            .await
-            .context(LookupFailedSnafu)?;
-        let info = EndpointInfo::from_txt_lookup(name, lookup).context(ParseSnafu)?;
+        let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
+        let info = EndpointInfo::from_txt_lookup(name, lookup)?;
         Ok(info)
     }
 
@@ -765,7 +730,7 @@ impl<A: Iterator<Item = IpAddr>, B: Iterator<Item = IpAddr>> Iterator for Lookup
 /// ignoring any previous error. If all calls fail, an error summarizing all errors is returned.
 async fn stagger_call<
     T,
-    E: std::fmt::Debug + std::fmt::Display,
+    E: StackError + 'static,
     F: Fn() -> Fut,
     Fut: Future<Output = Result<T, E>>,
 >(
@@ -793,7 +758,7 @@ async fn stagger_call<
         }
     }
 
-    Err(StaggeredError::new(errors))
+    Err(e!(StaggeredError { errors }))
 }
 
 fn add_jitter(delay: &u64) -> Duration {
@@ -826,7 +791,7 @@ pub(crate) mod tests {
             let r_pos = DONE_CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             async move {
                 tracing::info!(r_pos, "call");
-                CALL_RESULTS[r_pos].map_err(|_| InvalidResponseSnafu.build())
+                CALL_RESULTS[r_pos].map_err(|_| e!(DnsError::InvalidResponse))
             }
         };
 
@@ -872,7 +837,7 @@ pub(crate) mod tests {
                     let addr = if host == "foo.example" {
                         Ipv4Addr::new(1, 1, 1, 1)
                     } else {
-                        return Err(NoResponseSnafu.build());
+                        return Err(e!(DnsError::NoResponse));
                     };
                     let iter: BoxIter<Ipv4Addr> = Box::new(vec![addr].into_iter());
                     Ok(iter)

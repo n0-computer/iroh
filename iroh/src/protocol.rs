@@ -43,17 +43,17 @@ use std::{
 };
 
 use iroh_base::EndpointId;
+use n0_error::{AnyError, e, stack_error};
 use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
 };
-use snafu::{Backtrace, Snafu};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
-    endpoint::{Connecting, Connection, RemoteEndpointIdError},
+    endpoint::{Accepting, Connection, RemoteEndpointIdError},
 };
 
 /// The built router.
@@ -70,10 +70,10 @@ use crate::{
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use n0_snafu::ResultExt;
+/// # use n0_error::StdResultExt;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, EndpointAddr};
 /// #
-/// # async fn test_compile() -> n0_snafu::Result<()> {
+/// # async fn test_compile() -> n0_error::Result<()> {
 /// let endpoint = Endpoint::bind().await?;
 ///
 /// let router = Router::builder(endpoint)
@@ -81,8 +81,8 @@ use crate::{
 ///     .spawn();
 ///
 /// // wait until the user wants to
-/// tokio::signal::ctrl_c().await.context("ctrl+c")?;
-/// router.shutdown().await.context("shutdown")?;
+/// tokio::signal::ctrl_c().await.std_context("ctrl+c")?;
+/// router.shutdown().await.std_context("shutdown")?;
 /// # Ok(())
 /// # }
 /// ```
@@ -102,33 +102,41 @@ pub struct RouterBuilder {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta, from_sources, std_sources)]
 #[non_exhaustive]
 pub enum AcceptError {
-    #[snafu(transparent)]
+    #[error(transparent)]
+    Connecting {
+        source: crate::endpoint::ConnectingError,
+    },
+    #[error(transparent)]
     Connection {
         source: crate::endpoint::ConnectionError,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
     },
-    #[snafu(transparent)]
+    #[error(transparent)]
     MissingRemoteEndpointId { source: RemoteEndpointIdError },
-    #[snafu(display("Not allowed."))]
+    #[error("Not allowed.")]
     NotAllowed {},
-
-    #[snafu(transparent)]
-    User {
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
-    },
+    #[error(transparent)]
+    User { source: AnyError },
 }
 
 impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
+    // TODO(Frando): Rename to `from_std`
+    #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
-        Self::User {
-            source: Box::new(value),
-        }
+        e!(AcceptError::User {
+            source: AnyError::from_std(value)
+        })
+    }
+
+    /// Creates a new user error from an arbitrary boxed error.
+    #[track_caller]
+    pub fn from_boxed(value: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        e!(AcceptError::User {
+            source: AnyError::from_std_box(value)
+        })
     }
 }
 
@@ -156,17 +164,31 @@ impl From<quinn::ClosedStream> for AcceptError {
 ///
 /// See the [module documentation](crate::protocol) for an example.
 pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
-    /// Optional interception point to handle the `Connecting` state.
+    /// Optional interception point to handle the `Accepting` state.
     ///
-    /// Can be implemented as `async fn on_connecting(&self, connecting: Connecting) -> Result<Connection>`.
+    /// Can be implemented as `async fn on_accepting(&self, accepting: Accepting) -> Result<Connection>`.
     ///
-    /// This enables accepting 0-RTT data from clients, among other things.
-    fn on_connecting(
+    /// Typically, this method is used as an early interception point to accept
+    /// or reject a connection.
+    ///
+    /// However, this method can also be used to implement the accept side of a
+    /// 0-RTT connection.
+    ///
+    /// ## 0-RTT
+    ///
+    /// `ProtocolHandler::on_accepting` allows you to take over the connection
+    /// state machine early in the handshake processes, by calling [`Accepting::into_0rtt`].
+    ///
+    /// When working with 0-RTT, you may want to implement all of your protocol
+    /// logic in `on_accepting`. This is fine because `on_accepting` can handle
+    /// long-running processes. In this case, the [`ProtocolHandler::accept`] method
+    /// can simply return `Ok(())`.
+    fn on_accepting(
         &self,
-        connecting: Connecting,
+        accepting: Accepting,
     ) -> impl Future<Output = Result<Connection, AcceptError>> + Send {
         async move {
-            let conn = connecting.await?;
+            let conn = accepting.await?;
             Ok(conn)
         }
     }
@@ -175,7 +197,13 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     ///
     /// Can be implemented as `async fn accept(&self, connection: Connection) -> Result<()>`.
     ///
-    /// The returned future runs on a freshly spawned tokio task so it can be long-running.
+    /// The returned future runs on a freshly spawned tokio task so it can be long-running. Once
+    /// `accept()` returns, the connection is dropped. This means that it will be closed
+    /// if there are no other clones of the connection.  If there is a protocol error, you
+    /// can use [`Connection::close`] to send an error code to the remote peer. Returning
+    /// an `Err<AcceptError>` will also drop the connection and log a warning, but no
+    /// dedicated error code will be sent to the peer, so it's recommended to explicitly
+    /// close the connection within your accept handler.
     ///
     /// When [`Router::shutdown`] is called, no further connections will be accepted, and
     /// the futures returned by [`Self::accept`] will be aborted after the future returned
@@ -197,8 +225,8 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
-    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, AcceptError> {
-        self.as_ref().on_connecting(conn).await
+    async fn on_accepting(&self, accepting: Accepting) -> Result<Connection, AcceptError> {
+        self.as_ref().on_accepting(accepting).await
     }
 
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
@@ -211,8 +239,8 @@ impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
-    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, AcceptError> {
-        self.as_ref().on_connecting(conn).await
+    async fn on_accepting(&self, accepting: Accepting) -> Result<Connection, AcceptError> {
+        self.as_ref().on_accepting(accepting).await
     }
 
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
@@ -239,13 +267,13 @@ impl<T: ProtocolHandler> From<T> for Box<dyn DynProtocolHandler> {
 // We are not using [`n0_future::boxed::BoxFuture] because we don't need a `'static` bound
 // on these futures.
 pub trait DynProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
-    /// See [`ProtocolHandler::on_connecting`].
-    fn on_connecting(
+    /// See [`ProtocolHandler::on_accepting`].
+    fn on_accepting(
         &self,
-        connecting: Connecting,
+        accepting: Accepting,
     ) -> Pin<Box<dyn Future<Output = Result<Connection, AcceptError>> + Send + '_>> {
         Box::pin(async move {
-            let conn = connecting.await?;
+            let conn = accepting.await?;
             Ok(conn)
         })
     }
@@ -270,11 +298,11 @@ impl<P: ProtocolHandler> DynProtocolHandler for P {
         Box::pin(<Self as ProtocolHandler>::accept(self, connection))
     }
 
-    fn on_connecting(
+    fn on_accepting(
         &self,
-        connecting: Connecting,
+        accepting: Accepting,
     ) -> Pin<Box<dyn Future<Output = Result<Connection, AcceptError>> + Send + '_>> {
-        Box::pin(<Self as ProtocolHandler>::on_connecting(self, connecting))
+        Box::pin(<Self as ProtocolHandler>::on_accepting(self, accepting))
     }
 
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
@@ -487,14 +515,14 @@ impl RouterBuilder {
 }
 
 async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
-    let mut connecting = match incoming.accept() {
+    let mut accepting = match incoming.accept() {
         Ok(conn) => conn,
         Err(err) => {
             warn!("Ignoring connection: accepting failed: {err:#}");
             return;
         }
     };
-    let alpn = match connecting.alpn().await {
+    let alpn = match accepting.alpn().await {
         Ok(alpn) => alpn,
         Err(err) => {
             warn!("Ignoring connection: invalid handshake: {err:#}");
@@ -506,18 +534,18 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
         warn!("Ignoring connection: unsupported ALPN protocol");
         return;
     };
-    match handler.on_connecting(connecting).await {
+    match handler.on_accepting(accepting).await {
         Ok(connection) => {
-            if let Ok(remote) = connection.remote_id() {
-                tracing::Span::current()
-                    .record("remote", tracing::field::display(remote.fmt_short()));
-            };
+            tracing::Span::current().record(
+                "remote",
+                tracing::field::display(connection.remote_id().fmt_short()),
+            );
             if let Err(err) = handler.accept(connection).await {
                 warn!("Handling incoming connection ended with error: {err}");
             }
         }
         Err(err) => {
-            warn!("Handling incoming connecting ended with error: {err}");
+            warn!("Accepting incoming connection ended with error: {err}");
         }
     }
 }
@@ -550,19 +578,19 @@ impl<P: ProtocolHandler + Clone> AccessLimit<P> {
 }
 
 impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
-    fn on_connecting(
+    fn on_accepting(
         &self,
-        conn: Connecting,
+        accepting: Accepting,
     ) -> impl Future<Output = Result<Connection, AcceptError>> + Send {
-        self.proto.on_connecting(conn)
+        self.proto.on_accepting(accepting)
     }
 
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
-        let remote = conn.remote_id()?;
+        let remote = conn.remote_id();
         let is_allowed = (self.limiter)(remote);
         if !is_allowed {
             conn.close(0u32.into(), b"not allowed");
-            return Err(NotAllowedSnafu.build());
+            return Err(e!(AcceptError::NotAllowed));
         }
         self.proto.accept(conn).await?;
         Ok(())
@@ -577,7 +605,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 mod tests {
     use std::{sync::Mutex, time::Duration};
 
-    use n0_snafu::{Result, ResultExt};
+    use n0_error::{Result, StdResultExt};
     use quinn::ApplicationClose;
 
     use super::*;
@@ -591,7 +619,7 @@ mod tests {
         assert!(!router.is_shutdown());
         assert!(!endpoint.is_closed());
 
-        router.shutdown().await.e()?;
+        router.shutdown().await.anyerr()?;
 
         assert!(router.is_shutdown());
         assert!(endpoint.is_closed());
@@ -635,11 +663,11 @@ mod tests {
         println!("connecting");
         let conn = e2.connect(addr1, ECHO_ALPN).await?;
 
-        let (_send, mut recv) = conn.open_bi().await.e()?;
+        let (_send, mut recv) = conn.open_bi().await.anyerr()?;
         let response = recv.read_to_end(1000).await.unwrap_err();
         assert!(format!("{response:#?}").contains("not allowed"));
 
-        r1.shutdown().await.e()?;
+        r1.shutdown().await.anyerr()?;
         e2.close().await;
 
         Ok(())
@@ -683,7 +711,7 @@ mod tests {
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 
         eprintln!("starting shutdown");
-        router.shutdown().await.e()?;
+        router.shutdown().await.anyerr()?;
 
         eprintln!("waiting for closed conn");
         let reason = conn.closed().await;

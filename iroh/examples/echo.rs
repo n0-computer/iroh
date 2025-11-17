@@ -11,7 +11,7 @@ use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt};
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     connect_side(router.endpoint().addr()).await?;
 
     // This makes sure the endpoint in the router is closed properly and connections close gracefully
-    router.shutdown().await.e()?;
+    router.shutdown().await.anyerr()?;
 
     Ok(())
 }
@@ -41,16 +41,16 @@ async fn connect_side(addr: EndpointAddr) -> Result<()> {
     let conn = endpoint.connect(addr, ALPN).await?;
 
     // Open a bidirectional QUIC stream
-    let (mut send, mut recv) = conn.open_bi().await.e()?;
+    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
     // Send some data to be echoed
-    send.write_all(b"Hello, world!").await.e()?;
+    send.write_all(b"Hello, world!").await.anyerr()?;
 
     // Signal the end of data for this particular stream
-    send.finish().e()?;
+    send.finish().anyerr()?;
 
     // Receive the echo, but limit reading up to maximum 1000 bytes
-    let response = recv.read_to_end(1000).await.e()?;
+    let response = recv.read_to_end(1000).await.anyerr()?;
     assert_eq!(&response, b"Hello, world!");
 
     // Explicitly close the whole connection.
@@ -86,7 +86,7 @@ impl ProtocolHandler for Echo {
     /// the connection lasts.
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // We can get the remote's endpoint id from the connection.
-        let endpoint_id = connection.remote_id()?;
+        let endpoint_id = connection.remote_id();
         println!("accepted connection from {endpoint_id}");
 
         // Our protocol is a simple request-response protocol, so we expect the

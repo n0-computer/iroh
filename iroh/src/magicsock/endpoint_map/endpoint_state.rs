@@ -1,36 +1,35 @@
 use std::{
-    collections::{BTreeSet, HashMap, VecDeque},
+    collections::{BTreeSet, VecDeque},
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
+    task::Poll,
 };
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_future::{
-    MergeUnbounded, Stream, StreamExt,
+    FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use quinn::WeakConnectionHandle;
+use quinn::{PathStats, WeakConnectionHandle};
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
-use snafu::{ResultExt, Whatever};
-use tokio::sync::{mpsc, oneshot};
+use smallvec::SmallVec;
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
-use super::{Source, TransportsSenderMessage, path_state::PathState};
-// TODO: Use this
-// #[cfg(any(test, feature = "test-utils"))]
-// use crate::endpoint::PathSelection;
+use self::guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel};
+use super::{Source, path_state::PathState};
 use crate::{
     endpoint::DirectAddr,
     magicsock::{
         HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
-        mapped_addrs::{AddrMap, MappedAddr, MultipathMappedAddr, RelayMappedAddr},
-        transports::{self, OwnedTransmit},
+        endpoint_map::Private,
+        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
+        transports::{self, OwnedTransmit, TransportsSender},
     },
     util::MaybeFuture,
 };
@@ -41,8 +40,7 @@ use crate::{
 /// attempted more frequently than at this interval.
 const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Interval at which [`ConnectionState`]s for closed connections are cleaned up.
-const CONN_CLEANUP_INTERVAL: Duration = Duration::from_secs(5);
+mod guarded_channel;
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
@@ -74,6 +72,14 @@ const CONN_CLEANUP_INTERVAL: Duration = Duration::from_secs(5);
 // TODO: Quinn should just do this.  Also, I made this value up.
 const APPLICATION_ABANDON_PATH: u8 = 30;
 
+/// The time after which an idle [`EndpointStateActor`] stops.
+///
+/// The actor only enters the idle state if no connections are active and no inbox senders exist
+/// apart from the one stored in the endpoint map. Stopping and restarting the actor in this state
+/// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
+/// in a high frequency, and to keep data about previous path around for subsequent connections.
+const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// A stream of events from all paths for all connections.
 ///
 /// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
@@ -90,6 +96,9 @@ type PathEvents = MergeUnbounded<
 type AddrEvents =
     MergeUnbounded<Pin<Box<dyn Stream<Item = (ConnId, Vec<SocketAddr>)> + Send + Sync>>>;
 
+/// List of addrs and path ids for open paths in a connection.
+pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
+
 /// The state we need to know about a single remote endpoint.
 ///
 /// This actor manages all connections to the remote endpoint.  It will trigger holepunching
@@ -104,10 +113,7 @@ pub(super) struct EndpointStateActor {
     //
     /// Metrics.
     metrics: Arc<MagicsockMetrics>,
-    /// Allowing us to directly send datagrams.
-    ///
-    /// Used for handling [`EndpointStateMessage::SendDatagram`] messages.
-    transports_sender: mpsc::Sender<TransportsSenderMessage>,
+    sender: TransportsSender,
     /// Our local addresses.
     ///
     /// These are our local addresses and any reflexive transport addresses.
@@ -119,6 +125,8 @@ pub(super) struct EndpointStateActor {
     //
     /// All connections we have to this remote endpoint.
     connections: FxHashMap<ConnId, ConnectionState>,
+    /// Notifications when connections are closed.
+    connections_close: FuturesUnordered<OnClosed>,
     /// Events emitted by Quinn about path changes, for all paths, all connections.
     path_events: PathEvents,
     /// A stream of events of announced NAT traversal candidate addresses for all connections.
@@ -141,7 +149,7 @@ pub(super) struct EndpointStateActor {
     /// holepunching regularly.
     ///
     /// We only select a path once the path is functional in Quinn.
-    selected_path: Option<transports::Addr>,
+    selected_path: Watchable<Option<transports::Addr>>,
     /// Time at which we should schedule the next holepunch attempt.
     scheduled_holepunch: Option<Instant>,
     /// When to next attempt opening paths in [`Self::pending_open_paths`].
@@ -156,32 +164,33 @@ impl EndpointStateActor {
     pub(super) fn new(
         endpoint_id: EndpointId,
         local_endpoint_id: EndpointId,
-        transports_sender: mpsc::Sender<TransportsSenderMessage>,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
+        sender: TransportsSender,
     ) -> Self {
         Self {
             endpoint_id,
             local_endpoint_id,
             metrics,
-            transports_sender,
             local_addrs,
             relay_mapped_addrs,
             connections: FxHashMap::default(),
+            connections_close: Default::default(),
             path_events: Default::default(),
             addr_events: Default::default(),
             paths: FxHashMap::default(),
             last_holepunch: None,
-            selected_path: None,
+            selected_path: Default::default(),
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
+            sender,
         }
     }
 
     pub(super) fn start(mut self) -> EndpointStateHandle {
-        let (tx, rx) = mpsc::channel(16);
+        let (tx, rx) = guarded_channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
 
@@ -213,13 +222,14 @@ impl EndpointStateActor {
     ///
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
-    /// dicipline is needed to not turn pending for a long time.
+    /// discipline is needed to not turn pending for a long time.
     async fn run(
         &mut self,
-        mut inbox: mpsc::Receiver<EndpointStateMessage>,
-    ) -> Result<(), Whatever> {
+        mut inbox: GuardedReceiver<EndpointStateMessage>,
+    ) -> n0_error::Result<()> {
         trace!("actor started");
-        let mut conn_cleanup = std::pin::pin!(time::interval(CONN_CLEANUP_INTERVAL));
+        let idle_timeout = MaybeFuture::None;
+        tokio::pin!(idle_timeout);
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -246,6 +256,13 @@ impl EndpointStateActor {
                     trace!(?id, "remote addrs updated, triggering holepunching");
                     self.trigger_holepunching().await;
                 }
+                Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
+                    self.connections.remove(&conn_id);
+                    if self.connections.is_empty() {
+                        trace!("last connection closed - clearing selected_path");
+                        self.selected_path.set(None).ok();
+                    }
+                }
                 _ = self.local_addrs.updated() => {
                     trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching().await;
@@ -263,9 +280,22 @@ impl EndpointStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching().await;
                 }
-                _ = conn_cleanup.tick() => {
-                    self.cleanup_connections();
+                _ = &mut idle_timeout => {
+                    if self.connections.is_empty() && inbox.close_if_idle() {
+                        trace!("idle timeout expired and still idle: terminate actor");
+                        break;
+                    }
                 }
+            }
+
+            if self.connections.is_empty() && inbox.is_idle() && idle_timeout.is_none() {
+                trace!("start idle timeout");
+                idle_timeout
+                    .as_mut()
+                    .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
+            } else if idle_timeout.is_some() {
+                trace!("abort idle timeout");
+                idle_timeout.as_mut().set_none()
             }
         }
         trace!("actor terminating");
@@ -276,14 +306,14 @@ impl EndpointStateActor {
     ///
     /// Error returns are fatal and kill the actor.
     #[instrument(skip(self))]
-    async fn handle_message(&mut self, msg: EndpointStateMessage) -> Result<(), Whatever> {
+    async fn handle_message(&mut self, msg: EndpointStateMessage) -> n0_error::Result<()> {
         // trace!("handling message");
         match msg {
             EndpointStateMessage::SendDatagram(transmit) => {
                 self.handle_msg_send_datagram(transmit).await?;
             }
-            EndpointStateMessage::AddConnection(handle, paths_info) => {
-                self.handle_msg_add_connection(handle, paths_info).await;
+            EndpointStateMessage::AddConnection(handle, tx) => {
+                self.handle_msg_add_connection(handle, tx).await;
             }
             EndpointStateMessage::AddEndpointAddr(addr, source) => {
                 self.handle_msg_add_endpoint_addr(addr, source);
@@ -298,26 +328,34 @@ impl EndpointStateActor {
         Ok(())
     }
 
+    async fn send_datagram(
+        &self,
+        dst: transports::Addr,
+        owned_transmit: OwnedTransmit,
+    ) -> n0_error::Result<()> {
+        let transmit = transports::Transmit {
+            ecn: owned_transmit.ecn,
+            contents: owned_transmit.contents.as_ref(),
+            segment_size: owned_transmit.segment_size,
+        };
+        self.sender.send(&dst, None, &transmit).await?;
+        Ok(())
+    }
+
     /// Handles [`EndpointStateMessage::SendDatagram`].
     ///
     /// Error returns are fatal and kill the actor.
-    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> Result<(), Whatever> {
-        if let Some(ref addr) = self.selected_path {
+    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> n0_error::Result<()> {
+        if let Some(addr) = self.selected_path.get() {
             trace!(?addr, "sending datagram to selected path");
-            self.transports_sender
-                .send((addr.clone(), transmit).into())
-                .await
-                .whatever_context("TransportSenderActor stopped")?;
+            self.send_datagram(addr, transmit).await?;
         } else {
             trace!(
                 paths = ?self.paths.keys().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
             );
             for addr in self.paths.keys() {
-                self.transports_sender
-                    .send((addr.clone(), transmit.clone()).into())
-                    .await
-                    .whatever_context("TransportSenerActor stopped")?;
+                self.send_datagram(addr.clone(), transmit.clone()).await?;
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger
@@ -332,79 +370,78 @@ impl EndpointStateActor {
     async fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
-        paths_info: Watchable<HashMap<TransportAddr, PathInfo>>,
+        tx: oneshot::Sender<PathsWatcher>,
     ) {
+        let pub_open_paths = Watchable::default();
         if let Some(conn) = handle.upgrade() {
             // Remove any conflicting stable_ids from the local state.
             let conn_id = ConnId(conn.stable_id());
             self.connections.remove(&conn_id);
 
-            // This is a good time to clean up connections.
-            self.cleanup_connections();
-
-            // Hook up paths and NAT addresses event streams.
+            // Hook up paths, NAT addresses and connection closed event streams.
             self.path_events.push(Box::pin(
                 BroadcastStream::new(conn.path_events()).map(move |evt| (conn_id, evt)),
             ));
             self.addr_events
                 .push(Box::pin(conn.addr_events().map(move |evt| (conn_id, evt))));
+            self.connections_close.push(OnClosed::new(&conn));
 
-            // Store the connection.
-            self.connections.insert(
-                conn_id,
-                ConnectionState {
+            // Store the connection
+            let conn_state = self
+                .connections
+                .entry(conn_id)
+                .insert_entry(ConnectionState {
                     handle: handle.clone(),
-                    pub_path_info: paths_info,
+                    pub_open_paths: pub_open_paths.clone(),
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
-                },
-            );
+                })
+                .into_mut();
 
             // Store PathId(0), set path_status and select best path, check if holepunching
             // is needed.
-            if let Some(conn) = handle.upgrade() {
-                if let Some(path) = conn.path(PathId::ZERO) {
-                    if let Some(path_remote) = path
-                        .remote_address()
-                        .map_or(None, |remote| Some(MultipathMappedAddr::from(remote)))
-                        .and_then(|mmaddr| mmaddr.to_transport_addr(&self.relay_mapped_addrs))
-                    {
-                        trace!(?path_remote, "added new connection");
-                        let path_remote_is_ip = path_remote.is_ip();
-                        let status = match path_remote {
-                            transports::Addr::Ip(_) => PathStatus::Available,
-                            transports::Addr::Relay(_, _) => PathStatus::Backup,
-                        };
-                        path.set_status(status).ok();
-                        let conn_state =
-                            self.connections.get_mut(&conn_id).expect("inserted above");
-                        conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
-                        self.paths
-                            .entry(path_remote)
-                            .or_default()
-                            .sources
-                            .insert(Source::Connection, Instant::now());
-                        self.select_path();
+            if let Some(path) = conn.path(PathId::ZERO)
+                && let Ok(socketaddr) = path.remote_address()
+                && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
+            {
+                trace!(?path_remote, "added new connection");
+                let path_remote_is_ip = path_remote.is_ip();
+                let status = match path_remote {
+                    transports::Addr::Ip(_) => PathStatus::Available,
+                    transports::Addr::Relay(_, _) => PathStatus::Backup,
+                };
+                path.set_status(status).ok();
+                conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
+                self.paths
+                    .entry(path_remote)
+                    .or_default()
+                    .sources
+                    .insert(Source::Connection { _0: Private }, Instant::now());
+                self.select_path();
 
-                        if path_remote_is_ip {
-                            // We may have raced this with a relay address.  Try and add any
-                            // relay addresses we have back.
-                            let relays = self
-                                .paths
-                                .keys()
-                                .filter(|a| a.is_relay())
-                                .cloned()
-                                .collect::<Vec<_>>();
-                            for remote in relays {
-                                self.open_path(&remote);
-                            }
-                        }
+                if path_remote_is_ip {
+                    // We may have raced this with a relay address.  Try and add any
+                    // relay addresses we have back.
+                    let relays = self
+                        .paths
+                        .keys()
+                        .filter(|a| a.is_relay())
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    for remote in relays {
+                        self.open_path(&remote);
                     }
                 }
-                self.trigger_holepunching().await;
             }
+            self.trigger_holepunching().await;
         }
+        tx.send(PathsWatcher::new(
+            pub_open_paths.watch(),
+            self.selected_path.watch(),
+            handle,
+        ))
+        .ok();
     }
 
     /// Handles [`EndpointStateMessage::AddEndpointAddr`].
@@ -436,20 +473,20 @@ impl EndpointStateActor {
 
     /// Handles [`EndpointStateMessage::Latency`].
     fn handle_msg_latency(&self, tx: oneshot::Sender<Option<Duration>>) {
-        let rtt = self.selected_path.as_ref().and_then(|addr| {
+        let rtt = self.selected_path.get().and_then(|addr| {
             for conn_state in self.connections.values() {
-                let Some(path_id) = conn_state.path_ids.get(addr) else {
+                let Some(path_id) = conn_state.path_ids.get(&addr) else {
                     continue;
                 };
                 if !conn_state.open_paths.contains_key(path_id) {
                     continue;
                 }
-                if let Some(stats) = conn_state
+                if let Some(rtt) = conn_state
                     .handle
                     .upgrade()
-                    .and_then(|conn| conn.stats().paths.get(path_id).copied())
+                    .and_then(|conn| conn.path_stats(*path_id).map(|stats| stats.rtt))
                 {
-                    return Some(stats.rtt);
+                    return Some(rtt);
                 }
             }
             None
@@ -635,10 +672,8 @@ impl EndpointStateActor {
                 path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
                 path.set_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT)).ok();
 
-                if let Some(path_remote) = path
-                    .remote_address()
-                    .map_or(None, |remote| Some(MultipathMappedAddr::from(remote)))
-                    .and_then(|mmaddr| mmaddr.to_transport_addr(&self.relay_mapped_addrs))
+                if let Ok(socketaddr) = path.remote_address()
+                    && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
                 {
                     event!(
                         target: "iroh::_events::path::open",
@@ -653,7 +688,7 @@ impl EndpointStateActor {
                         .entry(path_remote.clone())
                         .or_default()
                         .sources
-                        .insert(Source::Connection, Instant::now());
+                        .insert(Source::Connection { _0: Private }, Instant::now());
                 }
 
                 self.select_path();
@@ -705,11 +740,6 @@ impl EndpointStateActor {
         }
     }
 
-    /// Clean up connections which no longer exist.
-    fn cleanup_connections(&mut self) {
-        self.connections.retain(|_, c| c.handle.upgrade().is_some());
-    }
-
     /// Selects the path with the lowest RTT, prefers direct paths.
     ///
     /// If there are direct paths, this selects the direct path with the lowest RTT.  If
@@ -726,9 +756,8 @@ impl EndpointStateActor {
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
-            let stats = conn.stats();
-            for (path_id, stats) in stats.paths {
-                if let Some(addr) = conn_state.open_paths.get(&path_id) {
+            for (path_id, addr) in conn_state.open_paths.iter() {
+                if let Some(stats) = conn.path_stats(*path_id) {
                     all_path_rtts
                         .entry(addr.clone())
                         .or_default()
@@ -764,8 +793,8 @@ impl EndpointStateActor {
                 .min()
         });
         if let Some((rtt, addr)) = selected_path {
-            let prev = self.selected_path.replace(addr.clone());
-            if prev.as_ref() != Some(addr) {
+            let prev = self.selected_path.set(Some(addr.clone()));
+            if prev.is_ok() {
                 debug!(?addr, ?rtt, ?prev, "selected new path");
             }
             self.open_path(addr);
@@ -781,7 +810,7 @@ impl EndpointStateActor {
     //    paths and immediately call this.  But the new paths are probably not yet open on
     //    all connections.
     fn close_redundant_paths(&mut self, selected_path: &transports::Addr) {
-        debug_assert_eq!(self.selected_path.as_ref(), Some(selected_path));
+        debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path),);
 
         for (conn_id, conn_state) in self.connections.iter() {
             for (path_id, path_remote) in conn_state
@@ -835,10 +864,7 @@ pub(crate) enum EndpointStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(
-        WeakConnectionHandle,
-        Watchable<HashMap<TransportAddr, PathInfo>>,
-    ),
+    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatcher>),
     /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
     AddEndpointAddr(EndpointAddr, Source),
     /// Asks if there is any possible path that could be used.
@@ -855,10 +881,16 @@ pub(crate) enum EndpointStateMessage {
 
 /// A handle to a [`EndpointStateActor`].
 ///
-/// Dropping this will stop the actor.
+/// Dropping this will stop the actor. The actor will also stop after an idle timeout
+/// if it has no connections, an empty inbox, and no other senders than the one stored
+/// in the endpoint map exist.
 #[derive(Debug)]
 pub(super) struct EndpointStateHandle {
-    pub(super) sender: mpsc::Sender<EndpointStateMessage>,
+    /// Sender for the channel into the [`EndpointStateActor`].
+    ///
+    /// This is a [`GuardedSender`], from which we can get a sender but only if the receiver
+    /// hasn't been closed.
+    pub(super) sender: GuardedSender<EndpointStateMessage>,
     _task: AbortOnDropHandle<()>,
 }
 
@@ -881,31 +913,10 @@ struct HolepunchAttempt {
     remote_candidates: BTreeSet<SocketAddr>,
 }
 
-/// The type of connection we have to the endpoint.
-#[derive(derive_more::Display, Default, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub enum ConnectionType {
-    /// Direct UDP connection
-    #[display("direct({_0})")]
-    Direct(SocketAddr),
-    /// Relay connection over relay
-    #[display("relay({_0})")]
-    Relay(RelayUrl),
-    /// Both a UDP and a relay connection are used.
-    ///
-    /// This is the case if we do have a UDP address, but are missing a recent confirmation that
-    /// the address works.
-    #[display("mixed(udp: {_0}, relay: {_1})")]
-    Mixed(SocketAddr, RelayUrl),
-    /// We have no verified connection to this PublicKey
-    #[default]
-    #[display("none")]
-    None,
-}
-
 /// Newtype to track Connections.
 ///
-/// The wrapped value is the [`Connection::stable_id`] value, and is thus only valid for
-/// active connections.
+/// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
+/// for active connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct ConnId(usize);
 
@@ -915,7 +926,7 @@ struct ConnectionState {
     /// Weak handle to the connection.
     handle: WeakConnectionHandle,
     /// The information we publish to users about the paths used in this connection.
-    pub_path_info: Watchable<HashMap<TransportAddr, PathInfo>>,
+    pub_open_paths: Watchable<PathAddrList>,
     /// The paths that exist on this connection.
     ///
     /// This could be in any state, e.g. while still validating the path or already closed
@@ -960,52 +971,227 @@ impl ConnectionState {
     }
 
     /// Sets the new [`PathInfo`] structs for the public [`Connection`].
+    ///
+    /// [`Connection`]: crate::endpoint::Connection
     fn update_pub_path_info(&self) {
         let new = self
             .open_paths
             .iter()
             .map(|(path_id, remote)| {
                 let remote = TransportAddr::from(remote.clone());
-                (
-                    remote.clone(),
-                    PathInfo {
-                        remote: remote.clone(),
-                        path_id: *path_id,
-                    },
-                )
+                (remote, *path_id)
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<PathAddrList>();
 
-        self.pub_path_info.set(new).ok();
+        self.pub_open_paths.set(new).ok();
+    }
+}
+
+/// Watcher for the open paths and selected transmission path in a connection.
+///
+/// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
+///
+/// Internally, this contains a boxed-mapped-joined watcher over the open paths in the connection and the
+/// selected path to the remote endpoint. The watcher is boxed because the mapped-joined watcher with
+/// `SmallVec<PathInfoList>` has a size of over 800 bytes, which we don't want to put upon the [`Connection`].
+///
+/// [`Connection`]: crate::endpoint::Connection
+#[derive(Clone, derive_more::Debug)]
+#[debug("PathsWatcher")]
+#[allow(clippy::type_complexity)]
+pub(crate) struct PathsWatcher(
+    Box<
+        n0_watcher::Map<
+            n0_watcher::Tuple<
+                n0_watcher::Direct<PathAddrList>,
+                n0_watcher::Direct<Option<transports::Addr>>,
+            >,
+            PathInfoList,
+        >,
+    >,
+);
+
+impl n0_watcher::Watcher for PathsWatcher {
+    type Value = PathInfoList;
+
+    fn update(&mut self) -> bool {
+        self.0.update()
+    }
+
+    fn peek(&self) -> &Self::Value {
+        self.0.peek()
+    }
+
+    fn is_connected(&self) -> bool {
+        self.0.is_connected()
+    }
+
+    fn poll_updated(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Result<(), n0_watcher::Disconnected>> {
+        self.0.poll_updated(cx)
+    }
+}
+
+impl PathsWatcher {
+    fn new(
+        open_paths: n0_watcher::Direct<PathAddrList>,
+        selected_path: n0_watcher::Direct<Option<transports::Addr>>,
+        conn_handle: WeakConnectionHandle,
+    ) -> Self {
+        Self(Box::new(open_paths.or(selected_path).map(
+            move |(open_paths, selected_path)| {
+                let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
+                let Some(conn) = conn_handle.upgrade() else {
+                    return PathInfoList(Default::default());
+                };
+                let list = open_paths
+                    .into_iter()
+                    .flat_map(move |(remote, path_id)| {
+                        PathInfo::new(path_id, &conn, remote, selected_path.as_ref())
+                    })
+                    .collect();
+                PathInfoList(list)
+            },
+        )))
+    }
+}
+
+/// List of [`PathInfo`] for the network paths of a [`Connection`].
+///
+/// This struct implements [`IntoIterator`].
+///
+/// [`Connection`]: crate::endpoint::Connection
+#[derive(derive_more::Debug, derive_more::IntoIterator, Eq, PartialEq, Clone)]
+#[debug("{_0:?}")]
+pub struct PathInfoList(SmallVec<[PathInfo; 4]>);
+
+impl PathInfoList {
+    /// Returns an iterator over the path infos.
+    pub fn iter(&self) -> impl Iterator<Item = &PathInfo> {
+        self.0.iter()
+    }
+
+    /// Returns `true` if the list is empty.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the number of paths.
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
 /// Information about a network path used by a [`Connection`].
 ///
 /// [`Connection`]: crate::endpoint::Connection
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(derive_more::Debug, Clone)]
 pub struct PathInfo {
+    path_id: PathId,
+    #[debug(skip)]
+    handle: WeakConnectionHandle,
+    stats: PathStats,
+    remote: TransportAddr,
+    is_selected: bool,
+}
+
+impl PartialEq for PathInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.path_id == other.path_id
+            && self.remote == other.remote
+            && self.is_selected == other.is_selected
+    }
+}
+
+impl Eq for PathInfo {}
+
+impl PathInfo {
+    fn new(
+        path_id: PathId,
+        conn: &quinn::Connection,
+        remote: TransportAddr,
+        selected_path: Option<&TransportAddr>,
+    ) -> Option<Self> {
+        let stats = conn.path_stats(path_id)?;
+        Some(Self {
+            path_id,
+            handle: conn.weak_handle(),
+            is_selected: Some(&remote) == selected_path,
+            remote,
+            stats,
+        })
+    }
+
     /// The remote transport address used by this network path.
-    pub remote: TransportAddr,
-    /// The internal path identifier for the [`Connection`]
-    ///
-    /// This is unique for the lifetime of the connection.  Can be used to look up the path
-    /// statistics in the [`ConnectionStats::paths`], returned by [`Connection::stats`].
+    pub fn remote_addr(&self) -> &TransportAddr {
+        &self.remote
+    }
+
+    /// Returns `true` if this path is currently the main transmission path for this [`Connection`].
     ///
     /// [`Connection`]: crate::endpoint::Connection
-    /// [`Connection::stats`]: crate::endpoint::Connection::stats
-    /// [`ConnectionStats::paths`]: crate::endpoint::ConnectionStats::paths
-    // TODO: Decide if exposing this is a good idea.  Maybe we should just hide this
-    //    entirely try to provide Self::stats().  But that would mean this needs to have a
-    //    WeakConnectionHandle.
-    pub path_id: PathId,
+    pub fn is_selected(&self) -> bool {
+        self.is_selected
+    }
+
+    /// Whether this is an IP transport address.
+    pub fn is_ip(&self) -> bool {
+        self.remote.is_ip()
+    }
+
+    /// Whether this is a transport address via a relay server.
+    pub fn is_relay(&self) -> bool {
+        self.remote.is_relay()
+    }
+
+    /// Returns stats for this transmission path.
+    pub fn stats(&self) -> PathStats {
+        self.handle
+            .upgrade()
+            .and_then(|conn| conn.path_stats(self.path_id))
+            .unwrap_or(self.stats)
+    }
+
+    /// Current best estimate of this paths's latency (round-trip-time)
+    pub fn rtt(&self) -> Duration {
+        self.stats().rtt
+    }
 }
 
 /// Poll a future once, like n0_future::future::poll_once but sync.
 fn now_or_never<T, F: Future<Output = T>>(fut: F) -> Option<T> {
     let fut = std::pin::pin!(fut);
     match fut.poll(&mut std::task::Context::from_waker(std::task::Waker::noop())) {
-        std::task::Poll::Ready(res) => Some(res),
-        std::task::Poll::Pending => None,
+        Poll::Ready(res) => Some(res),
+        Poll::Pending => None,
+    }
+}
+
+/// Future that resolves to the `conn_id` once a connection is closed.
+///
+/// This uses [`quinn::Connection::on_closed`], which does not keep the connection alive
+/// while awaiting the future.
+struct OnClosed {
+    conn_id: ConnId,
+    inner: quinn::OnClosed,
+}
+
+impl OnClosed {
+    fn new(conn: &quinn::Connection) -> Self {
+        Self {
+            conn_id: ConnId(conn.stable_id()),
+            inner: conn.on_closed(),
+        }
+    }
+}
+
+impl Future for OnClosed {
+    type Output = ConnId;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let (_close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
+        Poll::Ready(self.conn_id)
     }
 }

@@ -6,9 +6,9 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
-    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
+    endpoint::{Connection, ConnectionError, QuinnTransportConfig, RecvStream, SendStream},
 };
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
 
 use crate::{
@@ -126,17 +126,16 @@ pub async fn connect_client(
     Ok((endpoint, connection))
 }
 
-pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig {
+pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuinnTransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
-    let mut config = TransportConfig::default();
+    let mut config = QuinnTransportConfig::default();
     config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
     config.initial_mtu(initial_mtu);
 
-    // TODO: re-enable when we upgrade quinn version
-    // let mut acks = quinn::AckFrequencyConfig::default();
-    // acks.ack_eliciting_threshold(10u32.into());
-    // config.ack_frequency_config(Some(acks));
+    let mut acks = quinn::AckFrequencyConfig::default();
+    acks.ack_eliciting_threshold(10u32.into());
+    config.ack_frequency_config(Some(acks));
 
     config
 }
@@ -154,7 +153,7 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.e()? {
+        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -176,7 +175,7 @@ async fn drain_stream(
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.e()? {
+        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -200,21 +199,21 @@ async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Resul
         stream
             .write_chunk(bytes_data.clone())
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
     if remaining != 0 {
         stream
             .write_chunk(bytes_data.slice(0..remaining))
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
-    stream.finish().context("failed finishing stream")?;
+    stream.finish().std_context("failed finishing stream")?;
     stream
         .stopped()
         .await
-        .context("failed to wait for stream to be stopped")?;
+        .std_context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }
@@ -229,7 +228,7 @@ pub async fn handle_client_stream(
     let (mut send_stream, mut recv_stream) = connection
         .open_bi()
         .await
-        .context("failed to open stream")?;
+        .std_context("failed to open stream")?;
 
     send_data_on_stream(&mut send_stream, upload_size).await?;
 
@@ -249,8 +248,8 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
     // Handle only the expected amount of clients
     for _ in 0..opt.clients {
         let incoming = endpoint.accept().await.unwrap();
-        let connecting = match incoming.accept() {
-            Ok(connecting) => connecting,
+        let accepting = match incoming.accept() {
+            Ok(accepting) => accepting,
             Err(err) => {
                 warn!("incoming connection failed: {err:#}");
                 // we can carry on in these cases:
@@ -258,7 +257,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 continue;
             }
         };
-        let connection = connecting.await.context("handshake failed")?;
+        let connection = accepting.await.context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {
             loop {
@@ -275,7 +274,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 tokio::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
-                    Ok::<_, n0_snafu::Error>(())
+                    n0_error::Ok(())
                 });
             }
 

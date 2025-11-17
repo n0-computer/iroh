@@ -13,7 +13,7 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher as _};
 use tokio::sync::mpsc;
-use tokio_util::sync::PollSender;
+use tokio_util::sync::{CancellationToken, PollSender};
 use tracing::{Instrument, error, info_span, warn};
 
 use super::{Addr, Transmit};
@@ -38,7 +38,7 @@ pub(crate) struct RelayTransport {
 }
 
 impl RelayTransport {
-    pub(crate) fn new(config: RelayActorConfig) -> Self {
+    pub(crate) fn new(config: RelayActorConfig, cancel_token: CancellationToken) -> Self {
         let (relay_datagram_send_tx, relay_datagram_send_rx) = mpsc::channel(256);
 
         let (relay_datagram_recv_tx, relay_datagram_recv_rx) = mpsc::channel(512);
@@ -48,7 +48,7 @@ impl RelayTransport {
         let my_endpoint_id = config.secret_key.public();
         let my_relay = config.my_relay.clone();
 
-        let relay_actor = RelayActor::new(config, relay_datagram_recv_tx);
+        let relay_actor = RelayActor::new(config, relay_datagram_recv_tx, cancel_token);
 
         let actor_handle = AbortOnDropHandle::new(task::spawn(
             async move {
@@ -332,7 +332,7 @@ mod tests {
     async fn test_relay_datagram_queue() {
         let capacity = 16;
         let (sender, mut receiver) = mpsc::channel(capacity);
-        let url = staging::default_na_relay().url;
+        let url = staging::default_na_east_relay().url;
 
         let mut tasks = JoinSet::new();
 

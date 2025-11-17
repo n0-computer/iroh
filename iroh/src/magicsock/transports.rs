@@ -3,18 +3,20 @@ use std::{
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
-    sync::{Arc, atomic::AtomicUsize},
+    sync::Arc,
     task::{Context, Poll},
 };
 
 use bytes::Bytes;
 use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{MagicSock, endpoint_map::EndpointStateMessage, mapped_addrs::MultipathMappedAddr};
-use crate::net_report::Report;
+use crate::{metrics::EndpointMetrics, net_report::Report};
 
 #[cfg(not(wasm_browser))]
 mod ip;
@@ -34,18 +36,20 @@ pub(crate) struct Transports {
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
 
-    poll_recv_counter: AtomicUsize,
+    poll_recv_counter: usize,
+    /// Cache for source addrs, to speed up access
+    source_addrs: [Addr; quinn_udp::BATCH_SIZE],
 }
 
 #[cfg(not(wasm_browser))]
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
-    (
+    n0_watcher::Tuple<
         n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
         n0_watcher::Join<
             Option<(RelayUrl, EndpointId)>,
             n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
         >,
-    ),
+    >,
     Vec<Addr>,
 >;
 
@@ -58,18 +62,89 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     Vec<Addr>,
 >;
 
+/// Available transport configurations.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum TransportConfig {
+    /// IP based transport
+    #[cfg(not(wasm_browser))]
+    Ip {
+        /// The address this transport will bind on.
+        bind_addr: SocketAddr,
+    },
+    /// Relay transport
+    Relay {
+        /// The [`RelayMap`] used for this relay.
+        relay_map: RelayMap,
+    },
+}
+impl TransportConfig {
+    /// Configures a default IPv4 transport, listening on `0.0.0.0:0`.
+    #[cfg(not(wasm_browser))]
+    pub fn default_ipv4() -> Self {
+        use std::net::{Ipv4Addr, SocketAddrV4};
+
+        Self::Ip {
+            bind_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+        }
+    }
+
+    /// Configures a default IPv6 transport, listening on `[::]:0`.
+    #[cfg(not(wasm_browser))]
+    pub fn default_ipv6() -> Self {
+        Self::Ip {
+            bind_addr: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
+        }
+    }
+}
+
+#[cfg(not(wasm_browser))]
+fn bind_ip(configs: &[TransportConfig], metrics: &EndpointMetrics) -> io::Result<Vec<IpTransport>> {
+    let mut transports = Vec::new();
+    for config in configs {
+        if let TransportConfig::Ip { bind_addr } = config {
+            match IpTransport::bind(*bind_addr, metrics.magicsock.clone()) {
+                Ok(transport) => {
+                    transports.push(transport);
+                }
+                Err(err) => {
+                    if bind_addr.is_ipv6() {
+                        tracing::info!("bind ignoring IPv6 bind failure: {:?}", err);
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(transports)
+}
+
 impl Transports {
-    /// Creates a new transports structure.
-    pub(crate) fn new(
-        #[cfg(not(wasm_browser))] ip: Vec<IpTransport>,
-        relay: Vec<RelayTransport>,
-    ) -> Self {
-        Self {
+    /// Binds the  transports.
+    pub(crate) fn bind(
+        configs: &[TransportConfig],
+        relay_actor_config: RelayActorConfig,
+        metrics: &EndpointMetrics,
+        shutdown_token: CancellationToken,
+    ) -> io::Result<Self> {
+        #[cfg(not(wasm_browser))]
+        let ip = bind_ip(configs, metrics)?;
+
+        let relay = configs
+            .iter()
+            .filter(|t| matches!(t, TransportConfig::Relay { .. }))
+            .map(|_c| RelayTransport::new(relay_actor_config.clone(), shutdown_token.child_token()))
+            .collect();
+
+        Ok(Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
             poll_recv_counter: Default::default(),
-        }
+            source_addrs: Default::default(),
+        })
     }
 
     pub(crate) fn poll_recv(
@@ -80,15 +155,15 @@ impl Transports {
         msock: &MagicSock,
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        if msock.is_closed() {
+        debug_assert!(bufs.len() <= quinn_udp::BATCH_SIZE, "too many buffers");
+        if msock.is_closing() {
             return Poll::Pending;
         }
 
-        let mut source_addrs = vec![Addr::default(); metas.len()];
-        match self.inner_poll_recv(cx, bufs, metas, &mut source_addrs)? {
+        match self.inner_poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => Poll::Pending,
             Poll::Ready(n) => {
-                msock.process_datagrams(&mut bufs[..n], &mut metas[..n], &source_addrs[..n]);
+                msock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.source_addrs[..n]);
                 Poll::Ready(Ok(n))
             }
         }
@@ -100,13 +175,12 @@ impl Transports {
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
-        source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
         macro_rules! poll_transport {
             ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas, source_addrs)? {
+                match $socket.poll_recv(cx, bufs, metas, &mut self.source_addrs)? {
                     Poll::Pending | Poll::Ready(0) => {}
                     Poll::Ready(n) => {
                         return Poll::Ready(Ok(n));
@@ -117,9 +191,7 @@ impl Transports {
 
         // To improve fairness, every other call reverses the ordering of polling.
 
-        let counter = self
-            .poll_recv_counter
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let counter = self.poll_recv_counter.wrapping_add(1);
 
         if counter % 2 == 0 {
             #[cfg(not(wasm_browser))]
@@ -156,7 +228,7 @@ impl Transports {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
 
-        (ips, relays).map(|(ips, relays)| {
+        ips.or(relays).map(|(ips, relays)| {
             ips.into_iter()
                 .map(Addr::from)
                 .chain(
@@ -412,7 +484,7 @@ impl Addr {
 }
 
 /// A sender that sends to all our transports.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpSender>,
@@ -560,13 +632,16 @@ impl quinn::AsyncUdpSocket for MagicTransport {
 
     #[cfg(not(wasm_browser))]
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs: Vec<_> = self
-            .transports
-            .local_addrs()
+        let local_addrs = self.transports.local_addrs();
+        let addrs: Vec<_> = local_addrs
             .into_iter()
-            .filter_map(|addr| {
-                let addr: SocketAddr = addr.into_socket_addr()?;
-                Some(addr)
+            .map(|addr| {
+                use crate::magicsock::mapped_addrs::DEFAULT_FAKE_ADDR;
+
+                match addr {
+                    Addr::Ip(addr) => addr,
+                    Addr::Relay(..) => DEFAULT_FAKE_ADDR.into(),
+                }
             })
             .collect();
 
@@ -579,6 +654,12 @@ impl quinn::AsyncUdpSocket for MagicTransport {
             return Ok(SocketAddr::new(ip, addr.port()));
         }
 
+        if !self.transports.relay.is_empty() {
+            // pretend we have an address to make sure things are not too sad during startup
+            use crate::magicsock::mapped_addrs::DEFAULT_FAKE_ADDR;
+
+            return Ok(DEFAULT_FAKE_ADDR.into());
+        }
         Err(io::Error::other("no valid address available"))
     }
 
@@ -602,8 +683,6 @@ impl quinn::AsyncUdpSocket for MagicTransport {
 /// This is special in that it handles [`MultipathMappedAddr::Mixed`] by delegating to the
 /// [`MagicSock`] which expands it back to one or more [`Addr`]s and sends it
 /// using the underlying [`Transports`].
-// TODO: Can I just send the TransportsSender along in the NodeStateMessage::SendDatagram
-// message??  That way you don't have to hook up the sender into the NodeMap!
 #[derive(Debug)]
 #[pin_project::pin_project]
 pub(crate) struct MagicSender {
@@ -677,7 +756,7 @@ impl quinn::UdpSender for MagicSender {
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
                         debug!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(),
-                            "NodeStateActor inbox {err:#}, dropped transmit");
+                            "EndpointStateActor inbox {err:#}, dropped transmit");
                         Poll::Ready(Ok(()))
                     }
                 };
@@ -689,7 +768,7 @@ impl quinn::UdpSender for MagicSender {
                     .relay_mapped_addrs
                     .lookup(&relay_mapped_addr)
                 {
-                    Some((relay_url, node_id)) => Addr::Relay(relay_url, node_id),
+                    Some((relay_url, endpoint_id)) => Addr::Relay(relay_url, endpoint_id),
                     None => {
                         error!("unknown RelayMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));

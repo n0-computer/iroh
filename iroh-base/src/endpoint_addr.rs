@@ -36,9 +36,7 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 /// [discovery]: https://docs.rs/iroh/*/iroh/index.html#endpoint-discovery
 /// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
 /// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
-#[derive(
-    derive_more::Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash,
-)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EndpointAddr {
     /// The endpoint's identifier.
     pub id: EndpointId,

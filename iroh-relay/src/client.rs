@@ -11,13 +11,12 @@ use std::{
 
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
+use n0_error::{e, stack_error};
 use n0_future::{
     Sink, Stream,
     split::{SplitSink, SplitStream, split},
     time,
 };
-use nested_enum_utils::common_fields;
-use snafu::{Backtrace, Snafu};
 #[cfg(any(test, feature = "test-utils"))]
 use tracing::warn;
 use tracing::{Level, debug, event, trace};
@@ -47,75 +46,85 @@ mod util;
 ///
 /// `ConnectError` contains `DialError`, errors that can occur while dialing the
 /// relay, as well as errors that occur while creating or maintaining a connection.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum ConnectError {
-    #[snafu(display("Invalid URL for websocket: {url}"))]
+    #[error("Invalid URL for websocket: {url}")]
     InvalidWebsocketUrl { url: Url },
-    #[snafu(display("Invalid relay URL: {url}"))]
+    #[error("Invalid relay URL: {url}")]
     InvalidRelayUrl { url: Url },
-    #[snafu(transparent)]
+    #[error(transparent)]
     Websocket {
         #[cfg(not(wasm_browser))]
+        #[error(std_err)]
         source: tokio_websockets::Error,
         #[cfg(wasm_browser)]
+        #[error(std_err)]
         source: ws_stream_wasm::WsErr,
     },
-    #[snafu(transparent)]
-    Handshake { source: handshake::Error },
-    #[snafu(transparent)]
+    #[error(transparent)]
+    Handshake {
+        #[error(std_err)]
+        source: handshake::Error,
+    },
+    #[error(transparent)]
     Dial { source: DialError },
-    #[snafu(display("Unexpected status during upgrade: {code}"))]
+    #[error("Unexpected status during upgrade: {code}")]
     UnexpectedUpgradeStatus { code: hyper::StatusCode },
-    #[snafu(display("Failed to upgrade response"))]
-    Upgrade { source: hyper::Error },
-    #[snafu(display("Invalid TLS servername"))]
+    #[error("Failed to upgrade response")]
+    Upgrade {
+        #[error(std_err)]
+        source: hyper::Error,
+    },
+    #[error("Invalid TLS servername")]
     InvalidTlsServername {},
-    #[snafu(display("No local address available"))]
+    #[error("No local address available")]
     NoLocalAddr {},
-    #[snafu(display("tls connection failed"))]
-    Tls { source: std::io::Error },
+    #[error("tls connection failed")]
+    Tls {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
     #[cfg(wasm_browser)]
-    #[snafu(display("The relay protocol is not available in browsers"))]
+    #[error("The relay protocol is not available in browsers")]
     RelayProtoNotAvailable {},
 }
 
 /// Errors that can occur while dialing the relay server.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
+#[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum DialError {
-    #[snafu(display("Invliad target port"))]
+    #[error("Invalid target port")]
     InvalidTargetPort {},
-    #[snafu(transparent)]
+    #[error(transparent)]
     #[cfg(not(wasm_browser))]
     Dns { source: DnsError },
-    #[snafu(transparent)]
-    Timeout { source: time::Elapsed },
-    #[snafu(transparent)]
-    Io { source: std::io::Error },
-    #[snafu(display("Invalid URL: {url}"))]
+    #[error(transparent)]
+    Timeout {
+        #[error(std_err)]
+        source: time::Elapsed,
+    },
+    #[error(transparent)]
+    Io {
+        #[error(std_err)]
+        source: std::io::Error,
+    },
+    #[error("Invalid URL: {url}")]
     InvalidUrl { url: Url },
-    #[snafu(display("Failed proxy connection: {status}"))]
+    #[error("Failed proxy connection: {status}")]
     ProxyConnectInvalidStatus { status: hyper::StatusCode },
-    #[snafu(display("Invalid Proxy URL {proxy_url}"))]
+    #[error("Invalid Proxy URL {proxy_url}")]
     ProxyInvalidUrl { proxy_url: Url },
-    #[snafu(display("failed to establish proxy connection"))]
-    ProxyConnect { source: hyper::Error },
-    #[snafu(display("Invalid proxy TLS servername: {proxy_hostname}"))]
+    #[error("failed to establish proxy connection")]
+    ProxyConnect {
+        #[error(std_err)]
+        source: hyper::Error,
+    },
+    #[error("Invalid proxy TLS servername: {proxy_hostname}")]
     ProxyInvalidTlsServername { proxy_hostname: String },
-    #[snafu(display("Invalid proxy target port"))]
+    #[error("Invalid proxy target port")]
     ProxyInvalidTargetPort {},
 }
 
@@ -220,10 +229,9 @@ impl ClientBuilder {
                 _ => "wss",
             })
             .map_err(|_| {
-                InvalidWebsocketUrlSnafu {
-                    url: dial_url.clone(),
-                }
-                .build()
+                e!(ConnectError::InvalidWebsocketUrl {
+                    url: dial_url.clone()
+                })
             })?;
 
         debug!(%dial_url, "Dialing relay by websocket");
@@ -242,14 +250,13 @@ impl ClientBuilder {
         let local_addr = stream
             .as_ref()
             .local_addr()
-            .map_err(|_| NoLocalAddrSnafu.build())?;
+            .map_err(|_| e!(ConnectError::NoLocalAddr))?;
         let mut builder = tokio_websockets::ClientBuilder::new()
             .uri(dial_url.as_str())
             .map_err(|_| {
-                InvalidRelayUrlSnafu {
-                    url: dial_url.clone(),
-                }
-                .build()
+                e!(ConnectError::InvalidRelayUrl {
+                    url: dial_url.clone()
+                })
             })?
             .add_header(
                 SEC_WEBSOCKET_PROTOCOL,
@@ -271,12 +278,12 @@ impl ClientBuilder {
         }
         let (conn, response) = builder.connect_on(stream).await?;
 
-        if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            UnexpectedUpgradeStatusSnafu {
-                code: response.status(),
+        n0_error::ensure!(
+            response.status() == hyper::StatusCode::SWITCHING_PROTOCOLS,
+            ConnectError::UnexpectedUpgradeStatus {
+                code: response.status()
             }
-            .fail()?;
-        }
+        );
 
         let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;
 
@@ -323,10 +330,9 @@ impl ClientBuilder {
                 _ => "wss",
             })
             .map_err(|_| {
-                InvalidWebsocketUrlSnafu {
-                    url: dial_url.clone(),
-                }
-                .build()
+                e!(ConnectError::InvalidWebsocketUrl {
+                    url: dial_url.clone()
+                })
             })?;
 
         debug!(%dial_url, "Dialing relay by websocket");

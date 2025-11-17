@@ -1,11 +1,11 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use bytes::Bytes;
-use n0_snafu::{Result, ResultExt};
+use n0_error::{Result, StdResultExt};
 use quinn::{
     Connection, Endpoint, RecvStream, SendStream, TransportConfig, crypto::rustls::QuicClientConfig,
 };
@@ -32,13 +32,15 @@ pub fn server_endpoint(
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
     server_config.transport = Arc::new(transport_config(opt.max_streams, opt.initial_mtu));
 
+    let addr = if opt.use_ipv6 {
+        IpAddr::V6(Ipv6Addr::LOCALHOST)
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
+
     let endpoint = {
         let _guard = rt.enter();
-        quinn::Endpoint::server(
-            server_config,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-        )
-        .unwrap()
+        quinn::Endpoint::server(server_config, SocketAddr::new(addr, 0)).unwrap()
     };
     let server_addr = endpoint.local_addr().unwrap();
     (server_addr, endpoint)
@@ -69,11 +71,16 @@ pub async fn connect_client(
     server_cert: CertificateDer<'_>,
     opt: Opt,
 ) -> Result<(::quinn::Endpoint, Connection)> {
-    let endpoint =
-        quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    let addr = if opt.use_ipv6 {
+        IpAddr::V6(Ipv6Addr::LOCALHOST)
+    } else {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    };
+
+    let endpoint = quinn::Endpoint::client(SocketAddr::new(addr, 0)).unwrap();
 
     let mut roots = RootCertStore::empty();
-    roots.add(server_cert).e()?;
+    roots.add(server_cert).anyerr()?;
 
     let provider = rustls::crypto::ring::default_provider();
 
@@ -84,14 +91,14 @@ pub async fn connect_client(
         .with_no_client_auth();
 
     let mut client_config =
-        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).e()?));
+        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).anyerr()?));
     client_config.transport_config(Arc::new(transport_config(opt.max_streams, opt.initial_mtu)));
 
     let connection = endpoint
         .connect_with(client_config, server_addr, "localhost")
         .unwrap()
         .await
-        .context("unable to connect")?;
+        .std_context("unable to connect")?;
     trace!("connected");
 
     Ok((endpoint, connection))
@@ -103,11 +110,11 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig
     let mut config = TransportConfig::default();
     config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
     config.initial_mtu(initial_mtu);
+    config.max_concurrent_multipath_paths(16);
 
-    // TODO: re-enable when we upgrade quinn version
-    // let mut acks = quinn::AckFrequencyConfig::default();
-    // acks.ack_eliciting_threshold(10u32.into());
-    // config.ack_frequency_config(Some(acks));
+    let mut acks = quinn::AckFrequencyConfig::default();
+    acks.ack_eliciting_threshold(10u32.into());
+    config.ack_frequency_config(Some(acks));
 
     config
 }
@@ -125,7 +132,7 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.e()? {
+        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -147,7 +154,7 @@ async fn drain_stream(
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.e()? {
+        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -171,21 +178,21 @@ async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Resul
         stream
             .write_chunk(bytes_data.clone())
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
     if remaining != 0 {
         stream
             .write_chunk(bytes_data.slice(0..remaining))
             .await
-            .context("failed sending data")?;
+            .std_context("failed sending data")?;
     }
 
-    stream.finish().context("failed finishing stream")?;
+    stream.finish().std_context("failed finishing stream")?;
     stream
         .stopped()
         .await
-        .context("failed to wait for stream to be stopped")?;
+        .std_context("failed to wait for stream to be stopped")?;
 
     Ok(())
 }
@@ -200,7 +207,7 @@ pub async fn handle_client_stream(
     let (mut send_stream, mut recv_stream) = connection
         .open_bi()
         .await
-        .context("failed to open stream")?;
+        .std_context("failed to open stream")?;
 
     send_data_on_stream(&mut send_stream, upload_size).await?;
 
@@ -220,8 +227,8 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
     // Handle only the expected amount of clients
     for _ in 0..opt.clients {
         let incoming = endpoint.accept().await.unwrap();
-        let connecting = match incoming.accept() {
-            Ok(connecting) => connecting,
+        let accepting = match incoming.accept() {
+            Ok(accepting) => accepting,
             Err(err) => {
                 warn!("incoming connection failed: {err:#}");
                 // we can carry on in these cases:
@@ -229,7 +236,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 continue;
             }
         };
-        let connection = connecting.await.context("handshake failed")?;
+        let connection = accepting.await.std_context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {
             loop {
@@ -246,7 +253,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 tokio::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
-                    Ok::<_, n0_snafu::Error>(())
+                    n0_error::Ok(())
                 });
             }
 

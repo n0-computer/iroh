@@ -1,14 +1,11 @@
-use std::{env, future::Future, str::FromStr, time::Instant};
+use std::{env, str::FromStr, time::Instant};
 
 use clap::Parser;
 use data_encoding::HEXLOWER;
-use iroh::{
-    EndpointId, SecretKey,
-    endpoint::{Connecting, Connection},
-};
-use n0_future::{StreamExt, future};
-use n0_snafu::ResultExt;
-use n0_watcher::Watcher;
+use iroh::{EndpointId, SecretKey, discovery::Discovery, endpoint::ZeroRttStatus};
+use n0_error::{Result, StackResultExt, StdResultExt};
+use n0_future::StreamExt;
+use quinn::{RecvStream, SendStream};
 use tracing::{info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
@@ -27,7 +24,7 @@ struct Args {
 
 /// Gets a secret key from the IROH_SECRET environment variable or generates a new random one.
 /// If the environment variable is set, it must be a valid string representation of a secret key.
-pub fn get_or_generate_secret_key() -> n0_snafu::Result<SecretKey> {
+pub fn get_or_generate_secret_key() -> Result<SecretKey> {
     if let Ok(secret) = env::var("IROH_SECRET") {
         // Parse the secret key from string
         SecretKey::from_str(&secret).context("Invalid secret key format")
@@ -44,59 +41,39 @@ pub fn get_or_generate_secret_key() -> n0_snafu::Result<SecretKey> {
 }
 
 /// Do a simple ping-pong with the given connection.
-///
-/// We send the data on the connection. If `proceed` resolves to true,
-/// read the response immediately. Otherwise, the stream pair is bad and we need
-/// to open a new stream pair.
-async fn pingpong(
-    connection: &Connection,
-    proceed: impl Future<Output = bool>,
-    x: u64,
-) -> n0_snafu::Result<()> {
-    let (mut send, recv) = connection.open_bi().await.e()?;
+async fn pingpong(send: SendStream, recv: RecvStream, x: u64) -> Result<()> {
+    ping(send, x).await?;
+    pong(recv, x).await
+}
+
+async fn ping(mut send: SendStream, x: u64) -> Result<()> {
     let data = x.to_be_bytes();
-    send.write_all(&data).await.e()?;
-    send.finish().e()?;
-    let mut recv = if proceed.await {
-        // use recv directly if we can proceed
-        recv
-    } else {
-        // proceed returned false, so we have learned that the 0-RTT send was rejected.
-        // at this point we have a fully handshaked connection, so we try again.
-        let (mut send, recv) = connection.open_bi().await.e()?;
-        send.write_all(&data).await.e()?;
-        send.finish().e()?;
-        recv
-    };
-    let echo = recv.read_to_end(8).await.e()?;
+    send.write_all(&data).await.anyerr()?;
+    send.finish().anyerr()
+}
+
+async fn pong(mut recv: RecvStream, x: u64) -> Result<()> {
+    let data = x.to_be_bytes();
+    let echo = recv.read_to_end(8).await.anyerr()?;
     assert!(echo == data);
     Ok(())
 }
 
-async fn pingpong_0rtt(connecting: Connecting, i: u64) -> n0_snafu::Result<Connection> {
-    let connection = match connecting.into_0rtt() {
-        Ok((connection, accepted)) => {
-            trace!("0-RTT possible from our side");
-            pingpong(&connection, accepted, i).await?;
-            connection
-        }
-        Err(connecting) => {
-            trace!("0-RTT not possible from our side");
-            let connection = connecting.await.e()?;
-            pingpong(&connection, future::ready(true), i).await?;
-            connection
-        }
-    };
-    Ok(connection)
-}
-
-async fn connect(args: Args) -> n0_snafu::Result<()> {
+async fn connect(args: Args) -> Result<()> {
     let remote_id = args.endpoint_id.unwrap();
     let endpoint = iroh::Endpoint::builder()
         .relay_mode(iroh::RelayMode::Disabled)
         .keylog(true)
         .bind()
         .await?;
+    // ensure we have resolved the remote_id before connecting
+    // so we get a more accurate connection timing
+    let mut discovery_stream = endpoint
+        .discovery()
+        .resolve(remote_id)
+        .expect("discovery to be enabled");
+    let _ = discovery_stream.next().await;
+
     let t0 = Instant::now();
     for i in 0..args.rounds {
         let t0 = Instant::now();
@@ -104,20 +81,42 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
             .connect_with_opts(remote_id, PINGPONG_ALPN, Default::default())
             .await?;
         let connection = if args.disable_0rtt {
-            let connection = connecting.await.e()?;
+            let connection = connecting.await.anyerr()?;
             trace!("connecting without 0-RTT");
-            pingpong(&connection, future::ready(true), i).await?;
+            let (send, recv) = connection.open_bi().await.anyerr()?;
+            pingpong(send, recv, i).await?;
             connection
         } else {
-            pingpong_0rtt(connecting, i).await?
+            match connecting.into_0rtt() {
+                Ok(zrtt_connection) => {
+                    trace!("0-RTT possible from our side");
+                    let (send, recv) = zrtt_connection.open_bi().await.anyerr()?;
+                    // before we get the full handshake, attempt to send 0-RTT data
+                    let zrtt_task = tokio::spawn(ping(send, i));
+                    match zrtt_connection.handshake_completed().await? {
+                        ZeroRttStatus::Accepted(conn) => {
+                            let _ = zrtt_task.await.anyerr()?;
+                            pong(recv, i).await?;
+                            conn
+                        }
+                        ZeroRttStatus::Rejected(conn) => {
+                            zrtt_task.abort();
+                            let (send, recv) = conn.open_bi().await.anyerr()?;
+                            pingpong(send, recv, i).await?;
+                            conn
+                        }
+                    }
+                }
+                Err(connecting) => {
+                    trace!("0-RTT not possible from our side");
+                    let conn = connecting.await.anyerr()?;
+                    let (send, recv) = conn.open_bi().await.anyerr()?;
+                    pingpong(send, recv, i).await?;
+                    conn
+                }
+            }
         };
-        tokio::spawn(async move {
-            // wait for some time for the handshake to complete and the server
-            // to send a NewSessionTicket. This is less than ideal, but we
-            // don't have a better way to wait for the handshake to complete.
-            tokio::time::sleep(connection.rtt() * 2).await;
-            connection.close(0u8.into(), b"");
-        });
+        connection.close(0u8.into(), b"");
         let elapsed = t0.elapsed();
         println!("round {i}: {} us", elapsed.as_micros());
     }
@@ -130,7 +129,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
     Ok(())
 }
 
-async fn accept(_args: Args) -> n0_snafu::Result<()> {
+async fn accept(_args: Args) -> Result<()> {
     let secret_key = get_or_generate_secret_key()?;
     let endpoint = iroh::Endpoint::builder()
         .alpns(vec![PINGPONG_ALPN.to_vec()])
@@ -138,32 +137,21 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
         .relay_mode(iroh::RelayMode::Disabled)
         .bind()
         .await?;
-    let mut addrs = endpoint.watch_addr().stream();
-    let addr = loop {
-        let Some(addr) = addrs.next().await else {
-            snafu::whatever!("Address stream closed");
-        };
-        if !addr.ip_addrs().count() == 0 {
-            break addr;
-        }
-    };
-    println!("Listening on: {addr:?}");
+    println!("endpoint id: {}", endpoint.id());
 
     let accept = async move {
         while let Some(incoming) = endpoint.accept().await {
             tokio::spawn(async move {
-                let connecting = incoming.accept().e()?;
-                let (connection, _zero_rtt_accepted) = connecting
-                    .into_0rtt()
-                    .expect("accept into 0.5 RTT always succeeds");
-                let (mut send, mut recv) = connection.accept_bi().await.e()?;
+                let accepting = incoming.accept().anyerr()?;
+                let connection = accepting.into_0rtt();
+                let (mut send, mut recv) = connection.accept_bi().await.anyerr()?;
                 trace!("recv.is_0rtt: {}", recv.is_0rtt());
-                let data = recv.read_to_end(8).await.e()?;
+                let data = recv.read_to_end(8).await.anyerr()?;
                 trace!("recv: {}", data.len());
-                send.write_all(&data).await.e()?;
-                send.finish().e()?;
+                send.write_all(&data).await.anyerr()?;
+                send.finish().anyerr()?;
                 connection.closed().await;
-                Ok::<_, n0_snafu::Error>(())
+                n0_error::Ok(())
             });
         }
     };
@@ -179,7 +167,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> n0_snafu::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
     if args.endpoint_id.is_some() {

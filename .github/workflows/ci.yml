@@ -16,7 +16,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.85"
+  MSRV: "1.89"
   SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
@@ -338,4 +338,4 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: pip install --user codespell[toml]
-      - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md
+      - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl,keep-alives --skip=CHANGELOG.md

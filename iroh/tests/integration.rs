@@ -13,11 +13,11 @@ use iroh::{
     Endpoint, RelayMode,
     discovery::{Discovery, pkarr::PkarrResolver},
 };
+use n0_error::{Result, StdResultExt};
 use n0_future::{
     StreamExt, task,
     time::{self, Duration},
 };
-use n0_snafu::{Result, ResultExt};
 #[cfg(not(wasm_browser))]
 use tokio::test;
 use tracing::{Instrument, info_span};
@@ -25,7 +25,7 @@ use tracing::{Instrument, info_span};
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
 // Enable this if you want to run these tests in the browser.
-// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in endpointjs.
+// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in nodejs.
 // #[cfg(wasm_browser)]
 // wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
@@ -52,7 +52,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     tracing::info!("waiting for server to go online");
     time::timeout(Duration::from_secs(12), server.online())
         .await
-        .context("server endpoint took too long to get online")?;
+        .std_context("server endpoint took too long to get online")?;
 
     // Make the server respond to requests with an echo
     task::spawn({
@@ -61,24 +61,24 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
         async move {
             while let Some(incoming) = server.accept().await {
                 tracing::info!("accepting connection");
-                let conn = incoming.await.e()?;
-                let endpoint_id = conn.remote_id()?;
+                let conn = incoming.await?;
+                let endpoint_id = conn.remote_id();
                 tracing::info!(endpoint_id = %endpoint_id.fmt_short(), "Accepted connection");
 
-                let (mut send, mut recv) = conn.accept_bi().await.e()?;
+                let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
                 let mut bytes_sent = 0;
-                while let Some(chunk) = recv.read_chunk(10_000, true).await.e()? {
+                while let Some(chunk) = recv.read_chunk(10_000, true).await.anyerr()? {
                     bytes_sent += chunk.bytes.len();
-                    send.write_chunk(chunk.bytes).await.e()?;
+                    send.write_chunk(chunk.bytes).await.anyerr()?;
                 }
-                send.finish().e()?;
+                send.finish().anyerr()?;
                 tracing::info!("Copied over {bytes_sent} byte(s)");
 
                 let code = conn.closed().await;
                 tracing::info!("Closed with code: {code:?}");
             }
 
-            Ok::<_, n0_snafu::Error>(())
+            n0_error::Ok(())
         }
         .instrument(info_span!("server"))
     });
@@ -111,18 +111,18 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
         }
     })
     .await
-    .e()?;
+    .anyerr()?;
 
     tracing::info!(to = %server.id().fmt_short(), "Opening a connection");
     let conn = client.connect(server.id(), ECHO_ALPN).await?;
     tracing::info!("Connection opened");
 
-    let (mut send, mut recv) = conn.open_bi().await.e()?;
-    send.write_all(b"Hello, World!").await.e()?;
-    send.finish().e()?;
+    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+    send.write_all(b"Hello, World!").await.anyerr()?;
+    send.finish().anyerr()?;
     tracing::info!("Sent request");
 
-    let response = recv.read_to_end(10_000).await.e()?;
+    let response = recv.read_to_end(10_000).await.anyerr()?;
     tracing::info!(len = response.len(), "Received response");
     assert_eq!(&response, b"Hello, World!");
 
