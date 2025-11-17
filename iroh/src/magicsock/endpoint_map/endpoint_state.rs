@@ -380,16 +380,16 @@ impl EndpointStateActor {
                 paths = ?self.paths.keys().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
             );
-            // TODO(Frando): Use Watcher::peek once available.
-            let local_addrs = self.local_addrs.get();
             for addr in self.paths.keys() {
+                // We never want to send to our local addresses.
+                // The local address set is updated in the main loop so we can use `peek` here.
                 if let transports::Addr::Ip(sockaddr) = addr
-                    && local_addrs.iter().any(|a| a.addr == *sockaddr)
+                    && self.local_addrs.peek().iter().any(|a| a.addr == *sockaddr)
                 {
                     warn!(%sockaddr, "not sending datagram to our own address");
-                    continue;
+                } else {
+                    self.send_datagram(addr.clone(), transmit.clone()).await?;
                 }
-                self.send_datagram(addr.clone(), transmit.clone()).await?;
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger

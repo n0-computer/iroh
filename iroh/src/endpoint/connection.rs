@@ -199,20 +199,12 @@ async fn alpn_from_quinn_connecting(conn: &mut quinn::Connecting) -> Result<Vec<
 #[stack_error(add_meta, derive, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
-#[allow(private_interfaces)]
 #[derive(Clone)]
 pub enum AuthenticationError {
     #[error(transparent)]
     RemoteId { source: RemoteEndpointIdError },
     #[error("no ALPN provided")]
     NoAlpn {},
-}
-
-impl From<EndpointStateActorStoppedError> for ConnectingError {
-    #[track_caller]
-    fn from(_value: EndpointStateActorStoppedError) -> Self {
-        e!(Self::InternalConsistencyError)
-    }
 }
 
 /// Converts a `quinn::Connection` to a `Connection`.
@@ -359,6 +351,7 @@ pub enum AlpnError {
 #[allow(missing_docs)]
 #[non_exhaustive]
 #[derive(Clone)]
+#[allow(private_interfaces)]
 pub enum ConnectingError {
     #[error(transparent)]
     ConnectionError {
@@ -367,8 +360,11 @@ pub enum ConnectingError {
     },
     #[error("Failure finalizing the handshake")]
     HandshakeFailure { source: AuthenticationError },
-    #[error("internal consistency error: EndpointStateActor stopped")]
-    InternalConsistencyError,
+    #[error("internal consistency error")]
+    InternalConsistencyError {
+        /// Private source type, cannot be accessed publicly.
+        source: EndpointStateActorStoppedError,
+    },
 }
 
 impl Connecting {
