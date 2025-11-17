@@ -215,8 +215,8 @@
 <a href=#215 id=215 data-nosnippet>215</a></span><span class="kw">pub enum </span>DiscoveryError {
 <a href=#216 id=216 data-nosnippet>216</a>    <span class="attr">#[error(<span class="string">"No discovery service configured"</span>)]
 <a href=#217 id=217 data-nosnippet>217</a>    </span>NoServiceConfigured,
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="attr">#[error(<span class="string">"Discovery produced no results for {}"</span>, endpoint_id.fmt_short())]
-<a href=#219 id=219 data-nosnippet>219</a>    </span>NoResults { endpoint_id: EndpointId },
+<a href=#218 id=218 data-nosnippet>218</a>    <span class="attr">#[error(<span class="string">"Discovery produced no results"</span>)]
+<a href=#219 id=219 data-nosnippet>219</a>    </span>NoResults,
 <a href=#220 id=220 data-nosnippet>220</a>    <span class="attr">#[error(<span class="string">"Service '{provenance}' error"</span>)]
 <a href=#221 id=221 data-nosnippet>221</a>    </span>User {
 <a href=#222 id=222 data-nosnippet>222</a>        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
