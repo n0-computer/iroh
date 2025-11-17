@@ -81,18 +81,6 @@ pub use crate::magicsock::transports::TransportConfig;
 /// is still no connection the configured [`crate::discovery::Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
-/// Defines the mode of path selection for all traffic flowing through
-/// the endpoint.
-#[cfg(any(test, feature = "test-utils"))]
-#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
-pub enum PathSelection {
-    /// Uses all available paths
-    #[default]
-    All,
-    /// Forces all traffic to go exclusively through relays
-    RelayOnly,
-}
-
 /// Builder for [`Endpoint`].
 ///
 /// By default the endpoint will generate a new random [`SecretKey`], which will result in a
@@ -113,8 +101,6 @@ pub struct Builder {
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     transports: Vec<TransportConfig>,
-    #[cfg(any(test, feature = "test-utils"))]
-    path_selection: PathSelection,
     max_tls_tickets: usize,
 }
 
@@ -176,8 +162,6 @@ impl Builder {
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection: PathSelection::default(),
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
         }
@@ -224,8 +208,6 @@ impl Builder {
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            // #[cfg(any(test, feature = "test-utils"))]
-            // path_selection: self.path_selection,
             metrics,
         };
 
@@ -468,14 +450,6 @@ impl Builder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
         self.insecure_skip_relay_cert_verify = skip_verify;
-        self
-    }
-
-    /// This implies we only use the relay to communicate
-    /// and do not attempt to do any hole punching.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn path_selection(mut self, path_selection: PathSelection) -> Self {
-        self.path_selection = path_selection;
         self
     }
 
