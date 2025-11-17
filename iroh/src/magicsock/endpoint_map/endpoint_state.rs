@@ -23,14 +23,17 @@ use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
-use self::guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel};
+use self::{
+    guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
+    path_state::EndpointPathState,
+};
 use crate::{
     disco::{self},
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
-        endpoint_map::{Private, Source, path_state::EndpointPathState},
+        endpoint_map::{Private, Source},
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -38,6 +41,7 @@ use crate::{
 };
 
 mod guarded_channel;
+mod path_state;
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.

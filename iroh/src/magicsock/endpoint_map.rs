@@ -24,7 +24,6 @@ use super::{
 use crate::{disco, discovery::ConcurrentDiscovery};
 
 mod endpoint_state;
-mod path_state;
 
 /// Interval in which handles to closed [`EndpointStateActor`]s should be removed.
 pub(super) const ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);

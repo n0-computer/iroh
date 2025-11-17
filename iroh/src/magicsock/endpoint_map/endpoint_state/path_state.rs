@@ -22,12 +22,14 @@ pub(super) struct EndpointPathState {
     /// These paths might be entirely impossible to use, since they are added by discovery
     /// mechanisms. The are only potentially usable.
     paths: FxHashMap<transports::Addr, PathState>,
-    /// Pending requests from [`super::EndpointStateMessage::ResolveRemote`].
+    /// Pending requests from [`Self::resolve_remote`].
     pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
 }
 
 impl EndpointPathState {
     /// Insert a new address into our list of potential paths.
+    ///
+    /// This will emit pending resolve requests.
     pub(super) fn insert(&mut self, addr: transports::Addr, source: Source) {
         self.paths
             .entry(addr)
@@ -38,6 +40,8 @@ impl EndpointPathState {
     }
 
     /// Inserts multiple addresses into our list of potential paths.
+    ///
+    /// This will emit pending resolve requests.
     pub(super) fn insert_multiple(
         &mut self,
         addrs: impl Iterator<Item = transports::Addr>,
@@ -55,10 +59,13 @@ impl EndpointPathState {
         self.emit_pending_resolve_requests(None);
     }
 
-    /// Resolves `tx` immediately if there are any known paths, or store in the list of pending requests.
+    /// Triggers `tx` immediately if there are any known paths, or store in the list of pending requests.
     ///
-    /// The pending requests will be resolved one a path becomes known, or once discovery concludes without results,
-    /// whichever comes first.
+    /// The pending requests will be resolved once a path becomes known, or once discovery
+    /// concludes without results, whichever comes first.
+    ///
+    /// Sends `Ok(())` over `tx` if there are any known paths, and a [`DiscoveryError`] if there are
+    /// no known paths by the time a discovery run finished with an error or without results.
     pub(super) fn resolve_remote(&mut self, tx: oneshot::Sender<Result<(), DiscoveryError>>) {
         if !self.paths.is_empty() {
             tx.send(Ok(())).ok();
