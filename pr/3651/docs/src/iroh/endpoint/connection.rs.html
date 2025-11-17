@@ -735,7 +735,7 @@
 <a href=#735 id=735 data-nosnippet>735</a>
 <a href=#736 id=736 data-nosnippet>736</a>    <span class="comment">// TODO: It seems `SendDatagram` is not yet exposed by quinn.  This has been fixed
 <a href=#737 id=737 data-nosnippet>737</a>    //       upstream and will be in the next release.
-<a href=#738 id=738 data-nosnippet>738</a>    // /// Transmits `data` as an unreliable, unordered application datagramb
+<a href=#738 id=738 data-nosnippet>738</a>    // /// Transmits `data` as an unreliable, unordered application datagram
 <a href=#739 id=739 data-nosnippet>739</a>    // ///
 <a href=#740 id=740 data-nosnippet>740</a>    // /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
 <a href=#741 id=741 data-nosnippet>741</a>    // /// conditions, which effectively prioritizes old datagrams over new datagrams.
@@ -1521,7 +1521,7 @@
 <a href=#1521 id=1521 data-nosnippet>1521</a>    <span class="kw">use </span>n0_future::StreamExt;
 <a href=#1522 id=1522 data-nosnippet>1522</a>    <span class="kw">use </span>n0_watcher::Watcher;
 <a href=#1523 id=1523 data-nosnippet>1523</a>    <span class="kw">use </span>rand::SeedableRng;
-<a href=#1524 id=1524 data-nosnippet>1524</a>    <span class="kw">use </span>tracing::{Instrument, error_span, info_span, trace_span};
+<a href=#1524 id=1524 data-nosnippet>1524</a>    <span class="kw">use </span>tracing::{Instrument, error_span, info, info_span, trace_span};
 <a href=#1525 id=1525 data-nosnippet>1525</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#1526 id=1526 data-nosnippet>1526</a>
 <a href=#1527 id=1527 data-nosnippet>1527</a>    <span class="kw">use </span><span class="kw">super</span>::Endpoint;
@@ -1740,8 +1740,8 @@
 <a href=#1740 id=1740 data-nosnippet>1740</a>    }
 <a href=#1741 id=1741 data-nosnippet>1741</a>
 <a href=#1742 id=1742 data-nosnippet>1742</a>    <span class="attr">#[tokio::test]
-<a href=#1743 id=1743 data-nosnippet>1743</a>    </span><span class="kw">async fn </span>test_paths_watcher() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1744 id=1744 data-nosnippet>1744</a>        tracing_subscriber::fmt::init();
+<a href=#1743 id=1743 data-nosnippet>1743</a>    #[traced_test]
+<a href=#1744 id=1744 data-nosnippet>1744</a>    </span><span class="kw">async fn </span>test_paths_watcher() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#1745 id=1745 data-nosnippet>1745</a>        <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"test"</span>;
 <a href=#1746 id=1746 data-nosnippet>1746</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
 <a href=#1747 id=1747 data-nosnippet>1747</a>        <span class="kw">let </span>(relay_map, _relay_map, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1760,13 +1760,13 @@
 <a href=#1760 id=1760 data-nosnippet>1760</a>
 <a href=#1761 id=1761 data-nosnippet>1761</a>        server.online().<span class="kw">await</span>;
 <a href=#1762 id=1762 data-nosnippet>1762</a>        <span class="kw">let </span>server_addr = server.addr();
-<a href=#1763 id=1763 data-nosnippet>1763</a>        <span class="macro">tracing::info!</span>(<span class="string">"server addr: {server_addr:?}"</span>);
+<a href=#1763 id=1763 data-nosnippet>1763</a>        <span class="macro">info!</span>(<span class="string">"server addr: {server_addr:?}"</span>);
 <a href=#1764 id=1764 data-nosnippet>1764</a>
 <a href=#1765 id=1765 data-nosnippet>1765</a>        <span class="kw">let </span>(conn_client, conn_server) = <span class="macro">tokio::join!</span>(
 <a href=#1766 id=1766 data-nosnippet>1766</a>            <span class="kw">async </span>{ client.connect(server_addr, ALPN).<span class="kw">await</span>.unwrap() },
 <a href=#1767 id=1767 data-nosnippet>1767</a>            <span class="kw">async </span>{ server.accept().<span class="kw">await</span>.unwrap().<span class="kw">await</span>.unwrap() }
 <a href=#1768 id=1768 data-nosnippet>1768</a>        );
-<a href=#1769 id=1769 data-nosnippet>1769</a>        <span class="macro">tracing::info!</span>(<span class="string">"connected"</span>);
+<a href=#1769 id=1769 data-nosnippet>1769</a>        <span class="macro">info!</span>(<span class="string">"connected"</span>);
 <a href=#1770 id=1770 data-nosnippet>1770</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_client = conn_client.paths().stream();
 <a href=#1771 id=1771 data-nosnippet>1771</a>        <span class="kw">let </span><span class="kw-2">mut </span>paths_server = conn_server.paths().stream();
 <a href=#1772 id=1772 data-nosnippet>1772</a>
@@ -1778,12 +1778,12 @@
 <a href=#1778 id=1778 data-nosnippet>1778</a>        ) {
 <a href=#1779 id=1779 data-nosnippet>1779</a>            <span class="kw">loop </span>{
 <a href=#1780 id=1780 data-nosnippet>1780</a>                <span class="kw">let </span>paths = stream.next().<span class="kw">await</span>.expect(<span class="string">"paths stream ended"</span>);
-<a href=#1781 id=1781 data-nosnippet>1781</a>                <span class="macro">tracing::info!</span>(<span class="question-mark">?</span>paths, <span class="string">"paths"</span>);
+<a href=#1781 id=1781 data-nosnippet>1781</a>                <span class="macro">info!</span>(<span class="question-mark">?</span>paths, <span class="string">"paths"</span>);
 <a href=#1782 id=1782 data-nosnippet>1782</a>                <span class="kw">if </span>paths.len() &gt;= <span class="number">2
 <a href=#1783 id=1783 data-nosnippet>1783</a>                    </span>&amp;&amp; paths.iter().any(PathInfo::is_relay)
 <a href=#1784 id=1784 data-nosnippet>1784</a>                    &amp;&amp; paths.iter().any(PathInfo::is_ip)
 <a href=#1785 id=1785 data-nosnippet>1785</a>                {
-<a href=#1786 id=1786 data-nosnippet>1786</a>                    <span class="macro">tracing::info!</span>(<span class="string">"break"</span>);
+<a href=#1786 id=1786 data-nosnippet>1786</a>                    <span class="macro">info!</span>(<span class="string">"break"</span>);
 <a href=#1787 id=1787 data-nosnippet>1787</a>                    <span class="kw">return</span>;
 <a href=#1788 id=1788 data-nosnippet>1788</a>                }
 <a href=#1789 id=1789 data-nosnippet>1789</a>            }
@@ -1806,7 +1806,7 @@
 <a href=#1806 id=1806 data-nosnippet>1806</a>        );
 <a href=#1807 id=1807 data-nosnippet>1807</a>
 <a href=#1808 id=1808 data-nosnippet>1808</a>        <span class="comment">// Close the client connection.
-<a href=#1809 id=1809 data-nosnippet>1809</a>        </span><span class="macro">tracing::info!</span>(<span class="string">"close client conn"</span>);
+<a href=#1809 id=1809 data-nosnippet>1809</a>        </span><span class="macro">info!</span>(<span class="string">"close client conn"</span>);
 <a href=#1810 id=1810 data-nosnippet>1810</a>        conn_client.close(<span class="number">0u32</span>.into(), <span class="string">b""</span>);
 <a href=#1811 id=1811 data-nosnippet>1811</a>
 <a href=#1812 id=1812 data-nosnippet>1812</a>        <span class="comment">// Verify that the path watch streams close.

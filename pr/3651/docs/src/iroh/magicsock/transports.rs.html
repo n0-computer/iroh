@@ -79,7 +79,7 @@
 <a href=#79 id=79 data-nosnippet>79</a>    },
 <a href=#80 id=80 data-nosnippet>80</a>}
 <a href=#81 id=81 data-nosnippet>81</a><span class="kw">impl </span>TransportConfig {
-<a href=#82 id=82 data-nosnippet>82</a>    <span class="doccomment">/// TODO docs
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="doccomment">/// Configures a default IPv4 transport, listening on `0.0.0.0:0`.
 <a href=#83 id=83 data-nosnippet>83</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#84 id=84 data-nosnippet>84</a>    </span><span class="kw">pub fn </span>default_ipv4() -&gt; <span class="self">Self </span>{
 <a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddrV4};
@@ -89,7 +89,7 @@
 <a href=#89 id=89 data-nosnippet>89</a>        }
 <a href=#90 id=90 data-nosnippet>90</a>    }
 <a href=#91 id=91 data-nosnippet>91</a>
-<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// TODO docs
+<a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// Configures a default IPv6 transport, listening on `[::]:0`.
 <a href=#93 id=93 data-nosnippet>93</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">pub fn </span>default_ipv6() -&gt; <span class="self">Self </span>{
 <a href=#95 id=95 data-nosnippet>95</a>        <span class="self">Self</span>::Ip {
