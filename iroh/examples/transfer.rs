@@ -242,16 +242,7 @@ impl EndpointArgs {
         }
 
         if self.relay_only {
-            #[cfg(feature = "test-utils")]
-            {
-                builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
-            }
-            #[cfg(not(feature = "test-utils"))]
-            {
-                n0_error::bail_any!(
-                    "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
-                );
-            }
+            builder = builder.clear_ip_transports();
         }
 
         if let Some(host) = self.dns_server {
@@ -280,7 +271,7 @@ impl EndpointArgs {
             #[cfg(not(feature = "discovery-local-network"))]
             {
                 n0_error::bail_any!(
-                    "Must have the `test-utils` feature enabled when using the `--relay-only` flag"
+                    "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
                 );
             }
         }

@@ -53,8 +53,6 @@ use self::{
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-// #[cfg(any(test, feature = "test-utils"))]
-// use crate::endpoint::PathSelection;
 #[cfg(not(wasm_browser))]
 use crate::net_report::QuicConfig;
 use crate::{
@@ -144,10 +142,6 @@ pub(crate) struct Options {
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
-
-    // /// Configuration for what path selection to use
-    // #[cfg(any(test, feature = "test-utils"))]
-    // pub(crate) path_selection: PathSelection,
     pub(crate) metrics: EndpointMetrics,
 }
 
@@ -918,8 +912,6 @@ impl Handle {
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
-            // #[cfg(any(test, feature = "test-utils"))]
-            // path_selection,
             metrics,
         } = opts;
 
@@ -1008,8 +1000,6 @@ impl Handle {
         let endpoint_map = {
             EndpointMap::new(
                 secret_key.public(),
-                // #[cfg(any(test, feature = "test-utils"))]
-                // path_selection,
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
                 disco.clone(),
@@ -1866,7 +1856,6 @@ mod tests {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             #[cfg(any(test, feature = "test-utils"))]
-            // path_selection: PathSelection::default(),
             discovery_user_data: None,
             metrics: Default::default(),
         }
@@ -2302,7 +2291,6 @@ mod tests {
             proxy_url: None,
             server_config,
             insecure_skip_relay_cert_verify: false,
-            // path_selection: PathSelection::default(),
             metrics: Default::default(),
         };
         let msock = MagicSock::spawn(opts).await?;

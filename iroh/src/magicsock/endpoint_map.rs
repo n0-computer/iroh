@@ -12,8 +12,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-// #[cfg(any(test, feature = "test-utils"))]
-// use crate::endpoint::PathSelection;
 pub(super) use self::endpoint_state::EndpointStateMessage;
 pub(crate) use self::endpoint_state::PathsWatcher;
 use self::endpoint_state::{EndpointStateActor, EndpointStateHandle};
@@ -70,8 +68,6 @@ impl EndpointMap {
     /// Creates a new [`EndpointMap`].
     pub(super) fn new(
         local_endpoint_id: EndpointId,
-        // TODO:
-        // #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
         metrics: Arc<MagicsockMetrics>,
 
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
