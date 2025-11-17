@@ -39,444 +39,444 @@
 <a href=#39 id=39 data-nosnippet>39</a>    util::MaybeFuture,
 <a href=#40 id=40 data-nosnippet>40</a>};
 <a href=#41 id=41 data-nosnippet>41</a>
-<a href=#42 id=42 data-nosnippet>42</a><span class="comment">// TODO: Use this
-<a href=#43 id=43 data-nosnippet>43</a>// #[cfg(any(test, feature = "test-utils"))]
-<a href=#44 id=44 data-nosnippet>44</a>// use crate::endpoint::PathSelection;
-<a href=#45 id=45 data-nosnippet>45</a>
-<a href=#46 id=46 data-nosnippet>46</a></span><span class="kw">mod </span>guarded_channel;
-<a href=#47 id=47 data-nosnippet>47</a>
-<a href=#48 id=48 data-nosnippet>48</a><span class="comment">// TODO: use this
-<a href=#49 id=49 data-nosnippet>49</a>// /// Number of addresses that are not active that we keep around per endpoint.
-<a href=#50 id=50 data-nosnippet>50</a>// ///
-<a href=#51 id=51 data-nosnippet>51</a>// /// See [`EndpointState::prune_direct_addresses`].
-<a href=#52 id=52 data-nosnippet>52</a>// pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
+<a href=#42 id=42 data-nosnippet>42</a><span class="kw">mod </span>guarded_channel;
+<a href=#43 id=43 data-nosnippet>43</a>
+<a href=#44 id=44 data-nosnippet>44</a><span class="comment">// TODO: use this
+<a href=#45 id=45 data-nosnippet>45</a>// /// Number of addresses that are not active that we keep around per endpoint.
+<a href=#46 id=46 data-nosnippet>46</a>// ///
+<a href=#47 id=47 data-nosnippet>47</a>// /// See [`EndpointState::prune_direct_addresses`].
+<a href=#48 id=48 data-nosnippet>48</a>// pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
+<a href=#49 id=49 data-nosnippet>49</a>
+<a href=#50 id=50 data-nosnippet>50</a>// TODO: use this
+<a href=#51 id=51 data-nosnippet>51</a>// /// How long since an endpoint path was last alive before it might be pruned.
+<a href=#52 id=52 data-nosnippet>52</a>// const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 <a href=#53 id=53 data-nosnippet>53</a>
 <a href=#54 id=54 data-nosnippet>54</a>// TODO: use this
-<a href=#55 id=55 data-nosnippet>55</a>// /// How long since an endpoint path was last alive before it might be pruned.
-<a href=#56 id=56 data-nosnippet>56</a>// const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
+<a href=#55 id=55 data-nosnippet>55</a>// /// The latency at or under which we don't try to upgrade to a better path.
+<a href=#56 id=56 data-nosnippet>56</a>// const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 <a href=#57 id=57 data-nosnippet>57</a>
 <a href=#58 id=58 data-nosnippet>58</a>// TODO: use this
-<a href=#59 id=59 data-nosnippet>59</a>// /// The latency at or under which we don't try to upgrade to a better path.
-<a href=#60 id=60 data-nosnippet>60</a>// const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
-<a href=#61 id=61 data-nosnippet>61</a>
-<a href=#62 id=62 data-nosnippet>62</a>// TODO: use this
-<a href=#63 id=63 data-nosnippet>63</a>// /// How long since the last activity we try to keep an established endpoint peering alive.
-<a href=#64 id=64 data-nosnippet>64</a>// ///
-<a href=#65 id=65 data-nosnippet>65</a>// /// It's also the idle time at which we stop doing QAD queries to keep NAT mappings alive.
-<a href=#66 id=66 data-nosnippet>66</a>// pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
-<a href=#67 id=67 data-nosnippet>67</a>
-<a href=#68 id=68 data-nosnippet>68</a>// TODO: use this
-<a href=#69 id=69 data-nosnippet>69</a>// /// How often we try to upgrade to a better path.
-<a href=#70 id=70 data-nosnippet>70</a>// ///
-<a href=#71 id=71 data-nosnippet>71</a>// /// Even if we have some non-relay route that works.
-<a href=#72 id=72 data-nosnippet>72</a>// const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
+<a href=#59 id=59 data-nosnippet>59</a>// /// How long since the last activity we try to keep an established endpoint peering alive.
+<a href=#60 id=60 data-nosnippet>60</a>// ///
+<a href=#61 id=61 data-nosnippet>61</a>// /// It's also the idle time at which we stop doing QAD queries to keep NAT mappings alive.
+<a href=#62 id=62 data-nosnippet>62</a>// pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
+<a href=#63 id=63 data-nosnippet>63</a>
+<a href=#64 id=64 data-nosnippet>64</a>// TODO: use this
+<a href=#65 id=65 data-nosnippet>65</a>// /// How often we try to upgrade to a better path.
+<a href=#66 id=66 data-nosnippet>66</a>// ///
+<a href=#67 id=67 data-nosnippet>67</a>// /// Even if we have some non-relay route that works.
+<a href=#68 id=68 data-nosnippet>68</a>// const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a></span><span class="doccomment">/// The value which we close paths.
+<a href=#71 id=71 data-nosnippet>71</a></span><span class="comment">// TODO: Quinn should just do this.  Also, I made this value up.
+<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">const </span>APPLICATION_ABANDON_PATH: u8 = <span class="number">30</span>;
 <a href=#73 id=73 data-nosnippet>73</a>
-<a href=#74 id=74 data-nosnippet>74</a></span><span class="doccomment">/// The value which we close paths.
-<a href=#75 id=75 data-nosnippet>75</a></span><span class="comment">// TODO: Quinn should just do this.  Also, I made this value up.
-<a href=#76 id=76 data-nosnippet>76</a></span><span class="kw">const </span>APPLICATION_ABANDON_PATH: u8 = <span class="number">30</span>;
-<a href=#77 id=77 data-nosnippet>77</a>
-<a href=#78 id=78 data-nosnippet>78</a><span class="doccomment">/// The time after which an idle [`EndpointStateActor`] stops.
-<a href=#79 id=79 data-nosnippet>79</a>///
-<a href=#80 id=80 data-nosnippet>80</a>/// The actor only enters the idle state if no connections are active and no inbox senders exist
-<a href=#81 id=81 data-nosnippet>81</a>/// apart from the one stored in the endpoint map. Stopping and restarting the actor in this state
-<a href=#82 id=82 data-nosnippet>82</a>/// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
-<a href=#83 id=83 data-nosnippet>83</a>/// in a high frequency, and to keep data about previous path around for subsequent connections.
-<a href=#84 id=84 data-nosnippet>84</a></span><span class="kw">const </span>ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(<span class="number">60</span>);
-<a href=#85 id=85 data-nosnippet>85</a>
-<a href=#86 id=86 data-nosnippet>86</a><span class="doccomment">/// A stream of events from all paths for all connections.
-<a href=#87 id=87 data-nosnippet>87</a>///
-<a href=#88 id=88 data-nosnippet>88</a>/// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
-<a href=#89 id=89 data-nosnippet>89</a>/// actor has lagged processing the events, which is rather critical for us.
-<a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">type </span>PathEvents = MergeUnbounded&lt;
-<a href=#91 id=91 data-nosnippet>91</a>    Pin&lt;
-<a href=#92 id=92 data-nosnippet>92</a>        Box&lt;<span class="kw">dyn </span>Stream&lt;Item = (ConnId, <span class="prelude-ty">Result</span>&lt;PathEvent, BroadcastStreamRecvError&gt;)&gt; + Send + Sync&gt;,
-<a href=#93 id=93 data-nosnippet>93</a>    &gt;,
-<a href=#94 id=94 data-nosnippet>94</a>&gt;;
-<a href=#95 id=95 data-nosnippet>95</a>
-<a href=#96 id=96 data-nosnippet>96</a><span class="doccomment">/// Either a stream of incoming results from [`ConcurrentDiscovery::resolve`] or infinitely pending.
-<a href=#97 id=97 data-nosnippet>97</a>///
-<a href=#98 id=98 data-nosnippet>98</a>/// Set to [`Either::Left`] with an always-pending stream while discovery is not running, and to
-<a href=#99 id=99 data-nosnippet>99</a>/// [`Either::Right`] while discovery is running.
-<a href=#100 id=100 data-nosnippet>100</a>///
-<a href=#101 id=101 data-nosnippet>101</a>/// The stream returned from [`ConcurrentDiscovery::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
-<a href=#102 id=102 data-nosnippet>102</a>/// wrapper to make it `Sync` so that the [`EndpointStateActor::run`] future stays `Send`.
-<a href=#103 id=103 data-nosnippet>103</a></span><span class="kw">type </span>DiscoveryStream = Either&lt;
-<a href=#104 id=104 data-nosnippet>104</a>    n0_future::stream::Pending&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;,
-<a href=#105 id=105 data-nosnippet>105</a>    SyncStream&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;&gt;,
-<a href=#106 id=106 data-nosnippet>106</a>&gt;;
-<a href=#107 id=107 data-nosnippet>107</a>
-<a href=#108 id=108 data-nosnippet>108</a><span class="doccomment">/// List of addrs and path ids for open paths in a connection.
-<a href=#109 id=109 data-nosnippet>109</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>PathAddrList = SmallVec&lt;[(TransportAddr, PathId); <span class="number">4</span>]&gt;;
-<a href=#110 id=110 data-nosnippet>110</a>
-<a href=#111 id=111 data-nosnippet>111</a><span class="doccomment">/// The state we need to know about a single remote endpoint.
-<a href=#112 id=112 data-nosnippet>112</a>///
-<a href=#113 id=113 data-nosnippet>113</a>/// This actor manages all connections to the remote endpoint.  It will trigger holepunching
-<a href=#114 id=114 data-nosnippet>114</a>/// and select the best path etc.
-<a href=#115 id=115 data-nosnippet>115</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>EndpointStateActor {
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// The endpoint ID of the remote endpoint.
-<a href=#117 id=117 data-nosnippet>117</a>    </span>endpoint_id: EndpointId,
-<a href=#118 id=118 data-nosnippet>118</a>    <span class="doccomment">/// The endpoint ID of the local endpoint.
-<a href=#119 id=119 data-nosnippet>119</a>    </span>local_endpoint_id: EndpointId,
-<a href=#120 id=120 data-nosnippet>120</a>
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="comment">// Hooks into the rest of the MagicSocket.
-<a href=#122 id=122 data-nosnippet>122</a>    //
-<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="doccomment">/// Metrics.
-<a href=#124 id=124 data-nosnippet>124</a>    </span>metrics: Arc&lt;MagicsockMetrics&gt;,
-<a href=#125 id=125 data-nosnippet>125</a>    sender: TransportsSender,
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// Our local addresses.
-<a href=#127 id=127 data-nosnippet>127</a>    ///
-<a href=#128 id=128 data-nosnippet>128</a>    /// These are our local addresses and any reflexive transport addresses.
-<a href=#129 id=129 data-nosnippet>129</a>    </span>local_addrs: n0_watcher::Direct&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// Shared state to allow to encrypt DISCO messages to peers.
-<a href=#131 id=131 data-nosnippet>131</a>    </span>disco: DiscoState,
-<a href=#132 id=132 data-nosnippet>132</a>    <span class="doccomment">/// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
-<a href=#133 id=133 data-nosnippet>133</a>    </span>relay_mapped_addrs: AddrMap&lt;(RelayUrl, EndpointId), RelayMappedAddr&gt;,
-<a href=#134 id=134 data-nosnippet>134</a>
-<a href=#135 id=135 data-nosnippet>135</a>    <span class="comment">// Internal state - Quinn Connections we are managing.
-<a href=#136 id=136 data-nosnippet>136</a>    //
-<a href=#137 id=137 data-nosnippet>137</a>    </span><span class="doccomment">/// All connections we have to this remote endpoint.
-<a href=#138 id=138 data-nosnippet>138</a>    </span>connections: FxHashMap&lt;ConnId, ConnectionState&gt;,
-<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Notifications when connections are closed.
-<a href=#140 id=140 data-nosnippet>140</a>    </span>connections_close: FuturesUnordered&lt;OnClosed&gt;,
-<a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// Events emitted by Quinn about path changes, for all paths, all connections.
-<a href=#142 id=142 data-nosnippet>142</a>    </span>path_events: PathEvents,
-<a href=#143 id=143 data-nosnippet>143</a>
-<a href=#144 id=144 data-nosnippet>144</a>    <span class="comment">// Internal state - Holepunching and path state.
-<a href=#145 id=145 data-nosnippet>145</a>    //
-<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="doccomment">/// All possible paths we are aware of.
-<a href=#147 id=147 data-nosnippet>147</a>    ///
-<a href=#148 id=148 data-nosnippet>148</a>    /// These paths might be entirely impossible to use, since they are added by discovery
-<a href=#149 id=149 data-nosnippet>149</a>    /// mechanisms.  The are only potentially usable.
-<a href=#150 id=150 data-nosnippet>150</a>    </span>paths: FxHashMap&lt;transports::Addr, PathState&gt;,
-<a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// Information about the last holepunching attempt.
-<a href=#152 id=152 data-nosnippet>152</a>    </span>last_holepunch: <span class="prelude-ty">Option</span>&lt;HolepunchAttempt&gt;,
-<a href=#153 id=153 data-nosnippet>153</a>    <span class="doccomment">/// The path we currently consider the preferred path to the remote endpoint.
-<a href=#154 id=154 data-nosnippet>154</a>    ///
-<a href=#155 id=155 data-nosnippet>155</a>    /// **We expect this path to work.** If we become aware this path is broken then it is
-<a href=#156 id=156 data-nosnippet>156</a>    /// set back to `None`.  Having a selected path does not mean we may not be able to get
-<a href=#157 id=157 data-nosnippet>157</a>    /// a better path: e.g. when the selected path is a relay path we still need to trigger
-<a href=#158 id=158 data-nosnippet>158</a>    /// holepunching regularly.
-<a href=#159 id=159 data-nosnippet>159</a>    ///
-<a href=#160 id=160 data-nosnippet>160</a>    /// We only select a path once the path is functional in Quinn.
-<a href=#161 id=161 data-nosnippet>161</a>    </span>selected_path: Watchable&lt;<span class="prelude-ty">Option</span>&lt;transports::Addr&gt;&gt;,
-<a href=#162 id=162 data-nosnippet>162</a>    <span class="doccomment">/// Time at which we should schedule the next holepunch attempt.
-<a href=#163 id=163 data-nosnippet>163</a>    </span>scheduled_holepunch: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
-<a href=#164 id=164 data-nosnippet>164</a>    <span class="doccomment">/// When to next attempt opening paths in [`Self::pending_open_paths`].
-<a href=#165 id=165 data-nosnippet>165</a>    </span>scheduled_open_path: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="doccomment">/// Paths which we still need to open.
-<a href=#167 id=167 data-nosnippet>167</a>    ///
-<a href=#168 id=168 data-nosnippet>168</a>    /// They failed to open because we did not have enough CIDs issued by the remote.
-<a href=#169 id=169 data-nosnippet>169</a>    </span>pending_open_paths: VecDeque&lt;transports::Addr&gt;,
-<a href=#170 id=170 data-nosnippet>170</a>    <span class="doccomment">/// Discovery service, cloned from the magicsock.
-<a href=#171 id=171 data-nosnippet>171</a>    </span>discovery: ConcurrentDiscovery,
-<a href=#172 id=172 data-nosnippet>172</a>    <span class="doccomment">/// Stream of discovery results, or always pending if discovery is not running.
-<a href=#173 id=173 data-nosnippet>173</a>    </span>discovery_stream: DiscoveryStream,
-<a href=#174 id=174 data-nosnippet>174</a>    <span class="doccomment">/// Pending requests from [`EndpointStateMessage::ResolveRemote`].
-<a href=#175 id=175 data-nosnippet>175</a>    </span>pending_resolve_requests: VecDeque&lt;oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), DiscoveryError&gt;&gt;&gt;,
-<a href=#176 id=176 data-nosnippet>176</a>}
-<a href=#177 id=177 data-nosnippet>177</a>
-<a href=#178 id=178 data-nosnippet>178</a><span class="kw">impl </span>EndpointStateActor {
-<a href=#179 id=179 data-nosnippet>179</a>    <span class="attr">#[allow(clippy::too_many_arguments)]
-<a href=#180 id=180 data-nosnippet>180</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
-<a href=#181 id=181 data-nosnippet>181</a>        endpoint_id: EndpointId,
-<a href=#182 id=182 data-nosnippet>182</a>        local_endpoint_id: EndpointId,
-<a href=#183 id=183 data-nosnippet>183</a>        local_addrs: n0_watcher::Direct&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
-<a href=#184 id=184 data-nosnippet>184</a>        disco: DiscoState,
-<a href=#185 id=185 data-nosnippet>185</a>        relay_mapped_addrs: AddrMap&lt;(RelayUrl, EndpointId), RelayMappedAddr&gt;,
-<a href=#186 id=186 data-nosnippet>186</a>        metrics: Arc&lt;MagicsockMetrics&gt;,
-<a href=#187 id=187 data-nosnippet>187</a>        sender: TransportsSender,
-<a href=#188 id=188 data-nosnippet>188</a>        discovery: ConcurrentDiscovery,
-<a href=#189 id=189 data-nosnippet>189</a>    ) -&gt; <span class="self">Self </span>{
-<a href=#190 id=190 data-nosnippet>190</a>        <span class="self">Self </span>{
-<a href=#191 id=191 data-nosnippet>191</a>            endpoint_id,
-<a href=#192 id=192 data-nosnippet>192</a>            local_endpoint_id,
-<a href=#193 id=193 data-nosnippet>193</a>            metrics,
-<a href=#194 id=194 data-nosnippet>194</a>            local_addrs,
-<a href=#195 id=195 data-nosnippet>195</a>            relay_mapped_addrs,
-<a href=#196 id=196 data-nosnippet>196</a>            disco,
-<a href=#197 id=197 data-nosnippet>197</a>            connections: FxHashMap::default(),
-<a href=#198 id=198 data-nosnippet>198</a>            connections_close: Default::default(),
-<a href=#199 id=199 data-nosnippet>199</a>            path_events: Default::default(),
-<a href=#200 id=200 data-nosnippet>200</a>            paths: FxHashMap::default(),
-<a href=#201 id=201 data-nosnippet>201</a>            last_holepunch: <span class="prelude-val">None</span>,
-<a href=#202 id=202 data-nosnippet>202</a>            selected_path: Default::default(),
-<a href=#203 id=203 data-nosnippet>203</a>            scheduled_holepunch: <span class="prelude-val">None</span>,
-<a href=#204 id=204 data-nosnippet>204</a>            scheduled_open_path: <span class="prelude-val">None</span>,
-<a href=#205 id=205 data-nosnippet>205</a>            pending_open_paths: VecDeque::new(),
-<a href=#206 id=206 data-nosnippet>206</a>            sender,
-<a href=#207 id=207 data-nosnippet>207</a>            discovery,
-<a href=#208 id=208 data-nosnippet>208</a>            discovery_stream: Either::Left(n0_future::stream::pending()),
-<a href=#209 id=209 data-nosnippet>209</a>            pending_resolve_requests: VecDeque::new(),
-<a href=#210 id=210 data-nosnippet>210</a>        }
-<a href=#211 id=211 data-nosnippet>211</a>    }
-<a href=#212 id=212 data-nosnippet>212</a>
-<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start(<span class="self">self</span>) -&gt; EndpointStateHandle {
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">let </span>(tx, rx) = guarded_channel(<span class="number">16</span>);
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">let </span>me = <span class="self">self</span>.local_endpoint_id;
-<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">let </span>endpoint_id = <span class="self">self</span>.endpoint_id;
-<a href=#217 id=217 data-nosnippet>217</a>
-<a href=#218 id=218 data-nosnippet>218</a>        <span class="comment">// Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
-<a href=#219 id=219 data-nosnippet>219</a>        // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
-<a href=#220 id=220 data-nosnippet>220</a>        // we don't explicitly set a span we get the spans from whatever call happens to
-<a href=#221 id=221 data-nosnippet>221</a>        // first create the actor, which is often very confusing as it then keeps those
-<a href=#222 id=222 data-nosnippet>222</a>        // spans for all logging of the actor.
-<a href=#223 id=223 data-nosnippet>223</a>        </span><span class="kw">let </span>task = task::spawn(
-<a href=#224 id=224 data-nosnippet>224</a>            <span class="kw">async move </span>{
-<a href=#225 id=225 data-nosnippet>225</a>                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.run(rx).<span class="kw">await </span>{
-<a href=#226 id=226 data-nosnippet>226</a>                    <span class="macro">error!</span>(<span class="string">"actor failed: {err:#}"</span>);
-<a href=#227 id=227 data-nosnippet>227</a>                }
-<a href=#228 id=228 data-nosnippet>228</a>            }
-<a href=#229 id=229 data-nosnippet>229</a>            .instrument(<span class="macro">info_span!</span>(
-<a href=#230 id=230 data-nosnippet>230</a>                parent: <span class="prelude-val">None</span>,
-<a href=#231 id=231 data-nosnippet>231</a>                <span class="string">"EndpointStateActor"</span>,
-<a href=#232 id=232 data-nosnippet>232</a>                me = %me.fmt_short(),
-<a href=#233 id=233 data-nosnippet>233</a>                remote = %endpoint_id.fmt_short(),
-<a href=#234 id=234 data-nosnippet>234</a>            )),
-<a href=#235 id=235 data-nosnippet>235</a>        );
-<a href=#236 id=236 data-nosnippet>236</a>        EndpointStateHandle {
-<a href=#237 id=237 data-nosnippet>237</a>            sender: tx,
-<a href=#238 id=238 data-nosnippet>238</a>            _task: AbortOnDropHandle::new(task),
-<a href=#239 id=239 data-nosnippet>239</a>        }
-<a href=#240 id=240 data-nosnippet>240</a>    }
-<a href=#241 id=241 data-nosnippet>241</a>
-<a href=#242 id=242 data-nosnippet>242</a>    <span class="doccomment">/// Runs the main loop of the actor.
-<a href=#243 id=243 data-nosnippet>243</a>    ///
-<a href=#244 id=244 data-nosnippet>244</a>    /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
-<a href=#245 id=245 data-nosnippet>245</a>    /// not processing items from the inbox while waiting on any async calls.  So some
-<a href=#246 id=246 data-nosnippet>246</a>    /// discipline is needed to not turn pending for a long time.
-<a href=#247 id=247 data-nosnippet>247</a>    </span><span class="kw">async fn </span>run(
-<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw-2">mut </span><span class="self">self</span>,
-<a href=#249 id=249 data-nosnippet>249</a>        <span class="kw-2">mut </span>inbox: GuardedReceiver&lt;EndpointStateMessage&gt;,
-<a href=#250 id=250 data-nosnippet>250</a>    ) -&gt; n0_error::Result&lt;()&gt; {
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="macro">trace!</span>(<span class="string">"actor started"</span>);
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>idle_timeout = MaybeFuture::None;
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="macro">tokio::pin!</span>(idle_timeout);
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">loop </span>{
-<a href=#255 id=255 data-nosnippet>255</a>            <span class="kw">let </span>scheduled_path_open = <span class="kw">match </span><span class="self">self</span>.scheduled_open_path {
-<a href=#256 id=256 data-nosnippet>256</a>                <span class="prelude-val">Some</span>(when) =&gt; MaybeFuture::Some(time::sleep_until(when)),
-<a href=#257 id=257 data-nosnippet>257</a>                <span class="prelude-val">None </span>=&gt; MaybeFuture::None,
-<a href=#258 id=258 data-nosnippet>258</a>            };
-<a href=#259 id=259 data-nosnippet>259</a>            <span class="macro">n0_future::pin!</span>(scheduled_path_open);
-<a href=#260 id=260 data-nosnippet>260</a>            <span class="kw">let </span>scheduled_hp = <span class="kw">match </span><span class="self">self</span>.scheduled_holepunch {
-<a href=#261 id=261 data-nosnippet>261</a>                <span class="prelude-val">Some</span>(when) =&gt; MaybeFuture::Some(time::sleep_until(when)),
-<a href=#262 id=262 data-nosnippet>262</a>                <span class="prelude-val">None </span>=&gt; MaybeFuture::None,
-<a href=#263 id=263 data-nosnippet>263</a>            };
-<a href=#264 id=264 data-nosnippet>264</a>            <span class="macro">n0_future::pin!</span>(scheduled_hp);
-<a href=#265 id=265 data-nosnippet>265</a>            <span class="macro">tokio::select!</span> {
-<a href=#266 id=266 data-nosnippet>266</a>                biased;
-<a href=#267 id=267 data-nosnippet>267</a>                msg = inbox.recv() =&gt; {
-<a href=#268 id=268 data-nosnippet>268</a>                    <span class="kw">match </span>msg {
-<a href=#269 id=269 data-nosnippet>269</a>                        <span class="prelude-val">Some</span>(msg) =&gt; <span class="self">self</span>.handle_message(msg).<span class="kw">await</span><span class="question-mark">?</span>,
-<a href=#270 id=270 data-nosnippet>270</a>                        <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
-<a href=#271 id=271 data-nosnippet>271</a>                    }
-<a href=#272 id=272 data-nosnippet>272</a>                }
-<a href=#273 id=273 data-nosnippet>273</a>                <span class="prelude-val">Some</span>((id, evt)) = <span class="self">self</span>.path_events.next() =&gt; {
-<a href=#274 id=274 data-nosnippet>274</a>                    <span class="self">self</span>.handle_path_event(id, evt);
-<a href=#275 id=275 data-nosnippet>275</a>                }
-<a href=#276 id=276 data-nosnippet>276</a>                <span class="prelude-val">Some</span>(conn_id) = <span class="self">self</span>.connections_close.next(), <span class="kw">if </span>!<span class="self">self</span>.connections_close.is_empty() =&gt; {
-<a href=#277 id=277 data-nosnippet>277</a>                    <span class="self">self</span>.connections.remove(<span class="kw-2">&amp;</span>conn_id);
-<a href=#278 id=278 data-nosnippet>278</a>                    <span class="kw">if </span><span class="self">self</span>.connections.is_empty() {
-<a href=#279 id=279 data-nosnippet>279</a>                        <span class="macro">trace!</span>(<span class="string">"last connection closed - clearing selected_path"</span>);
-<a href=#280 id=280 data-nosnippet>280</a>                        <span class="self">self</span>.selected_path.set(<span class="prelude-val">None</span>).ok();
-<a href=#281 id=281 data-nosnippet>281</a>                    }
-<a href=#282 id=282 data-nosnippet>282</a>                }
-<a href=#283 id=283 data-nosnippet>283</a>                <span class="kw">_ </span>= <span class="self">self</span>.local_addrs.updated() =&gt; {
-<a href=#284 id=284 data-nosnippet>284</a>                    <span class="macro">trace!</span>(<span class="string">"local addrs updated, triggering holepunching"</span>);
-<a href=#285 id=285 data-nosnippet>285</a>                    <span class="self">self</span>.trigger_holepunching().<span class="kw">await</span>;
-<a href=#286 id=286 data-nosnippet>286</a>                }
-<a href=#287 id=287 data-nosnippet>287</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>scheduled_path_open =&gt; {
-<a href=#288 id=288 data-nosnippet>288</a>                    <span class="macro">trace!</span>(<span class="string">"triggering scheduled path_open"</span>);
-<a href=#289 id=289 data-nosnippet>289</a>                    <span class="self">self</span>.scheduled_open_path = <span class="prelude-val">None</span>;
-<a href=#290 id=290 data-nosnippet>290</a>                    <span class="kw">let </span><span class="kw-2">mut </span>addrs = std::mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.pending_open_paths);
-<a href=#291 id=291 data-nosnippet>291</a>                    <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = addrs.pop_front() {
-<a href=#292 id=292 data-nosnippet>292</a>                        <span class="self">self</span>.open_path(<span class="kw-2">&amp;</span>addr);
-<a href=#293 id=293 data-nosnippet>293</a>                    }
-<a href=#294 id=294 data-nosnippet>294</a>                }
-<a href=#295 id=295 data-nosnippet>295</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>scheduled_hp =&gt; {
-<a href=#296 id=296 data-nosnippet>296</a>                    <span class="macro">trace!</span>(<span class="string">"triggering scheduled holepunching"</span>);
-<a href=#297 id=297 data-nosnippet>297</a>                    <span class="self">self</span>.scheduled_holepunch = <span class="prelude-val">None</span>;
-<a href=#298 id=298 data-nosnippet>298</a>                    <span class="self">self</span>.trigger_holepunching().<span class="kw">await</span>;
-<a href=#299 id=299 data-nosnippet>299</a>                }
-<a href=#300 id=300 data-nosnippet>300</a>                item = <span class="self">self</span>.discovery_stream.next() =&gt; {
-<a href=#301 id=301 data-nosnippet>301</a>                    <span class="self">self</span>.handle_discovery_item(item);
-<a href=#302 id=302 data-nosnippet>302</a>                }
-<a href=#303 id=303 data-nosnippet>303</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>idle_timeout =&gt; {
-<a href=#304 id=304 data-nosnippet>304</a>                    <span class="kw">if </span><span class="self">self</span>.connections.is_empty() &amp;&amp; inbox.close_if_idle() {
-<a href=#305 id=305 data-nosnippet>305</a>                        <span class="macro">trace!</span>(<span class="string">"idle timeout expired and still idle: terminate actor"</span>);
-<a href=#306 id=306 data-nosnippet>306</a>                        <span class="kw">break</span>;
-<a href=#307 id=307 data-nosnippet>307</a>                    }
-<a href=#308 id=308 data-nosnippet>308</a>                }
-<a href=#309 id=309 data-nosnippet>309</a>            }
-<a href=#310 id=310 data-nosnippet>310</a>
-<a href=#311 id=311 data-nosnippet>311</a>            <span class="kw">if </span><span class="self">self</span>.connections.is_empty() &amp;&amp; inbox.is_idle() &amp;&amp; idle_timeout.is_none() {
-<a href=#312 id=312 data-nosnippet>312</a>                <span class="macro">trace!</span>(<span class="string">"start idle timeout"</span>);
-<a href=#313 id=313 data-nosnippet>313</a>                idle_timeout
-<a href=#314 id=314 data-nosnippet>314</a>                    .as_mut()
-<a href=#315 id=315 data-nosnippet>315</a>                    .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
-<a href=#316 id=316 data-nosnippet>316</a>            } <span class="kw">else if </span>idle_timeout.is_some() {
-<a href=#317 id=317 data-nosnippet>317</a>                <span class="macro">trace!</span>(<span class="string">"abort idle timeout"</span>);
-<a href=#318 id=318 data-nosnippet>318</a>                idle_timeout.as_mut().set_none()
-<a href=#319 id=319 data-nosnippet>319</a>            }
-<a href=#320 id=320 data-nosnippet>320</a>        }
-<a href=#321 id=321 data-nosnippet>321</a>        <span class="macro">trace!</span>(<span class="string">"actor terminating"</span>);
-<a href=#322 id=322 data-nosnippet>322</a>        <span class="prelude-val">Ok</span>(())
-<a href=#323 id=323 data-nosnippet>323</a>    }
-<a href=#324 id=324 data-nosnippet>324</a>
-<a href=#325 id=325 data-nosnippet>325</a>    <span class="doccomment">/// Handles an actor message.
-<a href=#326 id=326 data-nosnippet>326</a>    ///
-<a href=#327 id=327 data-nosnippet>327</a>    /// Error returns are fatal and kill the actor.
-<a href=#328 id=328 data-nosnippet>328</a>    </span><span class="attr">#[instrument(skip(<span class="self">self</span>))]
-<a href=#329 id=329 data-nosnippet>329</a>    </span><span class="kw">async fn </span>handle_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: EndpointStateMessage) -&gt; n0_error::Result&lt;()&gt; {
-<a href=#330 id=330 data-nosnippet>330</a>        <span class="comment">// trace!("handling message");
-<a href=#331 id=331 data-nosnippet>331</a>        </span><span class="kw">match </span>msg {
-<a href=#332 id=332 data-nosnippet>332</a>            EndpointStateMessage::SendDatagram(transmit) =&gt; {
-<a href=#333 id=333 data-nosnippet>333</a>                <span class="self">self</span>.handle_msg_send_datagram(transmit).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#334 id=334 data-nosnippet>334</a>            }
-<a href=#335 id=335 data-nosnippet>335</a>            EndpointStateMessage::AddConnection(handle, tx) =&gt; {
-<a href=#336 id=336 data-nosnippet>336</a>                <span class="self">self</span>.handle_msg_add_connection(handle, tx).<span class="kw">await</span>;
-<a href=#337 id=337 data-nosnippet>337</a>            }
-<a href=#338 id=338 data-nosnippet>338</a>            EndpointStateMessage::CallMeMaybeReceived(msg) =&gt; {
-<a href=#339 id=339 data-nosnippet>339</a>                <span class="self">self</span>.handle_msg_call_me_maybe_received(msg).<span class="kw">await</span>;
-<a href=#340 id=340 data-nosnippet>340</a>            }
-<a href=#341 id=341 data-nosnippet>341</a>            EndpointStateMessage::PingReceived(ping, src) =&gt; {
-<a href=#342 id=342 data-nosnippet>342</a>                <span class="self">self</span>.handle_msg_ping_received(ping, src).<span class="kw">await</span>;
-<a href=#343 id=343 data-nosnippet>343</a>            }
-<a href=#344 id=344 data-nosnippet>344</a>            EndpointStateMessage::PongReceived(pong, src) =&gt; {
-<a href=#345 id=345 data-nosnippet>345</a>                <span class="self">self</span>.handle_msg_pong_received(pong, src);
-<a href=#346 id=346 data-nosnippet>346</a>            }
-<a href=#347 id=347 data-nosnippet>347</a>            EndpointStateMessage::ResolveRemote(addrs, tx) =&gt; {
-<a href=#348 id=348 data-nosnippet>348</a>                <span class="self">self</span>.handle_msg_resolve_remote(addrs, tx);
-<a href=#349 id=349 data-nosnippet>349</a>            }
-<a href=#350 id=350 data-nosnippet>350</a>            EndpointStateMessage::Latency(tx) =&gt; {
-<a href=#351 id=351 data-nosnippet>351</a>                <span class="self">self</span>.handle_msg_latency(tx);
-<a href=#352 id=352 data-nosnippet>352</a>            }
-<a href=#353 id=353 data-nosnippet>353</a>        }
-<a href=#354 id=354 data-nosnippet>354</a>        <span class="prelude-val">Ok</span>(())
-<a href=#355 id=355 data-nosnippet>355</a>    }
-<a href=#356 id=356 data-nosnippet>356</a>
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="kw">async fn </span>send_datagram(
-<a href=#358 id=358 data-nosnippet>358</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#359 id=359 data-nosnippet>359</a>        dst: transports::Addr,
-<a href=#360 id=360 data-nosnippet>360</a>        owned_transmit: OwnedTransmit,
-<a href=#361 id=361 data-nosnippet>361</a>    ) -&gt; n0_error::Result&lt;()&gt; {
-<a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">let </span>transmit = transports::Transmit {
-<a href=#363 id=363 data-nosnippet>363</a>            ecn: owned_transmit.ecn,
-<a href=#364 id=364 data-nosnippet>364</a>            contents: owned_transmit.contents.as_ref(),
-<a href=#365 id=365 data-nosnippet>365</a>            segment_size: owned_transmit.segment_size,
-<a href=#366 id=366 data-nosnippet>366</a>        };
-<a href=#367 id=367 data-nosnippet>367</a>        <span class="self">self</span>.sender.send(<span class="kw-2">&amp;</span>dst, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#368 id=368 data-nosnippet>368</a>        <span class="prelude-val">Ok</span>(())
-<a href=#369 id=369 data-nosnippet>369</a>    }
-<a href=#370 id=370 data-nosnippet>370</a>
-<a href=#371 id=371 data-nosnippet>371</a>    <span class="doccomment">/// Handles [`EndpointStateMessage::SendDatagram`].
-<a href=#372 id=372 data-nosnippet>372</a>    ///
-<a href=#373 id=373 data-nosnippet>373</a>    /// Error returns are fatal and kill the actor.
-<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">async fn </span>handle_msg_send_datagram(<span class="kw-2">&amp;mut </span><span class="self">self</span>, transmit: OwnedTransmit) -&gt; n0_error::Result&lt;()&gt; {
-<a href=#375 id=375 data-nosnippet>375</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="self">self</span>.selected_path.get() {
-<a href=#376 id=376 data-nosnippet>376</a>            <span class="macro">trace!</span>(<span class="question-mark">?</span>addr, <span class="string">"sending datagram to selected path"</span>);
-<a href=#377 id=377 data-nosnippet>377</a>            <span class="self">self</span>.send_datagram(addr, transmit).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#378 id=378 data-nosnippet>378</a>        } <span class="kw">else </span>{
-<a href=#379 id=379 data-nosnippet>379</a>            <span class="macro">trace!</span>(
-<a href=#380 id=380 data-nosnippet>380</a>                paths = <span class="question-mark">?</span><span class="self">self</span>.paths.keys().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
-<a href=#381 id=381 data-nosnippet>381</a>                <span class="string">"sending datagram to all known paths"</span>,
-<a href=#382 id=382 data-nosnippet>382</a>            );
-<a href=#383 id=383 data-nosnippet>383</a>            <span class="kw">for </span>addr <span class="kw">in </span><span class="self">self</span>.paths.keys() {
-<a href=#384 id=384 data-nosnippet>384</a>                <span class="comment">// We never want to send to our local addresses.
-<a href=#385 id=385 data-nosnippet>385</a>                // The local address set is updated in the main loop so we can use `peek` here.
-<a href=#386 id=386 data-nosnippet>386</a>                </span><span class="kw">if let </span>transports::Addr::Ip(sockaddr) = addr
-<a href=#387 id=387 data-nosnippet>387</a>                    &amp;&amp; <span class="self">self</span>.local_addrs.peek().iter().any(|a| a.addr == <span class="kw-2">*</span>sockaddr)
-<a href=#388 id=388 data-nosnippet>388</a>                {
-<a href=#389 id=389 data-nosnippet>389</a>                    <span class="macro">warn!</span>(%sockaddr, <span class="string">"not sending datagram to our own address"</span>);
-<a href=#390 id=390 data-nosnippet>390</a>                } <span class="kw">else </span>{
-<a href=#391 id=391 data-nosnippet>391</a>                    <span class="self">self</span>.send_datagram(addr.clone(), transmit.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#392 id=392 data-nosnippet>392</a>                }
-<a href=#393 id=393 data-nosnippet>393</a>            }
-<a href=#394 id=394 data-nosnippet>394</a>            <span class="comment">// This message is received *before* a connection is added.  So we do
-<a href=#395 id=395 data-nosnippet>395</a>            // not yet have a connection to holepunch.  Instead we trigger
-<a href=#396 id=396 data-nosnippet>396</a>            // holepunching when AddConnection is received.
-<a href=#397 id=397 data-nosnippet>397</a>        </span>}
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="prelude-val">Ok</span>(())
-<a href=#399 id=399 data-nosnippet>399</a>    }
-<a href=#400 id=400 data-nosnippet>400</a>
-<a href=#401 id=401 data-nosnippet>401</a>    <span class="doccomment">/// Handles [`EndpointStateMessage::AddConnection`].
-<a href=#402 id=402 data-nosnippet>402</a>    ///
-<a href=#403 id=403 data-nosnippet>403</a>    /// Error returns are fatal and kill the actor.
-<a href=#404 id=404 data-nosnippet>404</a>    </span><span class="kw">async fn </span>handle_msg_add_connection(
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#406 id=406 data-nosnippet>406</a>        handle: WeakConnectionHandle,
-<a href=#407 id=407 data-nosnippet>407</a>        tx: oneshot::Sender&lt;PathsWatcher&gt;,
-<a href=#408 id=408 data-nosnippet>408</a>    ) {
-<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">let </span>pub_open_paths = Watchable::default();
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(conn) = handle.upgrade() {
-<a href=#411 id=411 data-nosnippet>411</a>            <span class="comment">// Remove any conflicting stable_ids from the local state.
-<a href=#412 id=412 data-nosnippet>412</a>            </span><span class="kw">let </span>conn_id = ConnId(conn.stable_id());
-<a href=#413 id=413 data-nosnippet>413</a>            <span class="self">self</span>.connections.remove(<span class="kw-2">&amp;</span>conn_id);
-<a href=#414 id=414 data-nosnippet>414</a>
-<a href=#415 id=415 data-nosnippet>415</a>            <span class="comment">// Store the connection and hook up paths events stream.
-<a href=#416 id=416 data-nosnippet>416</a>            </span><span class="kw">let </span>events = BroadcastStream::new(conn.path_events());
-<a href=#417 id=417 data-nosnippet>417</a>            <span class="kw">let </span>stream = events.map(<span class="kw">move </span>|evt| (conn_id, evt));
-<a href=#418 id=418 data-nosnippet>418</a>            <span class="self">self</span>.path_events.push(Box::pin(stream));
-<a href=#419 id=419 data-nosnippet>419</a>            <span class="self">self</span>.connections_close.push(OnClosed::new(<span class="kw-2">&amp;</span>conn));
-<a href=#420 id=420 data-nosnippet>420</a>            <span class="kw">let </span>conn_state = <span class="self">self
-<a href=#421 id=421 data-nosnippet>421</a>                </span>.connections
-<a href=#422 id=422 data-nosnippet>422</a>                .entry(conn_id)
-<a href=#423 id=423 data-nosnippet>423</a>                .insert_entry(ConnectionState {
-<a href=#424 id=424 data-nosnippet>424</a>                    handle: handle.clone(),
-<a href=#425 id=425 data-nosnippet>425</a>                    pub_open_paths: pub_open_paths.clone(),
-<a href=#426 id=426 data-nosnippet>426</a>                    paths: Default::default(),
-<a href=#427 id=427 data-nosnippet>427</a>                    open_paths: Default::default(),
-<a href=#428 id=428 data-nosnippet>428</a>                    path_ids: Default::default(),
-<a href=#429 id=429 data-nosnippet>429</a>                })
-<a href=#430 id=430 data-nosnippet>430</a>                .into_mut();
-<a href=#431 id=431 data-nosnippet>431</a>
-<a href=#432 id=432 data-nosnippet>432</a>            <span class="comment">// Store PathId(0), set path_status and select best path, check if holepunching
-<a href=#433 id=433 data-nosnippet>433</a>            // is needed.
-<a href=#434 id=434 data-nosnippet>434</a>            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(path) = conn.path(PathId::ZERO)
-<a href=#435 id=435 data-nosnippet>435</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Ok</span>(socketaddr) = path.remote_address()
-<a href=#436 id=436 data-nosnippet>436</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(path_remote) = <span class="self">self</span>.relay_mapped_addrs.to_transport_addr(socketaddr)
-<a href=#437 id=437 data-nosnippet>437</a>            {
-<a href=#438 id=438 data-nosnippet>438</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>path_remote, <span class="string">"added new connection"</span>);
-<a href=#439 id=439 data-nosnippet>439</a>                <span class="kw">let </span>path_remote_is_ip = path_remote.is_ip();
-<a href=#440 id=440 data-nosnippet>440</a>                <span class="kw">let </span>status = <span class="kw">match </span>path_remote {
-<a href=#441 id=441 data-nosnippet>441</a>                    transports::Addr::Ip(<span class="kw">_</span>) =&gt; PathStatus::Available,
-<a href=#442 id=442 data-nosnippet>442</a>                    transports::Addr::Relay(<span class="kw">_</span>, <span class="kw">_</span>) =&gt; PathStatus::Backup,
-<a href=#443 id=443 data-nosnippet>443</a>                };
-<a href=#444 id=444 data-nosnippet>444</a>                path.set_status(status).ok();
-<a href=#445 id=445 data-nosnippet>445</a>                conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
-<a href=#446 id=446 data-nosnippet>446</a>                <span class="self">self</span>.add_path_entry(path_remote, Source::Connection { _0: Private });
-<a href=#447 id=447 data-nosnippet>447</a>                <span class="self">self</span>.select_path();
-<a href=#448 id=448 data-nosnippet>448</a>
-<a href=#449 id=449 data-nosnippet>449</a>                <span class="kw">if </span>path_remote_is_ip {
-<a href=#450 id=450 data-nosnippet>450</a>                    <span class="comment">// We may have raced this with a relay address.  Try and add any
-<a href=#451 id=451 data-nosnippet>451</a>                    // relay addresses we have back.
-<a href=#452 id=452 data-nosnippet>452</a>                    </span><span class="kw">let </span>relays = <span class="self">self
-<a href=#453 id=453 data-nosnippet>453</a>                        </span>.paths
-<a href=#454 id=454 data-nosnippet>454</a>                        .keys()
-<a href=#455 id=455 data-nosnippet>455</a>                        .filter(|a| a.is_relay())
-<a href=#456 id=456 data-nosnippet>456</a>                        .cloned()
-<a href=#457 id=457 data-nosnippet>457</a>                        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#458 id=458 data-nosnippet>458</a>                    <span class="kw">for </span>remote <span class="kw">in </span>relays {
-<a href=#459 id=459 data-nosnippet>459</a>                        <span class="self">self</span>.open_path(<span class="kw-2">&amp;</span>remote);
-<a href=#460 id=460 data-nosnippet>460</a>                    }
-<a href=#461 id=461 data-nosnippet>461</a>                }
-<a href=#462 id=462 data-nosnippet>462</a>            }
-<a href=#463 id=463 data-nosnippet>463</a>            <span class="self">self</span>.trigger_holepunching().<span class="kw">await</span>;
-<a href=#464 id=464 data-nosnippet>464</a>        }
-<a href=#465 id=465 data-nosnippet>465</a>        tx.send(PathsWatcher::new(
-<a href=#466 id=466 data-nosnippet>466</a>            pub_open_paths.watch(),
-<a href=#467 id=467 data-nosnippet>467</a>            <span class="self">self</span>.selected_path.watch(),
-<a href=#468 id=468 data-nosnippet>468</a>            handle,
-<a href=#469 id=469 data-nosnippet>469</a>        ))
-<a href=#470 id=470 data-nosnippet>470</a>        .ok();
-<a href=#471 id=471 data-nosnippet>471</a>    }
-<a href=#472 id=472 data-nosnippet>472</a>
-<a href=#473 id=473 data-nosnippet>473</a>    <span class="doccomment">/// Adds new [`TransportAddr`] addresses to our list of potential paths.
-<a href=#474 id=474 data-nosnippet>474</a>    </span><span class="kw">fn </span>add_addrs(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addrs: BTreeSet&lt;TransportAddr&gt;, source: Source) {
-<a href=#475 id=475 data-nosnippet>475</a>        <span class="kw">use </span>transports::Addr;
-<a href=#476 id=476 data-nosnippet>476</a>        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
-<a href=#477 id=477 data-nosnippet>477</a>            <span class="kw">let </span>addr = <span class="kw">match </span>addr {
-<a href=#478 id=478 data-nosnippet>478</a>                TransportAddr::Relay(relay_url) =&gt; Addr::from((relay_url, <span class="self">self</span>.endpoint_id)),
-<a href=#479 id=479 data-nosnippet>479</a>                TransportAddr::Ip(sockaddr) =&gt; Addr::from(sockaddr),
+<a href=#74 id=74 data-nosnippet>74</a><span class="doccomment">/// The time after which an idle [`EndpointStateActor`] stops.
+<a href=#75 id=75 data-nosnippet>75</a>///
+<a href=#76 id=76 data-nosnippet>76</a>/// The actor only enters the idle state if no connections are active and no inbox senders exist
+<a href=#77 id=77 data-nosnippet>77</a>/// apart from the one stored in the endpoint map. Stopping and restarting the actor in this state
+<a href=#78 id=78 data-nosnippet>78</a>/// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
+<a href=#79 id=79 data-nosnippet>79</a>/// in a high frequency, and to keep data about previous path around for subsequent connections.
+<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">const </span>ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(<span class="number">60</span>);
+<a href=#81 id=81 data-nosnippet>81</a>
+<a href=#82 id=82 data-nosnippet>82</a><span class="doccomment">/// A stream of events from all paths for all connections.
+<a href=#83 id=83 data-nosnippet>83</a>///
+<a href=#84 id=84 data-nosnippet>84</a>/// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
+<a href=#85 id=85 data-nosnippet>85</a>/// actor has lagged processing the events, which is rather critical for us.
+<a href=#86 id=86 data-nosnippet>86</a></span><span class="kw">type </span>PathEvents = MergeUnbounded&lt;
+<a href=#87 id=87 data-nosnippet>87</a>    Pin&lt;
+<a href=#88 id=88 data-nosnippet>88</a>        Box&lt;<span class="kw">dyn </span>Stream&lt;Item = (ConnId, <span class="prelude-ty">Result</span>&lt;PathEvent, BroadcastStreamRecvError&gt;)&gt; + Send + Sync&gt;,
+<a href=#89 id=89 data-nosnippet>89</a>    &gt;,
+<a href=#90 id=90 data-nosnippet>90</a>&gt;;
+<a href=#91 id=91 data-nosnippet>91</a>
+<a href=#92 id=92 data-nosnippet>92</a><span class="doccomment">/// Either a stream of incoming results from [`ConcurrentDiscovery::resolve`] or infinitely pending.
+<a href=#93 id=93 data-nosnippet>93</a>///
+<a href=#94 id=94 data-nosnippet>94</a>/// Set to [`Either::Left`] with an always-pending stream while discovery is not running, and to
+<a href=#95 id=95 data-nosnippet>95</a>/// [`Either::Right`] while discovery is running.
+<a href=#96 id=96 data-nosnippet>96</a>///
+<a href=#97 id=97 data-nosnippet>97</a>/// The stream returned from [`ConcurrentDiscovery::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
+<a href=#98 id=98 data-nosnippet>98</a>/// wrapper to make it `Sync` so that the [`EndpointStateActor::run`] future stays `Send`.
+<a href=#99 id=99 data-nosnippet>99</a></span><span class="kw">type </span>DiscoveryStream = Either&lt;
+<a href=#100 id=100 data-nosnippet>100</a>    n0_future::stream::Pending&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;,
+<a href=#101 id=101 data-nosnippet>101</a>    SyncStream&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;&gt;,
+<a href=#102 id=102 data-nosnippet>102</a>&gt;;
+<a href=#103 id=103 data-nosnippet>103</a>
+<a href=#104 id=104 data-nosnippet>104</a><span class="doccomment">/// List of addrs and path ids for open paths in a connection.
+<a href=#105 id=105 data-nosnippet>105</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>PathAddrList = SmallVec&lt;[(TransportAddr, PathId); <span class="number">4</span>]&gt;;
+<a href=#106 id=106 data-nosnippet>106</a>
+<a href=#107 id=107 data-nosnippet>107</a><span class="doccomment">/// The state we need to know about a single remote endpoint.
+<a href=#108 id=108 data-nosnippet>108</a>///
+<a href=#109 id=109 data-nosnippet>109</a>/// This actor manages all connections to the remote endpoint.  It will trigger holepunching
+<a href=#110 id=110 data-nosnippet>110</a>/// and select the best path etc.
+<a href=#111 id=111 data-nosnippet>111</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>EndpointStateActor {
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// The endpoint ID of the remote endpoint.
+<a href=#113 id=113 data-nosnippet>113</a>    </span>endpoint_id: EndpointId,
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="doccomment">/// The endpoint ID of the local endpoint.
+<a href=#115 id=115 data-nosnippet>115</a>    </span>local_endpoint_id: EndpointId,
+<a href=#116 id=116 data-nosnippet>116</a>
+<a href=#117 id=117 data-nosnippet>117</a>    <span class="comment">// Hooks into the rest of the MagicSocket.
+<a href=#118 id=118 data-nosnippet>118</a>    //
+<a href=#119 id=119 data-nosnippet>119</a>    </span><span class="doccomment">/// Metrics.
+<a href=#120 id=120 data-nosnippet>120</a>    </span>metrics: Arc&lt;MagicsockMetrics&gt;,
+<a href=#121 id=121 data-nosnippet>121</a>    sender: TransportsSender,
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// Our local addresses.
+<a href=#123 id=123 data-nosnippet>123</a>    ///
+<a href=#124 id=124 data-nosnippet>124</a>    /// These are our local addresses and any reflexive transport addresses.
+<a href=#125 id=125 data-nosnippet>125</a>    </span>local_addrs: n0_watcher::Direct&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// Shared state to allow to encrypt DISCO messages to peers.
+<a href=#127 id=127 data-nosnippet>127</a>    </span>disco: DiscoState,
+<a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
+<a href=#129 id=129 data-nosnippet>129</a>    </span>relay_mapped_addrs: AddrMap&lt;(RelayUrl, EndpointId), RelayMappedAddr&gt;,
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// Discovery service, cloned from the magicsock.
+<a href=#131 id=131 data-nosnippet>131</a>    </span>discovery: ConcurrentDiscovery,
+<a href=#132 id=132 data-nosnippet>132</a>
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="comment">// Internal state - Quinn Connections we are managing.
+<a href=#134 id=134 data-nosnippet>134</a>    //
+<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="doccomment">/// All connections we have to this remote endpoint.
+<a href=#136 id=136 data-nosnippet>136</a>    </span>connections: FxHashMap&lt;ConnId, ConnectionState&gt;,
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="doccomment">/// Notifications when connections are closed.
+<a href=#138 id=138 data-nosnippet>138</a>    </span>connections_close: FuturesUnordered&lt;OnClosed&gt;,
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// Events emitted by Quinn about path changes, for all paths, all connections.
+<a href=#140 id=140 data-nosnippet>140</a>    </span>path_events: PathEvents,
+<a href=#141 id=141 data-nosnippet>141</a>
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="comment">// Internal state - Holepunching and path state.
+<a href=#143 id=143 data-nosnippet>143</a>    //
+<a href=#144 id=144 data-nosnippet>144</a>    </span><span class="doccomment">/// All possible paths we are aware of.
+<a href=#145 id=145 data-nosnippet>145</a>    ///
+<a href=#146 id=146 data-nosnippet>146</a>    /// These paths might be entirely impossible to use, since they are added by discovery
+<a href=#147 id=147 data-nosnippet>147</a>    /// mechanisms.  The are only potentially usable.
+<a href=#148 id=148 data-nosnippet>148</a>    </span>paths: FxHashMap&lt;transports::Addr, PathState&gt;,
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="doccomment">/// Information about the last holepunching attempt.
+<a href=#150 id=150 data-nosnippet>150</a>    </span>last_holepunch: <span class="prelude-ty">Option</span>&lt;HolepunchAttempt&gt;,
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// The path we currently consider the preferred path to the remote endpoint.
+<a href=#152 id=152 data-nosnippet>152</a>    ///
+<a href=#153 id=153 data-nosnippet>153</a>    /// **We expect this path to work.** If we become aware this path is broken then it is
+<a href=#154 id=154 data-nosnippet>154</a>    /// set back to `None`.  Having a selected path does not mean we may not be able to get
+<a href=#155 id=155 data-nosnippet>155</a>    /// a better path: e.g. when the selected path is a relay path we still need to trigger
+<a href=#156 id=156 data-nosnippet>156</a>    /// holepunching regularly.
+<a href=#157 id=157 data-nosnippet>157</a>    ///
+<a href=#158 id=158 data-nosnippet>158</a>    /// We only select a path once the path is functional in Quinn.
+<a href=#159 id=159 data-nosnippet>159</a>    </span>selected_path: Watchable&lt;<span class="prelude-ty">Option</span>&lt;transports::Addr&gt;&gt;,
+<a href=#160 id=160 data-nosnippet>160</a>    <span class="doccomment">/// Time at which we should schedule the next holepunch attempt.
+<a href=#161 id=161 data-nosnippet>161</a>    </span>scheduled_holepunch: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
+<a href=#162 id=162 data-nosnippet>162</a>    <span class="doccomment">/// When to next attempt opening paths in [`Self::pending_open_paths`].
+<a href=#163 id=163 data-nosnippet>163</a>    </span>scheduled_open_path: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="doccomment">/// Paths which we still need to open.
+<a href=#165 id=165 data-nosnippet>165</a>    ///
+<a href=#166 id=166 data-nosnippet>166</a>    /// They failed to open because we did not have enough CIDs issued by the remote.
+<a href=#167 id=167 data-nosnippet>167</a>    </span>pending_open_paths: VecDeque&lt;transports::Addr&gt;,
+<a href=#168 id=168 data-nosnippet>168</a>
+<a href=#169 id=169 data-nosnippet>169</a>    <span class="comment">// Internal state - Discovery
+<a href=#170 id=170 data-nosnippet>170</a>    //
+<a href=#171 id=171 data-nosnippet>171</a>    </span><span class="doccomment">/// Stream of discovery results, or always pending if discovery is not running.
+<a href=#172 id=172 data-nosnippet>172</a>    </span>discovery_stream: DiscoveryStream,
+<a href=#173 id=173 data-nosnippet>173</a>    <span class="doccomment">/// Pending requests from [`EndpointStateMessage::ResolveRemote`].
+<a href=#174 id=174 data-nosnippet>174</a>    </span>pending_resolve_requests: VecDeque&lt;oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), DiscoveryError&gt;&gt;&gt;,
+<a href=#175 id=175 data-nosnippet>175</a>}
+<a href=#176 id=176 data-nosnippet>176</a>
+<a href=#177 id=177 data-nosnippet>177</a><span class="kw">impl </span>EndpointStateActor {
+<a href=#178 id=178 data-nosnippet>178</a>    <span class="attr">#[allow(clippy::too_many_arguments)]
+<a href=#179 id=179 data-nosnippet>179</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
+<a href=#180 id=180 data-nosnippet>180</a>        endpoint_id: EndpointId,
+<a href=#181 id=181 data-nosnippet>181</a>        local_endpoint_id: EndpointId,
+<a href=#182 id=182 data-nosnippet>182</a>        local_addrs: n0_watcher::Direct&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
+<a href=#183 id=183 data-nosnippet>183</a>        disco: DiscoState,
+<a href=#184 id=184 data-nosnippet>184</a>        relay_mapped_addrs: AddrMap&lt;(RelayUrl, EndpointId), RelayMappedAddr&gt;,
+<a href=#185 id=185 data-nosnippet>185</a>        metrics: Arc&lt;MagicsockMetrics&gt;,
+<a href=#186 id=186 data-nosnippet>186</a>        sender: TransportsSender,
+<a href=#187 id=187 data-nosnippet>187</a>        discovery: ConcurrentDiscovery,
+<a href=#188 id=188 data-nosnippet>188</a>    ) -&gt; <span class="self">Self </span>{
+<a href=#189 id=189 data-nosnippet>189</a>        <span class="self">Self </span>{
+<a href=#190 id=190 data-nosnippet>190</a>            endpoint_id,
+<a href=#191 id=191 data-nosnippet>191</a>            local_endpoint_id,
+<a href=#192 id=192 data-nosnippet>192</a>            metrics,
+<a href=#193 id=193 data-nosnippet>193</a>            local_addrs,
+<a href=#194 id=194 data-nosnippet>194</a>            relay_mapped_addrs,
+<a href=#195 id=195 data-nosnippet>195</a>            disco,
+<a href=#196 id=196 data-nosnippet>196</a>            connections: FxHashMap::default(),
+<a href=#197 id=197 data-nosnippet>197</a>            connections_close: Default::default(),
+<a href=#198 id=198 data-nosnippet>198</a>            path_events: Default::default(),
+<a href=#199 id=199 data-nosnippet>199</a>            paths: FxHashMap::default(),
+<a href=#200 id=200 data-nosnippet>200</a>            last_holepunch: <span class="prelude-val">None</span>,
+<a href=#201 id=201 data-nosnippet>201</a>            selected_path: Default::default(),
+<a href=#202 id=202 data-nosnippet>202</a>            scheduled_holepunch: <span class="prelude-val">None</span>,
+<a href=#203 id=203 data-nosnippet>203</a>            scheduled_open_path: <span class="prelude-val">None</span>,
+<a href=#204 id=204 data-nosnippet>204</a>            pending_open_paths: VecDeque::new(),
+<a href=#205 id=205 data-nosnippet>205</a>            sender,
+<a href=#206 id=206 data-nosnippet>206</a>            discovery,
+<a href=#207 id=207 data-nosnippet>207</a>            discovery_stream: Either::Left(n0_future::stream::pending()),
+<a href=#208 id=208 data-nosnippet>208</a>            pending_resolve_requests: VecDeque::new(),
+<a href=#209 id=209 data-nosnippet>209</a>        }
+<a href=#210 id=210 data-nosnippet>210</a>    }
+<a href=#211 id=211 data-nosnippet>211</a>
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start(<span class="self">self</span>) -&gt; EndpointStateHandle {
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>(tx, rx) = guarded_channel(<span class="number">16</span>);
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">let </span>me = <span class="self">self</span>.local_endpoint_id;
+<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">let </span>endpoint_id = <span class="self">self</span>.endpoint_id;
+<a href=#216 id=216 data-nosnippet>216</a>
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="comment">// Ideally we'd use the endpoint span as parent.  We'd have to plug that span into
+<a href=#218 id=218 data-nosnippet>218</a>        // here somehow.  Instead we have no parent and explicitly set the me attribute.  If
+<a href=#219 id=219 data-nosnippet>219</a>        // we don't explicitly set a span we get the spans from whatever call happens to
+<a href=#220 id=220 data-nosnippet>220</a>        // first create the actor, which is often very confusing as it then keeps those
+<a href=#221 id=221 data-nosnippet>221</a>        // spans for all logging of the actor.
+<a href=#222 id=222 data-nosnippet>222</a>        </span><span class="kw">let </span>task = task::spawn(
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="kw">async move </span>{
+<a href=#224 id=224 data-nosnippet>224</a>                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.run(rx).<span class="kw">await </span>{
+<a href=#225 id=225 data-nosnippet>225</a>                    <span class="macro">error!</span>(<span class="string">"actor failed: {err:#}"</span>);
+<a href=#226 id=226 data-nosnippet>226</a>                }
+<a href=#227 id=227 data-nosnippet>227</a>            }
+<a href=#228 id=228 data-nosnippet>228</a>            .instrument(<span class="macro">info_span!</span>(
+<a href=#229 id=229 data-nosnippet>229</a>                parent: <span class="prelude-val">None</span>,
+<a href=#230 id=230 data-nosnippet>230</a>                <span class="string">"EndpointStateActor"</span>,
+<a href=#231 id=231 data-nosnippet>231</a>                me = %me.fmt_short(),
+<a href=#232 id=232 data-nosnippet>232</a>                remote = %endpoint_id.fmt_short(),
+<a href=#233 id=233 data-nosnippet>233</a>            )),
+<a href=#234 id=234 data-nosnippet>234</a>        );
+<a href=#235 id=235 data-nosnippet>235</a>        EndpointStateHandle {
+<a href=#236 id=236 data-nosnippet>236</a>            sender: tx,
+<a href=#237 id=237 data-nosnippet>237</a>            _task: AbortOnDropHandle::new(task),
+<a href=#238 id=238 data-nosnippet>238</a>        }
+<a href=#239 id=239 data-nosnippet>239</a>    }
+<a href=#240 id=240 data-nosnippet>240</a>
+<a href=#241 id=241 data-nosnippet>241</a>    <span class="doccomment">/// Runs the main loop of the actor.
+<a href=#242 id=242 data-nosnippet>242</a>    ///
+<a href=#243 id=243 data-nosnippet>243</a>    /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
+<a href=#244 id=244 data-nosnippet>244</a>    /// not processing items from the inbox while waiting on any async calls.  So some
+<a href=#245 id=245 data-nosnippet>245</a>    /// discipline is needed to not turn pending for a long time.
+<a href=#246 id=246 data-nosnippet>246</a>    </span><span class="kw">async fn </span>run(
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="kw-2">mut </span><span class="self">self</span>,
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw-2">mut </span>inbox: GuardedReceiver&lt;EndpointStateMessage&gt;,
+<a href=#249 id=249 data-nosnippet>249</a>    ) -&gt; n0_error::Result&lt;()&gt; {
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="macro">trace!</span>(<span class="string">"actor started"</span>);
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>idle_timeout = MaybeFuture::None;
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="macro">tokio::pin!</span>(idle_timeout);
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">loop </span>{
+<a href=#254 id=254 data-nosnippet>254</a>            <span class="kw">let </span>scheduled_path_open = <span class="kw">match </span><span class="self">self</span>.scheduled_open_path {
+<a href=#255 id=255 data-nosnippet>255</a>                <span class="prelude-val">Some</span>(when) =&gt; MaybeFuture::Some(time::sleep_until(when)),
+<a href=#256 id=256 data-nosnippet>256</a>                <span class="prelude-val">None </span>=&gt; MaybeFuture::None,
+<a href=#257 id=257 data-nosnippet>257</a>            };
+<a href=#258 id=258 data-nosnippet>258</a>            <span class="macro">n0_future::pin!</span>(scheduled_path_open);
+<a href=#259 id=259 data-nosnippet>259</a>            <span class="kw">let </span>scheduled_hp = <span class="kw">match </span><span class="self">self</span>.scheduled_holepunch {
+<a href=#260 id=260 data-nosnippet>260</a>                <span class="prelude-val">Some</span>(when) =&gt; MaybeFuture::Some(time::sleep_until(when)),
+<a href=#261 id=261 data-nosnippet>261</a>                <span class="prelude-val">None </span>=&gt; MaybeFuture::None,
+<a href=#262 id=262 data-nosnippet>262</a>            };
+<a href=#263 id=263 data-nosnippet>263</a>            <span class="macro">n0_future::pin!</span>(scheduled_hp);
+<a href=#264 id=264 data-nosnippet>264</a>            <span class="macro">tokio::select!</span> {
+<a href=#265 id=265 data-nosnippet>265</a>                biased;
+<a href=#266 id=266 data-nosnippet>266</a>                msg = inbox.recv() =&gt; {
+<a href=#267 id=267 data-nosnippet>267</a>                    <span class="kw">match </span>msg {
+<a href=#268 id=268 data-nosnippet>268</a>                        <span class="prelude-val">Some</span>(msg) =&gt; <span class="self">self</span>.handle_message(msg).<span class="kw">await</span><span class="question-mark">?</span>,
+<a href=#269 id=269 data-nosnippet>269</a>                        <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
+<a href=#270 id=270 data-nosnippet>270</a>                    }
+<a href=#271 id=271 data-nosnippet>271</a>                }
+<a href=#272 id=272 data-nosnippet>272</a>                <span class="prelude-val">Some</span>((id, evt)) = <span class="self">self</span>.path_events.next() =&gt; {
+<a href=#273 id=273 data-nosnippet>273</a>                    <span class="self">self</span>.handle_path_event(id, evt);
+<a href=#274 id=274 data-nosnippet>274</a>                }
+<a href=#275 id=275 data-nosnippet>275</a>                <span class="prelude-val">Some</span>(conn_id) = <span class="self">self</span>.connections_close.next(), <span class="kw">if </span>!<span class="self">self</span>.connections_close.is_empty() =&gt; {
+<a href=#276 id=276 data-nosnippet>276</a>                    <span class="self">self</span>.connections.remove(<span class="kw-2">&amp;</span>conn_id);
+<a href=#277 id=277 data-nosnippet>277</a>                    <span class="kw">if </span><span class="self">self</span>.connections.is_empty() {
+<a href=#278 id=278 data-nosnippet>278</a>                        <span class="macro">trace!</span>(<span class="string">"last connection closed - clearing selected_path"</span>);
+<a href=#279 id=279 data-nosnippet>279</a>                        <span class="self">self</span>.selected_path.set(<span class="prelude-val">None</span>).ok();
+<a href=#280 id=280 data-nosnippet>280</a>                    }
+<a href=#281 id=281 data-nosnippet>281</a>                }
+<a href=#282 id=282 data-nosnippet>282</a>                <span class="kw">_ </span>= <span class="self">self</span>.local_addrs.updated() =&gt; {
+<a href=#283 id=283 data-nosnippet>283</a>                    <span class="macro">trace!</span>(<span class="string">"local addrs updated, triggering holepunching"</span>);
+<a href=#284 id=284 data-nosnippet>284</a>                    <span class="self">self</span>.trigger_holepunching().<span class="kw">await</span>;
+<a href=#285 id=285 data-nosnippet>285</a>                }
+<a href=#286 id=286 data-nosnippet>286</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>scheduled_path_open =&gt; {
+<a href=#287 id=287 data-nosnippet>287</a>                    <span class="macro">trace!</span>(<span class="string">"triggering scheduled path_open"</span>);
+<a href=#288 id=288 data-nosnippet>288</a>                    <span class="self">self</span>.scheduled_open_path = <span class="prelude-val">None</span>;
+<a href=#289 id=289 data-nosnippet>289</a>                    <span class="kw">let </span><span class="kw-2">mut </span>addrs = std::mem::take(<span class="kw-2">&amp;mut </span><span class="self">self</span>.pending_open_paths);
+<a href=#290 id=290 data-nosnippet>290</a>                    <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = addrs.pop_front() {
+<a href=#291 id=291 data-nosnippet>291</a>                        <span class="self">self</span>.open_path(<span class="kw-2">&amp;</span>addr);
+<a href=#292 id=292 data-nosnippet>292</a>                    }
+<a href=#293 id=293 data-nosnippet>293</a>                }
+<a href=#294 id=294 data-nosnippet>294</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>scheduled_hp =&gt; {
+<a href=#295 id=295 data-nosnippet>295</a>                    <span class="macro">trace!</span>(<span class="string">"triggering scheduled holepunching"</span>);
+<a href=#296 id=296 data-nosnippet>296</a>                    <span class="self">self</span>.scheduled_holepunch = <span class="prelude-val">None</span>;
+<a href=#297 id=297 data-nosnippet>297</a>                    <span class="self">self</span>.trigger_holepunching().<span class="kw">await</span>;
+<a href=#298 id=298 data-nosnippet>298</a>                }
+<a href=#299 id=299 data-nosnippet>299</a>                item = <span class="self">self</span>.discovery_stream.next() =&gt; {
+<a href=#300 id=300 data-nosnippet>300</a>                    <span class="self">self</span>.handle_discovery_item(item);
+<a href=#301 id=301 data-nosnippet>301</a>                }
+<a href=#302 id=302 data-nosnippet>302</a>                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>idle_timeout =&gt; {
+<a href=#303 id=303 data-nosnippet>303</a>                    <span class="kw">if </span><span class="self">self</span>.connections.is_empty() &amp;&amp; inbox.close_if_idle() {
+<a href=#304 id=304 data-nosnippet>304</a>                        <span class="macro">trace!</span>(<span class="string">"idle timeout expired and still idle: terminate actor"</span>);
+<a href=#305 id=305 data-nosnippet>305</a>                        <span class="kw">break</span>;
+<a href=#306 id=306 data-nosnippet>306</a>                    }
+<a href=#307 id=307 data-nosnippet>307</a>                }
+<a href=#308 id=308 data-nosnippet>308</a>            }
+<a href=#309 id=309 data-nosnippet>309</a>
+<a href=#310 id=310 data-nosnippet>310</a>            <span class="kw">if </span><span class="self">self</span>.connections.is_empty() &amp;&amp; inbox.is_idle() &amp;&amp; idle_timeout.is_none() {
+<a href=#311 id=311 data-nosnippet>311</a>                <span class="macro">trace!</span>(<span class="string">"start idle timeout"</span>);
+<a href=#312 id=312 data-nosnippet>312</a>                idle_timeout
+<a href=#313 id=313 data-nosnippet>313</a>                    .as_mut()
+<a href=#314 id=314 data-nosnippet>314</a>                    .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
+<a href=#315 id=315 data-nosnippet>315</a>            } <span class="kw">else if </span>idle_timeout.is_some() {
+<a href=#316 id=316 data-nosnippet>316</a>                <span class="macro">trace!</span>(<span class="string">"abort idle timeout"</span>);
+<a href=#317 id=317 data-nosnippet>317</a>                idle_timeout.as_mut().set_none()
+<a href=#318 id=318 data-nosnippet>318</a>            }
+<a href=#319 id=319 data-nosnippet>319</a>        }
+<a href=#320 id=320 data-nosnippet>320</a>        <span class="macro">trace!</span>(<span class="string">"actor terminating"</span>);
+<a href=#321 id=321 data-nosnippet>321</a>        <span class="prelude-val">Ok</span>(())
+<a href=#322 id=322 data-nosnippet>322</a>    }
+<a href=#323 id=323 data-nosnippet>323</a>
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="doccomment">/// Handles an actor message.
+<a href=#325 id=325 data-nosnippet>325</a>    ///
+<a href=#326 id=326 data-nosnippet>326</a>    /// Error returns are fatal and kill the actor.
+<a href=#327 id=327 data-nosnippet>327</a>    </span><span class="attr">#[instrument(skip(<span class="self">self</span>))]
+<a href=#328 id=328 data-nosnippet>328</a>    </span><span class="kw">async fn </span>handle_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: EndpointStateMessage) -&gt; n0_error::Result&lt;()&gt; {
+<a href=#329 id=329 data-nosnippet>329</a>        <span class="comment">// trace!("handling message");
+<a href=#330 id=330 data-nosnippet>330</a>        </span><span class="kw">match </span>msg {
+<a href=#331 id=331 data-nosnippet>331</a>            EndpointStateMessage::SendDatagram(transmit) =&gt; {
+<a href=#332 id=332 data-nosnippet>332</a>                <span class="self">self</span>.handle_msg_send_datagram(transmit).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#333 id=333 data-nosnippet>333</a>            }
+<a href=#334 id=334 data-nosnippet>334</a>            EndpointStateMessage::AddConnection(handle, tx) =&gt; {
+<a href=#335 id=335 data-nosnippet>335</a>                <span class="self">self</span>.handle_msg_add_connection(handle, tx).<span class="kw">await</span>;
+<a href=#336 id=336 data-nosnippet>336</a>            }
+<a href=#337 id=337 data-nosnippet>337</a>            EndpointStateMessage::CallMeMaybeReceived(msg) =&gt; {
+<a href=#338 id=338 data-nosnippet>338</a>                <span class="self">self</span>.handle_msg_call_me_maybe_received(msg).<span class="kw">await</span>;
+<a href=#339 id=339 data-nosnippet>339</a>            }
+<a href=#340 id=340 data-nosnippet>340</a>            EndpointStateMessage::PingReceived(ping, src) =&gt; {
+<a href=#341 id=341 data-nosnippet>341</a>                <span class="self">self</span>.handle_msg_ping_received(ping, src).<span class="kw">await</span>;
+<a href=#342 id=342 data-nosnippet>342</a>            }
+<a href=#343 id=343 data-nosnippet>343</a>            EndpointStateMessage::PongReceived(pong, src) =&gt; {
+<a href=#344 id=344 data-nosnippet>344</a>                <span class="self">self</span>.handle_msg_pong_received(pong, src);
+<a href=#345 id=345 data-nosnippet>345</a>            }
+<a href=#346 id=346 data-nosnippet>346</a>            EndpointStateMessage::ResolveRemote(addrs, tx) =&gt; {
+<a href=#347 id=347 data-nosnippet>347</a>                <span class="self">self</span>.handle_msg_resolve_remote(addrs, tx);
+<a href=#348 id=348 data-nosnippet>348</a>            }
+<a href=#349 id=349 data-nosnippet>349</a>            EndpointStateMessage::Latency(tx) =&gt; {
+<a href=#350 id=350 data-nosnippet>350</a>                <span class="self">self</span>.handle_msg_latency(tx);
+<a href=#351 id=351 data-nosnippet>351</a>            }
+<a href=#352 id=352 data-nosnippet>352</a>        }
+<a href=#353 id=353 data-nosnippet>353</a>        <span class="prelude-val">Ok</span>(())
+<a href=#354 id=354 data-nosnippet>354</a>    }
+<a href=#355 id=355 data-nosnippet>355</a>
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">async fn </span>send_datagram(
+<a href=#357 id=357 data-nosnippet>357</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#358 id=358 data-nosnippet>358</a>        dst: transports::Addr,
+<a href=#359 id=359 data-nosnippet>359</a>        owned_transmit: OwnedTransmit,
+<a href=#360 id=360 data-nosnippet>360</a>    ) -&gt; n0_error::Result&lt;()&gt; {
+<a href=#361 id=361 data-nosnippet>361</a>        <span class="kw">let </span>transmit = transports::Transmit {
+<a href=#362 id=362 data-nosnippet>362</a>            ecn: owned_transmit.ecn,
+<a href=#363 id=363 data-nosnippet>363</a>            contents: owned_transmit.contents.as_ref(),
+<a href=#364 id=364 data-nosnippet>364</a>            segment_size: owned_transmit.segment_size,
+<a href=#365 id=365 data-nosnippet>365</a>        };
+<a href=#366 id=366 data-nosnippet>366</a>        <span class="self">self</span>.sender.send(<span class="kw-2">&amp;</span>dst, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#367 id=367 data-nosnippet>367</a>        <span class="prelude-val">Ok</span>(())
+<a href=#368 id=368 data-nosnippet>368</a>    }
+<a href=#369 id=369 data-nosnippet>369</a>
+<a href=#370 id=370 data-nosnippet>370</a>    <span class="doccomment">/// Handles [`EndpointStateMessage::SendDatagram`].
+<a href=#371 id=371 data-nosnippet>371</a>    ///
+<a href=#372 id=372 data-nosnippet>372</a>    /// Error returns are fatal and kill the actor.
+<a href=#373 id=373 data-nosnippet>373</a>    </span><span class="kw">async fn </span>handle_msg_send_datagram(<span class="kw-2">&amp;mut </span><span class="self">self</span>, transmit: OwnedTransmit) -&gt; n0_error::Result&lt;()&gt; {
+<a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="self">self</span>.selected_path.get() {
+<a href=#375 id=375 data-nosnippet>375</a>            <span class="macro">trace!</span>(<span class="question-mark">?</span>addr, <span class="string">"sending datagram to selected path"</span>);
+<a href=#376 id=376 data-nosnippet>376</a>            <span class="self">self</span>.send_datagram(addr, transmit).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#377 id=377 data-nosnippet>377</a>        } <span class="kw">else </span>{
+<a href=#378 id=378 data-nosnippet>378</a>            <span class="macro">trace!</span>(
+<a href=#379 id=379 data-nosnippet>379</a>                paths = <span class="question-mark">?</span><span class="self">self</span>.paths.keys().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
+<a href=#380 id=380 data-nosnippet>380</a>                <span class="string">"sending datagram to all known paths"</span>,
+<a href=#381 id=381 data-nosnippet>381</a>            );
+<a href=#382 id=382 data-nosnippet>382</a>            <span class="kw">for </span>addr <span class="kw">in </span><span class="self">self</span>.paths.keys() {
+<a href=#383 id=383 data-nosnippet>383</a>                <span class="comment">// We never want to send to our local addresses.
+<a href=#384 id=384 data-nosnippet>384</a>                // The local address set is updated in the main loop so we can use `peek` here.
+<a href=#385 id=385 data-nosnippet>385</a>                </span><span class="kw">if let </span>transports::Addr::Ip(sockaddr) = addr
+<a href=#386 id=386 data-nosnippet>386</a>                    &amp;&amp; <span class="self">self</span>.local_addrs.peek().iter().any(|a| a.addr == <span class="kw-2">*</span>sockaddr)
+<a href=#387 id=387 data-nosnippet>387</a>                {
+<a href=#388 id=388 data-nosnippet>388</a>                    <span class="macro">trace!</span>(%sockaddr, <span class="string">"not sending datagram to our own address"</span>);
+<a href=#389 id=389 data-nosnippet>389</a>                } <span class="kw">else </span>{
+<a href=#390 id=390 data-nosnippet>390</a>                    <span class="self">self</span>.send_datagram(addr.clone(), transmit.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#391 id=391 data-nosnippet>391</a>                }
+<a href=#392 id=392 data-nosnippet>392</a>            }
+<a href=#393 id=393 data-nosnippet>393</a>            <span class="comment">// This message is received *before* a connection is added.  So we do
+<a href=#394 id=394 data-nosnippet>394</a>            // not yet have a connection to holepunch.  Instead we trigger
+<a href=#395 id=395 data-nosnippet>395</a>            // holepunching when AddConnection is received.
+<a href=#396 id=396 data-nosnippet>396</a>        </span>}
+<a href=#397 id=397 data-nosnippet>397</a>        <span class="prelude-val">Ok</span>(())
+<a href=#398 id=398 data-nosnippet>398</a>    }
+<a href=#399 id=399 data-nosnippet>399</a>
+<a href=#400 id=400 data-nosnippet>400</a>    <span class="doccomment">/// Handles [`EndpointStateMessage::AddConnection`].
+<a href=#401 id=401 data-nosnippet>401</a>    ///
+<a href=#402 id=402 data-nosnippet>402</a>    /// Error returns are fatal and kill the actor.
+<a href=#403 id=403 data-nosnippet>403</a>    </span><span class="kw">async fn </span>handle_msg_add_connection(
+<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#405 id=405 data-nosnippet>405</a>        handle: WeakConnectionHandle,
+<a href=#406 id=406 data-nosnippet>406</a>        tx: oneshot::Sender&lt;PathsWatcher&gt;,
+<a href=#407 id=407 data-nosnippet>407</a>    ) {
+<a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>pub_open_paths = Watchable::default();
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(conn) = handle.upgrade() {
+<a href=#410 id=410 data-nosnippet>410</a>            <span class="comment">// Remove any conflicting stable_ids from the local state.
+<a href=#411 id=411 data-nosnippet>411</a>            </span><span class="kw">let </span>conn_id = ConnId(conn.stable_id());
+<a href=#412 id=412 data-nosnippet>412</a>            <span class="self">self</span>.connections.remove(<span class="kw-2">&amp;</span>conn_id);
+<a href=#413 id=413 data-nosnippet>413</a>
+<a href=#414 id=414 data-nosnippet>414</a>            <span class="comment">// Store the connection and hook up paths events stream.
+<a href=#415 id=415 data-nosnippet>415</a>            </span><span class="kw">let </span>events = BroadcastStream::new(conn.path_events());
+<a href=#416 id=416 data-nosnippet>416</a>            <span class="kw">let </span>stream = events.map(<span class="kw">move </span>|evt| (conn_id, evt));
+<a href=#417 id=417 data-nosnippet>417</a>            <span class="self">self</span>.path_events.push(Box::pin(stream));
+<a href=#418 id=418 data-nosnippet>418</a>            <span class="self">self</span>.connections_close.push(OnClosed::new(<span class="kw-2">&amp;</span>conn));
+<a href=#419 id=419 data-nosnippet>419</a>            <span class="kw">let </span>conn_state = <span class="self">self
+<a href=#420 id=420 data-nosnippet>420</a>                </span>.connections
+<a href=#421 id=421 data-nosnippet>421</a>                .entry(conn_id)
+<a href=#422 id=422 data-nosnippet>422</a>                .insert_entry(ConnectionState {
+<a href=#423 id=423 data-nosnippet>423</a>                    handle: handle.clone(),
+<a href=#424 id=424 data-nosnippet>424</a>                    pub_open_paths: pub_open_paths.clone(),
+<a href=#425 id=425 data-nosnippet>425</a>                    paths: Default::default(),
+<a href=#426 id=426 data-nosnippet>426</a>                    open_paths: Default::default(),
+<a href=#427 id=427 data-nosnippet>427</a>                    path_ids: Default::default(),
+<a href=#428 id=428 data-nosnippet>428</a>                })
+<a href=#429 id=429 data-nosnippet>429</a>                .into_mut();
+<a href=#430 id=430 data-nosnippet>430</a>
+<a href=#431 id=431 data-nosnippet>431</a>            <span class="comment">// Store PathId(0), set path_status and select best path, check if holepunching
+<a href=#432 id=432 data-nosnippet>432</a>            // is needed.
+<a href=#433 id=433 data-nosnippet>433</a>            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(path) = conn.path(PathId::ZERO)
+<a href=#434 id=434 data-nosnippet>434</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Ok</span>(socketaddr) = path.remote_address()
+<a href=#435 id=435 data-nosnippet>435</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(path_remote) = <span class="self">self</span>.relay_mapped_addrs.to_transport_addr(socketaddr)
+<a href=#436 id=436 data-nosnippet>436</a>            {
+<a href=#437 id=437 data-nosnippet>437</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>path_remote, <span class="string">"added new connection"</span>);
+<a href=#438 id=438 data-nosnippet>438</a>                <span class="kw">let </span>path_remote_is_ip = path_remote.is_ip();
+<a href=#439 id=439 data-nosnippet>439</a>                <span class="kw">let </span>status = <span class="kw">match </span>path_remote {
+<a href=#440 id=440 data-nosnippet>440</a>                    transports::Addr::Ip(<span class="kw">_</span>) =&gt; PathStatus::Available,
+<a href=#441 id=441 data-nosnippet>441</a>                    transports::Addr::Relay(<span class="kw">_</span>, <span class="kw">_</span>) =&gt; PathStatus::Backup,
+<a href=#442 id=442 data-nosnippet>442</a>                };
+<a href=#443 id=443 data-nosnippet>443</a>                path.set_status(status).ok();
+<a href=#444 id=444 data-nosnippet>444</a>                conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
+<a href=#445 id=445 data-nosnippet>445</a>                <span class="self">self</span>.add_path_entry(path_remote, Source::Connection { _0: Private });
+<a href=#446 id=446 data-nosnippet>446</a>                <span class="self">self</span>.select_path();
+<a href=#447 id=447 data-nosnippet>447</a>
+<a href=#448 id=448 data-nosnippet>448</a>                <span class="kw">if </span>path_remote_is_ip {
+<a href=#449 id=449 data-nosnippet>449</a>                    <span class="comment">// We may have raced this with a relay address.  Try and add any
+<a href=#450 id=450 data-nosnippet>450</a>                    // relay addresses we have back.
+<a href=#451 id=451 data-nosnippet>451</a>                    </span><span class="kw">let </span>relays = <span class="self">self
+<a href=#452 id=452 data-nosnippet>452</a>                        </span>.paths
+<a href=#453 id=453 data-nosnippet>453</a>                        .keys()
+<a href=#454 id=454 data-nosnippet>454</a>                        .filter(|a| a.is_relay())
+<a href=#455 id=455 data-nosnippet>455</a>                        .cloned()
+<a href=#456 id=456 data-nosnippet>456</a>                        .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#457 id=457 data-nosnippet>457</a>                    <span class="kw">for </span>remote <span class="kw">in </span>relays {
+<a href=#458 id=458 data-nosnippet>458</a>                        <span class="self">self</span>.open_path(<span class="kw-2">&amp;</span>remote);
+<a href=#459 id=459 data-nosnippet>459</a>                    }
+<a href=#460 id=460 data-nosnippet>460</a>                }
+<a href=#461 id=461 data-nosnippet>461</a>            }
+<a href=#462 id=462 data-nosnippet>462</a>            <span class="self">self</span>.trigger_holepunching().<span class="kw">await</span>;
+<a href=#463 id=463 data-nosnippet>463</a>        }
+<a href=#464 id=464 data-nosnippet>464</a>        tx.send(PathsWatcher::new(
+<a href=#465 id=465 data-nosnippet>465</a>            pub_open_paths.watch(),
+<a href=#466 id=466 data-nosnippet>466</a>            <span class="self">self</span>.selected_path.watch(),
+<a href=#467 id=467 data-nosnippet>467</a>            handle,
+<a href=#468 id=468 data-nosnippet>468</a>        ))
+<a href=#469 id=469 data-nosnippet>469</a>        .ok();
+<a href=#470 id=470 data-nosnippet>470</a>    }
+<a href=#471 id=471 data-nosnippet>471</a>
+<a href=#472 id=472 data-nosnippet>472</a>    <span class="doccomment">/// Adds new [`TransportAddr`] addresses to our list of potential paths.
+<a href=#473 id=473 data-nosnippet>473</a>    </span><span class="kw">fn </span>add_addrs(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addrs: BTreeSet&lt;TransportAddr&gt;, source: Source) {
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
+<a href=#475 id=475 data-nosnippet>475</a>            <span class="kw">let </span>addr = <span class="kw">match </span>addr {
+<a href=#476 id=476 data-nosnippet>476</a>                TransportAddr::Relay(relay_url) =&gt; {
+<a href=#477 id=477 data-nosnippet>477</a>                    transports::Addr::from((relay_url, <span class="self">self</span>.endpoint_id))
+<a href=#478 id=478 data-nosnippet>478</a>                }
+<a href=#479 id=479 data-nosnippet>479</a>                TransportAddr::Ip(sockaddr) =&gt; transports::Addr::from(sockaddr),
 <a href=#480 id=480 data-nosnippet>480</a>                <span class="kw">_ </span>=&gt; {
 <a href=#481 id=481 data-nosnippet>481</a>                    <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"Unsupported TransportAddr"</span>);
 <a href=#482 id=482 data-nosnippet>482</a>                    <span class="kw">continue</span>;
