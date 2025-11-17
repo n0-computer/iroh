@@ -206,29 +206,19 @@ pub enum AuthenticationError {
     RemoteId { source: RemoteEndpointIdError },
     #[error("no ALPN provided")]
     NoAlpn {},
-    #[error(transparent)]
-    ConnectionError {
-        #[error(std_err)]
-        source: ConnectionError,
-    },
-    #[error("Internal consistency error")]
-    InternalConsistencyError {
-        /// Private source type, cannot be accessed publicly.
-        source: EndpointStateActorStoppedError,
-    },
 }
 
 impl From<EndpointStateActorStoppedError> for ConnectingError {
     #[track_caller]
-    fn from(value: EndpointStateActorStoppedError) -> Self {
-        AuthenticationError::from(value).into()
+    fn from(_value: EndpointStateActorStoppedError) -> Self {
+        e!(Self::InternalConsistencyError)
     }
 }
 
 /// Converts a `quinn::Connection` to a `Connection`.
 ///
-/// Returns a [`AuthenticationError`] if the handshake data has not completed,
-/// or if no alpn was set by the remote node.
+/// Returns an error if there was a connection error, the handshake data has not completed
+/// or if the remote did not set an ALPN.
 ///
 /// Otherwise returns a future that completes once the connection has been registered with the
 /// magicsock. This future can return an [`EndpointStateActorStoppedError`], which will only be
@@ -240,13 +230,21 @@ fn conn_from_quinn_conn(
     ep: &Endpoint,
 ) -> Result<
     impl Future<Output = Result<Connection, EndpointStateActorStoppedError>> + Send + 'static,
-    AuthenticationError,
+    ConnectingError,
 > {
-    if let Some(reason) = conn.close_reason() {
-        return Err(e!(AuthenticationError::ConnectionError { source: reason }));
-    }
-    let remote_id = remote_id_from_quinn_conn(&conn)?;
-    let alpn = alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
+    let (remote_id, alpn) = match static_info_from_conn(&conn) {
+        Ok(val) => val,
+        Err(auth_err) => {
+            // If the authentication error raced with a connection error, the connection
+            // error wins.
+            if let Some(conn_err) = conn.close_reason() {
+                return Err(e!(ConnectingError::ConnectionError { source: conn_err }));
+            } else {
+                return Err(e!(ConnectingError::HandshakeFailure { source: auth_err }));
+            }
+        }
+    };
+
     // Register this connection with the magicsock.
     let fut = ep.msock.register_connection(remote_id, conn.weak_handle());
     Ok(async move {
@@ -258,6 +256,14 @@ fn conn_from_quinn_conn(
             inner: conn,
         })
     })
+}
+
+fn static_info_from_conn(
+    conn: &quinn::Connection,
+) -> Result<(EndpointId, Vec<u8>), AuthenticationError> {
+    let remote_id = remote_id_from_quinn_conn(conn)?;
+    let alpn = alpn_from_quinn_conn(conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
+    Ok((remote_id, alpn))
 }
 
 /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -352,6 +358,7 @@ pub enum AlpnError {
 #[stack_error(add_meta, derive, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
+#[derive(Clone)]
 pub enum ConnectingError {
     #[error(transparent)]
     ConnectionError {
@@ -360,6 +367,8 @@ pub enum ConnectingError {
     },
     #[error("Failure finalizing the handshake")]
     HandshakeFailure { source: AuthenticationError },
+    #[error("internal consistency error: EndpointStateActor stopped")]
+    InternalConsistencyError,
 }
 
 impl Connecting {
@@ -460,10 +469,8 @@ impl Future for Connecting {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
                 let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
-                match conn_from_quinn_conn(quinn_conn, &self.ep) {
-                    Err(err) => return Poll::Ready(Err(err.into())),
-                    Ok(fut) => self.register_with_magicsock = Some(Box::pin(fut.err_into())),
-                };
+                let fut = conn_from_quinn_conn(quinn_conn, &self.ep)?;
+                self.register_with_magicsock = Some(Box::pin(fut.err_into()));
             }
         }
     }
@@ -545,7 +552,7 @@ impl Future for Accepting {
             } else {
                 let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
                 match conn_from_quinn_conn(quinn_conn, &self.ep) {
-                    Err(err) => return Poll::Ready(Err(err.into())),
+                    Err(err) => return Poll::Ready(Err(err)),
                     Ok(fut) => self.register_with_magicsock = Some(Box::pin(fut.err_into())),
                 };
             }
@@ -567,7 +574,7 @@ impl Future for Accepting {
 #[derive(Debug, Clone)]
 pub struct OutgoingZeroRttConnection {
     inner: quinn::Connection,
-    handshake_completed_fut: Shared<BoxFuture<Result<ZeroRttStatus, AuthenticationError>>>,
+    handshake_completed_fut: Shared<BoxFuture<Result<ZeroRttStatus, ConnectingError>>>,
 }
 
 /// Returned from [`OutgoingZeroRttConnection::handshake_completed`].
@@ -592,17 +599,17 @@ impl OutgoingZeroRttConnection {
     /// the handshake will error and any data sent should be re-sent on a
     /// new stream.
     ///
-    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// This may fail with [`ConnectingError::ConnectionError`], if there was
     /// some general failure with the connection, such as a network timeout since
     /// we initiated the connection.
     ///
-    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
     /// doesn't use the right TLS authentication, which usually every iroh endpoint
     /// uses and requires.
     ///
     /// Thus, those errors should only occur if someone connects to you with a
     /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn handshake_completed(self) -> Result<ZeroRttStatus, AuthenticationError> {
+    pub async fn handshake_completed(self) -> Result<ZeroRttStatus, ConnectingError> {
         self.handshake_completed_fut.await
     }
 
@@ -896,23 +903,23 @@ impl OutgoingZeroRttConnection {
 #[derive(Debug)]
 pub struct IncomingZeroRttConnection {
     inner: quinn::Connection,
-    handshake_completed_fut: Shared<BoxFuture<Result<Connection, AuthenticationError>>>,
+    handshake_completed_fut: Shared<BoxFuture<Result<Connection, ConnectingError>>>,
 }
 
 impl IncomingZeroRttConnection {
     /// Waits until the full handshake occurs and then returns a [`Connection`].
     ///
-    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// This may fail with [`ConnectingError::ConnectionError`], if there was
     /// some general failure with the connection, such as a network timeout since
     /// we accepted the connection.
     ///
-    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
     /// doesn't use the right TLS authentication, which usually every iroh endpoint
     /// uses and requires.
     ///
     /// Thus, those errors should only occur if someone connects to you with a
     /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn handshake_completed(self) -> Result<Connection, AuthenticationError> {
+    pub async fn handshake_completed(self) -> Result<Connection, ConnectingError> {
         self.handshake_completed_fut.await
     }
 
@@ -1508,7 +1515,7 @@ mod tests {
     use n0_future::StreamExt;
     use n0_watcher::Watcher;
     use rand::SeedableRng;
-    use tracing::{Instrument, error_span, info_span, trace_span};
+    use tracing::{Instrument, error_span, info, info_span, trace_span};
     use tracing_test::traced_test;
 
     use super::Endpoint;
@@ -1727,8 +1734,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_paths_watcher() -> Result {
-        tracing_subscriber::fmt::init();
         const ALPN: &[u8] = b"test";
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (relay_map, _relay_map, _guard) = run_relay_server().await?;
@@ -1747,13 +1754,13 @@ mod tests {
 
         server.online().await;
         let server_addr = server.addr();
-        tracing::info!("server addr: {server_addr:?}");
+        info!("server addr: {server_addr:?}");
 
         let (conn_client, conn_server) = tokio::join!(
             async { client.connect(server_addr, ALPN).await.unwrap() },
             async { server.accept().await.unwrap().await.unwrap() }
         );
-        tracing::info!("connected");
+        info!("connected");
         let mut paths_client = conn_client.paths().stream();
         let mut paths_server = conn_server.paths().stream();
 
@@ -1765,12 +1772,12 @@ mod tests {
         ) {
             loop {
                 let paths = stream.next().await.expect("paths stream ended");
-                tracing::info!(?paths, "paths");
+                info!(?paths, "paths");
                 if paths.len() >= 2
                     && paths.iter().any(PathInfo::is_relay)
                     && paths.iter().any(PathInfo::is_ip)
                 {
-                    tracing::info!("break");
+                    info!("break");
                     return;
                 }
             }
@@ -1793,7 +1800,7 @@ mod tests {
         );
 
         // Close the client connection.
-        tracing::info!("close client conn");
+        info!("close client conn");
         conn_client.close(0u32.into(), b"");
 
         // Verify that the path watch streams close.
