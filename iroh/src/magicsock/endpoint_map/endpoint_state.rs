@@ -7,7 +7,6 @@ use std::{
 };
 
 use iroh_base::{EndpointId, RelayUrl, TransportAddr};
-use n0_error::e;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
@@ -24,15 +23,17 @@ use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
-use self::guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel};
-use super::{Source, path_state::PathState};
+use self::{
+    guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
+    path_state::EndpointPathState,
+};
 use crate::{
     disco::{self},
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
-        endpoint_map::Private,
+        endpoint_map::{Private, Source},
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -40,6 +41,7 @@ use crate::{
 };
 
 mod guarded_channel;
+mod path_state;
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
@@ -145,7 +147,7 @@ pub(super) struct EndpointStateActor {
     ///
     /// These paths might be entirely impossible to use, since they are added by discovery
     /// mechanisms.  The are only potentially usable.
-    paths: FxHashMap<transports::Addr, PathState>,
+    paths: EndpointPathState,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
     /// The path we currently consider the preferred path to the remote endpoint.
@@ -170,8 +172,6 @@ pub(super) struct EndpointStateActor {
     //
     /// Stream of discovery results, or always pending if discovery is not running.
     discovery_stream: DiscoveryStream,
-    /// Pending requests from [`EndpointStateMessage::ResolveRemote`].
-    pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
 }
 
 impl EndpointStateActor {
@@ -196,7 +196,7 @@ impl EndpointStateActor {
             connections: FxHashMap::default(),
             connections_close: Default::default(),
             path_events: Default::default(),
-            paths: FxHashMap::default(),
+            paths: Default::default(),
             last_holepunch: None,
             selected_path: Default::default(),
             scheduled_holepunch: None,
@@ -205,7 +205,6 @@ impl EndpointStateActor {
             sender,
             discovery,
             discovery_stream: Either::Left(n0_future::stream::pending()),
-            pending_resolve_requests: VecDeque::new(),
         }
     }
 
@@ -376,10 +375,10 @@ impl EndpointStateActor {
             self.send_datagram(addr, transmit).await?;
         } else {
             trace!(
-                paths = ?self.paths.keys().collect::<Vec<_>>(),
+                paths = ?self.paths.addrs().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
             );
-            for addr in self.paths.keys() {
+            for addr in self.paths.addrs() {
                 // We never want to send to our local addresses.
                 // The local address set is updated in the main loop so we can use `peek` here.
                 if let transports::Addr::Ip(sockaddr) = addr
@@ -442,7 +441,8 @@ impl EndpointStateActor {
                 };
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
-                self.add_path_entry(path_remote, Source::Connection { _0: Private });
+                self.paths
+                    .insert(path_remote, Source::Connection { _0: Private });
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -450,7 +450,7 @@ impl EndpointStateActor {
                     // relay addresses we have back.
                     let relays = self
                         .paths
-                        .keys()
+                        .addrs()
                         .filter(|a| a.is_relay())
                         .cloned()
                         .collect::<Vec<_>>();
@@ -469,24 +469,6 @@ impl EndpointStateActor {
         .ok();
     }
 
-    /// Adds new [`TransportAddr`] addresses to our list of potential paths.
-    fn add_addrs(&mut self, addrs: BTreeSet<TransportAddr>, source: Source) {
-        for addr in addrs {
-            let addr = match addr {
-                TransportAddr::Relay(relay_url) => {
-                    transports::Addr::from((relay_url, self.endpoint_id))
-                }
-                TransportAddr::Ip(sockaddr) => transports::Addr::from(sockaddr),
-                _ => {
-                    warn!(?addr, "Unsupported TransportAddr");
-                    continue;
-                }
-            };
-            self.add_path_entry(addr, source.clone());
-        }
-        trace!("added addressing information");
-    }
-
     /// Handles [`EndpointStateMessage::CallMeMaybeReceived`].
     async fn handle_msg_call_me_maybe_received(&mut self, msg: disco::CallMeMaybe) {
         event!(
@@ -495,15 +477,13 @@ impl EndpointStateActor {
             remote = %self.endpoint_id.fmt_short(),
             addrs = ?msg.my_numbers,
         );
-        let now = Instant::now();
         for addr in msg.my_numbers {
             let dst = transports::Addr::Ip(addr);
             let ping = disco::Ping::new(self.local_endpoint_id);
 
-            let path = self.paths.entry(dst.clone()).or_default();
-            path.sources
-                .insert(Source::CallMeMaybe { _0: Private }, now);
-            path.ping_sent = Some(ping.tx_id);
+            self.paths
+                .insert(dst.clone(), Source::CallMeMaybe { _0: Private });
+            self.paths.disco_ping_sent(dst.clone(), ping.tx_id);
 
             event!(
                 target: "iroh::_events::ping::sent",
@@ -543,7 +523,7 @@ impl EndpointStateActor {
         self.send_disco_message(src.clone(), disco::Message::Pong(pong))
             .await;
 
-        self.add_path_entry(src, Source::Ping { _0: Private });
+        self.paths.insert(src, Source::Ping { _0: Private });
 
         trace!("ping received, triggering holepunching");
         self.trigger_holepunching().await;
@@ -551,24 +531,17 @@ impl EndpointStateActor {
 
     /// Handles [`EndpointStateMessage::PongReceived`].
     fn handle_msg_pong_received(&mut self, pong: disco::Pong, src: transports::Addr) {
-        let Some(state) = self.paths.get(&src) else {
-            warn!(path = ?src, ?self.paths, "ignoring DISCO Pong for unknown path");
-            return;
-        };
-        if state.ping_sent != Some(pong.tx_id) {
-            debug!(path = ?src, ?state.ping_sent, pong_tx = ?pong.tx_id,
-                        "ignoring unknown DISCO Pong for path");
-            return;
-        }
-        event!(
-            target: "iroh::_events::pong::recv",
-            Level::DEBUG,
-            remote_endpoint = %self.endpoint_id.fmt_short(),
-            ?src,
-            txn = ?pong.tx_id,
-        );
+        if self.paths.disco_pong_received(&src, pong.tx_id) {
+            event!(
+                target: "iroh::_events::pong::recv",
+                Level::DEBUG,
+                remote_endpoint = %self.endpoint_id.fmt_short(),
+                ?src,
+                txn = ?pong.tx_id,
+            );
 
-        self.open_path(&src);
+            self.open_path(&src);
+        }
     }
 
     /// Handles [`EndpointStateMessage::ResolveRemote`].
@@ -577,12 +550,9 @@ impl EndpointStateActor {
         addrs: BTreeSet<TransportAddr>,
         tx: oneshot::Sender<Result<(), DiscoveryError>>,
     ) {
-        self.add_addrs(addrs, Source::App);
-        if !self.paths.is_empty() {
-            tx.send(Ok(())).ok();
-        } else {
-            self.pending_resolve_requests.push_back(tx);
-        }
+        let addrs = to_transports_addr(self.endpoint_id, addrs);
+        self.paths.insert_multiple(addrs, Source::App);
+        self.paths.resolve_remote(tx);
         // Start discovery if we have no selected path.
         self.trigger_discovery();
     }
@@ -614,12 +584,12 @@ impl EndpointStateActor {
         match item {
             None => {
                 self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.emit_pending_resolve_requests(None);
+                self.paths.discovery_finished(None);
             }
             Some(Err(err)) => {
                 warn!("Discovery failed: {err:#}");
                 self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.emit_pending_resolve_requests(Some(err));
+                self.paths.discovery_finished(Some(err));
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
@@ -628,30 +598,11 @@ impl EndpointStateActor {
                     let source = Source::Discovery {
                         name: item.provenance().to_string(),
                     };
-                    let addr = item.into_endpoint_addr();
-                    self.add_addrs(addr.addrs, source);
+                    let addrs =
+                        to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs);
+                    self.paths.insert_multiple(addrs, source);
                 }
             }
-        }
-    }
-
-    /// Replies to all pending requests from [`EndpointStateMessage::ResolveRemote`].
-    ///
-    /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
-    /// otherwise with the provided `discovery_error` or with [`DiscoveryError::NoResults`].
-    fn emit_pending_resolve_requests(&mut self, discovery_error: Option<DiscoveryError>) {
-        if self.pending_resolve_requests.is_empty() {
-            return;
-        }
-        let result = match (self.paths.is_empty(), discovery_error) {
-            (false, _) => Ok(()),
-            (true, Some(err)) => Err(err),
-            (true, None) => Err(e!(DiscoveryError::NoResults {
-                endpoint_id: self.endpoint_id
-            })),
-        };
-        for tx in self.pending_resolve_requests.drain(..) {
-            tx.send(result.clone()).ok();
         }
     }
 
@@ -664,7 +615,7 @@ impl EndpointStateActor {
         }
         match self.discovery.resolve(self.endpoint_id) {
             Some(stream) => self.discovery_stream = Either::Right(SyncStream::new(stream)),
-            None => self.emit_pending_resolve_requests(None),
+            None => self.paths.discovery_finished(None),
         }
     }
 
@@ -777,8 +728,8 @@ impl EndpointStateActor {
     async fn do_holepunching(&mut self) {
         let Some(relay_addr) = self
             .paths
-            .iter()
-            .filter_map(|(addr, _)| match addr {
+            .addrs()
+            .filter_map(|addr| match addr {
                 transports::Addr::Ip(_) => None,
                 transports::Addr::Relay(_, _) => Some(addr),
             })
@@ -801,7 +752,7 @@ impl EndpointStateActor {
                 txn = ?msg.tx_id,
             );
             let addr = transports::Addr::Ip(*dst);
-            self.paths.entry(addr.clone()).or_default().ping_sent = Some(msg.tx_id);
+            self.paths.disco_ping_sent(addr.clone(), msg.tx_id);
             self.send_disco_message(addr, disco::Message::Ping(msg))
                 .await;
         }
@@ -906,16 +857,6 @@ impl EndpointStateActor {
         }
     }
 
-    fn add_path_entry(&mut self, path_remote: transports::Addr, source: Source) {
-        self.paths
-            .entry(path_remote)
-            .or_default()
-            .sources
-            .insert(source, Instant::now());
-        // Now that we have a new potential path: Emit pending resolve requests if there are any.
-        self.emit_pending_resolve_requests(None);
-    }
-
     #[instrument(skip(self))]
     fn handle_path_event(
         &mut self,
@@ -960,7 +901,8 @@ impl EndpointStateActor {
                         ?path_id,
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id);
-                    self.add_path_entry(path_remote, Source::Connection { _0: Private });
+                    self.paths
+                        .insert(path_remote, Source::Connection { _0: Private });
                 }
 
                 self.select_path();
@@ -1480,4 +1422,19 @@ impl Future for OnClosed {
         let (_close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
         Poll::Ready(self.conn_id)
     }
+}
+
+/// Converts an interator of [`TransportAddr'] into an iterator of [`transports::Addr`].
+fn to_transports_addr(
+    endpoint_id: EndpointId,
+    addrs: impl IntoIterator<Item = TransportAddr>,
+) -> impl Iterator<Item = transports::Addr> {
+    addrs.into_iter().filter_map(move |addr| match addr {
+        TransportAddr::Relay(relay_url) => Some(transports::Addr::from((relay_url, endpoint_id))),
+        TransportAddr::Ip(sockaddr) => Some(transports::Addr::from(sockaddr)),
+        _ => {
+            warn!(?addr, "Unsupported TransportAddr");
+            None
+        }
+    })
 }

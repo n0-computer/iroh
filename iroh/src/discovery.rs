@@ -215,8 +215,8 @@ impl IntoDiscoveryError {
 pub enum DiscoveryError {
     #[error("No discovery service configured")]
     NoServiceConfigured,
-    #[error("Discovery produced no results for {}", endpoint_id.fmt_short())]
-    NoResults { endpoint_id: EndpointId },
+    #[error("Discovery produced no results")]
+    NoResults,
     #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
