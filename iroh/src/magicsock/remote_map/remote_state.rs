@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, HashSet, VecDeque},
+    collections::{BTreeSet, VecDeque},
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
@@ -26,7 +26,7 @@ use tracing::{Instrument, Level, debug, error, event, info_span, instrument, tra
 
 use self::{
     guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
-    path_state::{PathState, RemotePathState},
+    path_state::RemotePathState,
 };
 use super::Source;
 use crate::{
@@ -49,16 +49,6 @@ const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
 mod guarded_channel;
 mod path_state;
-
-/// Number of addresses that are not active that we keep around per endpoint.
-///
-/// See [`EndpointState::prune_ip_addresses`].
-pub(super) const MAX_INACTIVE_IP_ADDRESSES: usize = 20;
-
-/// Max duration of how long ago we learned about this source before we are willing
-/// to prune it, if the path for this ip address is inactive.
-/// TODO(ramfox): fix this comment it's not clear enough
-const LAST_SOURCE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 
 // TODO: use this
 // /// The latency at or under which we don't try to upgrade to a better path.
@@ -464,7 +454,7 @@ impl RemoteStateActor {
                     .insert(path_remote, Source::Connection { _0: Private });
                 self.select_path();
                 // TODO(ramfox): do we need to prune paths here?
-                self.prune_paths();
+                self.prune_ip_paths();
 
                 if path_remote_is_ip {
                     // We may have raced this with a relay address.  Try and add any
@@ -785,7 +775,7 @@ impl RemoteStateActor {
                 }
 
                 self.select_path();
-                self.prune_paths();
+                self.prune_ip_paths();
             }
             PathEvent::Abandoned { id, path_stats } => {
                 trace!(?path_stats, "path abandoned");
@@ -943,19 +933,19 @@ impl RemoteStateActor {
         }
     }
 
-    fn prune_paths(&mut self) {
+    /// TODO: fix up docs once review indicates this is actually
+    /// the criteria for pruning.
+    fn prune_ip_paths(&mut self) {
         // if the total number of paths, relay or ip, is less
         // than the max inactive ip addrs we allow, bail early
-        if self.paths.len() < MAX_INACTIVE_IP_ADDRESSES {
+        if self.paths.len() < path_state::MAX_INACTIVE_IP_ADDRESSES {
             return;
         }
         let open_paths = self
             .connections
             .values()
-            .map(|state| state.open_paths.values())
-            .flatten();
-        prune_paths(
-            &mut self.paths,
+            .flat_map(|state| state.open_paths.values());
+        self.paths.prune_ip_paths(
             &self.pending_open_paths,
             &self.selected_path.get(),
             open_paths,
@@ -1348,253 +1338,4 @@ fn to_transports_addr(
             None
         }
     })
-}
-
-fn prune_paths<'a>(
-    paths: &mut FxHashMap<transports::Addr, PathState>,
-    pending: &VecDeque<transports::Addr>,
-    selected_path: &Option<transports::Addr>,
-    open_paths: impl Iterator<Item = &'a transports::Addr>,
-) {
-    let ip_count = paths.keys().filter(|p| p.is_ip()).count();
-    // if the total number of ip paths is less than the allowed number of inactive
-    // paths, just return early;
-    if ip_count < MAX_INACTIVE_IP_ADDRESSES {
-        return;
-    }
-
-    let ip_paths: HashSet<_> = paths.keys().filter(|p| p.is_ip()).collect();
-
-    let mut protected_paths = HashSet::new();
-    for addr in pending {
-        protected_paths.insert(addr);
-    }
-    if let Some(path) = selected_path {
-        protected_paths.insert(path);
-    }
-    for path in open_paths {
-        protected_paths.insert(path);
-    }
-
-    let inactive_paths: HashSet<_> = ip_paths
-        .difference(&protected_paths)
-        // cloned here so we can use `paths.retain` later
-        .map(|&addr| addr.clone())
-        .collect();
-
-    if inactive_paths.len() < MAX_INACTIVE_IP_ADDRESSES {
-        return;
-    }
-
-    let now = Instant::now();
-
-    paths.retain(|addr, state| {
-        if inactive_paths.contains(addr) {
-            keep_path(state, &now)
-        } else {
-            // keep all active paths
-            true
-        }
-    });
-}
-
-/// Based on the [`PathState`], returns true if we should keep this path.
-///
-/// Currently we have two criteria:
-/// 1) This path has sent a Ping
-/// 2) The last time we learned about this address was greater than LAST_SOURCE_PRUNE_DURATION
-fn keep_path(state: &PathState, now: &Instant) -> bool {
-    // if we have never sent a ping, don't remove it
-    state.ping_sent.is_none()
-        || state
-            .sources
-            .values()
-            // only keep it if this path contains recent sources
-            .any(|instant| *instant + LAST_SOURCE_PRUNE_DURATION > *now)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::Source;
-    use super::{PathState, prune_paths};
-    use crate::disco::TransactionId;
-    use crate::magicsock::{endpoint_map::Private, transports};
-    use n0_error::Result;
-    use n0_future::time::{Duration, Instant};
-    use rustc_hash::FxHashMap;
-    use std::collections::VecDeque;
-    use std::net::{Ipv4Addr, SocketAddr};
-
-    /// Create a test IP address with specific port
-    fn test_ip_addr(port: u16) -> transports::Addr {
-        transports::Addr::Ip(SocketAddr::new(
-            std::net::IpAddr::V4(Ipv4Addr::LOCALHOST),
-            port,
-        ))
-    }
-
-    /// Create a PathState with sources at a specific time offset
-    fn test_path_state(time_offset: Duration, sent_ping: bool) -> PathState {
-        let mut state = PathState::default();
-        if sent_ping {
-            state.ping_sent = Some(TransactionId::default());
-        }
-        state.sources.insert(
-            Source::Connection { _0: Private },
-            Instant::now() - time_offset,
-        );
-        state
-    }
-
-    #[test]
-    fn test_prune_paths_too_few_total_paths() -> Result {
-        // create fewer than MAX_INACTIVE_IP_ADDRESSES paths
-        let mut paths = FxHashMap::default();
-        for i in 0..15 {
-            paths.insert(
-                test_ip_addr(i),
-                test_path_state(Duration::from_secs(0), false),
-            );
-        }
-
-        let pending = VecDeque::new();
-        let selected_path = None;
-        let open_paths = Vec::new();
-
-        let initial_len = paths.len();
-        // should not prune because we have fewer than MAX_INACTIVE_IP_ADDRESSES paths
-        prune_paths(&mut paths, &pending, &selected_path, open_paths.iter());
-        assert_eq!(
-            paths.len(),
-            initial_len,
-            "Expected no paths to be pruned when total IP paths < MAX_INACTIVE_IP_ADDRESSES"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_prune_paths_too_few_inactive_paths() -> Result {
-        // create MAX_INACTIVE_IP_ADDRESSES + 5 paths
-        let mut paths = FxHashMap::default();
-        for i in 0..25 {
-            paths.insert(
-                test_ip_addr(i),
-                test_path_state(Duration::from_secs(0), false),
-            );
-        }
-
-        // mark 10 of them as "active" by adding them to open_paths
-        let open_paths: Vec<transports::Addr> = (0..10).map(|i| test_ip_addr(i)).collect();
-
-        let pending = VecDeque::new();
-        let selected_path = None;
-
-        let initial_len = paths.len();
-        // now we have 25 total paths, but only 15 inactive paths (25 - 10 = 15)
-        // which is less than MAX_INACTIVE_IP_ADDRESSES (20)
-        prune_paths(&mut paths, &pending, &selected_path, open_paths.iter());
-        assert_eq!(
-            paths.len(),
-            initial_len,
-            "Expected no paths to be pruned when inactive paths < MAX_INACTIVE_IP_ADDRESSES"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_prune_paths_prunes_old_inactive_paths() -> Result {
-        // create MAX_INACTIVE_IP_ADDRESSES + 10 paths
-        let mut paths = FxHashMap::default();
-
-        // add 20 paths with recent sources (within 2 minutes)
-        for i in 0..20 {
-            paths.insert(
-                test_ip_addr(i),
-                test_path_state(Duration::from_secs(60), true), // 1 minute ago
-            );
-        }
-
-        // add 10 paths with old sources (more than 2 minutes ago)
-        for i in 20..30 {
-            paths.insert(
-                test_ip_addr(i),
-                test_path_state(Duration::from_secs(180), true), // 3 minutes ago
-            );
-        }
-
-        let pending = VecDeque::new();
-        let selected_path = None;
-        let open_paths = Vec::new();
-
-        // we have 30 total paths, all inactive
-        // paths with sources older than LAST_SOURCE_PRUNE_DURATION should be pruned
-        prune_paths(&mut paths, &pending, &selected_path, open_paths.iter());
-
-        // we should have kept the 20 recent paths
-        assert_eq!(
-            paths.len(),
-            20,
-            "Expected to keep 20 paths with recent sources"
-        );
-
-        // verify that the kept paths are the ones with recent sources
-        for i in 0..20 {
-            let addr = test_ip_addr(i);
-            assert!(
-                paths.contains_key(&addr),
-                "Expected to keep path with recent source: {:?}",
-                addr
-            );
-        }
-
-        // verify that the old paths were removed
-        for i in 20..30 {
-            let addr = test_ip_addr(i);
-            assert!(
-                !paths.contains_key(&addr),
-                "Expected to prune path with old source: {:?}",
-                addr
-            );
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_prune_paths_protects_selected_and_open_paths() -> Result {
-        // create MAX_INACTIVE_IP_ADDRESSES + 10 paths, all with old sources
-        let mut paths = FxHashMap::default();
-        for i in 0..30 {
-            paths.insert(
-                test_ip_addr(i),
-                test_path_state(Duration::from_secs(180), true), // 3 minutes ago
-            );
-        }
-
-        let pending = VecDeque::new();
-        // mark one path as selected
-        let selected_path = Some(test_ip_addr(0));
-        // mark a few paths as open
-        let open_paths = vec![test_ip_addr(1), test_ip_addr(2)];
-
-        prune_paths(&mut paths, &pending, &selected_path, open_paths.iter());
-
-        // protected paths should still be in the result even though they have old sources
-        assert!(
-            paths.contains_key(&test_ip_addr(0)),
-            "Expected to keep selected path even with old source"
-        );
-        assert!(
-            paths.contains_key(&test_ip_addr(1)),
-            "Expected to keep open path even with old source"
-        );
-        assert!(
-            paths.contains_key(&test_ip_addr(2)),
-            "Expected to keep open path even with old source"
-        );
-
-        Ok(())
-    }
 }
