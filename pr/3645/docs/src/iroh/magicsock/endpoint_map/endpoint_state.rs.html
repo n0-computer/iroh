@@ -380,16 +380,16 @@
 <a href=#380 id=380 data-nosnippet>380</a>                paths = <span class="question-mark">?</span><span class="self">self</span>.paths.keys().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
 <a href=#381 id=381 data-nosnippet>381</a>                <span class="string">"sending datagram to all known paths"</span>,
 <a href=#382 id=382 data-nosnippet>382</a>            );
-<a href=#383 id=383 data-nosnippet>383</a>            <span class="comment">// TODO(Frando): Use Watcher::peek once available.
-<a href=#384 id=384 data-nosnippet>384</a>            </span><span class="kw">let </span>local_addrs = <span class="self">self</span>.local_addrs.get();
-<a href=#385 id=385 data-nosnippet>385</a>            <span class="kw">for </span>addr <span class="kw">in </span><span class="self">self</span>.paths.keys() {
-<a href=#386 id=386 data-nosnippet>386</a>                <span class="kw">if let </span>transports::Addr::Ip(sockaddr) = addr
-<a href=#387 id=387 data-nosnippet>387</a>                    &amp;&amp; local_addrs.iter().any(|a| a.addr == <span class="kw-2">*</span>sockaddr)
+<a href=#383 id=383 data-nosnippet>383</a>            <span class="kw">for </span>addr <span class="kw">in </span><span class="self">self</span>.paths.keys() {
+<a href=#384 id=384 data-nosnippet>384</a>                <span class="comment">// We never want to send to our local addresses.
+<a href=#385 id=385 data-nosnippet>385</a>                // The local address set is updated in the main loop so we can use `peek` here.
+<a href=#386 id=386 data-nosnippet>386</a>                </span><span class="kw">if let </span>transports::Addr::Ip(sockaddr) = addr
+<a href=#387 id=387 data-nosnippet>387</a>                    &amp;&amp; <span class="self">self</span>.local_addrs.peek().iter().any(|a| a.addr == <span class="kw-2">*</span>sockaddr)
 <a href=#388 id=388 data-nosnippet>388</a>                {
 <a href=#389 id=389 data-nosnippet>389</a>                    <span class="macro">warn!</span>(%sockaddr, <span class="string">"not sending datagram to our own address"</span>);
-<a href=#390 id=390 data-nosnippet>390</a>                    <span class="kw">continue</span>;
-<a href=#391 id=391 data-nosnippet>391</a>                }
-<a href=#392 id=392 data-nosnippet>392</a>                <span class="self">self</span>.send_datagram(addr.clone(), transmit.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#390 id=390 data-nosnippet>390</a>                } <span class="kw">else </span>{
+<a href=#391 id=391 data-nosnippet>391</a>                    <span class="self">self</span>.send_datagram(addr.clone(), transmit.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#392 id=392 data-nosnippet>392</a>                }
 <a href=#393 id=393 data-nosnippet>393</a>            }
 <a href=#394 id=394 data-nosnippet>394</a>            <span class="comment">// This message is received *before* a connection is added.  So we do
 <a href=#395 id=395 data-nosnippet>395</a>            // not yet have a connection to holepunch.  Instead we trigger
