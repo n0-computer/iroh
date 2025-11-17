@@ -33,7 +33,7 @@
 <a href=#33 id=33 data-nosnippet>33</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder();
 <a href=#34 id=34 data-nosnippet>34</a>        <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
 <a href=#35 id=35 data-nosnippet>35</a>        </span>{
-<a href=#36 id=36 data-nosnippet>36</a>            builder = builder.insecure_skip_relay_cert_verify(<span class="bool-val">true</span>);
+<a href=#36 id=36 data-nosnippet>36</a>            builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
 <a href=#37 id=37 data-nosnippet>37</a>            <span class="kw">if </span>opt.only_relay {
 <a href=#38 id=38 data-nosnippet>38</a>                builder = builder.clear_ip_transports();
 <a href=#39 id=39 data-nosnippet>39</a>            }
