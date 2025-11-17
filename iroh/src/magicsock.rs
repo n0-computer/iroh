@@ -1842,7 +1842,10 @@ mod tests {
         Endpoint, RelayMode, SecretKey,
         discovery::static_provider::StaticProvider,
         dns::DnsResolver,
-        magicsock::{Handle, MagicSock, TransportConfig},
+        magicsock::{
+            Handle, MagicSock, TransportConfig,
+            mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
+        },
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
 
