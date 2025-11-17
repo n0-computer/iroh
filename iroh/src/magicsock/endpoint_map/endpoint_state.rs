@@ -830,7 +830,7 @@ impl EndpointStateActor {
 
     /// Sends a DISCO message to the remote endpoint this actor manages.
     #[instrument(skip(self), fields(remote = %self.endpoint_id.fmt_short()))]
-    async fn send_disco_message(&mut self, dst: transports::Addr, msg: disco::Message) {
+    async fn send_disco_message(&self, dst: transports::Addr, msg: disco::Message) {
         let pkt = self.disco.encode_and_seal(self.endpoint_id, &msg);
         let transmit = transports::OwnedTransmit {
             ecn: None,
