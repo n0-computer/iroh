@@ -35,10 +35,6 @@ use crate::{
     util::MaybeFuture,
 };
 
-// TODO: Use this
-// #[cfg(any(test, feature = "test-utils"))]
-// use crate::endpoint::PathSelection;
-
 mod guarded_channel;
 
 // TODO: use this
