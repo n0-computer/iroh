@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-pub(super) use self::endpoint_state::EndpointStateMessage;
-pub(crate) use self::endpoint_state::PathsWatcher;
-use self::endpoint_state::{EndpointStateActor, EndpointStateHandle};
-pub use self::endpoint_state::{PathInfo, PathInfoList};
+pub(crate) use self::remote_state::PathsWatcher;
+pub(super) use self::remote_state::RemoteStateMessage;
+pub use self::remote_state::{PathInfo, PathInfoList};
+use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
     DirectAddr, DiscoState, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
@@ -23,11 +23,10 @@ use super::{
 };
 use crate::disco;
 
-mod endpoint_state;
-mod path_state;
+mod remote_state;
 
-/// Interval in which handles to closed [`EndpointStateActor`]s should be removed.
-pub(super) const ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);
+/// Interval in which handles to closed [`RemoteStateActor`]s should be removed.
+pub(super) const REMOTE_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
@@ -41,19 +40,19 @@ pub(super) const ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);
 /// - Has the mapped addresses we use to refer to non-IP transports destinations into IPv6
 ///   addressing space that is used by Quinn.
 #[derive(Debug)]
-pub(crate) struct EndpointMap {
+pub(crate) struct RemoteMap {
     //
     // State we keep about remote endpoints.
     //
     /// The actors tracking each remote endpoint.
-    actor_handles: Mutex<FxHashMap<EndpointId, EndpointStateHandle>>,
+    actor_handles: Mutex<FxHashMap<EndpointId, RemoteStateHandle>>,
     /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
     pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
 
     //
-    // State needed to start a new EndpointStateHandle.
+    // State needed to start a new RemoteStateHandle.
     //
     /// The endpoint ID of the local endpoint.
     local_endpoint_id: EndpointId,
@@ -63,8 +62,8 @@ pub(crate) struct EndpointMap {
     sender: TransportsSender,
 }
 
-impl EndpointMap {
-    /// Creates a new [`EndpointMap`].
+impl RemoteMap {
+    /// Creates a new [`RemoteMap`].
     pub(super) fn new(
         local_endpoint_id: EndpointId,
         metrics: Arc<MagicsockMetrics>,
@@ -92,12 +91,12 @@ impl EndpointMap {
             self.relay_mapped_addrs
                 .get(&(url.clone(), endpoint_addr.id));
         }
-        let actor = self.endpoint_state_actor(endpoint_addr.id);
+        let actor = self.remote_state_actor(endpoint_addr.id);
 
-        // This only fails if the sender is closed.  That means the EndpointStateActor has
+        // This only fails if the sender is closed.  That means the RemoteStateActor has
         // stopped, which only happens during shutdown.
         actor
-            .send(EndpointStateMessage::AddEndpointAddr(endpoint_addr, source))
+            .send(RemoteStateMessage::AddEndpointAddr(endpoint_addr, source))
             .await
             .ok();
     }
@@ -106,24 +105,21 @@ impl EndpointMap {
         self.endpoint_mapped_addrs.get(&eid)
     }
 
-    /// Removes the handles for terminated [`EndpointStateActor`]s from the endpoint map.
+    /// Removes the handles for terminated [`RemoteStateActor`]s from the endpoint map.
     ///
     /// This should be called periodically to remove handles to endpoint state actors
     /// that have shutdown after their idle timeout expired.
-    pub(super) fn remove_closed_endpoint_state_actors(&self) {
+    pub(super) fn remove_closed_remote_state_actors(&self) {
         let mut handles = self.actor_handles.lock().expect("poisoned");
         handles.retain(|_eid, handle| !handle.sender.is_closed())
     }
 
-    /// Returns the sender for the [`EndpointStateActor`].
+    /// Returns the sender for the [`RemoteStateActor`].
     ///
     /// If needed a new actor is started on demand.
     ///
-    /// [`EndpointStateActor`]: endpoint_state::EndpointStateActor
-    pub(super) fn endpoint_state_actor(
-        &self,
-        eid: EndpointId,
-    ) -> mpsc::Sender<EndpointStateMessage> {
+    /// [`RemoteStateActor`]: remote_state::RemoteStateActor
+    pub(super) fn remote_state_actor(&self, eid: EndpointId) -> mpsc::Sender<RemoteStateMessage> {
         let mut handles = self.actor_handles.lock().expect("poisoned");
         match handles.entry(eid) {
             hash_map::Entry::Occupied(mut entry) => {
@@ -131,29 +127,29 @@ impl EndpointMap {
                     sender
                 } else {
                     // The actor is dead: Start a new actor.
-                    let (handle, sender) = self.start_endpoint_state_actor(eid);
+                    let (handle, sender) = self.start_remote_state_actor(eid);
                     entry.insert(handle);
                     sender
                 }
             }
             hash_map::Entry::Vacant(entry) => {
-                let (handle, sender) = self.start_endpoint_state_actor(eid);
+                let (handle, sender) = self.start_remote_state_actor(eid);
                 entry.insert(handle);
                 sender
             }
         }
     }
 
-    /// Starts a new endpoint state actor and returns a handle and a sender.
+    /// Starts a new remote state actor and returns a handle and a sender.
     ///
     /// The handle is not inserted into the endpoint map, this must be done by the caller of this function.
-    fn start_endpoint_state_actor(
+    fn start_remote_state_actor(
         &self,
         eid: EndpointId,
-    ) -> (EndpointStateHandle, mpsc::Sender<EndpointStateMessage>) {
-        // Ensure there is a EndpointMappedAddr for this EndpointId.
+    ) -> (RemoteStateHandle, mpsc::Sender<RemoteStateMessage>) {
+        // Ensure there is a RemoteMappedAddr for this EndpointId.
         self.endpoint_mapped_addrs.get(&eid);
-        let handle = EndpointStateActor::new(
+        let handle = RemoteStateActor::new(
             eid,
             self.local_endpoint_id,
             self.local_addrs.clone(),
@@ -172,8 +168,8 @@ impl EndpointMap {
             warn!("DISCO Ping EndpointId mismatch, ignoring ping");
             return;
         }
-        let endpoint_state = self.endpoint_state_actor(sender);
-        if let Err(err) = endpoint_state.try_send(EndpointStateMessage::PingReceived(msg, src)) {
+        let remote_state = self.remote_state_actor(sender);
+        if let Err(err) = remote_state.try_send(RemoteStateMessage::PingReceived(msg, src)) {
             // TODO: This is really, really bad and will drop pings under load.  But
             //    DISCO pings are going away with QUIC-NAT-TRAVERSAL so I don't care.
             warn!("DISCO Ping dropped: {err:#}");
@@ -181,8 +177,8 @@ impl EndpointMap {
     }
 
     pub(super) fn handle_pong(&self, msg: disco::Pong, sender: EndpointId, src: transports::Addr) {
-        let actor = self.endpoint_state_actor(sender);
-        if let Err(err) = actor.try_send(EndpointStateMessage::PongReceived(msg, src)) {
+        let actor = self.remote_state_actor(sender);
+        if let Err(err) = actor.try_send(RemoteStateMessage::PongReceived(msg, src)) {
             // TODO: This is really, really bad and will drop pongs under load.  But
             //    DISCO pongs are going away with QUIC-NAT-TRAVERSAL so I don't care.
             warn!("DISCO Pong dropped: {err:#}");
@@ -199,8 +195,8 @@ impl EndpointMap {
             warn!("DISCO CallMeMaybe packets should only come via relay");
             return;
         }
-        let actor = self.endpoint_state_actor(sender);
-        if let Err(err) = actor.try_send(EndpointStateMessage::CallMeMaybeReceived(msg)) {
+        let actor = self.remote_state_actor(sender);
+        if let Err(err) = actor.try_send(RemoteStateMessage::CallMeMaybeReceived(msg)) {
             // TODO: This is bad and will drop call-me-maybe's under load.  But
             //    DISCO CallMeMaybe going away with QUIC-NAT-TRAVERSAL so I don't care.
             warn!("DISCO CallMeMaybe dropped: {err:#}");
@@ -254,7 +250,7 @@ pub enum Source {
     /// We established a connection on this address.
     ///
     /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
-    /// was added to the `EndpointStateActor`.
+    /// was added to the `RemoteStateActor`.
     ///
     /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
     #[strum(serialize = "Connection")]

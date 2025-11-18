@@ -248,12 +248,10 @@ mod tests {
             .await?;
 
         let key = SecretKey::from_bytes(&[0u8; 32]);
-        let addr = EndpointAddr {
-            id: key.public(),
-            addrs: [TransportAddr::Relay("https://example.com".parse()?)]
-                .into_iter()
-                .collect(),
-        };
+        let addr = EndpointAddr::from_parts(
+            key.public(),
+            [TransportAddr::Relay("https://example.com".parse()?)],
+        );
         let user_data = Some("foobar".parse().unwrap());
         let endpoint_info = EndpointInfo::from(addr.clone()).with_user_data(user_data.clone());
         discovery.add_endpoint_info(endpoint_info.clone());
@@ -280,12 +278,10 @@ mod tests {
     async fn test_provenance() -> Result {
         let discovery = StaticProvider::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
-        let addr = EndpointAddr {
-            id: key.public(),
-            addrs: [TransportAddr::Relay("https://example.com".parse()?)]
-                .into_iter()
-                .collect(),
-        };
+        let addr = EndpointAddr::from_parts(
+            key.public(),
+            [TransportAddr::Relay("https://example.com".parse()?)],
+        );
         discovery.add_endpoint_info(addr);
         let mut stream = discovery.resolve(key.public()).unwrap();
         let item = stream.next().await.unwrap()?;
