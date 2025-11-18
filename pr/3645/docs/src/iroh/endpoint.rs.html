@@ -26,7 +26,7 @@
 <a href=#26 id=26 data-nosnippet>26</a>
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub use </span><span class="kw">super</span>::magicsock::{
 <a href=#28 id=28 data-nosnippet>28</a>    DirectAddr, DirectAddrType, PathInfo,
-<a href=#29 id=29 data-nosnippet>29</a>    endpoint_map::{PathInfoList, Source},
+<a href=#29 id=29 data-nosnippet>29</a>    remote_map::{PathInfoList, Source},
 <a href=#30 id=30 data-nosnippet>30</a>};
 <a href=#31 id=31 data-nosnippet>31</a><span class="attr">#[cfg(wasm_browser)]
 <a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::PkarrResolver;
@@ -36,8 +36,8 @@
 <a href=#36 id=36 data-nosnippet>36</a>    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
 <a href=#37 id=37 data-nosnippet>37</a>    endpoint::presets::Preset,
 <a href=#38 id=38 data-nosnippet>38</a>    magicsock::{
-<a href=#39 id=39 data-nosnippet>39</a>        <span class="self">self</span>, EndpointStateActorStoppedError, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS,
-<a href=#40 id=40 data-nosnippet>40</a>        PATH_MAX_IDLE_TIMEOUT, mapped_addrs::MappedAddr,
+<a href=#39 id=39 data-nosnippet>39</a>        <span class="self">self</span>, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT,
+<a href=#40 id=40 data-nosnippet>40</a>        RemoteStateActorStoppedError, mapped_addrs::MappedAddr,
 <a href=#41 id=41 data-nosnippet>41</a>    },
 <a href=#42 id=42 data-nosnippet>42</a>    metrics::EndpointMetrics,
 <a href=#43 id=43 data-nosnippet>43</a>    net_report::Report,
@@ -66,8 +66,8 @@
 <a href=#66 id=66 data-nosnippet>66</a>
 <a href=#67 id=67 data-nosnippet>67</a><span class="kw">pub use </span><span class="self">self</span>::connection::{
 <a href=#68 id=68 data-nosnippet>68</a>    Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-<a href=#69 id=69 data-nosnippet>69</a>    Incoming, IncomingZeroRttConnection, OutgoingZeroRttConnection, RemoteEndpointIdError,
-<a href=#70 id=70 data-nosnippet>70</a>    ZeroRttStatus,
+<a href=#69 id=69 data-nosnippet>69</a>    ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt, IncomingZeroRttConnection,
+<a href=#70 id=70 data-nosnippet>70</a>    OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError, ZeroRttStatus,
 <a href=#71 id=71 data-nosnippet>71</a>};
 <a href=#72 id=72 data-nosnippet>72</a><span class="kw">pub use </span><span class="kw">crate</span>::magicsock::transports::TransportConfig;
 <a href=#73 id=73 data-nosnippet>73</a>
@@ -526,7 +526,7 @@
 <a href=#526 id=526 data-nosnippet>526</a>    <span class="attr">#[error(<span class="string">"Internal consistency error"</span>)]
 <a href=#527 id=527 data-nosnippet>527</a>    </span>InternalConsistencyError {
 <a href=#528 id=528 data-nosnippet>528</a>        <span class="doccomment">/// Private source type, cannot be created publicly.
-<a href=#529 id=529 data-nosnippet>529</a>        </span>source: EndpointStateActorStoppedError,
+<a href=#529 id=529 data-nosnippet>529</a>        </span>source: RemoteStateActorStoppedError,
 <a href=#530 id=530 data-nosnippet>530</a>    },
 <a href=#531 id=531 data-nosnippet>531</a>}
 <a href=#532 id=532 data-nosnippet>532</a>
