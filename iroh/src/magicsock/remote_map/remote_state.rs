@@ -323,6 +323,8 @@ impl RemoteStateActor {
         dst: transports::Addr,
         owned_transmit: OwnedTransmit,
     ) -> n0_error::Result<()> {
+        // TODO(Frando): Demote to trace or remove.
+        debug!(?dst, "send datagram");
         let transmit = transports::Transmit {
             ecn: owned_transmit.ecn,
             contents: owned_transmit.contents.as_ref(),
