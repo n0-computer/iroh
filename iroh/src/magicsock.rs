@@ -2430,12 +2430,8 @@ mod tests {
             .ip_addrs()
             .get()
             .into_iter()
-            .map(|x| TransportAddr::Ip(x.addr))
-            .collect();
-        let endpoint_addr_2 = EndpointAddr {
-            id: endpoint_id_2,
-            addrs,
-        };
+            .map(|x| TransportAddr::Ip(x.addr));
+        let endpoint_addr_2 = EndpointAddr::from_parts(endpoint_id_2, addrs);
         msock_1
             .add_endpoint_addr(
                 endpoint_addr_2,
@@ -2509,10 +2505,7 @@ mod tests {
         msock_1
             .remote_map
             .add_endpoint_addr(
-                EndpointAddr {
-                    id: endpoint_id_2,
-                    addrs: Default::default(),
-                },
+                EndpointAddr::from_parts(endpoint_id_2, []),
                 Source::NamedApp {
                     name: "test".into(),
                 },
@@ -2544,18 +2537,15 @@ mod tests {
         info!("first connect timed out as expected");
 
         // Provide correct addressing information
+        let addrs = msock_2
+            .ip_addrs()
+            .get()
+            .into_iter()
+            .map(|x| TransportAddr::Ip(x.addr));
         msock_1
             .remote_map
             .add_endpoint_addr(
-                EndpointAddr {
-                    id: endpoint_id_2,
-                    addrs: msock_2
-                        .ip_addrs()
-                        .get()
-                        .into_iter()
-                        .map(|x| TransportAddr::Ip(x.addr))
-                        .collect(),
-                },
+                EndpointAddr::from_parts(endpoint_id_2, addrs),
                 Source::NamedApp {
                     name: "test".into(),
                 },
