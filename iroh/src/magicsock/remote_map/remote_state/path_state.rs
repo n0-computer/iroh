@@ -13,7 +13,7 @@ use crate::disco::TransactionId;
 /// the [`RemoteStateActor::paths`] map.
 ///
 /// [`transports::Addr`]: super::transports::Addr
-/// [`RemoteStateActor::paths`]: super::remote_state::RemoteStateActor
+/// [`RemoteStateActor::paths`]: super::RemoteStateActor
 #[derive(Debug, Default)]
 pub(super) struct PathState {
     /// How we learned about this path, and when.
