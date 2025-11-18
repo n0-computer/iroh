@@ -69,8 +69,8 @@ pub use quinn_proto::{
 
 pub use self::connection::{
     Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-    Incoming, IncomingZeroRttConnection, OutgoingZeroRttConnection, RemoteEndpointIdError,
-    ZeroRttStatus,
+    ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt, IncomingZeroRttConnection,
+    OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError, ZeroRttStatus,
 };
 pub use crate::magicsock::transports::TransportConfig;
 
