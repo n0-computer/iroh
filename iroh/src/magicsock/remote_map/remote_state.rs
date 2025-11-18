@@ -339,10 +339,10 @@ impl RemoteStateActor {
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> n0_error::Result<()> {
         if let Some(addr) = self.selected_path.get() {
-            trace!(?addr, "sending datagram to selected path");
+            debug!(?addr, "sending datagram to selected path");
             self.send_datagram(addr, transmit).await?;
         } else {
-            trace!(
+            debug!(
                 paths = ?self.paths.keys().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
             );
