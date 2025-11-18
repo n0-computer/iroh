@@ -391,6 +391,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
+    info!(?remote_addr, "start to connect");
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
     println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.

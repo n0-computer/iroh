@@ -434,6 +434,8 @@ impl RemoteStateActor {
 
     /// Handles [`RemoteStateMessage::AddEndpointAddr`].
     fn handle_msg_add_endpoint_addr(&mut self, addr: EndpointAddr, source: Source) {
+        // TODO(Frando): Remove or demote to trace.
+        debug!(?addr, ?source, "add endpoint addr");
         for sockaddr in addr.ip_addrs() {
             let addr = transports::Addr::from(sockaddr);
             self.paths
