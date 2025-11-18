@@ -285,7 +285,7 @@
 <a href=#285 id=285 data-nosnippet>285</a>
 <a href=#286 id=286 data-nosnippet>286</a>    <span class="doccomment">/// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
 <a href=#287 id=287 data-nosnippet>287</a>    ///
-<a href=#288 id=288 data-nosnippet>288</a>    /// This starts an `EndpointStateActor` for the remote if not running already, and then checks
+<a href=#288 id=288 data-nosnippet>288</a>    /// This starts a `RemoteStateActor` for the remote if not running already, and then checks
 <a href=#289 id=289 data-nosnippet>289</a>    /// if the actor has any known paths to the remote. If not, it starts discovery and waits for
 <a href=#290 id=290 data-nosnippet>290</a>    /// at least one result to arrive.
 <a href=#291 id=291 data-nosnippet>291</a>    ///
@@ -2482,7 +2482,7 @@
 <a href=#2482 id=2482 data-nosnippet>2482</a>        });
 <a href=#2483 id=2483 data-nosnippet>2483</a>        <span class="kw">let </span>_accept_task = AbortOnDropHandle::new(accept_task);
 <a href=#2484 id=2484 data-nosnippet>2484</a>
-<a href=#2485 id=2485 data-nosnippet>2485</a>        <span class="comment">// Add an entry in the EndpointMap of ep_1 with an invalid socket address
+<a href=#2485 id=2485 data-nosnippet>2485</a>        <span class="comment">// Add an entry in the RemoteMap of ep_1 with an invalid socket address
 <a href=#2486 id=2486 data-nosnippet>2486</a>        </span><span class="kw">let </span>empty_addr_2 = EndpointAddr::from_parts(
 <a href=#2487 id=2487 data-nosnippet>2487</a>            endpoint_id_2,
 <a href=#2488 id=2488 data-nosnippet>2488</a>            [TransportAddr::Ip(
