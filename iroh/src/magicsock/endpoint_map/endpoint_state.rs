@@ -14,7 +14,7 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::{PathStats, WeakConnectionHandle};
-use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
+use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use tokio::sync::oneshot;
@@ -93,8 +93,15 @@ type PathEvents = MergeUnbounded<
 /// A stream of events of announced NAT traversal candidate addresses for all connections.
 ///
 /// The connection is identified using [`ConnId`].
-type AddrEvents =
-    MergeUnbounded<Pin<Box<dyn Stream<Item = (ConnId, Vec<SocketAddr>)> + Send + Sync>>>;
+type AddrEvents = MergeUnbounded<
+    Pin<
+        Box<
+            dyn Stream<Item = (ConnId, Result<iroh_hp::Event, BroadcastStreamRecvError>)>
+                + Send
+                + Sync,
+        >,
+    >,
+>;
 
 /// List of addrs and path ids for open paths in a connection.
 pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
@@ -382,8 +389,9 @@ impl EndpointStateActor {
             self.path_events.push(Box::pin(
                 BroadcastStream::new(conn.path_events()).map(move |evt| (conn_id, evt)),
             ));
-            self.addr_events
-                .push(Box::pin(conn.addr_events().map(move |evt| (conn_id, evt))));
+            self.addr_events.push(Box::pin(
+                BroadcastStream::new(conn.nat_traversal_updates()).map(move |evt| (conn_id, evt)),
+            ));
             self.connections_close.push(OnClosed::new(&conn));
 
             // Store the connection
@@ -522,7 +530,15 @@ impl EndpointStateActor {
             trace!("not holepunching: no client connection");
             return;
         };
-        let remote_candidates = BTreeSet::from_iter(conn.nat_candidates());
+        // TODO: these are the local addresses, so this will be very sad.
+        let Ok(remote_candidates) = conn
+            .get_nat_traversal_addresses()
+            .and_then(|addrs| Ok(BTreeSet::from_iter(addrs)))
+        else {
+            warn!("boo");
+            return;
+        };
+        // let remote_candidates = BTreeSet::from_iter(conn.get_nat_traversal_addresses());
         let local_candidates: BTreeSet<SocketAddr> = self
             .local_addrs
             .get()
@@ -570,7 +586,7 @@ impl EndpointStateActor {
             .iter()
             .map(|daddr| daddr.addr)
             .collect::<BTreeSet<_>>();
-        match conn.initiate_nat_traversal(Vec::from_iter(local_candidates.iter().copied())) {
+        match conn.initiate_nat_traversal_round() {
             Ok(remote_candidates) => {
                 trace!(
                     ?local_candidates,
