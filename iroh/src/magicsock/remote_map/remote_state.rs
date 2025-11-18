@@ -28,7 +28,6 @@ use self::{
     path_state::RemotePathState,
 };
 use super::Source;
-
 use crate::{
     disco::{self},
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},

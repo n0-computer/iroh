@@ -139,7 +139,9 @@ impl RemotePathState {
 /// The state of a single path to the remote endpoint.
 ///
 /// Each path is identified by the destination [`transports::Addr`] and they are stored in
-/// the [`RemoteStateActor::paths`] map.
+/// the [`RemotePathState`] map at [`RemoteStateActor::paths`].
+///
+/// [`RemoteStateActor::paths`]: super::RemoteStateActor::paths
 #[derive(Debug, Default)]
 pub(super) struct PathState {
     /// How we learned about this path, and when.
