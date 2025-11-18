@@ -183,7 +183,7 @@ impl RemoteStateActor {
         }
     }
 
-    pub(super) fn start(mut self) -> RemoteStateHandle {
+    pub(super) fn start(self) -> RemoteStateHandle {
         let (tx, rx) = guarded_channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
@@ -193,19 +193,12 @@ impl RemoteStateActor {
         // we don't explicitly set a span we get the spans from whatever call happens to
         // first create the actor, which is often very confusing as it then keeps those
         // spans for all logging of the actor.
-        let task = task::spawn(
-            async move {
-                if let Err(err) = self.run(rx).await {
-                    error!("actor failed: {err:#}");
-                }
-            }
-            .instrument(info_span!(
-                parent: None,
-                "RemoteStateActor",
-                me = %me.fmt_short(),
-                remote = %endpoint_id.fmt_short(),
-            )),
-        );
+        let task = task::spawn(self.run(rx).instrument(info_span!(
+            parent: None,
+            "RemoteStateActor",
+            me = %me.fmt_short(),
+            remote = %endpoint_id.fmt_short(),
+        )));
         RemoteStateHandle {
             sender: tx,
             _task: AbortOnDropHandle::new(task),
@@ -217,10 +210,7 @@ impl RemoteStateActor {
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
     /// discipline is needed to not turn pending for a long time.
-    async fn run(
-        &mut self,
-        mut inbox: GuardedReceiver<RemoteStateMessage>,
-    ) -> n0_error::Result<()> {
+    async fn run(mut self, mut inbox: GuardedReceiver<RemoteStateMessage>) {
         trace!("actor started");
         let idle_timeout = MaybeFuture::None;
         tokio::pin!(idle_timeout);
@@ -239,7 +229,7 @@ impl RemoteStateActor {
                 biased;
                 msg = inbox.recv() => {
                     match msg {
-                        Some(msg) => self.handle_message(msg).await?,
+                        Some(msg) => self.handle_message(msg).await,
                         None => break,
                     }
                 }
@@ -290,18 +280,19 @@ impl RemoteStateActor {
             }
         }
         trace!("actor terminating");
-        Ok(())
     }
 
     /// Handles an actor message.
     ///
     /// Error returns are fatal and kill the actor.
     #[instrument(skip(self))]
-    async fn handle_message(&mut self, msg: RemoteStateMessage) -> n0_error::Result<()> {
+    async fn handle_message(&mut self, msg: RemoteStateMessage) {
         // trace!("handling message");
         match msg {
             RemoteStateMessage::SendDatagram(transmit) => {
-                self.handle_msg_send_datagram(transmit).await?;
+                if let Err(err) = self.handle_msg_send_datagram(transmit).await {
+                    warn!("failed to send datagram: {err:#}");
+                }
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx).await;
@@ -325,7 +316,6 @@ impl RemoteStateActor {
                 self.handle_msg_latency(tx);
             }
         }
-        Ok(())
     }
 
     async fn send_datagram(
@@ -333,7 +323,6 @@ impl RemoteStateActor {
         dst: transports::Addr,
         owned_transmit: OwnedTransmit,
     ) -> n0_error::Result<()> {
-        debug!(?dst, "send datagram");
         let transmit = transports::Transmit {
             ecn: owned_transmit.ecn,
             contents: owned_transmit.contents.as_ref(),
