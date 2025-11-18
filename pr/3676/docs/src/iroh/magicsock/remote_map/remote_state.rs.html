@@ -339,10 +339,10 @@
 <a href=#339 id=339 data-nosnippet>339</a>    /// Error returns are fatal and kill the actor.
 <a href=#340 id=340 data-nosnippet>340</a>    </span><span class="kw">async fn </span>handle_msg_send_datagram(<span class="kw-2">&amp;mut </span><span class="self">self</span>, transmit: OwnedTransmit) -&gt; n0_error::Result&lt;()&gt; {
 <a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = <span class="self">self</span>.selected_path.get() {
-<a href=#342 id=342 data-nosnippet>342</a>            <span class="macro">trace!</span>(<span class="question-mark">?</span>addr, <span class="string">"sending datagram to selected path"</span>);
+<a href=#342 id=342 data-nosnippet>342</a>            <span class="macro">debug!</span>(<span class="question-mark">?</span>addr, <span class="string">"sending datagram to selected path"</span>);
 <a href=#343 id=343 data-nosnippet>343</a>            <span class="self">self</span>.send_datagram(addr, transmit).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#344 id=344 data-nosnippet>344</a>        } <span class="kw">else </span>{
-<a href=#345 id=345 data-nosnippet>345</a>            <span class="macro">trace!</span>(
+<a href=#345 id=345 data-nosnippet>345</a>            <span class="macro">debug!</span>(
 <a href=#346 id=346 data-nosnippet>346</a>                paths = <span class="question-mark">?</span><span class="self">self</span>.paths.keys().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(),
 <a href=#347 id=347 data-nosnippet>347</a>                <span class="string">"sending datagram to all known paths"</span>,
 <a href=#348 id=348 data-nosnippet>348</a>            );
