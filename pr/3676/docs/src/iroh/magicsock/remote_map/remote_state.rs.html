@@ -253,7 +253,7 @@
 <a href=#253 id=253 data-nosnippet>253</a>                        <span class="self">self</span>.selected_path.set(<span class="prelude-val">None</span>).ok();
 <a href=#254 id=254 data-nosnippet>254</a>                    }
 <a href=#255 id=255 data-nosnippet>255</a>                }
-<a href=#256 id=256 data-nosnippet>256</a>                <span class="kw">_ </span>= <span class="self">self</span>.local_addrs.updated() =&gt; {
+<a href=#256 id=256 data-nosnippet>256</a>                <span class="kw">_ </span>= <span class="self">self</span>.local_addrs.updated(), <span class="kw">if </span><span class="self">self</span>.local_addrs.is_connected() =&gt; {
 <a href=#257 id=257 data-nosnippet>257</a>                    <span class="macro">trace!</span>(<span class="string">"local addrs updated, triggering holepunching"</span>);
 <a href=#258 id=258 data-nosnippet>258</a>                    <span class="self">self</span>.trigger_holepunching().<span class="kw">await</span>;
 <a href=#259 id=259 data-nosnippet>259</a>                }
