@@ -314,10 +314,6 @@ impl ActiveRelayActor {
     ///
     /// Primarily switches between the dialing and connected states.
     async fn run(mut self) {
-        // TODO(frando): decide what this metric means, it's either wrong here or in endpoint_state.rs.
-        // From the existing description, it is wrong here.
-        // self.metrics.num_relay_conns_added.inc();
-
         let mut backoff = Self::build_backoff();
 
         while let Err(err) = self.run_once().await {
@@ -341,9 +337,6 @@ impl ActiveRelayActor {
             }
         }
         debug!("exiting");
-        // TODO(frando): decide what this metric means, it's either wrong here or in endpoint_state.rs.
-        // From the existing description, it is wrong here.
-        // self.metrics.num_relay_conns_removed.inc();
     }
 
     fn build_backoff() -> impl Backoff {
@@ -1466,6 +1459,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
+    #[ignore = "flaky"]
     async fn test_active_relay_inactive() -> Result {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 

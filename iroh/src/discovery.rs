@@ -751,12 +751,10 @@ mod tests {
         let (ep2, _guard2) =
             new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
 
-        let ep1_wrong_addr = EndpointAddr {
-            id: ep1.id(),
-            addrs: [TransportAddr::Ip("240.0.0.1:1000".parse().unwrap())]
-                .into_iter()
-                .collect(),
-        };
+        let ep1_wrong_addr = EndpointAddr::from_parts(
+            ep1.id(),
+            [TransportAddr::Ip("240.0.0.1:1000".parse().unwrap())],
+        );
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -901,10 +899,7 @@ mod test_dns_pkarr {
             .await?;
         println!("resolved {resolved:?}");
 
-        let expected_addr = EndpointAddr {
-            id: endpoint_id,
-            addrs: relay_url.into_iter().collect(),
-        };
+        let expected_addr = EndpointAddr::from_parts(endpoint_id, relay_url);
 
         assert_eq!(resolved.to_endpoint_addr(), expected_addr);
         assert_eq!(resolved.user_data(), Some(&user_data));

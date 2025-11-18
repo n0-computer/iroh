@@ -16,7 +16,7 @@ use crate::{disco::TransactionId, discovery::DiscoveryError, magicsock::transpor
 /// Also stores a list of resolve requests which are triggered once at least one path is known,
 /// or once this struct is notified of a failed discovery run.
 #[derive(Debug, Default)]
-pub(super) struct EndpointPathState {
+pub(super) struct RemotePathState {
     /// All possible paths we are aware of.
     ///
     /// These paths might be entirely impossible to use, since they are added by discovery
@@ -26,7 +26,7 @@ pub(super) struct EndpointPathState {
     pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
 }
 
-impl EndpointPathState {
+impl RemotePathState {
     /// Insert a new address into our list of potential paths.
     ///
     /// This will emit pending resolve requests.
@@ -139,7 +139,7 @@ impl EndpointPathState {
 /// The state of a single path to the remote endpoint.
 ///
 /// Each path is identified by the destination [`transports::Addr`] and they are stored in
-/// the [`EndpointPathState::paths`] map.
+/// the [`RemoteStateActor::paths`] map.
 #[derive(Debug, Default)]
 pub(super) struct PathState {
     /// How we learned about this path, and when.

@@ -25,16 +25,18 @@ use tracing::{Instrument, Level, debug, error, event, info_span, instrument, tra
 
 use self::{
     guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
-    path_state::EndpointPathState,
+    path_state::RemotePathState,
 };
+use super::Source;
+
 use crate::{
     disco::{self},
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
-        endpoint_map::{Private, Source},
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
+        remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
     },
     util::MaybeFuture,
@@ -46,7 +48,7 @@ mod path_state;
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
 // ///
-// /// See [`EndpointState::prune_direct_addresses`].
+// /// See [`RemoteState::prune_direct_addresses`].
 // pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
 
 // TODO: use this
@@ -73,7 +75,7 @@ mod path_state;
 // TODO: Quinn should just do this.  Also, I made this value up.
 const APPLICATION_ABANDON_PATH: u8 = 30;
 
-/// The time after which an idle [`EndpointStateActor`] stops.
+/// The time after which an idle [`RemoteStateActor`] stops.
 ///
 /// The actor only enters the idle state if no connections are active and no inbox senders exist
 /// apart from the one stored in the endpoint map. Stopping and restarting the actor in this state
@@ -97,7 +99,7 @@ type PathEvents = MergeUnbounded<
 /// [`Either::Right`] while discovery is running.
 ///
 /// The stream returned from [`ConcurrentDiscovery::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
-/// wrapper to make it `Sync` so that the [`EndpointStateActor::run`] future stays `Send`.
+/// wrapper to make it `Sync` so that the [`RemoteStateActor::run`] future stays `Send`.
 type DiscoveryStream = Either<
     n0_future::stream::Pending<Result<DiscoveryItem, DiscoveryError>>,
     SyncStream<BoxStream<Result<DiscoveryItem, DiscoveryError>>>,
@@ -110,7 +112,7 @@ pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
 ///
 /// This actor manages all connections to the remote endpoint.  It will trigger holepunching
 /// and select the best path etc.
-pub(super) struct EndpointStateActor {
+pub(super) struct RemoteStateActor {
     /// The endpoint ID of the remote endpoint.
     endpoint_id: EndpointId,
     /// The endpoint ID of the local endpoint.
@@ -147,7 +149,7 @@ pub(super) struct EndpointStateActor {
     ///
     /// These paths might be entirely impossible to use, since they are added by discovery
     /// mechanisms.  The are only potentially usable.
-    paths: EndpointPathState,
+    paths: RemotePathState,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
     /// The path we currently consider the preferred path to the remote endpoint.
@@ -174,7 +176,7 @@ pub(super) struct EndpointStateActor {
     discovery_stream: DiscoveryStream,
 }
 
-impl EndpointStateActor {
+impl RemoteStateActor {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         endpoint_id: EndpointId,
@@ -208,7 +210,7 @@ impl EndpointStateActor {
         }
     }
 
-    pub(super) fn start(self) -> EndpointStateHandle {
+    pub(super) fn start(self) -> RemoteStateHandle {
         let (tx, rx) = guarded_channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
@@ -226,12 +228,12 @@ impl EndpointStateActor {
             }
             .instrument(info_span!(
                 parent: None,
-                "EndpointStateActor",
+                "RemoteStateActor",
                 me = %me.fmt_short(),
                 remote = %endpoint_id.fmt_short(),
             )),
         );
-        EndpointStateHandle {
+        RemoteStateHandle {
             sender: tx,
             _task: AbortOnDropHandle::new(task),
         }
@@ -242,10 +244,7 @@ impl EndpointStateActor {
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
     /// discipline is needed to not turn pending for a long time.
-    async fn run(
-        mut self,
-        mut inbox: GuardedReceiver<EndpointStateMessage>,
-    ) -> n0_error::Result<()> {
+    async fn run(mut self, mut inbox: GuardedReceiver<RemoteStateMessage>) -> n0_error::Result<()> {
         trace!("actor started");
         let idle_timeout = MaybeFuture::None;
         tokio::pin!(idle_timeout);
@@ -324,28 +323,28 @@ impl EndpointStateActor {
     ///
     /// Error returns are fatal and kill the actor.
     #[instrument(skip(self))]
-    async fn handle_message(&mut self, msg: EndpointStateMessage) -> n0_error::Result<()> {
+    async fn handle_message(&mut self, msg: RemoteStateMessage) -> n0_error::Result<()> {
         // trace!("handling message");
         match msg {
-            EndpointStateMessage::SendDatagram(transmit) => {
+            RemoteStateMessage::SendDatagram(transmit) => {
                 self.handle_msg_send_datagram(transmit).await?;
             }
-            EndpointStateMessage::AddConnection(handle, tx) => {
+            RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx).await;
             }
-            EndpointStateMessage::CallMeMaybeReceived(msg) => {
+            RemoteStateMessage::CallMeMaybeReceived(msg) => {
                 self.handle_msg_call_me_maybe_received(msg).await;
             }
-            EndpointStateMessage::PingReceived(ping, src) => {
+            RemoteStateMessage::PingReceived(ping, src) => {
                 self.handle_msg_ping_received(ping, src).await;
             }
-            EndpointStateMessage::PongReceived(pong, src) => {
+            RemoteStateMessage::PongReceived(pong, src) => {
                 self.handle_msg_pong_received(pong, src);
             }
-            EndpointStateMessage::ResolveRemote(addrs, tx) => {
+            RemoteStateMessage::ResolveRemote(addrs, tx) => {
                 self.handle_msg_resolve_remote(addrs, tx);
             }
-            EndpointStateMessage::Latency(tx) => {
+            RemoteStateMessage::Latency(tx) => {
                 self.handle_msg_latency(tx);
             }
         }
@@ -366,7 +365,7 @@ impl EndpointStateActor {
         Ok(())
     }
 
-    /// Handles [`EndpointStateMessage::SendDatagram`].
+    /// Handles [`RemoteStateMessage::SendDatagram`].
     ///
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> n0_error::Result<()> {
@@ -396,7 +395,7 @@ impl EndpointStateActor {
         Ok(())
     }
 
-    /// Handles [`EndpointStateMessage::AddConnection`].
+    /// Handles [`RemoteStateMessage::AddConnection`].
     ///
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_add_connection(
@@ -469,7 +468,7 @@ impl EndpointStateActor {
         .ok();
     }
 
-    /// Handles [`EndpointStateMessage::CallMeMaybeReceived`].
+    /// Handles [`RemoteStateMessage::CallMeMaybeReceived`].
     async fn handle_msg_call_me_maybe_received(&mut self, msg: disco::CallMeMaybe) {
         event!(
             target: "iroh::_events::call_me_maybe::recv",
@@ -496,7 +495,7 @@ impl EndpointStateActor {
         }
     }
 
-    /// Handles [`EndpointStateMessage::PingReceived`].
+    /// Handles [`RemoteStateMessage::PingReceived`].
     async fn handle_msg_ping_received(&mut self, ping: disco::Ping, src: transports::Addr) {
         let transports::Addr::Ip(addr) = src else {
             warn!("received ping via relay transport, ignored");
@@ -529,7 +528,7 @@ impl EndpointStateActor {
         self.trigger_holepunching().await;
     }
 
-    /// Handles [`EndpointStateMessage::PongReceived`].
+    /// Handles [`RemoteStateMessage::PongReceived`].
     fn handle_msg_pong_received(&mut self, pong: disco::Pong, src: transports::Addr) {
         if self.paths.disco_pong_received(&src, pong.tx_id) {
             event!(
@@ -544,7 +543,7 @@ impl EndpointStateActor {
         }
     }
 
-    /// Handles [`EndpointStateMessage::ResolveRemote`].
+    /// Handles [`RemoteStateMessage::ResolveRemote`].
     fn handle_msg_resolve_remote(
         &mut self,
         addrs: BTreeSet<TransportAddr>,
@@ -557,7 +556,7 @@ impl EndpointStateActor {
         self.trigger_discovery();
     }
 
-    /// Handles [`EndpointStateMessage::Latency`].
+    /// Handles [`RemoteStateMessage::Latency`].
     fn handle_msg_latency(&self, tx: oneshot::Sender<Option<Duration>>) {
         let rtt = self.selected_path.get().and_then(|addr| {
             for conn_state in self.connections.values() {
@@ -855,7 +854,7 @@ impl EndpointStateActor {
         event: Result<PathEvent, BroadcastStreamRecvError>,
     ) {
         let Ok(event) = event else {
-            warn!("missed a PathEvent, EndpointStateActor lagging");
+            warn!("missed a PathEvent, RemoteStateActor lagging");
             // TODO: Is it possible to recover using the sync APIs to figure out what the
             //    state of the connection and it's paths are?
             return;
@@ -1050,9 +1049,9 @@ impl EndpointStateActor {
     }
 }
 
-/// Messages to send to the [`EndpointStateActor`].
+/// Messages to send to the [`RemoteStateActor`].
 #[derive(derive_more::Debug)]
-pub(crate) enum EndpointStateMessage {
+pub(crate) enum RemoteStateMessage {
     /// Sends a datagram to all known paths.
     ///
     /// Used to send QUIC Initial packets.  If there is no working direct path this will
@@ -1098,18 +1097,18 @@ pub(crate) enum EndpointStateMessage {
     Latency(oneshot::Sender<Option<Duration>>),
 }
 
-/// A handle to a [`EndpointStateActor`].
+/// A handle to a [`RemoteStateActor`].
 ///
 /// Dropping this will stop the actor. The actor will also stop after an idle timeout
 /// if it has no connections, an empty inbox, and no other senders than the one stored
 /// in the endpoint map exist.
 #[derive(Debug)]
-pub(super) struct EndpointStateHandle {
-    /// Sender for the channel into the [`EndpointStateActor`].
+pub(super) struct RemoteStateHandle {
+    /// Sender for the channel into the [`RemoteStateActor`].
     ///
     /// This is a [`GuardedSender`], from which we can get a sender but only if the receiver
     /// hasn't been closed.
-    pub(super) sender: GuardedSender<EndpointStateMessage>,
+    pub(super) sender: GuardedSender<RemoteStateMessage>,
     _task: AbortOnDropHandle<()>,
 }
 

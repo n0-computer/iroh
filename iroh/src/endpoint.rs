@@ -26,7 +26,7 @@ use url::Url;
 
 pub use super::magicsock::{
     DirectAddr, DirectAddrType, PathInfo,
-    endpoint_map::{PathInfoList, Source},
+    remote_map::{PathInfoList, Source},
 };
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
@@ -36,8 +36,8 @@ use crate::{
     discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
     endpoint::presets::Preset,
     magicsock::{
-        self, EndpointStateActorStoppedError, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS,
-        PATH_MAX_IDLE_TIMEOUT, mapped_addrs::MappedAddr,
+        self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT,
+        RemoteStateActorStoppedError, mapped_addrs::MappedAddr,
     },
     metrics::EndpointMetrics,
     net_report::Report,
@@ -66,8 +66,8 @@ pub use quinn_proto::{
 
 pub use self::connection::{
     Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-    Incoming, IncomingZeroRttConnection, OutgoingZeroRttConnection, RemoteEndpointIdError,
-    ZeroRttStatus,
+    ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt, IncomingZeroRttConnection,
+    OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError, ZeroRttStatus,
 };
 pub use crate::magicsock::transports::TransportConfig;
 
@@ -526,7 +526,7 @@ pub enum ConnectWithOptsError {
     #[error("Internal consistency error")]
     InternalConsistencyError {
         /// Private source type, cannot be created publicly.
-        source: EndpointStateActorStoppedError,
+        source: RemoteStateActorStoppedError,
     },
 }
 
