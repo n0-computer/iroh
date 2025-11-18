@@ -335,11 +335,15 @@ impl RemoteStateActor {
         // though we might not have a relay transport or ip-capable transport set up.
         // So these errors must not be fatal for this actor (or even this operation).
 
+        let mut any_succeeded = false;
+
         if let Some(addr) = self.selected_path.get() {
             trace!(?addr, "sending datagram to selected path");
 
             if let Err(err) = self.send_datagram(addr, transmit).await {
                 trace!("failed to send datagram: {err:#}");
+            } else {
+                any_succeeded = true;
             }
         } else {
             trace!(
@@ -349,11 +353,21 @@ impl RemoteStateActor {
             for addr in self.paths.keys() {
                 if let Err(err) = self.send_datagram(addr.clone(), transmit.clone()).await {
                     trace!("failed to send datagram: {err:#}");
+                } else {
+                    any_succeeded = true;
                 }
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger
             // holepunching when AddConnection is received.
+        }
+
+        if !any_succeeded {
+            warn!(
+                selected_path = ?self.selected_path.get(),
+                paths = ?self.paths.keys().collect::<Vec<_>>(),
+                "failed to send datagram on any path"
+            );
         }
     }
 
