@@ -42,8 +42,8 @@ use crate::{
     Endpoint,
     discovery::DiscoveryTask,
     magicsock::{
-        EndpointStateActorStoppedError,
-        endpoint_map::{PathInfoList, PathsWatcher},
+        RemoteStateActorStoppedError,
+        remote_map::{PathInfoList, PathsWatcher},
     },
 };
 
@@ -208,9 +208,9 @@ pub enum AuthenticationError {
     NoAlpn {},
 }
 
-impl From<EndpointStateActorStoppedError> for ConnectingError {
+impl From<RemoteStateActorStoppedError> for ConnectingError {
     #[track_caller]
-    fn from(_value: EndpointStateActorStoppedError) -> Self {
+    fn from(_value: RemoteStateActorStoppedError) -> Self {
         e!(Self::InternalConsistencyError)
     }
 }
@@ -221,7 +221,7 @@ impl From<EndpointStateActorStoppedError> for ConnectingError {
 /// or if the remote did not set an ALPN.
 ///
 /// Otherwise returns a future that completes once the connection has been registered with the
-/// magicsock. This future can return an [`EndpointStateActorStoppedError`], which will only be
+/// magicsock. This future can return an [`RemoteStateActorStoppedError`], which will only be
 /// emitted if the endpoint is closing.
 ///
 /// The returned future is `'static`, so it can be stored without being lifetime-bound on `&ep`.
@@ -229,7 +229,7 @@ fn conn_from_quinn_conn(
     conn: quinn::Connection,
     ep: &Endpoint,
 ) -> Result<
-    impl Future<Output = Result<Connection, EndpointStateActorStoppedError>> + Send + 'static,
+    impl Future<Output = Result<Connection, RemoteStateActorStoppedError>> + Send + 'static,
     ConnectingError,
 > {
     let (remote_id, alpn) = match static_info_from_conn(&conn) {
@@ -328,7 +328,7 @@ pub struct Connecting {
     _discovery_drop_guard: Option<DiscoveryTask>,
 }
 
-type RegisterWithMagicsockFut = BoxFuture<Result<Connection, EndpointStateActorStoppedError>>;
+type RegisterWithMagicsockFut = BoxFuture<Result<Connection, RemoteStateActorStoppedError>>;
 
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
@@ -370,7 +370,7 @@ pub enum ConnectingError {
     },
     #[error("Failure finalizing the handshake")]
     HandshakeFailure { source: AuthenticationError },
-    #[error("internal consistency error: EndpointStateActor stopped")]
+    #[error("internal consistency error: RemoteStateActor stopped")]
     InternalConsistencyError,
 }
 

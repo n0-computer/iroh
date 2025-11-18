@@ -15,7 +15,7 @@ use relay::{RelayNetworkChangeSender, RelaySender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
-use super::{MagicSock, endpoint_map::EndpointStateMessage, mapped_addrs::MultipathMappedAddr};
+use super::{MagicSock, mapped_addrs::MultipathMappedAddr, remote_map::RemoteStateMessage};
 use crate::{metrics::EndpointMetrics, net_report::Report};
 
 #[cfg(not(wasm_browser))]
@@ -727,7 +727,7 @@ impl quinn::UdpSender for MagicSender {
             MultipathMappedAddr::Mixed(mapped_addr) => {
                 let Some(node_id) = self
                     .msock
-                    .endpoint_map
+                    .remote_map
                     .endpoint_mapped_addrs
                     .lookup(&mapped_addr)
                 else {
@@ -743,9 +743,9 @@ impl quinn::UdpSender for MagicSender {
                         "oops, flub didn't think this would happen");
                 }
 
-                let sender = self.msock.endpoint_map.endpoint_state_actor(node_id);
+                let sender = self.msock.remote_map.remote_state_actor(node_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
-                return match sender.try_send(EndpointStateMessage::SendDatagram(transmit)) {
+                return match sender.try_send(RemoteStateMessage::SendDatagram(transmit)) {
                     Ok(()) => {
                         trace!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(), "sent transmit");
                         Poll::Ready(Ok(()))
@@ -756,7 +756,7 @@ impl quinn::UdpSender for MagicSender {
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
                         debug!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(),
-                            "EndpointStateActor inbox {err:#}, dropped transmit");
+                            "RemoteStateActor inbox {err:#}, dropped transmit");
                         Poll::Ready(Ok(()))
                     }
                 };
@@ -764,7 +764,7 @@ impl quinn::UdpSender for MagicSender {
             MultipathMappedAddr::Relay(relay_mapped_addr) => {
                 match self
                     .msock
-                    .endpoint_map
+                    .remote_map
                     .relay_mapped_addrs
                     .lookup(&relay_mapped_addr)
                 {

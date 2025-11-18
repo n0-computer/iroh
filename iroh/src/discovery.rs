@@ -124,7 +124,7 @@ use tokio::sync::oneshot;
 use tracing::{Instrument, debug, error_span, warn};
 
 pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData};
-use crate::{Endpoint, magicsock::endpoint_map::Source};
+use crate::{Endpoint, magicsock::remote_map::Source};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
