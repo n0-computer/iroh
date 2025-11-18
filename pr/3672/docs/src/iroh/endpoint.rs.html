@@ -26,7 +26,7 @@
 <a href=#26 id=26 data-nosnippet>26</a>
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub use </span><span class="kw">super</span>::magicsock::{
 <a href=#28 id=28 data-nosnippet>28</a>    AddEndpointAddrError, DirectAddr, DirectAddrType, PathInfo,
-<a href=#29 id=29 data-nosnippet>29</a>    endpoint_map::{PathInfoList, Source},
+<a href=#29 id=29 data-nosnippet>29</a>    remote_map::{PathInfoList, Source},
 <a href=#30 id=30 data-nosnippet>30</a>};
 <a href=#31 id=31 data-nosnippet>31</a><span class="attr">#[cfg(wasm_browser)]
 <a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::PkarrResolver;
@@ -69,8 +69,8 @@
 <a href=#69 id=69 data-nosnippet>69</a>
 <a href=#70 id=70 data-nosnippet>70</a><span class="kw">pub use </span><span class="self">self</span>::connection::{
 <a href=#71 id=71 data-nosnippet>71</a>    Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-<a href=#72 id=72 data-nosnippet>72</a>    Incoming, IncomingZeroRttConnection, OutgoingZeroRttConnection, RemoteEndpointIdError,
-<a href=#73 id=73 data-nosnippet>73</a>    ZeroRttStatus,
+<a href=#72 id=72 data-nosnippet>72</a>    ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt, IncomingZeroRttConnection,
+<a href=#73 id=73 data-nosnippet>73</a>    OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError, ZeroRttStatus,
 <a href=#74 id=74 data-nosnippet>74</a>};
 <a href=#75 id=75 data-nosnippet>75</a><span class="kw">pub use </span><span class="kw">crate</span>::magicsock::transports::TransportConfig;
 <a href=#76 id=76 data-nosnippet>76</a>
