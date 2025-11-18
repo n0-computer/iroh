@@ -22,7 +22,7 @@ pub(super) struct RemotePathState {
     /// These paths might be entirely impossible to use, since they are added by discovery
     /// mechanisms. The are only potentially usable.
     paths: FxHashMap<transports::Addr, PathState>,
-    /// Pending requests from [`Self::resolve_remote`].
+    /// Pending resolve requests from [`Self::resolve_remote`].
     pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
 }
 
