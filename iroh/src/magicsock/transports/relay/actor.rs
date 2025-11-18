@@ -1515,6 +1515,10 @@ mod tests {
         tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
         tokio::time::resume();
+
+        // We resume time for these timeouts, as there's actual I/O happening,
+        // for example closing the TCP stream, so we actually need the tokio
+        // runtime to idle a bit while the kernel is doing its thing.
         assert!(
             tokio::time::timeout(Duration::from_secs(1), task)
                 .await
