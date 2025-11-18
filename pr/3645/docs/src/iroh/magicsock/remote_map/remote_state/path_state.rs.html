@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a>    /// These paths might be entirely impossible to use, since they are added by discovery
 <a href=#23 id=23 data-nosnippet>23</a>    /// mechanisms. The are only potentially usable.
 <a href=#24 id=24 data-nosnippet>24</a>    </span>paths: FxHashMap&lt;transports::Addr, PathState&gt;,
-<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// Pending requests from [`Self::resolve_remote`].
+<a href=#25 id=25 data-nosnippet>25</a>    <span class="doccomment">/// Pending resolve requests from [`Self::resolve_remote`].
 <a href=#26 id=26 data-nosnippet>26</a>    </span>pending_resolve_requests: VecDeque&lt;oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), DiscoveryError&gt;&gt;&gt;,
 <a href=#27 id=27 data-nosnippet>27</a>}
 <a href=#28 id=28 data-nosnippet>28</a>
