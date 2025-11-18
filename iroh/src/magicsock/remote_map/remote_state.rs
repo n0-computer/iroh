@@ -212,8 +212,8 @@ impl RemoteStateActor {
     /// discipline is needed to not turn pending for a long time.
     async fn run(mut self, mut inbox: GuardedReceiver<RemoteStateMessage>) {
         trace!("actor started");
-        let idle_timeout = MaybeFuture::None;
-        tokio::pin!(idle_timeout);
+        let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
+        n0_future::pin!(idle_timeout);
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -225,6 +225,11 @@ impl RemoteStateActor {
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_hp);
+            if !inbox.is_idle() || !self.connections.is_empty() {
+                idle_timeout
+                    .as_mut()
+                    .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
+            }
             tokio::select! {
                 biased;
                 msg = inbox.recv() => {
@@ -264,19 +269,11 @@ impl RemoteStateActor {
                     if self.connections.is_empty() && inbox.close_if_idle() {
                         trace!("idle timeout expired and still idle: terminate actor");
                         break;
+                    } else {
+                        // Seems like we weren't really idle, so we reset
+                        idle_timeout.as_mut().reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
                     }
                 }
-            }
-
-            let is_idle = self.connections.is_empty() && inbox.is_idle();
-            if idle_timeout.is_none() && is_idle {
-                trace!("start idle timeout");
-                idle_timeout
-                    .as_mut()
-                    .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
-            } else if idle_timeout.is_some() && !is_idle {
-                trace!("abort idle timeout");
-                idle_timeout.as_mut().set_none()
             }
         }
         trace!("actor terminating");
