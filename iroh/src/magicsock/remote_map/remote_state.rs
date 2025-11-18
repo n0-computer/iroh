@@ -287,9 +287,7 @@ impl RemoteStateActor {
         // trace!("handling message");
         match msg {
             RemoteStateMessage::SendDatagram(transmit) => {
-                if let Err(err) = self.handle_msg_send_datagram(transmit).await {
-                    warn!("failed to send datagram: {err:#}");
-                }
+                self.handle_msg_send_datagram(transmit).await;
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx).await;
@@ -330,25 +328,33 @@ impl RemoteStateActor {
     }
 
     /// Handles [`RemoteStateMessage::SendDatagram`].
-    ///
-    /// Error returns are fatal and kill the actor.
-    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> n0_error::Result<()> {
+    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) {
+        // Sending datagrams might fail, e.g. because we don't have the right transports set
+        // up to handle sending this owned transmit to.
+        // After all, we try every single path that we know (relay URL, IP address), even
+        // though we might not have a relay transport or ip-capable transport set up.
+        // So these errors must not be fatal for this actor (or even this operation).
+
         if let Some(addr) = self.selected_path.get() {
             trace!(?addr, "sending datagram to selected path");
-            self.send_datagram(addr, transmit).await?;
+
+            if let Err(err) = self.send_datagram(addr, transmit).await {
+                trace!("failed to send datagram: {err:#}");
+            }
         } else {
             trace!(
                 paths = ?self.paths.keys().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
             );
             for addr in self.paths.keys() {
-                self.send_datagram(addr.clone(), transmit.clone()).await?;
+                if let Err(err) = self.send_datagram(addr.clone(), transmit.clone()).await {
+                    trace!("failed to send datagram: {err:#}");
+                }
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger
             // holepunching when AddConnection is received.
         }
-        Ok(())
     }
 
     /// Handles [`RemoteStateMessage::AddConnection`].
