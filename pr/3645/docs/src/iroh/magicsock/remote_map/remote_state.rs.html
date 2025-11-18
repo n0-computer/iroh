@@ -193,18 +193,18 @@
 <a href=#193 id=193 data-nosnippet>193</a>            metrics,
 <a href=#194 id=194 data-nosnippet>194</a>            local_addrs,
 <a href=#195 id=195 data-nosnippet>195</a>            relay_mapped_addrs,
-<a href=#196 id=196 data-nosnippet>196</a>            disco,
-<a href=#197 id=197 data-nosnippet>197</a>            connections: FxHashMap::default(),
-<a href=#198 id=198 data-nosnippet>198</a>            connections_close: Default::default(),
-<a href=#199 id=199 data-nosnippet>199</a>            path_events: Default::default(),
-<a href=#200 id=200 data-nosnippet>200</a>            paths: Default::default(),
-<a href=#201 id=201 data-nosnippet>201</a>            last_holepunch: <span class="prelude-val">None</span>,
-<a href=#202 id=202 data-nosnippet>202</a>            selected_path: Default::default(),
-<a href=#203 id=203 data-nosnippet>203</a>            scheduled_holepunch: <span class="prelude-val">None</span>,
-<a href=#204 id=204 data-nosnippet>204</a>            scheduled_open_path: <span class="prelude-val">None</span>,
-<a href=#205 id=205 data-nosnippet>205</a>            pending_open_paths: VecDeque::new(),
-<a href=#206 id=206 data-nosnippet>206</a>            sender,
-<a href=#207 id=207 data-nosnippet>207</a>            discovery,
+<a href=#196 id=196 data-nosnippet>196</a>            discovery,
+<a href=#197 id=197 data-nosnippet>197</a>            disco,
+<a href=#198 id=198 data-nosnippet>198</a>            connections: FxHashMap::default(),
+<a href=#199 id=199 data-nosnippet>199</a>            connections_close: Default::default(),
+<a href=#200 id=200 data-nosnippet>200</a>            path_events: Default::default(),
+<a href=#201 id=201 data-nosnippet>201</a>            paths: Default::default(),
+<a href=#202 id=202 data-nosnippet>202</a>            last_holepunch: <span class="prelude-val">None</span>,
+<a href=#203 id=203 data-nosnippet>203</a>            selected_path: Default::default(),
+<a href=#204 id=204 data-nosnippet>204</a>            scheduled_holepunch: <span class="prelude-val">None</span>,
+<a href=#205 id=205 data-nosnippet>205</a>            scheduled_open_path: <span class="prelude-val">None</span>,
+<a href=#206 id=206 data-nosnippet>206</a>            pending_open_paths: VecDeque::new(),
+<a href=#207 id=207 data-nosnippet>207</a>            sender,
 <a href=#208 id=208 data-nosnippet>208</a>            discovery_stream: Either::Left(n0_future::stream::pending()),
 <a href=#209 id=209 data-nosnippet>209</a>        }
 <a href=#210 id=210 data-nosnippet>210</a>    }
@@ -582,12 +582,12 @@
 <a href=#582 id=582 data-nosnippet>582</a>        <span class="kw">match </span>item {
 <a href=#583 id=583 data-nosnippet>583</a>            <span class="prelude-val">None </span>=&gt; {
 <a href=#584 id=584 data-nosnippet>584</a>                <span class="self">self</span>.discovery_stream = Either::Left(n0_future::stream::pending());
-<a href=#585 id=585 data-nosnippet>585</a>                <span class="self">self</span>.paths.discovery_finished(<span class="prelude-val">None</span>);
+<a href=#585 id=585 data-nosnippet>585</a>                <span class="self">self</span>.paths.discovery_finished(<span class="prelude-val">Ok</span>(()));
 <a href=#586 id=586 data-nosnippet>586</a>            }
 <a href=#587 id=587 data-nosnippet>587</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
 <a href=#588 id=588 data-nosnippet>588</a>                <span class="macro">warn!</span>(<span class="string">"Discovery failed: {err:#}"</span>);
 <a href=#589 id=589 data-nosnippet>589</a>                <span class="self">self</span>.discovery_stream = Either::Left(n0_future::stream::pending());
-<a href=#590 id=590 data-nosnippet>590</a>                <span class="self">self</span>.paths.discovery_finished(<span class="prelude-val">Some</span>(err));
+<a href=#590 id=590 data-nosnippet>590</a>                <span class="self">self</span>.paths.discovery_finished(<span class="prelude-val">Err</span>(err));
 <a href=#591 id=591 data-nosnippet>591</a>            }
 <a href=#592 id=592 data-nosnippet>592</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(item)) =&gt; {
 <a href=#593 id=593 data-nosnippet>593</a>                <span class="kw">if </span>item.endpoint_id() != <span class="self">self</span>.endpoint_id {
@@ -613,7 +613,7 @@
 <a href=#613 id=613 data-nosnippet>613</a>        }
 <a href=#614 id=614 data-nosnippet>614</a>        <span class="kw">match </span><span class="self">self</span>.discovery.resolve(<span class="self">self</span>.endpoint_id) {
 <a href=#615 id=615 data-nosnippet>615</a>            <span class="prelude-val">Some</span>(stream) =&gt; <span class="self">self</span>.discovery_stream = Either::Right(SyncStream::new(stream)),
-<a href=#616 id=616 data-nosnippet>616</a>            <span class="prelude-val">None </span>=&gt; <span class="self">self</span>.paths.discovery_finished(<span class="prelude-val">None</span>),
+<a href=#616 id=616 data-nosnippet>616</a>            <span class="prelude-val">None </span>=&gt; <span class="self">self</span>.paths.discovery_finished(<span class="prelude-val">Ok</span>(())),
 <a href=#617 id=617 data-nosnippet>617</a>        }
 <a href=#618 id=618 data-nosnippet>618</a>    }
 <a href=#619 id=619 data-nosnippet>619</a>
