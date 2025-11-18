@@ -283,7 +283,7 @@ impl RemoteStateActor {
                 idle_timeout
                     .as_mut()
                     .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
-            } else if idle_timeout.is_some() {
+            } else if idle_timeout.is_some() && (!self.connections.is_empty() || !inbox.is_idle()) {
                 trace!("abort idle timeout");
                 idle_timeout.as_mut().set_none()
             }
