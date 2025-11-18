@@ -193,6 +193,7 @@ impl RemoteStateActor {
             metrics,
             local_addrs,
             relay_mapped_addrs,
+            discovery,
             disco,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
@@ -204,7 +205,6 @@ impl RemoteStateActor {
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
             sender,
-            discovery,
             discovery_stream: Either::Left(n0_future::stream::pending()),
         }
     }
@@ -582,12 +582,12 @@ impl RemoteStateActor {
         match item {
             None => {
                 self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.paths.discovery_finished(None);
+                self.paths.discovery_finished(Ok(()));
             }
             Some(Err(err)) => {
                 warn!("Discovery failed: {err:#}");
                 self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.paths.discovery_finished(Some(err));
+                self.paths.discovery_finished(Err(err));
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
@@ -613,7 +613,7 @@ impl RemoteStateActor {
         }
         match self.discovery.resolve(self.endpoint_id) {
             Some(stream) => self.discovery_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.discovery_finished(None),
+            None => self.paths.discovery_finished(Ok(())),
         }
     }
 

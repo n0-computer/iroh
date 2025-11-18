@@ -103,8 +103,8 @@ impl RemotePathState {
     /// Notifies that a discovery run has finished.
     ///
     /// This will emit pending resolve requests.
-    pub(super) fn discovery_finished(&mut self, error: Option<DiscoveryError>) {
-        self.emit_pending_resolve_requests(error);
+    pub(super) fn discovery_finished(&mut self, result: Result<(), DiscoveryError>) {
+        self.emit_pending_resolve_requests(result.err());
     }
 
     /// Returns an iterator over all paths and their state.
