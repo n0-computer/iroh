@@ -278,12 +278,13 @@ impl RemoteStateActor {
                 }
             }
 
-            if self.connections.is_empty() && inbox.is_idle() && idle_timeout.is_none() {
+            let is_idle = self.connections.is_empty() && inbox.is_idle();
+            if idle_timeout.is_none() && is_idle {
                 trace!("start idle timeout");
                 idle_timeout
                     .as_mut()
                     .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
-            } else if idle_timeout.is_some() && (!self.connections.is_empty() || !inbox.is_idle()) {
+            } else if idle_timeout.is_some() && !is_idle {
                 trace!("abort idle timeout");
                 idle_timeout.as_mut().set_none()
             }
