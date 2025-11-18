@@ -2058,10 +2058,8 @@ mod tests {
         let ep2_addr_stream = ep2.watch_addr().stream();
         let mut addr_stream = MergeBounded::from_iter([ep1_addr_stream, ep2_addr_stream]);
         let task = tokio::spawn(async move {
-            loop {
-                while let Some(addr) = addr_stream.next().await {
-                    discovery.add_endpoint_info(addr);
-                }
+            while let Some(addr) = addr_stream.next().await {
+                discovery.add_endpoint_info(addr);
             }
         });
 
