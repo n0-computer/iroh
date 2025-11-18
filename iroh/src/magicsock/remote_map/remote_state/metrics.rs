@@ -48,18 +48,17 @@ impl MetricsTracker {
                     .observe(stats.rtt.as_millis() as f64);
             }
 
-            let Some(rtt_variance) = self.path_rtt_variance.get_mut(path_id) else {
-                continue;
-            };
-            rtt_variance.add_rtt_sample(stats.rtt);
-            if let Some(variance) = rtt_variance.rtt_variance() {
-                metrics
-                    .path_rtt_variance_ms
-                    .observe(variance.as_millis() as f64);
-            }
+            if let Some(rtt_variance) = self.path_rtt_variance.get_mut(path_id) {
+                rtt_variance.add_rtt_sample(stats.rtt);
+                if let Some(variance) = rtt_variance.rtt_variance() {
+                    metrics
+                        .path_rtt_variance_ms
+                        .observe(variance.as_millis() as f64);
+                }
 
-            let quality = rtt_variance.quality_score(loss_rate);
-            metrics.path_quality_score.observe(quality);
+                let quality = rtt_variance.quality_score(loss_rate);
+                metrics.path_quality_score.observe(quality);
+            };
         }
     }
 
