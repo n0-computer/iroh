@@ -333,6 +333,7 @@ impl RemoteStateActor {
         dst: transports::Addr,
         owned_transmit: OwnedTransmit,
     ) -> n0_error::Result<()> {
+        trace!(?dst, "send datagram");
         let transmit = transports::Transmit {
             ecn: owned_transmit.ecn,
             contents: owned_transmit.contents.as_ref(),
