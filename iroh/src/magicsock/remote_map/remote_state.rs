@@ -253,7 +253,7 @@ impl RemoteStateActor {
                         self.selected_path.set(None).ok();
                     }
                 }
-                _ = self.local_addrs.updated() => {
+                _ = self.local_addrs.updated(), if self.local_addrs.is_connected() => {
                     trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching().await;
                 }
