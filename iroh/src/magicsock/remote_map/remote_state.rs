@@ -20,16 +20,14 @@ use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
-use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+use self::path_state::RemotePathState;
 pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
-use self::{
-    guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
-    path_state::RemotePathState,
-};
+use tokio::sync::{mpsc, oneshot};
+
 use super::Source;
 use crate::{
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
@@ -52,7 +50,6 @@ const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 /// How often are we checking if we still have a good connection.
 const CHECK_CONNECTIONS_INTERVAL: Duration = Duration::from_secs(5);
 
-mod guarded_channel;
 mod path_state;
 mod remote_info;
 
@@ -223,8 +220,12 @@ impl RemoteStateActor {
         }
     }
 
-    pub(super) fn start(self, shutdown_token: CancellationToken) -> RemoteStateHandle {
-        let (tx, rx) = guarded_channel(16);
+    pub(super) fn start(
+        self,
+        tasks: &mut JoinSet<Vec<RemoteStateMessage>>,
+        shutdown_token: CancellationToken,
+    ) -> mpsc::Sender<RemoteStateMessage> {
+        let (tx, rx) = mpsc::channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
 
@@ -252,9 +253,9 @@ impl RemoteStateActor {
     /// discipline is needed to not turn pending for a long time.
     async fn run(
         mut self,
-        mut inbox: GuardedReceiver<RemoteStateMessage>,
+        mut inbox: mpsc::Receiver<RemoteStateMessage>,
         shutdown_token: CancellationToken,
-    ) {
+    ) -> Vec<RemoteStateMessage> {
         trace!("actor started");
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
@@ -273,7 +274,7 @@ impl RemoteStateActor {
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_hp);
-            if !inbox.is_idle() || !self.connections.is_empty() {
+            if !inbox.is_empty() || !self.connections.is_empty() {
                 idle_timeout
                     .as_mut()
                     .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
@@ -284,7 +285,7 @@ impl RemoteStateActor {
 
                 _ = shutdown_token.cancelled() => {
                     trace!("actor cancelled");
-                    break;
+                    break vec![];
                 }
                 msg = inbox.recv() => {
                     match msg {
@@ -305,7 +306,7 @@ impl RemoteStateActor {
                 res = self.local_direct_addrs.updated() => {
                     if let Err(n0_watcher::Disconnected) = res {
                         trace!("direct address watcher disconnected, shutting down");
-                        break;
+                        break vec![];
                     }
                     self.local_addrs_updated();
                     trace!("local addrs updated, triggering holepunching");
@@ -331,9 +332,14 @@ impl RemoteStateActor {
                     self.check_connections();
                 }
                 _ = &mut idle_timeout => {
-                    if self.connections.is_empty() && inbox.close_if_idle() {
+                    if self.connections.is_empty() && inbox.is_empty() {
                         trace!("idle timeout expired and still idle: terminate actor");
-                        break;
+                        inbox.close();
+                        // There might be a race between checking `inbox.is_empty()` and `inbox.close()`,
+                        // so we pull out all messages that are left over.
+                        let mut leftover_msgs = Vec::with_capacity(inbox.len());
+                        inbox.recv_many(&mut leftover_msgs, inbox.len()).await;
+                        break leftover_msgs;
                     } else {
                         // Seems like we weren't really idle, so we reset
                         idle_timeout.as_mut().reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
@@ -341,7 +347,9 @@ impl RemoteStateActor {
                 }
             }
         }
+
         trace!("actor terminating");
+        leftover_msgs
     }
 
     /// Handles an actor message.

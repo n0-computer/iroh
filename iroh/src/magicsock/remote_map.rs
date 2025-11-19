@@ -7,6 +7,7 @@ use std::{
 };
 
 use iroh_base::{EndpointId, RelayUrl};
+use n0_future::task::JoinSet;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -46,7 +47,7 @@ pub(crate) struct RemoteMap {
     // State we keep about remote endpoints.
     //
     /// The actors tracking each remote endpoint.
-    actor_handles: Mutex<FxHashMap<EndpointId, RemoteStateHandle>>,
+    actor_senders: Mutex<FxHashMap<EndpointId, mpsc::Sender<RemoteStateMessage>>>,
     /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
     pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
@@ -74,7 +75,7 @@ impl RemoteMap {
         shutdown_token: CancellationToken,
     ) -> Self {
         Self {
-            actor_handles: Mutex::new(FxHashMap::default()),
+            actor_senders: Mutex::new(FxHashMap::default()),
             endpoint_mapped_addrs: Default::default(),
             relay_mapped_addrs: Default::default(),
             local_endpoint_id,
@@ -117,8 +118,8 @@ impl RemoteMap {
                 }
             }
             hash_map::Entry::Vacant(entry) => {
-                let (handle, sender) = self.start_remote_state_actor(eid);
-                entry.insert(handle);
+                let sender = self.start_remote_state_actor(eid);
+                entry.insert(sender.clone());
                 sender
             }
         }
@@ -138,13 +139,10 @@ impl RemoteMap {
     /// Starts a new remote state actor and returns a handle and a sender.
     ///
     /// The handle is not inserted into the endpoint map, this must be done by the caller of this function.
-    fn start_remote_state_actor(
-        &self,
-        eid: EndpointId,
-    ) -> (RemoteStateHandle, mpsc::Sender<RemoteStateMessage>) {
+    fn start_remote_state_actor(&self, eid: EndpointId) -> mpsc::Sender<RemoteStateMessage> {
         // Ensure there is a RemoteMappedAddr for this EndpointId.
         self.endpoint_mapped_addrs.get(&eid);
-        let handle = RemoteStateActor::new(
+        RemoteStateActor::new(
             eid,
             self.local_endpoint_id,
             self.local_direct_addrs.clone(),
@@ -152,9 +150,10 @@ impl RemoteMap {
             self.metrics.clone(),
             self.discovery.clone(),
         )
-        .start(self.shutdown_token.child_token());
-        let sender = handle.sender.get().expect("just created");
-        (handle, sender)
+        .start(
+            self.actor_tasks.lock().expect("poisoned").deref_mut(),
+            self.shutdown_token.clone(),
+        )
     }
 }
 
