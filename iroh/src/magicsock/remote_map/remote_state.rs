@@ -222,7 +222,8 @@ impl RemoteStateActor {
 
     pub(super) fn start(
         self,
-        tasks: &mut JoinSet<Vec<RemoteStateMessage>>,
+        initial_msgs: Vec<RemoteStateMessage>,
+        tasks: &mut JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
         shutdown_token: CancellationToken,
     ) -> mpsc::Sender<RemoteStateMessage> {
         let (tx, rx) = mpsc::channel(16);
@@ -234,12 +235,15 @@ impl RemoteStateActor {
         // we don't explicitly set a span we get the spans from whatever call happens to
         // first create the actor, which is often very confusing as it then keeps those
         // spans for all logging of the actor.
-        let task = task::spawn(self.run(rx, shutdown_token).instrument(info_span!(
-            parent: None,
-            "RemoteStateActor",
-            me = %me.fmt_short(),
-            remote = %endpoint_id.fmt_short(),
-        )));
+        tasks.spawn(
+            self.run(initial_msgs, rx, shutdown_token)
+                .instrument(info_span!(
+                    parent: None,
+                    "RemoteStateActor",
+                    me = %me.fmt_short(),
+                    remote = %endpoint_id.fmt_short(),
+                )),
+        );
         RemoteStateHandle {
             sender: tx,
             _task: AbortOnDropHandle::new(task),
@@ -253,10 +257,14 @@ impl RemoteStateActor {
     /// discipline is needed to not turn pending for a long time.
     async fn run(
         mut self,
+        initial_msgs: Vec<RemoteStateMessage>,
         mut inbox: mpsc::Receiver<RemoteStateMessage>,
         shutdown_token: CancellationToken,
-    ) -> Vec<RemoteStateMessage> {
+    ) -> (EndpointId, Vec<RemoteStateMessage>) {
         trace!("actor started");
+        for msg in initial_msgs {
+            self.handle_message(msg).await;
+        }
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
 
@@ -349,7 +357,7 @@ impl RemoteStateActor {
         }
 
         trace!("actor terminating");
-        leftover_msgs
+        (self.endpoint_id, leftover_msgs)
     }
 
     /// Handles an actor message.
