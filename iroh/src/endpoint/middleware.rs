@@ -36,7 +36,7 @@ impl AfterHandshakeOutcome {
 
 pub trait Middleware: std::fmt::Debug + Send + Sync {
     fn before_connect<'a>(
-        &self,
+        &'a self,
         _remote_addr: &'a EndpointAddr,
         _alpn: &'a [u8],
     ) -> impl Future<Output = BeforeConnectOutcome> + Send + 'a {
@@ -53,7 +53,7 @@ pub trait Middleware: std::fmt::Debug + Send + Sync {
 
 pub(crate) trait DynMiddleware: std::fmt::Debug + Send + Sync {
     fn before_connect<'a>(
-        &self,
+        &'a self,
         _remote_addr: &'a EndpointAddr,
         _alpn: &'a [u8],
     ) -> BoxFuture<'a, BeforeConnectOutcome>;
@@ -65,7 +65,7 @@ pub(crate) trait DynMiddleware: std::fmt::Debug + Send + Sync {
 
 impl<T: Middleware> DynMiddleware for T {
     fn before_connect<'a>(
-        &self,
+        &'a self,
         remote_addr: &'a EndpointAddr,
         alpn: &'a [u8],
     ) -> BoxFuture<'a, BeforeConnectOutcome> {
