@@ -36,7 +36,7 @@
 <a href=#36 id=36 data-nosnippet>36</a>
 <a href=#37 id=37 data-nosnippet>37</a><span class="kw">pub trait </span>Middleware: std::fmt::Debug + Send + Sync {
 <a href=#38 id=38 data-nosnippet>38</a>    <span class="kw">fn </span>before_connect&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#39 id=39 data-nosnippet>39</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#39 id=39 data-nosnippet>39</a>        <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
 <a href=#40 id=40 data-nosnippet>40</a>        _remote_addr: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>EndpointAddr,
 <a href=#41 id=41 data-nosnippet>41</a>        _alpn: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
 <a href=#42 id=42 data-nosnippet>42</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = BeforeConnectOutcome&gt; + Send + <span class="lifetime">'a </span>{
@@ -53,7 +53,7 @@
 <a href=#53 id=53 data-nosnippet>53</a>
 <a href=#54 id=54 data-nosnippet>54</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>DynMiddleware: std::fmt::Debug + Send + Sync {
 <a href=#55 id=55 data-nosnippet>55</a>    <span class="kw">fn </span>before_connect&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#56 id=56 data-nosnippet>56</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#56 id=56 data-nosnippet>56</a>        <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
 <a href=#57 id=57 data-nosnippet>57</a>        _remote_addr: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>EndpointAddr,
 <a href=#58 id=58 data-nosnippet>58</a>        _alpn: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
 <a href=#59 id=59 data-nosnippet>59</a>    ) -&gt; BoxFuture&lt;<span class="lifetime">'a</span>, BeforeConnectOutcome&gt;;
@@ -65,7 +65,7 @@
 <a href=#65 id=65 data-nosnippet>65</a>
 <a href=#66 id=66 data-nosnippet>66</a><span class="kw">impl</span>&lt;T: Middleware&gt; DynMiddleware <span class="kw">for </span>T {
 <a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">fn </span>before_connect&lt;<span class="lifetime">'a</span>&gt;(
-<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>,
 <a href=#69 id=69 data-nosnippet>69</a>        remote_addr: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>EndpointAddr,
 <a href=#70 id=70 data-nosnippet>70</a>        alpn: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
 <a href=#71 id=71 data-nosnippet>71</a>    ) -&gt; BoxFuture&lt;<span class="lifetime">'a</span>, BeforeConnectOutcome&gt; {
