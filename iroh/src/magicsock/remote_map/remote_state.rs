@@ -7,6 +7,7 @@ use std::{
 };
 
 use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
@@ -349,7 +350,10 @@ impl RemoteStateActor {
             contents: owned_transmit.contents.as_ref(),
             segment_size: owned_transmit.segment_size,
         };
-        self.sender.send(&dst, None, &transmit).await?;
+        self.sender
+            .send(&dst, None, &transmit)
+            .await
+            .with_context(|_| format!("failed to send datagram to {dst:?}"))?;
         Ok(())
     }
 
