@@ -23,7 +23,7 @@ workspace = true
 [dependencies]
 aead = { version = "=0.6.0-rc.2", features = ["bytes"] }
 backon = { version = "1.4" }
-bytes = "1.7"
+bytes = "1.11"
 crypto_box = { version = "0.10.0-pre.0", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
 derive_more = { version = "2.0.1", features = [
