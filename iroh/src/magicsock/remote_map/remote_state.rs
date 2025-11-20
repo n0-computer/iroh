@@ -212,8 +212,8 @@ impl RemoteStateActor {
     /// discipline is needed to not turn pending for a long time.
     async fn run(mut self, mut inbox: GuardedReceiver<RemoteStateMessage>) {
         trace!("actor started");
-        let idle_timeout = MaybeFuture::None;
-        tokio::pin!(idle_timeout);
+        let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
+        n0_future::pin!(idle_timeout);
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -225,6 +225,11 @@ impl RemoteStateActor {
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_hp);
+            if !inbox.is_idle() || !self.connections.is_empty() {
+                idle_timeout
+                    .as_mut()
+                    .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
+            }
             tokio::select! {
                 biased;
                 msg = inbox.recv() => {
@@ -264,19 +269,11 @@ impl RemoteStateActor {
                     if self.connections.is_empty() && inbox.close_if_idle() {
                         trace!("idle timeout expired and still idle: terminate actor");
                         break;
+                    } else {
+                        // Seems like we weren't really idle, so we reset
+                        idle_timeout.as_mut().reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
                     }
                 }
-            }
-
-            let is_idle = self.connections.is_empty() && inbox.is_idle();
-            if idle_timeout.is_none() && is_idle {
-                trace!("start idle timeout");
-                idle_timeout
-                    .as_mut()
-                    .set_future(time::sleep(ACTOR_MAX_IDLE_TIMEOUT));
-            } else if idle_timeout.is_some() && !is_idle {
-                trace!("abort idle timeout");
-                idle_timeout.as_mut().set_none()
             }
         }
         trace!("actor terminating");
@@ -290,9 +287,7 @@ impl RemoteStateActor {
         // trace!("handling message");
         match msg {
             RemoteStateMessage::SendDatagram(transmit) => {
-                if let Err(err) = self.handle_msg_send_datagram(transmit).await {
-                    warn!("failed to send datagram: {err:#}");
-                }
+                self.handle_msg_send_datagram(transmit).await;
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx).await;
@@ -333,25 +328,36 @@ impl RemoteStateActor {
     }
 
     /// Handles [`RemoteStateMessage::SendDatagram`].
-    ///
-    /// Error returns are fatal and kill the actor.
-    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> n0_error::Result<()> {
+    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) {
+        // Sending datagrams might fail, e.g. because we don't have the right transports set
+        // up to handle sending this owned transmit to.
+        // After all, we try every single path that we know (relay URL, IP address), even
+        // though we might not have a relay transport or ip-capable transport set up.
+        // So these errors must not be fatal for this actor (or even this operation).
+
         if let Some(addr) = self.selected_path.get() {
             trace!(?addr, "sending datagram to selected path");
-            self.send_datagram(addr, transmit).await?;
+
+            if let Err(err) = self.send_datagram(addr.clone(), transmit).await {
+                debug!(?addr, "failed to send datagram on selected_path: {err:#}");
+            }
         } else {
             trace!(
                 paths = ?self.paths.keys().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
             );
+            if self.paths.is_empty() {
+                warn!("Cannot send datagrams: No paths to remote endpoint known");
+            }
             for addr in self.paths.keys() {
-                self.send_datagram(addr.clone(), transmit.clone()).await?;
+                if let Err(err) = self.send_datagram(addr.clone(), transmit.clone()).await {
+                    debug!(?addr, "failed to send datagram: {err:#}");
+                }
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger
             // holepunching when AddConnection is received.
         }
-        Ok(())
     }
 
     /// Handles [`RemoteStateMessage::AddConnection`].
