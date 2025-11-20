@@ -39,7 +39,7 @@ rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
 rustls-pemfile = { version = "2.1" }
 serde = { version = "1", features = ["derive"] }
 struct_iterable = "0.1.1"
-n0-error = "0.1.0"
+n0-error = "0.1.2"
 strum = { version = "0.27", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false, features = [
