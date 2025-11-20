@@ -609,7 +609,12 @@ mod tests {
     use quinn::ApplicationClose;
 
     use super::*;
-    use crate::{RelayMode, endpoint::ConnectionError};
+    use crate::{
+        RelayMode,
+        endpoint::{
+            BeforeConnectOutcome, ConnectError, ConnectWithOptsError, ConnectionError, Middleware,
+        },
+    };
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
@@ -649,7 +654,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_limiter() -> Result {
+    async fn test_limiter_router() -> Result {
         // tracing_subscriber::fmt::try_init().ok();
         let e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
         // deny all access
@@ -666,6 +671,52 @@ mod tests {
         let (_send, mut recv) = conn.open_bi().await.anyerr()?;
         let response = recv.read_to_end(1000).await.unwrap_err();
         assert!(format!("{response:#?}").contains("not allowed"));
+
+        r1.shutdown().await.anyerr()?;
+        e2.close().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_limiter_middleware() -> Result {
+        tracing_subscriber::fmt::try_init().ok();
+        #[derive(Debug, Default)]
+        struct LimitMiddleware;
+        impl Middleware for LimitMiddleware {
+            async fn before_connect<'a>(
+                &'a self,
+                _remote_addr: &'a iroh_base::EndpointAddr,
+                alpn: &'a [u8],
+            ) -> BeforeConnectOutcome {
+                assert_eq!(alpn, ECHO_ALPN);
+
+                // deny all access
+                BeforeConnectOutcome::Reject
+            }
+        }
+
+        let e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+
+        let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, Echo).spawn();
+
+        let addr1 = r1.endpoint().addr();
+        dbg!(&addr1);
+        let e2 = Endpoint::empty_builder(RelayMode::Disabled)
+            .middleware(LimitMiddleware::default())
+            .bind()
+            .await?;
+
+        println!("connecting");
+        let conn_err = e2.connect(addr1, ECHO_ALPN).await.unwrap_err();
+
+        assert!(matches!(
+            conn_err,
+            ConnectError::Connect {
+                source: ConnectWithOptsError::LocallyRejected { .. },
+                ..
+            }
+        ));
 
         r1.shutdown().await.anyerr()?;
         e2.close().await;
