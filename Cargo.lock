@@ -2218,6 +2218,7 @@ dependencies = [
  "smallvec",
  "strum",
  "swarm-discovery",
+ "sync_wrapper",
  "time",
  "tokio",
  "tokio-stream",

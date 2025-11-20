@@ -46,35 +46,33 @@ use transports::{LocalAddrsWatch, MagicTransport, TransportConfig};
 use url::Url;
 
 use self::{
-    endpoint_map::{EndpointMap, EndpointStateMessage},
     metrics::Metrics as MagicsockMetrics,
+    remote_map::{RemoteMap, RemoteStateMessage},
     transports::{RelayActorConfig, Transports},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-// #[cfg(any(test, feature = "test-utils"))]
-// use crate::endpoint::PathSelection;
 #[cfg(not(wasm_browser))]
 use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
-    magicsock::endpoint_map::PathsWatcher,
+    discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
+    magicsock::remote_map::PathsWatcher,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
 
 mod metrics;
 
-pub(crate) mod endpoint_map;
 pub(crate) mod mapped_addrs;
+pub(crate) mod remote_map;
 pub(crate) mod transports;
 
-pub use self::{endpoint_map::PathInfo, metrics::Metrics};
 use self::{
     mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
     transports::Addr,
 };
+pub use self::{metrics::Metrics, remote_map::PathInfo};
 
 // TODO: Use this
 // /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
@@ -99,9 +97,17 @@ pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 pub(crate) const MAX_MULTIPATH_PATHS: u32 = 16;
 
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
-#[stack_error(derive)]
+#[stack_error(add_meta, derive)]
 #[error("endpoint state actor stopped")]
-pub(crate) struct EndpointStateActorStoppedError;
+#[derive(Clone)]
+pub(crate) struct RemoteStateActorStoppedError;
+
+impl From<mpsc::error::SendError<RemoteStateMessage>> for RemoteStateActorStoppedError {
+    #[track_caller]
+    fn from(_value: mpsc::error::SendError<RemoteStateMessage>) -> Self {
+        Self::new()
+    }
+}
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
@@ -133,10 +139,6 @@ pub(crate) struct Options {
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
-
-    // /// Configuration for what path selection to use
-    // #[cfg(any(test, feature = "test-utils"))]
-    // pub(crate) path_selection: PathSelection,
     pub(crate) metrics: EndpointMetrics,
 }
 
@@ -186,7 +188,7 @@ pub(crate) struct MagicSock {
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
-    pub(crate) endpoint_map: EndpointMap,
+    pub(crate) remote_map: RemoteMap,
 
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
@@ -206,18 +208,6 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
-}
-
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub enum AddEndpointAddrError {
-    #[error("Empty addressing info")]
-    Empty,
-    #[error("Empty addressing info, {pruned} direct address have been pruned")]
-    EmptyPruned { pruned: usize },
-    #[error("Adding our own address is not supported")]
-    OwnAddress,
 }
 
 impl MagicSock {
@@ -252,7 +242,7 @@ impl MagicSock {
         self.local_addrs_watch.clone().get()
     }
 
-    /// Registers the connection in the `EndpointStateActor`.
+    /// Registers the connection in the `RemoteStateActor`.
     ///
     /// The actor is responsible for holepunching and opening additional paths to this
     /// connection.
@@ -264,16 +254,15 @@ impl MagicSock {
         &self,
         remote: EndpointId,
         conn: WeakConnectionHandle,
-    ) -> impl Future<Output = Result<PathsWatcher, EndpointStateActorStoppedError>> + Send + 'static
+    ) -> impl Future<Output = Result<PathsWatcher, RemoteStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
-        let sender = self.endpoint_map.endpoint_state_actor(remote);
+        let sender = self.remote_map.remote_state_actor(remote);
         async move {
             sender
-                .send(EndpointStateMessage::AddConnection(conn, tx))
-                .await
-                .map_err(|_| EndpointStateActorStoppedError)?;
-            rx.await.map_err(|_| EndpointStateActorStoppedError)
+                .send(RemoteStateMessage::AddConnection(conn, tx))
+                .await?;
+            rx.await.map_err(|_| RemoteStateActorStoppedError::new())
         }
     }
 
@@ -288,14 +277,37 @@ impl MagicSock {
             .filter_map(|addr| addr.into_socket_addr())
     }
 
-    /// Returns `true` if we have at least one candidate address where we can send packets to.
-    pub(crate) async fn has_send_address(&self, eid: EndpointId) -> bool {
-        let actor = self.endpoint_map.endpoint_state_actor(eid);
+    /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
+    ///
+    /// This starts a `RemoteStateActor` for the remote if not running already, and then checks
+    /// if the actor has any known paths to the remote. If not, it starts discovery and waits for
+    /// at least one result to arrive.
+    ///
+    /// Returns `Ok(Ok(EndpointIdMappedAddr))` if there is a known path or discovery produced
+    /// at least one result. This does not mean there is a working path, only that we have at least
+    /// one transport address we can try to connect to.
+    ///
+    /// Returns `Ok(Err(discovery_error))` if there are no known paths to the remote and discovery
+    /// failed or produced no results. This means that we don't have any transport address for
+    /// the remote, thus there is no point in trying to connect over the quinn endpoint.
+    ///
+    /// Returns `Err(RemoteStateActorStoppedError)` if the `RemoteStateActor` for the remote has stopped,
+    /// which may never happen and thus is a bug if it does.
+    pub(crate) async fn resolve_remote(
+        &self,
+        addr: EndpointAddr,
+    ) -> Result<Result<EndpointIdMappedAddr, DiscoveryError>, RemoteStateActorStoppedError> {
+        let EndpointAddr { id, addrs } = addr;
+        let actor = self.remote_map.remote_state_actor(id);
         let (tx, rx) = oneshot::channel();
-        if actor.send(EndpointStateMessage::CanSend(tx)).await.is_err() {
-            return false;
+        actor
+            .send(RemoteStateMessage::ResolveRemote(addrs, tx))
+            .await?;
+        match rx.await {
+            Ok(Ok(())) => Ok(Ok(self.remote_map.endpoint_mapped_addr(id))),
+            Ok(Err(err)) => Ok(Err(err)),
+            Err(_) => Err(RemoteStateActorStoppedError::new()),
         }
-        rx.await.unwrap_or(false)
     }
 
     pub(crate) async fn insert_relay(
@@ -379,49 +391,13 @@ impl MagicSock {
     // TODO: Build better info to expose to the user about remote nodes.  We probably want
     // to expose this as part of path information instead.
     pub(crate) async fn latency(&self, eid: EndpointId) -> Option<Duration> {
-        let endpoint_state = self.endpoint_map.endpoint_state_actor(eid);
+        let remote_state = self.remote_map.remote_state_actor(eid);
         let (tx, rx) = oneshot::channel();
-        endpoint_state
-            .send(EndpointStateMessage::Latency(tx))
+        remote_state
+            .send(RemoteStateMessage::Latency(tx))
             .await
             .ok();
         rx.await.unwrap_or_default()
-    }
-
-    /// Returns the socket address which can be used by the QUIC layer to dial this endpoint.
-    pub(crate) fn get_endpoint_mapped_addr(&self, eid: EndpointId) -> EndpointIdMappedAddr {
-        self.endpoint_map.endpoint_mapped_addr(eid)
-    }
-
-    /// Add potential addresses for a endpoint to the `EndpointStateActor`.
-    ///
-    /// This is used to add possible paths that the remote endpoint might be reachable on.  They
-    /// will be used when there is no active connection to the endpoint to attempt to establish
-    /// a connection.
-    #[instrument(skip_all)]
-    pub(crate) async fn add_endpoint_addr(
-        &self,
-        mut addr: EndpointAddr,
-        source: endpoint_map::Source,
-    ) -> Result<(), AddEndpointAddrError> {
-        let mut pruned: usize = 0;
-        for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.addrs.remove(&TransportAddr::Ip(my_addr)) {
-                warn!( endpoint_id=%addr.id.fmt_short(), %my_addr, %source, "not adding our addr for endpoint");
-                pruned += 1;
-            }
-        }
-        if !addr.is_empty() {
-            // Add addr to the internal EndpointMap
-            self.endpoint_map
-                .add_endpoint_addr(addr.clone(), source)
-                .await;
-            Ok(())
-        } else if pruned != 0 {
-            Err(e!(AddEndpointAddrError::EmptyPruned { pruned }))
-        } else {
-            Err(e!(AddEndpointAddrError::Empty))
-        }
     }
 
     /// Stores a new set of direct addresses.
@@ -522,8 +498,8 @@ impl MagicSock {
         // result in the wrong address family and Windows trips up on that.
         //
         // What should be done is that this dst_ip from the RecvMeta is stored in the
-        // EndpointState/PathState.  Then on the send path it should be retrieved from the
-        // EndpointState/PathSate together with the send address and substituted at send time.
+        // RemoteState/PathState.  Then on the send path it should be retrieved from the
+        // RemoteState/PathState together with the send address and substituted at send time.
         // This is relevant for IPv6 link-local addresses where the OS otherwise does not
         // know which interface to send from.
         #[cfg(not(windows))]
@@ -576,7 +552,7 @@ impl MagicSock {
 
                     // Fill in the correct mapped address
                     let mapped_addr = self
-                        .endpoint_map
+                        .remote_map
                         .relay_mapped_addrs
                         .get(&(src_url.clone(), *src_node));
                     quinn_meta.addr = mapped_addr.private_socket_addr();
@@ -781,8 +757,6 @@ impl Handle {
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
-            // #[cfg(any(test, feature = "test-utils"))]
-            // path_selection,
             metrics,
         } = opts;
 
@@ -867,14 +841,13 @@ impl Handle {
 
         let direct_addrs = DiscoveredDirectAddrs::default();
 
-        let endpoint_map = {
-            EndpointMap::new(
+        let remote_map = {
+            RemoteMap::new(
                 secret_key.public(),
-                // #[cfg(any(test, feature = "test-utils"))]
-                // path_selection,
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
                 transports.create_sender(),
+                discovery.clone(),
             )
         };
 
@@ -884,7 +857,7 @@ impl Handle {
             closed: AtomicBool::new(false),
             actor_sender: actor_sender.clone(),
             ipv6_reported,
-            endpoint_map,
+            remote_map,
             discovery,
             relay_map: relay_map.clone(),
             discovery_user_data: RwLock::new(discovery_user_data),
@@ -1125,8 +1098,8 @@ impl Actor {
         // ensure we are doing an initial publish of our addresses
         self.msock.publish_my_addr();
 
-        // Interval timer to remove closed `EndpointStateActor` handles from the endpoint map.
-        let mut endpoint_map_gc = time::interval(endpoint_map::ENDPOINT_MAP_GC_INTERVAL);
+        // Interval timer to remove closed `RemoteStateActor` handles from the endpoint map.
+        let mut remote_map_gc = time::interval(remote_map::REMOTE_MAP_GC_INTERVAL);
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
@@ -1234,8 +1207,8 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                _ = endpoint_map_gc.tick() => {
-                    self.msock.endpoint_map.remove_closed_endpoint_state_actors();
+                _ = remote_map_gc.tick() => {
+                    self.msock.remote_map.remove_closed_remote_state_actors();
                 }
             }
         }
@@ -1557,7 +1530,7 @@ impl Display for DirectAddrType {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{net::SocketAddrV4, sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
@@ -1570,15 +1543,15 @@ mod tests {
     use tracing::{Instrument, error, info, info_span, instrument};
     use tracing_test::traced_test;
 
-    use super::{EndpointIdMappedAddr, Options, endpoint_map::Source, mapped_addrs::MappedAddr};
+    use super::Options;
     use crate::{
-        Endpoint,
-        RelayMode,
-        SecretKey,
+        Endpoint, RelayMode, SecretKey,
         discovery::static_provider::StaticProvider,
         dns::DnsResolver,
-        // endpoint::PathSelection,
-        magicsock::{Handle, MagicSock, TransportConfig},
+        magicsock::{
+            Handle, MagicSock, TransportConfig,
+            mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
+        },
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
 
@@ -1599,7 +1572,6 @@ mod tests {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             #[cfg(any(test, feature = "test-utils"))]
-            // path_selection: PathSelection::default(),
             discovery_user_data: None,
             metrics: Default::default(),
         }
@@ -1788,10 +1760,8 @@ mod tests {
         let ep2_addr_stream = ep2.watch_addr().stream();
         let mut addr_stream = MergeBounded::from_iter([ep1_addr_stream, ep2_addr_stream]);
         let task = tokio::spawn(async move {
-            loop {
-                while let Some(addr) = addr_stream.next().await {
-                    discovery.add_endpoint_info(addr);
-                }
+            while let Some(addr) = addr_stream.next().await {
+                discovery.add_endpoint_info(addr);
             }
         });
 
@@ -2035,7 +2005,6 @@ mod tests {
             proxy_url: None,
             server_config,
             insecure_skip_relay_cert_verify: false,
-            // path_selection: PathSelection::default(),
             metrics: Default::default(),
         };
         let msock = MagicSock::spawn(opts).await?;
@@ -2110,7 +2079,7 @@ mod tests {
 
         let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
 
-        // Generate an address not present in the EndpointMap.
+        // Generate an address not present in the RemoteMap.
         let bad_addr = EndpointIdMappedAddr::generate();
 
         // 500ms is rather fast here.  Running this locally it should always be the correct
@@ -2161,22 +2130,13 @@ mod tests {
             .ip_addrs()
             .get()
             .into_iter()
-            .map(|x| TransportAddr::Ip(x.addr))
-            .collect();
-        let endpoint_addr_2 = EndpointAddr {
-            id: endpoint_id_2,
-            addrs,
-        };
-        msock_1
-            .add_endpoint_addr(
-                endpoint_addr_2,
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
+            .map(|x| TransportAddr::Ip(x.addr));
+        let endpoint_addr_2 = EndpointAddr::from_parts(endpoint_id_2, addrs);
+        let addr = msock_1
+            .resolve_remote(endpoint_addr_2)
             .await
+            .unwrap()
             .unwrap();
-        let addr = msock_1.get_endpoint_mapped_addr(endpoint_id_2);
         let res = tokio::time::timeout(
             Duration::from_secs(10),
             magicsock_connect(
@@ -2236,20 +2196,15 @@ mod tests {
         });
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
-        // Add an empty entry in the EndpointMap of ep_1
-        msock_1
-            .endpoint_map
-            .add_endpoint_addr(
-                EndpointAddr {
-                    id: endpoint_id_2,
-                    addrs: Default::default(),
-                },
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
-            .await;
-        let addr_2 = msock_1.get_endpoint_mapped_addr(endpoint_id_2);
+        // Add an entry in the RemoteMap of ep_1 with an invalid socket address
+        let empty_addr_2 = EndpointAddr::from_parts(
+            endpoint_id_2,
+            [TransportAddr::Ip(
+                // Reserved IP range for documentation (unreachable)
+                SocketAddrV4::new([192, 0, 2, 1].into(), 12345).into(),
+            )],
+        );
+        let addr_2 = msock_1.resolve_remote(empty_addr_2).await.unwrap().unwrap();
 
         // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
         // not take forever.  You need to check the log output to verify this is really
@@ -2275,23 +2230,20 @@ mod tests {
         info!("first connect timed out as expected");
 
         // Provide correct addressing information
-        msock_1
-            .endpoint_map
-            .add_endpoint_addr(
-                EndpointAddr {
-                    id: endpoint_id_2,
-                    addrs: msock_2
-                        .ip_addrs()
-                        .get()
-                        .into_iter()
-                        .map(|x| TransportAddr::Ip(x.addr))
-                        .collect(),
-                },
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
-            .await;
+        let correct_addr_2 = EndpointAddr::from_parts(
+            endpoint_id_2,
+            msock_2
+                .ip_addrs()
+                .get()
+                .into_iter()
+                .map(|x| TransportAddr::Ip(x.addr)),
+        );
+        let addr_2a = msock_1
+            .resolve_remote(correct_addr_2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(addr_2, addr_2a);
 
         // We can now connect
         tokio::time::timeout(Duration::from_secs(10), async move {
@@ -2315,6 +2267,6 @@ mod tests {
         .expect("connection timed out");
 
         // TODO: could remove the addresses again, send, add it back and see it recover.
-        // But we don't have that much private access to the EndpointMap.  This will do for now.
+        // But we don't have that much private access to the RemoteMap.  This will do for now.
     }
 }

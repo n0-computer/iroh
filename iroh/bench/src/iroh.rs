@@ -34,11 +34,9 @@ pub fn server_endpoint(
         #[cfg(feature = "local-relay")]
         {
             builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
-            let path_selection = match opt.only_relay {
-                true => iroh::endpoint::PathSelection::RelayOnly,
-                false => iroh::endpoint::PathSelection::default(),
-            };
-            builder = builder.path_selection(path_selection);
+            if opt.only_relay {
+                builder = builder.clear_ip_transports();
+            }
         }
         let ep = builder
             .alpns(vec![ALPN.to_vec()])
@@ -95,11 +93,9 @@ pub async fn connect_client(
     #[cfg(feature = "local-relay")]
     {
         builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
-        let path_selection = match opt.only_relay {
-            true => iroh::endpoint::PathSelection::RelayOnly,
-            false => iroh::endpoint::PathSelection::default(),
-        };
-        builder = builder.path_selection(path_selection);
+        if opt.only_relay {
+            builder = builder.clear_ip_transports();
+        }
     }
     let endpoint = builder
         .alpns(vec![ALPN.to_vec()])

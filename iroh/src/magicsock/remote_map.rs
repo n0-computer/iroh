@@ -6,26 +6,27 @@ use std::{
     time::Duration,
 };
 
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
+use iroh_base::{EndpointId, RelayUrl};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-pub(super) use self::endpoint_state::EndpointStateMessage;
-pub(crate) use self::endpoint_state::PathsWatcher;
-use self::endpoint_state::{EndpointStateActor, EndpointStateHandle};
-pub use self::endpoint_state::{PathInfo, PathInfoList};
+use crate::discovery::ConcurrentDiscovery;
+
+pub(crate) use self::remote_state::PathsWatcher;
+pub(super) use self::remote_state::RemoteStateMessage;
+pub use self::remote_state::{PathInfo, PathInfoList};
+use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
     DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
     transports::TransportsSender,
 };
 
-mod endpoint_state;
-mod path_state;
+mod remote_state;
 
-/// Interval in which handles to closed [`EndpointStateActor`]s should be removed.
-pub(super) const ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);
+/// Interval in which handles to closed [`RemoteStateActor`]s should be removed.
+pub(super) const REMOTE_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
@@ -39,34 +40,36 @@ pub(super) const ENDPOINT_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);
 /// - Has the mapped addresses we use to refer to non-IP transports destinations into IPv6
 ///   addressing space that is used by Quinn.
 #[derive(Debug)]
-pub(crate) struct EndpointMap {
+pub(crate) struct RemoteMap {
     //
     // State we keep about remote endpoints.
     //
     /// The actors tracking each remote endpoint.
-    actor_handles: Mutex<FxHashMap<EndpointId, EndpointStateHandle>>,
+    actor_handles: Mutex<FxHashMap<EndpointId, RemoteStateHandle>>,
     /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
     pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
 
     //
-    // State needed to start a new EndpointStateHandle.
+    // State needed to start a new RemoteStateHandle.
     //
     /// The endpoint ID of the local endpoint.
     local_endpoint_id: EndpointId,
     metrics: Arc<MagicsockMetrics>,
     local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     sender: TransportsSender,
+    discovery: ConcurrentDiscovery,
 }
 
-impl EndpointMap {
-    /// Creates a new [`EndpointMap`].
+impl RemoteMap {
+    /// Creates a new [`RemoteMap`].
     pub(super) fn new(
         local_endpoint_id: EndpointId,
         metrics: Arc<MagicsockMetrics>,
         local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         sender: TransportsSender,
+        discovery: ConcurrentDiscovery,
     ) -> Self {
         Self {
             actor_handles: Mutex::new(FxHashMap::default()),
@@ -76,48 +79,29 @@ impl EndpointMap {
             metrics,
             local_addrs,
             sender,
+            discovery,
         }
-    }
-
-    /// Adds addresses where an endpoint might be contactable.
-    pub(super) async fn add_endpoint_addr(&self, endpoint_addr: EndpointAddr, source: Source) {
-        for url in endpoint_addr.relay_urls() {
-            // Ensure we have a RelayMappedAddress.
-            self.relay_mapped_addrs
-                .get(&(url.clone(), endpoint_addr.id));
-        }
-        let actor = self.endpoint_state_actor(endpoint_addr.id);
-
-        // This only fails if the sender is closed.  That means the EndpointStateActor has
-        // stopped, which only happens during shutdown.
-        actor
-            .send(EndpointStateMessage::AddEndpointAddr(endpoint_addr, source))
-            .await
-            .ok();
     }
 
     pub(super) fn endpoint_mapped_addr(&self, eid: EndpointId) -> EndpointIdMappedAddr {
         self.endpoint_mapped_addrs.get(&eid)
     }
 
-    /// Removes the handles for terminated [`EndpointStateActor`]s from the endpoint map.
+    /// Removes the handles for terminated [`RemoteStateActor`]s from the endpoint map.
     ///
     /// This should be called periodically to remove handles to endpoint state actors
     /// that have shutdown after their idle timeout expired.
-    pub(super) fn remove_closed_endpoint_state_actors(&self) {
+    pub(super) fn remove_closed_remote_state_actors(&self) {
         let mut handles = self.actor_handles.lock().expect("poisoned");
         handles.retain(|_eid, handle| !handle.sender.is_closed())
     }
 
-    /// Returns the sender for the [`EndpointStateActor`].
+    /// Returns the sender for the [`RemoteStateActor`].
     ///
     /// If needed a new actor is started on demand.
     ///
-    /// [`EndpointStateActor`]: endpoint_state::EndpointStateActor
-    pub(super) fn endpoint_state_actor(
-        &self,
-        eid: EndpointId,
-    ) -> mpsc::Sender<EndpointStateMessage> {
+    /// [`RemoteStateActor`]: remote_state::RemoteStateActor
+    pub(super) fn remote_state_actor(&self, eid: EndpointId) -> mpsc::Sender<RemoteStateMessage> {
         let mut handles = self.actor_handles.lock().expect("poisoned");
         match handles.entry(eid) {
             hash_map::Entry::Occupied(mut entry) => {
@@ -125,35 +109,36 @@ impl EndpointMap {
                     sender
                 } else {
                     // The actor is dead: Start a new actor.
-                    let (handle, sender) = self.start_endpoint_state_actor(eid);
+                    let (handle, sender) = self.start_remote_state_actor(eid);
                     entry.insert(handle);
                     sender
                 }
             }
             hash_map::Entry::Vacant(entry) => {
-                let (handle, sender) = self.start_endpoint_state_actor(eid);
+                let (handle, sender) = self.start_remote_state_actor(eid);
                 entry.insert(handle);
                 sender
             }
         }
     }
 
-    /// Starts a new endpoint state actor and returns a handle and a sender.
+    /// Starts a new remote state actor and returns a handle and a sender.
     ///
     /// The handle is not inserted into the endpoint map, this must be done by the caller of this function.
-    fn start_endpoint_state_actor(
+    fn start_remote_state_actor(
         &self,
         eid: EndpointId,
-    ) -> (EndpointStateHandle, mpsc::Sender<EndpointStateMessage>) {
-        // Ensure there is a EndpointMappedAddr for this EndpointId.
+    ) -> (RemoteStateHandle, mpsc::Sender<RemoteStateMessage>) {
+        // Ensure there is a RemoteMappedAddr for this EndpointId.
         self.endpoint_mapped_addrs.get(&eid);
-        let handle = EndpointStateActor::new(
+        let handle = RemoteStateActor::new(
             eid,
             self.local_endpoint_id,
             self.local_addrs.clone(),
             self.relay_mapped_addrs.clone(),
             self.metrics.clone(),
             self.sender.clone(),
+            self.discovery.clone(),
         )
         .start();
         let sender = handle.sender.get().expect("just created");
@@ -207,7 +192,7 @@ pub enum Source {
     /// We established a connection on this address.
     ///
     /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
-    /// was added to the `EndpointStateActor`.
+    /// was added to the `RemoteStateActor`.
     ///
     /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
     #[strum(serialize = "Connection")]

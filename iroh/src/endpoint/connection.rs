@@ -40,10 +40,9 @@ use tracing::warn;
 
 use crate::{
     Endpoint,
-    discovery::DiscoveryTask,
     magicsock::{
-        EndpointStateActorStoppedError,
-        endpoint_map::{PathInfoList, PathsWatcher},
+        RemoteStateActorStoppedError,
+        remote_map::{PathInfoList, PathsWatcher},
     },
 };
 
@@ -208,20 +207,13 @@ pub enum AuthenticationError {
     NoAlpn {},
 }
 
-impl From<EndpointStateActorStoppedError> for ConnectingError {
-    #[track_caller]
-    fn from(_value: EndpointStateActorStoppedError) -> Self {
-        e!(Self::InternalConsistencyError)
-    }
-}
-
 /// Converts a `quinn::Connection` to a `Connection`.
 ///
 /// Returns an error if there was a connection error, the handshake data has not completed
 /// or if the remote did not set an ALPN.
 ///
 /// Otherwise returns a future that completes once the connection has been registered with the
-/// magicsock. This future can return an [`EndpointStateActorStoppedError`], which will only be
+/// magicsock. This future can return an [`RemoteStateActorStoppedError`], which will only be
 /// emitted if the endpoint is closing.
 ///
 /// The returned future is `'static`, so it can be stored without being lifetime-bound on `&ep`.
@@ -229,10 +221,10 @@ fn conn_from_quinn_conn(
     conn: quinn::Connection,
     ep: &Endpoint,
 ) -> Result<
-    impl Future<Output = Result<Connection, EndpointStateActorStoppedError>> + Send + 'static,
+    impl Future<Output = Result<Connection, RemoteStateActorStoppedError>> + Send + 'static,
     ConnectingError,
 > {
-    let (remote_id, alpn) = match static_info_from_conn(&conn) {
+    let info = match static_info_from_conn(&conn) {
         Ok(val) => val,
         Err(auth_err) => {
             // If the authentication error raced with a connection error, the connection
@@ -246,24 +238,22 @@ fn conn_from_quinn_conn(
     };
 
     // Register this connection with the magicsock.
-    let fut = ep.msock.register_connection(remote_id, conn.weak_handle());
+    let fut = ep
+        .msock
+        .register_connection(info.endpoint_id, conn.weak_handle());
     Ok(async move {
         let paths = fut.await?;
         Ok(Connection {
-            paths,
-            remote_id,
-            alpn,
+            data: HandshakeCompletedData { info, paths },
             inner: conn,
         })
     })
 }
 
-fn static_info_from_conn(
-    conn: &quinn::Connection,
-) -> Result<(EndpointId, Vec<u8>), AuthenticationError> {
-    let remote_id = remote_id_from_quinn_conn(conn)?;
+fn static_info_from_conn(conn: &quinn::Connection) -> Result<StaticInfo, AuthenticationError> {
+    let endpoint_id = remote_id_from_quinn_conn(conn)?;
     let alpn = alpn_from_quinn_conn(conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
-    Ok((remote_id, alpn))
+    Ok(StaticInfo { endpoint_id, alpn })
 }
 
 /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -323,12 +313,9 @@ pub struct Connecting {
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
     remote_endpoint_id: EndpointId,
-    /// We run discovery as long as we haven't established a connection yet.
-    #[debug("Option<DiscoveryTask>")]
-    _discovery_drop_guard: Option<DiscoveryTask>,
 }
 
-type RegisterWithMagicsockFut = BoxFuture<Result<Connection, EndpointStateActorStoppedError>>;
+type RegisterWithMagicsockFut = BoxFuture<Result<Connection, RemoteStateActorStoppedError>>;
 
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
@@ -362,6 +349,7 @@ pub enum AlpnError {
 #[allow(missing_docs)]
 #[non_exhaustive]
 #[derive(Clone)]
+#[allow(private_interfaces)]
 pub enum ConnectingError {
     #[error(transparent)]
     ConnectionError {
@@ -370,8 +358,11 @@ pub enum ConnectingError {
     },
     #[error("Failure finalizing the handshake")]
     HandshakeFailure { source: AuthenticationError },
-    #[error("internal consistency error: EndpointStateActor stopped")]
-    InternalConsistencyError,
+    #[error("internal consistency error")]
+    InternalConsistencyError {
+        /// Private source type, cannot be created publicly.
+        source: RemoteStateActorStoppedError,
+    },
 }
 
 impl Connecting {
@@ -379,14 +370,12 @@ impl Connecting {
         inner: quinn::Connecting,
         ep: Endpoint,
         remote_endpoint_id: EndpointId,
-        _discovery_drop_guard: Option<DiscoveryTask>,
     ) -> Self {
         Self {
             inner,
             ep,
             remote_endpoint_id,
             register_with_magicsock: None,
-            _discovery_drop_guard,
         }
     }
 
@@ -429,21 +418,21 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<OutgoingZeroRttConnection, Connecting> {
         match self.inner.into_0rtt() {
             Ok((quinn_conn, zrtt_accepted)) => {
-                let handshake_completed_fut: BoxFuture<_> = Box::pin({
+                let accepted: BoxFuture<_> = Box::pin({
                     let quinn_conn = quinn_conn.clone();
                     async move {
                         let accepted = zrtt_accepted.await;
                         let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
-                        drop(self._discovery_drop_guard);
                         Ok(match accepted {
                             true => ZeroRttStatus::Accepted(conn),
                             false => ZeroRttStatus::Rejected(conn),
                         })
                     }
                 });
-                Ok(OutgoingZeroRttConnection {
+                let accepted = accepted.shared();
+                Ok(Connection {
                     inner: quinn_conn,
-                    handshake_completed_fut: handshake_completed_fut.shared(),
+                    data: OutgoingZeroRttData { accepted },
                 })
             }
             Err(inner) => Err(Self { inner, ..self }),
@@ -523,7 +512,7 @@ impl Accepting {
             .inner
             .into_0rtt()
             .expect("incoming connections can always be converted to 0-RTT");
-        let handshake_completed_fut: BoxFuture<_> = Box::pin({
+        let accepted: BoxFuture<_> = Box::pin({
             let quinn_conn = quinn_conn.clone();
             async move {
                 zrtt_accepted.await;
@@ -531,9 +520,10 @@ impl Accepting {
                 Ok(conn)
             }
         });
+        let accepted = accepted.shared();
         IncomingZeroRttConnection {
             inner: quinn_conn,
-            handshake_completed_fut: handshake_completed_fut.shared(),
+            data: IncomingZeroRttData { accepted },
         }
     }
 
@@ -577,11 +567,7 @@ impl Future for Accepting {
 ///
 /// Look at the [`OutgoingZeroRttConnection::handshake_completed`] method for
 /// more details.
-#[derive(Debug, Clone)]
-pub struct OutgoingZeroRttConnection {
-    inner: quinn::Connection,
-    handshake_completed_fut: Shared<BoxFuture<Result<ZeroRttStatus, ConnectingError>>>,
-}
+pub type OutgoingZeroRttConnection = Connection<OutgoingZeroRtt>;
 
 /// Returned from [`OutgoingZeroRttConnection::handshake_completed`].
 #[derive(Debug, Clone)]
@@ -593,299 +579,6 @@ pub enum ZeroRttStatus {
     /// the handshake was completed will error and any data that was
     /// previously sent on those streams will need to be resent.
     Rejected(Connection),
-}
-
-impl OutgoingZeroRttConnection {
-    /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
-    ///
-    /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
-    /// the handshake has completed can still be used.
-    ///
-    /// If `ZeroRttStatus::Rejected` is returned, than any streams created before
-    /// the handshake will error and any data sent should be re-sent on a
-    /// new stream.
-    ///
-    /// This may fail with [`ConnectingError::ConnectionError`], if there was
-    /// some general failure with the connection, such as a network timeout since
-    /// we initiated the connection.
-    ///
-    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
-    /// doesn't use the right TLS authentication, which usually every iroh endpoint
-    /// uses and requires.
-    ///
-    /// Thus, those errors should only occur if someone connects to you with a
-    /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn handshake_completed(self) -> Result<ZeroRttStatus, ConnectingError> {
-        self.handshake_completed_fut.await
-    }
-
-    /// Initiates a new outgoing unidirectional stream.
-    ///
-    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
-    /// consequence, the peer won’t be notified that a stream has been opened until the
-    /// stream is actually used.
-    #[inline]
-    pub fn open_uni(&self) -> OpenUni<'_> {
-        self.inner.open_uni()
-    }
-
-    /// Initiates a new outgoing bidirectional stream.
-    ///
-    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
-    /// consequence, the peer won't be notified that a stream has been opened until the
-    /// stream is actually used. Calling [`open_bi`] then waiting on the [`RecvStream`]
-    /// without writing anything to [`SendStream`] will never succeed.
-    ///
-    /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
-    #[inline]
-    pub fn open_bi(&self) -> OpenBi<'_> {
-        self.inner.open_bi()
-    }
-
-    /// Accepts the next incoming uni-directional stream.
-    #[inline]
-    pub fn accept_uni(&self) -> AcceptUni<'_> {
-        self.inner.accept_uni()
-    }
-
-    /// Accept the next incoming bidirectional stream.
-    ///
-    /// **Important Note**: The peer that calls [`open_bi`] must write to its [`SendStream`]
-    /// before the peer `Connection` is able to accept the stream using
-    /// `accept_bi()`. Calling [`open_bi`] then waiting on the [`RecvStream`] without
-    /// writing anything to the connected [`SendStream`] will never succeed.
-    ///
-    /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
-    #[inline]
-    pub fn accept_bi(&self) -> AcceptBi<'_> {
-        self.inner.accept_bi()
-    }
-
-    /// Receives an application datagram.
-    #[inline]
-    pub fn read_datagram(&self) -> ReadDatagram<'_> {
-        self.inner.read_datagram()
-    }
-
-    /// Wait for the connection to be closed for any reason.
-    ///
-    /// Despite the return type's name, closed connections are often not an error condition
-    /// at the application layer. Cases that might be routine include
-    /// [`ConnectionError::LocallyClosed`] and [`ConnectionError::ApplicationClosed`].
-    #[inline]
-    pub async fn closed(&self) -> ConnectionError {
-        self.inner.closed().await
-    }
-
-    /// If the connection is closed, the reason why.
-    ///
-    /// Returns `None` if the connection is still open.
-    #[inline]
-    pub fn close_reason(&self) -> Option<ConnectionError> {
-        self.inner.close_reason()
-    }
-
-    /// Closes the connection immediately.
-    ///
-    /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. No
-    /// more data is sent to the peer and the peer may drop buffered data upon receiving the
-    /// CONNECTION_CLOSE frame.
-    ///
-    /// `error_code` and `reason` are not interpreted, and are provided directly to the
-    /// peer.
-    ///
-    /// `reason` will be truncated to fit in a single packet with overhead; to improve odds
-    /// that it is preserved in full, it should be kept under 1KiB.
-    ///
-    /// # Gracefully closing a connection
-    ///
-    /// Only the peer last receiving application data can be certain that all data is
-    /// delivered. The only reliable action it can then take is to close the connection,
-    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
-    /// frame is very likely if both endpoints stay online long enough, calling
-    /// [`Endpoint::close`] will wait to provide sufficient time. Otherwise, the remote peer
-    /// will time out the connection, provided that the idle timeout is not disabled.
-    ///
-    /// The sending side can not guarantee all stream data is delivered to the remote
-    /// application. It only knows the data is delivered to the QUIC stack of the remote
-    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
-    /// [`close`] the remote endpoint may drop any data it received but is as yet
-    /// undelivered to the application, including data that was acknowledged as received to
-    /// the local endpoint.
-    ///
-    /// [`close`]: Connection::close
-    #[inline]
-    pub fn close(&self, error_code: VarInt, reason: &[u8]) {
-        self.inner.close(error_code, reason)
-    }
-
-    /// Transmits `data` as an unreliable, unordered application datagram.
-    ///
-    /// Application datagrams are a low-level primitive. They may be lost or delivered out
-    /// of order, and `data` must both fit inside a single QUIC packet and be smaller than
-    /// the maximum dictated by the peer.
-    #[inline]
-    pub fn send_datagram(&self, data: bytes::Bytes) -> Result<(), SendDatagramError> {
-        self.inner.send_datagram(data)
-    }
-
-    // TODO: It seems `SendDatagram` is not yet exposed by quinn.  This has been fixed
-    //       upstream and will be in the next release.
-    // /// Transmits `data` as an unreliable, unordered application datagram
-    // ///
-    // /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
-    // /// conditions, which effectively prioritizes old datagrams over new datagrams.
-    // ///
-    // /// See [`send_datagram()`] for details.
-    // ///
-    // /// [`send_datagram()`]: Connection::send_datagram
-    // #[inline]
-    // pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
-    //     self.inner.send_datagram_wait(data)
-    // }
-
-    /// Computes the maximum size of datagrams that may be passed to [`send_datagram`].
-    ///
-    /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
-    ///
-    /// This may change over the lifetime of a connection according to variation in the path
-    /// MTU estimate. The peer can also enforce an arbitrarily small fixed limit, but if the
-    /// peer's limit is large this is guaranteed to be a little over a kilobyte at minimum.
-    ///
-    /// Not necessarily the maximum size of received datagrams.
-    ///
-    /// [`send_datagram`]: Self::send_datagram
-    #[inline]
-    pub fn max_datagram_size(&self) -> Option<usize> {
-        self.inner.max_datagram_size()
-    }
-
-    /// Bytes available in the outgoing datagram buffer.
-    ///
-    /// When greater than zero, calling [`send_datagram`] with a
-    /// datagram of at most this size is guaranteed not to cause older datagrams to be
-    /// dropped.
-    ///
-    /// [`send_datagram`]: Self::send_datagram
-    #[inline]
-    pub fn datagram_send_buffer_space(&self) -> usize {
-        self.inner.datagram_send_buffer_space()
-    }
-
-    /// Current best estimate of this connection's latency (round-trip-time).
-    #[inline]
-    pub fn rtt(&self) -> Duration {
-        self.inner.rtt()
-    }
-
-    /// Returns connection statistics.
-    #[inline]
-    pub fn stats(&self) -> ConnectionStats {
-        self.inner.stats()
-    }
-
-    /// Current state of the congestion control algorithm, for debugging purposes.
-    #[inline]
-    pub fn congestion_state(&self) -> Box<dyn quinn_proto::congestion::Controller> {
-        self.inner.congestion_state()
-    }
-
-    /// Parameters negotiated during the handshake.
-    ///
-    /// Guaranteed to return `Some` on fully established connections or after
-    /// [`Connecting::handshake_data()`] succeeds. See that method's documentations for
-    /// details on the returned value.
-    ///
-    /// [`Connection::handshake_data()`]: crate::endpoint::Connecting::handshake_data
-    #[inline]
-    pub fn handshake_data(&self) -> Option<Box<dyn Any>> {
-        self.inner.handshake_data()
-    }
-
-    /// Extracts the ALPN protocol from the peer's handshake data.
-    pub fn alpn(&self) -> Option<Vec<u8>> {
-        alpn_from_quinn_conn(&self.inner)
-    }
-
-    /// Cryptographic identity of the peer.
-    ///
-    /// The dynamic type returned is determined by the configured [`Session`]. For the
-    /// default `rustls` session, the return value can be [`downcast`] to a
-    /// <code>Vec<[rustls::pki_types::CertificateDer]></code>
-    ///
-    /// [`Session`]: quinn_proto::crypto::Session
-    /// [`downcast`]: Box::downcast
-    #[inline]
-    pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
-        self.inner.peer_identity()
-    }
-
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
-    ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
-    /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
-    /// connection.
-    ///
-    /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
-    }
-
-    /// A stable identifier for this connection.
-    ///
-    /// Peer addresses and connection IDs can change, but this value will remain fixed for
-    /// the lifetime of the connection.
-    #[inline]
-    pub fn stable_id(&self) -> usize {
-        self.inner.stable_id()
-    }
-
-    /// Derives keying material from this connection's TLS session secrets.
-    ///
-    /// When both peers call this method with the same `label` and `context`
-    /// arguments and `output` buffers of equal length, they will get the
-    /// same sequence of bytes in `output`. These bytes are cryptographically
-    /// strong and pseudorandom, and are suitable for use as keying material.
-    ///
-    /// See [RFC5705](https://tools.ietf.org/html/rfc5705) for more information.
-    #[inline]
-    pub fn export_keying_material(
-        &self,
-        output: &mut [u8],
-        label: &[u8],
-        context: &[u8],
-    ) -> Result<(), quinn_proto::crypto::ExportKeyingMaterialError> {
-        self.inner.export_keying_material(output, label, context)
-    }
-
-    /// Modifies the number of unidirectional streams that may be concurrently opened.
-    ///
-    /// No streams may be opened by the peer unless fewer than `count` are already
-    /// open. Large `count`s increase both minimum and worst-case memory consumption.
-    #[inline]
-    pub fn set_max_concurrent_uni_streams(&self, count: VarInt) {
-        self.inner.set_max_concurrent_uni_streams(count)
-    }
-
-    /// See [`quinn_proto::TransportConfig::receive_window`].
-    #[inline]
-    pub fn set_receive_window(&self, receive_window: VarInt) {
-        self.inner.set_receive_window(receive_window)
-    }
-
-    /// Modifies the number of bidirectional streams that may be concurrently opened.
-    ///
-    /// No streams may be opened by the peer unless fewer than `count` are already
-    /// open. Large `count`s increase both minimum and worst-case memory consumption.
-    #[inline]
-    pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
-        self.inner.set_max_concurrent_bi_streams(count)
-    }
 }
 
 /// A QUIC connection on the server-side that can possibly accept 0-RTT data.
@@ -906,29 +599,98 @@ impl OutgoingZeroRttConnection {
 /// `IncomingZeroRttConnection`. This waits until 0-RTT connection has completed
 /// the handshake and can now confidently derive the ALPN and the
 /// [`EndpointId`] of the remote endpoint.
-#[derive(Debug)]
-pub struct IncomingZeroRttConnection {
+pub type IncomingZeroRttConnection = Connection<IncomingZeroRtt>;
+
+/// A QUIC connection.
+///
+/// If all references to a connection (including every clone of the Connection handle,
+/// streams of incoming streams, and the various stream types) have been dropped, then the
+/// connection will be automatically closed with an error_code of 0 and an empty reason. You
+/// can also close the connection explicitly by calling [`Connection::close`].
+///
+/// Closing the connection immediately abandons efforts to deliver data to the peer. Upon
+/// receiving CONNECTION_CLOSE the peer may drop any stream data not yet delivered to the
+/// application. [`Connection::close`] describes in more detail how to gracefully close a
+/// connection without losing application data.
+///
+/// May be cloned to obtain another handle to the same connection.
+#[derive(Debug, Clone)]
+pub struct Connection<State: ConnectionState = HandshakeCompleted> {
     inner: quinn::Connection,
-    handshake_completed_fut: Shared<BoxFuture<Result<Connection, ConnectingError>>>,
+    /// State-specific information
+    data: State::Data,
 }
 
-impl IncomingZeroRttConnection {
-    /// Waits until the full handshake occurs and then returns a [`Connection`].
-    ///
-    /// This may fail with [`ConnectingError::ConnectionError`], if there was
-    /// some general failure with the connection, such as a network timeout since
-    /// we accepted the connection.
-    ///
-    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
-    /// doesn't use the right TLS authentication, which usually every iroh endpoint
-    /// uses and requires.
-    ///
-    /// Thus, those errors should only occur if someone connects to you with a
-    /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn handshake_completed(self) -> Result<Connection, ConnectingError> {
-        self.handshake_completed_fut.await
-    }
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct HandshakeCompletedData {
+    info: StaticInfo,
+    paths: PathsWatcher,
+}
 
+/// Static info from a completed TLS handshake.
+#[derive(Debug, Clone)]
+struct StaticInfo {
+    endpoint_id: EndpointId,
+    alpn: Vec<u8>,
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct IncomingZeroRttData {
+    accepted: Shared<BoxFuture<Result<Connection, ConnectingError>>>,
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct OutgoingZeroRttData {
+    accepted: Shared<BoxFuture<Result<ZeroRttStatus, ConnectingError>>>,
+}
+
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Trait to track the state of a [`Connection`] at compile time.
+pub trait ConnectionState: sealed::Sealed {
+    /// State-specific data stored in the [`Connection`].
+    type Data: std::fmt::Debug + Clone;
+}
+
+/// Marker type for a connection that has completed the handshake.
+#[derive(Debug, Clone)]
+pub struct HandshakeCompleted;
+
+/// Marker type for a connection that is in the incoming 0-RTT state.
+#[derive(Debug, Clone)]
+pub struct IncomingZeroRtt;
+
+/// Marker type for a connection that is in the outgoing 0-RTT state.
+#[derive(Debug, Clone)]
+pub struct OutgoingZeroRtt;
+
+impl sealed::Sealed for HandshakeCompleted {}
+impl ConnectionState for HandshakeCompleted {
+    type Data = HandshakeCompletedData;
+}
+
+impl sealed::Sealed for IncomingZeroRtt {}
+impl ConnectionState for IncomingZeroRtt {
+    type Data = IncomingZeroRttData;
+}
+
+impl sealed::Sealed for OutgoingZeroRtt {}
+impl ConnectionState for OutgoingZeroRtt {
+    type Data = OutgoingZeroRttData;
+}
+
+#[allow(missing_docs)]
+#[stack_error(add_meta, derive)]
+#[error("Protocol error: no remote id available")]
+#[derive(Clone)]
+pub struct RemoteEndpointIdError;
+
+impl<T: ConnectionState> Connection<T> {
     /// Initiates a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
@@ -1116,11 +878,6 @@ impl IncomingZeroRttConnection {
         self.inner.handshake_data()
     }
 
-    /// Extracts the ALPN protocol from the peer's handshake data.
-    pub fn alpn(&self) -> Option<Vec<u8>> {
-        alpn_from_quinn_conn(&self.inner)
-    }
-
     /// Cryptographic identity of the peer.
     ///
     /// The dynamic type returned is determined by the configured [`Session`]. For the
@@ -1132,18 +889,6 @@ impl IncomingZeroRttConnection {
     #[inline]
     pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
         self.inner.peer_identity()
-    }
-
-    /// Returns the [`EndpointId`] from the peer's TLS certificate.
-    ///
-    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
-    /// included in the TLS certificate presented during the handshake when connecting.
-    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
-    /// connection.
-    ///
-    /// [`PublicKey`]: iroh_base::PublicKey
-    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
-        remote_id_from_quinn_conn(&self.inner)
     }
 
     /// A stable identifier for this connection.
@@ -1198,237 +943,10 @@ impl IncomingZeroRttConnection {
     }
 }
 
-/// A QUIC connection.
-///
-/// If all references to a connection (including every clone of the Connection handle,
-/// streams of incoming streams, and the various stream types) have been dropped, then the
-/// connection will be automatically closed with an error_code of 0 and an empty reason. You
-/// can also close the connection explicitly by calling [`Connection::close`].
-///
-/// Closing the connection immediately abandons efforts to deliver data to the peer. Upon
-/// receiving CONNECTION_CLOSE the peer may drop any stream data not yet delivered to the
-/// application. [`Connection::close`] describes in more detail how to gracefully close a
-/// connection without losing application data.
-///
-/// May be cloned to obtain another handle to the same connection.
-#[derive(derive_more::Debug, Clone)]
-pub struct Connection {
-    inner: quinn::Connection,
-    remote_id: EndpointId,
-    alpn: Vec<u8>,
-    paths: PathsWatcher,
-}
-
-#[allow(missing_docs)]
-#[stack_error(add_meta, derive)]
-#[error("Protocol error: no remote id available")]
-#[derive(Clone)]
-pub struct RemoteEndpointIdError;
-
-impl Connection {
-    /// Initiates a new outgoing unidirectional stream.
-    ///
-    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
-    /// consequence, the peer won’t be notified that a stream has been opened until the
-    /// stream is actually used.
-    #[inline]
-    pub fn open_uni(&self) -> OpenUni<'_> {
-        self.inner.open_uni()
-    }
-
-    /// Initiates a new outgoing bidirectional stream.
-    ///
-    /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
-    /// consequence, the peer won't be notified that a stream has been opened until the
-    /// stream is actually used. Calling [`open_bi`] then waiting on the [`RecvStream`]
-    /// without writing anything to [`SendStream`] will never succeed.
-    ///
-    /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
-    #[inline]
-    pub fn open_bi(&self) -> OpenBi<'_> {
-        self.inner.open_bi()
-    }
-
-    /// Accepts the next incoming uni-directional stream.
-    #[inline]
-    pub fn accept_uni(&self) -> AcceptUni<'_> {
-        self.inner.accept_uni()
-    }
-
-    /// Accept the next incoming bidirectional stream.
-    ///
-    /// **Important Note**: The peer that calls [`open_bi`] must write to its [`SendStream`]
-    /// before the peer `Connection` is able to accept the stream using
-    /// `accept_bi()`. Calling [`open_bi`] then waiting on the [`RecvStream`] without
-    /// writing anything to the connected [`SendStream`] will never succeed.
-    ///
-    /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
-    #[inline]
-    pub fn accept_bi(&self) -> AcceptBi<'_> {
-        self.inner.accept_bi()
-    }
-
-    /// Receives an application datagram.
-    #[inline]
-    pub fn read_datagram(&self) -> ReadDatagram<'_> {
-        self.inner.read_datagram()
-    }
-
-    /// Wait for the connection to be closed for any reason.
-    ///
-    /// Despite the return type's name, closed connections are often not an error condition
-    /// at the application layer. Cases that might be routine include
-    /// [`ConnectionError::LocallyClosed`] and [`ConnectionError::ApplicationClosed`].
-    #[inline]
-    pub async fn closed(&self) -> ConnectionError {
-        self.inner.closed().await
-    }
-
-    /// If the connection is closed, the reason why.
-    ///
-    /// Returns `None` if the connection is still open.
-    #[inline]
-    pub fn close_reason(&self) -> Option<ConnectionError> {
-        self.inner.close_reason()
-    }
-
-    /// Closes the connection immediately.
-    ///
-    /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. No
-    /// more data is sent to the peer and the peer may drop buffered data upon receiving the
-    /// CONNECTION_CLOSE frame.
-    ///
-    /// `error_code` and `reason` are not interpreted, and are provided directly to the
-    /// peer.
-    ///
-    /// `reason` will be truncated to fit in a single packet with overhead; to improve odds
-    /// that it is preserved in full, it should be kept under 1KiB.
-    ///
-    /// # Gracefully closing a connection
-    ///
-    /// Only the peer last receiving application data can be certain that all data is
-    /// delivered. The only reliable action it can then take is to close the connection,
-    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
-    /// frame is very likely if both endpoints stay online long enough, calling
-    /// [`Endpoint::close`] will wait to provide sufficient time. Otherwise, the remote peer
-    /// will time out the connection, provided that the idle timeout is not disabled.
-    ///
-    /// The sending side can not guarantee all stream data is delivered to the remote
-    /// application. It only knows the data is delivered to the QUIC stack of the remote
-    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
-    /// [`close`] the remote endpoint may drop any data it received but is as yet
-    /// undelivered to the application, including data that was acknowledged as received to
-    /// the local endpoint.
-    ///
-    /// [`close`]: Connection::close
-    #[inline]
-    pub fn close(&self, error_code: VarInt, reason: &[u8]) {
-        self.inner.close(error_code, reason)
-    }
-
-    /// Transmits `data` as an unreliable, unordered application datagram.
-    ///
-    /// Application datagrams are a low-level primitive. They may be lost or delivered out
-    /// of order, and `data` must both fit inside a single QUIC packet and be smaller than
-    /// the maximum dictated by the peer.
-    #[inline]
-    pub fn send_datagram(&self, data: bytes::Bytes) -> Result<(), SendDatagramError> {
-        self.inner.send_datagram(data)
-    }
-
-    // TODO: It seems `SendDatagram` is not yet exposed by quinn.  This has been fixed
-    //       upstream and will be in the next release.
-    // /// Transmits `data` as an unreliable, unordered application datagram
-    // ///
-    // /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
-    // /// conditions, which effectively prioritizes old datagrams over new datagrams.
-    // ///
-    // /// See [`send_datagram()`] for details.
-    // ///
-    // /// [`send_datagram()`]: Connection::send_datagram
-    // #[inline]
-    // pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
-    //     self.inner.send_datagram_wait(data)
-    // }
-
-    /// Computes the maximum size of datagrams that may be passed to [`send_datagram`].
-    ///
-    /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
-    ///
-    /// This may change over the lifetime of a connection according to variation in the path
-    /// MTU estimate. The peer can also enforce an arbitrarily small fixed limit, but if the
-    /// peer's limit is large this is guaranteed to be a little over a kilobyte at minimum.
-    ///
-    /// Not necessarily the maximum size of received datagrams.
-    ///
-    /// [`send_datagram`]: Self::send_datagram
-    #[inline]
-    pub fn max_datagram_size(&self) -> Option<usize> {
-        self.inner.max_datagram_size()
-    }
-
-    /// Bytes available in the outgoing datagram buffer.
-    ///
-    /// When greater than zero, calling [`send_datagram`] with a
-    /// datagram of at most this size is guaranteed not to cause older datagrams to be
-    /// dropped.
-    ///
-    /// [`send_datagram`]: Self::send_datagram
-    #[inline]
-    pub fn datagram_send_buffer_space(&self) -> usize {
-        self.inner.datagram_send_buffer_space()
-    }
-
-    /// Current best estimate of this connection's latency (round-trip-time).
-    #[inline]
-    pub fn rtt(&self) -> Duration {
-        self.inner.rtt()
-    }
-
-    /// Returns connection statistics.
-    #[inline]
-    pub fn stats(&self) -> ConnectionStats {
-        self.inner.stats()
-    }
-
-    /// Current state of the congestion control algorithm, for debugging purposes.
-    #[inline]
-    pub fn congestion_state(&self) -> Box<dyn quinn_proto::congestion::Controller> {
-        self.inner.congestion_state()
-    }
-
-    /// Parameters negotiated during the handshake.
-    ///
-    /// Guaranteed to return `Some` on fully established connections or after
-    /// [`Connecting::handshake_data()`] succeeds. See that method's documentations for
-    /// details on the returned value.
-    ///
-    /// [`Connection::handshake_data()`]: crate::endpoint::Connecting::handshake_data
-    #[inline]
-    pub fn handshake_data(&self) -> Option<Box<dyn Any>> {
-        self.inner.handshake_data()
-    }
-
+impl Connection<HandshakeCompleted> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> &[u8] {
-        &self.alpn
-    }
-
-    /// Cryptographic identity of the peer.
-    ///
-    /// The dynamic type returned is determined by the configured [`Session`]. For the
-    /// default `rustls` session, the return value can be [`downcast`] to a
-    /// <code>Vec<[rustls::pki_types::CertificateDer]></code>
-    ///
-    /// [`Session`]: quinn_proto::crypto::Session
-    /// [`downcast`]: Box::downcast
-    #[inline]
-    pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
-        self.inner.peer_identity()
+        &self.data.info.alpn
     }
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -1440,16 +958,7 @@ impl Connection {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> EndpointId {
-        self.remote_id
-    }
-
-    /// A stable identifier for this connection.
-    ///
-    /// Peer addresses and connection IDs can change, but this value will remain fixed for
-    /// the lifetime of the connection.
-    #[inline]
-    pub fn stable_id(&self) -> usize {
-        self.inner.stable_id()
+        self.data.info.endpoint_id
     }
 
     /// Returns a [`Watcher`] for the network paths of this connection.
@@ -1466,49 +975,60 @@ impl Connection {
     /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
     /// [`PathInfo`]: crate::magicsock::PathInfo
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        self.paths.clone()
+        self.data.paths.clone()
+    }
+}
+
+impl Connection<IncomingZeroRtt> {
+    /// Extracts the ALPN protocol from the peer's handshake data.
+    pub fn alpn(&self) -> Option<Vec<u8>> {
+        alpn_from_quinn_conn(&self.inner)
     }
 
-    /// Derives keying material from this connection's TLS session secrets.
+    /// Waits until the full handshake occurs and then returns a [`Connection`].
     ///
-    /// When both peers call this method with the same `label` and `context`
-    /// arguments and `output` buffers of equal length, they will get the
-    /// same sequence of bytes in `output`. These bytes are cryptographically
-    /// strong and pseudorandom, and are suitable for use as keying material.
+    /// This may fail with [`ConnectingError::ConnectionError`], if there was
+    /// some general failure with the connection, such as a network timeout since
+    /// we accepted the connection.
     ///
-    /// See [RFC5705](https://tools.ietf.org/html/rfc5705) for more information.
-    #[inline]
-    pub fn export_keying_material(
-        &self,
-        output: &mut [u8],
-        label: &[u8],
-        context: &[u8],
-    ) -> Result<(), quinn_proto::crypto::ExportKeyingMaterialError> {
-        self.inner.export_keying_material(output, label, context)
+    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
+    /// doesn't use the right TLS authentication, which usually every iroh endpoint
+    /// uses and requires.
+    ///
+    /// Thus, those errors should only occur if someone connects to you with a
+    /// modified iroh endpoint or with a plain QUIC client.
+    pub async fn handshake_completed(&self) -> Result<Connection, ConnectingError> {
+        self.data.accepted.clone().await
+    }
+}
+
+impl Connection<OutgoingZeroRtt> {
+    /// Extracts the ALPN protocol from the peer's handshake data.
+    pub fn alpn(&self) -> Option<Vec<u8>> {
+        alpn_from_quinn_conn(&self.inner)
     }
 
-    /// Modifies the number of unidirectional streams that may be concurrently opened.
+    /// Waits until the full handshake occurs and returns a [`ZeroRttStatus`].
     ///
-    /// No streams may be opened by the peer unless fewer than `count` are already
-    /// open. Large `count`s increase both minimum and worst-case memory consumption.
-    #[inline]
-    pub fn set_max_concurrent_uni_streams(&self, count: VarInt) {
-        self.inner.set_max_concurrent_uni_streams(count)
-    }
-
-    /// See [`quinn_proto::TransportConfig::receive_window`].
-    #[inline]
-    pub fn set_receive_window(&self, receive_window: VarInt) {
-        self.inner.set_receive_window(receive_window)
-    }
-
-    /// Modifies the number of bidirectional streams that may be concurrently opened.
+    /// If `ZeroRttStatus::Accepted` is returned, than any streams created before
+    /// the handshake has completed can still be used.
     ///
-    /// No streams may be opened by the peer unless fewer than `count` are already
-    /// open. Large `count`s increase both minimum and worst-case memory consumption.
-    #[inline]
-    pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
-        self.inner.set_max_concurrent_bi_streams(count)
+    /// If `ZeroRttStatus::Rejected` is returned, than any streams created before
+    /// the handshake will error and any data sent should be re-sent on a
+    /// new stream.
+    ///
+    /// This may fail with [`ConnectingError::ConnectionError`], if there was
+    /// some general failure with the connection, such as a network timeout since
+    /// we initiated the connection.
+    ///
+    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
+    /// doesn't use the right TLS authentication, which usually every iroh endpoint
+    /// uses and requires.
+    ///
+    /// Thus, those errors should only occur if someone connects to you with a
+    /// modified iroh endpoint or with a plain QUIC client.
+    pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, ConnectingError> {
+        self.data.accepted.clone().await
     }
 }
 

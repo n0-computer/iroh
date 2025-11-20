@@ -6,9 +6,10 @@ use std::{
     task::Poll,
 };
 
-use iroh_base::{EndpointAddr, EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{EndpointId, RelayUrl, TransportAddr};
 use n0_future::{
-    FuturesUnordered, MergeUnbounded, Stream, StreamExt,
+    Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
+    boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
@@ -17,18 +18,23 @@ use quinn::{PathStats, WeakConnectionHandle};
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use sync_wrapper::SyncStream;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
-use self::guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel};
-use super::{Source, path_state::PathState};
+use self::{
+    guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
+    path_state::RemotePathState,
+};
+use super::Source;
 use crate::{
+    discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
     endpoint::DirectAddr,
     magicsock::{
         HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
-        endpoint_map::Private,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
+        remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
     },
     util::MaybeFuture,
@@ -41,11 +47,12 @@ use crate::{
 const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
 mod guarded_channel;
+mod path_state;
 
 // TODO: use this
 // /// Number of addresses that are not active that we keep around per endpoint.
 // ///
-// /// See [`EndpointState::prune_direct_addresses`].
+// /// See [`RemoteState::prune_direct_addresses`].
 // pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
 
 // TODO: use this
@@ -72,7 +79,7 @@ mod guarded_channel;
 // TODO: Quinn should just do this.  Also, I made this value up.
 const APPLICATION_ABANDON_PATH: u8 = 30;
 
-/// The time after which an idle [`EndpointStateActor`] stops.
+/// The time after which an idle [`RemoteStateActor`] stops.
 ///
 /// The actor only enters the idle state if no connections are active and no inbox senders exist
 /// apart from the one stored in the endpoint map. Stopping and restarting the actor in this state
@@ -103,6 +110,18 @@ type AddrEvents = MergeUnbounded<
     >,
 >;
 
+/// Either a stream of incoming results from [`ConcurrentDiscovery::resolve`] or infinitely pending.
+///
+/// Set to [`Either::Left`] with an always-pending stream while discovery is not running, and to
+/// [`Either::Right`] while discovery is running.
+///
+/// The stream returned from [`ConcurrentDiscovery::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
+/// wrapper to make it `Sync` so that the [`RemoteStateActor::run`] future stays `Send`.
+type DiscoveryStream = Either<
+    n0_future::stream::Pending<Result<DiscoveryItem, DiscoveryError>>,
+    SyncStream<BoxStream<Result<DiscoveryItem, DiscoveryError>>>,
+>;
+
 /// List of addrs and path ids for open paths in a connection.
 pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
 
@@ -110,7 +129,7 @@ pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
 ///
 /// This actor manages all connections to the remote endpoint.  It will trigger holepunching
 /// and select the best path etc.
-pub(super) struct EndpointStateActor {
+pub(super) struct RemoteStateActor {
     /// The endpoint ID of the remote endpoint.
     endpoint_id: EndpointId,
     /// The endpoint ID of the local endpoint.
@@ -127,6 +146,8 @@ pub(super) struct EndpointStateActor {
     local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// Discovery service, cloned from the magicsock.
+    discovery: ConcurrentDiscovery,
 
     // Internal state - Quinn Connections we are managing.
     //
@@ -145,7 +166,7 @@ pub(super) struct EndpointStateActor {
     ///
     /// These paths might be entirely impossible to use, since they are added by discovery
     /// mechanisms.  The are only potentially usable.
-    paths: FxHashMap<transports::Addr, PathState>,
+    paths: RemotePathState,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
     /// The path we currently consider the preferred path to the remote endpoint.
@@ -165,9 +186,15 @@ pub(super) struct EndpointStateActor {
     ///
     /// They failed to open because we did not have enough CIDs issued by the remote.
     pending_open_paths: VecDeque<transports::Addr>,
+
+    // Internal state - Discovery
+    //
+    /// Stream of discovery results, or always pending if discovery is not running.
+    discovery_stream: DiscoveryStream,
 }
 
-impl EndpointStateActor {
+impl RemoteStateActor {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         endpoint_id: EndpointId,
         local_endpoint_id: EndpointId,
@@ -175,6 +202,7 @@ impl EndpointStateActor {
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
+        discovery: ConcurrentDiscovery,
     ) -> Self {
         Self {
             endpoint_id,
@@ -182,21 +210,23 @@ impl EndpointStateActor {
             metrics,
             local_addrs,
             relay_mapped_addrs,
+            discovery,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
             path_events: Default::default(),
             addr_events: Default::default(),
-            paths: FxHashMap::default(),
+            paths: Default::default(),
             last_holepunch: None,
             selected_path: Default::default(),
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
             sender,
+            discovery_stream: Either::Left(n0_future::stream::pending()),
         }
     }
 
-    pub(super) fn start(mut self) -> EndpointStateHandle {
+    pub(super) fn start(self) -> RemoteStateHandle {
         let (tx, rx) = guarded_channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
@@ -214,12 +244,12 @@ impl EndpointStateActor {
             }
             .instrument(info_span!(
                 parent: None,
-                "EndpointStateActor",
+                "RemoteStateActor",
                 me = %me.fmt_short(),
                 remote = %endpoint_id.fmt_short(),
             )),
         );
-        EndpointStateHandle {
+        RemoteStateHandle {
             sender: tx,
             _task: AbortOnDropHandle::new(task),
         }
@@ -230,10 +260,7 @@ impl EndpointStateActor {
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
     /// discipline is needed to not turn pending for a long time.
-    async fn run(
-        &mut self,
-        mut inbox: GuardedReceiver<EndpointStateMessage>,
-    ) -> n0_error::Result<()> {
+    async fn run(mut self, mut inbox: GuardedReceiver<RemoteStateMessage>) -> n0_error::Result<()> {
         trace!("actor started");
         let idle_timeout = MaybeFuture::None;
         tokio::pin!(idle_timeout);
@@ -287,6 +314,9 @@ impl EndpointStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching().await;
                 }
+                item = self.discovery_stream.next() => {
+                    self.handle_discovery_item(item);
+                }
                 _ = &mut idle_timeout => {
                     if self.connections.is_empty() && inbox.close_if_idle() {
                         trace!("idle timeout expired and still idle: terminate actor");
@@ -313,22 +343,19 @@ impl EndpointStateActor {
     ///
     /// Error returns are fatal and kill the actor.
     #[instrument(skip(self))]
-    async fn handle_message(&mut self, msg: EndpointStateMessage) -> n0_error::Result<()> {
+    async fn handle_message(&mut self, msg: RemoteStateMessage) -> n0_error::Result<()> {
         // trace!("handling message");
         match msg {
-            EndpointStateMessage::SendDatagram(transmit) => {
+            RemoteStateMessage::SendDatagram(transmit) => {
                 self.handle_msg_send_datagram(transmit).await?;
             }
-            EndpointStateMessage::AddConnection(handle, tx) => {
+            RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx).await;
             }
-            EndpointStateMessage::AddEndpointAddr(addr, source) => {
-                self.handle_msg_add_endpoint_addr(addr, source);
+            RemoteStateMessage::ResolveRemote(addrs, tx) => {
+                self.handle_msg_resolve_remote(addrs, tx);
             }
-            EndpointStateMessage::CanSend(tx) => {
-                self.handle_msg_can_send(tx);
-            }
-            EndpointStateMessage::Latency(tx) => {
+            RemoteStateMessage::Latency(tx) => {
                 self.handle_msg_latency(tx);
             }
         }
@@ -349,7 +376,7 @@ impl EndpointStateActor {
         Ok(())
     }
 
-    /// Handles [`EndpointStateMessage::SendDatagram`].
+    /// Handles [`RemoteStateMessage::SendDatagram`].
     ///
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) -> n0_error::Result<()> {
@@ -358,11 +385,19 @@ impl EndpointStateActor {
             self.send_datagram(addr, transmit).await?;
         } else {
             trace!(
-                paths = ?self.paths.keys().collect::<Vec<_>>(),
+                paths = ?self.paths.addrs().collect::<Vec<_>>(),
                 "sending datagram to all known paths",
             );
-            for addr in self.paths.keys() {
-                self.send_datagram(addr.clone(), transmit.clone()).await?;
+            for addr in self.paths.addrs() {
+                // We never want to send to our local addresses.
+                // The local address set is updated in the main loop so we can use `peek` here.
+                if let transports::Addr::Ip(sockaddr) = addr
+                    && self.local_addrs.peek().iter().any(|a| a.addr == *sockaddr)
+                {
+                    trace!(%sockaddr, "not sending datagram to our own address");
+                } else {
+                    self.send_datagram(addr.clone(), transmit.clone()).await?;
+                }
             }
             // This message is received *before* a connection is added.  So we do
             // not yet have a connection to holepunch.  Instead we trigger
@@ -371,7 +406,7 @@ impl EndpointStateActor {
         Ok(())
     }
 
-    /// Handles [`EndpointStateMessage::AddConnection`].
+    /// Handles [`RemoteStateMessage::AddConnection`].
     ///
     /// Error returns are fatal and kill the actor.
     async fn handle_msg_add_connection(
@@ -422,10 +457,7 @@ impl EndpointStateActor {
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
                 self.paths
-                    .entry(path_remote)
-                    .or_default()
-                    .sources
-                    .insert(Source::Connection { _0: Private }, Instant::now());
+                    .insert(path_remote, Source::Connection { _0: Private });
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -433,7 +465,7 @@ impl EndpointStateActor {
                     // relay addresses we have back.
                     let relays = self
                         .paths
-                        .keys()
+                        .addrs()
                         .filter(|a| a.is_relay())
                         .cloned()
                         .collect::<Vec<_>>();
@@ -452,34 +484,20 @@ impl EndpointStateActor {
         .ok();
     }
 
-    /// Handles [`EndpointStateMessage::AddEndpointAddr`].
-    fn handle_msg_add_endpoint_addr(&mut self, addr: EndpointAddr, source: Source) {
-        for sockaddr in addr.ip_addrs() {
-            let addr = transports::Addr::from(sockaddr);
-            self.paths
-                .entry(addr)
-                .or_default()
-                .sources
-                .insert(source.clone(), Instant::now());
-        }
-        for relay_url in addr.relay_urls() {
-            let addr = transports::Addr::from((relay_url.clone(), self.endpoint_id));
-            self.paths
-                .entry(addr)
-                .or_default()
-                .sources
-                .insert(source.clone(), Instant::now());
-        }
-        trace!("added addressing information");
+    /// Handles [`RemoteStateMessage::ResolveRemote`].
+    fn handle_msg_resolve_remote(
+        &mut self,
+        addrs: BTreeSet<TransportAddr>,
+        tx: oneshot::Sender<Result<(), DiscoveryError>>,
+    ) {
+        let addrs = to_transports_addr(self.endpoint_id, addrs);
+        self.paths.insert_multiple(addrs, Source::App);
+        self.paths.resolve_remote(tx);
+        // Start discovery if we have no selected path.
+        self.trigger_discovery();
     }
 
-    /// Handles [`EndpointStateMessage::CanSend`].
-    fn handle_msg_can_send(&self, tx: oneshot::Sender<bool>) {
-        let can_send = !self.paths.is_empty();
-        tx.send(can_send).ok();
-    }
-
-    /// Handles [`EndpointStateMessage::Latency`].
+    /// Handles [`RemoteStateMessage::Latency`].
     fn handle_msg_latency(&self, tx: oneshot::Sender<Option<Duration>>) {
         let rtt = self.selected_path.get().and_then(|addr| {
             for conn_state in self.connections.values() {
@@ -500,6 +518,45 @@ impl EndpointStateActor {
             None
         });
         tx.send(rtt).ok();
+    }
+
+    fn handle_discovery_item(&mut self, item: Option<Result<DiscoveryItem, DiscoveryError>>) {
+        match item {
+            None => {
+                self.discovery_stream = Either::Left(n0_future::stream::pending());
+                self.paths.discovery_finished(Ok(()));
+            }
+            Some(Err(err)) => {
+                warn!("Discovery failed: {err:#}");
+                self.discovery_stream = Either::Left(n0_future::stream::pending());
+                self.paths.discovery_finished(Err(err));
+            }
+            Some(Ok(item)) => {
+                if item.endpoint_id() != self.endpoint_id {
+                    warn!(?item, "Discovery emitted item for wrong remote endpoint");
+                } else {
+                    let source = Source::Discovery {
+                        name: item.provenance().to_string(),
+                    };
+                    let addrs =
+                        to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs);
+                    self.paths.insert_multiple(addrs, source);
+                }
+            }
+        }
+    }
+
+    /// Triggers discovery for the remote endpoint, if needed.
+    ///
+    /// Does not start discovery if we have a selected path or if discovery is currently running.
+    fn trigger_discovery(&mut self) {
+        if self.selected_path.get().is_some() || matches!(self.discovery_stream, Either::Right(_)) {
+            return;
+        }
+        match self.discovery.resolve(self.endpoint_id) {
+            Some(stream) => self.discovery_stream = Either::Right(SyncStream::new(stream)),
+            None => self.paths.discovery_finished(Ok(())),
+        }
     }
 
     /// Triggers holepunching to the remote endpoint.
@@ -663,7 +720,7 @@ impl EndpointStateActor {
         event: Result<PathEvent, BroadcastStreamRecvError>,
     ) {
         let Ok(event) = event else {
-            warn!("missed a PathEvent, EndpointStateActor lagging");
+            warn!("missed a PathEvent, RemoteStateActor lagging");
             // TODO: Is it possible to recover using the sync APIs to figure out what the
             //    state of the connection and it's paths are?
             return;
@@ -701,10 +758,7 @@ impl EndpointStateActor {
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id);
                     self.paths
-                        .entry(path_remote.clone())
-                        .or_default()
-                        .sources
-                        .insert(Source::Connection { _0: Private }, Instant::now());
+                        .insert(path_remote, Source::Connection { _0: Private });
                 }
 
                 self.select_path();
@@ -861,9 +915,9 @@ impl EndpointStateActor {
     }
 }
 
-/// Messages to send to the [`EndpointStateActor`].
+/// Messages to send to the [`RemoteStateActor`].
 #[derive(derive_more::Debug)]
-pub(crate) enum EndpointStateMessage {
+pub(crate) enum RemoteStateMessage {
     /// Sends a datagram to all known paths.
     ///
     /// Used to send QUIC Initial packets.  If there is no working direct path this will
@@ -881,13 +935,19 @@ pub(crate) enum EndpointStateMessage {
     /// will be removed etc.
     #[debug("AddConnection(..)")]
     AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatcher>),
-    /// Adds a [`EndpointAddr`] with locations where the endpoint might be reachable.
-    AddEndpointAddr(EndpointAddr, Source),
     /// Asks if there is any possible path that could be used.
     ///
-    /// This does not mean there is any guarantee that the remote endpoint is reachable.
-    #[debug("CanSend(..)")]
-    CanSend(oneshot::Sender<bool>),
+    /// This adds the provided transport addresses to the list of potential paths for this remote
+    /// and starts discovery if needed.
+    ///
+    /// Returns `Ok` immediately if the provided address list is non-empy or we have are other known paths.
+    /// Otherwise returns `Ok` once discovery produces a result, or the discovery error if discovery fails
+    /// or produces no results,
+    #[debug("ResolveRemote(..)")]
+    ResolveRemote(
+        BTreeSet<TransportAddr>,
+        oneshot::Sender<Result<(), DiscoveryError>>,
+    ),
     /// Returns the current latency to the remote endpoint.
     ///
     /// TODO: This is more of a placeholder message currently.  Check MagicSock::latency.
@@ -895,18 +955,18 @@ pub(crate) enum EndpointStateMessage {
     Latency(oneshot::Sender<Option<Duration>>),
 }
 
-/// A handle to a [`EndpointStateActor`].
+/// A handle to a [`RemoteStateActor`].
 ///
 /// Dropping this will stop the actor. The actor will also stop after an idle timeout
 /// if it has no connections, an empty inbox, and no other senders than the one stored
 /// in the endpoint map exist.
 #[derive(Debug)]
-pub(super) struct EndpointStateHandle {
-    /// Sender for the channel into the [`EndpointStateActor`].
+pub(super) struct RemoteStateHandle {
+    /// Sender for the channel into the [`RemoteStateActor`].
     ///
     /// This is a [`GuardedSender`], from which we can get a sender but only if the receiver
     /// hasn't been closed.
-    pub(super) sender: GuardedSender<EndpointStateMessage>,
+    pub(super) sender: GuardedSender<RemoteStateMessage>,
     _task: AbortOnDropHandle<()>,
 }
 
@@ -1210,4 +1270,19 @@ impl Future for OnClosed {
         let (_close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
         Poll::Ready(self.conn_id)
     }
+}
+
+/// Converts an iterator of [`TransportAddr'] into an iterator of [`transports::Addr`].
+fn to_transports_addr(
+    endpoint_id: EndpointId,
+    addrs: impl IntoIterator<Item = TransportAddr>,
+) -> impl Iterator<Item = transports::Addr> {
+    addrs.into_iter().filter_map(move |addr| match addr {
+        TransportAddr::Relay(relay_url) => Some(transports::Addr::from((relay_url, endpoint_id))),
+        TransportAddr::Ip(sockaddr) => Some(transports::Addr::from(sockaddr)),
+        _ => {
+            warn!(?addr, "Unsupported TransportAddr");
+            None
+        }
+    })
 }
