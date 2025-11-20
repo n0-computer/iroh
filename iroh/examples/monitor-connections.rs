@@ -30,6 +30,7 @@ async fn main() -> Result {
         .instrument(info_span!("server"))
         .await?;
     let server_addr = server.addr();
+    info!("server addr: {server_addr:?}");
 
     let count = 2;
 
@@ -62,6 +63,7 @@ async fn main() -> Result {
                     .await?;
                 let mut s = conn.open_uni().await.anyerr()?;
                 s.write_all(b"hi").await.anyerr()?;
+                s.finish().anyerr()?;
                 conn.closed().await;
             }
             info!("done");
