@@ -4,6 +4,7 @@ use std::pin::Pin;
 
 use iroh_base::EndpointAddr;
 use quinn::VarInt;
+use tracing::info;
 
 use crate::endpoint::connection::ConnectionInfo;
 
@@ -26,7 +27,7 @@ impl AfterHandshakeOutcome {
         Self::Accept
     }
 
-    pub fn close(&self, error_code: VarInt, reason: &[u8]) -> Self {
+    pub fn reject(&self, error_code: VarInt, reason: &[u8]) -> Self {
         Self::Reject {
             error_code,
             reason: reason.to_vec(),
@@ -99,17 +100,21 @@ impl MiddlewareList {
         for middleware in self.inner.iter() {
             match middleware.before_connect(remote_addr, alpn).await {
                 BeforeConnectOutcome::Accept => continue,
-                reject @ BeforeConnectOutcome::Reject => return reject,
+                reject @ BeforeConnectOutcome::Reject => {
+                    return reject;
+                }
             }
         }
         BeforeConnectOutcome::Accept
     }
 
-    pub(super) async fn handshake_completed(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
+    pub(super) async fn after_handshake(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
         for middleware in self.inner.iter() {
             match middleware.handshake_completed(conn).await {
                 AfterHandshakeOutcome::Accept => continue,
-                reject @ AfterHandshakeOutcome::Reject { .. } => return reject,
+                reject @ AfterHandshakeOutcome::Reject { .. } => {
+                    return reject;
+                }
             }
         }
         AfterHandshakeOutcome::Accept

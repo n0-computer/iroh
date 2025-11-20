@@ -253,11 +253,8 @@ fn conn_from_quinn_conn(
             inner: conn,
         };
 
-        if let AfterHandshakeOutcome::Reject { error_code, reason } = ep
-            .msock
-            .middlewares
-            .handshake_completed(&conn.to_info())
-            .await
+        if let AfterHandshakeOutcome::Reject { error_code, reason } =
+            ep.msock.middlewares.after_handshake(&conn.to_info()).await
         {
             conn.close(error_code, &reason);
             return Err(e!(ConnectingError::LocallyRejected));

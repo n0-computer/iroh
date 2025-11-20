@@ -207,7 +207,7 @@ impl Builder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
-            middlewares: Default::default(),
+            middlewares: self.middlewares,
         };
 
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
