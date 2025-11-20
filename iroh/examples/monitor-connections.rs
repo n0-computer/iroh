@@ -30,7 +30,6 @@ async fn main() -> Result {
         .instrument(info_span!("server"))
         .await?;
     let server_addr = server.addr();
-    info!("server addr: {server_addr:?}");
 
     let count = 2;
 
@@ -66,7 +65,6 @@ async fn main() -> Result {
                 s.finish().anyerr()?;
                 conn.closed().await;
             }
-            info!("done");
             server.close().await;
             n0_error::Ok(())
         }
