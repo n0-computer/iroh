@@ -18,14 +18,14 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{e, ensure, stack_error};
+use n0_error::{ensure, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 pub use super::magicsock::{
-    AddEndpointAddrError, DirectAddr, DirectAddrType, PathInfo,
+    DirectAddr, DirectAddrType, PathInfo,
     remote_map::{PathInfoList, Source},
 };
 #[cfg(wasm_browser)]
@@ -33,14 +33,11 @@ use crate::discovery::pkarr::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    discovery::{
-        ConcurrentDiscovery, DiscoveryError, DiscoveryTask, DynIntoDiscovery, IntoDiscovery,
-        UserData,
-    },
+    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
     endpoint::presets::Preset,
     magicsock::{
         self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT,
-        mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
+        RemoteStateActorStoppedError, mapped_addrs::MappedAddr,
     },
     metrics::EndpointMetrics,
     net_report::Report,
@@ -73,13 +70,6 @@ pub use self::connection::{
     OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError, ZeroRttStatus,
 };
 pub use crate::magicsock::transports::TransportConfig;
-
-/// The delay to fall back to discovery when direct addresses fail.
-///
-/// When a connection is attempted with an [`EndpointAddr`] containing direct addresses the
-/// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
-/// is still no connection the configured [`crate::discovery::Discovery`] will be used however.
-const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Builder for [`Endpoint`].
 ///
@@ -522,17 +512,21 @@ pub struct Endpoint {
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
+#[allow(private_interfaces)]
 pub enum ConnectWithOptsError {
-    #[error(transparent)]
-    AddEndpointAddr { source: AddEndpointAddrError },
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: GetMappingAddressError },
+    NoAddress { source: DiscoveryError },
     #[error("Unable to connect to remote")]
     Quinn {
         #[error(std_err)]
         source: quinn_proto::ConnectError,
+    },
+    #[error("Internal consistency error")]
+    InternalConsistencyError {
+        /// Private source type, cannot be created publicly.
+        source: RemoteStateActorStoppedError,
     },
 }
 
@@ -563,18 +557,6 @@ pub enum BindError {
     Discovery {
         source: crate::discovery::IntoDiscoveryError,
     },
-}
-
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub enum GetMappingAddressError {
-    #[error("Discovery service required due to missing addressing information")]
-    DiscoveryStart { source: DiscoveryError },
-    #[error("Discovery service failed")]
-    Discover { source: DiscoveryError },
-    #[error("No addressing information found")]
-    NoAddress,
 }
 
 impl Endpoint {
@@ -704,39 +686,21 @@ impl Endpoint {
         options: ConnectOptions,
     ) -> Result<Connecting, ConnectWithOptsError> {
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
-        tracing::Span::current().record(
-            "remote",
-            tracing::field::display(endpoint_addr.id.fmt_short()),
-        );
+        let endpoint_id = endpoint_addr.id;
+
+        tracing::Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
 
         // Connecting to ourselves is not supported.
-        ensure!(
-            endpoint_addr.id != self.id(),
-            ConnectWithOptsError::SelfConnect
-        );
+        ensure!(endpoint_id != self.id(), ConnectWithOptsError::SelfConnect);
 
-        if !endpoint_addr.is_empty() {
-            self.add_endpoint_addr(endpoint_addr.clone(), Source::App)
-                .await?;
-        }
-        let endpoint_id = endpoint_addr.id;
-        let ip_addresses: Vec<_> = endpoint_addr.ip_addrs().cloned().collect();
-        let relay_url = endpoint_addr.relay_urls().next().cloned();
         trace!(
             dst_endpoint_id = %endpoint_id.fmt_short(),
-            ?relay_url,
-            ?ip_addresses,
+            relay_url = ?endpoint_addr.relay_urls().next().cloned(),
+            ip_addresses = ?endpoint_addr.ip_addrs().cloned().collect::<Vec<_>>(),
             "connecting",
         );
 
-        // When we start a connection we want to send the QUIC Initial packets on all the
-        // known paths for the remote endpoint.  For this we use an EndpointIdMappedAddr as
-        // destination for Quinn.  Start discovery for this endpoint if it's enabled and we have
-        // no valid or verified address information for this endpoint.  Dropping the discovery
-        // cancels any still running task.
-        let (mapped_addr, _discovery_drop_guard) = self
-            .get_mapping_addr_and_maybe_start_discovery(endpoint_addr)
-            .await?;
+        let mapped_addr = self.msock.resolve_remote(endpoint_addr).await??;
 
         let transport_config = options
             .transport_config
@@ -764,12 +728,7 @@ impl Endpoint {
             .endpoint()
             .connect_with(client_config, dest_addr, server_name)?;
 
-        Ok(Connecting::new(
-            connect,
-            self.clone(),
-            endpoint_id,
-            _discovery_drop_guard,
-        ))
+        Ok(Connecting::new(connect, self.clone(), endpoint_id))
     }
 
     /// Accepts an incoming connection on the endpoint.
@@ -785,43 +744,6 @@ impl Endpoint {
             inner: self.msock.endpoint().accept(),
             ep: self.clone(),
         }
-    }
-
-    // # Methods for manipulating the internal state about other endpoints.
-
-    /// Informs this [`Endpoint`] about addresses of the iroh endpoint.
-    ///
-    /// This updates the local state for the remote endpoint.  If the provided [`EndpointAddr`]
-    /// contains a [`RelayUrl`] this will be used as the new relay server for this endpoint.  If
-    /// it contains any new IP endpoints they will also be stored and tried when next
-    /// connecting to this endpoint. Any address that matches this endpoint's direct addresses will be
-    /// silently ignored.
-    ///
-    /// The *source* is used for logging exclusively and will not be stored.
-    ///
-    /// # Using endpoint discovery instead
-    ///
-    /// It is strongly advised to use endpoint discovery using the [`StaticProvider`] instead.
-    /// This provides more flexibility and future proofing.
-    ///
-    /// # Errors
-    ///
-    /// Will return an error if we attempt to add our own [`EndpointId`] to the endpoint map or
-    /// if the direct addresses are a subset of ours.
-    ///
-    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    /// [`RelayUrl`]: crate::RelayUrl
-    pub(crate) async fn add_endpoint_addr(
-        &self,
-        endpoint_addr: EndpointAddr,
-        source: Source,
-    ) -> Result<(), AddEndpointAddrError> {
-        // Connecting to ourselves is not supported.
-        ensure!(
-            endpoint_addr.id != self.id(),
-            AddEndpointAddrError::OwnAddress
-        );
-        self.msock.add_endpoint_addr(endpoint_addr, source).await
     }
 
     // # Getter methods for properties of this Endpoint itself.
@@ -1211,62 +1133,6 @@ impl Endpoint {
     }
 
     // # Remaining private methods
-
-    /// Return the quic mapped address for this `endpoint_id` and possibly start discovery
-    /// services if discovery is enabled on this magic endpoint.
-    ///
-    /// This will launch discovery in all cases except if:
-    /// 1) we do not have discovery enabled
-    /// 2) we have discovery enabled, but already have at least one verified, unexpired
-    ///    addresses for this `endpoint_id`
-    ///
-    /// # Errors
-    ///
-    /// This method may fail if we have no way of dialing the endpoint. This can occur if
-    /// we were given no dialing information in the [`EndpointAddr`] and no discovery
-    /// services were configured or if discovery failed to fetch any dialing information.
-    async fn get_mapping_addr_and_maybe_start_discovery(
-        &self,
-        endpoint_addr: EndpointAddr,
-    ) -> Result<(EndpointIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
-        let endpoint_id = endpoint_addr.id;
-
-        // Only return a mapped addr if we have some way of dialing this endpoint, in other
-        // words, we have either a relay URL or at least one direct address.
-        let addr = if self.msock.has_send_address(endpoint_id).await {
-            Some(self.msock.get_endpoint_mapped_addr(endpoint_id))
-        } else {
-            None
-        };
-        match addr {
-            Some(maddr) => {
-                // We have some way of dialing this endpoint, but that doesn't mean we can
-                // connect to any of these addresses.  Start discovery after a small delay.
-                let discovery =
-                    DiscoveryTask::start_after_delay(self, endpoint_id, DISCOVERY_WAIT_PERIOD)
-                        .ok()
-                        .flatten();
-                Ok((maddr, discovery))
-            }
-
-            None => {
-                // We have no known addresses or relay URLs for this endpoint.
-                // So, we start a discovery task and wait for the first result to arrive, and
-                // only then continue, because otherwise we wouldn't have any
-                // path to the remote endpoint.
-                let res = DiscoveryTask::start(self.clone(), endpoint_id);
-                let mut discovery =
-                    res.map_err(|err| e!(GetMappingAddressError::DiscoveryStart, err))?;
-                discovery
-                    .first_arrived()
-                    .await
-                    .map_err(|err| e!(GetMappingAddressError::Discover, err))?;
-
-                let addr = self.msock.get_endpoint_mapped_addr(endpoint_id);
-                Ok((addr, Some(discovery)))
-            }
-        }
-    }
 
     #[cfg(test)]
     pub(crate) fn magic_sock(&self) -> Handle {
