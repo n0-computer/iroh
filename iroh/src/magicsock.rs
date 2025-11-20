@@ -94,7 +94,7 @@ pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
 /// Pretty arbitrary and high right now.
-pub(crate) const MAX_MULTIPATH_PATHS: u32 = 16;
+pub(crate) const MAX_MULTIPATH_PATHS: u32 = 12;
 
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
 #[stack_error(add_meta, derive)]

@@ -587,13 +587,12 @@ impl RemoteStateActor {
             trace!("not holepunching: no client connection");
             return;
         };
-        // TODO: these are the local addresses, so this will be very sad.
-        let Ok(remote_candidates) = conn
-            .get_remote_nat_traversal_addresses()
-            .and_then(|addrs| Ok(BTreeSet::from_iter(addrs)))
-        else {
-            warn!("boo");
-            return;
+        let remote_candidates = match conn.get_remote_nat_traversal_addresses() {
+            Ok(addrs) => BTreeSet::from_iter(addrs),
+            Err(err) => {
+                warn!("failed to get nat candidate addresses: {err:#}");
+                return;
+            }
         };
         // let remote_candidates = BTreeSet::from_iter(conn.get_nat_traversal_addresses());
         let local_candidates: BTreeSet<SocketAddr> = self
@@ -656,9 +655,8 @@ impl RemoteStateActor {
                     remote_candidates: BTreeSet::from_iter(remote_candidates),
                 });
             }
-            Err(_) => {
-                // TODO: log error
-                warn!("failed to initiate NAT traversal");
+            Err(err) => {
+                warn!("failed to initiate NAT traversal {err:#}");
             }
         }
     }

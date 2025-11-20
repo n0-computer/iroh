@@ -81,11 +81,6 @@ impl RemotePathState {
         self.emit_pending_resolve_requests(result.err());
     }
 
-    /// Returns an iterator over all paths and their state.
-    pub(super) fn iter(&self) -> impl Iterator<Item = (&transports::Addr, &PathState)> {
-        self.paths.iter()
-    }
-
     /// Returns an iterator over the addresses of all paths.
     pub(super) fn addrs(&self) -> impl Iterator<Item = &transports::Addr> {
         self.paths.keys()

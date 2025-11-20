@@ -174,7 +174,9 @@ impl Builder {
         self.transport_config
             .default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
         self.transport_config
-            .max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS);
+            .max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS + 1);
+        self.transport_config
+            .set_max_remote_nat_traversal_addresses(MAX_MULTIPATH_PATHS as u8);
 
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
