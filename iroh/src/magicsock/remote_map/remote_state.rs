@@ -453,7 +453,6 @@ impl RemoteStateActor {
                 self.paths
                     .insert(path_remote, Source::Connection { _0: Private });
                 self.select_path();
-                // TODO(ramfox): do we need to prune paths here?
                 self.prune_ip_paths();
 
                 if path_remote_is_ip {
@@ -771,7 +770,8 @@ impl RemoteStateActor {
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id);
                     self.paths
-                        .insert(path_remote, Source::Connection { _0: Private });
+                        .insert(path_remote.clone(), Source::Connection { _0: Private });
+                    self.paths.holepunched(&path_remote);
                 }
 
                 self.select_path();
@@ -936,11 +936,6 @@ impl RemoteStateActor {
     /// TODO: fix up docs once review indicates this is actually
     /// the criteria for pruning.
     fn prune_ip_paths(&mut self) {
-        // if the total number of paths, relay or ip, is less
-        // than the max inactive ip addrs we allow, bail early
-        if self.paths.len() < path_state::MAX_INACTIVE_IP_ADDRESSES {
-            return;
-        }
         let open_paths = self
             .connections
             .values()

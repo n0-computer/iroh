@@ -22,6 +22,9 @@ pub(super) const MAX_INACTIVE_IP_ADDRESSES: usize = 20;
 /// TODO(ramfox): fix this comment it's not clear enough
 const LAST_SOURCE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 
+/// Duration after sending a ping in which we assume holepunching failed.
+const PING_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Map of all paths that we are aware of for a remote endpoint.
 ///
 /// Also stores a list of resolve requests which are triggered once at least one path is known,
@@ -48,6 +51,18 @@ impl RemotePathState {
             .sources
             .insert(source.clone(), Instant::now());
         self.emit_pending_resolve_requests(None);
+    }
+
+    /// Record in the [`PathState`] for the given [`Addr`], that we have
+    /// successfully holepunched.
+    ///
+    /// If this path does exist, no information is added.
+    ///
+    /// [`Addr`]: transports::Addr
+    pub(super) fn holepunched(&mut self, addr: &transports::Addr) {
+        if let Some(path) = self.paths.get_mut(addr) {
+            path.holepunched = true;
+        }
     }
 
     /// Inserts multiple addresses into our list of potential paths.
@@ -120,10 +135,6 @@ impl RemotePathState {
         }
     }
 
-    pub(super) fn len(&self) -> usize {
-        self.paths.len()
-    }
-
     /// TODO: fix up docs once review indicates this is actually
     /// the criteria for pruning.
     pub(super) fn prune_ip_paths<'a>(
@@ -154,6 +165,22 @@ pub(super) struct PathState {
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
     /// of the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
+    /// The last ping sent on this path.
+    pub(super) ping_sent: Option<(TransactionId, Instant)>,
+    /// Last time we successfully holepunched.
+    pub(super) holepunched: bool,
+}
+
+impl PathState {
+    /// Returns true if a ping was sent in the last [`PING_DURATION`] amount of time.
+    fn ping_in_process(&self, now: &Instant) -> bool {
+        if let Some((_, ping_sent)) = self.ping_sent {
+            if ping_sent + PING_TIMEOUT > *now {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 fn prune_ip_paths<'a>(
@@ -206,12 +233,19 @@ fn prune_ip_paths<'a>(
 
 /// Based on the [`PathState`], returns true if we should keep this path.
 ///
-/// Currently we have two criteria:
-/// 1) This path has sent a Ping
-/// 2) The last time we learned about this address was greater than LAST_SOURCE_PRUNE_DURATION
+/// Currently we have four criteria:
+/// 1) This path has successfully holepunched, ever
+/// 2) We have never attempted to holepunch on this path
+/// 3) We are in the process of holepunching
+/// 4) The last time we learned about this address was greater than LAST_SOURCE_PRUNE_DURATION
+///
+/// In other words, paths that have never successfully holepunched, that we learned about
+/// over `LAST_SOURCE_PRUNE_DURATION` ago, should not be kept.
 fn keep_path(state: &PathState, now: &Instant) -> bool {
-    // if we have never sent a ping, don't remove it
-    state.ping_sent.is_none()
+    // if we have never successfully holepunched
+    state.holepunched
+        || state.ping_sent.is_none()
+        || state.ping_in_process(now)
         || state
             .sources
             .values()
@@ -245,10 +279,10 @@ mod tests {
     }
 
     /// Create a PathState with sources at a specific time offset
-    fn test_path_state(time_offset: Duration, sent_ping: bool) -> PathState {
+    fn test_path_state(time_offset: Duration, sent_ping: Option<Duration>) -> PathState {
         let mut state = PathState::default();
-        if sent_ping {
-            state.ping_sent = Some(TransactionId::default());
+        if let Some(sent_ping_ago) = sent_ping {
+            state.ping_sent = Some((TransactionId::default(), Instant::now() - sent_ping_ago));
         }
         state.sources.insert(
             Source::Connection { _0: Private },
@@ -264,7 +298,7 @@ mod tests {
         for i in 0..15 {
             paths.insert(
                 test_ip_addr(i),
-                test_path_state(Duration::from_secs(0), false),
+                test_path_state(Duration::from_secs(0), None),
             );
         }
 
@@ -291,7 +325,7 @@ mod tests {
         for i in 0..25 {
             paths.insert(
                 test_ip_addr(i),
-                test_path_state(Duration::from_secs(0), false),
+                test_path_state(Duration::from_secs(0), None),
             );
         }
 
@@ -323,7 +357,10 @@ mod tests {
         for i in 0..20 {
             paths.insert(
                 test_ip_addr(i),
-                test_path_state(Duration::from_secs(60), true), // 1 minute ago
+                test_path_state(
+                    Duration::from_secs(60),       // learn about this path 1 min ago
+                    Some(Duration::from_secs(60)), // sent ping 1 min ago
+                ),
             );
         }
 
@@ -331,7 +368,10 @@ mod tests {
         for i in 20..30 {
             paths.insert(
                 test_ip_addr(i),
-                test_path_state(Duration::from_secs(180), true), // 3 minutes ago
+                test_path_state(
+                    Duration::from_secs(180), // learned abou this path 3 mins ago
+                    Some(Duration::from_secs(60)),
+                ), // sent ping 1 min ago
             );
         }
 
@@ -380,7 +420,10 @@ mod tests {
         for i in 0..30 {
             paths.insert(
                 test_ip_addr(i),
-                test_path_state(Duration::from_secs(180), true), // 3 minutes ago
+                test_path_state(
+                    Duration::from_secs(180),      // learned about this path 3 mins ago
+                    Some(Duration::from_secs(60)), // sent ping 1 min ago
+                ),
             );
         }
 
