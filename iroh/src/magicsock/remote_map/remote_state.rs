@@ -126,7 +126,8 @@ pub(super) struct RemoteStateActor {
     /// Our local addresses.
     ///
     /// These are our local addresses and any reflexive transport addresses.
-    local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
+    /// They are called "direct addresses" in the magic socket actor.
+    local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// Shared state to allow to encrypt DISCO messages to peers.
     disco: DiscoState,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
@@ -181,7 +182,7 @@ impl RemoteStateActor {
     pub(super) fn new(
         endpoint_id: EndpointId,
         local_endpoint_id: EndpointId,
-        local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
+        local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
@@ -192,7 +193,7 @@ impl RemoteStateActor {
             endpoint_id,
             local_endpoint_id,
             metrics,
-            local_addrs,
+            local_direct_addrs,
             relay_mapped_addrs,
             discovery,
             disco,
@@ -275,7 +276,7 @@ impl RemoteStateActor {
                         self.selected_path.set(None).ok();
                     }
                 }
-                res = self.local_addrs.updated() => {
+                res = self.local_direct_addrs.updated() => {
                     if let Err(n0_watcher::Disconnected) = res {
                         trace!("direct address watcher disconnected, shutting down");
                         break;
@@ -387,7 +388,11 @@ impl RemoteStateActor {
                 // We never want to send to our local addresses.
                 // The local address set is updated in the main loop so we can use `peek` here.
                 if let transports::Addr::Ip(sockaddr) = addr
-                    && self.local_addrs.peek().iter().any(|a| a.addr == *sockaddr)
+                    && self
+                        .local_direct_addrs
+                        .peek()
+                        .iter()
+                        .any(|a| a.addr == *sockaddr)
                 {
                     trace!(%sockaddr, "not sending datagram to our own address");
                 } else if let Err(err) = self.send_datagram(addr.clone(), transmit.clone()).await {
@@ -662,7 +667,7 @@ impl RemoteStateActor {
 
         let remote_addrs: BTreeSet<SocketAddr> = self.remote_hp_addrs();
         let local_addrs: BTreeSet<SocketAddr> = self
-            .local_addrs
+            .local_direct_addrs
             .get()
             .iter()
             .map(|daddr| daddr.addr)
@@ -754,7 +759,7 @@ impl RemoteStateActor {
 
         // Send the DISCO CallMeMaybe message over the relay.
         let my_numbers: Vec<SocketAddr> = self
-            .local_addrs
+            .local_direct_addrs
             .get()
             .iter()
             .map(|daddr| daddr.addr)

@@ -57,7 +57,8 @@ pub(crate) struct RemoteMap {
     /// The endpoint ID of the local endpoint.
     local_endpoint_id: EndpointId,
     metrics: Arc<MagicsockMetrics>,
-    local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
+    /// The "direct" addresses known for our local endpoint
+    local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     disco: DiscoState,
     sender: TransportsSender,
     discovery: ConcurrentDiscovery,
@@ -69,7 +70,7 @@ impl RemoteMap {
         local_endpoint_id: EndpointId,
         metrics: Arc<MagicsockMetrics>,
 
-        local_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
+        local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
         sender: TransportsSender,
         discovery: ConcurrentDiscovery,
@@ -80,7 +81,7 @@ impl RemoteMap {
             relay_mapped_addrs: Default::default(),
             local_endpoint_id,
             metrics,
-            local_addrs,
+            local_direct_addrs,
             disco,
             sender,
             discovery,
@@ -138,7 +139,7 @@ impl RemoteMap {
         let handle = RemoteStateActor::new(
             eid,
             self.local_endpoint_id,
-            self.local_addrs.clone(),
+            self.local_direct_addrs.clone(),
             self.disco.clone(),
             self.relay_mapped_addrs.clone(),
             self.metrics.clone(),
