@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use std::pin::Pin;
 
 use iroh_base::EndpointAddr;
@@ -9,23 +7,40 @@ use crate::endpoint::connection::ConnectionInfo;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// Outcome of [`Middleware::before_connect`]
 #[derive(Debug)]
 pub enum BeforeConnectOutcome {
+    /// Accept the connect attempt.
     Accept,
+    /// Reject the connect attempt.
     Reject,
 }
 
+/// Outcome of [`Middleware::after_handshake`]
 #[derive(Debug)]
 pub enum AfterHandshakeOutcome {
+    /// Accept the connection.
     Accept,
-    Reject { error_code: VarInt, reason: Vec<u8> },
+    /// Reject and close the connection.
+    ///
+    /// See [`Connection::close`] for details on `error_code` and `reason`.
+    ///
+    /// [`Connection::close`]: crate::endpoint::Connection::close
+    Reject {
+        /// Error code to send with the connection close frame.
+        error_code: VarInt,
+        /// Close reason to send with the connection close frame.
+        reason: Vec<u8>,
+    },
 }
 
 impl AfterHandshakeOutcome {
+    /// Returns [`Self::Accept`].
     pub fn accept() -> Self {
         Self::Accept
     }
 
+    /// Returns [`Self::Reject`].
     pub fn reject(&self, error_code: VarInt, reason: &[u8]) -> Self {
         Self::Reject {
             error_code,
@@ -34,7 +49,31 @@ impl AfterHandshakeOutcome {
     }
 }
 
+/// Middlewares intercept the connection establishment process of an [`Endpoint`].
+///
+/// Use [`Builder::middleware`] to install middlewares onto an endpoint.
+///
+/// For each hook, all installed middlewares are invoked in the order they were installed on
+/// the endpoint builder. If a middleware returns `Accept`, processing continues with the next
+/// middleware. If a middleware returns `Reject`, processing is aborted and further middlewares
+/// are not invoked for this hook.
+///
+/// ## Notes to implementors
+///
+/// As middlewares are stored on the endpoint, you must make sure to never store an [`Endpoint`]
+/// on the middleware struct itself, as this would create reference counting loop and cause the
+/// endpoint to never be dropped, leaking memory.
+///
+/// [`Endpoint`]: crate::Endpoint
+/// [`Builder::middleware`]: crate::endpoint::Builder::middleware
 pub trait Middleware: std::fmt::Debug + Send + Sync {
+    /// Intercept outgoing connections before they are started.
+    ///
+    /// This is called whenever a new outgoing connection is initiated via [`Endpoint::connect`]
+    /// or [`Endpoint::connect_with_opts`].
+    ///
+    /// If any middleware returns [`BeforeConnectOutcome::Reject`], the connection attempt is aborted
+    /// before any packets are sent to the remote.
     fn before_connect<'a>(
         &'a self,
         _remote_addr: &'a EndpointAddr,
@@ -43,6 +82,11 @@ pub trait Middleware: std::fmt::Debug + Send + Sync {
         async { BeforeConnectOutcome::Accept }
     }
 
+    /// Intercept both incoming and outgoing connections once the TLS handshake has completed.
+    ///
+    /// At this point in time, we know the remote's endpoint id and ALPN. If any middleware returns
+    /// [`AfterHandshakeOutcome::Reject`], the connection is closed with the provided error code
+    /// and reason.
     fn after_handshake<'a>(
         &'a self,
         _conn: &'a ConnectionInfo,

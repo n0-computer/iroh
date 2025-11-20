@@ -463,7 +463,16 @@ impl Builder {
         self
     }
 
-    /// Adds a middleware to the endpoint.
+    /// Install a middleware onto the endpoint.
+    ///
+    /// Middlewares intercept the connection establishment process of an [`Endpoint`].
+    ///
+    /// You can install multiple middlewares by calling this function multiple times.
+    /// Order matters: Middlewares are invoked in the order they were installed onto the endpoint
+    /// builder. Once a middleware returns reject for a middleware hook, further processing
+    /// is aborted and other middlewares won't be invoked.
+    ///
+    /// See [`Middleware`] for details on the possible interception points in the connection lifecycle.
     pub fn middleware(mut self, middleware: impl Middleware + 'static) -> Self {
         self.middlewares.push(middleware);
         self
