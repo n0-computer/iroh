@@ -532,7 +532,7 @@ impl EndpointStateActor {
         };
         // TODO: these are the local addresses, so this will be very sad.
         let Ok(remote_candidates) = conn
-            .get_nat_traversal_addresses()
+            .get_remote_nat_traversal_addresses()
             .and_then(|addrs| Ok(BTreeSet::from_iter(addrs)))
         else {
             warn!("boo");
