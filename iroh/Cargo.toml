@@ -40,7 +40,7 @@ iroh-base = { version = "0.95.1", default-features = false, features = ["key", "
 iroh-relay = { version = "0.95", path = "../iroh-relay", default-features = false }
 n0-future = "0.3.0"
 n0-error = "0.1.0"
-n0-watcher = "0.5"
+n0-watcher = "0.6"
 netwatch = { version = "0.12" }
 pin-project = "1"
 pkarr = { version = "5", default-features = false, features = ["relays"] }
