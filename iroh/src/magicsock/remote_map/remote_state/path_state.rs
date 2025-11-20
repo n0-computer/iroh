@@ -15,8 +15,6 @@ use super::Source;
 use crate::{discovery::DiscoveryError, magicsock::transports};
 
 /// Number of addresses that are not active that we keep around per endpoint.
-///
-/// See [`EndpointState::prune_ip_paths`].
 pub(super) const MAX_INACTIVE_IP_ADDRESSES: usize = 20;
 
 /// Max duration of how long ago we learned about this source before we are willing
