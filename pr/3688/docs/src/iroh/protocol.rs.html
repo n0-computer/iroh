@@ -680,8 +680,8 @@
 <a href=#680 id=680 data-nosnippet>680</a>
 <a href=#681 id=681 data-nosnippet>681</a>    <span class="attr">#[tokio::test]
 <a href=#682 id=682 data-nosnippet>682</a>    </span><span class="kw">async fn </span>test_limiter_middleware() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#683 id=683 data-nosnippet>683</a>        tracing_subscriber::fmt::try_init().ok();
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="attr">#[derive(Debug, Default)]
+<a href=#683 id=683 data-nosnippet>683</a>        <span class="comment">// tracing_subscriber::fmt::try_init().ok();
+<a href=#684 id=684 data-nosnippet>684</a>        </span><span class="attr">#[derive(Debug, Default)]
 <a href=#685 id=685 data-nosnippet>685</a>        </span><span class="kw">struct </span>LimitMiddleware;
 <a href=#686 id=686 data-nosnippet>686</a>        <span class="kw">impl </span>Middleware <span class="kw">for </span>LimitMiddleware {
 <a href=#687 id=687 data-nosnippet>687</a>            <span class="kw">async fn </span>before_connect&lt;<span class="lifetime">'a</span>&gt;(
