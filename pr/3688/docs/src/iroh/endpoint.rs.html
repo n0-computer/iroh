@@ -205,7 +205,7 @@
 <a href=#205 id=205 data-nosnippet>205</a>            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 <a href=#206 id=206 data-nosnippet>206</a>            </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
 <a href=#207 id=207 data-nosnippet>207</a>            metrics,
-<a href=#208 id=208 data-nosnippet>208</a>            middlewares: Default::default(),
+<a href=#208 id=208 data-nosnippet>208</a>            middlewares: <span class="self">self</span>.middlewares,
 <a href=#209 id=209 data-nosnippet>209</a>        };
 <a href=#210 id=210 data-nosnippet>210</a>
 <a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>msock = magicsock::MagicSock::spawn(msock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
