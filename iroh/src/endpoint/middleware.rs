@@ -4,7 +4,6 @@ use std::pin::Pin;
 
 use iroh_base::EndpointAddr;
 use quinn::VarInt;
-use tracing::info;
 
 use crate::endpoint::connection::ConnectionInfo;
 
