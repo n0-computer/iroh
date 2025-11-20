@@ -90,7 +90,7 @@ struct Monitor {
 }
 
 impl Middleware for Monitor {
-    async fn handshake_completed(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
+    async fn after_handshake(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
         self.tx.send(conn.clone()).ok();
         AfterHandshakeOutcome::Accept
     }

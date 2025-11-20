@@ -43,7 +43,7 @@ pub trait Middleware: std::fmt::Debug + Send + Sync {
         async { BeforeConnectOutcome::Accept }
     }
 
-    fn handshake_completed<'a>(
+    fn after_handshake<'a>(
         &'a self,
         _conn: &'a ConnectionInfo,
     ) -> impl Future<Output = AfterHandshakeOutcome> + Send + 'a {
@@ -57,7 +57,7 @@ pub(crate) trait DynMiddleware: std::fmt::Debug + Send + Sync {
         remote_addr: &'a EndpointAddr,
         alpn: &'a [u8],
     ) -> BoxFuture<'a, BeforeConnectOutcome>;
-    fn handshake_completed<'a>(
+    fn after_handshake<'a>(
         &'a self,
         conn: &'a ConnectionInfo,
     ) -> BoxFuture<'a, AfterHandshakeOutcome>;
@@ -72,11 +72,11 @@ impl<T: Middleware> DynMiddleware for T {
         Box::pin(Middleware::before_connect(self, remote_addr, alpn))
     }
 
-    fn handshake_completed<'a>(
+    fn after_handshake<'a>(
         &'a self,
         conn: &'a ConnectionInfo,
     ) -> BoxFuture<'a, AfterHandshakeOutcome> {
-        Box::pin(Middleware::handshake_completed(self, conn))
+        Box::pin(Middleware::after_handshake(self, conn))
     }
 }
 
@@ -109,7 +109,7 @@ impl MiddlewareList {
 
     pub(super) async fn after_handshake(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
         for middleware in self.inner.iter() {
-            match middleware.handshake_completed(conn).await {
+            match middleware.after_handshake(conn).await {
                 AfterHandshakeOutcome::Accept => continue,
                 reject @ AfterHandshakeOutcome::Reject { .. } => {
                     return reject;
