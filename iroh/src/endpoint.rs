@@ -1331,7 +1331,7 @@ mod tests {
     use quinn::ConnectionError;
     use rand::SeedableRng;
     use tokio::sync::oneshot;
-    use tracing::{Instrument, error_span, info, info_span, instrument};
+    use tracing::{Instrument, debug, error_span, info, info_span, instrument};
     use tracing_test::traced_test;
 
     use super::Endpoint;
@@ -2519,15 +2519,15 @@ mod tests {
         info!(id = %server.id().fmt_short(), "server online");
         let server_addr = server.addr();
 
-        // We abort this example after two connections have finished.
-        let count = 2;
+        // We abort this example after 3 connections have finished.
+        let count = 3;
 
         // Our server accepts connections, opens an uni stream, writes some data,
         // and waits for the connection to be closed.
         let server_task = tokio::spawn(
             async move {
-                for _i in 0..count {
-                    info!("wait for connection");
+                for i in 0..count {
+                    info!("wait for connection {i}");
                     let conn = server
                         .accept()
                         .await
@@ -2537,9 +2537,9 @@ mod tests {
                     let mut s = conn.open_uni().await.anyerr()?;
                     s.write_all(b"hi").await.anyerr()?;
                     s.finish().anyerr()?;
-                    info!("written");
+                    debug!("written");
                     conn.closed().await;
-                    info!("closed");
+                    info!("connection {i} complete");
                 }
                 server.close().await;
                 n0_error::Ok(())
@@ -2547,10 +2547,10 @@ mod tests {
             .instrument(info_span!("server")),
         );
 
-        // Our client tasks creates a new endpoint and connects to the server two times.
+        // Our client tasks creates a new endpoint and connects to the server n times.
         let client_task = tokio::spawn(
             async move {
-                for _i in 0..count {
+                for i in 0..count {
                     let client = Endpoint::builder()
                         .relay_mode(relay_mode.clone())
                         .insecure_skip_relay_cert_verify(true)
@@ -2565,12 +2565,13 @@ mod tests {
                     info!("connected");
                     let mut s = conn.accept_uni().await.anyerr()?;
                     let data = s.read_to_end(2).await.anyerr()?;
-                    info!("read");
+                    debug!("read");
                     ensure_any!(data == b"hi", "unexpected data");
                     conn.close(23u32.into(), b"bye");
-                    info!("conn closed");
+                    debug!("conn closed");
                     client.close().await;
-                    info!("endpoint closed");
+                    debug!("endpoint closed");
+                    info!("client round {i} complete");
                 }
                 n0_error::Ok(())
             }
