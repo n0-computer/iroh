@@ -54,12 +54,12 @@ pub trait Middleware: std::fmt::Debug + Send + Sync {
 pub(crate) trait DynMiddleware: std::fmt::Debug + Send + Sync {
     fn before_connect<'a>(
         &'a self,
-        _remote_addr: &'a EndpointAddr,
-        _alpn: &'a [u8],
+        remote_addr: &'a EndpointAddr,
+        alpn: &'a [u8],
     ) -> BoxFuture<'a, BeforeConnectOutcome>;
     fn handshake_completed<'a>(
         &'a self,
-        _conn: &'a ConnectionInfo,
+        conn: &'a ConnectionInfo,
     ) -> BoxFuture<'a, AfterHandshakeOutcome>;
 }
 

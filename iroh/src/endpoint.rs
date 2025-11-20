@@ -50,6 +50,7 @@ pub(crate) mod middleware;
 pub mod presets;
 
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
+pub use middleware::{AfterHandshakeOutcome, BeforeConnectOutcome, Middleware};
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
@@ -73,7 +74,6 @@ pub use self::connection::{
     ZeroRttStatus,
 };
 pub use crate::magicsock::transports::TransportConfig;
-pub use middleware::{AfterHandshakeOutcome, BeforeConnectOutcome, Middleware};
 
 /// Builder for [`Endpoint`].
 ///
