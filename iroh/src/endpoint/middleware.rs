@@ -35,41 +35,47 @@ impl AfterHandshakeOutcome {
 }
 
 pub trait Middleware: std::fmt::Debug + Send + Sync {
-    fn before_connect(
+    fn before_connect<'a>(
         &self,
-        _remote_addr: &EndpointAddr,
-        _alpn: &[u8],
-    ) -> impl Future<Output = BeforeConnectOutcome> + Send + '_ {
+        _remote_addr: &'a EndpointAddr,
+        _alpn: &'a [u8],
+    ) -> impl Future<Output = BeforeConnectOutcome> + Send + 'a {
         async { BeforeConnectOutcome::Accept }
     }
 
-    fn handshake_completed(
-        &self,
-        _conn: &ConnectionInfo,
-    ) -> impl Future<Output = AfterHandshakeOutcome> + Send + '_ {
+    fn handshake_completed<'a>(
+        &'a self,
+        _conn: &'a ConnectionInfo,
+    ) -> impl Future<Output = AfterHandshakeOutcome> + Send + 'a {
         async { AfterHandshakeOutcome::accept() }
     }
 }
 
 pub(crate) trait DynMiddleware: std::fmt::Debug + Send + Sync {
-    fn before_connect(
+    fn before_connect<'a>(
         &self,
-        _remote_addr: &EndpointAddr,
-        _alpn: &[u8],
-    ) -> BoxFuture<'_, BeforeConnectOutcome>;
-    fn handshake_completed(&self, _conn: &ConnectionInfo) -> BoxFuture<'_, AfterHandshakeOutcome>;
+        _remote_addr: &'a EndpointAddr,
+        _alpn: &'a [u8],
+    ) -> BoxFuture<'a, BeforeConnectOutcome>;
+    fn handshake_completed<'a>(
+        &'a self,
+        _conn: &'a ConnectionInfo,
+    ) -> BoxFuture<'a, AfterHandshakeOutcome>;
 }
 
 impl<T: Middleware> DynMiddleware for T {
-    fn before_connect(
+    fn before_connect<'a>(
         &self,
-        remote_addr: &EndpointAddr,
-        alpn: &[u8],
-    ) -> BoxFuture<'_, BeforeConnectOutcome> {
+        remote_addr: &'a EndpointAddr,
+        alpn: &'a [u8],
+    ) -> BoxFuture<'a, BeforeConnectOutcome> {
         Box::pin(Middleware::before_connect(self, remote_addr, alpn))
     }
 
-    fn handshake_completed(&self, conn: &ConnectionInfo) -> BoxFuture<'_, AfterHandshakeOutcome> {
+    fn handshake_completed<'a>(
+        &'a self,
+        conn: &'a ConnectionInfo,
+    ) -> BoxFuture<'a, AfterHandshakeOutcome> {
         Box::pin(Middleware::handshake_completed(self, conn))
     }
 }

@@ -40,7 +40,7 @@ use tracing::warn;
 
 use crate::{
     Endpoint,
-    endpoint::middleware::AfterHandshakeOutcome,
+    endpoint::AfterHandshakeOutcome,
     magicsock::{
         RemoteStateActorStoppedError,
         remote_map::{PathInfoList, PathsWatcher},
