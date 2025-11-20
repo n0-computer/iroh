@@ -680,7 +680,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_limiter_middleware() -> Result {
-        tracing_subscriber::fmt::try_init().ok();
+        // tracing_subscriber::fmt::try_init().ok();
         #[derive(Debug, Default)]
         struct LimitMiddleware;
         impl Middleware for LimitMiddleware {
