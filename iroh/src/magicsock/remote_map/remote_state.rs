@@ -386,10 +386,8 @@ impl RemoteStateActor {
                     && self.local_addrs.peek().iter().any(|a| a.addr == *sockaddr)
                 {
                     trace!(%sockaddr, "not sending datagram to our own address");
-                } else {
-                    if let Err(err) = self.send_datagram(addr.clone(), transmit.clone()).await {
-                        debug!(?addr, "failed to send datagram: {err:#}");
-                    }
+                } else if let Err(err) = self.send_datagram(addr.clone(), transmit.clone()).await {
+                    debug!(?addr, "failed to send datagram: {err:#}");
                 }
             }
             // This message is received *before* a connection is added.  So we do
