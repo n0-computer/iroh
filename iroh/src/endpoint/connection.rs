@@ -40,6 +40,7 @@ use tracing::warn;
 
 use crate::{
     Endpoint,
+    endpoint::middleware::AfterHandshakeOutcome,
     magicsock::{
         RemoteStateActorStoppedError,
         remote_map::{PathInfoList, PathsWatcher},
@@ -221,7 +222,7 @@ fn conn_from_quinn_conn(
     conn: quinn::Connection,
     ep: &Endpoint,
 ) -> Result<
-    impl Future<Output = Result<Connection, RemoteStateActorStoppedError>> + Send + 'static,
+    impl Future<Output = Result<Connection, ConnectingError>> + Send + 'static,
     ConnectingError,
 > {
     let info = match static_info_from_conn(&conn) {
@@ -241,12 +242,28 @@ fn conn_from_quinn_conn(
     let fut = ep
         .msock
         .register_connection(info.endpoint_id, conn.weak_handle());
+
+    // Check middleware.
+    // TODO: avoid endpoint clone?
+    let ep = ep.clone();
     Ok(async move {
         let paths = fut.await?;
-        Ok(Connection {
+        let conn = Connection {
             data: HandshakeCompletedData { info, paths },
             inner: conn,
-        })
+        };
+
+        if let AfterHandshakeOutcome::Reject { error_code, reason } = ep
+            .msock
+            .middlewares
+            .handshake_completed(&conn.to_info())
+            .await
+        {
+            conn.close(error_code, &reason);
+            return Err(e!(ConnectingError::LocallyRejected));
+        }
+
+        Ok(conn)
     })
 }
 
@@ -315,7 +332,7 @@ pub struct Connecting {
     remote_endpoint_id: EndpointId,
 }
 
-type RegisterWithMagicsockFut = BoxFuture<Result<Connection, RemoteStateActorStoppedError>>;
+type RegisterWithMagicsockFut = BoxFuture<Result<Connection, ConnectingError>>;
 
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
@@ -363,6 +380,8 @@ pub enum ConnectingError {
         /// Private source type, cannot be created publicly.
         source: RemoteStateActorStoppedError,
     },
+    #[error("Connection was rejected locally")]
+    LocallyRejected,
 }
 
 impl Connecting {

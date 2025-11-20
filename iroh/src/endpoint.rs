@@ -18,12 +18,13 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{ensure, stack_error};
+use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+use self::middleware::MiddlewareList;
 pub use super::magicsock::{
     DirectAddr, DirectAddrType, PathInfo,
     remote_map::{PathInfoList, Source},
@@ -45,6 +46,7 @@ use crate::{
 };
 
 mod connection;
+pub(crate) mod middleware;
 pub mod presets;
 
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
@@ -71,6 +73,7 @@ pub use self::connection::{
     ZeroRttStatus,
 };
 pub use crate::magicsock::transports::TransportConfig;
+pub use middleware::{AfterHandshakeOutcome, BeforeConnectOutcome, Middleware};
 
 /// Builder for [`Endpoint`].
 ///
@@ -93,6 +96,7 @@ pub struct Builder {
     insecure_skip_relay_cert_verify: bool,
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
+    middlewares: MiddlewareList,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -155,6 +159,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: false,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
+            middlewares: Default::default(),
         }
     }
 
@@ -202,6 +207,7 @@ impl Builder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
+            middlewares: Default::default(),
         };
 
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
@@ -456,6 +462,12 @@ impl Builder {
         self.max_tls_tickets = n;
         self
     }
+
+    /// Adds a middleware to the endpoint.
+    pub fn middleware(mut self, middleware: impl Middleware + 'static) -> Self {
+        self.middlewares.push(middleware);
+        self
+    }
 }
 
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
@@ -531,6 +543,8 @@ pub enum ConnectWithOptsError {
         /// Private source type, cannot be created publicly.
         source: RemoteStateActorStoppedError,
     },
+    #[error("Connection was rejected locally")]
+    LocallyRejected,
 }
 
 #[allow(missing_docs)]
@@ -689,6 +703,14 @@ impl Endpoint {
         options: ConnectOptions,
     ) -> Result<Connecting, ConnectWithOptsError> {
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
+        if let BeforeConnectOutcome::Reject = self
+            .msock
+            .middlewares
+            .before_connect(&endpoint_addr, alpn)
+            .await
+        {
+            return Err(e!(ConnectWithOptsError::LocallyRejected));
+        }
         let endpoint_id = endpoint_addr.id;
 
         tracing::Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
