@@ -703,7 +703,7 @@
 <a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">let </span>addr1 = r1.endpoint().addr();
 <a href=#704 id=704 data-nosnippet>704</a>        <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>addr1);
 <a href=#705 id=705 data-nosnippet>705</a>        <span class="kw">let </span>e2 = Endpoint::empty_builder(RelayMode::Disabled)
-<a href=#706 id=706 data-nosnippet>706</a>            .middleware(LimitMiddleware::default())
+<a href=#706 id=706 data-nosnippet>706</a>            .middleware(LimitMiddleware)
 <a href=#707 id=707 data-nosnippet>707</a>            .bind()
 <a href=#708 id=708 data-nosnippet>708</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#709 id=709 data-nosnippet>709</a>
