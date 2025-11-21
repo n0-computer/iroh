@@ -34,12 +34,12 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_side(remote_addr: EndpointAddr, token: &[u8]) -> Result<()> {
-    let (auth_middleware, auth_connector) = auth::connect(token.to_vec());
+    let (auth_middleware, auth_task) = auth::outgoing(token.to_vec());
     let endpoint = Endpoint::builder()
         .middleware(auth_middleware)
         .bind()
         .await?;
-    let _guard = auth_connector.spawn(endpoint.clone());
+    let _guard = auth_task.spawn(endpoint.clone());
     Echo::connect(&endpoint, remote_addr, b"hello there!").await
 }
 
@@ -49,7 +49,7 @@ async fn connect_side_no_auth(remote_addr: EndpointAddr) -> Result<()> {
 }
 
 async fn accept_side(token: &[u8]) -> Result<Router> {
-    let (auth_middleware, auth_protocol) = auth::accept(token.to_vec());
+    let (auth_middleware, auth_protocol) = auth::incoming(token.to_vec());
     let endpoint = Endpoint::builder()
         .middleware(auth_middleware)
         .bind()
@@ -136,11 +136,11 @@ mod auth {
     const CLOSE_ACCEPTED: u32 = 1;
     const CLOSE_DENIED: u32 = 403;
 
-    /// Connect side: Use this if you want to pre-auth outgoing connections.
-    pub fn connect(token: Vec<u8>) -> (AuthConnectMiddleware, AuthConnectTask) {
+    /// Outgoing side: Use this if you want to pre-auth outgoing connections.
+    pub fn outgoing(token: Vec<u8>) -> (OutgoingAuthMiddleware, OutgoingAuthTask) {
         let (tx, rx) = mpsc::channel(16);
-        let middleware = AuthConnectMiddleware { tx };
-        let connector = AuthConnectTask {
+        let middleware = OutgoingAuthMiddleware { tx };
+        let connector = OutgoingAuthTask {
             token,
             rx,
             allowed_remotes: Default::default(),
@@ -152,11 +152,11 @@ mod auth {
 
     /// Middleware to mount on the endpoint builder.
     #[derive(Debug)]
-    pub struct AuthConnectMiddleware {
+    pub struct OutgoingAuthMiddleware {
         tx: mpsc::Sender<(EndpointId, oneshot::Sender<Result<(), Arc<AnyError>>>)>,
     }
 
-    impl AuthConnectMiddleware {
+    impl OutgoingAuthMiddleware {
         async fn authenticate(&self, remote_id: EndpointId) -> Result<()> {
             let (tx, rx) = oneshot::channel();
             self.tx
@@ -169,7 +169,7 @@ mod auth {
         }
     }
 
-    impl Middleware for AuthConnectMiddleware {
+    impl Middleware for OutgoingAuthMiddleware {
         async fn before_connect<'a>(
             &'a self,
             remote_addr: &'a EndpointAddr,
@@ -191,7 +191,7 @@ mod auth {
     }
 
     /// Connector task that initiates pre-auth request. Call [`Self::spawn`] once the endpoint is built.
-    pub struct AuthConnectTask {
+    pub struct OutgoingAuthTask {
         token: Vec<u8>,
         rx: mpsc::Receiver<(EndpointId, oneshot::Sender<Result<(), Arc<AnyError>>>)>,
         allowed_remotes: HashSet<EndpointId>,
@@ -199,7 +199,7 @@ mod auth {
         tasks: JoinSet<(EndpointId, Result<()>)>,
     }
 
-    impl AuthConnectTask {
+    impl OutgoingAuthTask {
         pub fn spawn(self, endpoint: Endpoint) -> AbortOnDropHandle<()> {
             AbortOnDropHandle::new(tokio::spawn(self.run(endpoint)))
         }
@@ -278,10 +278,10 @@ mod auth {
         }
     }
 
-    /// Accept side: Use this if you want to only accept connections from peers with successful pre-auth requests.
-    pub fn accept(token: Vec<u8>) -> (AuthAcceptMiddleware, AuthProtocol) {
+    /// Incoming side: Use this if you want to only accept connections from peers with successful pre-auth requests.
+    pub fn incoming(token: Vec<u8>) -> (IncomingAuthMiddleware, AuthProtocol) {
         let allowed_remotes: Arc<Mutex<HashSet<EndpointId>>> = Default::default();
-        let middleware = AuthAcceptMiddleware {
+        let middleware = IncomingAuthMiddleware {
             allowed_remotes: allowed_remotes.clone(),
         };
         let protocol = AuthProtocol {
@@ -295,11 +295,11 @@ mod auth {
     ///
     /// This will reject incoming connections if the remote did not successfully authenticate before.
     #[derive(Debug)]
-    pub struct AuthAcceptMiddleware {
+    pub struct IncomingAuthMiddleware {
         allowed_remotes: Arc<Mutex<HashSet<EndpointId>>>,
     }
 
-    impl Middleware for AuthAcceptMiddleware {
+    impl Middleware for IncomingAuthMiddleware {
         async fn after_handshake<'a>(
             &'a self,
             conn: &'a iroh::endpoint::ConnectionInfo,
