@@ -150,10 +150,12 @@ mod auth {
         (middleware, connector)
     }
 
+    type AuthResult = Result<(), Arc<AnyError>>;
+
     /// Middleware to mount on the endpoint builder.
     #[derive(Debug)]
     pub struct OutgoingAuthMiddleware {
-        tx: mpsc::Sender<(EndpointId, oneshot::Sender<Result<(), Arc<AnyError>>>)>,
+        tx: mpsc::Sender<(EndpointId, oneshot::Sender<AuthResult>)>,
     }
 
     impl OutgoingAuthMiddleware {
@@ -193,9 +195,9 @@ mod auth {
     /// Connector task that initiates pre-auth request. Call [`Self::spawn`] once the endpoint is built.
     pub struct OutgoingAuthTask {
         token: Vec<u8>,
-        rx: mpsc::Receiver<(EndpointId, oneshot::Sender<Result<(), Arc<AnyError>>>)>,
+        rx: mpsc::Receiver<(EndpointId, oneshot::Sender<AuthResult>)>,
         allowed_remotes: HashSet<EndpointId>,
-        pending_remotes: HashMap<EndpointId, Vec<oneshot::Sender<Result<(), Arc<AnyError>>>>>,
+        pending_remotes: HashMap<EndpointId, Vec<oneshot::Sender<AuthResult>>>,
         tasks: JoinSet<(EndpointId, Result<()>)>,
     }
 

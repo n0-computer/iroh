@@ -703,7 +703,7 @@ mod tests {
         let addr1 = r1.endpoint().addr();
         dbg!(&addr1);
         let e2 = Endpoint::empty_builder(RelayMode::Disabled)
-            .middleware(LimitMiddleware::default())
+            .middleware(LimitMiddleware)
             .bind()
             .await?;
 

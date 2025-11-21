@@ -74,6 +74,9 @@ pub trait Middleware: std::fmt::Debug + Send + Sync {
     ///
     /// If any middleware returns [`BeforeConnectOutcome::Reject`], the connection attempt is aborted
     /// before any packets are sent to the remote.
+    ///
+    /// [`Endpoint::connect`]: crate::Endpoint::connect
+    /// [`Endpoint::connect_with_opts`]: crate::Endpoint::connect_with_opts
     fn before_connect<'a>(
         &'a self,
         _remote_addr: &'a EndpointAddr,
