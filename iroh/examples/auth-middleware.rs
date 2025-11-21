@@ -311,7 +311,7 @@ mod auth {
                     .allowed_remotes
                     .lock()
                     .expect("poisoned")
-                    .contains(conn.remote_id())
+                    .contains(&conn.remote_id())
             {
                 AfterHandshakeOutcome::Accept
             } else {

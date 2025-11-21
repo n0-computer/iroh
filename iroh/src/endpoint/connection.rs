@@ -1083,8 +1083,8 @@ impl ConnectionInfo {
         &self.data.info.alpn
     }
 
-    pub fn remote_id(&self) -> &EndpointId {
-        &self.data.info.endpoint_id
+    pub fn remote_id(&self) -> EndpointId {
+        self.data.info.endpoint_id
     }
 
     pub fn is_alive(&self) -> bool {
