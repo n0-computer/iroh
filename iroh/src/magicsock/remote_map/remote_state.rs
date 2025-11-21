@@ -298,6 +298,7 @@ impl RemoteStateActor {
                     }
                 }
                 _ = self.local_addrs.updated() => {
+                    self.local_addrs_updated();
                     trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching().await;
                 }
@@ -429,6 +430,15 @@ impl RemoteStateActor {
             ));
             self.connections_close.push(OnClosed::new(&conn));
 
+            // Add local addrs to the connection
+            let local_addrs = self
+                .local_addrs
+                .get()
+                .iter()
+                .map(|d| d.addr)
+                .collect::<BTreeSet<_>>();
+            Self::set_local_addrs(&conn, &local_addrs);
+
             // Store the connection
             let conn_state = self
                 .connections
@@ -559,6 +569,43 @@ impl RemoteStateActor {
         }
     }
 
+    /// Sets the current local addresses to QNT's state to all connections
+    fn local_addrs_updated(&mut self) {
+        let local_addrs = self
+            .local_addrs
+            .get()
+            .iter()
+            .map(|d| d.addr)
+            .collect::<BTreeSet<_>>();
+
+        for conn in self.connections.values().filter_map(|s| s.handle.upgrade()) {
+            Self::set_local_addrs(&conn, &local_addrs);
+        }
+        // todo: trace
+    }
+
+    /// Sets the current local addresses to QNT's state
+    fn set_local_addrs(conn: &quinn::Connection, local_addrs: &BTreeSet<SocketAddr>) {
+        let quinn_local_addrs = match conn.get_local_nat_traversal_addresses() {
+            Ok(addrs) => BTreeSet::from_iter(addrs),
+            Err(err) => {
+                warn!("failed to get local nat candidates: {err:#}");
+                return;
+            }
+        };
+        for addr in local_addrs.difference(&quinn_local_addrs) {
+            if let Err(err) = conn.add_nat_traversal_address(*addr) {
+                warn!("failed adding local addr: {err:#}",);
+            }
+        }
+        for addr in quinn_local_addrs.difference(&local_addrs) {
+            if let Err(err) = conn.remove_nat_traversal_address(*addr) {
+                warn!("failed removing local addr: {err:#}");
+            }
+        }
+        trace!(?local_addrs, "updated local QNT addresses");
+    }
+
     /// Triggers holepunching to the remote endpoint.
     ///
     /// This will manage the entire process of holepunching with the remote endpoint.
@@ -594,7 +641,6 @@ impl RemoteStateActor {
                 return;
             }
         };
-        // let remote_candidates = BTreeSet::from_iter(conn.get_nat_traversal_addresses());
         let local_candidates: BTreeSet<SocketAddr> = self
             .local_addrs
             .get()
@@ -656,7 +702,7 @@ impl RemoteStateActor {
                 });
             }
             Err(err) => {
-                warn!("failed to initiate NAT traversal {err:#}");
+                warn!("failed to initiate NAT traversal: {err:#}");
             }
         }
     }
