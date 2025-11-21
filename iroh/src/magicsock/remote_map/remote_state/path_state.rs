@@ -422,8 +422,10 @@ mod tests {
         paths.get_mut(&test_ip_addr(3)).unwrap().holepunched = true;
 
         // mark path 4 as having a recent ping (ping in process)
-        paths.get_mut(&test_ip_addr(4)).unwrap().ping_sent =
-            Some((TransactionId::default(), Instant::now() - Duration::from_secs(5)));
+        paths.get_mut(&test_ip_addr(4)).unwrap().ping_sent = Some((
+            TransactionId::default(),
+            Instant::now() - Duration::from_secs(5),
+        ));
 
         let pending = VecDeque::new();
         // mark one path as selected
