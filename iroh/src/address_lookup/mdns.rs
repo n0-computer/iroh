@@ -5,6 +5,9 @@
 //!
 //! When [`MdnsAddressLookup`] is enabled, it's possible to get a list of the locally discovered endpoints by filtering a list of `RemoteInfo`s.
 //!
+//! In order to get a list of locally discovered addresses, you must call `MdnsAddressLookup::subscribe` to subscribe
+//! to a stream of discovered addresses.
+//!
 //! ```no_run
 //! use std::time::Duration;
 //!
@@ -41,6 +44,16 @@
 //!     }
 //! }
 //! ```
+//!
+//! ## RelayUrl
+//! You can enable publishing a single [`RelayUrl`] as well as your ip addresses.
+//!
+//! If there are multiple [`RelayUrl`]s available, the first in the list will be selected.
+//!
+//! If the [`RelayUrl`] is longer than 249 bytes, the relay will not be added to the
+//! mDNS TXT record.
+//!
+//! [`RelayUrl`]: iroh_base::RelayUrl
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
@@ -85,6 +98,10 @@ const USER_DATA_ATTRIBUTE: &str = "user-data";
 
 /// How long we will wait before we stop attempting to resolve an endpoint ID to an address
 const LOOKUP_DURATION: Duration = Duration::from_secs(10);
+
+/// The key of the attribute under which the `RelayUrl` is stored in
+/// the TXT record supported by swarm-discovery.
+const RELAY_URL_ATTRIBUTE: &str = "relay";
 
 /// Address Lookup using `swarm-discovery`, a variation on mdns
 #[derive(Debug, Clone)]
@@ -312,10 +329,14 @@ impl MdnsAddressLookup {
                         for addr in addrs {
                             address_lookup.add(addr.0, addr.1)
                         }
+                        if let Some(relay) = data.relay_urls().next()
+                            && let Err(err) = address_lookup.set_txt_attribute(RELAY_URL_ATTRIBUTE.to_string(), Some(relay.to_string()))  {
+                                warn!("Failed to set the relay url in mDNS: {err:?}");
+                        }
                         if let Some(user_data) = data.user_data()
                             && let Err(err) = address_lookup.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
-                                warn!("Failed to set the user-defined data in mdns: {err:?}");
-                            }
+                                warn!("Failed to set the user-defined data in mDNS: {err:?}");
+                        }
                         continue;
                     }
                 };
@@ -521,6 +542,21 @@ fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> AddressLooku
         .iter()
         .map(|(ip, port)| SocketAddr::new(*ip, *port))
         .collect();
+
+    // Get the relay url from the resolved peer info. We expect an attribute that parses as
+    // a `RelayUrl`. Otherwise, omit.
+    let relay_url = if let Some(Some(relay_url)) = peer.txt_attribute(RELAY_URL_ATTRIBUTE) {
+        match relay_url.parse() {
+            Err(err) => {
+                debug!("failed to parse relay url from TXT attribute: {err}");
+                None
+            }
+            Ok(url) => Some(url),
+        }
+    } else {
+        None
+    };
+
     // Get the user-defined data from the resolved peer info. We expect an attribute with a value
     // that parses as `UserData`. Otherwise, omit.
     let user_data = if let Some(Some(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
@@ -536,6 +572,7 @@ fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> AddressLooku
     };
     let endpoint_info = EndpointInfo::new(*endpoint_id)
         .with_ip_addrs(ip_addrs)
+        .with_relay_url(relay_url)
         .with_user_data(user_data);
     AddressLookupItem::new(endpoint_info, NAME, None)
 }
@@ -844,6 +881,50 @@ mod tests {
                 result_b.is_err(),
                 "Endpoint on a different service should NOT be discoverable"
             );
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn mdns_publish_relay_url() -> Result {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
+            // Create an mdns address lookup A that only listens
+            let (_, mdns_a) = make_address_lookup(&mut rng, false)?;
+
+            // Create an mdns address lookup B that includes a relay url for publishing
+            let (endpoint_id_b, mdns_b) = make_address_lookup(&mut rng, true)?;
+            let relay_url: iroh_base::RelayUrl = "https://relay.example.com".parse().unwrap();
+            let endpoint_data =
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
+                    .with_relay_url(Some(relay_url.clone()));
+
+            // Subscribe to discovery events filtered for endpoint B
+            let mut events = mdns_a.subscribe().await.filter(|event| match event {
+                DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                    endpoint_info.endpoint_id == endpoint_id_b
+                }
+                _ => false,
+            });
+
+            // Publish mdns_b's address with relay URL
+            mdns_b.publish(&endpoint_data);
+
+            // Wait for discovery
+            let DiscoveryEvent::Discovered { endpoint_info, .. } =
+                tokio::time::timeout(Duration::from_secs(2), events.next())
+                    .await
+                    .std_context("timeout")?
+                    .unwrap()
+            else {
+                panic!("Received unexpected discovery event");
+            };
+
+            // Verify the relay URL was received
+            let discovered_relay_urls: Vec<_> = endpoint_info.data.relay_urls().collect();
+            assert_eq!(discovered_relay_urls.len(), 1);
+            assert_eq!(discovered_relay_urls[0], &relay_url);
 
             Ok(())
         }
