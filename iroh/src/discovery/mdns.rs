@@ -3,7 +3,8 @@
 //! This allows you to use an mdns-like swarm discovery service to find address information about endpoints that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
 //!
-//! When [`MdnsDiscovery`] is enabled, it's possible to get a list of the locally discovered endpoints by filtering a list of `RemoteInfo`s.
+//! In order to get a list of locally discovered addresses, you must call `MdnsDiscovery::subscribe` to subscribe
+//! to a stream of discovered addresses.
 //!
 //! ```no_run
 //! use std::time::Duration;
@@ -41,6 +42,16 @@
 //!     }
 //! }
 //! ```
+//!
+//! ## RelayUrl
+//! You can enable publishing a single [`RelayUrl`] as well as your ip addresses.
+//!
+//! If there are multiple [`RelayUrl`]s available, the first in the list will be selected.
+//!
+//! If the [`RelayUrl`] is longer than 249 bytes, the relay will not be added to the
+//! mDNS TXT record.
+//!
+//! `RelayUrl`: iroh_base::RelayUrl
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
@@ -79,6 +90,10 @@ pub const NAME: &str = "mdns";
 /// The key of the attribute under which the `UserData` is stored in
 /// the TXT record supported by swarm-discovery.
 const USER_DATA_ATTRIBUTE: &str = "user-data";
+
+/// The key of the attribute under which the `RelayUrl` is stored in
+/// the TXT record supported by swarm-discovery.
+const RELAY_URL_ATTRIBUTE: &str = "relay";
 
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
@@ -149,6 +164,7 @@ impl Subscribers {
 #[derive(Debug)]
 pub struct MdnsDiscoveryBuilder {
     advertise: bool,
+    publish_relay_url: bool,
     service_name: String,
 }
 
@@ -157,6 +173,7 @@ impl MdnsDiscoveryBuilder {
     fn new() -> Self {
         Self {
             advertise: true,
+            publish_relay_url: false,
             service_name: N0_SERVICE_NAME.to_string(),
         }
     }
@@ -166,6 +183,24 @@ impl MdnsDiscoveryBuilder {
     /// Default is true.
     pub fn advertise(mut self, advertise: bool) -> Self {
         self.advertise = advertise;
+        self
+    }
+
+    /// Sets whether this endpoint should advertise its [`RelayUrl`].
+    ///
+    /// Overridden by the `MdnsDiscoveryBuilder::advertise` method. If this is
+    /// false, setting `MdnsDiscoveryBuilder::publish_relay_url` to `true`
+    /// will do nothing.
+    ///
+    /// The first [`RelayUrl`] in the given [`EndpointAddr`] is the url that will
+    /// be advertised. If that [`RelayUrl`] is larger than 249 bytes, the url will
+    /// no be added to the mDNS TXT record.
+    ///
+    /// Default is false.
+    ///
+    /// `RelayUrl`: iroh_base::RelayUrl
+    pub fn publish_relay_url(mut self, publish: bool) -> Self {
+        self.publish_relay_url = publish;
         self
     }
 
@@ -190,7 +225,12 @@ impl MdnsDiscoveryBuilder {
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     pub fn build(self, endpoint_id: EndpointId) -> Result<MdnsDiscovery, IntoDiscoveryError> {
-        MdnsDiscovery::new(endpoint_id, self.advertise, self.service_name)
+        MdnsDiscovery::new(
+            endpoint_id,
+            self.advertise,
+            self.publish_relay_url,
+            self.service_name,
+        )
     }
 }
 
@@ -243,6 +283,7 @@ impl MdnsDiscovery {
     fn new(
         endpoint_id: EndpointId,
         advertise: bool,
+        publish_relay_url: bool,
         service_name: String,
     ) -> Result<Self, IntoDiscoveryError> {
         debug!("Creating new MdnsDiscovery service");
@@ -283,9 +324,16 @@ impl MdnsDiscovery {
                         for addr in addrs {
                             discovery.add(addr.0, addr.1)
                         }
+                        if publish_relay_url {
+                            if let Some(relay) = data.relay_urls().next() {
+                                if let Err(err) = discovery.set_txt_attribute(RELAY_URL_ATTRIBUTE.to_string(), Some(relay.to_string())) {
+                                    warn!("Failed to set the relay url in mDNS: {err:?}");
+                                }
+                            }
+                        }
                         if let Some(user_data) = data.user_data() {
                             if let Err(err) = discovery.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
-                                warn!("Failed to set the user-defined data in local swarm discovery: {err:?}");
+                                warn!("Failed to set the user-defined data in mDNS: {err:?}");
                             }
                         }
                         continue;
@@ -494,6 +542,21 @@ fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryIte
         .iter()
         .map(|(ip, port)| SocketAddr::new(*ip, *port))
         .collect();
+
+    // Get the relay url from the resolved peer info. We expect an attribute that parses as
+    // a `RelayUrl`. Otherwise, omit.
+    let relay_url = if let Some(Some(relay_url)) = peer.txt_attribute(RELAY_URL_ATTRIBUTE) {
+        match relay_url.parse() {
+            Err(err) => {
+                debug!("failed to parse relay url from TXT attribute: {err}");
+                None
+            }
+            Ok(url) => Some(url),
+        }
+    } else {
+        None
+    };
+
     // Get the user-defined data from the resolved peer info. We expect an attribute with a value
     // that parses as `UserData`. Otherwise, omit.
     let user_data = if let Some(Some(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
@@ -509,6 +572,7 @@ fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryIte
     };
     let endpoint_info = EndpointInfo::new(*endpoint_id)
         .with_ip_addrs(ip_addrs)
+        .with_relay_url(relay_url)
         .with_user_data(user_data);
     DiscoveryItem::new(endpoint_info, NAME, None)
 }
@@ -811,6 +875,56 @@ mod tests {
                 result_b.is_err(),
                 "Endpoint on a different service should NOT be discoverable"
             );
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn mdns_publish_relay_url() -> Result {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+
+            // Create discoverer A that only listens
+            let (_, discovery_a) = make_discoverer(&mut rng, false)?;
+
+            // Create discoverer B that advertises with relay URL publishing enabled
+            let endpoint_id_b = SecretKey::generate(&mut rng).public();
+            let discovery_b = MdnsDiscovery::builder()
+                .advertise(true)
+                .publish_relay_url(true)
+                .build(endpoint_id_b)?;
+
+            // Create endpoint data with a relay URL
+            let relay_url: iroh_base::RelayUrl = "https://relay.example.com".parse().unwrap();
+            let endpoint_data =
+                EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
+                    .with_relay_url(Some(relay_url.clone()));
+
+            // Subscribe to discovery events filtered for endpoint B
+            let mut events = discovery_a.subscribe().await.filter(|event| match event {
+                DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                    endpoint_info.endpoint_id == endpoint_id_b
+                }
+                _ => false,
+            });
+
+            // Publish discovery_b's address with relay URL
+            discovery_b.publish(&endpoint_data);
+
+            // Wait for discovery
+            let DiscoveryEvent::Discovered { endpoint_info, .. } =
+                tokio::time::timeout(Duration::from_secs(2), events.next())
+                    .await
+                    .std_context("timeout")?
+                    .unwrap()
+            else {
+                panic!("Received unexpected discovery event");
+            };
+
+            // Verify the relay URL was received
+            let discovered_relay_urls: Vec<_> = endpoint_info.data.relay_urls().collect();
+            assert_eq!(discovered_relay_urls.len(), 1);
+            assert_eq!(discovered_relay_urls[0], &relay_url);
 
             Ok(())
         }
