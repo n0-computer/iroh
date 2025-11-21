@@ -82,7 +82,7 @@ use crate::{
     },
 };
 
-/// The n0 local service name
+/// The n0 local service name.
 const N0_SERVICE_NAME: &str = "irohv1";
 
 /// Name of this address lookup service.
@@ -96,14 +96,14 @@ pub const NAME: &str = "mdns";
 /// the TXT record supported by swarm-discovery.
 const USER_DATA_ATTRIBUTE: &str = "user-data";
 
-/// How long we will wait before we stop attempting to resolve an endpoint ID to an address
+/// How long we will wait before we stop attempting to resolve an endpoint ID to an address.
 const LOOKUP_DURATION: Duration = Duration::from_secs(10);
 
 /// The key of the attribute under which the `RelayUrl` is stored in
 /// the TXT record supported by swarm-discovery.
 const RELAY_URL_ATTRIBUTE: &str = "relay";
 
-/// Address Lookup using `swarm-discovery`, a variation on mdns
+/// Address Lookup using `swarm-discovery`, a variation on mdns.
 #[derive(Debug, Clone)]
 pub struct MdnsAddressLookup {
     #[allow(dead_code)]
@@ -134,7 +134,7 @@ impl Subscribers {
         Self(vec![])
     }
 
-    /// Add the subscriber to the list of subscribers
+    /// Add the subscriber to the list of subscribers.
     fn push(&mut self, subscriber: mpsc::Sender<DiscoveryEvent>) {
         self.0.push(subscriber);
     }
@@ -472,7 +472,7 @@ impl MdnsAddressLookup {
         })
     }
 
-    /// Subscribe to discovered endpoints
+    /// Subscribe to discovered endpoints.
     pub async fn subscribe(&self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
         let (sender, recv) = mpsc::channel(20);
         let address_lookup_sender = self.sender.clone();
@@ -607,7 +607,7 @@ impl AddressLookup for MdnsAddressLookup {
 mod tests {
 
     /// This module's name signals nextest to run test in a single thread (no other concurrent
-    /// tests)
+    /// tests).
     mod run_in_isolation {
         use iroh_base::{SecretKey, TransportAddr};
         use n0_error::{AnyError as Error, Result, StdResultExt, bail_any};
