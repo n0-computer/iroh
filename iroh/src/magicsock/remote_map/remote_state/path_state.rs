@@ -418,6 +418,13 @@ mod tests {
             );
         }
 
+        // mark path 3 as holepunched
+        paths.get_mut(&test_ip_addr(3)).unwrap().holepunched = true;
+
+        // mark path 4 as having a recent ping (ping in process)
+        paths.get_mut(&test_ip_addr(4)).unwrap().ping_sent =
+            Some((TransactionId::default(), Instant::now() - Duration::from_secs(5)));
+
         let pending = VecDeque::new();
         // mark one path as selected
         let selected_path = Some(test_ip_addr(0));
@@ -438,6 +445,14 @@ mod tests {
         assert!(
             paths.contains_key(&test_ip_addr(2)),
             "Expected to keep open path even with old source"
+        );
+        assert!(
+            paths.contains_key(&test_ip_addr(3)),
+            "Expected to keep holepunched path even with old source"
+        );
+        assert!(
+            paths.contains_key(&test_ip_addr(4)),
+            "Expected to keep path with ping in process even with old source"
         );
 
         Ok(())
