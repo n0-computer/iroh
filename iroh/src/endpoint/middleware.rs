@@ -58,7 +58,7 @@ impl AfterHandshakeOutcome {
 /// middleware. If a middleware returns `Reject`, processing is aborted and further middlewares
 /// are not invoked for this hook.
 ///
-/// ## Notes to implementors
+/// ## Notes to implementers
 ///
 /// As middlewares are stored on the endpoint, you must make sure to never store an [`Endpoint`]
 /// on the middleware struct itself, as this would create reference counting loop and cause the

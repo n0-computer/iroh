@@ -57,7 +57,7 @@ async fn main() -> Result {
     });
 
     // Let the server accept `count` connections in parallel.
-    // The server keeps all connections open for at least 500 miliseconds.
+    // The server keeps all connections open for at least 500 milliseconds.
     std::iter::repeat_with(async || {
         let conn = server
             .accept()
@@ -378,7 +378,7 @@ mod remote_map {
             conn_id: u64,
             conn: ConnectionInfo,
         ) {
-            // Store conn info for full introspection possibilty.
+            // Store conn info for full introspection possibility.
             {
                 let mut inner = map.write().expect("poisoned");
                 inner
