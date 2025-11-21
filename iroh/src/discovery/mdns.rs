@@ -77,7 +77,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
 };
 
-/// The n0 local service name
+/// The n0 local service name.
 const N0_SERVICE_NAME: &str = "irohv1";
 
 /// Name of this discovery service.
@@ -95,10 +95,10 @@ const USER_DATA_ATTRIBUTE: &str = "user-data";
 /// the TXT record supported by swarm-discovery.
 const RELAY_URL_ATTRIBUTE: &str = "relay";
 
-/// How long we will wait before we stop sending discovery items
+/// How long we will wait before we stop sending discovery items.
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 
-/// Discovery using `swarm-discovery`, a variation on mdns
+/// Discovery using `swarm-discovery`, a variation on mdns.
 #[derive(Debug, Clone)]
 pub struct MdnsDiscovery {
     #[allow(dead_code)]
@@ -129,7 +129,7 @@ impl Subscribers {
         Self(vec![])
     }
 
-    /// Add the subscriber to the list of subscribers
+    /// Add the subscriber to the list of subscribers.
     fn push(&mut self, subscriber: mpsc::Sender<DiscoveryEvent>) {
         self.0.push(subscriber);
     }
@@ -471,7 +471,7 @@ impl MdnsDiscovery {
         })
     }
 
-    /// Subscribe to discovered endpoints
+    /// Subscribe to discovered endpoints.
     pub async fn subscribe(&self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
         let (sender, recv) = mpsc::channel(20);
         let discovery_sender = self.sender.clone();
@@ -607,7 +607,7 @@ impl Discovery for MdnsDiscovery {
 mod tests {
 
     /// This module's name signals nextest to run test in a single thread (no other concurrent
-    /// tests)
+    /// tests).
     mod run_in_isolation {
         use iroh_base::{SecretKey, TransportAddr};
         use n0_error::{AnyError as Error, Result, StdResultExt, bail_any};
