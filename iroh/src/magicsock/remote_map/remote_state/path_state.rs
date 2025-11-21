@@ -143,11 +143,6 @@ impl RemotePathState {
         selected_path: &Option<transports::Addr>,
         open_paths: impl Iterator<Item = &'a transports::Addr>,
     ) {
-        // if the total number of paths, relay or ip, is less
-        // than the max inactive ip addrs we allow, bail early
-        if self.paths.len() < MAX_INACTIVE_IP_ADDRESSES {
-            return;
-        }
         prune_ip_paths(&mut self.paths, pending, selected_path, open_paths);
     }
 }
@@ -166,15 +161,15 @@ pub(super) struct PathState {
     /// of the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
     /// The last ping sent on this path.
-    pub(super) ping_sent: Option<(TransactionId, Instant)>,
+    pub(super) ping_sent: Option<Instant>,
     /// Last time we successfully holepunched.
     pub(super) holepunched: bool,
 }
 
 impl PathState {
-    /// Returns true if a ping was sent in the last [`PING_DURATION`] amount of time.
+    /// Returns true if a ping was sent in the last [`PING_TIMEOUT`] amount of time.
     fn ping_in_process(&self, now: &Instant) -> bool {
-        if let Some((_, ping_sent)) = self.ping_sent {
+        if let Some(ping_sent) = self.ping_sent {
             if ping_sent + PING_TIMEOUT > *now {
                 return true;
             }
@@ -189,12 +184,11 @@ fn prune_ip_paths<'a>(
     selected_path: &Option<transports::Addr>,
     open_paths: impl Iterator<Item = &'a transports::Addr>,
 ) {
-    let ip_count = paths.keys().filter(|p| p.is_ip()).count();
-    // if the total number of ip paths is less than the allowed number of inactive
-    // paths, just return early;
-    if ip_count < MAX_INACTIVE_IP_ADDRESSES {
+    // if the total number of paths, relay or ip, is less
+    // than the max inactive ip addrs we allow, bail early
+    if paths.len() < MAX_INACTIVE_IP_ADDRESSES {
         return;
-    }
+    };
 
     let ip_paths: HashSet<_> = paths.keys().filter(|p| p.is_ip()).collect();
 
@@ -265,10 +259,7 @@ mod tests {
     use rustc_hash::FxHashMap;
 
     use super::*;
-    use crate::{
-        disco::TransactionId,
-        magicsock::{remote_map::Private, transports},
-    };
+    use crate::magicsock::{remote_map::Private, transports};
 
     /// Create a test IP address with specific port
     fn test_ip_addr(port: u16) -> transports::Addr {
@@ -282,7 +273,7 @@ mod tests {
     fn test_path_state(time_offset: Duration, sent_ping: Option<Duration>) -> PathState {
         let mut state = PathState::default();
         if let Some(sent_ping_ago) = sent_ping {
-            state.ping_sent = Some((TransactionId::default(), Instant::now() - sent_ping_ago));
+            state.ping_sent = Some(Instant::now() - sent_ping_ago);
         }
         state.sources.insert(
             Source::Connection { _0: Private },
@@ -369,7 +360,7 @@ mod tests {
             paths.insert(
                 test_ip_addr(i),
                 test_path_state(
-                    Duration::from_secs(180), // learned abou this path 3 mins ago
+                    Duration::from_secs(180), // learned about this path 3 mins ago
                     Some(Duration::from_secs(60)),
                 ), // sent ping 1 min ago
             );
