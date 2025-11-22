@@ -435,7 +435,7 @@ impl From<&quinn_udp::Transmit<'_>> for OwnedTransmit {
 
 /// Transports address.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum Addr {
+pub enum Addr {
     /// An IP address, should always be stored in its canonical form.
     Ip(SocketAddr),
     /// A relay address.

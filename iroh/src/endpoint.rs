@@ -38,7 +38,7 @@ use crate::{
     endpoint::presets::Preset,
     magicsock::{
         self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT,
-        RemoteStateActorStoppedError, mapped_addrs::MappedAddr,
+        RemoteStateActorStoppedError, mapped_addrs::MappedAddr, transports::UserTransportConfig,
     },
     metrics::EndpointMetrics,
     net_report::Report,
@@ -280,6 +280,13 @@ impl Builder {
             scope_id,
             port,
         }));
+        self
+    }
+
+    /// Adds a custom user transport
+    pub fn add_user_transport(mut self, config: impl UserTransportConfig) -> Self {
+        self.transports
+            .push(TransportConfig::User(Box::new(config)));
         self
     }
 
