@@ -790,7 +790,11 @@ impl quinn::UdpSender for MagicSender {
                     }
                 }
             }
-            MultipathMappedAddr::Ip(socket_addr) => Addr::Ip(socket_addr),
+            MultipathMappedAddr::Ip(socket_addr) => {
+                let socket_addr =
+                    SocketAddr::new(socket_addr.ip().to_canonical(), socket_addr.port());
+                Addr::Ip(socket_addr)
+            }
         };
 
         let transmit = Transmit {
@@ -806,7 +810,7 @@ impl quinn::UdpSender for MagicSender {
         {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(ref err)) => {
-                warn!("dropped transmit: {err:#}");
+                warn!(?transport_addr, "dropped transmit: {err:#}");
                 Poll::Ready(Ok(()))
             }
             Poll::Pending => {
@@ -814,7 +818,7 @@ impl quinn::UdpSender for MagicSender {
                 // different transport.  Instead we let Quinn handle this as a lost
                 // datagram.
                 // TODO: Revisit this: we might want to do something better.
-                trace!("transport pending, dropped transmit");
+                trace!(?transport_addr, "transport pending, dropped transmit");
                 Poll::Ready(Ok(()))
             }
         }
