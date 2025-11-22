@@ -34,16 +34,8 @@ pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 /// can support.
 #[derive(Debug)]
 pub(crate) struct Transports {
-    /// Default sender for v4
     #[cfg(not(wasm_browser))]
-    ip_v4_default: Option<IpTransport>,
-    #[cfg(not(wasm_browser))]
-    ip_v4: Vec<IpTransport>,
-    /// Default sender for v6
-    #[cfg(not(wasm_browser))]
-    ip_v6_default: Option<IpTransport>,
-    #[cfg(not(wasm_browser))]
-    ip_v6: Vec<IpTransport>,
+    ip: IpTransports,
     relay: Vec<RelayTransport>,
 
     poll_recv_counter: usize,
@@ -109,63 +101,91 @@ impl TransportConfig {
     }
 }
 
-/// Returns (default_ipv4, ipv4, default_ipv6, ipv6) transports.
 #[cfg(not(wasm_browser))]
-#[allow(clippy::type_complexity)]
-fn bind_ip(
-    configs: &[TransportConfig],
-    metrics: &EndpointMetrics,
-) -> io::Result<(
-    Option<IpTransport>,
-    Vec<IpTransport>,
-    Option<IpTransport>,
-    Vec<IpTransport>,
-)> {
-    let mut ip_v4_default = None;
-    let mut ip_v4 = Vec::new();
-    let mut ip_v6_default = None;
-    let mut ip_v6 = Vec::new();
+#[derive(Debug)]
+struct IpTransports {
+    v4_default: Option<IpTransport>,
+    v4: Vec<IpTransport>,
+    v6_default: Option<IpTransport>,
+    v6: Vec<IpTransport>,
+}
 
-    for config in configs {
-        if let TransportConfig::Ip(config) = config {
-            match IpTransport::bind(*config, metrics.magicsock.clone()) {
-                Ok(transport) => {
-                    if config.is_ipv4() {
-                        if config.is_default() {
-                            if ip_v4_default.is_some() {
-                                return Err(io::Error::other(
-                                    "can only have a single IPv4 default transport",
-                                ));
+#[cfg(not(wasm_browser))]
+impl IpTransports {
+    fn create_sender(&self) -> IpTransportsSender {
+        let ip_v4_default = self.v4_default.as_ref().map(|t| t.create_sender());
+        let ip_v4 = self.v4.iter().map(|t| t.create_sender()).collect();
+        let ip_v6_default = self.v6_default.as_ref().map(|t| t.create_sender());
+        let ip_v6 = self.v6.iter().map(|t| t.create_sender()).collect();
+
+        IpTransportsSender {
+            v4_default: ip_v4_default,
+            v4: ip_v4,
+            v6_default: ip_v6_default,
+            v6: ip_v6,
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &IpTransport> {
+        self.v4_default
+            .iter()
+            .chain(self.v4.iter())
+            .chain(self.v6_default.iter())
+            .chain(self.v6.iter())
+    }
+
+    fn bind(configs: &[TransportConfig], metrics: &EndpointMetrics) -> io::Result<Self> {
+        let mut ip_v4_default = None;
+        let mut ip_v4 = Vec::new();
+        let mut ip_v6_default = None;
+        let mut ip_v6 = Vec::new();
+
+        for config in configs {
+            if let TransportConfig::Ip(config) = config {
+                match IpTransport::bind(*config, metrics.magicsock.clone()) {
+                    Ok(transport) => {
+                        if config.is_ipv4() {
+                            if config.is_default() {
+                                if ip_v4_default.is_some() {
+                                    return Err(io::Error::other(
+                                        "can only have a single IPv4 default transport",
+                                    ));
+                                }
+                                ip_v4_default = Some(transport);
+                            } else {
+                                ip_v4.push(transport);
                             }
-                            ip_v4_default = Some(transport);
-                        } else {
-                            ip_v4.push(transport);
-                        }
-                    } else if config.is_ipv6() {
-                        if config.is_default() {
-                            if ip_v6_default.is_some() {
-                                return Err(io::Error::other(
-                                    "can only have a single IPv6 default transport",
-                                ));
+                        } else if config.is_ipv6() {
+                            if config.is_default() {
+                                if ip_v6_default.is_some() {
+                                    return Err(io::Error::other(
+                                        "can only have a single IPv6 default transport",
+                                    ));
+                                }
+                                ip_v6_default = Some(transport);
+                            } else {
+                                ip_v6.push(transport);
                             }
-                            ip_v6_default = Some(transport);
-                        } else {
-                            ip_v6.push(transport);
                         }
                     }
-                }
-                Err(err) => {
-                    if config.is_ipv6() {
-                        tracing::info!("bind ignoring IPv6 bind failure: {:?}", err);
-                    } else {
-                        return Err(err);
+                    Err(err) => {
+                        if config.is_ipv6() {
+                            tracing::info!("bind ignoring IPv6 bind failure: {:?}", err);
+                        } else {
+                            return Err(err);
+                        }
                     }
                 }
             }
         }
-    }
 
-    Ok((ip_v4_default, ip_v4, ip_v6_default, ip_v6))
+        Ok(Self {
+            v4_default: ip_v4_default,
+            v4: ip_v4,
+            v6_default: ip_v6_default,
+            v6: ip_v6,
+        })
+    }
 }
 
 impl Transports {
@@ -177,7 +197,7 @@ impl Transports {
         shutdown_token: CancellationToken,
     ) -> io::Result<Self> {
         #[cfg(not(wasm_browser))]
-        let (ip_v4_default, ip_v4, ip_v6_default, ip_v6) = bind_ip(configs, metrics)?;
+        let ip = IpTransports::bind(configs, metrics)?;
 
         let relay = configs
             .iter()
@@ -187,13 +207,7 @@ impl Transports {
 
         Ok(Self {
             #[cfg(not(wasm_browser))]
-            ip_v4_default,
-            #[cfg(not(wasm_browser))]
-            ip_v4,
-            #[cfg(not(wasm_browser))]
-            ip_v6_default,
-            #[cfg(not(wasm_browser))]
-            ip_v6,
+            ip,
             relay,
             poll_recv_counter: Default::default(),
             source_addrs: Default::default(),
@@ -248,19 +262,19 @@ impl Transports {
 
         if counter % 2 == 0 {
             #[cfg(not(wasm_browser))]
-            if let Some(ref mut transport) = self.ip_v4_default {
+            if let Some(ref mut transport) = self.ip.v4_default {
                 poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
-            for transport in &mut self.ip_v4 {
+            for transport in &mut self.ip.v4 {
                 poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
-            if let Some(ref mut transport) = self.ip_v6_default {
+            if let Some(ref mut transport) = self.ip.v6_default {
                 poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
-            for transport in &mut self.ip_v6 {
+            for transport in &mut self.ip.v6 {
                 poll_transport!(transport);
             }
             for transport in &mut self.relay {
@@ -271,19 +285,19 @@ impl Transports {
                 poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
-            if let Some(ref mut transport) = self.ip_v6_default {
+            if let Some(ref mut transport) = self.ip.v6_default {
                 poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
-            for transport in &mut self.ip_v6 {
+            for transport in &mut self.ip.v6 {
                 poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
-            if let Some(ref mut transport) = self.ip_v4_default {
+            if let Some(ref mut transport) = self.ip.v4_default {
                 poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
-            for transport in &mut self.ip_v4 {
+            for transport in &mut self.ip.v4 {
                 poll_transport!(transport);
             }
         }
@@ -299,18 +313,10 @@ impl Transports {
         self.local_addrs_watch().get()
     }
 
-    fn ip_transports(&self) -> impl Iterator<Item = &IpTransport> {
-        self.ip_v4_default
-            .iter()
-            .chain(self.ip_v4.iter())
-            .chain(self.ip_v6_default.iter())
-            .chain(self.ip_v6.iter())
-    }
-
     /// Watch for all currently known local addresses.
     #[cfg(not(wasm_browser))]
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
-        let ips = n0_watcher::Join::new(self.ip_transports().map(|t| t.local_addr_watch()));
+        let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
 
         ips.or(relays).map(|(ips, relays)| {
@@ -336,15 +342,12 @@ impl Transports {
     /// Returns the bound addresses for IP based transports
     #[cfg(not(wasm_browser))]
     pub(crate) fn ip_bind_addrs(&self) -> Vec<SocketAddr> {
-        self.ip_transports().map(|t| t.bind_addr()).collect()
+        self.ip.iter().map(|t| t.bind_addr()).collect()
     }
 
     #[cfg(not(wasm_browser))]
     pub(crate) fn max_transmit_segments(&self) -> usize {
-        let res = self
-            .ip_transports()
-            .map(|t| t.max_transmit_segments())
-            .min();
+        let res = self.ip.iter().map(|t| t.max_transmit_segments()).min();
         res.unwrap_or(1)
     }
 
@@ -362,7 +365,7 @@ impl Transports {
         // but we never get data from both sockets at the same time in `poll_recv`
         // and it's impossible and unnecessary to be refactored that way.
 
-        let res = self.ip_transports().map(|t| t.max_receive_segments()).max();
+        let res = self.ip.iter().map(|t| t.max_receive_segments()).max();
         res.unwrap_or(1)
     }
 
@@ -373,7 +376,7 @@ impl Transports {
 
     #[cfg(not(wasm_browser))]
     pub(crate) fn may_fragment(&self) -> bool {
-        self.ip_transports().any(|t| t.may_fragment())
+        self.ip.iter().any(|t| t.may_fragment())
     }
 
     #[cfg(wasm_browser)]
@@ -383,26 +386,14 @@ impl Transports {
 
     pub(crate) fn create_sender(&self) -> TransportsSender {
         #[cfg(not(wasm_browser))]
-        let ip_v4_default = self.ip_v4_default.as_ref().map(|t| t.create_sender());
-        #[cfg(not(wasm_browser))]
-        let ip_v4 = self.ip_v4.iter().map(|t| t.create_sender()).collect();
-        #[cfg(not(wasm_browser))]
-        let ip_v6_default = self.ip_v6_default.as_ref().map(|t| t.create_sender());
-        #[cfg(not(wasm_browser))]
-        let ip_v6 = self.ip_v6.iter().map(|t| t.create_sender()).collect();
+        let ip = self.ip.create_sender();
 
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
         let max_transmit_segments = self.max_transmit_segments();
 
         TransportsSender {
             #[cfg(not(wasm_browser))]
-            ip_v4_default,
-            #[cfg(not(wasm_browser))]
-            ip_v4,
-            #[cfg(not(wasm_browser))]
-            ip_v6_default,
-            #[cfg(not(wasm_browser))]
-            ip_v6,
+            ip,
             relay,
             max_transmit_segments,
         }
@@ -413,7 +404,8 @@ impl Transports {
         NetworkChangeSender {
             #[cfg(not(wasm_browser))]
             ip: self
-                .ip_transports()
+                .ip
+                .iter()
                 .map(|t| t.create_network_change_sender())
                 .collect(),
             relay: self
@@ -586,29 +578,35 @@ impl Addr {
 /// A sender that sends to all our transports.
 #[derive(Debug, Clone)]
 pub(crate) struct TransportsSender {
-    /// Default sender for v4
     #[cfg(not(wasm_browser))]
-    ip_v4_default: Option<IpSender>,
-    #[cfg(not(wasm_browser))]
-    ip_v4: Vec<IpSender>,
-    /// Default sender for v6
-    #[cfg(not(wasm_browser))]
-    ip_v6_default: Option<IpSender>,
-    #[cfg(not(wasm_browser))]
-    ip_v6: Vec<IpSender>,
+    ip: IpTransportsSender,
     relay: Vec<RelaySender>,
     max_transmit_segments: usize,
 }
 
+#[cfg(not(wasm_browser))]
+#[derive(Debug, Clone)]
+struct IpTransportsSender {
+    /// Default sender for v4
+    v4_default: Option<IpSender>,
+    v4: Vec<IpSender>,
+    /// Default sender for v6
+    v6_default: Option<IpSender>,
+    v6: Vec<IpSender>,
+}
+
+#[cfg(not(wasm_browser))]
+impl IpTransportsSender {
+    fn v4_iter_mut(&mut self) -> impl Iterator<Item = &mut IpSender> {
+        self.v4.iter_mut().chain(self.v4_default.iter_mut())
+    }
+
+    fn v6_iter_mut(&mut self) -> impl Iterator<Item = &mut IpSender> {
+        self.v6.iter_mut().chain(self.v6_default.iter_mut())
+    }
+}
+
 impl TransportsSender {
-    fn ip_v4_senders_mut(&mut self) -> impl Iterator<Item = &mut IpSender> {
-        self.ip_v4.iter_mut().chain(self.ip_v4_default.iter_mut())
-    }
-
-    fn ip_v6_senders_mut(&mut self) -> impl Iterator<Item = &mut IpSender> {
-        self.ip_v6.iter_mut().chain(self.ip_v6_default.iter_mut())
-    }
-
     #[instrument(name = "poll_send", skip(self, cx, transmit), fields(len = transmit.contents.len()))]
     pub(crate) fn poll_send(
         mut self: Pin<&mut Self>,
@@ -625,10 +623,7 @@ impl TransportsSender {
             #[cfg(not(wasm_browser))]
             Addr::Ip(addr) => match addr {
                 SocketAddr::V4(_) => {
-                    for sender in self
-                        .ip_v4_senders_mut()
-                        .filter(|s| s.is_valid_send_addr(addr))
-                    {
+                    for sender in self.ip.v4_iter_mut().filter(|s| s.is_valid_send_addr(addr)) {
                         match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
@@ -642,10 +637,7 @@ impl TransportsSender {
                     }
                 }
                 SocketAddr::V6(_) => {
-                    for sender in self
-                        .ip_v6_senders_mut()
-                        .filter(|s| s.is_valid_send_addr(addr))
-                    {
+                    for sender in self.ip.v6_iter_mut().filter(|s| s.is_valid_send_addr(addr)) {
                         match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
