@@ -52,6 +52,18 @@ pub enum TransportAddr {
     Relay(RelayUrl),
     /// IP based addresses
     Ip(SocketAddr),
+    /// todo
+    User(UserAddr),
+}
+
+/// TODO
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UserAddr {
+    /// id
+    pub id: u64,
+    /// data
+    // TODO: figure out types
+    pub data: Box<[u8]>,
 }
 
 impl TransportAddr {
@@ -63,6 +75,11 @@ impl TransportAddr {
     /// Whether this is an IP transport address.
     pub fn is_ip(&self) -> bool {
         matches!(self, Self::Ip(_))
+    }
+
+    ///  TODO
+    pub fn is_user(&self) -> bool {
+        matches!(self, Self::User(_))
     }
 }
 
@@ -147,6 +164,8 @@ mod tests {
         Relay(RelayUrl),
         /// IP based addresses
         Ip(SocketAddr),
+        /// User addrs
+        User(UserAddr),
         /// New addr type for testing
         Cool(u16),
     }

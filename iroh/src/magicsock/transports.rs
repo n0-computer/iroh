@@ -35,11 +35,14 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: IpTransports,
     relay: Vec<RelayTransport>,
+    user: Vec<Box<dyn DynUserTransport>>,
 
     poll_recv_counter: usize,
     /// Cache for source addrs, to speed up access
     source_addrs: [Addr; quinn_udp::BATCH_SIZE],
 }
+
+pub trait DynUserTransport: std::fmt::Debug + Send + Sync + 'static {}
 
 #[cfg(not(wasm_browser))]
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
@@ -63,7 +66,7 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
 >;
 
 /// Available transport configurations.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[non_exhaustive]
 pub enum TransportConfig {
     /// IP based transport
@@ -74,6 +77,12 @@ pub enum TransportConfig {
         /// The [`RelayMap`] used for this relay.
         relay_map: RelayMap,
     },
+    /// TODO
+    User(Box<dyn UserTransportConfig>),
+}
+
+pub trait UserTransportConfig: std::fmt::Debug + Send + Sync + 'static {
+    fn bind(&self) -> io::Result<Box<dyn DynUserTransport>>;
 }
 
 impl TransportConfig {
@@ -125,10 +134,23 @@ impl Transports {
             .map(|_c| RelayTransport::new(relay_actor_config.clone(), shutdown_token.child_token()))
             .collect();
 
+        let mut user = Vec::new();
+        for config in configs.iter().filter_map(|t| {
+            if let TransportConfig::User(config) = t {
+                Some(config)
+            } else {
+                None
+            }
+        }) {
+            let transport = config.bind()?;
+            user.push(transport);
+        }
+
         Ok(Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            user,
             poll_recv_counter: Default::default(),
             source_addrs: Default::default(),
         })
