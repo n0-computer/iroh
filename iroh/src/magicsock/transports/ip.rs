@@ -7,14 +7,13 @@ use std::{
 };
 
 use n0_watcher::Watchable;
-#[cfg(not(wasm_browser))]
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
 use tracing::{debug, trace};
 
 use super::{Addr, Transmit};
-use crate::metrics::MagicsockMetrics;
+use crate::metrics::{EndpointMetrics, MagicsockMetrics};
 
 #[derive(Debug)]
 pub(crate) struct IpTransport {
@@ -328,5 +327,155 @@ impl IpSender {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Pending => Poll::Pending,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct IpTransportsSender {
+    /// Default sender for v4
+    v4_default: Option<IpSender>,
+    v4: Vec<IpSender>,
+    /// Default sender for v6
+    v6_default: Option<IpSender>,
+    v6: Vec<IpSender>,
+}
+
+impl IpTransportsSender {
+    pub(super) fn v4_iter(&self) -> impl Iterator<Item = &IpSender> {
+        self.v4.iter().chain(self.v4_default.iter())
+    }
+
+    pub(super) fn v6_iter(&self) -> impl Iterator<Item = &IpSender> {
+        self.v6.iter().chain(self.v6_default.iter())
+    }
+    pub(super) fn v4_iter_mut(&mut self) -> impl Iterator<Item = &mut IpSender> {
+        self.v4.iter_mut().chain(self.v4_default.iter_mut())
+    }
+
+    pub(super) fn v6_iter_mut(&mut self) -> impl Iterator<Item = &mut IpSender> {
+        self.v6.iter_mut().chain(self.v6_default.iter_mut())
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct IpTransports {
+    v4_default: Option<IpTransport>,
+    v4: Vec<IpTransport>,
+    v6_default: Option<IpTransport>,
+    v6: Vec<IpTransport>,
+}
+
+impl IpTransports {
+    pub(super) fn create_sender(&self) -> IpTransportsSender {
+        let ip_v4_default = self.v4_default.as_ref().map(|t| t.create_sender());
+        let ip_v4 = self.v4.iter().map(|t| t.create_sender()).collect();
+        let ip_v6_default = self.v6_default.as_ref().map(|t| t.create_sender());
+        let ip_v6 = self.v6.iter().map(|t| t.create_sender()).collect();
+
+        IpTransportsSender {
+            v4_default: ip_v4_default,
+            v4: ip_v4,
+            v6_default: ip_v6_default,
+            v6: ip_v6,
+        }
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = &IpTransport> {
+        self.v4_default
+            .iter()
+            .chain(self.v4.iter())
+            .chain(self.v6_default.iter())
+            .chain(self.v6.iter())
+    }
+
+    pub(super) fn bind(
+        configs: impl Iterator<Item = Config>,
+        metrics: &EndpointMetrics,
+    ) -> io::Result<Self> {
+        let mut ip_v4_default = None;
+        let mut ip_v4 = Vec::new();
+        let mut ip_v6_default = None;
+        let mut ip_v6 = Vec::new();
+
+        for config in configs {
+            match IpTransport::bind(config, metrics.magicsock.clone()) {
+                Ok(transport) => {
+                    if config.is_ipv4() {
+                        if config.is_default() {
+                            if ip_v4_default.is_some() {
+                                return Err(io::Error::other(
+                                    "can only have a single IPv4 default transport",
+                                ));
+                            }
+                            ip_v4_default = Some(transport);
+                        } else {
+                            ip_v4.push(transport);
+                        }
+                    } else if config.is_ipv6() {
+                        if config.is_default() {
+                            if ip_v6_default.is_some() {
+                                return Err(io::Error::other(
+                                    "can only have a single IPv6 default transport",
+                                ));
+                            }
+                            ip_v6_default = Some(transport);
+                        } else {
+                            ip_v6.push(transport);
+                        }
+                    }
+                }
+                Err(err) => {
+                    if config.is_ipv6() {
+                        tracing::info!("bind ignoring IPv6 bind failure: {:?}", err);
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        Ok(Self {
+            v4_default: ip_v4_default,
+            v4: ip_v4,
+            v6_default: ip_v6_default,
+            v6: ip_v6,
+        })
+    }
+
+    pub(super) fn poll_recv(
+        &mut self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [quinn_udp::RecvMeta],
+        source_addrs: &mut [Addr],
+    ) -> Poll<io::Result<usize>> {
+        macro_rules! poll_transport {
+            ($socket:expr) => {
+                match $socket.poll_recv(cx, bufs, metas, source_addrs)? {
+                    Poll::Pending | Poll::Ready(0) => {}
+                    Poll::Ready(n) => {
+                        return Poll::Ready(Ok(n));
+                    }
+                }
+            };
+        }
+
+        if let Some(ref mut transport) = self.v4_default {
+            poll_transport!(transport);
+        }
+
+        for transport in &mut self.v4 {
+            poll_transport!(transport);
+        }
+
+        if let Some(ref mut transport) = self.v6_default {
+            poll_transport!(transport);
+        }
+
+        for transport in &mut self.v6 {
+            poll_transport!(transport);
+        }
+
+        Poll::Pending
     }
 }
