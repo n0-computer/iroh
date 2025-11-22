@@ -76,6 +76,7 @@ futures-util = "0.3"
 
 # test_utils
 axum = { version = "0.8", optional = true }
+sync_wrapper = { version = "1.0.2", features = ["futures"] }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
