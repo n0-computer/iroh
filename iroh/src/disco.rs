@@ -24,7 +24,7 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use iroh_base::{EndpointId, PublicKey, RelayUrl};
+use iroh_base::{EndpointId, PublicKey, RelayUrl, UserAddr};
 use n0_error::{e, ensure, stack_error};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -181,6 +181,8 @@ pub enum SendAddr {
     Udp(SocketAddr),
     /// Relay Url.
     Relay(RelayUrl),
+    /// User
+    User(UserAddr),
 }
 
 impl From<transports::Addr> for SendAddr {
@@ -188,6 +190,7 @@ impl From<transports::Addr> for SendAddr {
         match addr {
             transports::Addr::Ip(addr) => SendAddr::Udp(addr),
             transports::Addr::Relay(url, _) => SendAddr::Relay(url),
+            transports::Addr::User(addr) => SendAddr::User(addr),
         }
     }
 }
@@ -209,6 +212,7 @@ impl PartialEq<SocketAddr> for SendAddr {
         match self {
             Self::Relay(_) => false,
             Self::Udp(addr) => addr.eq(other),
+            Self::User(_) => false,
         }
     }
 }
@@ -218,6 +222,7 @@ impl Display for SendAddr {
         match self {
             SendAddr::Relay(id) => write!(f, "Relay({id})"),
             SendAddr::Udp(addr) => write!(f, "UDP({addr})"),
+            SendAddr::User(addr) => write!(f, "User({addr:?})"),
         }
     }
 }
@@ -261,6 +266,11 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr, ParseError> {
             let u: Url = s.parse().map_err(|_| e!(ParseError::InvalidEncoding))?;
             Ok(SendAddr::Relay(u.into()))
         }
+        2u8 => {
+            let addr =
+                UserAddr::from_bytes(&p[1..]).map_err(|_| e!(ParseError::InvalidEncoding))?;
+            Ok(SendAddr::User(addr))
+        }
         _ => Err(e!(ParseError::UnknownFormat)),
     }
 }
@@ -275,6 +285,11 @@ fn send_addr_to_vec(addr: &SendAddr) -> Vec<u8> {
         SendAddr::Udp(ip) => {
             let mut out = vec![0u8];
             out.extend_from_slice(&socket_addr_as_bytes(ip));
+            out
+        }
+        SendAddr::User(addr) => {
+            let mut out = vec![2u8];
+            out.extend_from_slice(&addr.as_bytes());
             out
         }
     }

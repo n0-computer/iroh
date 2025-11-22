@@ -66,6 +66,21 @@ pub struct UserAddr {
     pub data: Box<[u8]>,
 }
 
+impl UserAddr {
+    /// Convert to byte representation
+    pub fn as_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 + self.data.len());
+        out[..8].copy_from_slice(&self.id.to_le_bytes());
+        out[8..].copy_from_slice(&self.data);
+        out
+    }
+
+    /// Parse from bytes
+    pub fn from_bytes(_data: &[u8]) -> Result<Self, ()> {
+        todo!()
+    }
+}
+
 impl TransportAddr {
     /// Whether this is a transport address via a relay server.
     pub fn is_relay(&self) -> bool {

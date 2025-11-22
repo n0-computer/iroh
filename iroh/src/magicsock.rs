@@ -568,6 +568,9 @@ impl MagicSock {
                                 .recv_data_relay
                                 .inc_by(datagram.len() as _);
                         }
+                        transports::Addr::User(..) => {
+                            // TODO
+                        }
                     }
 
                     quic_datagram_count += 1;
@@ -590,6 +593,10 @@ impl MagicSock {
                             .remote_map
                             .relay_mapped_addrs
                             .get(&(src_url.clone(), *src_endpoint));
+                        quinn_meta.addr = mapped_addr.private_socket_addr();
+                    }
+                    transports::Addr::User(addr) => {
+                        let mapped_addr = self.remote_map.user_mapped_addrs.get(addr);
                         quinn_meta.addr = mapped_addr.private_socket_addr();
                     }
                 }
@@ -686,6 +693,7 @@ impl MagicSock {
         let dst = match dst {
             SendAddr::Udp(addr) => transports::Addr::Ip(addr),
             SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+            SendAddr::User(addr) => transports::Addr::User(addr),
         };
 
         trace!(?dst, %msg, "send disco message (UDP)");

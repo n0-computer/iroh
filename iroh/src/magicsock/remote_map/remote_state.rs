@@ -6,7 +6,7 @@ use std::{
     task::Poll,
 };
 
-use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{EndpointId, RelayUrl, TransportAddr, UserAddr};
 use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
@@ -132,6 +132,8 @@ pub(super) struct RemoteStateActor {
     disco: DiscoState,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// The mapping between endpoints via a user transport and their [`RelayMappedAddr`]s.
+    user_mapped_addrs: AddrMap<UserAddr, RelayMappedAddr>, // TODO: use new type
     /// Discovery service, cloned from the magicsock.
     discovery: ConcurrentDiscovery,
 
@@ -185,6 +187,7 @@ impl RemoteStateActor {
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+        user_mapped_addrs: AddrMap<UserAddr, RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         discovery: ConcurrentDiscovery,
@@ -195,6 +198,7 @@ impl RemoteStateActor {
             metrics,
             local_direct_addrs,
             relay_mapped_addrs,
+            user_mapped_addrs,
             discovery,
             disco,
             connections: FxHashMap::default(),
@@ -446,6 +450,7 @@ impl RemoteStateActor {
                 let path_remote_is_ip = path_remote.is_ip();
                 let status = match path_remote {
                     transports::Addr::Ip(_) => PathStatus::Available,
+                    transports::Addr::User(_) => PathStatus::Available,
                     transports::Addr::Relay(_, _) => PathStatus::Backup,
                 };
                 path.set_status(status).ok();
@@ -707,6 +712,7 @@ impl RemoteStateActor {
             .filter_map(|(addr, state)| match addr {
                 transports::Addr::Ip(socket_addr) => Some((socket_addr, state)),
                 transports::Addr::Relay(_, _) => None,
+                transports::Addr::User(_) => None,
             })
             .filter_map(|(addr, state)| {
                 if state
@@ -794,6 +800,7 @@ impl RemoteStateActor {
         };
         let counter = match dst {
             transports::Addr::Ip(_) => &self.metrics.send_disco_udp,
+            transports::Addr::User(_) => &self.metrics.send_disco_udp, // TODO,
             transports::Addr::Relay(_, _) => &self.metrics.send_disco_relay,
         };
         match self.send_datagram(dst, transmit).await {
@@ -815,10 +822,12 @@ impl RemoteStateActor {
     fn open_path(&mut self, open_addr: &transports::Addr) {
         let path_status = match open_addr {
             transports::Addr::Ip(_) => PathStatus::Available,
+            transports::Addr::User(_) => PathStatus::Available,
             transports::Addr::Relay(_, _) => PathStatus::Backup,
         };
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
+            transports::Addr::User(addr) => self.user_mapped_addrs.get(addr).private_socket_addr(),
             transports::Addr::Relay(relay_url, eid) => self
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))

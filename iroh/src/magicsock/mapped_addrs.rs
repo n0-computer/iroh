@@ -93,6 +93,8 @@ pub(crate) enum MultipathMappedAddr {
     Relay(RelayMappedAddr),
     /// An IP based transport address.
     Ip(SocketAddr),
+    /// Custom user version
+    User(RelayMappedAddr), // TODO: custom type
 }
 
 impl From<SocketAddr> for MultipathMappedAddr {
@@ -339,6 +341,10 @@ impl AddrMap<(RelayUrl, EndpointId), RelayMappedAddr> {
                 }
             }
             MultipathMappedAddr::Ip(addr) => Some(transports::Addr::from(addr)),
+            MultipathMappedAddr::User(_) => {
+                error!("Failed to convert addr to transport addr: Unknown relay mapped addr");
+                None
+            }
         }
     }
 }

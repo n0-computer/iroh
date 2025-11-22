@@ -8,7 +8,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use futures_util::future::BoxFuture;
+use iroh_base::{EndpointId, RelayUrl, TransportAddr, UserAddr};
 use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
@@ -42,7 +43,28 @@ pub(crate) struct Transports {
     source_addrs: [Addr; quinn_udp::BATCH_SIZE],
 }
 
-pub trait DynUserTransport: std::fmt::Debug + Send + Sync + 'static {}
+pub trait DynUserTransport: std::fmt::Debug + Send + Sync + 'static {
+    fn create_sender(&self) -> Arc<dyn DynUserSender>;
+    fn poll_recv(
+        &mut self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [quinn_udp::RecvMeta],
+        source_addrs: &mut [Addr],
+    ) -> Poll<io::Result<usize>>;
+}
+
+pub trait DynUserSender: std::fmt::Debug + Send + Sync + 'static {
+    fn is_valid_send_addr(&self, addr: &UserAddr) -> bool;
+    fn send(&self, dst: UserAddr, transmit: &Transmit<'_>) -> BoxFuture<io::Result<()>>;
+
+    fn poll_send(
+        &self,
+        cx: &mut std::task::Context,
+        dst: UserAddr,
+        transmit: &Transmit<'_>,
+    ) -> Poll<io::Result<()>>;
+}
 
 #[cfg(not(wasm_browser))]
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
@@ -206,6 +228,10 @@ impl Transports {
             #[cfg(not(wasm_browser))]
             poll_transport!(&mut self.ip);
 
+            for transport in &mut self.user {
+                poll_transport!(transport);
+            }
+
             for transport in &mut self.relay {
                 poll_transport!(transport);
             }
@@ -213,6 +239,11 @@ impl Transports {
             for transport in self.relay.iter_mut().rev() {
                 poll_transport!(transport);
             }
+
+            for transport in self.user.iter_mut().rev() {
+                poll_transport!(transport);
+            }
+
             #[cfg(not(wasm_browser))]
             poll_transport!(&mut self.ip);
         }
@@ -304,12 +335,15 @@ impl Transports {
         let ip = self.ip.create_sender();
 
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
+        let user = self.user.iter().map(|t| t.create_sender()).collect();
+
         let max_transmit_segments = self.max_transmit_segments();
 
         TransportsSender {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            user,
             max_transmit_segments,
         }
     }
@@ -375,10 +409,10 @@ impl NetworkChangeSender {
 
 /// An outgoing packet
 #[derive(Debug, Clone)]
-pub(crate) struct Transmit<'a> {
-    pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
-    pub(crate) contents: &'a [u8],
-    pub(crate) segment_size: Option<usize>,
+pub struct Transmit<'a> {
+    pub ecn: Option<quinn_udp::EcnCodepoint>,
+    pub contents: &'a [u8],
+    pub segment_size: Option<usize>,
 }
 
 /// An outgoing packet that can be sent across channels.
@@ -406,6 +440,8 @@ pub(crate) enum Addr {
     Ip(SocketAddr),
     /// A relay address.
     Relay(RelayUrl, EndpointId),
+    /// A custom user address
+    User(UserAddr),
 }
 
 impl fmt::Debug for Addr {
@@ -413,6 +449,7 @@ impl fmt::Debug for Addr {
         match self {
             Addr::Ip(addr) => write!(f, "Ip({addr})"),
             Addr::Relay(url, node_id) => write!(f, "Relay({url}, {})", node_id.fmt_short()),
+            Addr::User(addr) => write!(f, "User({addr:?})"),
         }
     }
 }
@@ -425,6 +462,12 @@ impl Default for Addr {
             0,
             0,
         )))
+    }
+}
+
+impl From<UserAddr> for Addr {
+    fn from(value: UserAddr) -> Self {
+        Self::User(value)
     }
 }
 
@@ -461,6 +504,7 @@ impl From<Addr> for TransportAddr {
         match value {
             Addr::Ip(addr) => TransportAddr::Ip(addr),
             Addr::Relay(url, _) => TransportAddr::Relay(url),
+            Addr::User(addr) => TransportAddr::User(addr),
         }
     }
 }
@@ -478,6 +522,7 @@ impl Addr {
         match self {
             Addr::Ip(socket_addr) => socket_addr.is_ipv4(),
             Addr::Relay(_, _) => false,
+            Addr::User(_) => false,
         }
     }
 
@@ -486,6 +531,7 @@ impl Addr {
         match self {
             Self::Ip(ip) => Some(ip),
             Self::Relay(..) => None,
+            Self::User(..) => None,
         }
     }
 }
@@ -496,6 +542,7 @@ pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: IpTransportsSender,
     relay: Vec<RelaySender>,
+    user: Vec<Arc<dyn DynUserSender>>,
     max_transmit_segments: usize,
 }
 
@@ -547,6 +594,22 @@ impl TransportsSender {
                     if sender.is_valid_send_addr(url, endpoint_id) {
                         any_match = true;
                         match sender.send(url.clone(), *endpoint_id, transmit).await {
+                            Ok(()) => {
+                                trace!("sent");
+                                return Ok(());
+                            }
+                            Err(err) => {
+                                warn!("relay failed to send: {:?}", err);
+                            }
+                        }
+                    }
+                }
+            }
+            Addr::User(addr) => {
+                for sender in &self.user {
+                    if sender.is_valid_send_addr(addr) {
+                        any_match = true;
+                        match sender.send(addr.clone(), transmit).await {
                             Ok(()) => {
                                 trace!("sent");
                                 return Ok(());
@@ -628,6 +691,22 @@ impl TransportsSender {
                     }
                 }
             }
+            Addr::User(addr) => {
+                for sender in &mut self.user {
+                    if sender.is_valid_send_addr(addr) {
+                        match sender.poll_send(cx, addr.clone(), transmit) {
+                            Poll::Pending => {}
+                            Poll::Ready(res) => {
+                                match &res {
+                                    Ok(()) => trace!("sent"),
+                                    Err(err) => trace!("send failed: {err:#}"),
+                                }
+                                return Poll::Ready(res);
+                            }
+                        }
+                    }
+                }
+            }
         }
         Poll::Pending
     }
@@ -678,6 +757,7 @@ impl quinn::AsyncUdpSocket for MagicTransport {
                 match addr {
                     Addr::Ip(addr) => addr,
                     Addr::Relay(..) => DEFAULT_FAKE_ADDR.into(),
+                    Addr::User(..) => DEFAULT_FAKE_ADDR.into(),
                 }
             })
             .collect();
@@ -808,6 +888,20 @@ impl quinn::UdpSender for MagicSender {
                     Some((relay_url, endpoint_id)) => Addr::Relay(relay_url, endpoint_id),
                     None => {
                         error!("unknown RelayMappedAddr, dropped transmit");
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+            }
+            MultipathMappedAddr::User(user_mapped_addr) => {
+                match self
+                    .msock
+                    .remote_map
+                    .user_mapped_addrs
+                    .lookup(&user_mapped_addr)
+                {
+                    Some(addr) => Addr::User(addr),
+                    None => {
+                        error!("unknown UserMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));
                     }
                 }
