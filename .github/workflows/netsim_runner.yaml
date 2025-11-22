@@ -38,10 +38,6 @@ on:
         required: false
         type: string
         default: ""
-      report_table:
-        required: false
-        type: boolean
-        default: false
       test_filter:
         required: false
         type: string
@@ -84,10 +80,6 @@ on:
         required: false
         type: string
         default: ""
-      report_table:
-        required: false
-        type: boolean
-        default: false
       test_filter:
         required: false
         type: string
