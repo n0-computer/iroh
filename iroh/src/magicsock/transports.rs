@@ -43,8 +43,11 @@ pub(crate) struct Transports {
     source_addrs: [Addr; quinn_udp::BATCH_SIZE],
 }
 
+/// An user transport
 pub trait DynUserTransport: std::fmt::Debug + Send + Sync + 'static {
+    /// Create a sender
     fn create_sender(&self) -> Arc<dyn DynUserSender>;
+    /// Poll recv
     fn poll_recv(
         &mut self,
         cx: &mut Context,
@@ -54,10 +57,13 @@ pub trait DynUserTransport: std::fmt::Debug + Send + Sync + 'static {
     ) -> Poll<io::Result<usize>>;
 }
 
+/// User sender
 pub trait DynUserSender: std::fmt::Debug + Send + Sync + 'static {
+    /// is addr valid for this transport?
     fn is_valid_send_addr(&self, addr: &UserAddr) -> bool;
+    /// send
     fn send(&self, dst: UserAddr, transmit: &Transmit<'_>) -> BoxFuture<io::Result<()>>;
-
+    /// poll_send
     fn poll_send(
         &self,
         cx: &mut std::task::Context,
@@ -103,7 +109,9 @@ pub enum TransportConfig {
     User(Box<dyn UserTransportConfig>),
 }
 
+/// User transport config or factory
 pub trait UserTransportConfig: std::fmt::Debug + Send + Sync + 'static {
+    /// Create an actual user transport
     fn bind(&self) -> io::Result<Box<dyn DynUserTransport>>;
 }
 
@@ -410,8 +418,11 @@ impl NetworkChangeSender {
 /// An outgoing packet
 #[derive(Debug, Clone)]
 pub struct Transmit<'a> {
+    ///
     pub ecn: Option<quinn_udp::EcnCodepoint>,
+    ///
     pub contents: &'a [u8],
+    ///
     pub segment_size: Option<usize>,
 }
 

@@ -25,6 +25,13 @@ pub use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+/// Types for defining custom transports
+pub mod transports {
+    pub use super::magicsock::transports::{
+        Addr, DynUserSender, DynUserTransport, Transmit, UserTransportConfig,
+    };
+}
+
 pub use super::magicsock::{
     DirectAddr, DirectAddrType, PathInfo,
     remote_map::{PathInfoList, Source},
