@@ -28,32 +28,32 @@
 <a href=#28 id=28 data-nosnippet>28</a></span><span class="kw">pub enum </span>Config {
 <a href=#29 id=29 data-nosnippet>29</a>    <span class="doccomment">/// Default IPv4 binding
 <a href=#30 id=30 data-nosnippet>30</a>    </span>V4Default {
-<a href=#31 id=31 data-nosnippet>31</a>        <span class="doccomment">/// TODO
+<a href=#31 id=31 data-nosnippet>31</a>        <span class="doccomment">/// The IP address to bind on
 <a href=#32 id=32 data-nosnippet>32</a>        </span>ip_addr: Ipv4Addr,
 <a href=#33 id=33 data-nosnippet>33</a>        <span class="doccomment">/// The port to bind on
 <a href=#34 id=34 data-nosnippet>34</a>        </span>port: u16,
 <a href=#35 id=35 data-nosnippet>35</a>    },
 <a href=#36 id=36 data-nosnippet>36</a>    <span class="doccomment">/// Default IPv6 binding
 <a href=#37 id=37 data-nosnippet>37</a>    </span>V6Default {
-<a href=#38 id=38 data-nosnippet>38</a>        <span class="doccomment">/// TODO
+<a href=#38 id=38 data-nosnippet>38</a>        <span class="doccomment">/// The IP address to bind on
 <a href=#39 id=39 data-nosnippet>39</a>        </span>ip_addr: Ipv6Addr,
 <a href=#40 id=40 data-nosnippet>40</a>        <span class="doccomment">/// The scope_id
 <a href=#41 id=41 data-nosnippet>41</a>        </span>scope_id: u32,
 <a href=#42 id=42 data-nosnippet>42</a>        <span class="doccomment">/// The port to bind on
 <a href=#43 id=43 data-nosnippet>43</a>        </span>port: u16,
 <a href=#44 id=44 data-nosnippet>44</a>    },
-<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// IPv4 binding
+<a href=#45 id=45 data-nosnippet>45</a>    <span class="doccomment">/// General IPv4 binding
 <a href=#46 id=46 data-nosnippet>46</a>    </span>V4 {
-<a href=#47 id=47 data-nosnippet>47</a>        <span class="doccomment">/// TODO
+<a href=#47 id=47 data-nosnippet>47</a>        <span class="doccomment">/// The IP address to bind on
 <a href=#48 id=48 data-nosnippet>48</a>        </span>ip_addr: Ipv4Net,
 <a href=#49 id=49 data-nosnippet>49</a>        <span class="doccomment">/// The port to bind on
 <a href=#50 id=50 data-nosnippet>50</a>        </span>port: u16,
 <a href=#51 id=51 data-nosnippet>51</a>    },
-<a href=#52 id=52 data-nosnippet>52</a>    <span class="doccomment">/// IPv6 binding
+<a href=#52 id=52 data-nosnippet>52</a>    <span class="doccomment">/// General IPv6 binding
 <a href=#53 id=53 data-nosnippet>53</a>    </span>V6 {
-<a href=#54 id=54 data-nosnippet>54</a>        <span class="doccomment">/// TODO
+<a href=#54 id=54 data-nosnippet>54</a>        <span class="doccomment">/// The IP address to bind on
 <a href=#55 id=55 data-nosnippet>55</a>        </span>ip_addr: Ipv6Net,
-<a href=#56 id=56 data-nosnippet>56</a>        <span class="doccomment">/// The scope id
+<a href=#56 id=56 data-nosnippet>56</a>        <span class="doccomment">/// The scope id.
 <a href=#57 id=57 data-nosnippet>57</a>        </span>scope_id: u32,
 <a href=#58 id=58 data-nosnippet>58</a>        <span class="doccomment">/// The port to bind on
 <a href=#59 id=59 data-nosnippet>59</a>        </span>port: u16,
@@ -76,8 +76,8 @@
 <a href=#76 id=76 data-nosnippet>76</a>        <span class="macro">matches!</span>(<span class="self">self</span>, <span class="self">Self</span>::V4Default { .. } | <span class="self">Self</span>::V6Default { .. })
 <a href=#77 id=77 data-nosnippet>77</a>    }
 <a href=#78 id=78 data-nosnippet>78</a>
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// TODO
-<a href=#80 id=80 data-nosnippet>80</a>    </span><span class="kw">pub fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: SocketAddr) -&gt; bool {
+<a href=#79 id=79 data-nosnippet>79</a>    <span class="doccomment">/// Does this configuration match to send to the given `dst` address.
+<a href=#80 id=80 data-nosnippet>80</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: SocketAddr) -&gt; bool {
 <a href=#81 id=81 data-nosnippet>81</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#82 id=82 data-nosnippet>82</a>            <span class="self">Self</span>::V4Default { .. } =&gt; <span class="macro">matches!</span>(dst, SocketAddr::V4(<span class="kw">_</span>)),
 <a href=#83 id=83 data-nosnippet>83</a>            <span class="self">Self</span>::V6Default { .. } =&gt; <span class="macro">matches!</span>(dst, SocketAddr::V6(<span class="kw">_</span>)),
@@ -274,242 +274,236 @@
 <a href=#274 id=274 data-nosnippet>274</a>
 <a href=#275 id=275 data-nosnippet>275</a><span class="kw">impl </span>IpSender {
 <a href=#276 id=276 data-nosnippet>276</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: <span class="kw-2">&amp;</span>SocketAddr) -&gt; bool {
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="comment">// Our net-tools crate binds sockets to their specific family.  This means an IPv6
-<a href=#278 id=278 data-nosnippet>278</a>        // socket can not sent to IPv4, on any platform.  So we need to convert an
-<a href=#279 id=279 data-nosnippet>279</a>        // IPv4-mapped IPv6 address back to it's canonical IPv4 address.
-<a href=#280 id=280 data-nosnippet>280</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>dst = <span class="kw-2">*</span>dst;
-<a href=#281 id=281 data-nosnippet>281</a>        dst.set_ip(dst.ip().to_canonical());
-<a href=#282 id=282 data-nosnippet>282</a>
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="self">self</span>.config.is_valid_send_addr(dst)
-<a href=#284 id=284 data-nosnippet>284</a>    }
-<a href=#285 id=285 data-nosnippet>285</a>
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="doccomment">/// Creates a canonical socket address.
-<a href=#287 id=287 data-nosnippet>287</a>    ///
-<a href=#288 id=288 data-nosnippet>288</a>    /// We may be asked to send IPv4-mapped IPv6 addresses.  But our sockets are configured
-<a href=#289 id=289 data-nosnippet>289</a>    /// to only send their actual family.  So we need to map those back to the canonical
-<a href=#290 id=290 data-nosnippet>290</a>    /// addresses.
-<a href=#291 id=291 data-nosnippet>291</a>    </span><span class="attr">#[inline]
-<a href=#292 id=292 data-nosnippet>292</a>    </span><span class="kw">fn </span>canonical_addr(addr: SocketAddr) -&gt; SocketAddr {
-<a href=#293 id=293 data-nosnippet>293</a>        SocketAddr::new(addr.ip().to_canonical(), addr.port())
-<a href=#294 id=294 data-nosnippet>294</a>    }
-<a href=#295 id=295 data-nosnippet>295</a>
-<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>send(
-<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#298 id=298 data-nosnippet>298</a>        dst: SocketAddr,
-<a href=#299 id=299 data-nosnippet>299</a>        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
-<a href=#300 id=300 data-nosnippet>300</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#301 id=301 data-nosnippet>301</a>    ) -&gt; io::Result&lt;()&gt; {
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>total_bytes = transmit.contents.len() <span class="kw">as </span>u64;
-<a href=#303 id=303 data-nosnippet>303</a>        <span class="kw">let </span>res = <span class="self">self
-<a href=#304 id=304 data-nosnippet>304</a>            </span>.sender
-<a href=#305 id=305 data-nosnippet>305</a>            .send(<span class="kw-2">&amp;</span>quinn_udp::Transmit {
-<a href=#306 id=306 data-nosnippet>306</a>                destination: <span class="self">Self</span>::canonical_addr(dst),
-<a href=#307 id=307 data-nosnippet>307</a>                ecn: transmit.ecn,
-<a href=#308 id=308 data-nosnippet>308</a>                contents: transmit.contents,
-<a href=#309 id=309 data-nosnippet>309</a>                segment_size: transmit.segment_size,
-<a href=#310 id=310 data-nosnippet>310</a>                src_ip: src,
-<a href=#311 id=311 data-nosnippet>311</a>            })
-<a href=#312 id=312 data-nosnippet>312</a>            .<span class="kw">await</span>;
-<a href=#313 id=313 data-nosnippet>313</a>
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">match </span>res {
-<a href=#315 id=315 data-nosnippet>315</a>            <span class="prelude-val">Ok</span>(res) =&gt; {
-<a href=#316 id=316 data-nosnippet>316</a>                <span class="kw">match </span>dst {
-<a href=#317 id=317 data-nosnippet>317</a>                    SocketAddr::V4(<span class="kw">_</span>) =&gt; {
-<a href=#318 id=318 data-nosnippet>318</a>                        <span class="self">self</span>.metrics.send_ipv4.inc_by(total_bytes);
-<a href=#319 id=319 data-nosnippet>319</a>                    }
-<a href=#320 id=320 data-nosnippet>320</a>                    SocketAddr::V6(<span class="kw">_</span>) =&gt; {
-<a href=#321 id=321 data-nosnippet>321</a>                        <span class="self">self</span>.metrics.send_ipv6.inc_by(total_bytes);
-<a href=#322 id=322 data-nosnippet>322</a>                    }
-<a href=#323 id=323 data-nosnippet>323</a>                }
-<a href=#324 id=324 data-nosnippet>324</a>                <span class="prelude-val">Ok</span>(res)
-<a href=#325 id=325 data-nosnippet>325</a>            }
-<a href=#326 id=326 data-nosnippet>326</a>            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
-<a href=#327 id=327 data-nosnippet>327</a>        }
-<a href=#328 id=328 data-nosnippet>328</a>    }
-<a href=#329 id=329 data-nosnippet>329</a>
-<a href=#330 id=330 data-nosnippet>330</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-<a href=#332 id=332 data-nosnippet>332</a>        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
-<a href=#333 id=333 data-nosnippet>333</a>        dst: SocketAddr,
-<a href=#334 id=334 data-nosnippet>334</a>        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
-<a href=#335 id=335 data-nosnippet>335</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#336 id=336 data-nosnippet>336</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-<a href=#337 id=337 data-nosnippet>337</a>        <span class="kw">let </span>total_bytes = transmit.contents.len() <span class="kw">as </span>u64;
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">let </span>res = Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.sender).poll_send(
-<a href=#339 id=339 data-nosnippet>339</a>            <span class="kw-2">&amp;</span>quinn_udp::Transmit {
-<a href=#340 id=340 data-nosnippet>340</a>                destination: <span class="self">Self</span>::canonical_addr(dst),
-<a href=#341 id=341 data-nosnippet>341</a>                ecn: transmit.ecn,
-<a href=#342 id=342 data-nosnippet>342</a>                contents: transmit.contents,
-<a href=#343 id=343 data-nosnippet>343</a>                segment_size: transmit.segment_size,
-<a href=#344 id=344 data-nosnippet>344</a>                src_ip: src,
-<a href=#345 id=345 data-nosnippet>345</a>            },
-<a href=#346 id=346 data-nosnippet>346</a>            cx,
-<a href=#347 id=347 data-nosnippet>347</a>        );
-<a href=#348 id=348 data-nosnippet>348</a>
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">match </span>res {
-<a href=#350 id=350 data-nosnippet>350</a>            Poll::Ready(<span class="prelude-val">Ok</span>(res)) =&gt; {
-<a href=#351 id=351 data-nosnippet>351</a>                <span class="kw">match </span>dst {
-<a href=#352 id=352 data-nosnippet>352</a>                    SocketAddr::V4(<span class="kw">_</span>) =&gt; {
-<a href=#353 id=353 data-nosnippet>353</a>                        <span class="self">self</span>.metrics.send_ipv4.inc_by(total_bytes);
-<a href=#354 id=354 data-nosnippet>354</a>                    }
-<a href=#355 id=355 data-nosnippet>355</a>                    SocketAddr::V6(<span class="kw">_</span>) =&gt; {
-<a href=#356 id=356 data-nosnippet>356</a>                        <span class="self">self</span>.metrics.send_ipv6.inc_by(total_bytes);
-<a href=#357 id=357 data-nosnippet>357</a>                    }
-<a href=#358 id=358 data-nosnippet>358</a>                }
-<a href=#359 id=359 data-nosnippet>359</a>                Poll::Ready(<span class="prelude-val">Ok</span>(res))
-<a href=#360 id=360 data-nosnippet>360</a>            }
-<a href=#361 id=361 data-nosnippet>361</a>            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
-<a href=#362 id=362 data-nosnippet>362</a>            Poll::Pending =&gt; Poll::Pending,
-<a href=#363 id=363 data-nosnippet>363</a>        }
-<a href=#364 id=364 data-nosnippet>364</a>    }
-<a href=#365 id=365 data-nosnippet>365</a>}
-<a href=#366 id=366 data-nosnippet>366</a>
-<a href=#367 id=367 data-nosnippet>367</a><span class="attr">#[derive(Debug, Clone)]
-<a href=#368 id=368 data-nosnippet>368</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IpTransportsSender {
-<a href=#369 id=369 data-nosnippet>369</a>    <span class="doccomment">/// Default sender for v4
-<a href=#370 id=370 data-nosnippet>370</a>    </span>v4_default: <span class="prelude-ty">Option</span>&lt;IpSender&gt;,
-<a href=#371 id=371 data-nosnippet>371</a>    v4: Vec&lt;IpSender&gt;,
-<a href=#372 id=372 data-nosnippet>372</a>    <span class="doccomment">/// Default sender for v6
-<a href=#373 id=373 data-nosnippet>373</a>    </span>v6_default: <span class="prelude-ty">Option</span>&lt;IpSender&gt;,
-<a href=#374 id=374 data-nosnippet>374</a>    v6: Vec&lt;IpSender&gt;,
-<a href=#375 id=375 data-nosnippet>375</a>}
-<a href=#376 id=376 data-nosnippet>376</a>
-<a href=#377 id=377 data-nosnippet>377</a><span class="kw">impl </span>IpTransportsSender {
-<a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>v4_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>IpSender&gt; {
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="self">self</span>.v4.iter().chain(<span class="self">self</span>.v4_default.iter())
-<a href=#380 id=380 data-nosnippet>380</a>    }
-<a href=#381 id=381 data-nosnippet>381</a>
-<a href=#382 id=382 data-nosnippet>382</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>v6_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>IpSender&gt; {
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="self">self</span>.v6.iter().chain(<span class="self">self</span>.v6_default.iter())
-<a href=#384 id=384 data-nosnippet>384</a>    }
-<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>v4_iter_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;mut </span>IpSender&gt; {
-<a href=#386 id=386 data-nosnippet>386</a>        <span class="self">self</span>.v4.iter_mut().chain(<span class="self">self</span>.v4_default.iter_mut())
-<a href=#387 id=387 data-nosnippet>387</a>    }
-<a href=#388 id=388 data-nosnippet>388</a>
-<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>v6_iter_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;mut </span>IpSender&gt; {
-<a href=#390 id=390 data-nosnippet>390</a>        <span class="self">self</span>.v6.iter_mut().chain(<span class="self">self</span>.v6_default.iter_mut())
-<a href=#391 id=391 data-nosnippet>391</a>    }
-<a href=#392 id=392 data-nosnippet>392</a>}
-<a href=#393 id=393 data-nosnippet>393</a>
-<a href=#394 id=394 data-nosnippet>394</a><span class="attr">#[derive(Debug)]
-<a href=#395 id=395 data-nosnippet>395</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IpTransports {
-<a href=#396 id=396 data-nosnippet>396</a>    v4_default: <span class="prelude-ty">Option</span>&lt;IpTransport&gt;,
-<a href=#397 id=397 data-nosnippet>397</a>    v4: Vec&lt;IpTransport&gt;,
-<a href=#398 id=398 data-nosnippet>398</a>    v6_default: <span class="prelude-ty">Option</span>&lt;IpTransport&gt;,
-<a href=#399 id=399 data-nosnippet>399</a>    v6: Vec&lt;IpTransport&gt;,
-<a href=#400 id=400 data-nosnippet>400</a>}
-<a href=#401 id=401 data-nosnippet>401</a>
-<a href=#402 id=402 data-nosnippet>402</a><span class="kw">impl </span>IpTransports {
-<a href=#403 id=403 data-nosnippet>403</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; IpTransportsSender {
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span>ip_v4_default = <span class="self">self</span>.v4_default.as_ref().map(|t| t.create_sender());
-<a href=#405 id=405 data-nosnippet>405</a>        <span class="kw">let </span>ip_v4 = <span class="self">self</span>.v4.iter().map(|t| t.create_sender()).collect();
-<a href=#406 id=406 data-nosnippet>406</a>        <span class="kw">let </span>ip_v6_default = <span class="self">self</span>.v6_default.as_ref().map(|t| t.create_sender());
-<a href=#407 id=407 data-nosnippet>407</a>        <span class="kw">let </span>ip_v6 = <span class="self">self</span>.v6.iter().map(|t| t.create_sender()).collect();
-<a href=#408 id=408 data-nosnippet>408</a>
-<a href=#409 id=409 data-nosnippet>409</a>        IpTransportsSender {
-<a href=#410 id=410 data-nosnippet>410</a>            v4_default: ip_v4_default,
-<a href=#411 id=411 data-nosnippet>411</a>            v4: ip_v4,
-<a href=#412 id=412 data-nosnippet>412</a>            v6_default: ip_v6_default,
-<a href=#413 id=413 data-nosnippet>413</a>            v6: ip_v6,
-<a href=#414 id=414 data-nosnippet>414</a>        }
-<a href=#415 id=415 data-nosnippet>415</a>    }
-<a href=#416 id=416 data-nosnippet>416</a>
-<a href=#417 id=417 data-nosnippet>417</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>IpTransport&gt; {
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="self">self</span>.v4_default
-<a href=#419 id=419 data-nosnippet>419</a>            .iter()
-<a href=#420 id=420 data-nosnippet>420</a>            .chain(<span class="self">self</span>.v4.iter())
-<a href=#421 id=421 data-nosnippet>421</a>            .chain(<span class="self">self</span>.v6_default.iter())
-<a href=#422 id=422 data-nosnippet>422</a>            .chain(<span class="self">self</span>.v6.iter())
-<a href=#423 id=423 data-nosnippet>423</a>    }
-<a href=#424 id=424 data-nosnippet>424</a>
-<a href=#425 id=425 data-nosnippet>425</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bind(
-<a href=#426 id=426 data-nosnippet>426</a>        configs: <span class="kw">impl </span>Iterator&lt;Item = Config&gt;,
-<a href=#427 id=427 data-nosnippet>427</a>        metrics: <span class="kw-2">&amp;</span>EndpointMetrics,
-<a href=#428 id=428 data-nosnippet>428</a>    ) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
-<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">let </span><span class="kw-2">mut </span>ip_v4_default = <span class="prelude-val">None</span>;
-<a href=#430 id=430 data-nosnippet>430</a>        <span class="kw">let </span><span class="kw-2">mut </span>ip_v4 = Vec::new();
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">let </span><span class="kw-2">mut </span>ip_v6_default = <span class="prelude-val">None</span>;
-<a href=#432 id=432 data-nosnippet>432</a>        <span class="kw">let </span><span class="kw-2">mut </span>ip_v6 = Vec::new();
-<a href=#433 id=433 data-nosnippet>433</a>
-<a href=#434 id=434 data-nosnippet>434</a>        <span class="kw">for </span>config <span class="kw">in </span>configs {
-<a href=#435 id=435 data-nosnippet>435</a>            <span class="kw">match </span>IpTransport::bind(config, metrics.magicsock.clone()) {
-<a href=#436 id=436 data-nosnippet>436</a>                <span class="prelude-val">Ok</span>(transport) =&gt; {
-<a href=#437 id=437 data-nosnippet>437</a>                    <span class="kw">if </span>config.is_ipv4() {
-<a href=#438 id=438 data-nosnippet>438</a>                        <span class="kw">if </span>config.is_default() {
-<a href=#439 id=439 data-nosnippet>439</a>                            <span class="kw">if </span>ip_v4_default.is_some() {
-<a href=#440 id=440 data-nosnippet>440</a>                                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(
-<a href=#441 id=441 data-nosnippet>441</a>                                    <span class="string">"can only have a single IPv4 default transport"</span>,
-<a href=#442 id=442 data-nosnippet>442</a>                                ));
-<a href=#443 id=443 data-nosnippet>443</a>                            }
-<a href=#444 id=444 data-nosnippet>444</a>                            ip_v4_default = <span class="prelude-val">Some</span>(transport);
-<a href=#445 id=445 data-nosnippet>445</a>                        } <span class="kw">else </span>{
-<a href=#446 id=446 data-nosnippet>446</a>                            ip_v4.push(transport);
-<a href=#447 id=447 data-nosnippet>447</a>                        }
-<a href=#448 id=448 data-nosnippet>448</a>                    } <span class="kw">else if </span>config.is_ipv6() {
-<a href=#449 id=449 data-nosnippet>449</a>                        <span class="kw">if </span>config.is_default() {
-<a href=#450 id=450 data-nosnippet>450</a>                            <span class="kw">if </span>ip_v6_default.is_some() {
-<a href=#451 id=451 data-nosnippet>451</a>                                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(
-<a href=#452 id=452 data-nosnippet>452</a>                                    <span class="string">"can only have a single IPv6 default transport"</span>,
-<a href=#453 id=453 data-nosnippet>453</a>                                ));
-<a href=#454 id=454 data-nosnippet>454</a>                            }
-<a href=#455 id=455 data-nosnippet>455</a>                            ip_v6_default = <span class="prelude-val">Some</span>(transport);
-<a href=#456 id=456 data-nosnippet>456</a>                        } <span class="kw">else </span>{
-<a href=#457 id=457 data-nosnippet>457</a>                            ip_v6.push(transport);
-<a href=#458 id=458 data-nosnippet>458</a>                        }
-<a href=#459 id=459 data-nosnippet>459</a>                    }
-<a href=#460 id=460 data-nosnippet>460</a>                }
-<a href=#461 id=461 data-nosnippet>461</a>                <span class="prelude-val">Err</span>(err) =&gt; {
-<a href=#462 id=462 data-nosnippet>462</a>                    <span class="kw">if </span>config.is_ipv6() {
-<a href=#463 id=463 data-nosnippet>463</a>                        <span class="macro">tracing::info!</span>(<span class="string">"bind ignoring IPv6 bind failure: {:?}"</span>, err);
-<a href=#464 id=464 data-nosnippet>464</a>                    } <span class="kw">else </span>{
-<a href=#465 id=465 data-nosnippet>465</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(err);
-<a href=#466 id=466 data-nosnippet>466</a>                    }
-<a href=#467 id=467 data-nosnippet>467</a>                }
-<a href=#468 id=468 data-nosnippet>468</a>            }
-<a href=#469 id=469 data-nosnippet>469</a>        }
-<a href=#470 id=470 data-nosnippet>470</a>
-<a href=#471 id=471 data-nosnippet>471</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#472 id=472 data-nosnippet>472</a>            v4_default: ip_v4_default,
-<a href=#473 id=473 data-nosnippet>473</a>            v4: ip_v4,
-<a href=#474 id=474 data-nosnippet>474</a>            v6_default: ip_v6_default,
-<a href=#475 id=475 data-nosnippet>475</a>            v6: ip_v6,
-<a href=#476 id=476 data-nosnippet>476</a>        })
-<a href=#477 id=477 data-nosnippet>477</a>    }
-<a href=#478 id=478 data-nosnippet>478</a>
-<a href=#479 id=479 data-nosnippet>479</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_recv(
-<a href=#480 id=480 data-nosnippet>480</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#481 id=481 data-nosnippet>481</a>        cx: <span class="kw-2">&amp;mut </span>Context,
-<a href=#482 id=482 data-nosnippet>482</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#483 id=483 data-nosnippet>483</a>        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
-<a href=#484 id=484 data-nosnippet>484</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
-<a href=#485 id=485 data-nosnippet>485</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-<a href=#486 id=486 data-nosnippet>486</a>        <span class="macro">macro_rules!</span> poll_transport {
-<a href=#487 id=487 data-nosnippet>487</a>            (<span class="macro-nonterminal">$socket</span>:expr) =&gt; {
-<a href=#488 id=488 data-nosnippet>488</a>                <span class="kw">match </span><span class="macro-nonterminal">$socket</span>.poll_recv(cx, bufs, metas, source_addrs)<span class="question-mark">? </span>{
-<a href=#489 id=489 data-nosnippet>489</a>                    Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; {}
-<a href=#490 id=490 data-nosnippet>490</a>                    Poll::Ready(n) =&gt; {
-<a href=#491 id=491 data-nosnippet>491</a>                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(n));
-<a href=#492 id=492 data-nosnippet>492</a>                    }
-<a href=#493 id=493 data-nosnippet>493</a>                }
-<a href=#494 id=494 data-nosnippet>494</a>            };
-<a href=#495 id=495 data-nosnippet>495</a>        }
-<a href=#496 id=496 data-nosnippet>496</a>
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>transport) = <span class="self">self</span>.v4_default {
-<a href=#498 id=498 data-nosnippet>498</a>            <span class="macro">poll_transport!</span>(transport);
-<a href=#499 id=499 data-nosnippet>499</a>        }
-<a href=#500 id=500 data-nosnippet>500</a>
-<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.v4 {
-<a href=#502 id=502 data-nosnippet>502</a>            <span class="macro">poll_transport!</span>(transport);
-<a href=#503 id=503 data-nosnippet>503</a>        }
-<a href=#504 id=504 data-nosnippet>504</a>
-<a href=#505 id=505 data-nosnippet>505</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>transport) = <span class="self">self</span>.v6_default {
-<a href=#506 id=506 data-nosnippet>506</a>            <span class="macro">poll_transport!</span>(transport);
-<a href=#507 id=507 data-nosnippet>507</a>        }
-<a href=#508 id=508 data-nosnippet>508</a>
-<a href=#509 id=509 data-nosnippet>509</a>        <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.v6 {
-<a href=#510 id=510 data-nosnippet>510</a>            <span class="macro">poll_transport!</span>(transport);
-<a href=#511 id=511 data-nosnippet>511</a>        }
-<a href=#512 id=512 data-nosnippet>512</a>
-<a href=#513 id=513 data-nosnippet>513</a>        Poll::Pending
-<a href=#514 id=514 data-nosnippet>514</a>    }
-<a href=#515 id=515 data-nosnippet>515</a>}</code></pre></div></section></main></body></html>
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="self">self</span>.config.is_valid_send_addr(<span class="kw-2">*</span>dst)
+<a href=#278 id=278 data-nosnippet>278</a>    }
+<a href=#279 id=279 data-nosnippet>279</a>
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="doccomment">/// Creates a canonical socket address.
+<a href=#281 id=281 data-nosnippet>281</a>    ///
+<a href=#282 id=282 data-nosnippet>282</a>    /// We may be asked to send IPv4-mapped IPv6 addresses.  But our sockets are configured
+<a href=#283 id=283 data-nosnippet>283</a>    /// to only send their actual family.  So we need to map those back to the canonical
+<a href=#284 id=284 data-nosnippet>284</a>    /// addresses.
+<a href=#285 id=285 data-nosnippet>285</a>    </span><span class="attr">#[inline]
+<a href=#286 id=286 data-nosnippet>286</a>    </span><span class="kw">fn </span>canonical_addr(addr: SocketAddr) -&gt; SocketAddr {
+<a href=#287 id=287 data-nosnippet>287</a>        SocketAddr::new(addr.ip().to_canonical(), addr.port())
+<a href=#288 id=288 data-nosnippet>288</a>    }
+<a href=#289 id=289 data-nosnippet>289</a>
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>send(
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#292 id=292 data-nosnippet>292</a>        dst: SocketAddr,
+<a href=#293 id=293 data-nosnippet>293</a>        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
+<a href=#294 id=294 data-nosnippet>294</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#295 id=295 data-nosnippet>295</a>    ) -&gt; io::Result&lt;()&gt; {
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span>total_bytes = transmit.contents.len() <span class="kw">as </span>u64;
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span>res = <span class="self">self
+<a href=#298 id=298 data-nosnippet>298</a>            </span>.sender
+<a href=#299 id=299 data-nosnippet>299</a>            .send(<span class="kw-2">&amp;</span>quinn_udp::Transmit {
+<a href=#300 id=300 data-nosnippet>300</a>                destination: <span class="self">Self</span>::canonical_addr(dst),
+<a href=#301 id=301 data-nosnippet>301</a>                ecn: transmit.ecn,
+<a href=#302 id=302 data-nosnippet>302</a>                contents: transmit.contents,
+<a href=#303 id=303 data-nosnippet>303</a>                segment_size: transmit.segment_size,
+<a href=#304 id=304 data-nosnippet>304</a>                src_ip: src,
+<a href=#305 id=305 data-nosnippet>305</a>            })
+<a href=#306 id=306 data-nosnippet>306</a>            .<span class="kw">await</span>;
+<a href=#307 id=307 data-nosnippet>307</a>
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">match </span>res {
+<a href=#309 id=309 data-nosnippet>309</a>            <span class="prelude-val">Ok</span>(res) =&gt; {
+<a href=#310 id=310 data-nosnippet>310</a>                <span class="kw">match </span>dst {
+<a href=#311 id=311 data-nosnippet>311</a>                    SocketAddr::V4(<span class="kw">_</span>) =&gt; {
+<a href=#312 id=312 data-nosnippet>312</a>                        <span class="self">self</span>.metrics.send_ipv4.inc_by(total_bytes);
+<a href=#313 id=313 data-nosnippet>313</a>                    }
+<a href=#314 id=314 data-nosnippet>314</a>                    SocketAddr::V6(<span class="kw">_</span>) =&gt; {
+<a href=#315 id=315 data-nosnippet>315</a>                        <span class="self">self</span>.metrics.send_ipv6.inc_by(total_bytes);
+<a href=#316 id=316 data-nosnippet>316</a>                    }
+<a href=#317 id=317 data-nosnippet>317</a>                }
+<a href=#318 id=318 data-nosnippet>318</a>                <span class="prelude-val">Ok</span>(res)
+<a href=#319 id=319 data-nosnippet>319</a>            }
+<a href=#320 id=320 data-nosnippet>320</a>            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
+<a href=#321 id=321 data-nosnippet>321</a>        }
+<a href=#322 id=322 data-nosnippet>322</a>    }
+<a href=#323 id=323 data-nosnippet>323</a>
+<a href=#324 id=324 data-nosnippet>324</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+<a href=#326 id=326 data-nosnippet>326</a>        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
+<a href=#327 id=327 data-nosnippet>327</a>        dst: SocketAddr,
+<a href=#328 id=328 data-nosnippet>328</a>        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
+<a href=#329 id=329 data-nosnippet>329</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#330 id=330 data-nosnippet>330</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>total_bytes = transmit.contents.len() <span class="kw">as </span>u64;
+<a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span>res = Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.sender).poll_send(
+<a href=#333 id=333 data-nosnippet>333</a>            <span class="kw-2">&amp;</span>quinn_udp::Transmit {
+<a href=#334 id=334 data-nosnippet>334</a>                destination: <span class="self">Self</span>::canonical_addr(dst),
+<a href=#335 id=335 data-nosnippet>335</a>                ecn: transmit.ecn,
+<a href=#336 id=336 data-nosnippet>336</a>                contents: transmit.contents,
+<a href=#337 id=337 data-nosnippet>337</a>                segment_size: transmit.segment_size,
+<a href=#338 id=338 data-nosnippet>338</a>                src_ip: src,
+<a href=#339 id=339 data-nosnippet>339</a>            },
+<a href=#340 id=340 data-nosnippet>340</a>            cx,
+<a href=#341 id=341 data-nosnippet>341</a>        );
+<a href=#342 id=342 data-nosnippet>342</a>
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">match </span>res {
+<a href=#344 id=344 data-nosnippet>344</a>            Poll::Ready(<span class="prelude-val">Ok</span>(res)) =&gt; {
+<a href=#345 id=345 data-nosnippet>345</a>                <span class="kw">match </span>dst {
+<a href=#346 id=346 data-nosnippet>346</a>                    SocketAddr::V4(<span class="kw">_</span>) =&gt; {
+<a href=#347 id=347 data-nosnippet>347</a>                        <span class="self">self</span>.metrics.send_ipv4.inc_by(total_bytes);
+<a href=#348 id=348 data-nosnippet>348</a>                    }
+<a href=#349 id=349 data-nosnippet>349</a>                    SocketAddr::V6(<span class="kw">_</span>) =&gt; {
+<a href=#350 id=350 data-nosnippet>350</a>                        <span class="self">self</span>.metrics.send_ipv6.inc_by(total_bytes);
+<a href=#351 id=351 data-nosnippet>351</a>                    }
+<a href=#352 id=352 data-nosnippet>352</a>                }
+<a href=#353 id=353 data-nosnippet>353</a>                Poll::Ready(<span class="prelude-val">Ok</span>(res))
+<a href=#354 id=354 data-nosnippet>354</a>            }
+<a href=#355 id=355 data-nosnippet>355</a>            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
+<a href=#356 id=356 data-nosnippet>356</a>            Poll::Pending =&gt; Poll::Pending,
+<a href=#357 id=357 data-nosnippet>357</a>        }
+<a href=#358 id=358 data-nosnippet>358</a>    }
+<a href=#359 id=359 data-nosnippet>359</a>}
+<a href=#360 id=360 data-nosnippet>360</a>
+<a href=#361 id=361 data-nosnippet>361</a><span class="attr">#[derive(Debug, Clone)]
+<a href=#362 id=362 data-nosnippet>362</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IpTransportsSender {
+<a href=#363 id=363 data-nosnippet>363</a>    <span class="doccomment">/// Default sender for v4
+<a href=#364 id=364 data-nosnippet>364</a>    </span>v4_default: <span class="prelude-ty">Option</span>&lt;IpSender&gt;,
+<a href=#365 id=365 data-nosnippet>365</a>    v4: Vec&lt;IpSender&gt;,
+<a href=#366 id=366 data-nosnippet>366</a>    <span class="doccomment">/// Default sender for v6
+<a href=#367 id=367 data-nosnippet>367</a>    </span>v6_default: <span class="prelude-ty">Option</span>&lt;IpSender&gt;,
+<a href=#368 id=368 data-nosnippet>368</a>    v6: Vec&lt;IpSender&gt;,
+<a href=#369 id=369 data-nosnippet>369</a>}
+<a href=#370 id=370 data-nosnippet>370</a>
+<a href=#371 id=371 data-nosnippet>371</a><span class="kw">impl </span>IpTransportsSender {
+<a href=#372 id=372 data-nosnippet>372</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>v4_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>IpSender&gt; {
+<a href=#373 id=373 data-nosnippet>373</a>        <span class="self">self</span>.v4.iter().chain(<span class="self">self</span>.v4_default.iter())
+<a href=#374 id=374 data-nosnippet>374</a>    }
+<a href=#375 id=375 data-nosnippet>375</a>
+<a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>v6_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>IpSender&gt; {
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="self">self</span>.v6.iter().chain(<span class="self">self</span>.v6_default.iter())
+<a href=#378 id=378 data-nosnippet>378</a>    }
+<a href=#379 id=379 data-nosnippet>379</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>v4_iter_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;mut </span>IpSender&gt; {
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="self">self</span>.v4.iter_mut().chain(<span class="self">self</span>.v4_default.iter_mut())
+<a href=#381 id=381 data-nosnippet>381</a>    }
+<a href=#382 id=382 data-nosnippet>382</a>
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>v6_iter_mut(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;mut </span>IpSender&gt; {
+<a href=#384 id=384 data-nosnippet>384</a>        <span class="self">self</span>.v6.iter_mut().chain(<span class="self">self</span>.v6_default.iter_mut())
+<a href=#385 id=385 data-nosnippet>385</a>    }
+<a href=#386 id=386 data-nosnippet>386</a>}
+<a href=#387 id=387 data-nosnippet>387</a>
+<a href=#388 id=388 data-nosnippet>388</a><span class="attr">#[derive(Debug)]
+<a href=#389 id=389 data-nosnippet>389</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IpTransports {
+<a href=#390 id=390 data-nosnippet>390</a>    v4_default: <span class="prelude-ty">Option</span>&lt;IpTransport&gt;,
+<a href=#391 id=391 data-nosnippet>391</a>    v4: Vec&lt;IpTransport&gt;,
+<a href=#392 id=392 data-nosnippet>392</a>    v6_default: <span class="prelude-ty">Option</span>&lt;IpTransport&gt;,
+<a href=#393 id=393 data-nosnippet>393</a>    v6: Vec&lt;IpTransport&gt;,
+<a href=#394 id=394 data-nosnippet>394</a>}
+<a href=#395 id=395 data-nosnippet>395</a>
+<a href=#396 id=396 data-nosnippet>396</a><span class="kw">impl </span>IpTransports {
+<a href=#397 id=397 data-nosnippet>397</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; IpTransportsSender {
+<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">let </span>ip_v4_default = <span class="self">self</span>.v4_default.as_ref().map(|t| t.create_sender());
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">let </span>ip_v4 = <span class="self">self</span>.v4.iter().map(|t| t.create_sender()).collect();
+<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">let </span>ip_v6_default = <span class="self">self</span>.v6_default.as_ref().map(|t| t.create_sender());
+<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>ip_v6 = <span class="self">self</span>.v6.iter().map(|t| t.create_sender()).collect();
+<a href=#402 id=402 data-nosnippet>402</a>
+<a href=#403 id=403 data-nosnippet>403</a>        IpTransportsSender {
+<a href=#404 id=404 data-nosnippet>404</a>            v4_default: ip_v4_default,
+<a href=#405 id=405 data-nosnippet>405</a>            v4: ip_v4,
+<a href=#406 id=406 data-nosnippet>406</a>            v6_default: ip_v6_default,
+<a href=#407 id=407 data-nosnippet>407</a>            v6: ip_v6,
+<a href=#408 id=408 data-nosnippet>408</a>        }
+<a href=#409 id=409 data-nosnippet>409</a>    }
+<a href=#410 id=410 data-nosnippet>410</a>
+<a href=#411 id=411 data-nosnippet>411</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>IpTransport&gt; {
+<a href=#412 id=412 data-nosnippet>412</a>        <span class="self">self</span>.v4_default
+<a href=#413 id=413 data-nosnippet>413</a>            .iter()
+<a href=#414 id=414 data-nosnippet>414</a>            .chain(<span class="self">self</span>.v4.iter())
+<a href=#415 id=415 data-nosnippet>415</a>            .chain(<span class="self">self</span>.v6_default.iter())
+<a href=#416 id=416 data-nosnippet>416</a>            .chain(<span class="self">self</span>.v6.iter())
+<a href=#417 id=417 data-nosnippet>417</a>    }
+<a href=#418 id=418 data-nosnippet>418</a>
+<a href=#419 id=419 data-nosnippet>419</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bind(
+<a href=#420 id=420 data-nosnippet>420</a>        configs: <span class="kw">impl </span>Iterator&lt;Item = Config&gt;,
+<a href=#421 id=421 data-nosnippet>421</a>        metrics: <span class="kw-2">&amp;</span>EndpointMetrics,
+<a href=#422 id=422 data-nosnippet>422</a>    ) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">let </span><span class="kw-2">mut </span>ip_v4_default = <span class="prelude-val">None</span>;
+<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let </span><span class="kw-2">mut </span>ip_v4 = Vec::new();
+<a href=#425 id=425 data-nosnippet>425</a>        <span class="kw">let </span><span class="kw-2">mut </span>ip_v6_default = <span class="prelude-val">None</span>;
+<a href=#426 id=426 data-nosnippet>426</a>        <span class="kw">let </span><span class="kw-2">mut </span>ip_v6 = Vec::new();
+<a href=#427 id=427 data-nosnippet>427</a>
+<a href=#428 id=428 data-nosnippet>428</a>        <span class="kw">for </span>config <span class="kw">in </span>configs {
+<a href=#429 id=429 data-nosnippet>429</a>            <span class="kw">match </span>IpTransport::bind(config, metrics.magicsock.clone()) {
+<a href=#430 id=430 data-nosnippet>430</a>                <span class="prelude-val">Ok</span>(transport) =&gt; {
+<a href=#431 id=431 data-nosnippet>431</a>                    <span class="kw">if </span>config.is_ipv4() {
+<a href=#432 id=432 data-nosnippet>432</a>                        <span class="kw">if </span>config.is_default() {
+<a href=#433 id=433 data-nosnippet>433</a>                            <span class="kw">if </span>ip_v4_default.is_some() {
+<a href=#434 id=434 data-nosnippet>434</a>                                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(
+<a href=#435 id=435 data-nosnippet>435</a>                                    <span class="string">"can only have a single IPv4 default transport"</span>,
+<a href=#436 id=436 data-nosnippet>436</a>                                ));
+<a href=#437 id=437 data-nosnippet>437</a>                            }
+<a href=#438 id=438 data-nosnippet>438</a>                            ip_v4_default = <span class="prelude-val">Some</span>(transport);
+<a href=#439 id=439 data-nosnippet>439</a>                        } <span class="kw">else </span>{
+<a href=#440 id=440 data-nosnippet>440</a>                            ip_v4.push(transport);
+<a href=#441 id=441 data-nosnippet>441</a>                        }
+<a href=#442 id=442 data-nosnippet>442</a>                    } <span class="kw">else if </span>config.is_ipv6() {
+<a href=#443 id=443 data-nosnippet>443</a>                        <span class="kw">if </span>config.is_default() {
+<a href=#444 id=444 data-nosnippet>444</a>                            <span class="kw">if </span>ip_v6_default.is_some() {
+<a href=#445 id=445 data-nosnippet>445</a>                                <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(
+<a href=#446 id=446 data-nosnippet>446</a>                                    <span class="string">"can only have a single IPv6 default transport"</span>,
+<a href=#447 id=447 data-nosnippet>447</a>                                ));
+<a href=#448 id=448 data-nosnippet>448</a>                            }
+<a href=#449 id=449 data-nosnippet>449</a>                            ip_v6_default = <span class="prelude-val">Some</span>(transport);
+<a href=#450 id=450 data-nosnippet>450</a>                        } <span class="kw">else </span>{
+<a href=#451 id=451 data-nosnippet>451</a>                            ip_v6.push(transport);
+<a href=#452 id=452 data-nosnippet>452</a>                        }
+<a href=#453 id=453 data-nosnippet>453</a>                    }
+<a href=#454 id=454 data-nosnippet>454</a>                }
+<a href=#455 id=455 data-nosnippet>455</a>                <span class="prelude-val">Err</span>(err) =&gt; {
+<a href=#456 id=456 data-nosnippet>456</a>                    <span class="kw">if </span>config.is_ipv6() {
+<a href=#457 id=457 data-nosnippet>457</a>                        <span class="macro">tracing::info!</span>(<span class="string">"bind ignoring IPv6 bind failure: {:?}"</span>, err);
+<a href=#458 id=458 data-nosnippet>458</a>                    } <span class="kw">else </span>{
+<a href=#459 id=459 data-nosnippet>459</a>                        <span class="kw">return </span><span class="prelude-val">Err</span>(err);
+<a href=#460 id=460 data-nosnippet>460</a>                    }
+<a href=#461 id=461 data-nosnippet>461</a>                }
+<a href=#462 id=462 data-nosnippet>462</a>            }
+<a href=#463 id=463 data-nosnippet>463</a>        }
+<a href=#464 id=464 data-nosnippet>464</a>
+<a href=#465 id=465 data-nosnippet>465</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#466 id=466 data-nosnippet>466</a>            v4_default: ip_v4_default,
+<a href=#467 id=467 data-nosnippet>467</a>            v4: ip_v4,
+<a href=#468 id=468 data-nosnippet>468</a>            v6_default: ip_v6_default,
+<a href=#469 id=469 data-nosnippet>469</a>            v6: ip_v6,
+<a href=#470 id=470 data-nosnippet>470</a>        })
+<a href=#471 id=471 data-nosnippet>471</a>    }
+<a href=#472 id=472 data-nosnippet>472</a>
+<a href=#473 id=473 data-nosnippet>473</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_recv(
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#475 id=475 data-nosnippet>475</a>        cx: <span class="kw-2">&amp;mut </span>Context,
+<a href=#476 id=476 data-nosnippet>476</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#477 id=477 data-nosnippet>477</a>        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+<a href=#478 id=478 data-nosnippet>478</a>        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
+<a href=#479 id=479 data-nosnippet>479</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
+<a href=#480 id=480 data-nosnippet>480</a>        <span class="macro">macro_rules!</span> poll_transport {
+<a href=#481 id=481 data-nosnippet>481</a>            (<span class="macro-nonterminal">$socket</span>:expr) =&gt; {
+<a href=#482 id=482 data-nosnippet>482</a>                <span class="kw">match </span><span class="macro-nonterminal">$socket</span>.poll_recv(cx, bufs, metas, source_addrs)<span class="question-mark">? </span>{
+<a href=#483 id=483 data-nosnippet>483</a>                    Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; {}
+<a href=#484 id=484 data-nosnippet>484</a>                    Poll::Ready(n) =&gt; {
+<a href=#485 id=485 data-nosnippet>485</a>                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(n));
+<a href=#486 id=486 data-nosnippet>486</a>                    }
+<a href=#487 id=487 data-nosnippet>487</a>                }
+<a href=#488 id=488 data-nosnippet>488</a>            };
+<a href=#489 id=489 data-nosnippet>489</a>        }
+<a href=#490 id=490 data-nosnippet>490</a>
+<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>transport) = <span class="self">self</span>.v4_default {
+<a href=#492 id=492 data-nosnippet>492</a>            <span class="macro">poll_transport!</span>(transport);
+<a href=#493 id=493 data-nosnippet>493</a>        }
+<a href=#494 id=494 data-nosnippet>494</a>
+<a href=#495 id=495 data-nosnippet>495</a>        <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.v4 {
+<a href=#496 id=496 data-nosnippet>496</a>            <span class="macro">poll_transport!</span>(transport);
+<a href=#497 id=497 data-nosnippet>497</a>        }
+<a href=#498 id=498 data-nosnippet>498</a>
+<a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>transport) = <span class="self">self</span>.v6_default {
+<a href=#500 id=500 data-nosnippet>500</a>            <span class="macro">poll_transport!</span>(transport);
+<a href=#501 id=501 data-nosnippet>501</a>        }
+<a href=#502 id=502 data-nosnippet>502</a>
+<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.v6 {
+<a href=#504 id=504 data-nosnippet>504</a>            <span class="macro">poll_transport!</span>(transport);
+<a href=#505 id=505 data-nosnippet>505</a>        }
+<a href=#506 id=506 data-nosnippet>506</a>
+<a href=#507 id=507 data-nosnippet>507</a>        Poll::Pending
+<a href=#508 id=508 data-nosnippet>508</a>    }
+<a href=#509 id=509 data-nosnippet>509</a>}</code></pre></div></section></main></body></html>
