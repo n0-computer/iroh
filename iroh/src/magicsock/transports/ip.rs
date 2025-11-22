@@ -1,12 +1,14 @@
 use std::{
     io,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
 use n0_watcher::Watchable;
+#[cfg(not(wasm_browser))]
+use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
 use tracing::{debug, trace};
@@ -16,15 +18,116 @@ use crate::metrics::MagicsockMetrics;
 
 #[derive(Debug)]
 pub(crate) struct IpTransport {
-    bind_addr: SocketAddr,
+    config: Config,
     socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
     metrics: Arc<MagicsockMetrics>,
 }
 
-fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
-    debug!(%addr, "binding");
+/// IP transport configuration
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Config {
+    /// Default IPv4 binding
+    V4Default {
+        /// TODO
+        ip_addr: Ipv4Addr,
+        /// The port to bind on
+        port: u16,
+    },
+    /// Default IPv6 binding
+    V6Default {
+        /// TODO
+        ip_addr: Ipv6Addr,
+        /// The scope_id
+        scope_id: u32,
+        /// The port to bind on
+        port: u16,
+    },
+    /// IPv4 binding
+    V4 {
+        /// TODO
+        ip_addr: Ipv4Net,
+        /// The port to bind on
+        port: u16,
+    },
+    /// IPv6 binding
+    V6 {
+        /// TODO
+        ip_addr: Ipv6Net,
+        /// The scope id
+        scope_id: u32,
+        /// The port to bind on
+        port: u16,
+    },
+}
 
+impl Config {
+    /// Is this a v4 config.
+    pub fn is_ipv4(&self) -> bool {
+        matches!(self, Self::V4Default { .. } | Self::V4 { .. })
+    }
+
+    /// Is this a v6 config.
+    pub fn is_ipv6(&self) -> bool {
+        matches!(self, Self::V6Default { .. } | Self::V6 { .. })
+    }
+
+    /// Is this a default config?
+    pub fn is_default(&self) -> bool {
+        matches!(self, Self::V4Default { .. } | Self::V6Default { .. })
+    }
+
+    /// TODO
+    pub fn is_valid_send_addr(&self, dst: SocketAddr) -> bool {
+        match self {
+            Self::V4Default { .. } => matches!(dst, SocketAddr::V4(_)),
+            Self::V6Default { .. } => matches!(dst, SocketAddr::V6(_)),
+            Self::V4 { ip_addr, .. } => match dst {
+                SocketAddr::V4(dst_v4) => ip_addr.contains(dst_v4.ip()),
+                SocketAddr::V6(_) => false,
+            },
+            Self::V6 {
+                ip_addr, scope_id, ..
+            } => match dst {
+                SocketAddr::V6(dst_v6) => {
+                    if ip_addr.contains(dst_v6.ip()) {
+                        return true;
+                    }
+                    if dst_v6.ip().is_unicast_link_local() {
+                        // If we have a link local interface, use the scope id
+                        if *scope_id == dst_v6.scope_id() {
+                            return true;
+                        }
+                    }
+                    false
+                }
+                SocketAddr::V4(_) => false,
+            },
+        }
+    }
+}
+
+impl From<Config> for SocketAddr {
+    fn from(value: Config) -> Self {
+        match value {
+            Config::V4Default { ip_addr, port } => SocketAddr::V4(SocketAddrV4::new(ip_addr, port)),
+            Config::V6Default {
+                ip_addr,
+                scope_id,
+                port,
+            } => SocketAddr::V6(SocketAddrV6::new(ip_addr, port, 0, scope_id)),
+            Config::V4 { ip_addr, port } => SocketAddr::V4(SocketAddrV4::new(ip_addr.addr(), port)),
+            Config::V6 {
+                ip_addr,
+                scope_id,
+                port,
+            } => SocketAddr::V6(SocketAddrV6::new(ip_addr.addr(), port, 0, scope_id)),
+        }
+    }
+}
+
+fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
+    debug!(?addr, "binding");
     // First try binding a preferred port, if specified
     match netwatch::UdpSocket::bind_full(addr) {
         Ok(socket) => {
@@ -47,13 +150,13 @@ fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
 }
 
 impl IpTransport {
-    pub(crate) fn bind(bind_addr: SocketAddr, metrics: Arc<MagicsockMetrics>) -> io::Result<Self> {
-        let socket = bind_with_fallback(bind_addr)?;
-        Ok(Self::new(bind_addr, Arc::new(socket), metrics.clone()))
+    pub(crate) fn bind(config: Config, metrics: Arc<MagicsockMetrics>) -> io::Result<Self> {
+        let socket = bind_with_fallback(config.into())?;
+        Ok(Self::new(config, Arc::new(socket), metrics.clone()))
     }
 
     pub(crate) fn new(
-        bind_addr: SocketAddr,
+        config: Config,
         socket: Arc<UdpSocket>,
         metrics: Arc<MagicsockMetrics>,
     ) -> Self {
@@ -62,7 +165,7 @@ impl IpTransport {
         let local_addr = Watchable::new(socket.local_addr().expect("invalid socket"));
 
         Self {
-            bind_addr,
+            config,
             socket,
             local_addr,
             metrics,
@@ -119,7 +222,7 @@ impl IpTransport {
     }
 
     pub(crate) fn bind_addr(&self) -> SocketAddr {
-        self.bind_addr
+        self.config.into()
     }
 
     pub(super) fn create_network_change_sender(&self) -> IpNetworkChangeSender {
@@ -132,7 +235,7 @@ impl IpTransport {
     pub(super) fn create_sender(&self) -> IpSender {
         let sender = self.socket.clone().create_sender();
         IpSender {
-            bind_addr: self.bind_addr,
+            config: self.config,
             sender,
             metrics: self.metrics.clone(),
         }
@@ -164,7 +267,7 @@ impl IpNetworkChangeSender {
 #[derive(Debug, Clone)]
 #[pin_project]
 pub(super) struct IpSender {
-    bind_addr: SocketAddr,
+    config: Config,
     #[pin]
     sender: UdpSender,
     metrics: Arc<MagicsockMetrics>,
@@ -173,16 +276,12 @@ pub(super) struct IpSender {
 impl IpSender {
     pub(super) fn is_valid_send_addr(&self, dst: &SocketAddr) -> bool {
         // Our net-tools crate binds sockets to their specific family.  This means an IPv6
-        // socket can not sent to IPv4, on any platform.  So we need to convert and
+        // socket can not sent to IPv4, on any platform.  So we need to convert an
         // IPv4-mapped IPv6 address back to it's canonical IPv4 address.
-        let dst_ip = dst.ip().to_canonical();
+        let mut dst = *dst;
+        dst.set_ip(dst.ip().to_canonical());
 
-        #[allow(clippy::match_like_matches_macro)]
-        match (self.bind_addr.ip(), dst_ip) {
-            (IpAddr::V4(_), IpAddr::V4(_)) => true,
-            (IpAddr::V6(_), IpAddr::V6(_)) => true,
-            _ => false,
-        }
+        self.config.is_valid_send_addr(dst)
     }
 
     /// Creates a canonical socket address.

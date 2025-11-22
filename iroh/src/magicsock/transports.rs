@@ -23,6 +23,8 @@ mod ip;
 mod relay;
 
 #[cfg(not(wasm_browser))]
+pub use self::ip::Config as IpConfig;
+#[cfg(not(wasm_browser))]
 pub(crate) use self::ip::IpTransport;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpSender};
@@ -68,33 +70,34 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
 pub enum TransportConfig {
     /// IP based transport
     #[cfg(not(wasm_browser))]
-    Ip {
-        /// The address this transport will bind on.
-        bind_addr: SocketAddr,
-    },
+    Ip(ip::Config),
     /// Relay transport
     Relay {
         /// The [`RelayMap`] used for this relay.
         relay_map: RelayMap,
     },
 }
+
 impl TransportConfig {
     /// Configures a default IPv4 transport, listening on `0.0.0.0:0`.
     #[cfg(not(wasm_browser))]
     pub fn default_ipv4() -> Self {
-        use std::net::{Ipv4Addr, SocketAddrV4};
+        use std::net::Ipv4Addr;
 
-        Self::Ip {
-            bind_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
-        }
+        Self::Ip(ip::Config::V4Default {
+            ip_addr: Ipv4Addr::UNSPECIFIED,
+            port: 0,
+        })
     }
 
     /// Configures a default IPv6 transport, listening on `[::]:0`.
     #[cfg(not(wasm_browser))]
     pub fn default_ipv6() -> Self {
-        Self::Ip {
-            bind_addr: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
-        }
+        Self::Ip(ip::Config::V6Default {
+            ip_addr: Ipv6Addr::UNSPECIFIED,
+            scope_id: 0,
+            port: 0,
+        })
     }
 }
 
@@ -102,13 +105,13 @@ impl TransportConfig {
 fn bind_ip(configs: &[TransportConfig], metrics: &EndpointMetrics) -> io::Result<Vec<IpTransport>> {
     let mut transports = Vec::new();
     for config in configs {
-        if let TransportConfig::Ip { bind_addr } = config {
-            match IpTransport::bind(*bind_addr, metrics.magicsock.clone()) {
+        if let TransportConfig::Ip(config) = config {
+            match IpTransport::bind(*config, metrics.magicsock.clone()) {
                 Ok(transport) => {
                     transports.push(transport);
                 }
                 Err(err) => {
-                    if bind_addr.is_ipv6() {
+                    if config.is_ipv6() {
                         tracing::info!("bind ignoring IPv6 bind failure: {:?}", err);
                     } else {
                         return Err(err);

@@ -11,16 +11,17 @@
 //!
 //! [module docs]: crate
 
-use std::{
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
-    sync::Arc,
-};
+#[cfg(not(wasm_browser))]
+use std::net::{Ipv4Addr, Ipv6Addr};
+use std::{net::SocketAddr, sync::Arc};
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{ensure, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
+#[cfg(not(wasm_browser))]
+pub use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -69,6 +70,8 @@ pub use self::connection::{
     ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt, IncomingZeroRttConnection,
     OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError, ZeroRttStatus,
 };
+#[cfg(not(wasm_browser))]
+pub use crate::magicsock::transports::IpConfig;
 pub use crate::magicsock::transports::TransportConfig;
 
 /// Builder for [`Endpoint`].
@@ -227,11 +230,24 @@ impl Builder {
     ///
     /// Setting the port to `0` will use a random port.
     /// If the port specified is already in use, it will fallback to choosing a random port.
+    ///
+    /// Only a single interface can be the default, so this will replace the existing default
     #[cfg(not(wasm_browser))]
-    pub fn bind_addr_v4(mut self, bind_addr: SocketAddrV4) -> Self {
-        self.transports.push(TransportConfig::Ip {
-            bind_addr: bind_addr.into(),
-        });
+    pub fn bind_addr_v4_default(mut self, ip_addr: Ipv4Addr, port: u16) -> Self {
+        self.transports
+            .retain(|t| !matches!(t, TransportConfig::Ip(IpConfig::V4Default { .. })));
+        self.transports
+            .push(TransportConfig::Ip(IpConfig::V4Default { ip_addr, port }));
+        self
+    }
+
+    /// Binds an ipv4 socket
+    ///
+    /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    #[cfg(not(wasm_browser))]
+    pub fn bind_addr_v4(mut self, ip_addr: Ipv4Net, port: u16) -> Self {
+        self.transports
+            .push(TransportConfig::Ip(IpConfig::V4 { ip_addr, port }));
         self
     }
 
@@ -241,11 +257,29 @@ impl Builder {
     ///
     /// Setting the port to `0` will use a random port.
     /// If the port specified is already in use, it will fallback to choosing a random port.
+    ///
+    /// Only a single interface can be the default, so this will replace the existing default
     #[cfg(not(wasm_browser))]
-    pub fn bind_addr_v6(mut self, bind_addr: SocketAddrV6) -> Self {
-        self.transports.push(TransportConfig::Ip {
-            bind_addr: bind_addr.into(),
-        });
+    pub fn bind_addr_v6_default(mut self, ip_addr: Ipv6Addr, scope_id: u32, port: u16) -> Self {
+        self.transports
+            .push(TransportConfig::Ip(IpConfig::V6Default {
+                ip_addr,
+                scope_id,
+                port,
+            }));
+        self
+    }
+
+    /// Binds an ipv6 socket
+    ///
+    /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    #[cfg(not(wasm_browser))]
+    pub fn bind_addr_v6(mut self, ip_addr: Ipv6Net, scope_id: u32, port: u16) -> Self {
+        self.transports.push(TransportConfig::Ip(IpConfig::V6 {
+            ip_addr,
+            scope_id,
+            port,
+        }));
         self
     }
 
