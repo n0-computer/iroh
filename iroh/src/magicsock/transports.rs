@@ -723,6 +723,7 @@ impl quinn::UdpSender for MagicSender {
                 }
             }
             MultipathMappedAddr::Ip(socket_addr) => {
+                // Ensure IPv6 mapped addresses are converted back
                 let socket_addr =
                     SocketAddr::new(socket_addr.ip().to_canonical(), socket_addr.port());
                 Addr::Ip(socket_addr)
