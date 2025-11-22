@@ -190,12 +190,17 @@ jobs:
           touch traces.tar.gz
         fi
 
+    - name: Copy traces artifact
+      if: always()
+      run: |
+        cp ../chuck/netsim/traces.tar.gz ./traces.tar.gz || touch ./traces.tar.gz
+
     - name: Upload simulation traces
       if: always()
       uses: actions/upload-artifact@v5
       with:
         name: simulation-results
-        path: ../chuck/netsim/traces.tar.gz
+        path: traces.tar.gz
         retention-days: 7
 
     - name: Generate report
