@@ -8,6 +8,8 @@ use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
+use serde_json::json;
+use time::OffsetDateTime;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     Watcher,
@@ -52,6 +54,12 @@ const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+    /// Output logs in JSON format for trace server compatibility
+    #[clap(long, global = true)]
+    json_logs: bool,
+    /// Write metrics to the specified file path
+    #[clap(long, global = true)]
+    metrics_output: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone, Copy, Default, Debug, Eq, PartialEq, clap::ValueEnum)]
@@ -158,17 +166,28 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
     let cli = Cli::parse();
-    match cli.command {
+
+    if cli.json_logs {
+        tracing_subscriber::fmt()
+            .json()
+            .with_current_span(true)
+            .with_span_list(true)
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+    }
+
+    let result = match cli.command {
         Commands::Provide {
             size,
             endpoint_args,
         } => {
             let endpoint = endpoint_args.bind_endpoint().await?;
-            provide(endpoint, size).await?
+            provide(endpoint, size, cli.metrics_output.as_ref()).await
         }
         Commands::Fetch {
             remote_id,
@@ -182,11 +201,11 @@ async fn main() -> Result<()> {
                 .map(TransportAddr::Relay)
                 .chain(remote_direct_address.into_iter().map(TransportAddr::Ip));
             let remote_addr = EndpointAddr::from_parts(remote_id, addrs);
-            fetch(endpoint, remote_addr).await?
+            fetch(endpoint, remote_addr, cli.metrics_output.as_ref()).await
         }
-    }
+    };
 
-    Ok(())
+    result
 }
 
 impl EndpointArgs {
@@ -305,7 +324,7 @@ impl EndpointArgs {
     }
 }
 
-async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
+async fn provide(endpoint: Endpoint, size: u64, _metrics_output: Option<&std::path::PathBuf>) -> Result<()> {
     let endpoint_id = endpoint.id();
     let endpoint_addr = endpoint.addr();
 
@@ -384,7 +403,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     Ok(())
 }
 
-async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
+async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr, metrics_output: Option<&std::path::PathBuf>) -> Result<()> {
     let me = endpoint.id().fmt_short();
     let start = Instant::now();
     let remote_id = remote_addr.id;
@@ -405,7 +424,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     send.finish().anyerr()?;
     println!("Sent: \"{message}\"");
 
-    let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false).await?;
+    let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false, endpoint.id(), metrics_output).await?;
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
@@ -414,26 +433,53 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
         .anyerr()?;
 
     let duration = start.elapsed();
+    let throughput = len as f64 / duration.as_secs_f64();
+
     println!(
         "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks)",
         HumanBytes(len as u64),
         duration.as_secs_f64(),
-        HumanBytes((len as f64 / duration.as_secs_f64()) as u64),
+        HumanBytes(throughput as u64),
         time_to_first_byte.as_secs_f64(),
         chnk
     );
+
+    // Emit metrics in JSON format for netsim parsing
+    let timestamp = OffsetDateTime::now_utc();
+
+    let metrics_json = json!({
+        "timestamp": timestamp.unix_timestamp(),
+        "timestamp_rfc3339": timestamp.to_string(),
+        "node_id": endpoint.id().to_string(),
+        "transfer_bytes": len,
+        "duration_ms": duration.as_millis() as u64,
+        "throughput_bytes_per_sec": throughput as u64,
+        "time_to_first_byte_ms": time_to_first_byte.as_millis() as u64,
+        "chunks": chnk,
+    });
+    println!("METRICS:{}", serde_json::to_string(&metrics_json).anyerr()?);
+
+    // Write metrics to file if path provided
+    if let Some(path) = metrics_output {
+        tokio::fs::write(path, serde_json::to_string_pretty(&metrics_json).anyerr()?).await?;
+        info!("Metrics written to {:?}", path);
+    }
+
     Ok(())
 }
 
 async fn drain_stream(
     stream: &mut iroh::endpoint::RecvStream,
     read_unordered: bool,
+    endpoint_id: EndpointId,
+    metrics_output: Option<&std::path::PathBuf>,
 ) -> Result<(usize, Duration, u64)> {
     let mut read = 0;
 
     let download_start = Instant::now();
     let mut first_byte = true;
     let mut time_to_first_byte = download_start.elapsed();
+    let mut last_metric_time = download_start;
 
     let mut num_chunks: u64 = 0;
 
@@ -445,6 +491,17 @@ async fn drain_stream(
             }
             read += chunk.bytes.len();
             num_chunks += 1;
+
+            // Emit periodic metrics every second
+            if metrics_output.is_some() && last_metric_time.elapsed() >= Duration::from_secs(1) {
+                emit_progress_metrics(
+                    endpoint_id,
+                    read,
+                    download_start.elapsed(),
+                    num_chunks,
+                );
+                last_metric_time = Instant::now();
+            }
         }
     } else {
         // These are 32 buffers, for reading approximately 32kB at once
@@ -467,10 +524,48 @@ async fn drain_stream(
             }
             read += bufs.iter().take(n).map(|buf| buf.len()).sum::<usize>();
             num_chunks += 1;
+
+            // Emit periodic metrics every second
+            if metrics_output.is_some() && last_metric_time.elapsed() >= Duration::from_secs(1) {
+                emit_progress_metrics(
+                    endpoint_id,
+                    read,
+                    download_start.elapsed(),
+                    num_chunks,
+                );
+                last_metric_time = Instant::now();
+            }
         }
     }
 
     Ok((read, time_to_first_byte, num_chunks))
+}
+
+fn emit_progress_metrics(
+    endpoint_id: EndpointId,
+    bytes_transferred: usize,
+    elapsed: Duration,
+    chunks: u64,
+) {
+    let timestamp = OffsetDateTime::now_utc();
+
+    let throughput = if elapsed.as_secs_f64() > 0.0 {
+        bytes_transferred as f64 / elapsed.as_secs_f64()
+    } else {
+        0.0
+    };
+
+    let progress_json = json!({
+        "timestamp": timestamp.unix_timestamp(),
+        "timestamp_rfc3339": timestamp.to_string(),
+        "node_id": endpoint_id.to_string(),
+        "bytes_transferred": bytes_transferred,
+        "elapsed_ms": elapsed.as_millis() as u64,
+        "current_throughput": throughput as u64,
+        "chunks": chunks,
+    });
+
+    println!("PROGRESS:{}", serde_json::to_string(&progress_json).unwrap_or_default());
 }
 
 async fn send_data_on_stream(

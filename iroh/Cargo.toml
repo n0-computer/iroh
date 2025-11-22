@@ -109,6 +109,7 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 [dev-dependencies]
 console_error_panic_hook = "0.1"
 postcard = { version = "1.1.1", features = ["use-std"] }
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand_chacha = "0.9"
 
@@ -133,6 +134,7 @@ tracing-test = "0.2.5"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
+    "json",
 ] }
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }

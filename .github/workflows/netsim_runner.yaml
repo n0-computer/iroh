@@ -42,6 +42,11 @@ on:
         required: false
         type: boolean
         default: false
+      test_filter:
+        required: false
+        type: string
+        default: ""
+        description: "Filter to specific test case name (e.g., '1_to_1')"
   workflow_call:
     inputs:
       branch:
@@ -83,6 +88,11 @@ on:
         required: false
         type: boolean
         default: false
+      test_filter:
+        required: false
+        type: string
+        default: ""
+        description: "Filter to specific test case name (e.g., '1_to_1')"
 
 env:
   RUST_BACKTRACE: 1
@@ -151,8 +161,50 @@ jobs:
         # split sim_paths by comma
         IFS=',' read -ra sim_paths <<< "${{ inputs.sim_paths }}"
         for sim_path in "${sim_paths[@]}"; do
-          sudo python3 main.py ${{ inputs.debug_logs && '--debug' || ''}} ${{ inputs.visualizations && '--visualize' || ''}} --max-workers=${{ inputs.max_workers }} --integration $sim_path
+          sudo python3 main.py ${{ inputs.debug_logs && '--debug' || ''}} ${{ inputs.visualizations && '--visualize' || ''}} --max-workers=${{ inputs.max_workers }} --integration $sim_path ${{ inputs.test_filter != '' && format('--filter={0}', inputs.test_filter) || '' }}
         done
+
+    - name: Convert to trace format
+      id: convert_traces
+      if: always()
+      continue-on-error: true
+      run: |
+        cd ../chuck/netsim
+        mkdir -p traces
+        # Find all simulation runs and convert them
+        for log_file in logs/*__*.txt; do
+          if [ -f "$log_file" ]; then
+            # Extract prefix from log filename (e.g., iroh__1_to_1 from iroh__1_to_1__i_srv_0_r0.txt)
+            prefix=$(basename "$log_file" .txt | sed -E 's/__[^_]+_[0-9]+_r[0-9]+$//')
+            trace_dir="traces/trace-${prefix}"
+
+            # Only convert each prefix once
+            if [ ! -d "$trace_dir" ]; then
+              echo "Converting simulation: $prefix"
+              python3 convert_to_trace.py "$prefix" "$trace_dir" || echo "Warning: Failed to convert $prefix"
+            fi
+          fi
+        done
+
+    - name: Package traces
+      if: always()
+      run: |
+        cd ../chuck/netsim
+        if [ -d "traces" ] && [ "$(ls -A traces)" ]; then
+          tar czf traces.tar.gz traces/
+          echo "Packaged traces: $(du -h traces.tar.gz)"
+        else
+          echo "No traces to package"
+          touch traces.tar.gz
+        fi
+
+    - name: Upload simulation traces
+      if: always()
+      uses: actions/upload-artifact@v5
+      with:
+        name: simulation-results
+        path: ../chuck/netsim/traces.tar.gz
+        retention-days: 7
 
     - name: Generate report
       id: generate_report
