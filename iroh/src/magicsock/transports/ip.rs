@@ -28,32 +28,32 @@ pub(crate) struct IpTransport {
 pub enum Config {
     /// Default IPv4 binding
     V4Default {
-        /// TODO
+        /// The IP address to bind on
         ip_addr: Ipv4Addr,
         /// The port to bind on
         port: u16,
     },
     /// Default IPv6 binding
     V6Default {
-        /// TODO
+        /// The IP address to bind on
         ip_addr: Ipv6Addr,
         /// The scope_id
         scope_id: u32,
         /// The port to bind on
         port: u16,
     },
-    /// IPv4 binding
+    /// General IPv4 binding
     V4 {
-        /// TODO
+        /// The IP address to bind on
         ip_addr: Ipv4Net,
         /// The port to bind on
         port: u16,
     },
-    /// IPv6 binding
+    /// General IPv6 binding
     V6 {
-        /// TODO
+        /// The IP address to bind on
         ip_addr: Ipv6Net,
-        /// The scope id
+        /// The scope id.
         scope_id: u32,
         /// The port to bind on
         port: u16,
@@ -76,8 +76,8 @@ impl Config {
         matches!(self, Self::V4Default { .. } | Self::V6Default { .. })
     }
 
-    /// TODO
-    pub fn is_valid_send_addr(&self, dst: SocketAddr) -> bool {
+    /// Does this configuration match to send to the given `dst` address.
+    pub(crate) fn is_valid_send_addr(&self, dst: SocketAddr) -> bool {
         match self {
             Self::V4Default { .. } => matches!(dst, SocketAddr::V4(_)),
             Self::V6Default { .. } => matches!(dst, SocketAddr::V6(_)),
@@ -274,13 +274,7 @@ pub(super) struct IpSender {
 
 impl IpSender {
     pub(super) fn is_valid_send_addr(&self, dst: &SocketAddr) -> bool {
-        // Our net-tools crate binds sockets to their specific family.  This means an IPv6
-        // socket can not sent to IPv4, on any platform.  So we need to convert an
-        // IPv4-mapped IPv6 address back to it's canonical IPv4 address.
-        let mut dst = *dst;
-        dst.set_ip(dst.ip().to_canonical());
-
-        self.config.is_valid_send_addr(dst)
+        self.config.is_valid_send_addr(*dst)
     }
 
     /// Creates a canonical socket address.
