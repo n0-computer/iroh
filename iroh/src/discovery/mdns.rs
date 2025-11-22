@@ -51,7 +51,7 @@
 //! If the [`RelayUrl`] is longer than 249 bytes, the relay will not be added to the
 //! mDNS TXT record.
 //!
-//! `RelayUrl`: iroh_base::RelayUrl
+//! [`RelayUrl`]: iroh_base::RelayUrl
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
@@ -198,7 +198,8 @@ impl MdnsDiscoveryBuilder {
     ///
     /// Default is false.
     ///
-    /// `RelayUrl`: iroh_base::RelayUrl
+    /// [`RelayUrl`]: iroh_base::RelayUrl
+    /// [`EndpointAddr`]: crate::EndpointAddr
     pub fn publish_relay_url(mut self, publish: bool) -> Self {
         self.publish_relay_url = publish;
         self
