@@ -163,18 +163,13 @@ jobs:
       run: |
         cd ../chuck/netsim
         mkdir -p traces
-        # Find all simulation runs and convert them
-        for log_file in logs/*__*.txt; do
-          if [ -f "$log_file" ]; then
-            # Extract prefix from log filename (e.g., iroh__1_to_1 from iroh__1_to_1__i_srv_0_r0.txt)
-            prefix=$(basename "$log_file" .txt | sed -E 's/__[^_]+_[0-9]+_r[0-9]+$//')
-            trace_dir="traces/trace-${prefix}"
-
-            # Only convert each prefix once
-            if [ ! -d "$trace_dir" ]; then
-              echo "Converting simulation: $prefix"
-              python3 convert_to_trace.py "$prefix" "$trace_dir" || echo "Warning: Failed to convert $prefix"
-            fi
+        # Extract unique test prefixes (e.g., iroh__1_to_1 from iroh__1_to_1__i_get_0_r0.txt)
+        prefixes=$(ls logs/*__*.txt 2>/dev/null | xargs -n1 basename | sed -E 's/\.txt$//' | sed -E 's/__[a-z_]+_[0-9]+_r[0-9]+$//' | sort -u)
+        for prefix in $prefixes; do
+          trace_dir="traces/trace-${prefix}"
+          if [ ! -d "$trace_dir" ]; then
+            echo "Converting test case: $prefix"
+            python3 convert_to_trace.py "$prefix" "$trace_dir" || true
           fi
         done
 
