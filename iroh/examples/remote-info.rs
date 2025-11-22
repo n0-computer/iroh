@@ -237,8 +237,7 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn current_min_rtt(&self) -> Option<Duration> {
             self.connections()
-                .map(|c| c.paths().get())
-                .flatten()
+                .flat_map(|c| c.paths().get())
                 .map(|path| path.stats().rtt)
                 .min()
         }
@@ -248,8 +247,7 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn has_ip_path(&self) -> Option<bool> {
             self.connections()
-                .map(|c| c.paths().get())
-                .flatten()
+                .flat_map(|c| c.paths().get())
                 .filter(|path| path.is_ip())
                 .map(|_| true)
                 .next()
@@ -260,8 +258,7 @@ mod remote_map {
         /// Returns `None` if there are no active connections.
         pub fn has_relay_path(&self) -> Option<bool> {
             self.connections()
-                .map(|c| c.paths().get())
-                .flatten()
+                .flat_map(|c| c.paths().get())
                 .filter(|path| path.is_relay())
                 .map(|_| true)
                 .next()
