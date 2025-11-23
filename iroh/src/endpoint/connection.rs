@@ -244,8 +244,7 @@ fn conn_from_quinn_conn(
         .register_connection(info.endpoint_id, conn.weak_handle());
 
     // Check hooks
-    // TODO: avoid endpoint clone?
-    let ep = ep.clone();
+    let msock = ep.msock.clone();
     Ok(async move {
         let paths = fut.await?;
         let conn = Connection {
@@ -254,7 +253,7 @@ fn conn_from_quinn_conn(
         };
 
         if let AfterHandshakeOutcome::Reject { error_code, reason } =
-            ep.msock.hooks.after_handshake(&conn.to_info()).await
+            msock.hooks.after_handshake(&conn.to_info()).await
         {
             conn.close(error_code, &reason);
             return Err(e!(ConnectingError::LocallyRejected));
