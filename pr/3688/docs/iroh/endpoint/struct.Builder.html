@@ -89,8 +89,8 @@ number of clients.</p>
 <p>The default is 256, taking about 150 KiB in memory.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.hooks" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#474-477">Source</a><h4 class="code-header">pub fn <a href="#method.hooks" class="fn">hooks</a>(self, hooks: impl <a class="trait" href="trait.EndpointHooks.html" title="trait iroh::endpoint::EndpointHooks">EndpointHooks</a> + 'static) -&gt; Self</h4></section></summary><div class="docblock"><p>Install hooks onto the endpoint.</p>
 <p>Endpoint hooks intercept the connection establishment process of an <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>.</p>
-<p>You can install multiple hooks by calling this function multiple times.
-Order matters: Endpoint hooks are invoked in the order they were installed onto the endpoint
+<p>You can install multiple <a href="trait.EndpointHooks.html" title="trait iroh::endpoint::EndpointHooks"><code>EndpointHooks</code></a> by calling this function multiple times.
+Order matters: hooks are invoked in the order they were installed onto the endpoint
 builder. Once a hook returns reject, further processing
 is aborted and other hooks won’t be invoked.</p>
 <p>See <a href="trait.EndpointHooks.html" title="trait iroh::endpoint::EndpointHooks"><code>EndpointHooks</code></a> for details on the possible interception points in the connection lifecycle.</p>

@@ -465,8 +465,8 @@
 <a href=#465 id=465 data-nosnippet>465</a>    ///
 <a href=#466 id=466 data-nosnippet>466</a>    /// Endpoint hooks intercept the connection establishment process of an [`Endpoint`].
 <a href=#467 id=467 data-nosnippet>467</a>    ///
-<a href=#468 id=468 data-nosnippet>468</a>    /// You can install multiple hooks by calling this function multiple times.
-<a href=#469 id=469 data-nosnippet>469</a>    /// Order matters: Endpoint hooks are invoked in the order they were installed onto the endpoint
+<a href=#468 id=468 data-nosnippet>468</a>    /// You can install multiple [`EndpointHooks`] by calling this function multiple times.
+<a href=#469 id=469 data-nosnippet>469</a>    /// Order matters: hooks are invoked in the order they were installed onto the endpoint
 <a href=#470 id=470 data-nosnippet>470</a>    /// builder. Once a hook returns reject, further processing
 <a href=#471 id=471 data-nosnippet>471</a>    /// is aborted and other hooks won't be invoked.
 <a href=#472 id=472 data-nosnippet>472</a>    ///
