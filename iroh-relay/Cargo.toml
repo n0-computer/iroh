@@ -61,7 +61,6 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
     "ring",
 ] }
-sha1 = "0.11.0-rc.2"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 url = { version = "2.5.3", features = ["serde"] }
@@ -85,6 +84,7 @@ time = { version = "0.3.37", optional = true }
 tokio-rustls-acme = { version = "0.8", optional = true }
 tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
+sha1 = { version = "0.11.0-rc.2", optional = true }
 toml = { version = "0.9", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
@@ -115,7 +115,6 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
-crypto_box = { version = "0.10.0-pre.0", features = ["serde", "chacha20"] }
 proptest = "1.2.0"
 rand_chacha = "0.9"
 tokio = { version = "1", features = [
@@ -151,6 +150,7 @@ server = [
     "dep:tokio-rustls-acme",
     "dep:tokio-websockets",
     "dep:simdutf8",
+    "dep:sha1",
     "dep:toml",
     "dep:tracing-subscriber",
     "quinn/log",
