@@ -408,6 +408,11 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr, metrics_output: Op
     let start = Instant::now();
     let remote_id = remote_addr.id;
 
+    // Capture initial metrics
+    if metrics_output.is_some() {
+        emit_endpoint_metrics(&endpoint);
+    }
+
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
     println!("EVENT:{{\"type\":\"ConnectionAttempt\",\"remote\":\"{}\",\"timestamp\":{}}}",
@@ -433,7 +438,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr, metrics_output: Op
     println!("EVENT:{{\"type\":\"TransferStart\",\"remote\":\"{}\",\"timestamp\":{}}}",
         remote_id, OffsetDateTime::now_utc().unix_timestamp());
 
-    let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false, endpoint.id(), metrics_output).await?;
+    let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false, &endpoint, metrics_output).await?;
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
@@ -477,21 +482,28 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr, metrics_output: Op
         info!("Metrics written to {:?}", path);
     }
 
+    // Emit final endpoint metrics snapshot
+    if metrics_output.is_some() {
+        emit_endpoint_metrics(&endpoint);
+    }
+
     Ok(())
 }
 
 async fn drain_stream(
     stream: &mut iroh::endpoint::RecvStream,
     read_unordered: bool,
-    endpoint_id: EndpointId,
+    endpoint: &Endpoint,
     metrics_output: Option<&std::path::PathBuf>,
 ) -> Result<(usize, Duration, u64)> {
+    let endpoint_id = endpoint.id();
     let mut read = 0;
 
     let download_start = Instant::now();
     let mut first_byte = true;
     let mut time_to_first_byte = download_start.elapsed();
     let mut last_metric_time = download_start;
+    let mut last_bytes = 0;
 
     let mut num_chunks: u64 = 0;
 
@@ -506,13 +518,19 @@ async fn drain_stream(
 
             // Emit periodic metrics every second
             if metrics_output.is_some() && last_metric_time.elapsed() >= Duration::from_secs(1) {
+                let bytes_since_last = read - last_bytes;
+                let instant_throughput = bytes_since_last as f64 / last_metric_time.elapsed().as_secs_f64();
+
                 emit_progress_metrics(
                     endpoint_id,
                     read,
                     download_start.elapsed(),
                     num_chunks,
+                    instant_throughput as u64,
                 );
+                emit_endpoint_metrics(endpoint);
                 last_metric_time = Instant::now();
+                last_bytes = read;
             }
         }
     } else {
@@ -539,13 +557,19 @@ async fn drain_stream(
 
             // Emit periodic metrics every second
             if metrics_output.is_some() && last_metric_time.elapsed() >= Duration::from_secs(1) {
+                let bytes_since_last = read - last_bytes;
+                let instant_throughput = bytes_since_last as f64 / last_metric_time.elapsed().as_secs_f64();
+
                 emit_progress_metrics(
                     endpoint_id,
                     read,
                     download_start.elapsed(),
                     num_chunks,
+                    instant_throughput as u64,
                 );
+                emit_endpoint_metrics(endpoint);
                 last_metric_time = Instant::now();
+                last_bytes = read;
             }
         }
     }
@@ -553,15 +577,37 @@ async fn drain_stream(
     Ok((read, time_to_first_byte, num_chunks))
 }
 
+fn emit_endpoint_metrics(endpoint: &Endpoint) {
+    let timestamp = OffsetDateTime::now_utc();
+    let metrics = endpoint.metrics();
+
+    // Serialize entire EndpointMetrics struct
+    let metrics_serialized = match serde_json::to_value(metrics) {
+        Ok(mut val) => {
+            // Add timestamp and node_id to the metrics object
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("timestamp".to_string(), json!(timestamp.unix_timestamp()));
+                obj.insert("timestamp_rfc3339".to_string(), json!(timestamp.to_string()));
+                obj.insert("node_id".to_string(), json!(endpoint.id().to_string()));
+            }
+            val
+        }
+        Err(_) => return,
+    };
+
+    println!("ENDPOINT_METRICS:{}", serde_json::to_string(&metrics_serialized).unwrap_or_default());
+}
+
 fn emit_progress_metrics(
     endpoint_id: EndpointId,
     bytes_transferred: usize,
     elapsed: Duration,
     chunks: u64,
+    instant_throughput: u64,
 ) {
     let timestamp = OffsetDateTime::now_utc();
 
-    let throughput = if elapsed.as_secs_f64() > 0.0 {
+    let avg_throughput = if elapsed.as_secs_f64() > 0.0 {
         bytes_transferred as f64 / elapsed.as_secs_f64()
     } else {
         0.0
@@ -573,7 +619,8 @@ fn emit_progress_metrics(
         "node_id": endpoint_id.to_string(),
         "bytes_transferred": bytes_transferred,
         "elapsed_ms": elapsed.as_millis() as u64,
-        "current_throughput": throughput as u64,
+        "avg_throughput": avg_throughput as u64,
+        "instant_throughput": instant_throughput,
         "chunks": chunks,
     });
 
