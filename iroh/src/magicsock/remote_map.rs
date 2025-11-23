@@ -11,8 +11,6 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
-use crate::discovery::ConcurrentDiscovery;
-
 pub(crate) use self::remote_state::PathsWatcher;
 pub(super) use self::remote_state::RemoteStateMessage;
 pub use self::remote_state::{PathInfo, PathInfoList};
@@ -22,6 +20,7 @@ use super::{
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
     transports::TransportsSender,
 };
+use crate::discovery::ConcurrentDiscovery;
 
 mod remote_state;
 

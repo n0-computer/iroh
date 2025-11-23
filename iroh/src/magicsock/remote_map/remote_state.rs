@@ -598,7 +598,7 @@ impl RemoteStateActor {
                 warn!("failed adding local addr: {err:#}",);
             }
         }
-        for addr in quinn_local_addrs.difference(&local_addrs) {
+        for addr in quinn_local_addrs.difference(local_addrs) {
             if let Err(err) = conn.remove_nat_traversal_address(*addr) {
                 warn!("failed removing local addr: {err:#}");
             }
