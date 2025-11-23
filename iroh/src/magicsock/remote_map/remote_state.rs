@@ -451,9 +451,10 @@ impl RemoteStateActor {
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
                 self.paths
-                    .insert(path_remote, Source::Connection { _0: Private });
+                    .insert(path_remote.clone(), Source::Connection { _0: Private });
+                self.paths.opened_path(&path_remote);
                 self.select_path();
-                self.prune_ip_paths();
+                self.prune_paths();
 
                 if path_remote_is_ip {
                     // We may have raced this with a relay address.  Try and add any
@@ -490,6 +491,7 @@ impl RemoteStateActor {
         self.paths.resolve_remote(tx);
         // Start discovery if we have no selected path.
         self.trigger_discovery();
+        self.prune_paths();
     }
 
     fn handle_discovery_item(&mut self, item: Option<Result<DiscoveryItem, DiscoveryError>>) {
@@ -513,6 +515,7 @@ impl RemoteStateActor {
                     let addrs =
                         to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs);
                     self.paths.insert_multiple(addrs, source);
+                    self.prune_paths();
                 }
             }
         }
@@ -771,16 +774,18 @@ impl RemoteStateActor {
                     conn_state.add_open_path(path_remote.clone(), path_id);
                     self.paths
                         .insert(path_remote.clone(), Source::Connection { _0: Private });
-                    self.paths.holepunched(&path_remote);
+                    self.paths.opened_path(&path_remote);
                 }
 
                 self.select_path();
-                self.prune_ip_paths();
+                self.prune_paths();
             }
             PathEvent::Abandoned { id, path_stats } => {
                 trace!(?path_stats, "path abandoned");
                 // This is the last event for this path.
-                conn_state.remove_path(&id);
+                if let Some(addr) = conn_state.remove_path(&id) {
+                    self.paths.abandoned_path(&addr);
+                }
             }
             PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
                 let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
@@ -935,16 +940,8 @@ impl RemoteStateActor {
 
     /// TODO: fix up docs once review indicates this is actually
     /// the criteria for pruning.
-    fn prune_ip_paths(&mut self) {
-        let open_paths = self
-            .connections
-            .values()
-            .flat_map(|state| state.open_paths.values());
-        self.paths.prune_ip_paths(
-            &self.pending_open_paths,
-            &self.selected_path.get(),
-            open_paths,
-        );
+    fn prune_paths(&mut self) {
+        self.paths.prune_paths();
     }
 }
 
@@ -1080,11 +1077,13 @@ impl ConnectionState {
     }
 
     /// Completely removes a path from this connection.
-    fn remove_path(&mut self, path_id: &PathId) {
-        if let Some(addr) = self.paths.remove(path_id) {
-            self.path_ids.remove(&addr);
+    fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
+        let addr = self.paths.remove(path_id);
+        if let Some(ref addr) = addr {
+            self.path_ids.remove(addr);
         }
         self.open_paths.remove(path_id);
+        addr
     }
 
     /// Removes the path from the open paths.
