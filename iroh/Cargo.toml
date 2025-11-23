@@ -151,6 +151,7 @@ metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht"]
+qlog = ["quinn/qlog"]
 
 [package.metadata.docs.rs]
 all-features = true

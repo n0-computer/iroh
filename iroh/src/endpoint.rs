@@ -1333,7 +1333,7 @@ mod tests {
         discovery::static_provider::StaticProvider,
         endpoint::{ConnectOptions, Connection},
         protocol::{AcceptError, ProtocolHandler, Router},
-        test_utils::{run_relay_server, run_relay_server_with},
+        test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -1363,9 +1363,12 @@ mod tests {
         let server_secret_key = SecretKey::generate(&mut rng);
         let server_peer_id = server_secret_key.public();
 
+        let qlog = QlogFileGroup::from_env("endpoint_connect_close");
+
         // Wait for the endpoint to be started to make sure it's up before clients try to connect
         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(server_secret_key)
+            .transport_config(qlog.server("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
             .insecure_skip_relay_cert_verify(true)
             .bind()
@@ -1406,6 +1409,7 @@ mod tests {
                 let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .insecure_skip_relay_cert_verify(true)
+                    .transport_config(qlog.client("client")?)
                     .bind()
                     .await?;
                 info!("client connecting");
