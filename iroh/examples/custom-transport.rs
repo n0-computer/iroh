@@ -114,11 +114,23 @@ impl TestSender {
             .channels
             .get(&dst)
             .ok_or_else(|| io::Error::other("Unknown key"))?;
+        let from_id = try_parse_user_addr(&self.me).unwrap();
+        let to_id = try_parse_user_addr(&dst).unwrap();
         for packet in packets {
             let len = packet.data.len();
             match s.try_send(packet) {
-                Ok(_) => info!("send: sent {} bytes", len),
-                Err(TrySendError::Full(_)) => info!("send: dropped {} bytes", len),
+                Ok(_) => info!(
+                    "send {} -> {}: sent {} bytes",
+                    from_id.fmt_short(),
+                    to_id.fmt_short(),
+                    len
+                ),
+                Err(TrySendError::Full(_)) => info!(
+                    "send {} -> {}: dropped {} bytes",
+                    from_id.fmt_short(),
+                    to_id.fmt_short(),
+                    len
+                ),
                 Err(TrySendError::Closed(_)) => return Err(io::Error::other("channel closed")),
             }
         }
@@ -196,13 +208,20 @@ impl DynUserTransport for TestTransport {
             Poll::Ready(n) => n,
         };
         let mut n = 0;
+        let me = try_parse_user_addr(&self.me).unwrap();
         for (((packet, meta), buf), source_addr) in
             packets.into_iter().zip(metas).zip(bufs).zip(source_addrs)
         {
             if buf.len() < packet.data.len() {
                 break;
             }
-            info!("recv: copying {} bytes", packet.data.len());
+            let from = try_parse_user_addr(&packet.from).unwrap();
+            info!(
+                "recv {} -> {}: copying {} bytes",
+                from.fmt_short(),
+                me.fmt_short(),
+                packet.data.len()
+            );
             buf[..packet.data.len()].copy_from_slice(&packet.data);
             *source_addr = packet.from.into();
             meta.len = packet.data.len();
@@ -210,7 +229,7 @@ impl DynUserTransport for TestTransport {
             n += 1;
         }
         if n > 0 {
-            info!("recv: filled {n} slots");
+            info!("recv {}: filled {n} slots", me.fmt_short());
             Poll::Ready(Ok(n))
         } else {
             Poll::Pending
