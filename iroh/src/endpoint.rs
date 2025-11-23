@@ -28,7 +28,7 @@ use url::Url;
 /// Types for defining custom transports
 pub mod transports {
     pub use super::magicsock::transports::{
-        Addr, DynUserSender, DynUserTransport, Transmit, UserTransportConfig,
+        Addr, UserSender, UserTransport, Transmit, UserTransportConfig,
     };
 }
 

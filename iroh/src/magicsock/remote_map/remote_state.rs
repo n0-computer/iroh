@@ -35,7 +35,7 @@ use crate::{
     endpoint::DirectAddr,
     magicsock::{
         DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
-        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
+        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr, UserMappedAddr},
         remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -132,8 +132,8 @@ pub(super) struct RemoteStateActor {
     disco: DiscoState,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    /// The mapping between endpoints via a user transport and their [`RelayMappedAddr`]s.
-    user_mapped_addrs: AddrMap<UserAddr, RelayMappedAddr>, // TODO: use new type
+    /// The mapping between endpoints via a user transport and their [`UserMappedAddr`]s.
+    user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
     /// Discovery service, cloned from the magicsock.
     discovery: ConcurrentDiscovery,
 
@@ -187,7 +187,7 @@ impl RemoteStateActor {
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         disco: DiscoState,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-        user_mapped_addrs: AddrMap<UserAddr, RelayMappedAddr>,
+        user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
         sender: TransportsSender,
         discovery: ConcurrentDiscovery,

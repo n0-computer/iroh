@@ -9,7 +9,7 @@ use futures_util::{future::BoxFuture, io};
 use iroh::{
     Endpoint, EndpointId, SecretKey, TransportAddr,
     discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
-    endpoint::transports::{Addr, DynUserSender, DynUserTransport, Transmit, UserTransportConfig},
+    endpoint::transports::{Addr, UserSender, UserTransport, Transmit, UserTransportConfig},
 };
 use iroh_base::UserAddr;
 use n0_error::Result;
@@ -146,7 +146,7 @@ impl TestSender {
     }
 }
 
-impl DynUserSender for TestSender {
+impl UserSender for TestSender {
     fn is_valid_send_addr(&self, addr: &iroh_base::UserAddr) -> bool {
         addr.id == TEST_TRANSPORT_ID
     }
@@ -161,7 +161,7 @@ impl DynUserSender for TestSender {
         Poll::Ready(self.send_sync(dst, packets))
     }
 
-    fn send(&self, dst: UserAddr, transmit: &Transmit<'_>) -> BoxFuture<io::Result<()>> {
+    fn send(&self, dst: UserAddr, transmit: &Transmit<'_>) -> BoxFuture<'static, io::Result<()>> {
         let this = self.clone();
         let packets = self.split(transmit).collect();
         Box::pin(async move { this.send_sync(dst, packets) })
@@ -169,13 +169,13 @@ impl DynUserSender for TestSender {
 }
 
 impl UserTransportConfig for TestTransport {
-    fn bind(&self) -> std::io::Result<Box<dyn DynUserTransport>> {
+    fn bind(&self) -> std::io::Result<Box<dyn UserTransport>> {
         Ok(Box::new(self.clone()))
     }
 }
 
-impl DynUserTransport for TestTransport {
-    fn create_sender(&self) -> Arc<dyn iroh::endpoint::transports::DynUserSender> {
+impl UserTransport for TestTransport {
+    fn create_sender(&self) -> Arc<dyn iroh::endpoint::transports::UserSender> {
         Arc::new(TestSender {
             me: self.me.clone(),
             inner: self.state.clone(),
@@ -202,7 +202,7 @@ impl DynUserTransport for TestTransport {
             return Poll::Ready(Ok(0));
         };
         let mut packets = Vec::new();
-        let n = match r.poll_recv_many(cx, &mut packets, n) {
+        match r.poll_recv_many(cx, &mut packets, n) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(0) => return Poll::Ready(Err(io::Error::other("channel closed"))),
             Poll::Ready(n) => n,
@@ -241,8 +241,8 @@ impl DynUserTransport for TestTransport {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let map = Arc::new(Mutex::new(Default::default()));
-    let s1 = SecretKey::generate(&mut rand::rng());
-    let s2 = SecretKey::generate(&mut rand::rng());
+    let s1 = SecretKey::from([0u8; 32]);
+    let s2 = SecretKey::from([1u8; 32]);
     let tt1 = TestTransport {
         state: map.clone(),
         me: to_user_addr(s1.public()),
@@ -254,6 +254,8 @@ async fn main() -> Result<()> {
     let d = TestDiscovery { state: map.clone() };
     tt1.add_node(s1.public());
     tt1.add_node(s2.public());
+    println!("Node 1: {}", s1.public().fmt_short());
+    println!("Node 2: {}", s2.public().fmt_short());
     let ep1 = Endpoint::builder()
         .secret_key(s1.clone())
         .clear_discovery()
@@ -270,6 +272,10 @@ async fn main() -> Result<()> {
         .clear_ip_transports()
         .bind()
         .await?;
+    let server = tokio::spawn(async move {
+        let incoming = ep2.accept().await.unwrap().await.unwrap();
+        println!("GOT INCOMING");
+    });
     let conn = ep1.connect(s2.public(), b"TEST").await?;
     Ok(())
 }

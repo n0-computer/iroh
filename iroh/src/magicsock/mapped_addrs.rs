@@ -27,11 +27,14 @@ const ADDR_PREFIXL: u8 = 0xfd;
 /// The Global ID used in n0's Unique Local Addresses.
 const ADDR_GLOBAL_ID: [u8; 5] = [21, 7, 10, 81, 11];
 
-/// The Subnet ID for [`RelayMappedAddr].
+/// The Subnet ID for [`RelayMappedAddr`].
 const RELAY_MAPPED_SUBNET: [u8; 2] = [0, 1];
 
 /// The Subnet ID for [`EndpointIdMappedAddr`].
 const ENDPOINT_ID_SUBNET: [u8; 2] = [0; 2];
+
+/// The Subnet ID for [`UserMappedAddr`].
+const USER_MAPPED_SUBNET: [u8; 2] = [0, 3];
 
 /// A default fake addr, using the maximum addr that the internal fake addrs could be using.
 pub const DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
@@ -61,6 +64,9 @@ static RELAY_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Counter to always generate unique addresses for [`EndpointIdMappedAddr`].
 static ENDPOINT_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Counter to always generate unique addresses for [`UserMappedAddr`].
+static USER_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Generic mapped address.
 ///
@@ -94,7 +100,7 @@ pub(crate) enum MultipathMappedAddr {
     /// An IP based transport address.
     Ip(SocketAddr),
     /// Custom user version
-    User(RelayMappedAddr), // TODO: custom type
+    User(UserMappedAddr),
 }
 
 impl From<SocketAddr> for MultipathMappedAddr {
@@ -107,6 +113,9 @@ impl From<SocketAddr> for MultipathMappedAddr {
                 }
                 if let Ok(addr) = RelayMappedAddr::try_from(addr) {
                     return Self::Relay(addr);
+                }
+                if let Ok(addr) = UserMappedAddr::try_from(addr) {
+                    return Self::User(addr);
                 }
                 Self::Ip(value)
             }
@@ -247,6 +256,70 @@ impl std::fmt::Display for RelayMappedAddr {
     }
 }
 
+
+/// An Ipv6 ULA address, identifying a relay path for a [`EndpointId`].
+///
+/// Since iroh endpoint are reachable via a relay server we have a network path indicated by
+/// the `(EndpointId, RelayUrl)`.  However Quinn can only handle socket addresses, so we use
+/// IPv6 addresses in a private IPv6 Unique Local Address range, which map to a unique
+/// `(EndointId, RelayUrl)` pair.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub(crate) struct UserMappedAddr(Ipv6Addr);
+
+impl MappedAddr for UserMappedAddr {
+    /// Generates a globally unique fake UDP address.
+    ///
+    /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
+    /// which is recognised by iroh as an IP mapped address.
+    fn generate() -> Self {
+        let mut addr = [0u8; 16];
+        addr[0] = ADDR_PREFIXL;
+        addr[1..6].copy_from_slice(&ADDR_GLOBAL_ID);
+        addr[6..8].copy_from_slice(&USER_MAPPED_SUBNET);
+
+        let counter = USER_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        addr[8..16].copy_from_slice(&counter.to_be_bytes());
+
+        Self(Ipv6Addr::from(addr))
+    }
+
+    /// Returns a consistent [`SocketAddr`] for the [`RelayMappedAddr`].
+    ///
+    /// This socket address does not have a routable IP address and port.
+    ///
+    /// This uses a made-up port number, since the port does not play a role in the
+    /// addressing.  This socket address is only to be used to pass into Quinn.
+    fn private_socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
+    }
+}
+
+impl TryFrom<Ipv6Addr> for UserMappedAddr {
+    type Error = UserMappedAddrError;
+
+    fn try_from(value: Ipv6Addr) -> std::result::Result<Self, Self::Error> {
+        let octets = value.octets();
+        if octets[0] == ADDR_PREFIXL
+            && octets[1..6] == ADDR_GLOBAL_ID
+            && octets[6..8] == USER_MAPPED_SUBNET
+        {
+            return Ok(Self(value));
+        }
+        Err(e!(UserMappedAddrError))
+    }
+}
+
+/// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
+#[stack_error(derive, add_meta)]
+#[error("Failed to convert")]
+pub(crate) struct UserMappedAddrError;
+
+impl std::fmt::Display for UserMappedAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "UserMappedAddr({})", self.0)
+    }
+}
+
 /// A bi-directional map between a key and a [`MappedAddr`].
 #[derive(Debug, Clone)]
 pub(super) struct AddrMap<K, V> {
@@ -269,6 +342,7 @@ where
 {
     /// Returns the [`MappedAddr`], generating one if needed.
     pub(super) fn get(&self, key: &K) -> V {
+        let id: usize = Arc::as_ptr(&self.inner) as usize;
         let mut inner = self.inner.lock().expect("poisoned");
         match inner.addrs.get(key) {
             Some(addr) => *addr,
@@ -284,6 +358,7 @@ where
 
     /// Performs the reverse lookup.
     pub(super) fn lookup(&self, addr: &V) -> Option<K> {
+        let id: usize = Arc::as_ptr(&self.inner) as usize;
         let inner = self.inner.lock().expect("poisoned");
         inner.lookup.get(addr).cloned()
     }

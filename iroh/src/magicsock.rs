@@ -597,6 +597,7 @@ impl MagicSock {
                     }
                     transports::Addr::User(addr) => {
                         let mapped_addr = self.remote_map.user_mapped_addrs.get(addr);
+                        println!("mapped_addr: {:?}", mapped_addr);
                         quinn_meta.addr = mapped_addr.private_socket_addr();
                     }
                 }

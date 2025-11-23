@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{MagicSock, mapped_addrs::MultipathMappedAddr, remote_map::RemoteStateMessage};
-use crate::{metrics::EndpointMetrics, net_report::Report};
+use crate::{endpoint, metrics::EndpointMetrics, net_report::Report};
 
 #[cfg(not(wasm_browser))]
 mod ip;
@@ -36,7 +36,7 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: IpTransports,
     relay: Vec<RelayTransport>,
-    user: Vec<Box<dyn DynUserTransport>>,
+    user: Vec<Box<dyn UserTransport>>,
 
     poll_recv_counter: usize,
     /// Cache for source addrs, to speed up access
@@ -44,9 +44,9 @@ pub(crate) struct Transports {
 }
 
 /// An user transport
-pub trait DynUserTransport: std::fmt::Debug + Send + Sync + 'static {
+pub trait UserTransport: std::fmt::Debug + Send + Sync + 'static {
     /// Create a sender
-    fn create_sender(&self) -> Arc<dyn DynUserSender>;
+    fn create_sender(&self) -> Arc<dyn UserSender>;
     /// Poll recv
     fn poll_recv(
         &mut self,
@@ -58,7 +58,7 @@ pub trait DynUserTransport: std::fmt::Debug + Send + Sync + 'static {
 }
 
 /// User sender
-pub trait DynUserSender: std::fmt::Debug + Send + Sync + 'static {
+pub trait UserSender: std::fmt::Debug + Send + Sync + 'static {
     /// is addr valid for this transport?
     fn is_valid_send_addr(&self, addr: &UserAddr) -> bool;
     /// send
@@ -112,7 +112,7 @@ pub enum TransportConfig {
 /// User transport config or factory
 pub trait UserTransportConfig: std::fmt::Debug + Send + Sync + 'static {
     /// Create an actual user transport
-    fn bind(&self) -> io::Result<Box<dyn DynUserTransport>>;
+    fn bind(&self) -> io::Result<Box<dyn UserTransport>>;
 }
 
 impl TransportConfig {
@@ -553,7 +553,7 @@ pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: IpTransportsSender,
     relay: Vec<RelaySender>,
-    user: Vec<Arc<dyn DynUserSender>>,
+    user: Vec<Arc<dyn UserSender>>,
     max_transmit_segments: usize,
 }
 
