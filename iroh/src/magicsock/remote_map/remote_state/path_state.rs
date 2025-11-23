@@ -86,6 +86,11 @@ impl RemotePathState {
         self.paths.keys()
     }
 
+    /// Returns whether this stores any addresses.
+    pub(super) fn is_empty(&self) -> bool {
+        self.paths.is_empty()
+    }
+
     /// Replies to all pending resolve requests.
     ///
     /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,

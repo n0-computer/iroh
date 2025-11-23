@@ -512,15 +512,17 @@ impl Accepting {
             .inner
             .into_0rtt()
             .expect("incoming connections can always be converted to 0-RTT");
+
         let accepted: BoxFuture<_> = Box::pin({
             let quinn_conn = quinn_conn.clone();
             async move {
-                zrtt_accepted.await;
+                let _ = zrtt_accepted.await;
                 let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
                 Ok(conn)
             }
         });
         let accepted = accepted.shared();
+
         IncomingZeroRttConnection {
             inner: quinn_conn,
             data: IncomingZeroRttData { accepted },
@@ -673,7 +675,6 @@ impl sealed::Sealed for HandshakeCompleted {}
 impl ConnectionState for HandshakeCompleted {
     type Data = HandshakeCompletedData;
 }
-
 impl sealed::Sealed for IncomingZeroRtt {}
 impl ConnectionState for IncomingZeroRtt {
     type Data = IncomingZeroRttData;

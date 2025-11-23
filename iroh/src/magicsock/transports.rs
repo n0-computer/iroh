@@ -541,7 +541,9 @@ impl TransportsSender {
         if any_match {
             Err(io::Error::other("all available transports failed"))
         } else {
-            Err(io::Error::other("no transport available"))
+            Err(io::Error::other(
+                "no transport available for this destination",
+            ))
         }
     }
 
