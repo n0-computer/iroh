@@ -704,10 +704,12 @@ impl RemoteStateActor {
                     .iter()
                     .map(|addr| SocketAddr::new(addr.ip().to_canonical(), addr.port()))
                     .collect();
-                trace!(
+                event!(
+                    target: "iroh::_events::qnt::init",
+                    Level::DEBUG,
+                    remote = %self.endpoint_id.fmt_short(),
                     ?local_candidates,
                     ?remote_candidates,
-                    "nat traversal initiated"
                 );
                 self.last_holepunch = Some(HolepunchAttempt {
                     when: Instant::now(),
