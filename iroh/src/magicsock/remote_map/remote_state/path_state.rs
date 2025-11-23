@@ -182,7 +182,7 @@ pub(super) struct PathState {
 ///
 /// Always prunes paths that have unsuccessfully holepunched.
 ///
-/// Keeps [`MAX_INACTIVE_PATHS`] of the most recently closed paths
+/// Keeps [`MAX_INACTIVE_IP_PATHS`] of the most recently closed paths
 /// that are not currently being used but have successfully been
 /// holepunched previously.
 ///
@@ -247,8 +247,10 @@ fn prune_ip_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, SocketAddrV4};
-    use std::time::Duration;
+    use std::{
+        net::{Ipv4Addr, SocketAddrV4},
+        time::Duration,
+    };
 
     use iroh_base::{RelayUrl, SecretKey};
     use rand::SeedableRng;
@@ -434,7 +436,7 @@ mod tests {
         // Add 10 relay addresses
         for _ in 0..10 {
             let id = SecretKey::generate(&mut rng).public();
-            let relay_addr = transports::Addr::Relay(relay_url.clone().into(), id);
+            let relay_addr = transports::Addr::Relay(relay_url.clone(), id);
             paths.insert(relay_addr, PathState::default());
         }
 
