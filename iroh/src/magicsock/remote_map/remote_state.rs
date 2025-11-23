@@ -285,8 +285,8 @@ impl RemoteStateActor {
                 Some((id, evt)) = self.path_events.next() => {
                     self.handle_path_event(id, evt);
                 }
-                Some((id, _)) = self.addr_events.next() => {
-                    trace!(?id, "remote addrs updated, triggering holepunching");
+                Some((id, evt)) = self.addr_events.next() => {
+                    trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
                     self.trigger_holepunching().await;
                 }
                 Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
@@ -700,6 +700,10 @@ impl RemoteStateActor {
             .collect::<BTreeSet<_>>();
         match conn.initiate_nat_traversal_round() {
             Ok(remote_candidates) => {
+                let remote_candidates = remote_candidates
+                    .iter()
+                    .map(|addr| SocketAddr::new(addr.ip().to_canonical(), addr.port()))
+                    .collect();
                 trace!(
                     ?local_candidates,
                     ?remote_candidates,
@@ -708,7 +712,7 @@ impl RemoteStateActor {
                 self.last_holepunch = Some(HolepunchAttempt {
                     when: Instant::now(),
                     local_candidates,
-                    remote_candidates: BTreeSet::from_iter(remote_candidates),
+                    remote_candidates,
                 });
             }
             Err(err) => {
@@ -1025,6 +1029,8 @@ pub(super) struct RemoteStateHandle {
 }
 
 /// Information about a holepunch attempt.
+///
+/// Addresses are always stored in canonical form.
 #[derive(Debug)]
 struct HolepunchAttempt {
     when: Instant,
