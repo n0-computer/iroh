@@ -467,8 +467,8 @@ impl Builder {
     ///
     /// Endpoint hooks intercept the connection establishment process of an [`Endpoint`].
     ///
-    /// You can install multiple hooks by calling this function multiple times.
-    /// Order matters: Endpoint hooks are invoked in the order they were installed onto the endpoint
+    /// You can install multiple [`EndpointHooks`] by calling this function multiple times.
+    /// Order matters: hooks are invoked in the order they were installed onto the endpoint
     /// builder. Once a hook returns reject, further processing
     /// is aborted and other hooks won't be invoked.
     ///
