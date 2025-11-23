@@ -7,7 +7,7 @@ use crate::endpoint::connection::ConnectionInfo;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-/// Outcome of [`Middleware::before_connect`]
+/// Outcome of [`EndpointHooks::before_connect`]
 #[derive(Debug)]
 pub enum BeforeConnectOutcome {
     /// Accept the connect attempt.
@@ -16,7 +16,7 @@ pub enum BeforeConnectOutcome {
     Reject,
 }
 
-/// Outcome of [`Middleware::after_handshake`]
+/// Outcome of [`EndpointHooks::after_handshake`]
 #[derive(Debug)]
 pub enum AfterHandshakeOutcome {
     /// Accept the connection.
@@ -49,30 +49,30 @@ impl AfterHandshakeOutcome {
     }
 }
 
-/// Middlewares intercept the connection establishment process of an [`Endpoint`].
+/// EndpointHooks intercept the connection establishment process of an [`Endpoint`].
 ///
-/// Use [`Builder::middleware`] to install middlewares onto an endpoint.
+/// Use [`Builder::hooks`] to install hooks onto an endpoint.
 ///
-/// For each hook, all installed middlewares are invoked in the order they were installed on
-/// the endpoint builder. If a middleware returns `Accept`, processing continues with the next
-/// middleware. If a middleware returns `Reject`, processing is aborted and further middlewares
+/// For each hook, all installed hooks are invoked in the order they were installed on
+/// the endpoint builder. If a hook returns `Accept`, processing continues with the next
+/// hook. If a hook returns `Reject`, processing is aborted and further hooks
 /// are not invoked for this hook.
 ///
 /// ## Notes to implementers
 ///
-/// As middlewares are stored on the endpoint, you must make sure to never store an [`Endpoint`]
-/// on the middleware struct itself, as this would create reference counting loop and cause the
+/// As hooks are stored on the endpoint, you must make sure to never store an [`Endpoint`]
+/// on the hook struct itself, as this would create reference counting loop and cause the
 /// endpoint to never be dropped, leaking memory.
 ///
 /// [`Endpoint`]: crate::Endpoint
-/// [`Builder::middleware`]: crate::endpoint::Builder::middleware
-pub trait Middleware: std::fmt::Debug + Send + Sync {
+/// [`Builder::hooks`]: crate::endpoint::Builder::hooks
+pub trait EndpointHooks: std::fmt::Debug + Send + Sync {
     /// Intercept outgoing connections before they are started.
     ///
     /// This is called whenever a new outgoing connection is initiated via [`Endpoint::connect`]
     /// or [`Endpoint::connect_with_opts`].
     ///
-    /// If any middleware returns [`BeforeConnectOutcome::Reject`], the connection attempt is aborted
+    /// If any hook returns [`BeforeConnectOutcome::Reject`], the connection attempt is aborted
     /// before any packets are sent to the remote.
     ///
     /// [`Endpoint::connect`]: crate::Endpoint::connect
@@ -87,7 +87,7 @@ pub trait Middleware: std::fmt::Debug + Send + Sync {
 
     /// Intercept both incoming and outgoing connections once the TLS handshake has completed.
     ///
-    /// At this point in time, we know the remote's endpoint id and ALPN. If any middleware returns
+    /// At this point in time, we know the remote's endpoint id and ALPN. If any hook returns
     /// [`AfterHandshakeOutcome::Reject`], the connection is closed with the provided error code
     /// and reason.
     fn after_handshake<'a>(
@@ -98,7 +98,7 @@ pub trait Middleware: std::fmt::Debug + Send + Sync {
     }
 }
 
-pub(crate) trait DynMiddleware: std::fmt::Debug + Send + Sync {
+pub(crate) trait DynEndpointHooks: std::fmt::Debug + Send + Sync {
     fn before_connect<'a>(
         &'a self,
         remote_addr: &'a EndpointAddr,
@@ -110,32 +110,32 @@ pub(crate) trait DynMiddleware: std::fmt::Debug + Send + Sync {
     ) -> BoxFuture<'a, AfterHandshakeOutcome>;
 }
 
-impl<T: Middleware> DynMiddleware for T {
+impl<T: EndpointHooks> DynEndpointHooks for T {
     fn before_connect<'a>(
         &'a self,
         remote_addr: &'a EndpointAddr,
         alpn: &'a [u8],
     ) -> BoxFuture<'a, BeforeConnectOutcome> {
-        Box::pin(Middleware::before_connect(self, remote_addr, alpn))
+        Box::pin(EndpointHooks::before_connect(self, remote_addr, alpn))
     }
 
     fn after_handshake<'a>(
         &'a self,
         conn: &'a ConnectionInfo,
     ) -> BoxFuture<'a, AfterHandshakeOutcome> {
-        Box::pin(Middleware::after_handshake(self, conn))
+        Box::pin(EndpointHooks::after_handshake(self, conn))
     }
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct MiddlewareList {
-    inner: Vec<Box<dyn DynMiddleware>>,
+pub(crate) struct EndpointHooksList {
+    inner: Vec<Box<dyn DynEndpointHooks>>,
 }
 
-impl MiddlewareList {
-    pub(super) fn push(&mut self, middleware: impl Middleware + 'static) {
-        let middleware: Box<dyn DynMiddleware> = Box::new(middleware);
-        self.inner.push(middleware);
+impl EndpointHooksList {
+    pub(super) fn push(&mut self, hook: impl EndpointHooks + 'static) {
+        let hook: Box<dyn DynEndpointHooks> = Box::new(hook);
+        self.inner.push(hook);
     }
 
     pub(super) async fn before_connect(
@@ -143,8 +143,8 @@ impl MiddlewareList {
         remote_addr: &EndpointAddr,
         alpn: &[u8],
     ) -> BeforeConnectOutcome {
-        for middleware in self.inner.iter() {
-            match middleware.before_connect(remote_addr, alpn).await {
+        for hook in self.inner.iter() {
+            match hook.before_connect(remote_addr, alpn).await {
                 BeforeConnectOutcome::Accept => continue,
                 reject @ BeforeConnectOutcome::Reject => {
                     return reject;
@@ -155,8 +155,8 @@ impl MiddlewareList {
     }
 
     pub(super) async fn after_handshake(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
-        for middleware in self.inner.iter() {
-            match middleware.after_handshake(conn).await {
+        for hook in self.inner.iter() {
+            match hook.after_handshake(conn).await {
                 AfterHandshakeOutcome::Accept => continue,
                 reject @ AfterHandshakeOutcome::Reject { .. } => {
                     return reject;

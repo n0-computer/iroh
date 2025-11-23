@@ -612,7 +612,8 @@ mod tests {
     use crate::{
         RelayMode,
         endpoint::{
-            BeforeConnectOutcome, ConnectError, ConnectWithOptsError, ConnectionError, Middleware,
+            BeforeConnectOutcome, ConnectError, ConnectWithOptsError, ConnectionError,
+            EndpointHooks,
         },
     };
 
@@ -679,11 +680,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_limiter_middleware() -> Result {
+    async fn test_limiter_hook() -> Result {
         // tracing_subscriber::fmt::try_init().ok();
         #[derive(Debug, Default)]
-        struct LimitMiddleware;
-        impl Middleware for LimitMiddleware {
+        struct LimitHook;
+        impl EndpointHooks for LimitHook {
             async fn before_connect<'a>(
                 &'a self,
                 _remote_addr: &'a iroh_base::EndpointAddr,
@@ -703,7 +704,7 @@ mod tests {
         let addr1 = r1.endpoint().addr();
         dbg!(&addr1);
         let e2 = Endpoint::empty_builder(RelayMode::Disabled)
-            .middleware(LimitMiddleware)
+            .hooks(LimitHook)
             .bind()
             .await?;
 

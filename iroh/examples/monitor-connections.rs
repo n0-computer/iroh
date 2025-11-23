@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use iroh::{
     Endpoint, RelayMode, Watcher,
-    endpoint::{AfterHandshakeOutcome, ConnectionInfo, Middleware},
+    endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks},
 };
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::task::AbortOnDropHandle;
@@ -25,7 +25,7 @@ async fn main() -> Result {
     let monitor = Monitor::new();
     let server = Endpoint::empty_builder(RelayMode::Disabled)
         .alpns(vec![ALPN.to_vec()])
-        .middleware(monitor.clone())
+        .hooks(monitor.clone())
         .bind()
         .instrument(info_span!("server"))
         .await?;
@@ -87,7 +87,7 @@ struct Monitor {
     _task: Arc<AbortOnDropHandle<()>>,
 }
 
-impl Middleware for Monitor {
+impl EndpointHooks for Monitor {
     async fn after_handshake(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
         self.tx.send(conn.clone()).ok();
         AfterHandshakeOutcome::Accept

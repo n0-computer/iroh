@@ -57,7 +57,7 @@ use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
-    endpoint::middleware::MiddlewareList,
+    endpoint::hooks::EndpointHooksList,
     magicsock::remote_map::PathsWatcher,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
@@ -141,7 +141,7 @@ pub(crate) struct Options {
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
     pub(crate) metrics: EndpointMetrics,
-    pub(crate) middlewares: MiddlewareList,
+    pub(crate) hooks: EndpointHooksList,
 }
 
 /// Handle for [`MagicSock`].
@@ -210,7 +210,7 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
-    pub(crate) middlewares: MiddlewareList,
+    pub(crate) hooks: EndpointHooksList,
 }
 
 impl MagicSock {
@@ -761,7 +761,7 @@ impl Handle {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics,
-            middlewares,
+            hooks,
         } = opts;
 
         let discovery = ConcurrentDiscovery::default();
@@ -873,7 +873,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
-            middlewares,
+            hooks,
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -1579,7 +1579,7 @@ mod tests {
             #[cfg(any(test, feature = "test-utils"))]
             discovery_user_data: None,
             metrics: Default::default(),
-            middlewares: Default::default(),
+            hooks: Default::default(),
         }
     }
 
@@ -2012,7 +2012,7 @@ mod tests {
             server_config,
             insecure_skip_relay_cert_verify: false,
             metrics: Default::default(),
-            middlewares: Default::default(),
+            hooks: Default::default(),
         };
         let msock = MagicSock::spawn(opts).await?;
         Ok(msock)

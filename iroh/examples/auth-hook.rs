@@ -1,6 +1,6 @@
-//! Implementation of authentication using iroh middlewares
+//! Implementation of authentication using iroh hooks
 //!
-//! This implements an auth protocol that works with iroh middlewares.
+//! This implements an auth protocol that works with iroh hooks.
 //! It allows to put authentication in front of iroh protocols. The protocols don't need any special support.
 //! Authentication is handled prior to establishing the connections, over a separate connection.
 
@@ -34,11 +34,8 @@ async fn main() -> Result<()> {
 }
 
 async fn connect_side(remote_addr: EndpointAddr, token: &[u8]) -> Result<()> {
-    let (auth_middleware, auth_task) = auth::outgoing(token.to_vec());
-    let endpoint = Endpoint::builder()
-        .middleware(auth_middleware)
-        .bind()
-        .await?;
+    let (auth_hook, auth_task) = auth::outgoing(token.to_vec());
+    let endpoint = Endpoint::builder().hooks(auth_hook).bind().await?;
     let _guard = auth_task.spawn(endpoint.clone());
     Echo::connect(&endpoint, remote_addr, b"hello there!").await
 }
@@ -49,11 +46,8 @@ async fn connect_side_no_auth(remote_addr: EndpointAddr) -> Result<()> {
 }
 
 async fn accept_side(token: &[u8]) -> Result<Router> {
-    let (auth_middleware, auth_protocol) = auth::incoming(token.to_vec());
-    let endpoint = Endpoint::builder()
-        .middleware(auth_middleware)
-        .bind()
-        .await?;
+    let (auth_hook, auth_protocol) = auth::incoming(token.to_vec());
+    let endpoint = Endpoint::builder().hooks(auth_hook).bind().await?;
 
     let router = Router::builder(endpoint)
         .accept(auth::ALPN, auth_protocol)
@@ -110,7 +104,7 @@ mod echo {
 }
 
 mod auth {
-    //! Authentication middleware
+    //! Authentication hook
 
     use std::{
         collections::{HashMap, HashSet, hash_map},
@@ -119,7 +113,7 @@ mod auth {
 
     use iroh::{
         Endpoint, EndpointAddr, EndpointId,
-        endpoint::{AfterHandshakeOutcome, BeforeConnectOutcome, Connection, Middleware},
+        endpoint::{AfterHandshakeOutcome, BeforeConnectOutcome, Connection, EndpointHooks},
         protocol::{AcceptError, ProtocolHandler},
     };
     use n0_error::{AnyError, Result, StackResultExt, StdResultExt, anyerr};
@@ -137,9 +131,9 @@ mod auth {
     const CLOSE_DENIED: u32 = 403;
 
     /// Outgoing side: Use this if you want to pre-auth outgoing connections.
-    pub fn outgoing(token: Vec<u8>) -> (OutgoingAuthMiddleware, OutgoingAuthTask) {
+    pub fn outgoing(token: Vec<u8>) -> (OutgoingAuthHook, OutgoingAuthTask) {
         let (tx, rx) = mpsc::channel(16);
-        let middleware = OutgoingAuthMiddleware { tx };
+        let hook = OutgoingAuthHook { tx };
         let connector = OutgoingAuthTask {
             token,
             rx,
@@ -147,18 +141,18 @@ mod auth {
             pending_remotes: Default::default(),
             tasks: JoinSet::new(),
         };
-        (middleware, connector)
+        (hook, connector)
     }
 
     type AuthResult = Result<(), Arc<AnyError>>;
 
-    /// Middleware to mount on the endpoint builder.
+    /// Hook to mount on the endpoint builder.
     #[derive(Debug)]
-    pub struct OutgoingAuthMiddleware {
+    pub struct OutgoingAuthHook {
         tx: mpsc::Sender<(EndpointId, oneshot::Sender<AuthResult>)>,
     }
 
-    impl OutgoingAuthMiddleware {
+    impl OutgoingAuthHook {
         async fn authenticate(&self, remote_id: EndpointId) -> Result<()> {
             let (tx, rx) = oneshot::channel();
             self.tx
@@ -171,7 +165,7 @@ mod auth {
         }
     }
 
-    impl Middleware for OutgoingAuthMiddleware {
+    impl EndpointHooks for OutgoingAuthHook {
         async fn before_connect<'a>(
             &'a self,
             remote_addr: &'a EndpointAddr,
@@ -281,27 +275,27 @@ mod auth {
     }
 
     /// Incoming side: Use this if you want to only accept connections from peers with successful pre-auth requests.
-    pub fn incoming(token: Vec<u8>) -> (IncomingAuthMiddleware, AuthProtocol) {
+    pub fn incoming(token: Vec<u8>) -> (IncomingAuthHook, AuthProtocol) {
         let allowed_remotes: Arc<Mutex<HashSet<EndpointId>>> = Default::default();
-        let middleware = IncomingAuthMiddleware {
+        let hook = IncomingAuthHook {
             allowed_remotes: allowed_remotes.clone(),
         };
         let protocol = AuthProtocol {
             allowed_remotes,
             token,
         };
-        (middleware, protocol)
+        (hook, protocol)
     }
 
-    /// Accept-side auth middleware: Mount this onto the endpoint.
+    /// Accept-side auth hook: Mount this onto the endpoint.
     ///
     /// This will reject incoming connections if the remote did not successfully authenticate before.
     #[derive(Debug)]
-    pub struct IncomingAuthMiddleware {
+    pub struct IncomingAuthHook {
         allowed_remotes: Arc<Mutex<HashSet<EndpointId>>>,
     }
 
-    impl Middleware for IncomingAuthMiddleware {
+    impl EndpointHooks for IncomingAuthHook {
         async fn after_handshake<'a>(
             &'a self,
             conn: &'a iroh::endpoint::ConnectionInfo,

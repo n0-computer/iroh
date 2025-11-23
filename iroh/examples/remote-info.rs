@@ -1,4 +1,4 @@
-//! Example for using an iroh middleware to collect information about remote endpoints.
+//! Example for using an iroh hook to collect information about remote endpoints.
 //!
 //! This implements a [`RemoteMap`] which collects information about all connections and paths from an iroh endpoint.
 //! The remote map can be cloned and inspected from other tasks at any time. It contains both data about all
@@ -24,13 +24,13 @@ async fn main() -> Result {
         )
         .init();
 
-    // Create the remote map and middleware.
-    let (middleware, remote_map) = RemoteMap::new();
+    // Create the remote map and hook.
+    let (hook, remote_map) = RemoteMap::new();
 
-    // Bind our endpoint and install the remote map middleware.
+    // Bind our endpoint and install the remote map hook.
     let server = Endpoint::builder()
         .alpns(vec![ALPN.to_vec()])
-        .middleware(middleware)
+        .hooks(hook)
         .bind()
         .instrument(info_span!("server"))
         .await?;
@@ -156,7 +156,7 @@ async fn run_clients(server_addr: EndpointAddr, count: usize) -> Result {
 }
 
 mod remote_map {
-    //! Implementation of a remote map and middleware to track information about all remote endpoints to which an iroh endpoint
+    //! Implementation of a remote map and hook to track information about all remote endpoints to which an iroh endpoint
     //! has connections with.
 
     use std::{
@@ -167,7 +167,7 @@ mod remote_map {
 
     use iroh::{
         EndpointId, Watcher,
-        endpoint::{AfterHandshakeOutcome, ConnectionInfo, Middleware, PathInfo},
+        endpoint::{AfterHandshakeOutcome, ConnectionInfo, EndpointHooks, PathInfo},
     };
     use n0_future::task::AbortOnDropHandle;
     use tokio::{sync::mpsc, task::JoinSet};
@@ -284,13 +284,13 @@ mod remote_map {
         _task: Arc<AbortOnDropHandle<()>>,
     }
 
-    /// Middleware to collect information about remote endpoints from an endpoint.
+    /// Hook to collect information about remote endpoints from an endpoint.
     #[derive(Debug)]
-    pub struct RemoteMapMiddleware {
+    pub struct RemoteMapHook {
         tx: mpsc::Sender<ConnectionInfo>,
     }
 
-    impl Middleware for RemoteMapMiddleware {
+    impl EndpointHooks for RemoteMapHook {
         async fn after_handshake(&self, conn: &ConnectionInfo) -> AfterHandshakeOutcome {
             info!(remote=%conn.remote_id().fmt_short(), "after_handshake");
             self.tx.send(conn.clone()).await.ok();
@@ -299,15 +299,15 @@ mod remote_map {
     }
 
     impl RemoteMap {
-        /// Creates a new [`RemoteMapMiddleware`] and [`RemoteMap`].
-        pub fn new() -> (RemoteMapMiddleware, Self) {
+        /// Creates a new [`RemoteMapHook`] and [`RemoteMap`].
+        pub fn new() -> (RemoteMapHook, Self) {
             Self::with_max_retention(Duration::from_secs(60 * 5))
         }
 
-        /// Creates a new [`RemoteMapMiddleware`] and [`RemoteMap`] and configure the retention time.
+        /// Creates a new [`RemoteMapHook`] and [`RemoteMap`] and configure the retention time.
         ///
         /// `retention_time` is the time entries for remote endpoints remain in the map after the last connection has closed.
-        pub fn with_max_retention(retention_time: Duration) -> (RemoteMapMiddleware, Self) {
+        pub fn with_max_retention(retention_time: Duration) -> (RemoteMapHook, Self) {
             let (tx, rx) = mpsc::channel(8);
             let map = RemoteMapInner::default();
             let task = tokio::spawn(
@@ -318,8 +318,8 @@ mod remote_map {
                 map,
                 _task: Arc::new(AbortOnDropHandle::new(task)),
             };
-            let middleware = RemoteMapMiddleware { tx };
-            (middleware, map)
+            let hook = RemoteMapHook { tx };
+            (hook, map)
         }
 
         /// Read the current state of the remote map.

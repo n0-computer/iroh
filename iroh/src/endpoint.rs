@@ -24,7 +24,7 @@ use n0_watcher::Watcher;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use self::middleware::MiddlewareList;
+use self::hooks::EndpointHooksList;
 pub use super::magicsock::{
     DirectAddr, DirectAddrType, PathInfo,
     remote_map::{PathInfoList, Source},
@@ -46,11 +46,11 @@ use crate::{
 };
 
 mod connection;
-pub(crate) mod middleware;
+pub(crate) mod hooks;
 pub mod presets;
 
+pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
-pub use middleware::{AfterHandshakeOutcome, BeforeConnectOutcome, Middleware};
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
@@ -96,7 +96,7 @@ pub struct Builder {
     insecure_skip_relay_cert_verify: bool,
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
-    middlewares: MiddlewareList,
+    hooks: EndpointHooksList,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -159,7 +159,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: false,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
-            middlewares: Default::default(),
+            hooks: Default::default(),
         }
     }
 
@@ -207,7 +207,7 @@ impl Builder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
-            middlewares: self.middlewares,
+            hooks: self.hooks,
         };
 
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
@@ -463,18 +463,18 @@ impl Builder {
         self
     }
 
-    /// Install a middleware onto the endpoint.
+    /// Install hooks onto the endpoint.
     ///
-    /// Middlewares intercept the connection establishment process of an [`Endpoint`].
+    /// Endpoint hooks intercept the connection establishment process of an [`Endpoint`].
     ///
-    /// You can install multiple middlewares by calling this function multiple times.
-    /// Order matters: Middlewares are invoked in the order they were installed onto the endpoint
-    /// builder. Once a middleware returns reject for a middleware hook, further processing
-    /// is aborted and other middlewares won't be invoked.
+    /// You can install multiple hooks by calling this function multiple times.
+    /// Order matters: Endpoint hooks are invoked in the order they were installed onto the endpoint
+    /// builder. Once a hook returns reject, further processing
+    /// is aborted and other hooks won't be invoked.
     ///
-    /// See [`Middleware`] for details on the possible interception points in the connection lifecycle.
-    pub fn middleware(mut self, middleware: impl Middleware + 'static) -> Self {
-        self.middlewares.push(middleware);
+    /// See [`EndpointHooks`] for details on the possible interception points in the connection lifecycle.
+    pub fn hooks(mut self, hooks: impl EndpointHooks + 'static) -> Self {
+        self.hooks.push(hooks);
         self
     }
 }
@@ -712,11 +712,8 @@ impl Endpoint {
         options: ConnectOptions,
     ) -> Result<Connecting, ConnectWithOptsError> {
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
-        if let BeforeConnectOutcome::Reject = self
-            .msock
-            .middlewares
-            .before_connect(&endpoint_addr, alpn)
-            .await
+        if let BeforeConnectOutcome::Reject =
+            self.msock.hooks.before_connect(&endpoint_addr, alpn).await
         {
             return Err(e!(ConnectWithOptsError::LocallyRejected));
         }
