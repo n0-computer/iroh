@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>    defaults::timeouts::NET_REPORT_TIMEOUT,
 <a href=#60 id=60 data-nosnippet>60</a>    disco::{<span class="self">self</span>, SendAddr},
 <a href=#61 id=61 data-nosnippet>61</a>    discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
-<a href=#62 id=62 data-nosnippet>62</a>    endpoint::middleware::MiddlewareList,
+<a href=#62 id=62 data-nosnippet>62</a>    endpoint::hooks::EndpointHooksList,
 <a href=#63 id=63 data-nosnippet>63</a>    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
 <a href=#64 id=64 data-nosnippet>64</a>    magicsock::remote_map::PathsWatcher,
 <a href=#65 id=65 data-nosnippet>65</a>    metrics::EndpointMetrics,
@@ -144,7 +144,7 @@
 <a href=#144 id=144 data-nosnippet>144</a>    </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 <a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) insecure_skip_relay_cert_verify: bool,
 <a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) metrics: EndpointMetrics,
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) middlewares: MiddlewareList,
+<a href=#147 id=147 data-nosnippet>147</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) hooks: EndpointHooksList,
 <a href=#148 id=148 data-nosnippet>148</a>}
 <a href=#149 id=149 data-nosnippet>149</a>
 <a href=#150 id=150 data-nosnippet>150</a><span class="doccomment">/// Handle for [`MagicSock`].
@@ -216,7 +216,7 @@
 <a href=#216 id=216 data-nosnippet>216</a>
 <a href=#217 id=217 data-nosnippet>217</a>    <span class="doccomment">/// Metrics
 <a href=#218 id=218 data-nosnippet>218</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) metrics: EndpointMetrics,
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) middlewares: MiddlewareList,
+<a href=#219 id=219 data-nosnippet>219</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) hooks: EndpointHooksList,
 <a href=#220 id=220 data-nosnippet>220</a>}
 <a href=#221 id=221 data-nosnippet>221</a>
 <a href=#222 id=222 data-nosnippet>222</a><span class="kw">impl </span>MagicSock {
@@ -916,7 +916,7 @@
 <a href=#916 id=916 data-nosnippet>916</a>            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 <a href=#917 id=917 data-nosnippet>917</a>            </span>insecure_skip_relay_cert_verify,
 <a href=#918 id=918 data-nosnippet>918</a>            metrics,
-<a href=#919 id=919 data-nosnippet>919</a>            middlewares,
+<a href=#919 id=919 data-nosnippet>919</a>            hooks,
 <a href=#920 id=920 data-nosnippet>920</a>        } = opts;
 <a href=#921 id=921 data-nosnippet>921</a>
 <a href=#922 id=922 data-nosnippet>922</a>        <span class="kw">let </span>discovery = ConcurrentDiscovery::default();
@@ -1031,7 +1031,7 @@
 <a href=#1031 id=1031 data-nosnippet>1031</a>            local_addrs_watch: transports.local_addrs_watch(),
 <a href=#1032 id=1032 data-nosnippet>1032</a>            <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#1033 id=1033 data-nosnippet>1033</a>            </span>ip_bind_addrs: transports.ip_bind_addrs(),
-<a href=#1034 id=1034 data-nosnippet>1034</a>            middlewares,
+<a href=#1034 id=1034 data-nosnippet>1034</a>            hooks,
 <a href=#1035 id=1035 data-nosnippet>1035</a>        });
 <a href=#1036 id=1036 data-nosnippet>1036</a>
 <a href=#1037 id=1037 data-nosnippet>1037</a>        <span class="kw">let </span><span class="kw-2">mut </span>endpoint_config = quinn::EndpointConfig::default();
@@ -1863,7 +1863,7 @@
 <a href=#1863 id=1863 data-nosnippet>1863</a>            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 <a href=#1864 id=1864 data-nosnippet>1864</a>            </span>discovery_user_data: <span class="prelude-val">None</span>,
 <a href=#1865 id=1865 data-nosnippet>1865</a>            metrics: Default::default(),
-<a href=#1866 id=1866 data-nosnippet>1866</a>            middlewares: Default::default(),
+<a href=#1866 id=1866 data-nosnippet>1866</a>            hooks: Default::default(),
 <a href=#1867 id=1867 data-nosnippet>1867</a>        }
 <a href=#1868 id=1868 data-nosnippet>1868</a>    }
 <a href=#1869 id=1869 data-nosnippet>1869</a>
@@ -2296,7 +2296,7 @@
 <a href=#2296 id=2296 data-nosnippet>2296</a>            server_config,
 <a href=#2297 id=2297 data-nosnippet>2297</a>            insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
 <a href=#2298 id=2298 data-nosnippet>2298</a>            metrics: Default::default(),
-<a href=#2299 id=2299 data-nosnippet>2299</a>            middlewares: Default::default(),
+<a href=#2299 id=2299 data-nosnippet>2299</a>            hooks: Default::default(),
 <a href=#2300 id=2300 data-nosnippet>2300</a>        };
 <a href=#2301 id=2301 data-nosnippet>2301</a>        <span class="kw">let </span>msock = MagicSock::spawn(opts).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2302 id=2302 data-nosnippet>2302</a>        <span class="prelude-val">Ok</span>(msock)
