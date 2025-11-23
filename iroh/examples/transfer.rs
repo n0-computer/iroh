@@ -410,7 +410,13 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr, metrics_output: Op
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
+    println!("EVENT:{{\"type\":\"ConnectionAttempt\",\"remote\":\"{}\",\"timestamp\":{}}}",
+        remote_id, OffsetDateTime::now_utc().unix_timestamp());
+
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
+
+    println!("EVENT:{{\"type\":\"ConnectionEstablished\",\"remote\":\"{}\",\"timestamp\":{}}}",
+        remote_id, OffsetDateTime::now_utc().unix_timestamp());
     println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
     let _guard = watch_conn_type(conn.remote_id(), conn.paths());
@@ -424,6 +430,9 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr, metrics_output: Op
     send.finish().anyerr()?;
     println!("Sent: \"{message}\"");
 
+    println!("EVENT:{{\"type\":\"TransferStart\",\"remote\":\"{}\",\"timestamp\":{}}}",
+        remote_id, OffsetDateTime::now_utc().unix_timestamp());
+
     let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false, endpoint.id(), metrics_output).await?;
 
     // We received the last message: close all connections and allow for the close
@@ -434,6 +443,9 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr, metrics_output: Op
 
     let duration = start.elapsed();
     let throughput = len as f64 / duration.as_secs_f64();
+
+    println!("EVENT:{{\"type\":\"TransferComplete\",\"remote\":\"{}\",\"bytes\":{},\"duration_ms\":{},\"timestamp\":{}}}",
+        remote_id, len, duration.as_millis(), OffsetDateTime::now_utc().unix_timestamp());
 
     println!(
         "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks)",
