@@ -60,6 +60,9 @@ struct Cli {
     /// Write metrics to the specified file path
     #[clap(long, global = true)]
     metrics_output: Option<std::path::PathBuf>,
+    /// Enable QLOG output for QUIC connection debugging
+    #[clap(long, global = true)]
+    qlog: bool,
 }
 
 #[derive(Clone, Copy, Default, Debug, Eq, PartialEq, clap::ValueEnum)]
@@ -186,7 +189,7 @@ async fn main() -> Result<()> {
             size,
             endpoint_args,
         } => {
-            let endpoint = endpoint_args.bind_endpoint().await?;
+            let endpoint = endpoint_args.bind_endpoint(cli.qlog).await?;
             provide(endpoint, size, cli.metrics_output.as_ref()).await
         }
         Commands::Fetch {
@@ -195,7 +198,7 @@ async fn main() -> Result<()> {
             remote_direct_address,
             endpoint_args,
         } => {
-            let endpoint = endpoint_args.bind_endpoint().await?;
+            let endpoint = endpoint_args.bind_endpoint(cli.qlog).await?;
             let addrs = remote_relay_url
                 .into_iter()
                 .map(TransportAddr::Relay)
@@ -208,9 +211,31 @@ async fn main() -> Result<()> {
     result
 }
 
+fn qlog_config(name: impl ToString, start: Instant) -> Result<quinn::TransportConfig> {
+    let name = name.to_string();
+    let path = std::path::PathBuf::from(format!("/tmp/{name}.qlog"));
+    let mut transport_config = quinn::TransportConfig::default();
+    let mut qlog = quinn::QlogConfig::default();
+    qlog.start_time(start);
+    let file = std::fs::File::create(&path)?;
+    let writer = std::io::BufWriter::new(file);
+    qlog.writer(Box::new(writer)).title(Some(name.clone()));
+    transport_config.qlog_stream(qlog.into_stream());
+    tracing::info!("QLOG enabled: {:?}", path);
+    Ok(transport_config)
+}
+
 impl EndpointArgs {
-    async fn bind_endpoint(self) -> Result<Endpoint> {
+    async fn bind_endpoint(self, enable_qlog: bool) -> Result<Endpoint> {
+        let start = Instant::now();
         let mut builder = Endpoint::builder();
+
+        // Enable qlog if requested
+        if enable_qlog {
+            let node_name = std::env::var("HOSTNAME").unwrap_or_else(|_| "transfer".to_string());
+            let transport_config = qlog_config(node_name, start)?;
+            builder = builder.transport_config(transport_config);
+        }
 
         let secret_key = match std::env::var("IROH_SECRET") {
             Ok(s) => SecretKey::from_str(&s)

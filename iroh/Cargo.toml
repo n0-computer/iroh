@@ -139,6 +139,7 @@ tracing-subscriber = { version = "0.3", features = [
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
 iroh-base = { version = "0.95.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "main-iroh", default-features = false, features = ["runtime-tokio", "rustls-ring", "qlog"] }
 
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
