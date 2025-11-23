@@ -205,9 +205,9 @@ fn prune_ip_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
     }
 
     // paths that were opened at one point but have previously been closed
-    let mut can_prune = Vec::new();
+    let mut inactive = Vec::new();
     // paths where we attempted hole punching but it not successful
-    let mut must_prune = Vec::new();
+    let mut failed = Vec::new();
 
     for (addr, state) in ip_paths {
         match state.abandoned {
@@ -218,28 +218,32 @@ fn prune_ip_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
             Some(abandoned) => {
                 if state.usable {
                     // These are paths where hole punching succeeded at one point, but the path was closed.
-                    can_prune.push((addr.clone(), abandoned));
+                    inactive.push((addr.clone(), abandoned));
                 } else {
                     // These are paths where hole punching has been attempted and failed.
-                    must_prune.push(addr.clone());
+                    failed.push(addr.clone());
                 }
             }
         }
     }
 
-    // sort the potentially prunable from most recently closed to least recently closed
-    can_prune.sort_by(|a, b| b.1.cmp(&a.1));
+    // All paths are bad, don't prune all of them.
+    //
+    // This implies that `inactive` is empty.
+    if failed.len() == paths.len() {
+        failed.truncate(MAX_IP_PATHS);
+    }
 
-    // Don't prune any potentially usable but inactive paths if we don't need to.
-    let prunable_slots = MAX_INACTIVE_IP_PATHS.saturating_sub(must_prune.len());
+    // sort the potentially prunable from most recently closed to least recently closed
+    inactive.sort_by(|a, b| b.1.cmp(&a.1));
 
     // Prune the "oldest" closed paths.
-    let prune = can_prune.split_off(can_prune.len().saturating_sub(prunable_slots));
+    let old_inactive = inactive.split_off(inactive.len().saturating_sub(MAX_INACTIVE_IP_PATHS));
 
     // collect all the paths that should be pruned
-    let must_prune: HashSet<_> = must_prune
+    let must_prune: HashSet<_> = failed
         .into_iter()
-        .chain(prune.into_iter().map(|(addr, _)| addr))
+        .chain(old_inactive.into_iter().map(|(addr, _)| addr))
         .collect();
 
     paths.retain(|addr, _| !must_prune.contains(addr));
@@ -285,7 +289,7 @@ mod tests {
         }
 
         prune_ip_paths(&mut paths);
-        assert_eq!(paths.len(), 20, "should not prune when under MAX_IP_PATHS");
+        assert_eq!(20, paths.len(), "should not prune when under MAX_IP_PATHS");
     }
 
     #[test]
@@ -297,7 +301,7 @@ mod tests {
         }
 
         prune_ip_paths(&mut paths);
-        assert_eq!(paths.len(), MAX_IP_PATHS, "should not prune active paths");
+        assert_eq!(MAX_IP_PATHS, paths.len(), "should not prune active paths");
     }
 
     #[test]
@@ -318,7 +322,7 @@ mod tests {
         prune_ip_paths(&mut paths);
 
         // All failed holepunch paths should be pruned
-        assert_eq!(paths.len(), 20);
+        assert_eq!(20, paths.len());
         for i in 0..20 {
             assert!(paths.contains_key(&ip_addr(i)));
         }
@@ -347,11 +351,11 @@ mod tests {
             );
         }
 
-        assert_eq!(paths.len(), 35);
+        assert_eq!(35, paths.len());
         prune_ip_paths(&mut paths);
 
         // Should keep 15 active + 10 most recently abandoned
-        assert_eq!(paths.len(), 25);
+        assert_eq!(25, paths.len());
 
         // Active paths should remain
         for i in 0..15 {
@@ -397,11 +401,12 @@ mod tests {
             );
         }
 
-        assert_eq!(paths.len(), 35);
+        assert_eq!(35, paths.len());
         prune_ip_paths(&mut paths);
 
-        // Total: 15 active + 5 most recent can_prune = 20
-        assert_eq!(paths.len(), 20);
+        // Remove all failed paths -> down to 30
+        // Keep MAX_INACTIVE_IP_PATHS, eg remove 5 usable but abandoned paths -> down to 20
+        assert_eq!(20, paths.len());
 
         // Active paths should remain
         for i in 0..15 {
@@ -440,11 +445,11 @@ mod tests {
             paths.insert(relay_addr, PathState::default());
         }
 
-        assert_eq!(paths.len(), 35); // 25 IP + 10 relay
+        assert_eq!(35, paths.len()); // 25 IP + 10 relay
         prune_ip_paths(&mut paths);
 
         // Should not prune since IP paths < MAX_IP_PATHS
-        assert_eq!(paths.len(), 35);
+        assert_eq!(35, paths.len());
     }
 
     #[test]
