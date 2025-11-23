@@ -863,6 +863,9 @@ impl RemoteStateActor {
                         }
                     }
                 }
+
+                // If the remote closed our selected path, select a new one.
+                self.select_path();
             }
             PathEvent::RemoteStatus { .. } | PathEvent::ObservedAddr { .. } => {
                 // Nothing to do for these events.
@@ -932,13 +935,14 @@ impl RemoteStateActor {
         }
     }
 
-    /// Closes any direct paths not selected.
+    /// Closes any direct paths not selected if we are the client.
     ///
     /// Makes sure not to close the last direct path.  Relay paths are never closed
     /// currently, because we only have one relay path at this time.
-    // TODO: Need to handle this on a timer as well probably.  In .select_path() we open new
-    //    paths and immediately call this.  But the new paths are probably not yet open on
-    //    all connections.
+    ///
+    /// Only the client closes paths, just like only the client opens paths.  This is to
+    /// avoid the client and server selecting different paths and accidentally closing all
+    /// paths.
     fn close_redundant_paths(&mut self, selected_path: &transports::Addr) {
         debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path),);
 
@@ -955,6 +959,7 @@ impl RemoteStateActor {
                 if let Some(path) = conn_state
                     .handle
                     .upgrade()
+                    .filter(|conn| conn.side().is_client())
                     .and_then(|conn| conn.path(*path_id))
                 {
                     trace!(?path_remote, ?conn_id, ?path_id, "closing direct path");
