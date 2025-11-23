@@ -1339,7 +1339,7 @@
 <a href=#1339 id=1339 data-nosnippet>1339</a>        <span class="kw">let </span>server_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
 <a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="kw">let </span>server_peer_id = server_secret_key.public();
 <a href=#1341 id=1341 data-nosnippet>1341</a>
-<a href=#1342 id=1342 data-nosnippet>1342</a>        <span class="kw">let </span>qlog = QlogFileGroup::new(<span class="string">"endpoint_connect_close"</span>);
+<a href=#1342 id=1342 data-nosnippet>1342</a>        <span class="kw">let </span>qlog = QlogFileGroup::from_env(<span class="string">"endpoint_connect_close"</span>);
 <a href=#1343 id=1343 data-nosnippet>1343</a>
 <a href=#1344 id=1344 data-nosnippet>1344</a>        <span class="comment">// Wait for the endpoint to be started to make sure it's up before clients try to connect
 <a href=#1345 id=1345 data-nosnippet>1345</a>        </span><span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
