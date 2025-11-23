@@ -6,10 +6,10 @@ use n0_error::e;
 use n0_future::time::Instant;
 use rustc_hash::FxHashMap;
 use tokio::sync::oneshot;
-use tracing::{debug, trace, warn};
+use tracing::trace;
 
 use super::Source;
-use crate::{disco::TransactionId, discovery::DiscoveryError, magicsock::transports};
+use crate::{discovery::DiscoveryError, magicsock::transports};
 
 /// Map of all paths that we are aware of for a remote endpoint.
 ///
@@ -74,42 +74,11 @@ impl RemotePathState {
         }
     }
 
-    /// Records a sent disco ping for a path.
-    pub(super) fn disco_ping_sent(&mut self, addr: transports::Addr, tx_id: TransactionId) {
-        let path = self.paths.entry(addr.clone()).or_default();
-        path.ping_sent = Some(tx_id);
-    }
-
-    /// Records a received disco pong for a path.
-    ///
-    /// Returns `true` if we have sent a ping with `tx_id` on the same path.
-    pub(super) fn disco_pong_received(
-        &mut self,
-        src: &transports::Addr,
-        tx_id: TransactionId,
-    ) -> bool {
-        let Some(state) = self.paths.get(src) else {
-            warn!(path = ?src, ?self.paths, "ignoring DISCO Pong for unknown path");
-            return false;
-        };
-        if state.ping_sent != Some(tx_id) {
-            debug!(path = ?src, ?state.ping_sent, pong_tx = ?tx_id, "ignoring unknown DISCO Pong for path");
-            false
-        } else {
-            true
-        }
-    }
-
     /// Notifies that a discovery run has finished.
     ///
     /// This will emit pending resolve requests.
     pub(super) fn discovery_finished(&mut self, result: Result<(), DiscoveryError>) {
         self.emit_pending_resolve_requests(result.err());
-    }
-
-    /// Returns an iterator over all paths and their state.
-    pub(super) fn iter(&self) -> impl Iterator<Item = (&transports::Addr, &PathState)> {
-        self.paths.iter()
     }
 
     /// Returns an iterator over the addresses of all paths.
@@ -154,6 +123,4 @@ pub(super) struct PathState {
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
     /// of the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
-    /// The last ping sent on this path.
-    pub(super) ping_sent: Option<TransactionId>,
 }
