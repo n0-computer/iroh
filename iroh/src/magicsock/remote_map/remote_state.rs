@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
-use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 
 use self::{
     guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
@@ -1441,6 +1441,7 @@ fn to_transports_addr(
     addrs.into_iter().filter_map(move |addr| match addr {
         TransportAddr::Relay(relay_url) => Some(transports::Addr::from((relay_url, endpoint_id))),
         TransportAddr::Ip(sockaddr) => Some(transports::Addr::from(sockaddr)),
+        TransportAddr::User(addr) => Some(transports::Addr::from(addr)),
         _ => {
             warn!(?addr, "Unsupported TransportAddr");
             None
