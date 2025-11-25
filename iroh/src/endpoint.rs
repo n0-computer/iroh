@@ -1330,7 +1330,7 @@ mod tests {
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
-    use tokio::sync::oneshot;
+    use tokio::sync::{mpsc, oneshot};
     use tracing::{Instrument, debug, error_span, info, info_span, instrument};
     use tracing_test::traced_test;
 
@@ -2526,13 +2526,26 @@ mod tests {
         // and waits for the connection to be closed.
         let server_task = tokio::spawn(
             async move {
+                let (tx, mut rx) = mpsc::channel(4);
+                let accept_task = tokio::task::spawn({
+                    let server = server.clone();
+                    async move {
+                        for i in 0.. {
+                            info!("wait for connection {i}");
+                            let incoming =
+                                server.accept().await.context("server endpoint closed")?;
+                            let tx = tx.clone();
+                            tokio::task::spawn(async move {
+                                let conn = incoming.await?;
+                                tx.send(conn).await.ok();
+                                n0_error::Ok(())
+                            });
+                        }
+                        n0_error::Ok(())
+                    }
+                });
                 for i in 0..count {
-                    info!("wait for connection {i}");
-                    let conn = server
-                        .accept()
-                        .await
-                        .context("server endpoint closed")?
-                        .await?;
+                    let conn = rx.recv().await.context("sender dropped")?;
                     info!("accepted");
                     let mut s = conn.open_uni().await.anyerr()?;
                     s.write_all(b"hi").await.anyerr()?;
@@ -2541,6 +2554,7 @@ mod tests {
                     conn.closed().await;
                     info!("connection {i} complete");
                 }
+                accept_task.abort();
                 server.close().await;
                 n0_error::Ok(())
             }
