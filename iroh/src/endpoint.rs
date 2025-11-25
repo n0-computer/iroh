@@ -18,12 +18,13 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{ensure, stack_error};
+use n0_error::{e, ensure, stack_error};
 use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+use self::hooks::EndpointHooksList;
 pub use super::magicsock::{
     DirectAddr, DirectAddrType, PathInfo,
     remote_map::{PathInfoList, Source},
@@ -45,8 +46,10 @@ use crate::{
 };
 
 mod connection;
+pub(crate) mod hooks;
 pub mod presets;
 
+pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
@@ -66,8 +69,9 @@ pub use quinn_proto::{
 
 pub use self::connection::{
     Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-    ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt, IncomingZeroRttConnection,
-    OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError, ZeroRttStatus,
+    ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt,
+    IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError,
+    ZeroRttStatus,
 };
 pub use crate::magicsock::transports::TransportConfig;
 
@@ -92,6 +96,7 @@ pub struct Builder {
     insecure_skip_relay_cert_verify: bool,
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
+    hooks: EndpointHooksList,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -154,6 +159,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: false,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
+            hooks: Default::default(),
         }
     }
 
@@ -201,6 +207,7 @@ impl Builder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
+            hooks: self.hooks,
         };
 
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
@@ -455,6 +462,21 @@ impl Builder {
         self.max_tls_tickets = n;
         self
     }
+
+    /// Install hooks onto the endpoint.
+    ///
+    /// Endpoint hooks intercept the connection establishment process of an [`Endpoint`].
+    ///
+    /// You can install multiple [`EndpointHooks`] by calling this function multiple times.
+    /// Order matters: hooks are invoked in the order they were installed onto the endpoint
+    /// builder. Once a hook returns reject, further processing
+    /// is aborted and other hooks won't be invoked.
+    ///
+    /// See [`EndpointHooks`] for details on the possible interception points in the connection lifecycle.
+    pub fn hooks(mut self, hooks: impl EndpointHooks + 'static) -> Self {
+        self.hooks.push(hooks);
+        self
+    }
 }
 
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
@@ -530,6 +552,8 @@ pub enum ConnectWithOptsError {
         /// Private source type, cannot be created publicly.
         source: RemoteStateActorStoppedError,
     },
+    #[error("Connection was rejected locally")]
+    LocallyRejected,
 }
 
 #[allow(missing_docs)]
@@ -688,6 +712,11 @@ impl Endpoint {
         options: ConnectOptions,
     ) -> Result<Connecting, ConnectWithOptsError> {
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
+        if let BeforeConnectOutcome::Reject =
+            self.msock.hooks.before_connect(&endpoint_addr, alpn).await
+        {
+            return Err(e!(ConnectWithOptsError::LocallyRejected));
+        }
         let endpoint_id = endpoint_addr.id;
 
         tracing::Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));

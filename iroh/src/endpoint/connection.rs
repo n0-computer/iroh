@@ -34,12 +34,13 @@ use n0_watcher::Watcher;
 use pin_project::pin_project;
 use quinn::{
     AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
-    RetryError, SendDatagramError, ServerConfig, VarInt,
+    RetryError, SendDatagramError, ServerConfig, Side, VarInt, WeakConnectionHandle,
 };
 use tracing::warn;
 
 use crate::{
     Endpoint,
+    endpoint::AfterHandshakeOutcome,
     magicsock::{
         RemoteStateActorStoppedError,
         remote_map::{PathInfoList, PathsWatcher},
@@ -221,7 +222,7 @@ fn conn_from_quinn_conn(
     conn: quinn::Connection,
     ep: &Endpoint,
 ) -> Result<
-    impl Future<Output = Result<Connection, RemoteStateActorStoppedError>> + Send + 'static,
+    impl Future<Output = Result<Connection, ConnectingError>> + Send + 'static,
     ConnectingError,
 > {
     let info = match static_info_from_conn(&conn) {
@@ -241,12 +242,24 @@ fn conn_from_quinn_conn(
     let fut = ep
         .msock
         .register_connection(info.endpoint_id, conn.weak_handle());
+
+    // Check hooks
+    let msock = ep.msock.clone();
     Ok(async move {
         let paths = fut.await?;
-        Ok(Connection {
+        let conn = Connection {
             data: HandshakeCompletedData { info, paths },
             inner: conn,
-        })
+        };
+
+        if let AfterHandshakeOutcome::Reject { error_code, reason } =
+            msock.hooks.after_handshake(&conn.to_info()).await
+        {
+            conn.close(error_code, &reason);
+            return Err(e!(ConnectingError::LocallyRejected));
+        }
+
+        Ok(conn)
     })
 }
 
@@ -315,7 +328,7 @@ pub struct Connecting {
     remote_endpoint_id: EndpointId,
 }
 
-type RegisterWithMagicsockFut = BoxFuture<Result<Connection, RemoteStateActorStoppedError>>;
+type RegisterWithMagicsockFut = BoxFuture<Result<Connection, ConnectingError>>;
 
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
@@ -363,6 +376,8 @@ pub enum ConnectingError {
         /// Private source type, cannot be created publicly.
         source: RemoteStateActorStoppedError,
     },
+    #[error("Connection was rejected locally")]
+    LocallyRejected,
 }
 
 impl Connecting {
@@ -978,6 +993,23 @@ impl Connection<HandshakeCompleted> {
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
         self.data.paths.clone()
     }
+
+    /// Returns the side of the connection (client or server).
+    pub fn side(&self) -> Side {
+        self.inner.side()
+    }
+
+    /// Returns a connection info struct.
+    ///
+    /// A [`ConnectionInfo`] is a weak handle to the connection that does not keep the connection alive,
+    /// but does allow to access some information about the connection and to wait for the connection to be closed.
+    pub fn to_info(&self) -> ConnectionInfo {
+        ConnectionInfo {
+            data: self.data.clone(),
+            inner: self.inner.weak_handle(),
+            side: self.side(),
+        }
+    }
 }
 
 impl Connection<IncomingZeroRtt> {
@@ -1030,6 +1062,69 @@ impl Connection<OutgoingZeroRtt> {
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, ConnectingError> {
         self.data.accepted.clone().await
+    }
+}
+
+/// Information about a connection.
+///
+/// A [`ConnectionInfo`] is a weak handle to a connection that exposes some information about the connection,
+/// but does not keep the connection alive.
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    side: Side,
+    data: HandshakeCompletedData,
+    inner: WeakConnectionHandle,
+}
+
+#[allow(missing_docs)]
+impl ConnectionInfo {
+    pub fn alpn(&self) -> &[u8] {
+        &self.data.info.alpn
+    }
+
+    pub fn remote_id(&self) -> EndpointId {
+        self.data.info.endpoint_id
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.inner.upgrade().is_some()
+    }
+
+    /// Returns a [`Watcher`] for the network paths of this connection.
+    ///
+    /// A connection can have several network paths to the remote endpoint, commonly there
+    /// will be a path via the relay server and a holepunched path.
+    ///
+    /// The watcher is updated whenever a path is opened or closed, or when the path selected
+    /// for transmission changes (see [`PathInfo::is_selected`]).
+    ///
+    /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
+    /// transmission path.
+    ///
+    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
+    /// [`PathInfo`]: crate::magicsock::PathInfo
+    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
+        self.data.paths.clone()
+    }
+
+    /// Returns connection statistics.
+    ///
+    /// Returns `None` if the connection has been dropped.
+    pub fn stats(&self) -> Option<ConnectionStats> {
+        self.inner.upgrade().map(|conn| conn.stats())
+    }
+
+    /// Returns the side of the connection (client or server).
+    pub fn side(&self) -> Side {
+        self.side
+    }
+
+    /// Waits for the connection to be closed, and returns the close reason and final connection stats.
+    ///
+    /// Returns `None` if the connection has been dropped already before this call.
+    pub async fn closed(&self) -> Option<(ConnectionError, ConnectionStats)> {
+        let fut = self.inner.upgrade()?.on_closed();
+        Some(fut.await)
     }
 }
 
