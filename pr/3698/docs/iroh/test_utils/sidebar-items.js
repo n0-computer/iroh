@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["run_relay_server","run_relay_server_with"],"mod":["qlog"],"struct":["CleanupDropGuard","DnsPkarrServer"]};
+window.SIDEBAR_ITEMS = {"fn":["run_relay_server","run_relay_server_with"],"struct":["CleanupDropGuard","DnsPkarrServer","QlogFileGroup"]};
