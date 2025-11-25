@@ -38,7 +38,7 @@
 <a href=#38 id=38 data-nosnippet>38</a>        <span class="doccomment">/// Creates a new [`QlogFileGroup] that is only enabled if feature flags and environment variables match.
 <a href=#39 id=39 data-nosnippet>39</a>        ///
 <a href=#40 id=40 data-nosnippet>40</a>        /// The [`QlogFileGroup] can be used independent of feature flags, but it will only emit qlog files
-<a href=#41 id=41 data-nosnippet>41</a>        /// if the "qlog" feature is enabled and the environment variable IROH_QLOG is set to 1.
+<a href=#41 id=41 data-nosnippet>41</a>        /// if the "qlog" feature is enabled and the environment variable IROH_TEST_QLOG is set to 1.
 <a href=#42 id=42 data-nosnippet>42</a>        ///
 <a href=#43 id=43 data-nosnippet>43</a>        /// qlog files will be written to `CARGO_MANIFEST_DIR/qlog`.
 <a href=#44 id=44 data-nosnippet>44</a>        </span><span class="kw">pub fn </span>from_env(title: <span class="kw">impl </span>ToString) -&gt; <span class="self">Self </span>{
@@ -67,7 +67,7 @@
 <a href=#67 id=67 data-nosnippet>67</a>
 <a href=#68 id=68 data-nosnippet>68</a>        <span class="doccomment">/// Creates a [`TransportConfig`] that emits qlog files with a client vantage point, if enabled.
 <a href=#69 id=69 data-nosnippet>69</a>        ///
-<a href=#70 id=70 data-nosnippet>70</a>        /// If the "qlog" feature is enabled, and the environment varialbe IROH_QLOG is set to "1",
+<a href=#70 id=70 data-nosnippet>70</a>        /// If the "qlog" feature is enabled, and the environment varialbe IROH_TEST_QLOG is set to "1",
 <a href=#71 id=71 data-nosnippet>71</a>        /// returns transport config that writes qlog configs to the configured output directory.
 <a href=#72 id=72 data-nosnippet>72</a>        /// Otherwise, a default transport config is returned.
 <a href=#73 id=73 data-nosnippet>73</a>        </span><span class="kw">pub fn </span>client(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw">impl </span>ToString) -&gt; <span class="prelude-ty">Result</span>&lt;TransportConfig&gt; {
@@ -78,7 +78,7 @@
 <a href=#78 id=78 data-nosnippet>78</a>            };
 <a href=#79 id=79 data-nosnippet>79</a>
 <a href=#80 id=80 data-nosnippet>80</a>            <span class="attr">#[cfg(feature = <span class="string">"qlog"</span>)]
-<a href=#81 id=81 data-nosnippet>81</a>            </span><span class="kw">let </span>config = <span class="kw">if </span>std::env::var(<span class="string">"IROH_QLOG"</span>).ok().as_deref() == <span class="prelude-val">Some</span>(<span class="string">"1"</span>) {
+<a href=#81 id=81 data-nosnippet>81</a>            </span><span class="kw">let </span>config = <span class="kw">if </span>std::env::var(<span class="string">"IROH_TEST_QLOG"</span>).ok().as_deref() == <span class="prelude-val">Some</span>(<span class="string">"1"</span>) {
 <a href=#82 id=82 data-nosnippet>82</a>                <span class="self">self</span>.transport_config(name.to_string(), VantagePointType::Client)<span class="question-mark">?
 <a href=#83 id=83 data-nosnippet>83</a>            </span>} <span class="kw">else </span>{
 <a href=#84 id=84 data-nosnippet>84</a>                Default::default()
@@ -88,7 +88,7 @@
 <a href=#88 id=88 data-nosnippet>88</a>
 <a href=#89 id=89 data-nosnippet>89</a>        <span class="doccomment">/// Creates a [`TransportConfig`] that emits qlog files with a server vantage point, if enabled.
 <a href=#90 id=90 data-nosnippet>90</a>        ///
-<a href=#91 id=91 data-nosnippet>91</a>        /// If the "qlog" feature is enabled, and the environment varialbe IROH_QLOG is set to "1",
+<a href=#91 id=91 data-nosnippet>91</a>        /// If the "qlog" feature is enabled, and the environment varialbe IROH_TEST_QLOG is set to "1",
 <a href=#92 id=92 data-nosnippet>92</a>        /// returns transport config that writes qlog configs to the configured output directory.
 <a href=#93 id=93 data-nosnippet>93</a>        /// Otherwise, a default transport config is returned.
 <a href=#94 id=94 data-nosnippet>94</a>        </span><span class="kw">pub fn </span>server(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw">impl </span>ToString) -&gt; <span class="prelude-ty">Result</span>&lt;TransportConfig&gt; {
@@ -99,7 +99,7 @@
 <a href=#99 id=99 data-nosnippet>99</a>            };
 <a href=#100 id=100 data-nosnippet>100</a>
 <a href=#101 id=101 data-nosnippet>101</a>            <span class="attr">#[cfg(feature = <span class="string">"qlog"</span>)]
-<a href=#102 id=102 data-nosnippet>102</a>            </span><span class="kw">let </span>config = <span class="kw">if </span>std::env::var(<span class="string">"IROH_QLOG"</span>).ok().as_deref() == <span class="prelude-val">Some</span>(<span class="string">"1"</span>) {
+<a href=#102 id=102 data-nosnippet>102</a>            </span><span class="kw">let </span>config = <span class="kw">if </span>std::env::var(<span class="string">"IROH_TEST_QLOG"</span>).ok().as_deref() == <span class="prelude-val">Some</span>(<span class="string">"1"</span>) {
 <a href=#103 id=103 data-nosnippet>103</a>                <span class="self">self</span>.transport_config(name.to_string(), VantagePointType::Server)<span class="question-mark">?
 <a href=#104 id=104 data-nosnippet>104</a>            </span>} <span class="kw">else </span>{
 <a href=#105 id=105 data-nosnippet>105</a>                Default::default()
