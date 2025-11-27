@@ -20,6 +20,7 @@ pub struct Metrics {
     pub send_data: Counter,
     pub send_data_network_down: Counter,
     pub recv_data_relay: Counter,
+    pub recv_data_user: Counter,
     pub recv_data_ipv4: Counter,
     pub recv_data_ipv6: Counter,
     /// Number of QUIC datagrams received.
@@ -27,26 +28,14 @@ pub struct Metrics {
     /// Number of datagrams received using GRO
     pub recv_gro_datagrams: Counter,
 
-    // Disco packets
-    pub send_disco_udp: Counter,
-    pub send_disco_relay: Counter,
-    pub sent_disco_udp: Counter,
-    pub sent_disco_relay: Counter,
-    pub sent_disco_ping: Counter,
-    pub sent_disco_pong: Counter,
-    pub sent_disco_call_me_maybe: Counter,
-    pub recv_disco_bad_key: Counter,
-    pub recv_disco_bad_parse: Counter,
-
-    pub recv_disco_udp: Counter,
-    pub recv_disco_relay: Counter,
-    pub recv_disco_ping: Counter,
-    pub recv_disco_pong: Counter,
-    pub recv_disco_call_me_maybe: Counter,
-    pub recv_disco_call_me_maybe_bad_disco: Counter,
-
     // How many times our relay home endpoint DI has changed from non-zero to a different non-zero.
     pub relay_home_change: Counter,
+
+    /*
+     * Holepunching metrics
+     */
+    /// The number of NAT traversal attempts initiated.
+    pub nat_traversal: Counter,
 
     /*
      * Connection Metrics

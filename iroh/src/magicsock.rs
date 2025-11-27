@@ -16,7 +16,7 @@
 //! however, read any packets that come off the UDP sockets.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt::Display,
     io,
     net::{IpAddr, SocketAddr},
@@ -26,7 +26,6 @@ use std::{
     },
 };
 
-use bytes::Bytes;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{bail, e, stack_error};
@@ -49,7 +48,7 @@ use url::Url;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     remote_map::{RemoteMap, RemoteStateMessage},
-    transports::{RelayActorConfig, Transports, TransportsSender},
+    transports::{RelayActorConfig, Transports},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -57,9 +56,8 @@ use crate::dns::DnsResolver;
 use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    disco::{self, SendAddr},
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
-    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
+    endpoint::hooks::EndpointHooksList,
     magicsock::remote_map::PathsWatcher,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
@@ -97,7 +95,7 @@ pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
 /// Pretty arbitrary and high right now.
-pub(crate) const MAX_MULTIPATH_PATHS: u32 = 16;
+pub(crate) const MAX_MULTIPATH_PATHS: u32 = 12;
 
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
 #[stack_error(add_meta, derive)]
@@ -143,6 +141,7 @@ pub(crate) struct Options {
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
     pub(crate) metrics: EndpointMetrics,
+    pub(crate) hooks: EndpointHooksList,
 }
 
 /// Handle for [`MagicSock`].
@@ -203,9 +202,6 @@ pub(crate) struct MagicSock {
     dns_resolver: DnsResolver,
     relay_map: RelayMap,
 
-    /// Disco
-    disco: DiscoState,
-
     // - Discovery
     /// Optional discovery service
     discovery: ConcurrentDiscovery,
@@ -214,6 +210,7 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
+    pub(crate) hooks: EndpointHooksList,
 }
 
 impl MagicSock {
@@ -515,215 +512,64 @@ impl MagicSock {
         #[cfg(windows)]
         let dst_ip = None;
 
-        let mut quic_packets_total = 0;
-
         // zip is slow :(
         for i in 0..metas.len() {
             let quinn_meta = &mut metas[i];
-            let buf = &mut bufs[i];
             let source_addr = &source_addrs[i];
 
-            let mut buf_contains_quic_datagrams = false;
-            let mut quic_datagram_count = 0;
-            if quinn_meta.len > quinn_meta.stride {
-                trace!(%quinn_meta.len, %quinn_meta.stride, "GRO datagram received");
-                self.metrics.magicsock.recv_gro_datagrams.inc();
-            }
-
-            // Chunk through the datagrams in this GRO payload to find disco
-            // packets and forward them to the actor
-            for datagram in buf[..quinn_meta.len].chunks_mut(quinn_meta.stride) {
-                if datagram.len() < quinn_meta.stride {
-                    trace!(
-                        len = %datagram.len(),
-                        %quinn_meta.stride,
-                        "Last GRO datagram smaller than stride",
-                    );
-                }
-
-                // Detect DISCO datagrams and process them.  Overwrite the first
-                // byte of those packets with zero to make Quinn ignore the packet.  This
-                // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
-                // which we do in Endpoint::bind.
-                if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
-                    self.handle_disco_message(sender, sealed_box, source_addr);
-                    datagram[0] = 0u8;
-                } else {
-                    match source_addr {
-                        transports::Addr::Ip(SocketAddr::V4(..)) => {
-                            self.metrics
-                                .magicsock
-                                .recv_data_ipv4
-                                .inc_by(datagram.len() as _);
-                        }
-                        transports::Addr::Ip(SocketAddr::V6(..)) => {
-                            self.metrics
-                                .magicsock
-                                .recv_data_ipv6
-                                .inc_by(datagram.len() as _);
-                        }
-                        transports::Addr::Relay(..) => {
-                            self.metrics
-                                .magicsock
-                                .recv_data_relay
-                                .inc_by(datagram.len() as _);
-                        }
-                        transports::Addr::User(..) => {
-                            // TODO
-                        }
-                    }
-
-                    quic_datagram_count += 1;
-                    buf_contains_quic_datagrams = true;
-                }
-            }
-
-            if buf_contains_quic_datagrams {
-                match source_addr {
-                    #[cfg(wasm_browser)]
-                    transports::Addr::Ip(_addr) => {
-                        panic!("cannot use IP based addressing in the browser");
-                    }
-                    #[cfg(not(wasm_browser))]
-                    transports::Addr::Ip(_addr) => {
-                        quic_packets_total += quic_datagram_count;
-                    }
-                    transports::Addr::Relay(src_url, src_endpoint) => {
-                        let mapped_addr = self
-                            .remote_map
-                            .relay_mapped_addrs
-                            .get(&(src_url.clone(), *src_endpoint));
-                        quinn_meta.addr = mapped_addr.private_socket_addr();
-                    }
-                    transports::Addr::User(addr) => {
-                        let mapped_addr = self.remote_map.user_mapped_addrs.get(addr);
-                        quinn_meta.addr = mapped_addr.private_socket_addr();
-                    }
-                }
-            } else {
-                // If all datagrams in this buf are DISCO, set len to zero to make
-                // Quinn skip the buf completely.
-                quinn_meta.len = 0;
-            }
-            // Normalize local_ip
-            quinn_meta.dst_ip = dst_ip;
-        }
-
-        if quic_packets_total > 0 {
+            let datagram_count = quinn_meta.len.div_ceil(quinn_meta.stride);
             self.metrics
                 .magicsock
                 .recv_datagrams
-                .inc_by(quic_packets_total as _);
-            trace!("UDP recv: {} packets", quic_packets_total);
-        }
-    }
-
-    /// Handles a discovery message.
-    #[instrument("disco_in", skip_all, fields(endpoint = %sender.fmt_short(), ?src))]
-    fn handle_disco_message(&self, sender: PublicKey, sealed_box: &[u8], src: &transports::Addr) {
-        if self.is_closed() {
-            return;
-        }
-
-        if let transports::Addr::Relay(_, endpoint_id) = src {
-            if endpoint_id != &sender {
-                // TODO: return here?
-                warn!(
-                    "Received relay disco message from connection for {}, but with message from {}",
-                    endpoint_id.fmt_short(),
-                    sender.fmt_short()
+                .inc_by(datagram_count as _);
+            if quinn_meta.len > quinn_meta.stride {
+                trace!(
+                    src = ?source_addr,
+                    len = quinn_meta.len,
+                    stride = %quinn_meta.stride,
+                    datagram_count = quinn_meta.len.div_ceil(quinn_meta.stride),
+                    "GRO datagram received",
                 );
+                self.metrics.magicsock.recv_gro_datagrams.inc();
+            } else {
+                trace!(src = ?source_addr, len = quinn_meta.len, "datagram received");
             }
-        }
+            match source_addr {
+                transports::Addr::Ip(SocketAddr::V4(..)) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_ipv4
+                        .inc_by(quinn_meta.len as _);
+                }
+                transports::Addr::Ip(SocketAddr::V6(..)) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_ipv6
+                        .inc_by(quinn_meta.len as _);
+                }
+                transports::Addr::Relay(src_url, src_node) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_relay
+                        .inc_by(quinn_meta.len as _);
 
-        // We're now reasonably sure we're expecting communication from
-        // this endpoint, do the heavy crypto lifting to see what they want.
-        let dm = match self.disco.unseal_and_decode(sender, sealed_box) {
-            Ok(dm) => dm,
-            Err(DiscoBoxError::Open { source, .. }) => {
-                warn!(?source, "failed to open disco box");
-                self.metrics.magicsock.recv_disco_bad_key.inc();
-                return;
+                    // Fill in the correct mapped address
+                    let mapped_addr = self
+                        .remote_map
+                        .relay_mapped_addrs
+                        .get(&(src_url.clone(), *src_node));
+                    quinn_meta.addr = mapped_addr.private_socket_addr();
+                }
+                transports::Addr::User(_) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_user
+                        .inc_by(quinn_meta.len as _);
+                }
             }
-            Err(DiscoBoxError::Parse { source, .. }) => {
-                // Couldn't parse it, but it was inside a correctly
-                // signed box, so just ignore it, assuming it's from a
-                // newer version of Tailscale that we don't
-                // understand. Not even worth logging about, lest it
-                // be too spammy for old clients.
 
-                self.metrics.magicsock.recv_disco_bad_parse.inc();
-                debug!(?source, "failed to parse disco message");
-                return;
-            }
-        };
-
-        if src.is_relay() {
-            self.metrics.magicsock.recv_disco_relay.inc();
-        } else {
-            self.metrics.magicsock.recv_disco_udp.inc();
-        }
-
-        trace!(?dm, "receive disco message");
-        match dm {
-            disco::Message::Ping(ping) => {
-                self.metrics.magicsock.recv_disco_ping.inc();
-                self.remote_map.handle_ping(ping, sender, src.clone());
-            }
-            disco::Message::Pong(pong) => {
-                self.metrics.magicsock.recv_disco_pong.inc();
-                self.remote_map.handle_pong(pong, sender, src.clone());
-            }
-            disco::Message::CallMeMaybe(cm) => {
-                self.metrics.magicsock.recv_disco_call_me_maybe.inc();
-                self.remote_map
-                    .handle_call_me_maybe(cm, sender, src.clone());
-            }
-        }
-    }
-
-    /// Sends out a disco message.
-    async fn send_disco_message(
-        &self,
-        sender: &TransportsSender,
-        dst: SendAddr,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -> io::Result<()> {
-        let dst = match dst {
-            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
-            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
-            SendAddr::User(addr) => transports::Addr::User(addr),
-        };
-
-        trace!(?dst, %msg, "send disco message (UDP)");
-        if self.is_closed() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            ));
-        }
-
-        let pkt = self.disco.encode_and_seal(dst_key, &msg);
-
-        let transmit = transports::Transmit {
-            contents: &pkt,
-            ecn: None,
-            segment_size: None,
-        };
-
-        let dst2 = dst.clone();
-        match sender.send(&dst2, None, &transmit).await {
-            Ok(()) => {
-                trace!(?dst, %msg, "sent disco message");
-                self.metrics.magicsock.sent_disco_udp.inc();
-                disco_message_sent(&msg, &self.metrics.magicsock);
-                Ok(())
-            }
-            Err(err) => {
-                warn!(?dst, ?msg, ?err, "failed to send disco message");
-                Err(err)
-            }
+            // Normalize local_ip
+            quinn_meta.dst_ip = dst_ip;
         }
     }
 
@@ -921,6 +767,7 @@ impl Handle {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics,
+            hooks,
         } = opts;
 
         let discovery = ConcurrentDiscovery::default();
@@ -1003,14 +850,12 @@ impl Handle {
             .any(|addr| addr.is_ipv6());
 
         let direct_addrs = DiscoveredDirectAddrs::default();
-        let (disco, disco_receiver) = DiscoState::new(&secret_key);
 
         let remote_map = {
             RemoteMap::new(
                 secret_key.public(),
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
-                disco.clone(),
                 transports.create_sender(),
                 discovery.clone(),
             )
@@ -1020,7 +865,6 @@ impl Handle {
             public_key: secret_key.public(),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            disco,
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             remote_map,
@@ -1035,6 +879,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            hooks,
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -1045,7 +890,6 @@ impl Handle {
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
-        let sender = transports.create_sender();
         let local_addrs_watch = transports.local_addrs_watch();
         let network_change_sender = transports.create_network_change_sender();
 
@@ -1118,8 +962,6 @@ impl Handle {
             direct_addr_update_state,
             network_change_sender,
             direct_addr_done_rx,
-            pending_call_me_maybes: Default::default(),
-            disco_receiver,
         };
         // Initialize addresses
         #[cfg(not(wasm_browser))]
@@ -1127,7 +969,7 @@ impl Handle {
 
         let actor_task = task::spawn(
             actor
-                .run(shutdown_token.child_token(), local_addrs_watch, sender)
+                .run(shutdown_token.child_token(), local_addrs_watch)
                 .instrument(info_span!("actor")),
         );
 
@@ -1220,82 +1062,6 @@ fn default_quic_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
-#[derive(Debug, Clone)]
-struct DiscoState {
-    /// The EndpointId/PublikeKey of this endpoint.
-    this_id: EndpointId,
-    /// Encryption key for this endpoint.
-    secret_encryption_key: Arc<crypto_box::SecretKey>,
-    /// The state for an active DiscoKey.
-    secrets: Arc<Mutex<HashMap<PublicKey, SharedSecret>>>,
-    /// Disco (ping) queue
-    sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
-}
-
-impl DiscoState {
-    fn new(
-        secret_key: &SecretKey,
-    ) -> (Self, mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>) {
-        let this_id = secret_key.public();
-        let secret_encryption_key = secret_ed_box(secret_key);
-        let (disco_sender, disco_receiver) = mpsc::channel(256);
-
-        (
-            Self {
-                this_id,
-                secret_encryption_key: Arc::new(secret_encryption_key),
-                secrets: Default::default(),
-                sender: disco_sender,
-            },
-            disco_receiver,
-        )
-    }
-
-    fn try_send(&self, dst: SendAddr, dst_key: PublicKey, msg: disco::Message) -> bool {
-        self.sender.try_send((dst, dst_key, msg)).is_ok()
-    }
-
-    fn encode_and_seal(&self, other_key: PublicKey, msg: &disco::Message) -> Bytes {
-        let mut seal = msg.as_bytes();
-        self.get_secret(other_key, |secret| secret.seal(&mut seal));
-        disco::encode_message(&self.this_id, seal).into()
-    }
-
-    fn unseal_and_decode(
-        &self,
-        endpoint_key: PublicKey,
-        sealed_box: &[u8],
-    ) -> Result<disco::Message, DiscoBoxError> {
-        let mut sealed_box = sealed_box.to_vec();
-        self.get_secret(endpoint_key, |secret| secret.open(&mut sealed_box))
-            .map_err(|source| e!(DiscoBoxError::Open { source }))?;
-        disco::Message::from_bytes(&sealed_box)
-            .map_err(|source| e!(DiscoBoxError::Parse { source }))
-    }
-
-    fn get_secret<F, T>(&self, endpoint_id: PublicKey, cb: F) -> T
-    where
-        F: FnOnce(&mut SharedSecret) -> T,
-    {
-        let mut inner = self.secrets.lock().expect("poisoned");
-        let x = inner.entry(endpoint_id).or_insert_with(|| {
-            let public_key = public_ed_box(&endpoint_id);
-            SharedSecret::new(&self.secret_encryption_key, &public_key)
-        });
-        cb(x)
-    }
-}
-
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-enum DiscoBoxError {
-    #[error("Failed to open crypto box")]
-    Open { source: DecryptionError },
-    #[error("Failed to parse disco message")]
-    Parse { source: disco::ParseError },
-}
-
 #[derive(Debug)]
 #[allow(clippy::enum_variant_names)]
 enum ActorMessage {
@@ -1317,11 +1083,6 @@ struct Actor {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
-
-    /// List of CallMeMaybe disco messages that should be sent out after
-    /// the next endpoint update completes
-    pending_call_me_maybes: HashMap<PublicKey, RelayUrl>,
-    disco_receiver: mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>,
 }
 
 impl Actor {
@@ -1329,7 +1090,6 @@ impl Actor {
         mut self,
         shutdown_token: CancellationToken,
         mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
-        sender: TransportsSender,
     ) {
         // Setup network monitoring
         let mut current_netmon_state = self.netmon_watcher.get();
@@ -1458,11 +1218,6 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
-                    if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
-                        warn!(%dst, endpoint = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
-                    }
-                }
                 _ = remote_map_gc.tick() => {
                     self.msock.remote_map.remove_closed_remote_state_actors();
                 }
@@ -1590,7 +1345,6 @@ impl Actor {
                 })
                 .collect(),
         );
-        self.send_queued_call_me_maybes();
     }
 
     #[cfg(not(wasm_browser))]
@@ -1653,22 +1407,6 @@ impl Actor {
         for (bound, local) in local_addrs {
             if !bound.ip().is_unspecified() {
                 addrs.entry(local).or_insert(DirectAddrType::Local);
-            }
-        }
-    }
-
-    fn send_queued_call_me_maybes(&mut self) {
-        let msg = self.msock.direct_addrs.to_call_me_maybe_message();
-        let msg = disco::Message::CallMeMaybe(msg);
-        // allocate, to minimize locking duration
-
-        for (public_key, url) in self.pending_call_me_maybes.drain() {
-            if !self
-                .msock
-                .disco
-                .try_send(SendAddr::Relay(url), public_key, msg.clone())
-            {
-                warn!(endpoint = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
             }
         }
     }
@@ -1741,25 +1479,6 @@ impl DiscoveredDirectAddrs {
 
     fn sockaddrs(&self) -> impl Iterator<Item = SocketAddr> {
         self.addrs.get().into_iter().map(|da| da.addr)
-    }
-
-    fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
-        let my_numbers = self.addrs.get().into_iter().map(|da| da.addr).collect();
-        disco::CallMeMaybe { my_numbers }
-    }
-}
-
-fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
-    match msg {
-        disco::Message::Ping(_) => {
-            metrics.sent_disco_ping.inc();
-        }
-        disco::Message::Pong(_) => {
-            metrics.sent_disco_pong.inc();
-        }
-        disco::Message::CallMeMaybe(_) => {
-            metrics.sent_disco_call_me_maybe.inc();
-        }
     }
 }
 
@@ -1866,6 +1585,7 @@ mod tests {
             #[cfg(any(test, feature = "test-utils"))]
             discovery_user_data: None,
             metrics: Default::default(),
+            hooks: Default::default(),
         }
     }
 
@@ -2298,6 +2018,7 @@ mod tests {
             server_config,
             insecure_skip_relay_cert_verify: false,
             metrics: Default::default(),
+            hooks: Default::default(),
         };
         let msock = MagicSock::spawn(opts).await?;
         Ok(msock)

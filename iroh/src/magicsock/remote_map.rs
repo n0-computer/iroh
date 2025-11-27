@@ -10,18 +10,17 @@ use iroh_base::{EndpointId, RelayUrl, UserAddr};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::warn;
 
 pub(crate) use self::remote_state::PathsWatcher;
 pub(super) use self::remote_state::RemoteStateMessage;
 pub use self::remote_state::{PathInfo, PathInfoList};
 use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
-    DirectAddr, DiscoState, MagicsockMetrics,
+    DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
-    transports::{self, TransportsSender},
+    transports::TransportsSender,
 };
-use crate::{disco, discovery::ConcurrentDiscovery, magicsock::mapped_addrs::UserMappedAddr};
+use crate::{discovery::ConcurrentDiscovery, magicsock::mapped_addrs::UserMappedAddr};
 
 mod remote_state;
 
@@ -60,7 +59,6 @@ pub(crate) struct RemoteMap {
     metrics: Arc<MagicsockMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    disco: DiscoState,
     sender: TransportsSender,
     discovery: ConcurrentDiscovery,
 }
@@ -70,9 +68,7 @@ impl RemoteMap {
     pub(super) fn new(
         local_endpoint_id: EndpointId,
         metrics: Arc<MagicsockMetrics>,
-
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        disco: DiscoState,
         sender: TransportsSender,
         discovery: ConcurrentDiscovery,
     ) -> Self {
@@ -84,7 +80,6 @@ impl RemoteMap {
             local_endpoint_id,
             metrics,
             local_direct_addrs,
-            disco,
             sender,
             discovery,
         }
@@ -142,7 +137,6 @@ impl RemoteMap {
             eid,
             self.local_endpoint_id,
             self.local_direct_addrs.clone(),
-            self.disco.clone(),
             self.relay_mapped_addrs.clone(),
             self.user_mapped_addrs.clone(),
             self.metrics.clone(),
@@ -152,46 +146,6 @@ impl RemoteMap {
         .start();
         let sender = handle.sender.get().expect("just created");
         (handle, sender)
-    }
-
-    pub(super) fn handle_ping(&self, msg: disco::Ping, sender: EndpointId, src: transports::Addr) {
-        if msg.endpoint_key != sender {
-            warn!("DISCO Ping EndpointId mismatch, ignoring ping");
-            return;
-        }
-        let remote_state = self.remote_state_actor(sender);
-        if let Err(err) = remote_state.try_send(RemoteStateMessage::PingReceived(msg, src)) {
-            // TODO: This is really, really bad and will drop pings under load.  But
-            //    DISCO pings are going away with QUIC-NAT-TRAVERSAL so I don't care.
-            warn!("DISCO Ping dropped: {err:#}");
-        }
-    }
-
-    pub(super) fn handle_pong(&self, msg: disco::Pong, sender: EndpointId, src: transports::Addr) {
-        let actor = self.remote_state_actor(sender);
-        if let Err(err) = actor.try_send(RemoteStateMessage::PongReceived(msg, src)) {
-            // TODO: This is really, really bad and will drop pongs under load.  But
-            //    DISCO pongs are going away with QUIC-NAT-TRAVERSAL so I don't care.
-            warn!("DISCO Pong dropped: {err:#}");
-        }
-    }
-
-    pub(super) fn handle_call_me_maybe(
-        &self,
-        msg: disco::CallMeMaybe,
-        sender: EndpointId,
-        src: transports::Addr,
-    ) {
-        if !src.is_relay() {
-            warn!("DISCO CallMeMaybe packets should only come via relay");
-            return;
-        }
-        let actor = self.remote_state_actor(sender);
-        if let Err(err) = actor.try_send(RemoteStateMessage::CallMeMaybeReceived(msg)) {
-            // TODO: This is bad and will drop call-me-maybe's under load.  But
-            //    DISCO CallMeMaybe going away with QUIC-NAT-TRAVERSAL so I don't care.
-            warn!("DISCO CallMeMaybe dropped: {err:#}");
-        }
     }
 }
 

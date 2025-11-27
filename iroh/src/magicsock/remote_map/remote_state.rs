@@ -16,7 +16,7 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::{PathStats, WeakConnectionHandle};
-use quinn_proto::{PathError, PathEvent, PathId, PathStatus};
+use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
@@ -30,17 +30,22 @@ use self::{
 };
 use super::Source;
 use crate::{
-    disco::{self},
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
     endpoint::DirectAddr,
     magicsock::{
-        DiscoState, HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
+        HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr, UserMappedAddr},
         remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
     },
     util::MaybeFuture,
 };
+
+/// How often to attempt holepunching.
+///
+/// If there have been no changes to the NAT address candidates, holepunching will not be
+/// attempted more frequently than at this interval.
+const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
 mod guarded_channel;
 mod path_state;
@@ -93,6 +98,19 @@ type PathEvents = MergeUnbounded<
     >,
 >;
 
+/// A stream of events of announced NAT traversal candidate addresses for all connections.
+///
+/// The connection is identified using [`ConnId`].
+type AddrEvents = MergeUnbounded<
+    Pin<
+        Box<
+            dyn Stream<Item = (ConnId, Result<iroh_hp::Event, BroadcastStreamRecvError>)>
+                + Send
+                + Sync,
+        >,
+    >,
+>;
+
 /// Either a stream of incoming results from [`ConcurrentDiscovery::resolve`] or infinitely pending.
 ///
 /// Set to [`Either::Left`] with an always-pending stream while discovery is not running, and to
@@ -126,10 +144,7 @@ pub(super) struct RemoteStateActor {
     /// Our local addresses.
     ///
     /// These are our local addresses and any reflexive transport addresses.
-    /// They are called "direct addresses" in the magic socket actor.
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    /// Shared state to allow to encrypt DISCO messages to peers.
-    disco: DiscoState,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     /// The mapping between endpoints via a user transport and their [`UserMappedAddr`]s.
@@ -145,6 +160,8 @@ pub(super) struct RemoteStateActor {
     connections_close: FuturesUnordered<OnClosed>,
     /// Events emitted by Quinn about path changes, for all paths, all connections.
     path_events: PathEvents,
+    /// A stream of events of announced NAT traversal candidate addresses for all connections.
+    addr_events: AddrEvents,
 
     // Internal state - Holepunching and path state.
     //
@@ -185,7 +202,6 @@ impl RemoteStateActor {
         endpoint_id: EndpointId,
         local_endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        disco: DiscoState,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
@@ -200,10 +216,10 @@ impl RemoteStateActor {
             relay_mapped_addrs,
             user_mapped_addrs,
             discovery,
-            disco,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
             path_events: Default::default(),
+            addr_events: Default::default(),
             paths: Default::default(),
             last_holepunch: None,
             selected_path: Default::default(),
@@ -273,6 +289,10 @@ impl RemoteStateActor {
                 Some((id, evt)) = self.path_events.next() => {
                     self.handle_path_event(id, evt);
                 }
+                Some((id, evt)) = self.addr_events.next() => {
+                    trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
+                    self.trigger_holepunching().await;
+                }
                 Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
                     self.connections.remove(&conn_id);
                     if self.connections.is_empty() {
@@ -285,6 +305,7 @@ impl RemoteStateActor {
                         trace!("direct address watcher disconnected, shutting down");
                         break;
                     }
+                    self.local_addrs_updated();
                     trace!("local addrs updated, triggering holepunching");
                     self.trigger_holepunching().await;
                 }
@@ -330,15 +351,6 @@ impl RemoteStateActor {
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx).await;
-            }
-            RemoteStateMessage::CallMeMaybeReceived(msg) => {
-                self.handle_msg_call_me_maybe_received(msg).await;
-            }
-            RemoteStateMessage::PingReceived(ping, src) => {
-                self.handle_msg_ping_received(ping, src).await;
-            }
-            RemoteStateMessage::PongReceived(pong, src) => {
-                self.handle_msg_pong_received(pong, src);
             }
             RemoteStateMessage::ResolveRemote(addrs, tx) => {
                 self.handle_msg_resolve_remote(addrs, tx);
@@ -423,11 +435,25 @@ impl RemoteStateActor {
             let conn_id = ConnId(conn.stable_id());
             self.connections.remove(&conn_id);
 
-            // Store the connection and hook up paths events stream.
-            let events = BroadcastStream::new(conn.path_events());
-            let stream = events.map(move |evt| (conn_id, evt));
-            self.path_events.push(Box::pin(stream));
+            // Hook up paths, NAT addresses and connection closed event streams.
+            self.path_events.push(Box::pin(
+                BroadcastStream::new(conn.path_events()).map(move |evt| (conn_id, evt)),
+            ));
+            self.addr_events.push(Box::pin(
+                BroadcastStream::new(conn.nat_traversal_updates()).map(move |evt| (conn_id, evt)),
+            ));
             self.connections_close.push(OnClosed::new(&conn));
+
+            // Add local addrs to the connection
+            let local_addrs = self
+                .local_direct_addrs
+                .get()
+                .iter()
+                .map(|d| d.addr)
+                .collect::<BTreeSet<_>>();
+            Self::set_local_addrs(&conn, &local_addrs);
+
+            // Store the connection
             let conn_state = self
                 .connections
                 .entry(conn_id)
@@ -481,81 +507,6 @@ impl RemoteStateActor {
             handle,
         ))
         .ok();
-    }
-
-    /// Handles [`RemoteStateMessage::CallMeMaybeReceived`].
-    async fn handle_msg_call_me_maybe_received(&mut self, msg: disco::CallMeMaybe) {
-        event!(
-            target: "iroh::_events::call_me_maybe::recv",
-            Level::DEBUG,
-            remote = %self.endpoint_id.fmt_short(),
-            addrs = ?msg.my_numbers,
-        );
-        for addr in msg.my_numbers {
-            let dst = transports::Addr::Ip(addr);
-            let ping = disco::Ping::new(self.local_endpoint_id);
-
-            self.paths
-                .insert(dst.clone(), Source::CallMeMaybe { _0: Private });
-            self.paths.disco_ping_sent(dst.clone(), ping.tx_id);
-
-            event!(
-                target: "iroh::_events::ping::sent",
-                Level::DEBUG,
-                remote = %self.endpoint_id.fmt_short(),
-                ?dst,
-            );
-            self.send_disco_message(dst, disco::Message::Ping(ping))
-                .await;
-        }
-    }
-
-    /// Handles [`RemoteStateMessage::PingReceived`].
-    async fn handle_msg_ping_received(&mut self, ping: disco::Ping, src: transports::Addr) {
-        let transports::Addr::Ip(addr) = src else {
-            warn!("received ping via relay transport, ignored");
-            return;
-        };
-        event!(
-            target: "iroh::_events::ping::recv",
-            Level::DEBUG,
-            remote = %self.endpoint_id.fmt_short(),
-            ?src,
-            txn = ?ping.tx_id,
-        );
-        let pong = disco::Pong {
-            tx_id: ping.tx_id,
-            ping_observed_addr: addr.into(),
-        };
-        event!(
-            target: "iroh::_events::pong::sent",
-            Level::DEBUG,
-            remote = %self.endpoint_id.fmt_short(),
-            dst = ?src,
-            txn = ?pong.tx_id,
-        );
-        self.send_disco_message(src.clone(), disco::Message::Pong(pong))
-            .await;
-
-        self.paths.insert(src, Source::Ping { _0: Private });
-
-        trace!("ping received, triggering holepunching");
-        self.trigger_holepunching().await;
-    }
-
-    /// Handles [`RemoteStateMessage::PongReceived`].
-    fn handle_msg_pong_received(&mut self, pong: disco::Pong, src: transports::Addr) {
-        if self.paths.disco_pong_received(&src, pong.tx_id) {
-            event!(
-                target: "iroh::_events::pong::recv",
-                Level::DEBUG,
-                remote_endpoint = %self.endpoint_id.fmt_short(),
-                ?src,
-                txn = ?pong.tx_id,
-            );
-
-            self.open_path(&src);
-        }
     }
 
     /// Handles [`RemoteStateMessage::ResolveRemote`].
@@ -633,62 +584,101 @@ impl RemoteStateActor {
         }
     }
 
+    /// Sets the current local addresses to QNT's state to all connections
+    fn local_addrs_updated(&mut self) {
+        let local_addrs = self
+            .local_direct_addrs
+            .get()
+            .iter()
+            .map(|d| d.addr)
+            .collect::<BTreeSet<_>>();
+
+        for conn in self.connections.values().filter_map(|s| s.handle.upgrade()) {
+            Self::set_local_addrs(&conn, &local_addrs);
+        }
+        // todo: trace
+    }
+
+    /// Sets the current local addresses to QNT's state
+    fn set_local_addrs(conn: &quinn::Connection, local_addrs: &BTreeSet<SocketAddr>) {
+        let quinn_local_addrs = match conn.get_local_nat_traversal_addresses() {
+            Ok(addrs) => BTreeSet::from_iter(addrs),
+            Err(err) => {
+                warn!("failed to get local nat candidates: {err:#}");
+                return;
+            }
+        };
+        for addr in local_addrs.difference(&quinn_local_addrs) {
+            if let Err(err) = conn.add_nat_traversal_address(*addr) {
+                warn!("failed adding local addr: {err:#}",);
+            }
+        }
+        for addr in quinn_local_addrs.difference(local_addrs) {
+            if let Err(err) = conn.remove_nat_traversal_address(*addr) {
+                warn!("failed removing local addr: {err:#}");
+            }
+        }
+        trace!(?local_addrs, "updated local QNT addresses");
+    }
+
     /// Triggers holepunching to the remote endpoint.
     ///
     /// This will manage the entire process of holepunching with the remote endpoint.
     ///
-    /// - If there already is a direct connection, nothing happens.
-    /// - If there is no relay address known, nothing happens.
-    /// - If there was a recent attempt, it will schedule holepunching instead.
-    ///   - Unless there are new addresses to try.
-    ///   - The scheduled attempt will only run if holepunching has not yet succeeded by
-    ///     then.
-    /// - DISCO pings will be sent to addresses recently advertised in a call-me-maybe
-    ///   message.
-    /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
-    ///
-    /// If a next trigger needs to be scheduled the delay until when to call this again is
-    /// returned.
+    /// - Holepunching happens on the Connection with the lowest [`ConnId`] which is a
+    ///   client.
+    ///   - Both endpoints may initiate holepunching if both have a client connection.
+    ///   - Any opened paths are opened on all other connections without holepunching.
+    /// - If there are no changes in local or remote candidate addresses since the
+    ///   last attempt **and** there was a recent attempt, a trigger_holepunching call
+    ///   will be scheduled instead.
     async fn trigger_holepunching(&mut self) {
-        const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
-
         if self.connections.is_empty() {
             trace!("not holepunching: no connections");
             return;
         }
 
-        if self
-            .selected_path
-            .get()
-            .map(|addr| addr.is_ip())
-            .unwrap_or_default()
-        {
-            // TODO: We should ping this path to make sure it still works.  Because we now
-            // know things could be broken.
-            trace!("not holepunching: already have a direct connection");
-            // TODO: If the latency is kind of bad we should retry holepunching at times.
+        let Some(conn) = self
+            .connections
+            .iter()
+            .filter_map(|(id, state)| state.handle.upgrade().map(|conn| (*id, conn)))
+            .filter(|(_, conn)| conn.side().is_client())
+            .min_by_key(|(id, _)| *id)
+            .map(|(_, conn)| conn)
+        else {
+            trace!("not holepunching: no client connection");
             return;
-        }
-
-        let remote_addrs: BTreeSet<SocketAddr> = self.remote_hp_addrs();
-        let local_addrs: BTreeSet<SocketAddr> = self
+        };
+        let remote_candidates = match conn.get_remote_nat_traversal_addresses() {
+            Ok(addrs) => BTreeSet::from_iter(addrs),
+            Err(err) => {
+                warn!("failed to get nat candidate addresses: {err:#}");
+                return;
+            }
+        };
+        let local_candidates: BTreeSet<SocketAddr> = self
             .local_direct_addrs
             .get()
             .iter()
             .map(|daddr| daddr.addr)
             .collect();
-        let new_addrs = self
+        let new_candidates = self
             .last_holepunch
             .as_ref()
             .map(|last_hp| {
                 // Addrs are allowed to disappear, but if there are new ones we need to
                 // holepunch again.
-                trace!(?last_hp, ?local_addrs, ?remote_addrs, "addrs to holepunch?");
-                !remote_addrs.is_subset(&last_hp.remote_addrs)
-                    || !local_addrs.is_subset(&last_hp.local_addrs)
+                trace!(
+                    ?last_hp,
+                    ?local_candidates,
+                    ?remote_candidates,
+                    "candidates to holepunch?"
+                );
+                !remote_candidates.is_subset(&last_hp.remote_candidates)
+                    || !local_candidates.is_subset(&last_hp.local_candidates)
             })
             .unwrap_or(true);
-        if !new_addrs {
+        if !new_candidates {
             if let Some(ref last_hp) = self.last_holepunch {
                 let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
                 let now = Instant::now();
@@ -700,116 +690,40 @@ impl RemoteStateActor {
             }
         }
 
-        self.do_holepunching().await;
-    }
-
-    /// Returns the remote addresses to holepunch against.
-    fn remote_hp_addrs(&self) -> BTreeSet<SocketAddr> {
-        const CALL_ME_MAYBE_VALIDITY: Duration = Duration::from_secs(30);
-
-        self.paths
-            .iter()
-            .filter_map(|(addr, state)| match addr {
-                transports::Addr::Ip(socket_addr) => Some((socket_addr, state)),
-                transports::Addr::Relay(_, _) => None,
-                transports::Addr::User(_) => None,
-            })
-            .filter_map(|(addr, state)| {
-                if state
-                    .sources
-                    .get(&Source::CallMeMaybe { _0: Private })
-                    .map(|when| when.elapsed() <= CALL_ME_MAYBE_VALIDITY)
-                    .unwrap_or_default()
-                    || state
-                        .sources
-                        .get(&Source::Ping { _0: Private })
-                        .map(|when| when.elapsed() <= CALL_ME_MAYBE_VALIDITY)
-                        .unwrap_or_default()
-                {
-                    Some(*addr)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        self.do_holepunching(conn).await;
     }
 
     /// Unconditionally perform holepunching.
-    ///
-    /// - DISCO pings will be sent to addresses recently advertised in a call-me-maybe
-    ///   message.
-    /// - A DISCO call-me-maybe message advertising our own addresses will be sent.
     #[instrument(skip_all)]
-    async fn do_holepunching(&mut self) {
-        let Some(relay_addr) = self.paths.addrs().find(|addr| addr.is_relay()).cloned() else {
-            warn!("holepunching requested but have no relay address");
-            return;
-        };
-        let remote_addrs = self.remote_hp_addrs();
-
-        // Send DISCO Ping messages to all CallMeMaybe-advertised paths.
-        for dst in remote_addrs.iter() {
-            let msg = disco::Ping::new(self.local_endpoint_id);
-            event!(
-                target: "iroh::_events::ping::sent",
-                Level::DEBUG,
-                remote = %self.endpoint_id.fmt_short(),
-                ?dst,
-                txn = ?msg.tx_id,
-            );
-            let addr = transports::Addr::Ip(*dst);
-            self.paths.disco_ping_sent(addr.clone(), msg.tx_id);
-            self.send_disco_message(addr, disco::Message::Ping(msg))
-                .await;
-        }
-
-        // Send the DISCO CallMeMaybe message over the relay.
-        let my_numbers: Vec<SocketAddr> = self
+    async fn do_holepunching(&mut self, conn: quinn::Connection) {
+        self.metrics.nat_traversal.inc();
+        let local_candidates = self
             .local_direct_addrs
             .get()
             .iter()
             .map(|daddr| daddr.addr)
-            .collect();
-        let local_addrs: BTreeSet<SocketAddr> = my_numbers.iter().copied().collect();
-        let msg = disco::CallMeMaybe { my_numbers };
-        event!(
-            target: "iroh::_events::call_me_maybe::sent",
-            Level::DEBUG,
-            remote = %self.endpoint_id.fmt_short(),
-            dst = ?relay_addr,
-            my_numbers = ?msg.my_numbers,
-        );
-        self.send_disco_message(relay_addr, disco::Message::CallMeMaybe(msg))
-            .await;
-
-        self.last_holepunch = Some(HolepunchAttempt {
-            when: Instant::now(),
-            local_addrs,
-            remote_addrs,
-        });
-    }
-
-    /// Sends a DISCO message to the remote endpoint this actor manages.
-    #[instrument(skip(self), fields(remote = %self.endpoint_id.fmt_short()))]
-    async fn send_disco_message(&self, dst: transports::Addr, msg: disco::Message) {
-        let pkt = self.disco.encode_and_seal(self.endpoint_id, &msg);
-        let transmit = transports::OwnedTransmit {
-            ecn: None,
-            contents: pkt,
-            segment_size: None,
-        };
-        let counter = match dst {
-            transports::Addr::Ip(_) => &self.metrics.send_disco_udp,
-            transports::Addr::User(_) => &self.metrics.send_disco_udp, // TODO,
-            transports::Addr::Relay(_, _) => &self.metrics.send_disco_relay,
-        };
-        match self.send_datagram(dst, transmit).await {
-            Ok(()) => {
-                trace!("sent");
-                counter.inc();
+            .collect::<BTreeSet<_>>();
+        match conn.initiate_nat_traversal_round() {
+            Ok(remote_candidates) => {
+                let remote_candidates = remote_candidates
+                    .iter()
+                    .map(|addr| SocketAddr::new(addr.ip().to_canonical(), addr.port()))
+                    .collect();
+                event!(
+                    target: "iroh::_events::qnt::init",
+                    Level::DEBUG,
+                    remote = %self.endpoint_id.fmt_short(),
+                    ?local_candidates,
+                    ?remote_candidates,
+                );
+                self.last_holepunch = Some(HolepunchAttempt {
+                    when: Instant::now(),
+                    local_candidates,
+                    remote_candidates,
+                });
             }
             Err(err) => {
-                warn!("failed to send disco message: {err:#}");
+                warn!("failed to initiate NAT traversal: {err:#}");
             }
         }
     }
@@ -956,6 +870,9 @@ impl RemoteStateActor {
                         }
                     }
                 }
+
+                // If the remote closed our selected path, select a new one.
+                self.select_path();
             }
             PathEvent::RemoteStatus { .. } | PathEvent::ObservedAddr { .. } => {
                 // Nothing to do for these events.
@@ -1025,13 +942,14 @@ impl RemoteStateActor {
         }
     }
 
-    /// Closes any direct paths not selected.
+    /// Closes any direct paths not selected if we are the client.
     ///
     /// Makes sure not to close the last direct path.  Relay paths are never closed
     /// currently, because we only have one relay path at this time.
-    // TODO: Need to handle this on a timer as well probably.  In .select_path() we open new
-    //    paths and immediately call this.  But the new paths are probably not yet open on
-    //    all connections.
+    ///
+    /// Only the client closes paths, just like only the client opens paths.  This is to
+    /// avoid the client and server selecting different paths and accidentally closing all
+    /// paths.
     fn close_redundant_paths(&mut self, selected_path: &transports::Addr) {
         debug_assert_eq!(self.selected_path.get().as_ref(), Some(selected_path),);
 
@@ -1048,6 +966,7 @@ impl RemoteStateActor {
                 if let Some(path) = conn_state
                     .handle
                     .upgrade()
+                    .filter(|conn| conn.side().is_client())
                     .and_then(|conn| conn.path(*path_id))
                 {
                     trace!(?path_remote, ?conn_id, ?path_id, "closing direct path");
@@ -1088,15 +1007,7 @@ pub(crate) enum RemoteStateMessage {
     /// will be removed etc.
     #[debug("AddConnection(..)")]
     AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatcher>),
-    /// Process a received DISCO CallMeMaybe message.
-    CallMeMaybeReceived(disco::CallMeMaybe),
-    /// Process a received DISCO Ping message.
-    #[debug("PingReceived({:?}, src: {_1:?})", _0.tx_id)]
-    PingReceived(disco::Ping, transports::Addr),
-    /// Process a received DISCO Pong message.
-    #[debug("PongReceived({:?}, src: {_1:?})", _0.tx_id)]
-    PongReceived(disco::Pong, transports::Addr),
-    /// Ensure we have at least one transport address for a remote.
+    /// Asks if there is any possible path that could be used.
     ///
     /// This adds the provided transport addresses to the list of potential paths for this remote
     /// and starts discovery if needed.
@@ -1132,6 +1043,8 @@ pub(super) struct RemoteStateHandle {
 }
 
 /// Information about a holepunch attempt.
+///
+/// Addresses are always stored in canonical form.
 #[derive(Debug)]
 struct HolepunchAttempt {
     when: Instant,
@@ -1143,18 +1056,18 @@ struct HolepunchAttempt {
     ///
     /// We do not store this as a [`DirectAddr`] because this is checked for equality and we
     /// do not want to compare the sources of these addresses.
-    local_addrs: BTreeSet<SocketAddr>,
+    local_candidates: BTreeSet<SocketAddr>,
     /// The set of remote addresses which could take part in holepunching.
     ///
-    /// Like `local_addrs` we may not have used them.
-    remote_addrs: BTreeSet<SocketAddr>,
+    /// Like [`Self::local_candidates`] we may not have used them.
+    remote_candidates: BTreeSet<SocketAddr>,
 }
 
 /// Newtype to track Connections.
 ///
 /// The wrapped value is the [`quinn::Connection::stable_id`] value, and is thus only valid
 /// for active connections.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct ConnId(usize);
 
 /// State about one connection.
