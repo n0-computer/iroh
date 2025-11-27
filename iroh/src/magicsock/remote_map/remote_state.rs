@@ -22,7 +22,7 @@ use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
-use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
+use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
 use self::{
     guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},

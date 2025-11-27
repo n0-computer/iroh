@@ -256,7 +256,6 @@ impl std::fmt::Display for RelayMappedAddr {
     }
 }
 
-
 /// An Ipv6 ULA address, identifying a relay path for a [`EndpointId`].
 ///
 /// Since iroh endpoint are reachable via a relay server we have a network path indicated by
@@ -342,7 +341,6 @@ where
 {
     /// Returns the [`MappedAddr`], generating one if needed.
     pub(super) fn get(&self, key: &K) -> V {
-        let id: usize = Arc::as_ptr(&self.inner) as usize;
         let mut inner = self.inner.lock().expect("poisoned");
         match inner.addrs.get(key) {
             Some(addr) => *addr,
@@ -358,7 +356,6 @@ where
 
     /// Performs the reverse lookup.
     pub(super) fn lookup(&self, addr: &V) -> Option<K> {
-        let id: usize = Arc::as_ptr(&self.inner) as usize;
         let inner = self.inner.lock().expect("poisoned");
         inner.lookup.get(addr).cloned()
     }
@@ -416,7 +413,11 @@ impl AddrMap<(RelayUrl, EndpointId), RelayMappedAddr> {
                 }
             }
             MultipathMappedAddr::Ip(addr) => Some(transports::Addr::from(addr)),
-            MultipathMappedAddr::User(_) => {
+            MultipathMappedAddr::User(_addr) => {
+                // TODO: is this really an error?
+                //
+                // it seems the only thing that can ever resolve here is a MultipathMappedAddr::Relay,
+                // so why is returning None not ok?
                 error!("Failed to convert addr to transport addr: Unknown relay mapped addr");
                 None
             }

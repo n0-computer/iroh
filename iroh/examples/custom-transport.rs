@@ -9,12 +9,56 @@ use futures_util::{future::BoxFuture, io};
 use iroh::{
     Endpoint, EndpointId, SecretKey, TransportAddr,
     discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
-    endpoint::transports::{Addr, UserSender, UserTransport, Transmit, UserTransportConfig},
+    endpoint::{
+        Connection,
+        transports::{Addr, Transmit, UserSender, UserTransport, UserTransportConfig},
+    },
+    protocol::{AcceptError, ProtocolHandler, Router},
 };
 use iroh_base::UserAddr;
-use n0_error::Result;
+use n0_error::{Result, StdResultExt};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::info;
+
+/// Each protocol is identified by its ALPN string.
+///
+/// The ALPN, or application-layer protocol negotiation, is exchanged in the connection handshake,
+/// and the connection is aborted unless both endpoints pass the same bytestring.
+const ALPN: &[u8] = b"iroh-example/echo/0";
+
+#[derive(Debug, Clone)]
+struct Echo;
+
+impl ProtocolHandler for Echo {
+    /// The `accept` method is called for each incoming connection for our ALPN.
+    ///
+    /// The returned future runs on a newly spawned tokio task, so it can run as long as
+    /// the connection lasts.
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+        // We can get the remote's endpoint id from the connection.
+        let endpoint_id = connection.remote_id();
+        println!("accepted connection from {endpoint_id}");
+
+        // Our protocol is a simple request-response protocol, so we expect the
+        // connecting peer to open a single bi-directional stream.
+        let (mut send, mut recv) = connection.accept_bi().await?;
+
+        // Echo any bytes received back directly.
+        // This will keep copying until the sender signals the end of data on the stream.
+        let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
+        println!("Copied over {bytes_sent} byte(s)");
+
+        // By calling `finish` on the send stream we signal that we will not send anything
+        // further, which makes the receive stream on the other end terminate.
+        send.finish()?;
+
+        // Wait until the remote closes the connection, which it does once it
+        // received the response.
+        connection.closed().await;
+
+        Ok(())
+    }
+}
 
 const TEST_TRANSPORT_ID: u64 = 0;
 
@@ -57,10 +101,10 @@ impl Discovery for TestDiscovery {
             Some(Box::pin(n0_future::stream::once(Ok(DiscoveryItem::new(
                 EndpointInfo {
                     endpoint_id,
-                    data: EndpointData::new([TransportAddr::User(UserAddr {
-                        id: TEST_TRANSPORT_ID,
-                        data: endpoint_id.as_bytes().to_vec().into(),
-                    })]),
+                    data: EndpointData::new([TransportAddr::User(UserAddr::from_parts(
+                        TEST_TRANSPORT_ID,
+                        endpoint_id.as_bytes(),
+                    ))]),
                 },
                 "test discovery",
                 None,
@@ -89,19 +133,15 @@ impl TestTransport {
 }
 
 fn to_user_addr(endpoint: EndpointId) -> UserAddr {
-    UserAddr {
-        id: TEST_TRANSPORT_ID,
-        data: endpoint.as_bytes().to_vec().into(),
-    }
+    UserAddr::from((TEST_TRANSPORT_ID, &endpoint.as_bytes()[..]))
 }
 
 fn try_parse_user_addr(addr: &UserAddr) -> io::Result<EndpointId> {
-    if addr.id != TEST_TRANSPORT_ID {
+    if addr.id() != TEST_TRANSPORT_ID {
         return Err(io::Error::other("unexpected transport id"));
     }
     let key_bytes: &[u8; 32] = addr
-        .data
-        .as_ref()
+        .data()
         .try_into()
         .map_err(|_| io::Error::other("wrong key length"))?;
     Ok(EndpointId::from_bytes(key_bytes).map_err(|_| io::Error::other("KeyParseError"))?)
@@ -148,7 +188,7 @@ impl TestSender {
 
 impl UserSender for TestSender {
     fn is_valid_send_addr(&self, addr: &iroh_base::UserAddr) -> bool {
-        addr.id == TEST_TRANSPORT_ID
+        addr.id() == TEST_TRANSPORT_ID
     }
 
     fn poll_send(
@@ -254,8 +294,6 @@ async fn main() -> Result<()> {
     let d = TestDiscovery { state: map.clone() };
     tt1.add_node(s1.public());
     tt1.add_node(s2.public());
-    println!("Node 1: {}", s1.public().fmt_short());
-    println!("Node 2: {}", s2.public().fmt_short());
     let ep1 = Endpoint::builder()
         .secret_key(s1.clone())
         .clear_discovery()
@@ -269,13 +307,19 @@ async fn main() -> Result<()> {
         .clear_discovery()
         .discovery(d.clone())
         .add_user_transport(tt2.clone())
+        .alpns(vec![ALPN.to_vec()])
         .clear_ip_transports()
         .bind()
         .await?;
-    let server = tokio::spawn(async move {
-        let incoming = ep2.accept().await.unwrap().await.unwrap();
-        println!("GOT INCOMING");
-    });
-    let conn = ep1.connect(s2.public(), b"TEST").await?;
+    let server = Router::builder(ep2).accept(ALPN, Echo).spawn();
+    let conn = ep1.connect(s2.public(), ALPN).await?;
+    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+    send.write_all(b"Hello custom transport!").await.anyerr()?;
+    send.finish().anyerr()?;
+    let response = recv.read_to_end(1000).await.anyerr()?;
+    assert_eq!(&response, b"Hello custom transport!");
+    conn.close(0u32.into(), b"bye!");
+    server.shutdown().await.anyerr()?;
+    drop(server);
     Ok(())
 }

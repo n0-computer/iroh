@@ -289,7 +289,7 @@ fn send_addr_to_vec(addr: &SendAddr) -> Vec<u8> {
         }
         SendAddr::User(addr) => {
             let mut out = vec![2u8];
-            out.extend_from_slice(&addr.as_bytes());
+            out.extend_from_slice(&addr.as_vec());
             out
         }
     }

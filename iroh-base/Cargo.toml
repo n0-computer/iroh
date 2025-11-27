@@ -25,6 +25,7 @@ serde = { version = "1", features = ["derive", "rc"] }
 n0-error = "0.1.0"
 zeroize = { version = "1.8.2", optional = true, features = ["derive"] }
 zeroize_derive = { version = "1.4.2", optional = true } # needed for minimal versions
+hex = "0.4.3"
 
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }

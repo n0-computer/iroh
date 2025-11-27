@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
 use super::{MagicSock, mapped_addrs::MultipathMappedAddr, remote_map::RemoteStateMessage};
-use crate::{endpoint, metrics::EndpointMetrics, net_report::Report};
+use crate::{metrics::EndpointMetrics, net_report::Report};
 
 #[cfg(not(wasm_browser))]
 mod ip;
@@ -62,7 +62,7 @@ pub trait UserSender: std::fmt::Debug + Send + Sync + 'static {
     /// is addr valid for this transport?
     fn is_valid_send_addr(&self, addr: &UserAddr) -> bool;
     /// send
-    fn send(&self, dst: UserAddr, transmit: &Transmit<'_>) -> BoxFuture<io::Result<()>>;
+    fn send<'a>(&'a self, dst: UserAddr, transmit: &Transmit<'_>) -> BoxFuture<'a, io::Result<()>>;
     /// poll_send
     fn poll_send(
         &self,
