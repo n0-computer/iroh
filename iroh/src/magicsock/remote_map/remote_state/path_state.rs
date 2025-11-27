@@ -48,7 +48,6 @@ impl RemotePathState {
         source: Source,
     ) {
         let addrs = addrs.collect::<Vec<_>>();
-        println!("{:?}", addrs);
         let now = Instant::now();
         for addr in addrs {
             self.paths
@@ -104,10 +103,7 @@ impl RemotePathState {
         let result = match (self.paths.is_empty(), discovery_error) {
             (false, _) => Ok(()),
             (true, Some(err)) => Err(err),
-            (true, None) => {
-                println!("emit_pending_resolve_requests");
-                Err(e!(DiscoveryError::NoResults))
-            }
+            (true, None) => Err(e!(DiscoveryError::NoResults)),
         };
         for tx in self.pending_resolve_requests.drain(..) {
             tx.send(result.clone()).ok();
