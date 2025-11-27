@@ -560,11 +560,15 @@ impl MagicSock {
                         .get(&(src_url.clone(), *src_node));
                     quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
-                transports::Addr::User(_) => {
+                transports::Addr::User(addr) => {
                     self.metrics
                         .magicsock
                         .recv_data_user
                         .inc_by(quinn_meta.len as _);
+
+                    // Fill in the correct mapped address
+                    let mapped_addr = self.remote_map.user_mapped_addrs.get(addr);
+                    quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
             }
 

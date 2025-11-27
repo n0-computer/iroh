@@ -7,10 +7,13 @@ use std::{
 use bytes::Bytes;
 use futures_util::{future::BoxFuture, io};
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId, SecretKey, TransportAddr, discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo}, endpoint::{
+    Endpoint, EndpointAddr, EndpointId, SecretKey, TransportAddr,
+    discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
+    endpoint::{
         Connection,
         transports::{Addr, Transmit, UserSender, UserTransport, UserTransportConfig},
-    }, protocol::{AcceptError, ProtocolHandler, Router}
+    },
+    protocol::{AcceptError, ProtocolHandler, Router},
 };
 use iroh_base::UserAddr;
 use n0_error::{Result, StdResultExt};
@@ -69,6 +72,7 @@ pub(crate) struct Packet {
 #[derive(Debug, Clone)]
 struct TestTransport {
     me: UserAddr,
+    me_watchable: n0_watcher::Watchable<Vec<UserAddr>>,
     state: Arc<Mutex<TestTransportInner>>,
 }
 
@@ -119,6 +123,15 @@ struct TestSender {
 }
 
 impl TestTransport {
+    fn new(id: EndpointId, state: Arc<Mutex<TestTransportInner>>) -> Self {
+        let me = to_user_addr(id);
+        Self {
+            me_watchable: n0_watcher::Watchable::new(vec![me.clone().into()]),
+            state,
+            me,
+        }
+    }
+
     fn add_node(&self, a: EndpointId) {
         let addr = to_user_addr(a);
         let mut guard = self.state.lock().unwrap();
@@ -212,6 +225,10 @@ impl UserTransportConfig for TestTransport {
 }
 
 impl UserTransport for TestTransport {
+    fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<UserAddr>> {
+        self.me_watchable.watch()
+    }
+
     fn create_sender(&self) -> Arc<dyn iroh::endpoint::transports::UserSender> {
         Arc::new(TestSender {
             me: self.me.clone(),
@@ -280,36 +297,38 @@ async fn main() -> Result<()> {
     let map = Arc::new(Mutex::new(Default::default()));
     let s1 = SecretKey::from([0u8; 32]);
     let s2 = SecretKey::from([1u8; 32]);
-    let tt1 = TestTransport {
-        state: map.clone(),
-        me: to_user_addr(s1.public()),
-    };
-    let tt2 = TestTransport {
-        state: map.clone(),
-        me: to_user_addr(s2.public()),
-    };
+    let tt1 = TestTransport::new(s1.public(), map.clone());
+    let tt2 = TestTransport::new(s2.public(), map.clone());
     let d = TestDiscovery { state: map.clone() };
     tt1.add_node(s1.public());
     tt1.add_node(s2.public());
     let ep1 = Endpoint::builder()
         .secret_key(s1.clone())
-        .clear_discovery()
+        // .clear_discovery()
         // .discovery(d.clone())
         .add_user_transport(tt1.clone())
         .clear_ip_transports()
+        .clear_relay_transports()
         .bind()
         .await?;
     let ep2 = Endpoint::builder()
         .secret_key(s2.clone())
-        .clear_discovery()
+        // .clear_discovery()
         // .discovery(d.clone())
         .add_user_transport(tt2.clone())
-        .alpns(vec![ALPN.to_vec()])
         .clear_ip_transports()
+        .clear_relay_transports()
         .bind()
         .await?;
+    let addr2 = ep2.addr();
+    println!("ep2 addr: {:?}", addr2);
     let server = Router::builder(ep2).accept(ALPN, Echo).spawn();
-    let conn = ep1.connect(EndpointAddr::from_parts(s2.public(), [TransportAddr::User(to_user_addr(s2.public()))]), ALPN).await?;
+    let addr2 = EndpointAddr::from_parts(
+        s2.public(),
+        [TransportAddr::User(to_user_addr(s2.public()))],
+    );
+    println!("ep2 addr: {:?}", addr2);
+    let conn = ep1.connect(addr2, ALPN).await?;
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
     send.write_all(b"Hello custom transport!").await.anyerr()?;
     send.finish().anyerr()?;

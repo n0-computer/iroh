@@ -49,6 +49,7 @@ pub(crate) struct RemoteMap {
     pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// The mapping between user provided addresses and their [`UserMappedAddr`]s.
     pub(super) user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
 
     //
