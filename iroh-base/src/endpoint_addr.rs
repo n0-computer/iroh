@@ -144,12 +144,12 @@ impl UserAddr {
     pub fn as_vec(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(8 + self.data.len());
         out[..8].copy_from_slice(&self.id().to_le_bytes());
-        out[8..].copy_from_slice(&self.data());
+        out[8..].copy_from_slice(self.data());
         out
     }
 
     /// Parse from bytes
-    pub fn from_bytes(_data: &[u8]) -> Result<Self, ()> {
+    pub fn from_bytes(_data: &[u8]) -> Result<Self, &'static str> {
         todo!()
     }
 }

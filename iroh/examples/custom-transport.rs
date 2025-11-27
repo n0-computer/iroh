@@ -126,7 +126,7 @@ impl TestTransport {
     fn new(id: EndpointId, state: Arc<Mutex<TestTransportInner>>) -> Self {
         let me = to_user_addr(id);
         Self {
-            me_watchable: n0_watcher::Watchable::new(vec![me.clone().into()]),
+            me_watchable: n0_watcher::Watchable::new(vec![me.clone()]),
             state,
             me,
         }
@@ -154,7 +154,7 @@ fn try_parse_user_addr(addr: &UserAddr) -> io::Result<EndpointId> {
         .data()
         .try_into()
         .map_err(|_| io::Error::other("wrong key length"))?;
-    Ok(EndpointId::from_bytes(key_bytes).map_err(|_| io::Error::other("KeyParseError"))?)
+    EndpointId::from_bytes(key_bytes).map_err(|_| io::Error::other("KeyParseError"))
 }
 
 impl TestSender {
@@ -299,7 +299,7 @@ async fn main() -> Result<()> {
     let s2 = SecretKey::from([1u8; 32]);
     let tt1 = TestTransport::new(s1.public(), map.clone());
     let tt2 = TestTransport::new(s2.public(), map.clone());
-    let d = TestDiscovery { state: map.clone() };
+    let _d = TestDiscovery { state: map.clone() };
     tt1.add_node(s1.public());
     tt1.add_node(s2.public());
     let ep1 = Endpoint::builder()

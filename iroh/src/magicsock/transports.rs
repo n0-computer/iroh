@@ -420,11 +420,11 @@ impl NetworkChangeSender {
 /// An outgoing packet
 #[derive(Debug, Clone)]
 pub struct Transmit<'a> {
-    ///
+    /// ecn
     pub ecn: Option<quinn_udp::EcnCodepoint>,
-    ///
+    /// Contents of the packet
     pub contents: &'a [u8],
-    ///
+    /// Optional segment size for GSO
     pub segment_size: Option<usize>,
 }
 
