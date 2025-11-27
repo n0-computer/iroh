@@ -144,12 +144,12 @@
 <a href=#144 id=144 data-nosnippet>144</a>    </span><span class="kw">pub fn </span>as_vec(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;u8&gt; {
 <a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::with_capacity(<span class="number">8 </span>+ <span class="self">self</span>.data.len());
 <a href=#146 id=146 data-nosnippet>146</a>        out[..<span class="number">8</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.id().to_le_bytes());
-<a href=#147 id=147 data-nosnippet>147</a>        out[<span class="number">8</span>..].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.data());
+<a href=#147 id=147 data-nosnippet>147</a>        out[<span class="number">8</span>..].copy_from_slice(<span class="self">self</span>.data());
 <a href=#148 id=148 data-nosnippet>148</a>        out
 <a href=#149 id=149 data-nosnippet>149</a>    }
 <a href=#150 id=150 data-nosnippet>150</a>
 <a href=#151 id=151 data-nosnippet>151</a>    <span class="doccomment">/// Parse from bytes
-<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">pub fn </span>from_bytes(_data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ()&gt; {
+<a href=#152 id=152 data-nosnippet>152</a>    </span><span class="kw">pub fn </span>from_bytes(_data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt; {
 <a href=#153 id=153 data-nosnippet>153</a>        <span class="macro">todo!</span>()
 <a href=#154 id=154 data-nosnippet>154</a>    }
 <a href=#155 id=155 data-nosnippet>155</a>}
