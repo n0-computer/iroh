@@ -7,13 +7,10 @@ use std::{
 use bytes::Bytes;
 use futures_util::{future::BoxFuture, io};
 use iroh::{
-    Endpoint, EndpointId, SecretKey, TransportAddr,
-    discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
-    endpoint::{
+    Endpoint, EndpointAddr, EndpointId, SecretKey, TransportAddr, discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo}, endpoint::{
         Connection,
         transports::{Addr, Transmit, UserSender, UserTransport, UserTransportConfig},
-    },
-    protocol::{AcceptError, ProtocolHandler, Router},
+    }, protocol::{AcceptError, ProtocolHandler, Router}
 };
 use iroh_base::UserAddr;
 use n0_error::{Result, StdResultExt};
@@ -297,7 +294,7 @@ async fn main() -> Result<()> {
     let ep1 = Endpoint::builder()
         .secret_key(s1.clone())
         .clear_discovery()
-        .discovery(d.clone())
+        // .discovery(d.clone())
         .add_user_transport(tt1.clone())
         .clear_ip_transports()
         .bind()
@@ -305,14 +302,14 @@ async fn main() -> Result<()> {
     let ep2 = Endpoint::builder()
         .secret_key(s2.clone())
         .clear_discovery()
-        .discovery(d.clone())
+        // .discovery(d.clone())
         .add_user_transport(tt2.clone())
         .alpns(vec![ALPN.to_vec()])
         .clear_ip_transports()
         .bind()
         .await?;
     let server = Router::builder(ep2).accept(ALPN, Echo).spawn();
-    let conn = ep1.connect(s2.public(), ALPN).await?;
+    let conn = ep1.connect(EndpointAddr::from_parts(s2.public(), [TransportAddr::User(to_user_addr(s2.public()))]), ALPN).await?;
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
     send.write_all(b"Hello custom transport!").await.anyerr()?;
     send.finish().anyerr()?;
