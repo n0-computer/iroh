@@ -8,6 +8,7 @@
 
 use std::{collections::BTreeSet, fmt, net::SocketAddr};
 
+use data_encoding::HEXLOWER;
 use serde::{Deserialize, Serialize};
 
 use crate::{EndpointId, PublicKey, RelayUrl};
@@ -74,12 +75,12 @@ enum UserAddrBytes {
 impl fmt::Debug for UserAddrBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !f.alternate() {
-            write!(f, "[{}]", hex::encode(self.as_bytes()))
+            write!(f, "[{}]", HEXLOWER.encode(self.as_bytes()))
         } else {
             let bytes = self.as_bytes();
             match self {
-                Self::Inline { .. } => write!(f, "Inline[{}]", hex::encode(bytes)),
-                Self::Heap(_) => write!(f, "Heap[{}]", hex::encode(bytes)),
+                Self::Inline { .. } => write!(f, "Inline[{}]", HEXLOWER.encode(bytes)),
+                Self::Heap(_) => write!(f, "Heap[{}]", HEXLOWER.encode(bytes)),
             }
         }
     }
