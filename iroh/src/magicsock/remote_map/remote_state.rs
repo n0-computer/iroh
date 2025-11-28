@@ -358,7 +358,7 @@ impl RemoteStateActor {
     }
 
     async fn send_datagram(
-        &self,
+        &mut self,
         dst: transports::Addr,
         owned_transmit: OwnedTransmit,
     ) -> n0_error::Result<()> {
@@ -367,8 +367,7 @@ impl RemoteStateActor {
             contents: owned_transmit.contents.as_ref(),
             segment_size: owned_transmit.segment_size,
         };
-        self.sender
-            .send(&dst, None, &transmit)
+        std::future::poll_fn(|cx| Pin::new(&mut self.sender).poll_send(cx, &dst, None, &transmit))
             .await
             .with_context(|_| format!("failed to send datagram to {dst:?}"))?;
         Ok(())
@@ -396,7 +395,8 @@ impl RemoteStateActor {
             if self.paths.is_empty() {
                 warn!("Cannot send datagrams: No paths to remote endpoint known");
             }
-            for addr in self.paths.addrs() {
+            let addrs: Vec<_> = self.paths.addrs().cloned().collect();
+            for addr in addrs {
                 // We never want to send to our local addresses.
                 // The local address set is updated in the main loop so we can use `peek` here.
                 if let transports::Addr::Ip(sockaddr) = addr
@@ -404,7 +404,7 @@ impl RemoteStateActor {
                         .local_direct_addrs
                         .peek()
                         .iter()
-                        .any(|a| a.addr == *sockaddr)
+                        .any(|a| a.addr == sockaddr)
                 {
                     trace!(%sockaddr, "not sending datagram to our own address");
                 } else if let Err(err) = self.send_datagram(addr.clone(), transmit.clone()).await {
