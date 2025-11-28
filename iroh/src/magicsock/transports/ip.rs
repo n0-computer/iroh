@@ -335,13 +335,6 @@ pub(super) struct IpTransportsSender {
 }
 
 impl IpTransportsSender {
-    pub(super) fn v4_iter(&self) -> impl Iterator<Item = &IpSender> {
-        self.v4.iter().chain(self.v4_default.iter())
-    }
-
-    pub(super) fn v6_iter(&self) -> impl Iterator<Item = &IpSender> {
-        self.v6.iter().chain(self.v6_default.iter())
-    }
     pub(super) fn v4_iter_mut(&mut self) -> impl Iterator<Item = &mut IpSender> {
         self.v4.iter_mut().chain(self.v4_default.iter_mut())
     }
