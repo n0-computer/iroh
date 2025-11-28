@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_util::{future::BoxFuture, io};
+use futures_util::io;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, SecretKey, TransportAddr,
     discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
@@ -209,12 +209,6 @@ impl UserSender for TestSender {
     ) -> std::task::Poll<std::io::Result<()>> {
         let packets = self.split(transmit).collect();
         Poll::Ready(self.send_sync(dst, packets))
-    }
-
-    fn send(&self, dst: UserAddr, transmit: &Transmit<'_>) -> BoxFuture<'static, io::Result<()>> {
-        let this = self.clone();
-        let packets = self.split(transmit).collect();
-        Box::pin(async move { this.send_sync(dst, packets) })
     }
 }
 

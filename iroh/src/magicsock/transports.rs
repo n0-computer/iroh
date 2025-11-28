@@ -8,7 +8,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_util::future::BoxFuture;
 use iroh_base::{EndpointId, RelayUrl, TransportAddr, UserAddr};
 use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
@@ -63,8 +62,6 @@ pub trait UserTransport: std::fmt::Debug + Send + Sync + 'static {
 pub trait UserSender: std::fmt::Debug + Send + Sync + 'static {
     /// is addr valid for this transport?
     fn is_valid_send_addr(&self, addr: &UserAddr) -> bool;
-    /// send
-    fn send<'a>(&'a self, dst: UserAddr, transmit: &Transmit<'_>) -> BoxFuture<'a, io::Result<()>>;
     /// poll_send
     fn poll_send(
         &self,
@@ -560,92 +557,8 @@ pub(crate) struct TransportsSender {
 }
 
 impl TransportsSender {
-    #[instrument(skip(self, transmit), fields(len = transmit.contents.len()))]
-    pub(crate) async fn send(
-        &self,
-        dst: &Addr,
-        src: Option<IpAddr>,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        let mut any_match = false;
-        match dst {
-            #[cfg(wasm_browser)]
-            Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
-            #[cfg(not(wasm_browser))]
-            Addr::Ip(addr) => match addr {
-                SocketAddr::V4(_) => {
-                    for sender in self.ip.v4_iter().filter(|s| s.is_valid_send_addr(addr)) {
-                        any_match = true;
-                        match sender.send(*addr, src, transmit).await {
-                            Ok(()) => {
-                                trace!("sent");
-                                return Ok(());
-                            }
-                            Err(err) => {
-                                warn!("ip failed to send: {:?}", err);
-                            }
-                        }
-                    }
-                }
-                SocketAddr::V6(_) => {
-                    for sender in self.ip.v6_iter().filter(|s| s.is_valid_send_addr(addr)) {
-                        any_match = true;
-                        match sender.send(*addr, src, transmit).await {
-                            Ok(()) => {
-                                trace!("sent");
-                                return Ok(());
-                            }
-                            Err(err) => {
-                                warn!("ip failed to send: {:?}", err);
-                            }
-                        }
-                    }
-                }
-            },
-            Addr::Relay(url, endpoint_id) => {
-                for sender in &self.relay {
-                    if sender.is_valid_send_addr(url, endpoint_id) {
-                        any_match = true;
-                        match sender.send(url.clone(), *endpoint_id, transmit).await {
-                            Ok(()) => {
-                                trace!("sent");
-                                return Ok(());
-                            }
-                            Err(err) => {
-                                warn!("relay failed to send: {:?}", err);
-                            }
-                        }
-                    }
-                }
-            }
-            Addr::User(addr) => {
-                for sender in &self.user {
-                    if sender.is_valid_send_addr(addr) {
-                        any_match = true;
-                        match sender.send(addr.clone(), transmit).await {
-                            Ok(()) => {
-                                trace!("sent");
-                                return Ok(());
-                            }
-                            Err(err) => {
-                                warn!("relay failed to send: {:?}", err);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if any_match {
-            Err(io::Error::other("all available transports failed"))
-        } else {
-            Err(io::Error::other(
-                "no transport available for this destination",
-            ))
-        }
-    }
-
     #[instrument(name = "poll_send", skip(self, cx, transmit), fields(len = transmit.contents.len()))]
-    pub(crate) fn inner_poll_send(
+    pub(crate) fn poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
         dst: &Addr,
@@ -936,7 +849,7 @@ impl quinn::UdpSender for MagicSender {
 
         match this
             .sender
-            .inner_poll_send(cx, &transport_addr, quinn_transmit.src_ip, &transmit)
+            .poll_send(cx, &transport_addr, quinn_transmit.src_ip, &transmit)
         {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(ref err)) => {
