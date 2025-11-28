@@ -693,7 +693,10 @@ impl quinn::UdpSender for MagicSender {
 
                 let sender = self.msock.remote_map.remote_state_actor(node_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
-                return match sender.try_send(RemoteStateMessage::SendDatagram(transmit)) {
+                return match sender.try_send(RemoteStateMessage::SendDatagram(
+                    self.sender.clone(),
+                    transmit,
+                )) {
                     Ok(()) => {
                         trace!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(), "sent transmit");
                         Poll::Ready(Ok(()))

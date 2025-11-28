@@ -140,7 +140,6 @@ pub(super) struct RemoteStateActor {
     //
     /// Metrics.
     metrics: Arc<MagicsockMetrics>,
-    sender: TransportsSender,
     /// Our local addresses.
     ///
     /// These are our local addresses and any reflexive transport addresses.
@@ -202,7 +201,6 @@ impl RemoteStateActor {
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
-        sender: TransportsSender,
         discovery: ConcurrentDiscovery,
     ) -> Self {
         Self {
@@ -222,7 +220,6 @@ impl RemoteStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            sender,
             discovery_stream: Either::Left(n0_future::stream::pending()),
         }
     }
@@ -342,8 +339,8 @@ impl RemoteStateActor {
     async fn handle_message(&mut self, msg: RemoteStateMessage) {
         // trace!("handling message");
         match msg {
-            RemoteStateMessage::SendDatagram(transmit) => {
-                self.handle_msg_send_datagram(transmit).await;
+            RemoteStateMessage::SendDatagram(sender, transmit) => {
+                self.handle_msg_send_datagram(sender, transmit).await;
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx).await;
@@ -358,7 +355,11 @@ impl RemoteStateActor {
     }
 
     /// Handles [`RemoteStateMessage::SendDatagram`].
-    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) {
+    async fn handle_msg_send_datagram(
+        &mut self,
+        mut sender: TransportsSender,
+        transmit: OwnedTransmit,
+    ) {
         // Sending datagrams might fail, e.g. because we don't have the right transports set
         // up to handle sending this owned transmit to.
         // After all, we try every single path that we know (relay URL, IP address), even
@@ -368,7 +369,7 @@ impl RemoteStateActor {
         if let Some(addr) = self.selected_path.get() {
             trace!(?addr, "sending datagram to selected path");
 
-            if let Err(err) = send_datagram(&mut self.sender, addr.clone(), transmit).await {
+            if let Err(err) = send_datagram(&mut sender, addr.clone(), transmit).await {
                 debug!(?addr, "failed to send datagram on selected_path: {err:#}");
             }
         } else {
@@ -392,7 +393,7 @@ impl RemoteStateActor {
                 {
                     trace!(%sockaddr, "not sending datagram to our own address");
                 } else if let Err(err) =
-                    send_datagram(&mut self.sender, addr.clone(), transmit.clone()).await
+                    send_datagram(&mut sender, addr.clone(), transmit.clone()).await
                 {
                     debug!(?addr, "failed to send datagram: {err:#}");
                 }
@@ -996,7 +997,7 @@ pub(crate) enum RemoteStateMessage {
     /// operation with a bunch more copying.  So it should only be used for sending QUIC
     /// Initial packets.
     #[debug("SendDatagram(..)")]
-    SendDatagram(OwnedTransmit),
+    SendDatagram(TransportsSender, OwnedTransmit),
     /// Adds an active connection to this remote endpoint.
     ///
     /// The connection will now be managed by this actor.  Holepunching will happen when
