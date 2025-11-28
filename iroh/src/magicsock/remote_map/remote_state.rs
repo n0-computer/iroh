@@ -357,23 +357,6 @@ impl RemoteStateActor {
         }
     }
 
-    async fn send_datagram(
-        &self,
-        dst: transports::Addr,
-        owned_transmit: OwnedTransmit,
-    ) -> n0_error::Result<()> {
-        let transmit = transports::Transmit {
-            ecn: owned_transmit.ecn,
-            contents: owned_transmit.contents.as_ref(),
-            segment_size: owned_transmit.segment_size,
-        };
-        self.sender
-            .send(&dst, None, &transmit)
-            .await
-            .with_context(|_| format!("failed to send datagram to {dst:?}"))?;
-        Ok(())
-    }
-
     /// Handles [`RemoteStateMessage::SendDatagram`].
     async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) {
         // Sending datagrams might fail, e.g. because we don't have the right transports set
@@ -385,7 +368,7 @@ impl RemoteStateActor {
         if let Some(addr) = self.selected_path.get() {
             trace!(?addr, "sending datagram to selected path");
 
-            if let Err(err) = self.send_datagram(addr.clone(), transmit).await {
+            if let Err(err) = send_datagram(&mut self.sender, addr.clone(), transmit).await {
                 debug!(?addr, "failed to send datagram on selected_path: {err:#}");
             }
         } else {
@@ -396,6 +379,7 @@ impl RemoteStateActor {
             if self.paths.is_empty() {
                 warn!("Cannot send datagrams: No paths to remote endpoint known");
             }
+
             for addr in self.paths.addrs() {
                 // We never want to send to our local addresses.
                 // The local address set is updated in the main loop so we can use `peek` here.
@@ -407,7 +391,9 @@ impl RemoteStateActor {
                         .any(|a| a.addr == *sockaddr)
                 {
                     trace!(%sockaddr, "not sending datagram to our own address");
-                } else if let Err(err) = self.send_datagram(addr.clone(), transmit.clone()).await {
+                } else if let Err(err) =
+                    send_datagram(&mut self.sender, addr.clone(), transmit.clone()).await
+                {
                     debug!(?addr, "failed to send datagram: {err:#}");
                 }
             }
@@ -978,6 +964,24 @@ impl RemoteStateActor {
             }
         }
     }
+}
+
+fn send_datagram<'a>(
+    sender: &'a mut TransportsSender,
+    dst: transports::Addr,
+    owned_transmit: OwnedTransmit,
+) -> impl Future<Output = n0_error::Result<()>> + 'a {
+    std::future::poll_fn(move |cx| {
+        let transmit = transports::Transmit {
+            ecn: owned_transmit.ecn,
+            contents: owned_transmit.contents.as_ref(),
+            segment_size: owned_transmit.segment_size,
+        };
+
+        Pin::new(&mut *sender)
+            .poll_send(cx, &dst, None, &transmit)
+            .map(|res| res.with_context(|_| format!("failed to send datagram to {dst:?}")))
+    })
 }
 
 /// Messages to send to the [`RemoteStateActor`].
