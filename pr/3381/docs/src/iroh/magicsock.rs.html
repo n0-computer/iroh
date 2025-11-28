@@ -1619,188 +1619,188 @@
 <a href=#1619 id=1619 data-nosnippet>1619</a>
 <a href=#1620 id=1620 data-nosnippet>1620</a>        <span class="kw">let </span>stats = conn.stats();
 <a href=#1621 id=1621 data-nosnippet>1621</a>        <span class="macro">info!</span>(<span class="string">"stats: {:#?}"</span>, stats);
-<a href=#1622 id=1622 data-nosnippet>1622</a>        <span class="comment">// TODO: ensure panics in this function are reported ok
-<a href=#1623 id=1623 data-nosnippet>1623</a>        </span><span class="kw">if </span><span class="macro">matches!</span>(loss, ExpectedLoss::AlmostNone) {
-<a href=#1624 id=1624 data-nosnippet>1624</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().get().iter() {
-<a href=#1625 id=1625 data-nosnippet>1625</a>                <span class="macro">assert!</span>(
-<a href=#1626 id=1626 data-nosnippet>1626</a>                    info.stats().lost_packets &lt; <span class="number">10</span>,
-<a href=#1627 id=1627 data-nosnippet>1627</a>                    <span class="string">"[receiver] path {:?} should not loose many packets"</span>,
-<a href=#1628 id=1628 data-nosnippet>1628</a>                    info.remote_addr()
-<a href=#1629 id=1629 data-nosnippet>1629</a>                );
-<a href=#1630 id=1630 data-nosnippet>1630</a>            }
-<a href=#1631 id=1631 data-nosnippet>1631</a>        }
-<a href=#1632 id=1632 data-nosnippet>1632</a>
-<a href=#1633 id=1633 data-nosnippet>1633</a>        <span class="macro">info!</span>(<span class="string">"close"</span>);
-<a href=#1634 id=1634 data-nosnippet>1634</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#1635 id=1635 data-nosnippet>1635</a>        <span class="macro">info!</span>(<span class="string">"wait idle"</span>);
-<a href=#1636 id=1636 data-nosnippet>1636</a>        ep.endpoint().wait_idle().<span class="kw">await</span>;
-<a href=#1637 id=1637 data-nosnippet>1637</a>
-<a href=#1638 id=1638 data-nosnippet>1638</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1639 id=1639 data-nosnippet>1639</a>    }
-<a href=#1640 id=1640 data-nosnippet>1640</a>
-<a href=#1641 id=1641 data-nosnippet>1641</a>    <span class="attr">#[instrument(skip_all, fields(me = %ep.id().fmt_short()))]
-<a href=#1642 id=1642 data-nosnippet>1642</a>    </span><span class="kw">async fn </span>echo_sender(
-<a href=#1643 id=1643 data-nosnippet>1643</a>        ep: Endpoint,
-<a href=#1644 id=1644 data-nosnippet>1644</a>        dest_id: EndpointId,
-<a href=#1645 id=1645 data-nosnippet>1645</a>        msg: <span class="kw-2">&amp;</span>[u8],
-<a href=#1646 id=1646 data-nosnippet>1646</a>        loss: ExpectedLoss,
-<a href=#1647 id=1647 data-nosnippet>1647</a>    ) -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1648 id=1648 data-nosnippet>1648</a>        <span class="macro">info!</span>(<span class="string">"connecting to {}"</span>, dest_id.fmt_short());
-<a href=#1649 id=1649 data-nosnippet>1649</a>        <span class="kw">let </span>dest = EndpointAddr::new(dest_id);
-<a href=#1650 id=1650 data-nosnippet>1650</a>        <span class="kw">let </span>conn = ep.connect(dest, ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1651 id=1651 data-nosnippet>1651</a>
-<a href=#1652 id=1652 data-nosnippet>1652</a>        <span class="macro">info!</span>(<span class="string">"opening bi"</span>);
-<a href=#1653 id=1653 data-nosnippet>1653</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.open_bi().<span class="kw">await</span>.std_context(<span class="string">"open bi"</span>)<span class="question-mark">?</span>;
-<a href=#1654 id=1654 data-nosnippet>1654</a>
-<a href=#1655 id=1655 data-nosnippet>1655</a>        <span class="macro">info!</span>(<span class="string">"writing message"</span>);
-<a href=#1656 id=1656 data-nosnippet>1656</a>        send_bi.write_all(msg).<span class="kw">await</span>.std_context(<span class="string">"write all"</span>)<span class="question-mark">?</span>;
-<a href=#1657 id=1657 data-nosnippet>1657</a>
-<a href=#1658 id=1658 data-nosnippet>1658</a>        <span class="macro">info!</span>(<span class="string">"finishing"</span>);
-<a href=#1659 id=1659 data-nosnippet>1659</a>        send_bi.finish().std_context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
-<a href=#1660 id=1660 data-nosnippet>1660</a>        send_bi.stopped().<span class="kw">await</span>.std_context(<span class="string">"stopped"</span>)<span class="question-mark">?</span>;
-<a href=#1661 id=1661 data-nosnippet>1661</a>
-<a href=#1662 id=1662 data-nosnippet>1662</a>        <span class="macro">info!</span>(<span class="string">"reading_to_end"</span>);
-<a href=#1663 id=1663 data-nosnippet>1663</a>        <span class="kw">let </span>val = recv_bi
-<a href=#1664 id=1664 data-nosnippet>1664</a>            .read_to_end(usize::MAX)
-<a href=#1665 id=1665 data-nosnippet>1665</a>            .<span class="kw">await
-<a href=#1666 id=1666 data-nosnippet>1666</a>            </span>.std_context(<span class="string">"read to end"</span>)<span class="question-mark">?</span>;
-<a href=#1667 id=1667 data-nosnippet>1667</a>        <span class="macro">assert_eq!</span>(
-<a href=#1668 id=1668 data-nosnippet>1668</a>            val,
-<a href=#1669 id=1669 data-nosnippet>1669</a>            msg,
-<a href=#1670 id=1670 data-nosnippet>1670</a>            <span class="string">"[sender] expected {}, got {}"</span>,
-<a href=#1671 id=1671 data-nosnippet>1671</a>            HEXLOWER.encode(msg),
-<a href=#1672 id=1672 data-nosnippet>1672</a>            HEXLOWER.encode(<span class="kw-2">&amp;</span>val)
-<a href=#1673 id=1673 data-nosnippet>1673</a>        );
-<a href=#1674 id=1674 data-nosnippet>1674</a>
-<a href=#1675 id=1675 data-nosnippet>1675</a>        <span class="kw">let </span>stats = conn.stats();
-<a href=#1676 id=1676 data-nosnippet>1676</a>        <span class="macro">info!</span>(<span class="string">"stats: {:#?}"</span>, stats);
-<a href=#1677 id=1677 data-nosnippet>1677</a>        <span class="kw">if </span><span class="macro">matches!</span>(loss, ExpectedLoss::AlmostNone) {
-<a href=#1678 id=1678 data-nosnippet>1678</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().get() {
-<a href=#1679 id=1679 data-nosnippet>1679</a>                <span class="macro">assert!</span>(
-<a href=#1680 id=1680 data-nosnippet>1680</a>                    info.stats().lost_packets &lt; <span class="number">10</span>,
-<a href=#1681 id=1681 data-nosnippet>1681</a>                    <span class="string">"[sender] path {:?} should not loose many packets"</span>,
-<a href=#1682 id=1682 data-nosnippet>1682</a>                    info.remote_addr()
-<a href=#1683 id=1683 data-nosnippet>1683</a>                );
-<a href=#1684 id=1684 data-nosnippet>1684</a>            }
-<a href=#1685 id=1685 data-nosnippet>1685</a>        }
-<a href=#1686 id=1686 data-nosnippet>1686</a>
-<a href=#1687 id=1687 data-nosnippet>1687</a>        <span class="macro">info!</span>(<span class="string">"close"</span>);
-<a href=#1688 id=1688 data-nosnippet>1688</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#1689 id=1689 data-nosnippet>1689</a>        <span class="macro">info!</span>(<span class="string">"wait idle"</span>);
-<a href=#1690 id=1690 data-nosnippet>1690</a>        ep.endpoint().wait_idle().<span class="kw">await</span>;
-<a href=#1691 id=1691 data-nosnippet>1691</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1692 id=1692 data-nosnippet>1692</a>    }
-<a href=#1693 id=1693 data-nosnippet>1693</a>
-<a href=#1694 id=1694 data-nosnippet>1694</a>    <span class="attr">#[derive(Debug, Copy, Clone)]
-<a href=#1695 id=1695 data-nosnippet>1695</a>    </span><span class="kw">enum </span>ExpectedLoss {
-<a href=#1696 id=1696 data-nosnippet>1696</a>        AlmostNone,
-<a href=#1697 id=1697 data-nosnippet>1697</a>        YeahSure,
-<a href=#1698 id=1698 data-nosnippet>1698</a>    }
-<a href=#1699 id=1699 data-nosnippet>1699</a>
-<a href=#1700 id=1700 data-nosnippet>1700</a>    <span class="doccomment">/// Runs a roundtrip between the [`echo_sender`] and [`echo_receiver`].
-<a href=#1701 id=1701 data-nosnippet>1701</a>    </span><span class="kw">async fn </span>run_roundtrip(
-<a href=#1702 id=1702 data-nosnippet>1702</a>        sender: Endpoint,
-<a href=#1703 id=1703 data-nosnippet>1703</a>        receiver: Endpoint,
-<a href=#1704 id=1704 data-nosnippet>1704</a>        payload: <span class="kw-2">&amp;</span>[u8],
-<a href=#1705 id=1705 data-nosnippet>1705</a>        loss: ExpectedLoss,
-<a href=#1706 id=1706 data-nosnippet>1706</a>    ) {
-<a href=#1707 id=1707 data-nosnippet>1707</a>        <span class="kw">let </span>send_endpoint_id = sender.id();
-<a href=#1708 id=1708 data-nosnippet>1708</a>        <span class="kw">let </span>recv_endpoint_id = receiver.id();
-<a href=#1709 id=1709 data-nosnippet>1709</a>        <span class="macro">info!</span>(<span class="string">"\nroundtrip: {send_endpoint_id:#} -&gt; {recv_endpoint_id:#}"</span>);
-<a href=#1710 id=1710 data-nosnippet>1710</a>
-<a href=#1711 id=1711 data-nosnippet>1711</a>        <span class="kw">let </span>receiver_task = tokio::spawn(echo_receiver(receiver, loss));
-<a href=#1712 id=1712 data-nosnippet>1712</a>        <span class="kw">let </span>sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).<span class="kw">await</span>;
-<a href=#1713 id=1713 data-nosnippet>1713</a>        <span class="kw">let </span>sender_is_err = <span class="kw">match </span>sender_res {
-<a href=#1714 id=1714 data-nosnippet>1714</a>            <span class="prelude-val">Ok</span>(()) =&gt; <span class="bool-val">false</span>,
-<a href=#1715 id=1715 data-nosnippet>1715</a>            <span class="prelude-val">Err</span>(err) =&gt; {
-<a href=#1716 id=1716 data-nosnippet>1716</a>                <span class="macro">eprintln!</span>(<span class="string">"[sender] Error:\n{err:#?}"</span>);
-<a href=#1717 id=1717 data-nosnippet>1717</a>                <span class="bool-val">true
-<a href=#1718 id=1718 data-nosnippet>1718</a>            </span>}
-<a href=#1719 id=1719 data-nosnippet>1719</a>        };
-<a href=#1720 id=1720 data-nosnippet>1720</a>        <span class="kw">let </span>receiver_is_err = <span class="kw">match </span>receiver_task.<span class="kw">await </span>{
-<a href=#1721 id=1721 data-nosnippet>1721</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; <span class="bool-val">false</span>,
-<a href=#1722 id=1722 data-nosnippet>1722</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-<a href=#1723 id=1723 data-nosnippet>1723</a>                <span class="macro">eprintln!</span>(<span class="string">"[receiver] Error:\n{err:#?}"</span>);
-<a href=#1724 id=1724 data-nosnippet>1724</a>                <span class="bool-val">true
-<a href=#1725 id=1725 data-nosnippet>1725</a>            </span>}
-<a href=#1726 id=1726 data-nosnippet>1726</a>            <span class="prelude-val">Err</span>(joinerr) =&gt; {
-<a href=#1727 id=1727 data-nosnippet>1727</a>                <span class="kw">if </span>joinerr.is_panic() {
-<a href=#1728 id=1728 data-nosnippet>1728</a>                    std::panic::resume_unwind(joinerr.into_panic());
-<a href=#1729 id=1729 data-nosnippet>1729</a>                } <span class="kw">else </span>{
-<a href=#1730 id=1730 data-nosnippet>1730</a>                    <span class="macro">eprintln!</span>(<span class="string">"[receiver] Error:\n{joinerr:#?}"</span>);
-<a href=#1731 id=1731 data-nosnippet>1731</a>                }
-<a href=#1732 id=1732 data-nosnippet>1732</a>                <span class="bool-val">true
-<a href=#1733 id=1733 data-nosnippet>1733</a>            </span>}
-<a href=#1734 id=1734 data-nosnippet>1734</a>        };
-<a href=#1735 id=1735 data-nosnippet>1735</a>        <span class="kw">if </span>sender_is_err || receiver_is_err {
-<a href=#1736 id=1736 data-nosnippet>1736</a>            <span class="macro">panic!</span>(<span class="string">"Sender or receiver errored"</span>);
-<a href=#1737 id=1737 data-nosnippet>1737</a>        }
-<a href=#1738 id=1738 data-nosnippet>1738</a>    }
-<a href=#1739 id=1739 data-nosnippet>1739</a>
-<a href=#1740 id=1740 data-nosnippet>1740</a>    <span class="doccomment">/// Returns a pair of endpoints with a shared [`StaticDiscovery`].
-<a href=#1741 id=1741 data-nosnippet>1741</a>    ///
-<a href=#1742 id=1742 data-nosnippet>1742</a>    /// The endpoints do not use a relay server but can connect to each other via local
-<a href=#1743 id=1743 data-nosnippet>1743</a>    /// addresses.  Dialing by [`EndpointId`] is possible, and the addresses get updated even if
-<a href=#1744 id=1744 data-nosnippet>1744</a>    /// the endpoints rebind.
-<a href=#1745 id=1745 data-nosnippet>1745</a>    </span><span class="kw">async fn </span>endpoint_pair() -&gt; (AbortOnDropHandle&lt;()&gt;, Endpoint, Endpoint) {
-<a href=#1746 id=1746 data-nosnippet>1746</a>        <span class="kw">let </span>discovery = StaticProvider::new();
-<a href=#1747 id=1747 data-nosnippet>1747</a>        <span class="kw">let </span>ep1 = Endpoint::builder()
-<a href=#1748 id=1748 data-nosnippet>1748</a>            .relay_mode(RelayMode::Disabled)
-<a href=#1749 id=1749 data-nosnippet>1749</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
-<a href=#1750 id=1750 data-nosnippet>1750</a>            .discovery(discovery.clone())
-<a href=#1751 id=1751 data-nosnippet>1751</a>            .bind()
-<a href=#1752 id=1752 data-nosnippet>1752</a>            .<span class="kw">await
-<a href=#1753 id=1753 data-nosnippet>1753</a>            </span>.unwrap();
-<a href=#1754 id=1754 data-nosnippet>1754</a>        <span class="kw">let </span>ep2 = Endpoint::builder()
-<a href=#1755 id=1755 data-nosnippet>1755</a>            .relay_mode(RelayMode::Disabled)
-<a href=#1756 id=1756 data-nosnippet>1756</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
-<a href=#1757 id=1757 data-nosnippet>1757</a>            .discovery(discovery.clone())
-<a href=#1758 id=1758 data-nosnippet>1758</a>            .bind()
-<a href=#1759 id=1759 data-nosnippet>1759</a>            .<span class="kw">await
-<a href=#1760 id=1760 data-nosnippet>1760</a>            </span>.unwrap();
-<a href=#1761 id=1761 data-nosnippet>1761</a>        discovery.add_endpoint_info(ep1.addr());
-<a href=#1762 id=1762 data-nosnippet>1762</a>        discovery.add_endpoint_info(ep2.addr());
-<a href=#1763 id=1763 data-nosnippet>1763</a>
-<a href=#1764 id=1764 data-nosnippet>1764</a>        <span class="kw">let </span>ep1_addr_stream = ep1.watch_addr().stream();
-<a href=#1765 id=1765 data-nosnippet>1765</a>        <span class="kw">let </span>ep2_addr_stream = ep2.watch_addr().stream();
-<a href=#1766 id=1766 data-nosnippet>1766</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr_stream = MergeBounded::from_iter([ep1_addr_stream, ep2_addr_stream]);
-<a href=#1767 id=1767 data-nosnippet>1767</a>        <span class="kw">let </span>task = tokio::spawn(<span class="kw">async move </span>{
-<a href=#1768 id=1768 data-nosnippet>1768</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = addr_stream.next().<span class="kw">await </span>{
-<a href=#1769 id=1769 data-nosnippet>1769</a>                discovery.add_endpoint_info(addr);
-<a href=#1770 id=1770 data-nosnippet>1770</a>            }
-<a href=#1771 id=1771 data-nosnippet>1771</a>        });
-<a href=#1772 id=1772 data-nosnippet>1772</a>
-<a href=#1773 id=1773 data-nosnippet>1773</a>        (AbortOnDropHandle::new(task), ep1, ep2)
-<a href=#1774 id=1774 data-nosnippet>1774</a>    }
-<a href=#1775 id=1775 data-nosnippet>1775</a>
-<a href=#1776 id=1776 data-nosnippet>1776</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
-<a href=#1777 id=1777 data-nosnippet>1777</a>    #[traced_test]
-<a href=#1778 id=1778 data-nosnippet>1778</a>    </span><span class="kw">async fn </span>test_two_devices_roundtrip_quinn_magic() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1779 id=1779 data-nosnippet>1779</a>        <span class="kw">let </span>(_guard, m1, m2) = endpoint_pair().<span class="kw">await</span>;
-<a href=#1780 id=1780 data-nosnippet>1780</a>
-<a href=#1781 id=1781 data-nosnippet>1781</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">5 </span>{
-<a href=#1782 id=1782 data-nosnippet>1782</a>            <span class="macro">info!</span>(<span class="string">"\n-- round {i}"</span>);
-<a href=#1783 id=1783 data-nosnippet>1783</a>            run_roundtrip(
-<a href=#1784 id=1784 data-nosnippet>1784</a>                m1.clone(),
-<a href=#1785 id=1785 data-nosnippet>1785</a>                m2.clone(),
-<a href=#1786 id=1786 data-nosnippet>1786</a>                <span class="string">b"hello m1"</span>,
-<a href=#1787 id=1787 data-nosnippet>1787</a>                ExpectedLoss::AlmostNone,
-<a href=#1788 id=1788 data-nosnippet>1788</a>            )
-<a href=#1789 id=1789 data-nosnippet>1789</a>            .<span class="kw">await</span>;
-<a href=#1790 id=1790 data-nosnippet>1790</a>            run_roundtrip(
-<a href=#1791 id=1791 data-nosnippet>1791</a>                m2.clone(),
-<a href=#1792 id=1792 data-nosnippet>1792</a>                m1.clone(),
-<a href=#1793 id=1793 data-nosnippet>1793</a>                <span class="string">b"hello m2"</span>,
-<a href=#1794 id=1794 data-nosnippet>1794</a>                ExpectedLoss::AlmostNone,
-<a href=#1795 id=1795 data-nosnippet>1795</a>            )
-<a href=#1796 id=1796 data-nosnippet>1796</a>            .<span class="kw">await</span>;
-<a href=#1797 id=1797 data-nosnippet>1797</a>
-<a href=#1798 id=1798 data-nosnippet>1798</a>            <span class="macro">info!</span>(<span class="string">"\n-- larger data"</span>);
-<a href=#1799 id=1799 data-nosnippet>1799</a>            <span class="kw">let </span><span class="kw-2">mut </span>data = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">10 </span>* <span class="number">1024</span>];
-<a href=#1800 id=1800 data-nosnippet>1800</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#1801 id=1801 data-nosnippet>1801</a>            rng.fill_bytes(<span class="kw-2">&amp;mut </span>data);
-<a href=#1802 id=1802 data-nosnippet>1802</a>            run_roundtrip(m1.clone(), m2.clone(), <span class="kw-2">&amp;</span>data, ExpectedLoss::AlmostNone).<span class="kw">await</span>;
-<a href=#1803 id=1803 data-nosnippet>1803</a>            run_roundtrip(m2.clone(), m1.clone(), <span class="kw-2">&amp;</span>data, ExpectedLoss::AlmostNone).<span class="kw">await</span>;
+<a href=#1622 id=1622 data-nosnippet>1622</a>        <span class="kw">if </span><span class="macro">matches!</span>(loss, ExpectedLoss::AlmostNone) {
+<a href=#1623 id=1623 data-nosnippet>1623</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().get().iter() {
+<a href=#1624 id=1624 data-nosnippet>1624</a>                <span class="macro">assert!</span>(
+<a href=#1625 id=1625 data-nosnippet>1625</a>                    info.stats().lost_packets &lt; <span class="number">10</span>,
+<a href=#1626 id=1626 data-nosnippet>1626</a>                    <span class="string">"[receiver] path {:?} should not loose many packets"</span>,
+<a href=#1627 id=1627 data-nosnippet>1627</a>                    info.remote_addr()
+<a href=#1628 id=1628 data-nosnippet>1628</a>                );
+<a href=#1629 id=1629 data-nosnippet>1629</a>            }
+<a href=#1630 id=1630 data-nosnippet>1630</a>        }
+<a href=#1631 id=1631 data-nosnippet>1631</a>
+<a href=#1632 id=1632 data-nosnippet>1632</a>        conn.closed().<span class="kw">await</span>;
+<a href=#1633 id=1633 data-nosnippet>1633</a>        <span class="macro">info!</span>(<span class="string">"closed"</span>);
+<a href=#1634 id=1634 data-nosnippet>1634</a>        ep.endpoint().wait_idle().<span class="kw">await</span>;
+<a href=#1635 id=1635 data-nosnippet>1635</a>        <span class="macro">info!</span>(<span class="string">"idle"</span>);
+<a href=#1636 id=1636 data-nosnippet>1636</a>
+<a href=#1637 id=1637 data-nosnippet>1637</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1638 id=1638 data-nosnippet>1638</a>    }
+<a href=#1639 id=1639 data-nosnippet>1639</a>
+<a href=#1640 id=1640 data-nosnippet>1640</a>    <span class="attr">#[instrument(skip_all, fields(me = %ep.id().fmt_short()))]
+<a href=#1641 id=1641 data-nosnippet>1641</a>    </span><span class="kw">async fn </span>echo_sender(
+<a href=#1642 id=1642 data-nosnippet>1642</a>        ep: Endpoint,
+<a href=#1643 id=1643 data-nosnippet>1643</a>        dest_id: EndpointId,
+<a href=#1644 id=1644 data-nosnippet>1644</a>        msg: <span class="kw-2">&amp;</span>[u8],
+<a href=#1645 id=1645 data-nosnippet>1645</a>        loss: ExpectedLoss,
+<a href=#1646 id=1646 data-nosnippet>1646</a>    ) -&gt; <span class="prelude-ty">Result</span> {
+<a href=#1647 id=1647 data-nosnippet>1647</a>        <span class="macro">info!</span>(<span class="string">"connecting to {}"</span>, dest_id.fmt_short());
+<a href=#1648 id=1648 data-nosnippet>1648</a>        <span class="kw">let </span>dest = EndpointAddr::new(dest_id);
+<a href=#1649 id=1649 data-nosnippet>1649</a>        <span class="kw">let </span>conn = ep.connect(dest, ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1650 id=1650 data-nosnippet>1650</a>
+<a href=#1651 id=1651 data-nosnippet>1651</a>        <span class="macro">info!</span>(<span class="string">"opening bi"</span>);
+<a href=#1652 id=1652 data-nosnippet>1652</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.open_bi().<span class="kw">await</span>.std_context(<span class="string">"open bi"</span>)<span class="question-mark">?</span>;
+<a href=#1653 id=1653 data-nosnippet>1653</a>
+<a href=#1654 id=1654 data-nosnippet>1654</a>        <span class="macro">info!</span>(<span class="string">"writing message"</span>);
+<a href=#1655 id=1655 data-nosnippet>1655</a>        send_bi.write_all(msg).<span class="kw">await</span>.std_context(<span class="string">"write all"</span>)<span class="question-mark">?</span>;
+<a href=#1656 id=1656 data-nosnippet>1656</a>
+<a href=#1657 id=1657 data-nosnippet>1657</a>        <span class="macro">info!</span>(<span class="string">"finishing"</span>);
+<a href=#1658 id=1658 data-nosnippet>1658</a>        send_bi.finish().std_context(<span class="string">"finish"</span>)<span class="question-mark">?</span>;
+<a href=#1659 id=1659 data-nosnippet>1659</a>        send_bi.stopped().<span class="kw">await</span>.std_context(<span class="string">"stopped"</span>)<span class="question-mark">?</span>;
+<a href=#1660 id=1660 data-nosnippet>1660</a>
+<a href=#1661 id=1661 data-nosnippet>1661</a>        <span class="macro">info!</span>(<span class="string">"reading_to_end"</span>);
+<a href=#1662 id=1662 data-nosnippet>1662</a>        <span class="kw">let </span>val = recv_bi
+<a href=#1663 id=1663 data-nosnippet>1663</a>            .read_to_end(usize::MAX)
+<a href=#1664 id=1664 data-nosnippet>1664</a>            .<span class="kw">await
+<a href=#1665 id=1665 data-nosnippet>1665</a>            </span>.std_context(<span class="string">"read to end"</span>)<span class="question-mark">?</span>;
+<a href=#1666 id=1666 data-nosnippet>1666</a>        <span class="macro">assert_eq!</span>(
+<a href=#1667 id=1667 data-nosnippet>1667</a>            val,
+<a href=#1668 id=1668 data-nosnippet>1668</a>            msg,
+<a href=#1669 id=1669 data-nosnippet>1669</a>            <span class="string">"[sender] expected {}, got {}"</span>,
+<a href=#1670 id=1670 data-nosnippet>1670</a>            HEXLOWER.encode(msg),
+<a href=#1671 id=1671 data-nosnippet>1671</a>            HEXLOWER.encode(<span class="kw-2">&amp;</span>val)
+<a href=#1672 id=1672 data-nosnippet>1672</a>        );
+<a href=#1673 id=1673 data-nosnippet>1673</a>
+<a href=#1674 id=1674 data-nosnippet>1674</a>        <span class="kw">let </span>stats = conn.stats();
+<a href=#1675 id=1675 data-nosnippet>1675</a>        <span class="macro">info!</span>(<span class="string">"stats: {:#?}"</span>, stats);
+<a href=#1676 id=1676 data-nosnippet>1676</a>        <span class="kw">if </span><span class="macro">matches!</span>(loss, ExpectedLoss::AlmostNone) {
+<a href=#1677 id=1677 data-nosnippet>1677</a>            <span class="kw">for </span>info <span class="kw">in </span>conn.paths().get() {
+<a href=#1678 id=1678 data-nosnippet>1678</a>                <span class="macro">assert!</span>(
+<a href=#1679 id=1679 data-nosnippet>1679</a>                    info.stats().lost_packets &lt; <span class="number">10</span>,
+<a href=#1680 id=1680 data-nosnippet>1680</a>                    <span class="string">"[sender] path {:?} should not loose many packets"</span>,
+<a href=#1681 id=1681 data-nosnippet>1681</a>                    info.remote_addr()
+<a href=#1682 id=1682 data-nosnippet>1682</a>                );
+<a href=#1683 id=1683 data-nosnippet>1683</a>            }
+<a href=#1684 id=1684 data-nosnippet>1684</a>        }
+<a href=#1685 id=1685 data-nosnippet>1685</a>
+<a href=#1686 id=1686 data-nosnippet>1686</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+<a href=#1687 id=1687 data-nosnippet>1687</a>        <span class="macro">info!</span>(<span class="string">"closed"</span>);
+<a href=#1688 id=1688 data-nosnippet>1688</a>        ep.endpoint().wait_idle().<span class="kw">await</span>;
+<a href=#1689 id=1689 data-nosnippet>1689</a>        <span class="macro">info!</span>(<span class="string">"idle"</span>);
+<a href=#1690 id=1690 data-nosnippet>1690</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1691 id=1691 data-nosnippet>1691</a>    }
+<a href=#1692 id=1692 data-nosnippet>1692</a>
+<a href=#1693 id=1693 data-nosnippet>1693</a>    <span class="attr">#[derive(Debug, Copy, Clone)]
+<a href=#1694 id=1694 data-nosnippet>1694</a>    </span><span class="kw">enum </span>ExpectedLoss {
+<a href=#1695 id=1695 data-nosnippet>1695</a>        AlmostNone,
+<a href=#1696 id=1696 data-nosnippet>1696</a>        YeahSure,
+<a href=#1697 id=1697 data-nosnippet>1697</a>    }
+<a href=#1698 id=1698 data-nosnippet>1698</a>
+<a href=#1699 id=1699 data-nosnippet>1699</a>    <span class="doccomment">/// Runs a roundtrip between the [`echo_sender`] and [`echo_receiver`].
+<a href=#1700 id=1700 data-nosnippet>1700</a>    </span><span class="kw">async fn </span>run_roundtrip(
+<a href=#1701 id=1701 data-nosnippet>1701</a>        sender: Endpoint,
+<a href=#1702 id=1702 data-nosnippet>1702</a>        receiver: Endpoint,
+<a href=#1703 id=1703 data-nosnippet>1703</a>        payload: <span class="kw-2">&amp;</span>[u8],
+<a href=#1704 id=1704 data-nosnippet>1704</a>        loss: ExpectedLoss,
+<a href=#1705 id=1705 data-nosnippet>1705</a>    ) {
+<a href=#1706 id=1706 data-nosnippet>1706</a>        <span class="kw">let </span>send_endpoint_id = sender.id();
+<a href=#1707 id=1707 data-nosnippet>1707</a>        <span class="kw">let </span>recv_endpoint_id = receiver.id();
+<a href=#1708 id=1708 data-nosnippet>1708</a>        <span class="macro">info!</span>(<span class="string">"\nroundtrip: {send_endpoint_id:#} -&gt; {recv_endpoint_id:#}"</span>);
+<a href=#1709 id=1709 data-nosnippet>1709</a>
+<a href=#1710 id=1710 data-nosnippet>1710</a>        <span class="kw">let </span>receiver_task = AbortOnDropHandle::new(tokio::spawn(echo_receiver(receiver, loss)));
+<a href=#1711 id=1711 data-nosnippet>1711</a>        <span class="kw">let </span>sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).<span class="kw">await</span>;
+<a href=#1712 id=1712 data-nosnippet>1712</a>        <span class="kw">let </span>sender_is_err = <span class="kw">match </span>sender_res {
+<a href=#1713 id=1713 data-nosnippet>1713</a>            <span class="prelude-val">Ok</span>(()) =&gt; <span class="bool-val">false</span>,
+<a href=#1714 id=1714 data-nosnippet>1714</a>            <span class="prelude-val">Err</span>(err) =&gt; {
+<a href=#1715 id=1715 data-nosnippet>1715</a>                <span class="macro">error!</span>(<span class="string">"[sender] Error:\n{err:#?}"</span>);
+<a href=#1716 id=1716 data-nosnippet>1716</a>                <span class="bool-val">true
+<a href=#1717 id=1717 data-nosnippet>1717</a>            </span>}
+<a href=#1718 id=1718 data-nosnippet>1718</a>        };
+<a href=#1719 id=1719 data-nosnippet>1719</a>        <span class="kw">let </span>receiver_is_err = <span class="kw">match </span>receiver_task.<span class="kw">await </span>{
+<a href=#1720 id=1720 data-nosnippet>1720</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; <span class="bool-val">false</span>,
+<a href=#1721 id=1721 data-nosnippet>1721</a>            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
+<a href=#1722 id=1722 data-nosnippet>1722</a>                <span class="macro">error!</span>(<span class="string">"[receiver] Error:\n{err:#?}"</span>);
+<a href=#1723 id=1723 data-nosnippet>1723</a>                <span class="bool-val">true
+<a href=#1724 id=1724 data-nosnippet>1724</a>            </span>}
+<a href=#1725 id=1725 data-nosnippet>1725</a>            <span class="prelude-val">Err</span>(joinerr) =&gt; {
+<a href=#1726 id=1726 data-nosnippet>1726</a>                <span class="kw">if </span>joinerr.is_panic() {
+<a href=#1727 id=1727 data-nosnippet>1727</a>                    std::panic::resume_unwind(joinerr.into_panic());
+<a href=#1728 id=1728 data-nosnippet>1728</a>                } <span class="kw">else </span>{
+<a href=#1729 id=1729 data-nosnippet>1729</a>                    <span class="macro">error!</span>(<span class="string">"[receiver] Error:\n{joinerr:#?}"</span>);
+<a href=#1730 id=1730 data-nosnippet>1730</a>                }
+<a href=#1731 id=1731 data-nosnippet>1731</a>                <span class="bool-val">true
+<a href=#1732 id=1732 data-nosnippet>1732</a>            </span>}
+<a href=#1733 id=1733 data-nosnippet>1733</a>        };
+<a href=#1734 id=1734 data-nosnippet>1734</a>        <span class="kw">if </span>sender_is_err || receiver_is_err {
+<a href=#1735 id=1735 data-nosnippet>1735</a>            <span class="macro">panic!</span>(<span class="string">"Sender or receiver errored"</span>);
+<a href=#1736 id=1736 data-nosnippet>1736</a>        }
+<a href=#1737 id=1737 data-nosnippet>1737</a>    }
+<a href=#1738 id=1738 data-nosnippet>1738</a>
+<a href=#1739 id=1739 data-nosnippet>1739</a>    <span class="doccomment">/// Returns a pair of endpoints with a shared [`StaticDiscovery`].
+<a href=#1740 id=1740 data-nosnippet>1740</a>    ///
+<a href=#1741 id=1741 data-nosnippet>1741</a>    /// The endpoints do not use a relay server but can connect to each other via local
+<a href=#1742 id=1742 data-nosnippet>1742</a>    /// addresses.  Dialing by [`EndpointId`] is possible, and the addresses get updated even if
+<a href=#1743 id=1743 data-nosnippet>1743</a>    /// the endpoints rebind.
+<a href=#1744 id=1744 data-nosnippet>1744</a>    </span><span class="kw">async fn </span>endpoint_pair() -&gt; (AbortOnDropHandle&lt;()&gt;, Endpoint, Endpoint) {
+<a href=#1745 id=1745 data-nosnippet>1745</a>        <span class="kw">let </span>discovery = StaticProvider::new();
+<a href=#1746 id=1746 data-nosnippet>1746</a>        <span class="kw">let </span>ep1 = Endpoint::builder()
+<a href=#1747 id=1747 data-nosnippet>1747</a>            .relay_mode(RelayMode::Disabled)
+<a href=#1748 id=1748 data-nosnippet>1748</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
+<a href=#1749 id=1749 data-nosnippet>1749</a>            .discovery(discovery.clone())
+<a href=#1750 id=1750 data-nosnippet>1750</a>            .bind()
+<a href=#1751 id=1751 data-nosnippet>1751</a>            .<span class="kw">await
+<a href=#1752 id=1752 data-nosnippet>1752</a>            </span>.unwrap();
+<a href=#1753 id=1753 data-nosnippet>1753</a>        <span class="kw">let </span>ep2 = Endpoint::builder()
+<a href=#1754 id=1754 data-nosnippet>1754</a>            .relay_mode(RelayMode::Disabled)
+<a href=#1755 id=1755 data-nosnippet>1755</a>            .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
+<a href=#1756 id=1756 data-nosnippet>1756</a>            .discovery(discovery.clone())
+<a href=#1757 id=1757 data-nosnippet>1757</a>            .bind()
+<a href=#1758 id=1758 data-nosnippet>1758</a>            .<span class="kw">await
+<a href=#1759 id=1759 data-nosnippet>1759</a>            </span>.unwrap();
+<a href=#1760 id=1760 data-nosnippet>1760</a>        discovery.add_endpoint_info(ep1.addr());
+<a href=#1761 id=1761 data-nosnippet>1761</a>        discovery.add_endpoint_info(ep2.addr());
+<a href=#1762 id=1762 data-nosnippet>1762</a>
+<a href=#1763 id=1763 data-nosnippet>1763</a>        <span class="kw">let </span>ep1_addr_stream = ep1.watch_addr().stream();
+<a href=#1764 id=1764 data-nosnippet>1764</a>        <span class="kw">let </span>ep2_addr_stream = ep2.watch_addr().stream();
+<a href=#1765 id=1765 data-nosnippet>1765</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr_stream = MergeBounded::from_iter([ep1_addr_stream, ep2_addr_stream]);
+<a href=#1766 id=1766 data-nosnippet>1766</a>        <span class="kw">let </span>task = tokio::spawn(<span class="kw">async move </span>{
+<a href=#1767 id=1767 data-nosnippet>1767</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(addr) = addr_stream.next().<span class="kw">await </span>{
+<a href=#1768 id=1768 data-nosnippet>1768</a>                discovery.add_endpoint_info(addr);
+<a href=#1769 id=1769 data-nosnippet>1769</a>            }
+<a href=#1770 id=1770 data-nosnippet>1770</a>        });
+<a href=#1771 id=1771 data-nosnippet>1771</a>
+<a href=#1772 id=1772 data-nosnippet>1772</a>        (AbortOnDropHandle::new(task), ep1, ep2)
+<a href=#1773 id=1773 data-nosnippet>1773</a>    }
+<a href=#1774 id=1774 data-nosnippet>1774</a>
+<a href=#1775 id=1775 data-nosnippet>1775</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
+<a href=#1776 id=1776 data-nosnippet>1776</a>    #[traced_test]
+<a href=#1777 id=1777 data-nosnippet>1777</a>    </span><span class="kw">async fn </span>test_two_devices_roundtrip_quinn_magic() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#1778 id=1778 data-nosnippet>1778</a>        <span class="kw">let </span>(_guard, m1, m2) = endpoint_pair().<span class="kw">await</span>;
+<a href=#1779 id=1779 data-nosnippet>1779</a>
+<a href=#1780 id=1780 data-nosnippet>1780</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">5 </span>{
+<a href=#1781 id=1781 data-nosnippet>1781</a>            <span class="macro">info!</span>(<span class="string">"\n-- round {i}"</span>);
+<a href=#1782 id=1782 data-nosnippet>1782</a>            run_roundtrip(
+<a href=#1783 id=1783 data-nosnippet>1783</a>                m1.clone(),
+<a href=#1784 id=1784 data-nosnippet>1784</a>                m2.clone(),
+<a href=#1785 id=1785 data-nosnippet>1785</a>                <span class="string">b"hello m1"</span>,
+<a href=#1786 id=1786 data-nosnippet>1786</a>                ExpectedLoss::AlmostNone,
+<a href=#1787 id=1787 data-nosnippet>1787</a>            )
+<a href=#1788 id=1788 data-nosnippet>1788</a>            .<span class="kw">await</span>;
+<a href=#1789 id=1789 data-nosnippet>1789</a>            run_roundtrip(
+<a href=#1790 id=1790 data-nosnippet>1790</a>                m2.clone(),
+<a href=#1791 id=1791 data-nosnippet>1791</a>                m1.clone(),
+<a href=#1792 id=1792 data-nosnippet>1792</a>                <span class="string">b"hello m2"</span>,
+<a href=#1793 id=1793 data-nosnippet>1793</a>                ExpectedLoss::AlmostNone,
+<a href=#1794 id=1794 data-nosnippet>1794</a>            )
+<a href=#1795 id=1795 data-nosnippet>1795</a>            .<span class="kw">await</span>;
+<a href=#1796 id=1796 data-nosnippet>1796</a>
+<a href=#1797 id=1797 data-nosnippet>1797</a>            <span class="macro">info!</span>(<span class="string">"\n-- larger data"</span>);
+<a href=#1798 id=1798 data-nosnippet>1798</a>            <span class="kw">let </span><span class="kw-2">mut </span>data = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">10 </span>* <span class="number">1024</span>];
+<a href=#1799 id=1799 data-nosnippet>1799</a>            <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
+<a href=#1800 id=1800 data-nosnippet>1800</a>            rng.fill_bytes(<span class="kw-2">&amp;mut </span>data);
+<a href=#1801 id=1801 data-nosnippet>1801</a>            run_roundtrip(m1.clone(), m2.clone(), <span class="kw-2">&amp;</span>data, ExpectedLoss::AlmostNone).<span class="kw">await</span>;
+<a href=#1802 id=1802 data-nosnippet>1802</a>            run_roundtrip(m2.clone(), m1.clone(), <span class="kw-2">&amp;</span>data, ExpectedLoss::AlmostNone).<span class="kw">await</span>;
+<a href=#1803 id=1803 data-nosnippet>1803</a>            <span class="macro">info!</span>(<span class="string">"\n-- round {i} finished"</span>);
 <a href=#1804 id=1804 data-nosnippet>1804</a>        }
 <a href=#1805 id=1805 data-nosnippet>1805</a>
 <a href=#1806 id=1806 data-nosnippet>1806</a>        <span class="prelude-val">Ok</span>(())
