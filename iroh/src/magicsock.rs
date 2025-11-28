@@ -850,7 +850,6 @@ impl Handle {
                 secret_key.public(),
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
-                transports.create_sender(),
                 discovery.clone(),
             )
         };

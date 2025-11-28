@@ -18,7 +18,6 @@ use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
     DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
-    transports::TransportsSender,
 };
 use crate::discovery::ConcurrentDiscovery;
 
@@ -58,7 +57,6 @@ pub(crate) struct RemoteMap {
     metrics: Arc<MagicsockMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    sender: TransportsSender,
     discovery: ConcurrentDiscovery,
 }
 
@@ -68,7 +66,6 @@ impl RemoteMap {
         local_endpoint_id: EndpointId,
         metrics: Arc<MagicsockMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        sender: TransportsSender,
         discovery: ConcurrentDiscovery,
     ) -> Self {
         Self {
@@ -78,7 +75,6 @@ impl RemoteMap {
             local_endpoint_id,
             metrics,
             local_direct_addrs,
-            sender,
             discovery,
         }
     }
@@ -137,7 +133,6 @@ impl RemoteMap {
             self.local_direct_addrs.clone(),
             self.relay_mapped_addrs.clone(),
             self.metrics.clone(),
-            self.sender.clone(),
             self.discovery.clone(),
         )
         .start();
