@@ -348,9 +348,6 @@ impl RemoteStateActor {
             RemoteStateMessage::ResolveRemote(addrs, tx) => {
                 self.handle_msg_resolve_remote(addrs, tx);
             }
-            RemoteStateMessage::Latency(tx) => {
-                self.handle_msg_latency(tx);
-            }
         }
     }
 
@@ -502,29 +499,6 @@ impl RemoteStateActor {
         self.paths.resolve_remote(tx);
         // Start discovery if we have no selected path.
         self.trigger_discovery();
-    }
-
-    /// Handles [`RemoteStateMessage::Latency`].
-    fn handle_msg_latency(&self, tx: oneshot::Sender<Option<Duration>>) {
-        let rtt = self.selected_path.get().and_then(|addr| {
-            for conn_state in self.connections.values() {
-                let Some(path_id) = conn_state.path_ids.get(&addr) else {
-                    continue;
-                };
-                if !conn_state.open_paths.contains_key(path_id) {
-                    continue;
-                }
-                if let Some(rtt) = conn_state
-                    .handle
-                    .upgrade()
-                    .and_then(|conn| conn.path_stats(*path_id).map(|stats| stats.rtt))
-                {
-                    return Some(rtt);
-                }
-            }
-            None
-        });
-        tx.send(rtt).ok();
     }
 
     fn handle_discovery_item(&mut self, item: Option<Result<DiscoveryItem, DiscoveryError>>) {
@@ -1018,11 +992,6 @@ pub(crate) enum RemoteStateMessage {
         BTreeSet<TransportAddr>,
         oneshot::Sender<Result<(), DiscoveryError>>,
     ),
-    /// Returns the current latency to the remote endpoint.
-    ///
-    /// TODO: This is more of a placeholder message currently.  Check MagicSock::latency.
-    #[debug("Latency(..)")]
-    Latency(oneshot::Sender<Option<Duration>>),
 }
 
 /// A handle to a [`RemoteStateActor`].
