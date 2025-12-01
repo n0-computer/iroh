@@ -211,24 +211,20 @@ fn prune_ip_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
     }
 
     // paths that were opened at one point but have previously been closed
-    let mut inactive = Vec::new();
+    let mut inactive = Vec::with_capacity(ip_paths.len());
     // paths where we attempted hole punching but it not successful
-    let mut failed = Vec::new();
+    let mut failed = Vec::with_capacity(ip_paths.len());
 
     for (addr, state) in ip_paths {
-        match state.abandoned {
-            // If a path has never been abandoned, it is either
-            // open currently or has never been dialed.
-            // Keep it.
-            None => {}
-            Some(abandoned) => {
-                if state.usable {
-                    // These are paths where holepunching succeeded at one point, but the path was closed.
-                    inactive.push((addr.clone(), abandoned));
-                } else {
-                    // These are paths where holepunching has been attempted and failed.
-                    failed.push(addr.clone());
-                }
+        // ignore paths that have never been abandoned, they are either currently
+        // open or were never dialed.
+        if let Some(abandoned) = state.abandoned {
+            if state.usable {
+                // paths where holepunching succeeded at one point, but the path was closed.
+                inactive.push((addr.clone(), abandoned));
+            } else {
+                // paths where holepunching has been attempted and failed.
+                failed.push(addr.clone());
             }
         }
     }
