@@ -391,18 +391,6 @@ impl MagicSock {
         })
     }
 
-    // TODO: Build better info to expose to the user about remote nodes.  We probably want
-    // to expose this as part of path information instead.
-    pub(crate) async fn latency(&self, eid: EndpointId) -> Option<Duration> {
-        let remote_state = self.remote_map.remote_state_actor(eid);
-        let (tx, rx) = oneshot::channel();
-        remote_state
-            .send(RemoteStateMessage::Latency(tx))
-            .await
-            .ok();
-        rx.await.unwrap_or_default()
-    }
-
     /// Stores a new set of direct addresses.
     ///
     /// If the direct addresses have changed from the previous set, they are published to
