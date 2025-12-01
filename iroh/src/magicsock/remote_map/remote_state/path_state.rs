@@ -231,7 +231,8 @@ fn prune_ip_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
     //
     // This implies that `inactive` is empty.
     if failed.len() == paths.len() {
-        failed.truncate(MAX_IP_PATHS);
+        // leave the max number of IP paths
+        failed.truncate(paths.len().saturating_sub(MAX_IP_PATHS));
     }
 
     // sort the potentially prunable from most recently closed to least recently closed
@@ -473,5 +474,27 @@ mod tests {
         for i in 0..20 {
             assert!(paths.contains_key(&ip_addr(i)));
         }
+    }
+
+    #[test]
+    fn test_prune_all_paths_failed() {
+        let mut paths = FxHashMap::default();
+        let now = Instant::now();
+
+        // Add 40 failed holepunch paths (all paths have failed)
+        for i in 0..40 {
+            paths.insert(ip_addr(i), path_state_failed_abandoned(now));
+        }
+
+        assert_eq!(40, paths.len());
+        prune_ip_paths(&mut paths);
+
+        // Should keep MAX_IP_PATHS instead of pruning everything
+        // This prevents catastrophic loss of all path information
+        assert_eq!(
+            MAX_IP_PATHS,
+            paths.len(),
+            "should keep MAX_IP_PATHS when all paths failed"
+        );
     }
 }
