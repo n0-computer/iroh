@@ -693,7 +693,8 @@ impl DirectAddrUpdateState {
         let msock = self.msock.clone();
 
         let run_done = self.run_done.clone();
-        task::spawn(
+        task::spawn_with_name(
+            "net_report",
             async move {
                 let fut = time::timeout(
                     NET_REPORT_TIMEOUT,
@@ -948,7 +949,8 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         actor.update_direct_addresses(None);
 
-        let actor_task = task::spawn(
+        let actor_task = task::spawn_with_name(
+            "magicsock_actor",
             actor
                 .run(shutdown_token.child_token(), local_addrs_watch)
                 .instrument(info_span!("actor")),

@@ -7,12 +7,14 @@ use std::{
 
 use clap::Parser;
 use n0_error::Result;
+use n0_future::task;
 use stats::Stats;
 use tokio::{
     runtime::{Builder, Runtime},
     sync::Semaphore,
 };
 use tracing::info;
+use tracing_subscriber::{EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub mod iroh;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
@@ -132,12 +134,18 @@ impl ConnectionSelector {
 }
 
 pub fn configure_tracing_subscriber() {
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .finish(),
-    )
-    .unwrap();
+    let registry = tracing_subscriber::registry();
+    #[cfg(feature = "tokio-console")]
+    let registry = registry.with(console_subscriber::spawn());
+    registry
+        .with(
+            fmt::layer().with_filter(
+                EnvFilter::try_from_default_env()
+                    .or_else(|_| EnvFilter::try_new("warn"))
+                    .unwrap(),
+            ),
+        )
+        .init();
 }
 
 pub fn rt() -> Runtime {
@@ -206,11 +214,11 @@ pub async fn client_handler(
 
     let sem = Arc::new(Semaphore::new(opt.max_streams));
     let results = Arc::new(Mutex::new(Vec::new()));
-    for _ in 0..opt.streams {
+    for i in 0..opt.streams {
         let permit = sem.clone().acquire_owned().await.unwrap();
         let results = results.clone();
         let connection = connection.clone();
-        tokio::spawn(async move {
+        task::spawn_with_name(&format!("client-stream-{i}"), async move {
             let result = match &*connection {
                 ConnectionSelector::Iroh(connection) => {
                     iroh::handle_client_stream(connection, opt.upload_size, opt.read_unordered)

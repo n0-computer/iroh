@@ -9,6 +9,7 @@ use iroh::{
     endpoint::{Connection, ConnectionError, QuinnTransportConfig, RecvStream, SendStream},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
+use n0_future::task;
 use tracing::{trace, warn};
 
 use crate::{
@@ -132,7 +133,6 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuinnTransportC
     let mut acks = quinn::AckFrequencyConfig::default();
     acks.ack_eliciting_threshold(10u32.into());
     config.ack_frequency_config(Some(acks));
-
     config
 }
 
@@ -242,7 +242,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
     let mut server_tasks = Vec::new();
 
     // Handle only the expected amount of clients
-    for _ in 0..opt.clients {
+    for i in 0..opt.clients {
         let incoming = endpoint.accept().await.unwrap();
         let accepting = match incoming.accept() {
             Ok(accepting) => accepting,
@@ -255,7 +255,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
         };
         let connection = accepting.await.context("handshake failed")?;
 
-        server_tasks.push(tokio::spawn(async move {
+        server_tasks.push(task::spawn_with_name(&format!("server-{i}"), async move {
             loop {
                 let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
                     Err(ConnectionError::ApplicationClosed(_)) => break,
@@ -267,7 +267,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 };
                 trace!("stream established");
 
-                tokio::spawn(async move {
+                task::spawn_with_name(&format!("drain-server-{i}"), async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
                     n0_error::Ok(())
