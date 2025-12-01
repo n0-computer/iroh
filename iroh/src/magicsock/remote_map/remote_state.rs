@@ -454,7 +454,6 @@ impl RemoteStateActor {
                     .insert(path_remote.clone(), Source::Connection { _0: Private });
                 self.paths.opened_path(&path_remote);
                 self.select_path();
-                self.prune_paths();
 
                 if path_remote_is_ip {
                     // We may have raced this with a relay address.  Try and add any
@@ -491,7 +490,6 @@ impl RemoteStateActor {
         self.paths.resolve_remote(tx);
         // Start discovery if we have no selected path.
         self.trigger_discovery();
-        self.prune_paths();
     }
 
     fn handle_discovery_item(&mut self, item: Option<Result<DiscoveryItem, DiscoveryError>>) {
@@ -515,7 +513,6 @@ impl RemoteStateActor {
                     let addrs =
                         to_transports_addr(self.endpoint_id, item.into_endpoint_addr().addrs);
                     self.paths.insert_multiple(addrs, source);
-                    self.prune_paths();
                 }
             }
         }
@@ -778,7 +775,6 @@ impl RemoteStateActor {
                 }
 
                 self.select_path();
-                self.prune_paths();
             }
             PathEvent::Abandoned { id, path_stats } => {
                 trace!(?path_stats, "path abandoned");
@@ -936,12 +932,6 @@ impl RemoteStateActor {
                 }
             }
         }
-    }
-
-    /// TODO: fix up docs once review indicates this is actually
-    /// the criteria for pruning.
-    fn prune_paths(&mut self) {
-        self.paths.prune_paths();
     }
 }
 

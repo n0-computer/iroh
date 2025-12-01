@@ -37,7 +37,7 @@ pub(super) struct RemotePathState {
 impl RemotePathState {
     /// Insert a new address into our list of potential paths.
     ///
-    /// This will emit pending resolve requests.
+    /// This will emit pending resolve requests and trigger pruning paths..
     pub(super) fn insert(&mut self, addr: transports::Addr, source: Source) {
         self.paths
             .entry(addr)
@@ -45,6 +45,7 @@ impl RemotePathState {
             .sources
             .insert(source.clone(), Instant::now());
         self.emit_pending_resolve_requests(None);
+        self.prune_paths();
     }
 
     /// Mark a path as abandoned.
@@ -70,7 +71,7 @@ impl RemotePathState {
 
     /// Inserts multiple addresses into our list of potential paths.
     ///
-    /// This will emit pending resolve requests.
+    /// This will emit pending resolve requests and trigger pruning paths.
     pub(super) fn insert_multiple(
         &mut self,
         addrs: impl Iterator<Item = transports::Addr>,
@@ -86,6 +87,7 @@ impl RemotePathState {
         }
         trace!("added addressing information");
         self.emit_pending_resolve_requests(None);
+        self.prune_paths();
     }
 
     /// Triggers `tx` immediately if there are any known paths, or store in the list of pending requests.
@@ -138,8 +140,12 @@ impl RemotePathState {
         }
     }
 
-    /// TODO: fix up docs once review indicates this is actually
-    /// the criteria for pruning.
+    /// Prune paths.
+    ///
+    /// Should be invoked any time we insert a new path.
+    ///
+    /// We currently only prune IP paths. For more information on the criteria
+    /// for when and which paths we prune, look at the [`prune_ip_paths`] function.
     pub(super) fn prune_paths(&mut self) {
         // right now we only prune IP paths
         prune_ip_paths(&mut self.paths);
@@ -161,11 +167,11 @@ pub(super) struct PathState {
     pub(super) sources: HashMap<Source, Instant>,
     /// The last time this path was proven usable.
     ///
-    /// If this is `false` and closed is `Some`, than we attempted to open this path, but
-    /// it did not work.
+    /// If this is `false` and the `abandoned` field is `Some`, than we attempted
+    /// to open this path, but it did not work.
     ///
-    /// If this is `false` and closed is `None`, than we do not know yet if this path is
-    /// usable.
+    /// If this is `false` and the `abandoned` field is `None`, than we do not know
+    ///  yet if this path is usable.
     pub(super) usable: bool,
     /// The last time a path with this addr was abandoned.
     ///
@@ -217,10 +223,10 @@ fn prune_ip_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
             None => {}
             Some(abandoned) => {
                 if state.usable {
-                    // These are paths where hole punching succeeded at one point, but the path was closed.
+                    // These are paths where holepunching succeeded at one point, but the path was closed.
                     inactive.push((addr.clone(), abandoned));
                 } else {
-                    // These are paths where hole punching has been attempted and failed.
+                    // These are paths where holepunching has been attempted and failed.
                     failed.push(addr.clone());
                 }
             }
