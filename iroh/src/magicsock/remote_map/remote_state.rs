@@ -51,16 +51,6 @@ mod guarded_channel;
 mod path_state;
 
 // TODO: use this
-// /// Number of addresses that are not active that we keep around per endpoint.
-// ///
-// /// See [`RemoteState::prune_direct_addresses`].
-// pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
-
-// TODO: use this
-// /// How long since an endpoint path was last alive before it might be pruned.
-// const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
-
-// TODO: use this
 // /// The latency at or under which we don't try to upgrade to a better path.
 // const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
@@ -461,7 +451,7 @@ impl RemoteStateActor {
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
                 self.paths
-                    .insert(path_remote, Source::Connection { _0: Private });
+                    .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -779,7 +769,7 @@ impl RemoteStateActor {
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id);
                     self.paths
-                        .insert(path_remote, Source::Connection { _0: Private });
+                        .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 }
 
                 self.select_path();
@@ -787,7 +777,9 @@ impl RemoteStateActor {
             PathEvent::Abandoned { id, path_stats } => {
                 trace!(?path_stats, "path abandoned");
                 // This is the last event for this path.
-                conn_state.remove_path(&id);
+                if let Some(addr) = conn_state.remove_path(&id) {
+                    self.paths.abandoned_path(&addr);
+                }
             }
             PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
                 let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
@@ -1073,11 +1065,13 @@ impl ConnectionState {
     }
 
     /// Completely removes a path from this connection.
-    fn remove_path(&mut self, path_id: &PathId) {
-        if let Some(addr) = self.paths.remove(path_id) {
-            self.path_ids.remove(&addr);
+    fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
+        let addr = self.paths.remove(path_id);
+        if let Some(ref addr) = addr {
+            self.path_ids.remove(addr);
         }
         self.open_paths.remove(path_id);
+        addr
     }
 
     /// Removes the path from the open paths.
