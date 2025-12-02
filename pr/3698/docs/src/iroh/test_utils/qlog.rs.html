@@ -24,11 +24,11 @@
 <a href=#24 id=24 data-nosnippet>24</a>}
 <a href=#25 id=25 data-nosnippet>25</a>
 <a href=#26 id=26 data-nosnippet>26</a><span class="kw">impl </span>QlogFileGroup {
-<a href=#27 id=27 data-nosnippet>27</a>    <span class="doccomment">/// Creates a new [`QlogFileGroup] that is only enabled if feature flags and environment variables match.
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="doccomment">/// Creates a new [`QlogFileGroup`] that is only enabled if feature flags and environment variables match.
 <a href=#28 id=28 data-nosnippet>28</a>    ///
 <a href=#29 id=29 data-nosnippet>29</a>    /// The qlog files will be written to `CARGO_MANIFEST_DIR/qlog`.
 <a href=#30 id=30 data-nosnippet>30</a>    ///
-<a href=#31 id=31 data-nosnippet>31</a>    /// The [`QlogFileGroup] can be used independent of feature flags, but it will only emit qlog files
+<a href=#31 id=31 data-nosnippet>31</a>    /// The [`QlogFileGroup`] can be used independent of feature flags, but it will only emit qlog files
 <a href=#32 id=32 data-nosnippet>32</a>    /// if the "qlog" feature is enabled and the environment variable IROH_TEST_QLOG is set to 1.
 <a href=#33 id=33 data-nosnippet>33</a>    </span><span class="kw">pub fn </span>from_env(title: <span class="kw">impl </span>ToString) -&gt; <span class="self">Self </span>{
 <a href=#34 id=34 data-nosnippet>34</a>        <span class="kw">let </span>directory = PathBuf::from(<span class="macro">env!</span>(<span class="string">"CARGO_MANIFEST_DIR"</span>)).join(<span class="string">"qlog"</span>);
@@ -59,7 +59,7 @@
 <a href=#59 id=59 data-nosnippet>59</a>
 <a href=#60 id=60 data-nosnippet>60</a>    <span class="doccomment">/// Creates a [`TransportConfig`] that emits qlog files with a client vantage point, if enabled.
 <a href=#61 id=61 data-nosnippet>61</a>    ///
-<a href=#62 id=62 data-nosnippet>62</a>    /// If the "qlog" feature is enabled, and the environment varialbe IROH_TEST_QLOG is set to "1",
+<a href=#62 id=62 data-nosnippet>62</a>    /// If the "qlog" feature is enabled, and the environment variable IROH_TEST_QLOG is set to "1",
 <a href=#63 id=63 data-nosnippet>63</a>    /// this returns a transport config that writes qlog configs to the configured output directory.
 <a href=#64 id=64 data-nosnippet>64</a>    /// Otherwise, a default transport config is returned.
 <a href=#65 id=65 data-nosnippet>65</a>    </span><span class="kw">pub fn </span>client(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw">impl </span>ToString) -&gt; <span class="prelude-ty">Result</span>&lt;TransportConfig&gt; {
@@ -80,7 +80,7 @@
 <a href=#80 id=80 data-nosnippet>80</a>
 <a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// Creates a [`TransportConfig`] that emits qlog files with a server vantage point, if enabled.
 <a href=#82 id=82 data-nosnippet>82</a>    ///
-<a href=#83 id=83 data-nosnippet>83</a>    /// If the "qlog" feature is enabled, and the environment varialbe IROH_TEST_QLOG is set to "1",
+<a href=#83 id=83 data-nosnippet>83</a>    /// If the "qlog" feature is enabled, and the environment variable IROH_TEST_QLOG is set to "1",
 <a href=#84 id=84 data-nosnippet>84</a>    /// this returns a transport config that writes qlog configs to the configured output directory.
 <a href=#85 id=85 data-nosnippet>85</a>    /// Otherwise, a default transport config is returned.
 <a href=#86 id=86 data-nosnippet>86</a>    </span><span class="kw">pub fn </span>server(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw">impl </span>ToString) -&gt; <span class="prelude-ty">Result</span>&lt;TransportConfig&gt; {
@@ -128,7 +128,7 @@
 <a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">let </span>full_name = <span class="macro">format!</span>(<span class="string">"{}.{}"</span>, <span class="self">self</span>.title, name);
 <a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">let </span>file_name = <span class="macro">format!</span>(<span class="string">"{full_name}.qlog"</span>);
 <a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">let </span>file_path = <span class="self">self</span>.directory.join(file_name);
-<a href=#131 id=131 data-nosnippet>131</a>        std::fs::create_dir_all(file_path.parent().unwrap())<span class="question-mark">?</span>;
+<a href=#131 id=131 data-nosnippet>131</a>        std::fs::create_dir_all(file_path.parent().expect(<span class="string">"joined above"</span>))<span class="question-mark">?</span>;
 <a href=#132 id=132 data-nosnippet>132</a>        <span class="kw">let </span>file = std::fs::File::create(file_path)<span class="question-mark">?</span>;
 <a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">let </span>writer = std::io::BufWriter::new(file);
 <a href=#134 id=134 data-nosnippet>134</a>
