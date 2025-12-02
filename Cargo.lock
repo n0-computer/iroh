@@ -1046,7 +1046,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1803,7 +1803,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2225,7 +2225,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#21a8fdc68f5e72f354cac0222513c2f0b3e67ad1"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#238057833af99ad7ae123dd9144436ee37a2d1e7"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2234,7 +2234,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2245,7 +2245,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#21a8fdc68f5e72f354cac0222513c2f0b3e67ad1"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#238057833af99ad7ae123dd9144436ee37a2d1e7"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2267,15 +2267,14 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn-udp"
-version = "0.5.12"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#21a8fdc68f5e72f354cac0222513c2f0b3e67ad1"
+version = "0.6.0"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#238057833af99ad7ae123dd9144436ee37a2d1e7"
 dependencies = [
  "cfg_aliases",
  "libc",
- "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2716,7 +2715,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#cd7aba545996781786b8168d49b876f0844ad3d7"
+source = "git+https://github.com/n0-computer/net-tools?branch=quinn-udp-git#7fc6d4483b449739e0e7a630022afba7e9b95c55"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2789,7 +2788,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3082,8 +3081,7 @@ checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 [[package]]
 name = "portmapper"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b575f975dcf03e258b0c7ab3f81497d7124f508884c37da66a7314aa2a8d467"
+source = "git+https://github.com/n0-computer/net-tools?branch=quinn-udp-git#7fc6d4483b449739e0e7a630022afba7e9b95c55"
 dependencies = [
  "base64",
  "bytes",
@@ -3249,7 +3247,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3286,9 +3284,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3557,7 +3555,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3680,7 +3678,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4223,7 +4221,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

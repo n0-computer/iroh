@@ -153,7 +153,6 @@ server = [
     "dep:sha1",
     "dep:toml",
     "dep:tracing-subscriber",
-    "quinn/log",
     "quinn/platform-verifier",
     "quinn/runtime-tokio",
     "iroh-metrics/service",
