@@ -34,16 +34,30 @@ pub(super) struct RemotePathState {
     pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
 }
 
+/// Describes the usability of this path, i.e. whether it has ever been opened,
+/// when it was closed, or if it has never been usable.
+#[derive(Debug, Default)]
+pub(super) enum PathStatus {
+    /// This path is open and active.
+    Open,
+    /// This path was once opened, but was abandoned at the given [`Instant`].
+    Inactive(Instant),
+    /// This path was never usable and was abandoned at the given [`Instant`].
+    Unusable,
+    /// We have not yet attempted holepunching, or holepunching is currently in
+    /// progress, so we do not know the usability of this path.
+    #[default]
+    Unknown,
+}
+
 impl RemotePathState {
-    /// Insert a new address into our list of potential paths.
+    /// Insert a new address of an open path into our list of paths.
     ///
-    /// This will emit pending resolve requests and trigger pruning paths..
-    pub(super) fn insert(&mut self, addr: transports::Addr, source: Source) {
-        self.paths
-            .entry(addr)
-            .or_default()
-            .sources
-            .insert(source.clone(), Instant::now());
+    /// This will emit pending resolve requests and trigger pruning paths.
+    pub(super) fn insert_open_path(&mut self, addr: transports::Addr, source: Source) {
+        let state = self.paths.entry(addr).or_default();
+        state.status = PathStatus::Open;
+        state.sources.insert(source.clone(), Instant::now());
         self.emit_pending_resolve_requests(None);
         self.prune_paths();
     }
@@ -54,22 +68,18 @@ impl RemotePathState {
     /// `RemotePathState`
     pub(super) fn abandoned_path(&mut self, addr: &transports::Addr) {
         if let Some(state) = self.paths.get_mut(addr) {
-            state.abandoned = Some(Instant::now());
+            match state.status {
+                PathStatus::Open | PathStatus::Inactive(_) => {
+                    state.status = PathStatus::Inactive(Instant::now());
+                }
+                PathStatus::Unusable | PathStatus::Unknown => {
+                    state.status = PathStatus::Unusable;
+                }
+            }
         }
     }
 
-    /// Mark a path as opened.
-    ///
-    /// If this path does not exist, it does nothing to the
-    /// `RemotePathState`
-    pub(super) fn opened_path(&mut self, addr: &transports::Addr) {
-        if let Some(state) = self.paths.get_mut(addr) {
-            state.usable = true;
-            state.abandoned = None;
-        }
-    }
-
-    /// Inserts multiple addresses into our list of potential paths.
+    /// Inserts multiple addresses of unknown status into our list of potential paths.
     ///
     /// This will emit pending resolve requests and trigger pruning paths.
     pub(super) fn insert_multiple(
@@ -165,26 +175,15 @@ pub(super) struct PathState {
     /// We keep track of only the latest [`Instant`] for each [`Source`], keeping the size
     /// of the map of sources down to one entry per type of source.
     pub(super) sources: HashMap<Source, Instant>,
-    /// The last time this path was proven usable.
-    ///
-    /// If this is `false` and the `abandoned` field is `Some`, than we attempted
-    /// to open this path, but it did not work.
-    ///
-    /// If this is `false` and the `abandoned` field is `None`, than we do not know
-    ///  yet if this path is usable.
-    pub(super) usable: bool,
-    /// The last time a path with this addr was abandoned.
-    ///
-    /// If this is `Some` and usable is `None`, than we attempted to use this path and it
-    /// did not work.
-    pub(super) abandoned: Option<Instant>,
+    /// The usability status of this path.
+    pub(super) status: PathStatus,
 }
 
 /// Prunes the IP paths in the paths HashMap.
 ///
 /// Only prunes if the number of IP paths is above [`MAX_IP_PATHS`].
 ///
-/// Keeps paths that are active or have never been holepunched.
+/// Keeps paths that are open or of unknown status.
 ///
 /// Always prunes paths that have unsuccessfully holepunched.
 ///
@@ -216,15 +215,17 @@ fn prune_ip_paths(paths: &mut FxHashMap<transports::Addr, PathState>) {
     let mut failed = Vec::with_capacity(ip_paths.len());
 
     for (addr, state) in ip_paths {
-        // ignore paths that have never been abandoned, they are either currently
-        // open or were never dialed.
-        if let Some(abandoned) = state.abandoned {
-            if state.usable {
+        match state.status {
+            PathStatus::Inactive(t) => {
                 // paths where holepunching succeeded at one point, but the path was closed.
-                inactive.push((addr.clone(), abandoned));
-            } else {
+                inactive.push((addr.clone(), t));
+            }
+            PathStatus::Unusable => {
                 // paths where holepunching has been attempted and failed.
                 failed.push(addr.clone());
+            }
+            _ => {
+                // ignore paths that are open or the status is unknown
             }
         }
     }
@@ -268,19 +269,17 @@ mod tests {
         transports::Addr::Ip(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port).into())
     }
 
-    fn path_state_usable_abandoned(abandoned: Instant) -> PathState {
+    fn path_state_inactive(closed: Instant) -> PathState {
         PathState {
             sources: HashMap::new(),
-            usable: true,
-            abandoned: Some(abandoned),
+            status: PathStatus::Inactive(closed),
         }
     }
 
-    fn path_state_failed_abandoned(abandoned: Instant) -> PathState {
+    fn path_state_unusable() -> PathState {
         PathState {
             sources: HashMap::new(),
-            usable: false,
-            abandoned: Some(abandoned),
+            status: PathStatus::Unusable,
         }
     }
 
@@ -310,7 +309,6 @@ mod tests {
     #[test]
     fn test_prune_failed_holepunch() {
         let mut paths = FxHashMap::default();
-        let now = Instant::now();
 
         // Add 20 active paths
         for i in 0..20 {
@@ -319,7 +317,7 @@ mod tests {
 
         // Add 15 failed holepunch paths (must_prune)
         for i in 20..35 {
-            paths.insert(ip_addr(i), path_state_failed_abandoned(now));
+            paths.insert(ip_addr(i), path_state_unusable());
         }
 
         prune_ip_paths(&mut paths);
@@ -344,14 +342,11 @@ mod tests {
             paths.insert(ip_addr(i), PathState::default());
         }
 
-        // Add 20 usable but abandoned paths with different abandon times
+        // Add 20 inactive paths with different abandon times
         // Ports 15-34, with port 34 being most recently abandoned
         for i in 0..20 {
             let abandoned_time = now - Duration::from_secs((20 - i) as u64);
-            paths.insert(
-                ip_addr(15 + i as u16),
-                path_state_usable_abandoned(abandoned_time),
-            );
+            paths.insert(ip_addr(15 + i as u16), path_state_inactive(abandoned_time));
         }
 
         assert_eq!(35, paths.len());
@@ -392,16 +387,13 @@ mod tests {
 
         // Add 5 failed holepunch paths
         for i in 15..20 {
-            paths.insert(ip_addr(i), path_state_failed_abandoned(now));
+            paths.insert(ip_addr(i), path_state_unusable());
         }
 
         // Add 15 usable but abandoned paths
         for i in 0..15 {
             let abandoned_time = now - Duration::from_secs((15 - i) as u64);
-            paths.insert(
-                ip_addr(20 + i as u16),
-                path_state_usable_abandoned(abandoned_time),
-            );
+            paths.insert(ip_addr(20 + i as u16), path_state_inactive(abandoned_time));
         }
 
         assert_eq!(35, paths.len());
@@ -430,11 +422,10 @@ mod tests {
     #[test]
     fn test_prune_non_ip_paths_not_counted() {
         let mut paths = FxHashMap::default();
-        let now = Instant::now();
 
         // Add 25 IP paths (under MAX_IP_PATHS)
         for i in 0..25 {
-            paths.insert(ip_addr(i), path_state_failed_abandoned(now));
+            paths.insert(ip_addr(i), path_state_unusable());
         }
 
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
@@ -458,16 +449,15 @@ mod tests {
     #[test]
     fn test_prune_preserves_never_dialed() {
         let mut paths = FxHashMap::default();
-        let now = Instant::now();
 
-        // Add 20 never-dialed paths (abandoned = None, usable = false)
+        // Add 20 never-dialed paths (PathStatus::Unknown)
         for i in 0..20 {
             paths.insert(ip_addr(i), PathState::default());
         }
 
         // Add 15 failed paths to trigger pruning
         for i in 20..35 {
-            paths.insert(ip_addr(i), path_state_failed_abandoned(now));
+            paths.insert(ip_addr(i), path_state_unusable());
         }
 
         prune_ip_paths(&mut paths);
@@ -481,11 +471,10 @@ mod tests {
     #[test]
     fn test_prune_all_paths_failed() {
         let mut paths = FxHashMap::default();
-        let now = Instant::now();
 
         // Add 40 failed holepunch paths (all paths have failed)
         for i in 0..40 {
-            paths.insert(ip_addr(i), path_state_failed_abandoned(now));
+            paths.insert(ip_addr(i), path_state_unusable());
         }
 
         assert_eq!(40, paths.len());
@@ -498,5 +487,67 @@ mod tests {
             paths.len(),
             "should keep MAX_IP_PATHS when all paths failed"
         );
+    }
+
+    #[test]
+    fn test_insert_open_path() {
+        let mut state = RemotePathState::default();
+        let addr = ip_addr(1000);
+        let source = Source::Udp;
+
+        assert!(state.is_empty());
+
+        state.insert_open_path(addr.clone(), source.clone());
+
+        assert!(!state.is_empty());
+        assert!(state.paths.contains_key(&addr));
+        let path = &state.paths[&addr];
+        assert!(matches!(path.status, PathStatus::Open));
+        assert_eq!(path.sources.len(), 1);
+        assert!(path.sources.contains_key(&source));
+    }
+
+    #[test]
+    fn test_abandoned_path() {
+        let mut state = RemotePathState::default();
+
+        // Test: Open goes to Inactive
+        let addr_open = ip_addr(1000);
+        state.insert_open_path(addr_open.clone(), Source::Udp);
+        assert!(matches!(state.paths[&addr_open].status, PathStatus::Open));
+
+        state.abandoned_path(&addr_open);
+        assert!(matches!(
+            state.paths[&addr_open].status,
+            PathStatus::Inactive(_)
+        ));
+
+        // Test: Inactive stays Inactive
+        state.abandoned_path(&addr_open);
+        assert!(matches!(
+            state.paths[&addr_open].status,
+            PathStatus::Inactive(_)
+        ));
+
+        // Test: Unknown goes to Unusable
+        let addr_unknown = ip_addr(2000);
+        state.insert_multiple([addr_unknown.clone()].into_iter(), Source::Relay);
+        assert!(matches!(
+            state.paths[&addr_unknown].status,
+            PathStatus::Unknown
+        ));
+
+        state.abandoned_path(&addr_unknown);
+        assert!(matches!(
+            state.paths[&addr_unknown].status,
+            PathStatus::Unusable
+        ));
+
+        // Test: Unusable stays Unusable
+        state.abandoned_path(&addr_unknown);
+        assert!(matches!(
+            state.paths[&addr_unknown].status,
+            PathStatus::Unusable
+        ));
     }
 }

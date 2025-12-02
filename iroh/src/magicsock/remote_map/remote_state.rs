@@ -451,8 +451,7 @@ impl RemoteStateActor {
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
                 self.paths
-                    .insert(path_remote.clone(), Source::Connection { _0: Private });
-                self.paths.opened_path(&path_remote);
+                    .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -770,8 +769,7 @@ impl RemoteStateActor {
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id);
                     self.paths
-                        .insert(path_remote.clone(), Source::Connection { _0: Private });
-                    self.paths.opened_path(&path_remote);
+                        .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 }
 
                 self.select_path();
