@@ -1803,7 +1803,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2234,7 +2234,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2272,7 +2272,7 @@ source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#238057833af9
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -2715,7 +2715,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=quinn-udp-git#21da3b34199b93b5aecf8d2503b3489a4502e9ab"
+source = "git+https://github.com/n0-computer/net-tools?branch=quinn-udp-git#7fc6d4483b449739e0e7a630022afba7e9b95c55"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3081,7 +3081,7 @@ checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 [[package]]
 name = "portmapper"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=quinn-udp-git#21da3b34199b93b5aecf8d2503b3489a4502e9ab"
+source = "git+https://github.com/n0-computer/net-tools?branch=quinn-udp-git#7fc6d4483b449739e0e7a630022afba7e9b95c55"
 dependencies = [
  "base64",
  "bytes",
@@ -3247,7 +3247,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3284,7 +3284,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
