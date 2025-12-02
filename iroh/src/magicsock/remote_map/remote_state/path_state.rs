@@ -42,7 +42,7 @@ pub(super) enum PathStatus {
     Open,
     /// This path was once opened, but was abandoned at the given [`Instant`].
     Inactive(Instant),
-    /// This path was never usable and was abandoned at the given [`Instant`].
+    /// This path was never usable (we attempted holepunching and it didn't work).
     Unusable,
     /// We have not yet attempted holepunching, or holepunching is currently in
     /// progress, so we do not know the usability of this path.
