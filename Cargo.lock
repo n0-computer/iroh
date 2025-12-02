@@ -2053,7 +2053,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
- "iroh-quinn-udp",
+ "iroh-quinn-udp 0.6.0",
  "iroh-relay",
  "n0-error",
  "n0-future",
@@ -2225,12 +2225,12 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#21a8fdc68f5e72f354cac0222513c2f0b3e67ad1"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#238057833af99ad7ae123dd9144436ee37a2d1e7"
 dependencies = [
  "bytes",
  "cfg_aliases",
  "iroh-quinn-proto",
- "iroh-quinn-udp",
+ "iroh-quinn-udp 0.6.0",
  "pin-project-lite",
  "rustc-hash",
  "rustls",
@@ -2245,7 +2245,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#21a8fdc68f5e72f354cac0222513c2f0b3e67ad1"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#238057833af99ad7ae123dd9144436ee37a2d1e7"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2267,12 +2267,25 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn-udp"
-version = "0.5.12"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#21a8fdc68f5e72f354cac0222513c2f0b3e67ad1"
+version = "0.5.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c53afaa1049f7c83ea1331f5ebb9e6ebc5fdd69c468b7a22dd598b02c9bcc973"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
+ "socket2 0.5.10",
+ "tracing",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "iroh-quinn-udp"
+version = "0.6.0"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#238057833af99ad7ae123dd9144436ee37a2d1e7"
+dependencies = [
+ "cfg_aliases",
+ "libc",
  "socket2 0.6.1",
  "tracing",
  "windows-sys 0.59.0",
@@ -2722,7 +2735,7 @@ dependencies = [
  "bytes",
  "cfg_aliases",
  "derive_more 2.0.1",
- "iroh-quinn-udp",
+ "iroh-quinn-udp 0.5.7",
  "js-sys",
  "libc",
  "n0-error",
@@ -4993,7 +5006,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
