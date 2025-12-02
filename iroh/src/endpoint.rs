@@ -1315,7 +1315,10 @@ fn is_cgi() -> bool {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
@@ -1677,11 +1680,13 @@ mod tests {
         // discovery.  Wait until there is a direct connection.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
+        let qlog = Arc::new(QlogFileGroup::from_env("two_relay_only_becomes_direct"));
 
         #[instrument(name = "client", skip_all)]
         async fn connect(
             relay_map: RelayMap,
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
+            qlog: Arc<QlogFileGroup>,
         ) -> Result<quinn::ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let secret = SecretKey::generate(&mut rng);
@@ -1690,6 +1695,7 @@ mod tests {
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .insecure_skip_relay_cert_verify(true)
                 .relay_mode(RelayMode::Custom(relay_map))
+                .transport_config(qlog.client("client")?)
                 .bind()
                 .await?;
             info!(me = %ep.id().fmt_short(), "client starting");
@@ -1717,6 +1723,7 @@ mod tests {
         async fn accept(
             relay_map: RelayMap,
             node_addr_tx: oneshot::Sender<EndpointAddr>,
+            qlog: Arc<QlogFileGroup>,
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
             let secret = SecretKey::generate(&mut rng);
@@ -1724,6 +1731,7 @@ mod tests {
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .insecure_skip_relay_cert_verify(true)
+                .transport_config(qlog.server("server")?)
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -1748,8 +1756,8 @@ mod tests {
             Ok(())
         }
 
-        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
-        let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
+        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx, qlog.clone()));
+        let client_task = tokio::spawn(connect(relay_map, node_addr_rx, qlog));
 
         server_task.await.anyerr()??;
         let conn_closed = dbg!(client_task.await.anyerr()??);
