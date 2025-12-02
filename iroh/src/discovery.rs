@@ -502,13 +502,15 @@ mod tests {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StackResultExt};
     use n0_future::{StreamExt, time};
-    use quinn::{IdleTimeout, TransportConfig};
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{Endpoint, RelayMode, endpoint::ConnectOptions};
+    use crate::{
+        Endpoint, RelayMode,
+        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfigBuilder},
+    };
 
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
 
@@ -725,10 +727,10 @@ mod tests {
         .await;
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
-        let mut config = TransportConfig::default();
+        let mut config = QuicTransportConfigBuilder::default();
         config.keep_alive_interval(Some(Duration::from_secs(1)));
         config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()));
-        let opts = ConnectOptions::new().with_transport_config(Arc::new(config));
+        let opts = ConnectOptions::new().with_transport_config(config.build());
 
         let res = ep2
             .connect_with_opts(ep1.id(), TEST_ALPN, opts)

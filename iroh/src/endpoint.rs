@@ -63,11 +63,12 @@ pub use self::{
         AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
         CryptoError, CryptoServerConfig, ExportKeyingMaterialError, FrameStats, HandshakeTokenKey,
-        MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, ReadDatagram, ReadError, ReadExactError,
-        ReadToEndError, RecvStream, ResetError, RetryError, SendDatagramError, SendStream,
-        ServerConfig, StoppedError, StreamId, TransportConfig as QuicTransportConfig,
-        TransportError, TransportErrorCode, UdpStats, UnsupportedVersion, VarInt,
-        WeakConnectionHandle, WriteError, Written,
+        IdleTimeout, MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, ReadDatagram, ReadError,
+        ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError, SendDatagramError,
+        SendStream, ServerConfig, StoppedError, StreamId, TransportConfig as QuicTransportConfig,
+        TransportConfigBuilder as QuicTransportConfigBuilder, TransportError, TransportErrorCode,
+        UdpStats, UnsupportedVersion, VarInt, VarIntBoundsExceeded, WeakConnectionHandle,
+        WriteError, Written,
     },
 };
 pub use crate::magicsock::transports::TransportConfig;
@@ -82,7 +83,7 @@ pub use crate::magicsock::transports::TransportConfig;
 pub struct Builder {
     secret_key: Option<SecretKey>,
     alpn_protocols: Vec<Vec<u8>>,
-    transport_config: QuicTransportConfig,
+    transport_config: QuicTransportConfigBuilder,
     keylog: bool,
     discovery: Vec<Box<dyn DynIntoDiscovery>>,
     discovery_user_data: Option<UserData>,
@@ -130,7 +131,7 @@ impl Builder {
 
     /// Creates an empty builder with no discovery services.
     pub fn empty(relay_mode: RelayMode) -> Self {
-        let mut transport_config = QuicTransportConfig::default();
+        let mut transport_config = QuicTransportConfigBuilder::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
         let mut transports = vec![
@@ -145,7 +146,7 @@ impl Builder {
         Self {
             secret_key: Default::default(),
             alpn_protocols: Default::default(),
-            transport_config: QuicTransportConfig::default(),
+            transport_config: QuicTransportConfigBuilder::default(),
             keylog: Default::default(),
             discovery: Default::default(),
             discovery_user_data: Default::default(),
@@ -182,7 +183,7 @@ impl Builder {
             .set_max_remote_nat_traversal_addresses(MAX_MULTIPATH_PATHS as u8);
 
         let static_config = StaticConfig {
-            transport_config: Arc::new(self.transport_config),
+            transport_config: self.transport_config.build(),
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
             keylog: self.keylog,
         };
@@ -391,7 +392,7 @@ impl Builder {
     ///
     /// Please be aware that changing some settings may have adverse effects on establishing
     /// and maintaining direct connections.
-    pub fn transport_config(mut self, transport_config: QuicTransportConfig) -> Self {
+    pub fn transport_config(mut self, transport_config: QuicTransportConfigBuilder) -> Self {
         self.transport_config = transport_config;
         self
     }
@@ -480,7 +481,7 @@ impl Builder {
 #[derive(Debug)]
 struct StaticConfig {
     tls_config: tls::TlsConfig,
-    transport_config: Arc<QuicTransportConfig>,
+    transport_config: quic::TransportConfig,
     keylog: bool,
 }
 
@@ -491,7 +492,7 @@ impl StaticConfig {
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(self.transport_config.clone());
+        server_config.transport_config(self.transport_config.0.clone());
 
         server_config
     }
@@ -745,7 +746,7 @@ impl Endpoint {
                 .tls_config
                 .make_client_config(alpn_protocols, self.static_config.keylog);
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-            client_config.transport_config(transport_config);
+            client_config.transport_config(transport_config.0.clone());
             client_config
         };
 
@@ -1168,7 +1169,7 @@ impl Endpoint {
 /// Options for the [`Endpoint::connect_with_opts`] function.
 #[derive(Default, Debug, Clone)]
 pub struct ConnectOptions {
-    transport_config: Option<Arc<QuicTransportConfig>>,
+    transport_config: Option<QuicTransportConfig>,
     additional_alpns: Vec<Vec<u8>>,
 }
 
@@ -1182,7 +1183,7 @@ impl ConnectOptions {
     }
 
     /// Sets the QUIC transport config options for this connection.
-    pub fn with_transport_config(mut self, transport_config: Arc<QuicTransportConfig>) -> Self {
+    pub fn with_transport_config(mut self, transport_config: QuicTransportConfig) -> Self {
         self.transport_config = Some(transport_config);
         self
     }
