@@ -24,11 +24,11 @@ pub struct QlogFileGroup {
 }
 
 impl QlogFileGroup {
-    /// Creates a new [`QlogFileGroup] that is only enabled if feature flags and environment variables match.
+    /// Creates a new [`QlogFileGroup`] that is only enabled if feature flags and environment variables match.
     ///
     /// The qlog files will be written to `CARGO_MANIFEST_DIR/qlog`.
     ///
-    /// The [`QlogFileGroup] can be used independent of feature flags, but it will only emit qlog files
+    /// The [`QlogFileGroup`] can be used independent of feature flags, but it will only emit qlog files
     /// if the "qlog" feature is enabled and the environment variable IROH_TEST_QLOG is set to 1.
     pub fn from_env(title: impl ToString) -> Self {
         let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("qlog");
@@ -59,7 +59,7 @@ impl QlogFileGroup {
 
     /// Creates a [`TransportConfig`] that emits qlog files with a client vantage point, if enabled.
     ///
-    /// If the "qlog" feature is enabled, and the environment varialbe IROH_TEST_QLOG is set to "1",
+    /// If the "qlog" feature is enabled, and the environment variable IROH_TEST_QLOG is set to "1",
     /// this returns a transport config that writes qlog configs to the configured output directory.
     /// Otherwise, a default transport config is returned.
     pub fn client(&self, name: impl ToString) -> Result<TransportConfig> {
@@ -80,7 +80,7 @@ impl QlogFileGroup {
 
     /// Creates a [`TransportConfig`] that emits qlog files with a server vantage point, if enabled.
     ///
-    /// If the "qlog" feature is enabled, and the environment varialbe IROH_TEST_QLOG is set to "1",
+    /// If the "qlog" feature is enabled, and the environment variable IROH_TEST_QLOG is set to "1",
     /// this returns a transport config that writes qlog configs to the configured output directory.
     /// Otherwise, a default transport config is returned.
     pub fn server(&self, name: impl ToString) -> Result<TransportConfig> {
@@ -128,7 +128,7 @@ impl QlogFileGroup {
         let full_name = format!("{}.{}", self.title, name);
         let file_name = format!("{full_name}.qlog");
         let file_path = self.directory.join(file_name);
-        std::fs::create_dir_all(file_path.parent().unwrap())?;
+        std::fs::create_dir_all(file_path.parent().expect("joined above"))?;
         let file = std::fs::File::create(file_path)?;
         let writer = std::io::BufWriter::new(file);
 
