@@ -146,11 +146,13 @@ wasm-bindgen-test = "0.3"
 cfg_aliases = { version = "0.2.1" }
 
 [features]
-default = ["metrics"]
+default = ["metrics", "fast-apple-datapath"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht"]
+# Use private Apple APIs to send multiple packets in a single syscall.
+fast-apple-datapath = ["quinn/fast-apple-datapath"]
 
 [package.metadata.docs.rs]
 all-features = true
