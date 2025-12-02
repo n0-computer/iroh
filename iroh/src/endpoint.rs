@@ -48,30 +48,27 @@ use crate::{
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
+pub mod quic;
 
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
-// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
-pub use quinn::{
-    AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
-    ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
-    PathStats, ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-    RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId,
-    TransportConfig as QuinnTransportConfig, VarInt, WeakConnectionHandle, WriteError,
-};
-pub use quinn_proto::{
-    FrameStats, TransportError, TransportErrorCode, UdpStats, Written,
-    congestion::{Controller, ControllerFactory},
-    crypto::{
-        AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
-        ServerConfig as CryptoServerConfig, UnsupportedVersion,
-    },
-};
 
-pub use self::connection::{
-    Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-    ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt,
-    IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError,
-    ZeroRttStatus,
+pub use self::{
+    connection::{
+        Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
+        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt,
+        IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        RemoteEndpointIdError, ZeroRttStatus,
+    },
+    quic::{
+        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
+        ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
+        CryptoError, CryptoServerConfig, ExportKeyingMaterialError, FrameStats, HandshakeTokenKey,
+        MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, ReadDatagram, ReadError, ReadExactError,
+        ReadToEndError, RecvStream, ResetError, RetryError, SendDatagramError, SendStream,
+        ServerConfig, StoppedError, StreamId, TransportConfig as QuicTransportConfig,
+        TransportError, TransportErrorCode, UdpStats, UnsupportedVersion, VarInt,
+        WeakConnectionHandle, WriteError, Written,
+    },
 };
 pub use crate::magicsock::transports::TransportConfig;
 
@@ -85,7 +82,7 @@ pub use crate::magicsock::transports::TransportConfig;
 pub struct Builder {
     secret_key: Option<SecretKey>,
     alpn_protocols: Vec<Vec<u8>>,
-    transport_config: quinn::TransportConfig,
+    transport_config: QuicTransportConfig,
     keylog: bool,
     discovery: Vec<Box<dyn DynIntoDiscovery>>,
     discovery_user_data: Option<UserData>,
@@ -133,7 +130,7 @@ impl Builder {
 
     /// Creates an empty builder with no discovery services.
     pub fn empty(relay_mode: RelayMode) -> Self {
-        let mut transport_config = quinn::TransportConfig::default();
+        let mut transport_config = QuicTransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
 
         let mut transports = vec![
@@ -148,7 +145,7 @@ impl Builder {
         Self {
             secret_key: Default::default(),
             alpn_protocols: Default::default(),
-            transport_config: quinn::TransportConfig::default(),
+            transport_config: QuicTransportConfig::default(),
             keylog: Default::default(),
             discovery: Default::default(),
             discovery_user_data: Default::default(),
@@ -383,7 +380,7 @@ impl Builder {
 
     // # Methods for more specialist customisation.
 
-    /// Sets a custom [`quinn::TransportConfig`] for this endpoint.
+    /// Sets a custom [`QuicTransportConfig`] for this endpoint.
     ///
     /// The transport config contains parameters governing the QUIC state machine.
     ///
@@ -394,7 +391,7 @@ impl Builder {
     ///
     /// Please be aware that changing some settings may have adverse effects on establishing
     /// and maintaining direct connections.
-    pub fn transport_config(mut self, transport_config: quinn::TransportConfig) -> Self {
+    pub fn transport_config(mut self, transport_config: QuicTransportConfig) -> Self {
         self.transport_config = transport_config;
         self
     }
@@ -483,7 +480,7 @@ impl Builder {
 #[derive(Debug)]
 struct StaticConfig {
     tls_config: tls::TlsConfig,
-    transport_config: Arc<quinn::TransportConfig>,
+    transport_config: Arc<QuicTransportConfig>,
     keylog: bool,
 }
 
@@ -1171,7 +1168,7 @@ impl Endpoint {
 /// Options for the [`Endpoint::connect_with_opts`] function.
 #[derive(Default, Debug, Clone)]
 pub struct ConnectOptions {
-    transport_config: Option<Arc<quinn::TransportConfig>>,
+    transport_config: Option<Arc<QuicTransportConfig>>,
     additional_alpns: Vec<Vec<u8>>,
 }
 
@@ -1185,7 +1182,7 @@ impl ConnectOptions {
     }
 
     /// Sets the QUIC transport config options for this connection.
-    pub fn with_transport_config(mut self, transport_config: Arc<quinn::TransportConfig>) -> Self {
+    pub fn with_transport_config(mut self, transport_config: Arc<QuicTransportConfig>) -> Self {
         self.transport_config = Some(transport_config);
         self
     }
