@@ -39,7 +39,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
     let server_span = tracing::error_span!("server");
     let runtime = rt();
     #[cfg(feature = "qlog")]
-    let qlog = QlogFileGroup::from_env("iroh-bench");
+    let qlog = QlogFileGroup::from_env("iroh-bench-iroh");
 
     #[cfg(feature = "local-relay")]
     let (relay_url, relay_server) = if opt.only_relay {
@@ -129,6 +129,9 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
 pub fn run_quinn(opt: Opt) -> Result<()> {
     use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 
+    #[cfg(feature = "qlog")]
+    let qlog = QlogFileGroup::from_env("iroh-bench-quinn");
+
     let server_span = tracing::error_span!("server");
     let runtime = rt();
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
@@ -137,7 +140,14 @@ pub fn run_quinn(opt: Opt) -> Result<()> {
 
     let (server_addr, endpoint) = {
         let _guard = server_span.enter();
-        quinn::server_endpoint(&runtime, cert.clone(), key.into(), &opt)
+        quinn::server_endpoint(
+            &runtime,
+            cert.clone(),
+            key.into(),
+            &opt,
+            #[cfg(feature = "qlog")]
+            &qlog,
+        )
     };
 
     let server_thread = std::thread::spawn(move || {
@@ -150,10 +160,18 @@ pub fn run_quinn(opt: Opt) -> Result<()> {
     let mut handles = Vec::new();
     for id in 0..opt.clients {
         let cert = cert.clone();
+        #[cfg(feature = "qlog")]
+        let qlog = qlog.clone();
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
             let runtime = rt();
-            match runtime.block_on(quinn::client(server_addr, cert, opt)) {
+            match runtime.block_on(quinn::client(
+                server_addr,
+                cert,
+                opt,
+                #[cfg(feature = "qlog")]
+                &qlog,
+            )) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
                     eprintln!("client failed: {e:#}");

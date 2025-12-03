@@ -5,6 +5,8 @@ use std::{
 };
 
 use bytes::Bytes;
+#[cfg(feature = "qlog")]
+use iroh::test_utils::{QlogFileGroup, VantagePointType};
 use n0_error::{Result, StdResultExt};
 use quinn::{
     Connection, Endpoint, RecvStream, SendStream, TransportConfig, crypto::rustls::QuicClientConfig,
@@ -27,10 +29,17 @@ pub fn server_endpoint(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
     opt: &Opt,
+    #[cfg(feature = "qlog")] qlog: &QlogFileGroup,
 ) -> (SocketAddr, quinn::Endpoint) {
     let cert_chain = vec![cert];
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
-    server_config.transport = Arc::new(transport_config(opt.max_streams, opt.initial_mtu));
+    server_config.transport = Arc::new(transport_config(
+        "server",
+        opt.max_streams,
+        opt.initial_mtu,
+        #[cfg(feature = "qlog")]
+        qlog,
+    ));
 
     let addr = if opt.use_ipv6 {
         IpAddr::V6(Ipv6Addr::LOCALHOST)
@@ -51,9 +60,17 @@ pub async fn client(
     server_addr: SocketAddr,
     server_cert: CertificateDer<'static>,
     opt: Opt,
+    #[cfg(feature = "qlog")] qlog: &QlogFileGroup,
 ) -> Result<ClientStats> {
     let client_start = std::time::Instant::now();
-    let (endpoint, connection) = connect_client(server_addr, server_cert, opt).await?;
+    let (endpoint, connection) = connect_client(
+        server_addr,
+        server_cert,
+        opt,
+        #[cfg(feature = "qlog")]
+        qlog,
+    )
+    .await?;
     let client_connect_time = client_start.elapsed();
     let mut res = client_handler(
         EndpointSelector::Quinn(endpoint),
@@ -70,6 +87,7 @@ pub async fn connect_client(
     server_addr: SocketAddr,
     server_cert: CertificateDer<'_>,
     opt: Opt,
+    #[cfg(feature = "qlog")] qlog: &QlogFileGroup,
 ) -> Result<(::quinn::Endpoint, Connection)> {
     let addr = if opt.use_ipv6 {
         IpAddr::V6(Ipv6Addr::LOCALHOST)
@@ -92,7 +110,13 @@ pub async fn connect_client(
 
     let mut client_config =
         quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).anyerr()?));
-    client_config.transport_config(Arc::new(transport_config(opt.max_streams, opt.initial_mtu)));
+    client_config.transport_config(Arc::new(transport_config(
+        "client",
+        opt.max_streams,
+        opt.initial_mtu,
+        #[cfg(feature = "qlog")]
+        qlog,
+    )));
 
     let connection = endpoint
         .connect_with(client_config, server_addr, "localhost")
@@ -104,9 +128,20 @@ pub async fn connect_client(
     Ok((endpoint, connection))
 }
 
-pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig {
+#[allow(unused_variables)]
+pub fn transport_config(
+    name: &str,
+    max_streams: usize,
+    initial_mtu: u16,
+    #[cfg(feature = "qlog")] qlog: &QlogFileGroup,
+) -> TransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
+    #[cfg(feature = "qlog")]
+    let mut config = qlog
+        .transport_config(name.into(), VantagePointType::Server)
+        .unwrap();
+    #[cfg(not(feature = "qlog"))]
     let mut config = TransportConfig::default();
     config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
     config.initial_mtu(initial_mtu);
