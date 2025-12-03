@@ -4,6 +4,8 @@ use std::{
 };
 
 use bytes::Bytes;
+#[cfg(feature = "qlog")]
+use iroh::test_utils::{QlogFileGroup, VantagePointType};
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
     endpoint::{Connection, ConnectionError, QuinnTransportConfig, RecvStream, SendStream},
@@ -22,6 +24,7 @@ pub fn server_endpoint(
     rt: &tokio::runtime::Runtime,
     relay_url: &Option<RelayUrl>,
     opt: &Opt,
+    #[cfg(feature = "qlog")] qlog: &QlogFileGroup,
 ) -> (EndpointAddr, Endpoint) {
     let _guard = rt.enter();
     rt.block_on(async move {
@@ -38,10 +41,16 @@ pub fn server_endpoint(
                 builder = builder.clear_ip_transports();
             }
         }
+        #[cfg(feature = "qlog")]
+        let config = qlog
+            .transport_config("server".into(), VantagePointType::Server)
+            .unwrap();
+        #[cfg(not(feature = "qlog"))]
+        let config = Default::default();
         let ep = builder
             .alpns(vec![ALPN.to_vec()])
             .relay_mode(relay_mode)
-            .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
+            .transport_config(transport_config(config, opt.max_streams, opt.initial_mtu))
             .bind()
             .await
             .unwrap();
@@ -65,9 +74,17 @@ pub async fn client(
     server_addr: EndpointAddr,
     relay_url: Option<RelayUrl>,
     opt: Opt,
+    #[cfg(feature = "qlog")] qlog: &QlogFileGroup,
 ) -> Result<ClientStats> {
     let client_start = std::time::Instant::now();
-    let (endpoint, connection) = connect_client(server_addr, relay_url, opt).await?;
+    let (endpoint, connection) = connect_client(
+        server_addr,
+        relay_url,
+        opt,
+        #[cfg(feature = "qlog")]
+        qlog,
+    )
+    .await?;
     let client_connect_time = client_start.elapsed();
     let mut res = client_handler(
         EndpointSelector::Iroh(endpoint),
@@ -84,6 +101,7 @@ pub async fn connect_client(
     server_addr: EndpointAddr,
     relay_url: Option<RelayUrl>,
     opt: Opt,
+    #[cfg(feature = "qlog")] qlog: &QlogFileGroup,
 ) -> Result<(Endpoint, Connection)> {
     let relay_mode = relay_url
         .clone()
@@ -97,10 +115,16 @@ pub async fn connect_client(
             builder = builder.clear_ip_transports();
         }
     }
+    #[cfg(feature = "qlog")]
+    let config = qlog
+        .transport_config("client".into(), VantagePointType::Client)
+        .unwrap();
+    #[cfg(not(feature = "qlog"))]
+    let config = Default::default();
     let endpoint = builder
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(relay_mode)
-        .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
+        .transport_config(transport_config(config, opt.max_streams, opt.initial_mtu))
         .bind()
         .await
         .unwrap();
@@ -122,10 +146,13 @@ pub async fn connect_client(
     Ok((endpoint, connection))
 }
 
-pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuinnTransportConfig {
+pub fn transport_config(
+    mut config: QuinnTransportConfig,
+    max_streams: usize,
+    initial_mtu: u16,
+) -> QuinnTransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
-    let mut config = QuinnTransportConfig::default();
     config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
     config.initial_mtu(initial_mtu);
 

@@ -7,13 +7,13 @@ use std::time::Instant;
 use n0_error::Result;
 use quinn::TransportConfig;
 #[cfg(feature = "qlog")]
-use quinn_proto::{QlogConfig, VantagePointType};
+pub use quinn_proto::{QlogConfig, VantagePointType};
 
 /// Builder to create one or more related qlog configs.
 ///
 /// This struct is available independently of feature flags, but if the "qlog" feature is not enabled
 /// it does not do anything.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QlogFileGroup {
     #[cfg(feature = "qlog")]
     directory: PathBuf,
@@ -111,8 +111,9 @@ impl QlogFileGroup {
         self.qlog_config(name.to_string(), VantagePointType::Server)
     }
 
+    /// Creates a qlog config with given vantage point.
     #[cfg(feature = "qlog")]
-    fn transport_config(
+    pub fn transport_config(
         &self,
         name: String,
         vantage_point: VantagePointType,

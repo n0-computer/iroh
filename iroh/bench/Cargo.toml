@@ -30,6 +30,7 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
 [features]
 default = ["metrics", "fast-apple-datapath"]
 metrics = ["iroh/metrics", "iroh-metrics"]
+qlog = ["iroh/test-utils","iroh/qlog"]
 local-relay = ["iroh/test-utils"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["iroh/fast-apple-datapath", "quinn/fast-apple-datapath"]

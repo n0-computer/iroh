@@ -12,6 +12,8 @@ use iroh_relay::{
 use tokio::sync::oneshot;
 
 pub use self::{dns_and_pkarr_servers::DnsPkarrServer, qlog::QlogFileGroup};
+#[cfg(feature = "qlog")]
+pub use qlog::VantagePointType;
 
 mod qlog;
 
