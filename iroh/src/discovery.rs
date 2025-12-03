@@ -728,7 +728,7 @@ mod tests {
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
         let mut config = QuicTransportConfig::default();
-        config.keep_alive_interval(Duration::from_secs(1))?;
+        config.keep_alive_interval(Duration::from_secs(1));
         config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()));
         let opts = ConnectOptions::new().with_transport_config(config);
 

@@ -44,7 +44,7 @@ use crate::{
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
-pub mod quic;
+mod quic;
 
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 
@@ -163,7 +163,7 @@ impl Builder {
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
 
         let static_config = StaticConfig {
-            transport_config: Arc::new(self.transport_config.0),
+            transport_config: self.transport_config.clone(),
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
             keylog: self.keylog,
         };
@@ -461,7 +461,7 @@ impl Builder {
 #[derive(Debug)]
 struct StaticConfig {
     tls_config: tls::TlsConfig,
-    transport_config: Arc<quic::TransportConfig>,
+    transport_config: QuicTransportConfig,
     keylog: bool,
 }
 
@@ -472,7 +472,7 @@ impl StaticConfig {
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(self.transport_config.clone());
+        server_config.transport_config(self.transport_config.to_arc());
 
         server_config
     }
@@ -713,8 +713,8 @@ impl Endpoint {
 
         let transport_config = options
             .transport_config
-            .map(|quic_transport_config| Arc::new(quic_transport_config.0))
-            .unwrap_or(self.static_config.transport_config.clone());
+            .map(|cfg| cfg.to_arc())
+            .unwrap_or(self.static_config.transport_config.to_arc());
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
@@ -1148,7 +1148,7 @@ impl Endpoint {
 }
 
 /// Options for the [`Endpoint::connect_with_opts`] function.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct ConnectOptions {
     transport_config: Option<QuicTransportConfig>,
     additional_alpns: Vec<Vec<u8>>,
