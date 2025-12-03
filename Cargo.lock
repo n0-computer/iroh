@@ -2266,7 +2266,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#8e4ecbc6372485e99af1598e5191ea0772ea4d61"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#97bdd3da165b2e04d5f92105d8fa4405cc80680d"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2286,7 +2286,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#8e4ecbc6372485e99af1598e5191ea0772ea4d61"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#97bdd3da165b2e04d5f92105d8fa4405cc80680d"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2310,7 +2310,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#8e4ecbc6372485e99af1598e5191ea0772ea4d61"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#97bdd3da165b2e04d5f92105d8fa4405cc80680d"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2768,7 +2768,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando%2Fquinn-qlog#b476561213819c5308441c5359d434937b343878"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando%2Fquinn-qlog#b4fdb8fe333d40cb9bb1891a94769deadb76a328"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3134,7 +3134,7 @@ checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 [[package]]
 name = "portmapper"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando%2Fquinn-qlog#b476561213819c5308441c5359d434937b343878"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando%2Fquinn-qlog#b4fdb8fe333d40cb9bb1891a94769deadb76a328"
 dependencies = [
  "base64",
  "bytes",
