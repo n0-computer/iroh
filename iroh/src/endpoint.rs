@@ -19,7 +19,6 @@ use std::{
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{e, ensure, stack_error};
-use n0_future::time::Duration;
 use n0_watcher::Watcher;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
@@ -36,10 +35,7 @@ use crate::dns::DnsResolver;
 use crate::{
     discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
     endpoint::presets::Preset,
-    magicsock::{
-        self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT,
-        RemoteStateActorStoppedError, mapped_addrs::MappedAddr,
-    },
+    magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -63,12 +59,11 @@ pub use self::{
         AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
         CryptoError, CryptoServerConfig, ExportKeyingMaterialError, FrameStats, HandshakeTokenKey,
-        IdleTimeout, MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, ReadDatagram, ReadError,
-        ReadExactError, ReadToEndError, RecvStream, ResetError, RetryError, SendDatagramError,
-        SendStream, ServerConfig, StoppedError, StreamId, TransportConfig as QuicTransportConfig,
-        TransportConfigBuilder as QuicTransportConfigBuilder, TransportError, TransportErrorCode,
-        UdpStats, UnsupportedVersion, VarInt, VarIntBoundsExceeded, WeakConnectionHandle,
-        WriteError, Written,
+        IdleTimeout, MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, QuicTransportConfig,
+        ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
+        RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId,
+        TransportError, TransportErrorCode, UdpStats, UnsupportedVersion, VarInt,
+        VarIntBoundsExceeded, WeakConnectionHandle, WriteError, Written,
     },
 };
 pub use crate::magicsock::transports::TransportConfig;
@@ -83,7 +78,7 @@ pub use crate::magicsock::transports::TransportConfig;
 pub struct Builder {
     secret_key: Option<SecretKey>,
     alpn_protocols: Vec<Vec<u8>>,
-    transport_config: QuicTransportConfigBuilder,
+    transport_config: QuicTransportConfig,
     keylog: bool,
     discovery: Vec<Box<dyn DynIntoDiscovery>>,
     discovery_user_data: Option<UserData>,
@@ -131,9 +126,6 @@ impl Builder {
 
     /// Creates an empty builder with no discovery services.
     pub fn empty(relay_mode: RelayMode) -> Self {
-        let mut transport_config = QuicTransportConfigBuilder::default();
-        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
-
         let mut transports = vec![
             #[cfg(not(wasm_browser))]
             TransportConfig::default_ipv4(),
@@ -146,7 +138,7 @@ impl Builder {
         Self {
             secret_key: Default::default(),
             alpn_protocols: Default::default(),
-            transport_config: QuicTransportConfigBuilder::default(),
+            transport_config: QuicTransportConfig::default(),
             keylog: Default::default(),
             discovery: Default::default(),
             discovery_user_data: Default::default(),
@@ -164,26 +156,14 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint.
-    pub async fn bind(mut self) -> Result<Endpoint, BindError> {
+    pub async fn bind(self) -> Result<Endpoint, BindError> {
         let mut rng = rand::rng();
         let secret_key = self
             .secret_key
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
 
-        // Override some transport config settings.
-        self.transport_config
-            .keep_alive_interval(Some(HEARTBEAT_INTERVAL));
-        self.transport_config
-            .default_path_keep_alive_interval(Some(HEARTBEAT_INTERVAL));
-        self.transport_config
-            .default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
-        self.transport_config
-            .max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS + 1);
-        self.transport_config
-            .set_max_remote_nat_traversal_addresses(MAX_MULTIPATH_PATHS as u8);
-
         let static_config = StaticConfig {
-            transport_config: self.transport_config.build(),
+            transport_config: Arc::new(self.transport_config.0),
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
             keylog: self.keylog,
         };
@@ -392,7 +372,7 @@ impl Builder {
     ///
     /// Please be aware that changing some settings may have adverse effects on establishing
     /// and maintaining direct connections.
-    pub fn transport_config(mut self, transport_config: QuicTransportConfigBuilder) -> Self {
+    pub fn transport_config(mut self, transport_config: QuicTransportConfig) -> Self {
         self.transport_config = transport_config;
         self
     }
@@ -481,7 +461,7 @@ impl Builder {
 #[derive(Debug)]
 struct StaticConfig {
     tls_config: tls::TlsConfig,
-    transport_config: quic::TransportConfig,
+    transport_config: Arc<quic::TransportConfig>,
     keylog: bool,
 }
 
@@ -492,7 +472,7 @@ impl StaticConfig {
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(self.transport_config.0.clone());
+        server_config.transport_config(self.transport_config.clone());
 
         server_config
     }
@@ -733,6 +713,7 @@ impl Endpoint {
 
         let transport_config = options
             .transport_config
+            .map(|quic_transport_config| Arc::new(quic_transport_config.0))
             .unwrap_or(self.static_config.transport_config.clone());
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
@@ -746,7 +727,7 @@ impl Endpoint {
                 .tls_config
                 .make_client_config(alpn_protocols, self.static_config.keylog);
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-            client_config.transport_config(transport_config.0.clone());
+            client_config.transport_config(transport_config.clone());
             client_config
         };
 
@@ -1167,7 +1148,7 @@ impl Endpoint {
 }
 
 /// Options for the [`Endpoint::connect_with_opts`] function.
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug)]
 pub struct ConnectOptions {
     transport_config: Option<QuicTransportConfig>,
     additional_alpns: Vec<Vec<u8>>,

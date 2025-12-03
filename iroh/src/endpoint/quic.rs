@@ -1,15 +1,15 @@
 //! Exporting and encapsulating structs from quinn
 //!
-//! This is necessary for two reasons:
-//! 1) There are some structs that we use in particular ways, where we would like
-//!    to limit or expand how those structs are used in iroh. By encapsulating them
-//!    we can ensure the functionality needed to make iroh work.
-//! 2) quinn is not yet at 1.0, we need to ensure that the iroh API remains stable
-//!    even as quinn changes.
+//! Co-locates all iroh-quinn exports.
+//!
+//! There are some structs that we use in particular ways, where we would like
+//! to limit or expand how those structs are used in iroh. By encapsulating them
+//! we can ensure the functionality needed to make iroh work.
 
 use std::{sync::Arc, time::Duration};
 
-// TODO: encapsulate structs
+use n0_error::{e, stack_error};
+pub(super) use quinn::TransportConfig;
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
@@ -27,6 +27,8 @@ pub use quinn_proto::{
     },
 };
 
+use crate::magicsock::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT};
+
 /// Parameters governing the core QUIC state machine
 ///
 /// Default values should be suitable for most internet applications. Applications protocols which
@@ -39,29 +41,63 @@ pub use quinn_proto::{
 /// for higher bandwidths and latencies increases worst-case memory consumption, but does not impair
 /// performance at lower bandwidths and latencies. The default configuration is tuned for a 100Mbps
 /// link with a 100ms round trip time.
+///
+/// In iroh, the config has some specific default values that make iroh's holepunching work
+/// well with QUIC multipath. Adjusting those settings may error if the given values
+/// are out of scope with what is optimal for iroh.
+///
+/// Look at the following methods for more details:
+/// - [`QuicTransportConfig::keep_alive_interval`]
+/// - [`QuicTransportConfig::default_path_keep_alive_interval`]
+/// - [`QuicTransportConfig::default_path_max_idle_timeout`]
+/// - [`QuicTransportConfig::max_concurrent_multipath_paths`]
+/// - [`QuicTransportConfig::set_max_remote_nat_traversal_addresses`]
 #[derive(Debug)]
-pub struct TransportConfigBuilder(pub(crate) quinn::TransportConfig);
+pub struct QuicTransportConfig(pub(crate) TransportConfig);
 
-impl TransportConfigBuilder {}
-
-impl Default for TransportConfigBuilder {
+impl Default for QuicTransportConfig {
     fn default() -> Self {
-        let cfg = quinn::TransportConfig::default();
-        // TODO: adjust to use multipath defaults
+        let mut cfg = TransportConfig::default();
+        // Override some transport config settings.
+        cfg.keep_alive_interval(Some(Duration::from_millis(HEARTBEAT_INTERVAL)));
+        cfg.default_path_keep_alive_interval(Some(Duration::from_millis(HEARTBEAT_INTERVAL)));
+        cfg.default_path_max_idle_timeout(Some(Duration::from_millis(PATH_MAX_IDLE_TIMEOUT)));
+        cfg.max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS + 1);
+        cfg.set_max_remote_nat_traversal_addresses(MAX_MULTIPATH_PATHS as u8);
         Self(cfg)
     }
 }
 
-/// TODO: docs
-#[derive(Debug, Clone)]
-pub struct TransportConfig(pub(crate) Arc<quinn::TransportConfig>);
+#[allow(missing_docs)]
+#[stack_error(add_meta, derive)]
+#[derive(Clone)]
+#[non_exhaustive]
+pub enum QuicTransportConfigError {
+    #[error(
+        "keep alive value too high, must be at minimum {}ms",
+        HEARTBEAT_INTERVAL
+    )]
+    KeepAliveInterval,
+    #[error(
+        "path keep alive value too high, must be at minimum {}ms",
+        HEARTBEAT_INTERVAL
+    )]
+    PathKeepAliveInterval,
+    #[error(
+        "path max idle timeout value too low, must be at least {}ms",
+        PATH_MAX_IDLE_TIMEOUT
+    )]
+    PathMaxIdleTimeout,
+    #[error("max concurrent multipath paths too low, must be at least {}", MAX_MULTIPATH_PATHS + 1)]
+    MaxConcurrentMultipathPaths,
+    #[error(
+        "max remote nat traversal addresses value too low, must be at least {}",
+        MAX_MULTIPATH_PATHS
+    )]
+    MaxRemoteNatTraversalAddresses,
+}
 
-impl TransportConfigBuilder {
-    /// TODO: docs
-    pub fn build(self) -> TransportConfig {
-        TransportConfig(Arc::new(self.0))
-    }
-
+impl QuicTransportConfig {
     /// Maximum number of incoming bidirectional streams that may be open concurrently
     ///
     /// Must be nonzero for the peer to open any bidirectional streams.
@@ -89,9 +125,9 @@ impl TransportConfigBuilder {
     ///
     /// ```
     /// # use std::{convert::TryInto, time::Duration};
-    /// # use iroh::endpoint::{QuicTransportConfigBuilder, VarInt, VarIntBoundsExceeded};
+    /// # use iroh::endpoint::{QuicTransportConfig, VarInt, VarIntBoundsExceeded};
     /// # fn main() -> Result<(), VarIntBoundsExceeded> {
-    /// let mut config = QuicTransportConfigBuilder::default();
+    /// let mut config = QuicTransportConfig::default();
     ///
     /// // Set the idle timeout as `VarInt`-encoded milliseconds
     /// config.max_idle_timeout(Some(VarInt::from_u32(10_000).into()));
@@ -177,13 +213,13 @@ impl TransportConfigBuilder {
     }
 
     /// The initial value to be used as the maximum UDP payload size before running MTU discovery
-    /// (see [`TransportConfigBuilder::mtu_discovery_config`]).
+    /// (see [`QuicTransportConfig::mtu_discovery_config`]).
     ///
     /// Must be at least 1200, which is the default, and known to be safe for typical internet
     /// applications. Larger values are more efficient, but increase the risk of packet loss due to
     /// exceeding the network path's IP MTU. If the provided value is higher than what the network
     /// path actually supports, packet loss will eventually trigger black hole detection and bring
-    /// it down to [`TransportConfigBuilder::min_mtu`].
+    /// it down to [`QuicTransportConfig::min_mtu`].
     pub fn initial_mtu(&mut self, value: u16) -> &mut Self {
         self.0.initial_mtu(value);
         self
@@ -192,15 +228,15 @@ impl TransportConfigBuilder {
     /// The maximum UDP payload size guaranteed to be supported by the network.
     ///
     /// Must be at least 1200, which is the default, and lower than or equal to
-    /// [`TransportConfigBuilder::initial_mtu`].
+    /// [`QuicTransportConfig::initial_mtu`].
     ///
     /// Real-world MTUs can vary according to ISP, VPN, and properties of intermediate network links
     /// outside of either endpoint's control. Extreme care should be used when raising this value
     /// outside of private networks where these factors are fully controlled. If the provided value
     /// is higher than what the network path actually supports, the result will be unpredictable and
     /// catastrophic packet loss, without a possibility of repair. Prefer
-    /// [`TransportConfigBuilder::initial_mtu`] together with
-    /// [`TransportConfigBuilder::mtu_discovery_config`] to set a maximum UDP payload size that robustly
+    /// [`QuicTransportConfig::initial_mtu`] together with
+    /// [`QuicTransportConfig::mtu_discovery_config`] to set a maximum UDP payload size that robustly
     /// adapts to the network.
     pub fn min_mtu(&mut self, value: u16) -> &mut Self {
         self.0.min_mtu(value);
@@ -255,9 +291,19 @@ impl TransportConfigBuilder {
     /// `None` to disable, which is the default. Only one side of any given connection needs keep-alive
     /// enabled for the connection to be preserved. Must be set lower than the idle_timeout of both
     /// peers to be effective.
-    pub fn keep_alive_interval(&mut self, value: Option<Duration>) -> &mut Self {
-        self.0.keep_alive_interval(value);
-        self
+    ///
+    /// # Errors
+    ///
+    /// Will return a [`QuicTransportConfigError::KeepAliveInterval`] if the given value is more than [`HEARTBEAT_INTERVAL`].
+    pub fn keep_alive_interval(
+        &mut self,
+        value: Duration,
+    ) -> Result<&mut Self, QuicTransportConfigError> {
+        if value > Duration::from_millis(HEARTBEAT_INTERVAL) {
+            return Err(e!(QuicTransportConfigError::KeepAliveInterval));
+        }
+        self.0.keep_alive_interval(Some(value));
+        Ok(self)
     }
 
     /// Maximum quantity of out-of-order crypto layer data to buffer
@@ -304,8 +350,8 @@ impl TransportConfigBuilder {
     ///
     /// # Example
     /// ```
-    /// # use iroh::endpoint::QuicTransportConfigBuilder; use quinn_proto::congestion; use std::sync::Arc;
-    /// let mut config = QuicTransportConfigBuilder::default();
+    /// # use iroh::endpoint::QuicTransportConfig; use quinn_proto::congestion; use std::sync::Arc;
+    /// let mut config = QuicTransportConfig::default();
     /// config.congestion_controller_factory(Arc::new(congestion::NewRenoConfig::default()));
     /// ```
     pub fn congestion_controller_factory(
@@ -359,40 +405,63 @@ impl TransportConfigBuilder {
     /// The value provided specifies the number maximum number of paths this endpoint may open
     /// concurrently when multipath is negotiated. For any path to be opened, the remote must
     /// enable multipath as well.
-    pub fn max_concurrent_multipath_paths(&mut self, max_concurrent: u32) -> &mut Self {
+    ///
+    /// # Errors
+    ///
+    /// Will return a [`QuicTransportConfigError::MaxConcurrentMultipathPaths`] error if the
+    /// given value is less than [`MAX_MULTIPATH_PATHS`] + 1.
+    pub fn max_concurrent_multipath_paths(
+        &mut self,
+        max_concurrent: u32,
+    ) -> Result<&mut Self, QuicTransportConfigError> {
+        if max_concurrent < MAX_MULTIPATH_PATHS + 1 {
+            return Err(e!(QuicTransportConfigError::MaxConcurrentMultipathPaths));
+        }
         self.0.max_concurrent_multipath_paths(max_concurrent);
-        self
+        Ok(self)
     }
 
     /// Sets a default per-path maximum idle timeout
     ///
     /// If the path is idle for this long the path will be abandoned. Bear in mind this will
-    /// interact with the [`TransportConfigBuilder::max_idle_timeout`], if the last path is
+    /// interact with the [`QuicTransportConfig::max_idle_timeout`], if the last path is
     /// abandoned the entire connection will be closed.
-    // TODO: add Connection::set_path_max_idle_timeout?
-    // You can also change this using [`Connection::set_path_max_idle_timeout`] for
-    // existing paths.
-    //
-    // [`Connection::set_path_max_idle_timeout`]: crate::Connection::set_path_max_idle_timeout
-    pub fn default_path_max_idle_timeout(&mut self, timeout: Option<Duration>) -> &mut Self {
-        self.0.default_path_max_idle_timeout(timeout);
-        self
+    ///
+    /// # Errors
+    ///
+    /// Will return a [`QuicTransportConfigError::PathMaxIdleTimeout`] error if the timeout
+    /// is less than the [`PATH_MAX_IDLE_TIMEOUT`];
+    pub fn default_path_max_idle_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<&mut Self, QuicTransportConfigError> {
+        if timeout < Duration::from_millis(PATH_MAX_IDLE_TIMEOUT) {
+            return Err(e!(QuicTransportConfigError::PathMaxIdleTimeout));
+        }
+        self.0.default_path_max_idle_timeout(Some(timeout));
+        Ok(self)
     }
 
     /// Sets a default per-path keep alive interval
     ///
     /// Note that this does not interact with the connection-wide
-    /// [`TransportConfigBuilder::keep_alive_interval`].  This setting will keep this path active,
-    /// [`TransportConfigBuilder::keep_alive_interval`] will keep the connection active, with no
+    /// [`QuicTransportConfig::keep_alive_interval`].  This setting will keep this path active,
+    /// [`QuicTransportConfig::keep_alive_interval`] will keep the connection active, with no
     /// control over which path is used for this.
-    // TODO: add `Connection::set_path_keep_alive_interval`?
-    // You can also change this using [`Connection::set_path_keep_alive_interval`] for
-    // existing path.
-    //
-    // [`Connection::set_path_keep_alive_interval`]: crate::Connection::set_path_keep_alive_interval
-    pub fn default_path_keep_alive_interval(&mut self, interval: Option<Duration>) -> &mut Self {
-        self.0.default_path_keep_alive_interval(interval);
-        self
+    ///
+    /// # Errors
+    ///
+    /// Will return a `QuicTransportConfigError::PathKeepAliveInterval` if the
+    /// given value is longer than [`HEARTBEAT_INTERVAL`].
+    pub fn default_path_keep_alive_interval(
+        &mut self,
+        interval: Duration,
+    ) -> Result<&mut Self, QuicTransportConfigError> {
+        if interval > Duration::from_millis(HEARTBEAT_INTERVAL) {
+            return Err(e!(QuicTransportConfigError::PathKeepAliveInterval));
+        }
+        self.0.default_path_keep_alive_interval(Some(interval));
+        Ok(self)
     }
 
     /// Sets the maximum number of nat traversal addresses this endpoint allows the remote to
@@ -402,11 +471,21 @@ impl TransportConfigBuilder {
     /// Traversal Extension for QUIC, see
     /// <https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html>
     ///
-    /// This implementation expects the multipath extension to be enabled as well. if not yet
+    /// This implementation expects the multipath extension to be enabled as well. If not yet
     /// enabled via [`Self::max_concurrent_multipath_paths`], a default value of
     /// 12 will be used.
-    pub fn set_max_remote_nat_traversal_addresses(&mut self, max_addresses: u8) -> &mut Self {
+    ///
+    /// # Errors
+    ///
+    /// Will return a [`QuicTransportConfigError::MaxRemoteNatTraversalAddresses`] error if the given max addresses value is less than [`MAX_MULTIPATH_PATHS`] + 1.
+    pub fn set_max_remote_nat_traversal_addresses(
+        &mut self,
+        max_addresses: u8,
+    ) -> Result<&mut Self, QuicTransportConfigError> {
+        if max_addresses < MAX_MULTIPATH_PATHS as u8 {
+            return Err(e!(QuicTransportConfigError::MaxRemoteNatTraversalAddresses));
+        }
         self.0.set_max_remote_nat_traversal_addresses(max_addresses);
-        self
+        Ok(self)
     }
 }

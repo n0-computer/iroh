@@ -80,22 +80,22 @@ pub use self::{metrics::Metrics, remote_map::PathInfo};
 // /// expire at 30 seconds, so this is a few seconds shy of that.
 // const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
-/// The duration in which we send keep-alives.
+/// The number of milliseconds after which we send keep-alives.
 ///
 /// If a path is idle for this long, a PING frame will be sent to keep the connection
 /// alive.
-pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+pub const HEARTBEAT_INTERVAL: u64 = 5000;
 
-/// The maximum time a path can stay idle before being closed.
+/// The maximum milliseconds a path can stay idle before being closed.
 ///
 /// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
 /// some retries.
-pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
+pub const PATH_MAX_IDLE_TIMEOUT: u64 = 6500;
 
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
 /// Pretty arbitrary and high right now.
-pub(crate) const MAX_MULTIPATH_PATHS: u32 = 12;
+pub const MAX_MULTIPATH_PATHS: u32 = 12;
 
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
 #[stack_error(add_meta, derive)]

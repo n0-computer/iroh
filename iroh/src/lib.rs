@@ -275,6 +275,8 @@ pub use iroh_base::{
     Signature, SignatureError, TransportAddr,
 };
 pub use iroh_relay::{RelayConfig, RelayMap, endpoint_info};
+// these consts are public so they can be used for reference in documentation
+pub use magicsock::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT};
 pub use n0_watcher::Watcher;
 
 #[cfg(any(test, feature = "test-utils"))]
