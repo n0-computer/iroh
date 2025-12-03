@@ -509,7 +509,7 @@
 <a href=#509 id=509 data-nosnippet>509</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#510 id=510 data-nosnippet>510</a>    <span class="kw">use crate</span>::{
 <a href=#511 id=511 data-nosnippet>511</a>        Endpoint, RelayMode,
-<a href=#512 id=512 data-nosnippet>512</a>        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfigBuilder},
+<a href=#512 id=512 data-nosnippet>512</a>        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig},
 <a href=#513 id=513 data-nosnippet>513</a>    };
 <a href=#514 id=514 data-nosnippet>514</a>
 <a href=#515 id=515 data-nosnippet>515</a>    <span class="kw">type </span>InfoStore = HashMap&lt;EndpointId, (EndpointData, u64)&gt;;
@@ -727,10 +727,10 @@
 <a href=#727 id=727 data-nosnippet>727</a>        .<span class="kw">await</span>;
 <a href=#728 id=728 data-nosnippet>728</a>
 <a href=#729 id=729 data-nosnippet>729</a>        <span class="comment">// 10x faster test via a 3s idle timeout instead of the 30s default
-<a href=#730 id=730 data-nosnippet>730</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>config = QuicTransportConfigBuilder::default();
-<a href=#731 id=731 data-nosnippet>731</a>        config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">1</span>)));
+<a href=#730 id=730 data-nosnippet>730</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>config = QuicTransportConfig::default();
+<a href=#731 id=731 data-nosnippet>731</a>        config.keep_alive_interval(Duration::from_secs(<span class="number">1</span>))<span class="question-mark">?</span>;
 <a href=#732 id=732 data-nosnippet>732</a>        config.max_idle_timeout(<span class="prelude-val">Some</span>(IdleTimeout::try_from(Duration::from_secs(<span class="number">3</span>)).unwrap()));
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span>opts = ConnectOptions::new().with_transport_config(config.build());
+<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span>opts = ConnectOptions::new().with_transport_config(config);
 <a href=#734 id=734 data-nosnippet>734</a>
 <a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">let </span>res = ep2
 <a href=#736 id=736 data-nosnippet>736</a>            .connect_with_opts(ep1.id(), TEST_ALPN, opts)
