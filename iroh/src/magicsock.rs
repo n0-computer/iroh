@@ -84,18 +84,18 @@ pub use self::{metrics::Metrics, remote_map::PathInfo};
 ///
 /// If a path is idle for this long, a PING frame will be sent to keep the connection
 /// alive.
-pub const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The maximum time a path can stay idle before being closed.
 ///
 /// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
 /// some retries.
-pub const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
+pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 
 /// Maximum number of concurrent QUIC multipath paths per connection.
 ///
 /// Pretty arbitrary and high right now.
-pub const MAX_MULTIPATH_PATHS: u32 = 12;
+pub(crate) const MAX_MULTIPATH_PATHS: u32 = 12;
 
 /// Error returned when the endpoint state actor stopped while waiting for a reply.
 #[stack_error(add_meta, derive)]

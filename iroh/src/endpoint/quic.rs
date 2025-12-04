@@ -369,14 +369,14 @@ impl QuicTransportConfig {
     /// concurrently when multipath is negotiated. For any path to be opened, the remote must
     /// enable multipath as well.
     ///
-    /// Note: setting this value below 13 is not recommended and will currently log a warning.
+    /// Note: this method will ignore values less than the recommended 13 and will log a warning.
     pub fn max_concurrent_multipath_paths(&mut self, max_concurrent: u32) -> &mut Self {
         if max_concurrent < MAX_MULTIPATH_PATHS + 1 {
             warn!(
-                "setting QuicTransportConfig::max_concurrent_multipath_paths to {}, below the recommended minimum {}",
-                max_concurrent,
+                "QuicTransportConfig::max_concurrent_multipath_paths must be at minimum {}, ignoring user supplied value",
                 MAX_MULTIPATH_PATHS + 1
             );
+            return self;
         }
         self.0.max_concurrent_multipath_paths(max_concurrent);
         self
@@ -388,14 +388,14 @@ impl QuicTransportConfig {
     /// interact with the [`QuicTransportConfig::max_idle_timeout`], if the last path is
     /// abandoned the entire connection will be closed.
     ///
-    /// Note: setting this timeout to higher than 6500ms is not currently recommended
-    /// and will log a warning.
+    /// Note: this method will ignore values higher than the recommended 6500 ms and will log a warning.
     pub fn default_path_max_idle_timeout(&mut self, timeout: Duration) -> &mut Self {
         if timeout > PATH_MAX_IDLE_TIMEOUT {
             warn!(
-                "setting QuicTransportConfig::default_path_max_idle to {:?}, above the recommended maximum {:?}",
-                timeout, PATH_MAX_IDLE_TIMEOUT
+                "QuicTransportConfig::default_path_max_idle must be at most {:?}, ignoring user supplied value",
+                PATH_MAX_IDLE_TIMEOUT
             );
+            return self;
         }
         self.0.default_path_max_idle_timeout(Some(timeout));
         self
@@ -408,13 +408,14 @@ impl QuicTransportConfig {
     /// [`QuicTransportConfig::keep_alive_interval`] will keep the connection active, with no
     /// control over which path is used for this.
     ///
-    /// Note: setting this timeout higher than 5 seconds is not recommended and will log a warning.
+    /// Note: this method will ignore values higher than the recommended 5 seconds and will log a warning.
     pub fn default_path_keep_alive_interval(&mut self, interval: Duration) -> &mut Self {
         if interval > HEARTBEAT_INTERVAL {
             warn!(
-                "setting QuicTransportConfig::default_path_keep_alive to {:?}, above the recommended maximum {:?}",
-                interval, HEARTBEAT_INTERVAL
+                "QuicTransportConfig::default_path_keep_alive must be at most {:?}, ignoring user supplied value",
+                HEARTBEAT_INTERVAL
             );
+            return self;
         }
         self.0.default_path_keep_alive_interval(Some(interval));
         self
@@ -431,13 +432,14 @@ impl QuicTransportConfig {
     /// enabled via [`Self::max_concurrent_multipath_paths`], a default value of
     /// 12 will be used.
     ///
-    /// Note: setting this value to lower than 12 is not recommended and will log a warning.
+    /// Note: this method will ignore values less than the recommended 12 and will log a warning.
     pub fn set_max_remote_nat_traversal_addresses(&mut self, max_addresses: u8) -> &mut Self {
         if max_addresses < MAX_MULTIPATH_PATHS as u8 {
             warn!(
-                "setting QuicTransportConfig::max_remote_nat_traversal_addresses to {}, below the recommended minimum {}",
-                max_addresses, MAX_MULTIPATH_PATHS
+                "QuicTransportConfig::max_remote_nat_traversal_addresses must be at least {}, ignoring user supplied value",
+                MAX_MULTIPATH_PATHS
             );
+            return self;
         }
         self.0.set_max_remote_nat_traversal_addresses(max_addresses);
         self
