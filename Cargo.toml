@@ -47,8 +47,7 @@ iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "Frando/ql
 iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "Frando/qlog-latest-multipath" }
 iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "Frando/qlog-latest-multipath" }
 
-netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "Frando/quinn-qlog" }
-portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "Frando/quinn-qlog" }
+netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
 
 # iroh-quinn = { path = "../quinn/quinn" }
 # iroh-quinn-proto = { path = "../quinn/quinn-proto" }
