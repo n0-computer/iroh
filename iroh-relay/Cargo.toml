@@ -30,7 +30,7 @@ derive_more = { version = "2.0.1", features = [
 http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
-hyper-util = "0.1.1"
+hyper-util = "0.1.19"
 iroh-base = { version = "0.95.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.37", default-features = false }
 n0-future = "0.3.0"
