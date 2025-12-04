@@ -369,14 +369,14 @@
 <a href=#369 id=369 data-nosnippet>369</a>    /// concurrently when multipath is negotiated. For any path to be opened, the remote must
 <a href=#370 id=370 data-nosnippet>370</a>    /// enable multipath as well.
 <a href=#371 id=371 data-nosnippet>371</a>    ///
-<a href=#372 id=372 data-nosnippet>372</a>    /// Note: setting this value below 13 is not recommended and will currently log a warning.
+<a href=#372 id=372 data-nosnippet>372</a>    /// Note: this method will ignore values less than the recommended 13 and will log a warning.
 <a href=#373 id=373 data-nosnippet>373</a>    </span><span class="kw">pub fn </span>max_concurrent_multipath_paths(<span class="kw-2">&amp;mut </span><span class="self">self</span>, max_concurrent: u32) -&gt; <span class="kw-2">&amp;mut </span><span class="self">Self </span>{
 <a href=#374 id=374 data-nosnippet>374</a>        <span class="kw">if </span>max_concurrent &lt; MAX_MULTIPATH_PATHS + <span class="number">1 </span>{
 <a href=#375 id=375 data-nosnippet>375</a>            <span class="macro">warn!</span>(
-<a href=#376 id=376 data-nosnippet>376</a>                <span class="string">"setting QuicTransportConfig::max_concurrent_multipath_paths to {}, below the recommended minimum {}"</span>,
-<a href=#377 id=377 data-nosnippet>377</a>                max_concurrent,
-<a href=#378 id=378 data-nosnippet>378</a>                MAX_MULTIPATH_PATHS + <span class="number">1
-<a href=#379 id=379 data-nosnippet>379</a>            </span>);
+<a href=#376 id=376 data-nosnippet>376</a>                <span class="string">"QuicTransportConfig::max_concurrent_multipath_paths must be at minimum {}, ignoring user supplied value"</span>,
+<a href=#377 id=377 data-nosnippet>377</a>                MAX_MULTIPATH_PATHS + <span class="number">1
+<a href=#378 id=378 data-nosnippet>378</a>            </span>);
+<a href=#379 id=379 data-nosnippet>379</a>            <span class="kw">return </span><span class="self">self</span>;
 <a href=#380 id=380 data-nosnippet>380</a>        }
 <a href=#381 id=381 data-nosnippet>381</a>        <span class="self">self</span>.<span class="number">0</span>.max_concurrent_multipath_paths(max_concurrent);
 <a href=#382 id=382 data-nosnippet>382</a>        <span class="self">self
@@ -388,14 +388,14 @@
 <a href=#388 id=388 data-nosnippet>388</a>    /// interact with the [`QuicTransportConfig::max_idle_timeout`], if the last path is
 <a href=#389 id=389 data-nosnippet>389</a>    /// abandoned the entire connection will be closed.
 <a href=#390 id=390 data-nosnippet>390</a>    ///
-<a href=#391 id=391 data-nosnippet>391</a>    /// Note: setting this timeout to higher than 6500ms is not currently recommended
-<a href=#392 id=392 data-nosnippet>392</a>    /// and will log a warning.
-<a href=#393 id=393 data-nosnippet>393</a>    </span><span class="kw">pub fn </span>default_path_max_idle_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>, timeout: Duration) -&gt; <span class="kw-2">&amp;mut </span><span class="self">Self </span>{
-<a href=#394 id=394 data-nosnippet>394</a>        <span class="kw">if </span>timeout &gt; PATH_MAX_IDLE_TIMEOUT {
-<a href=#395 id=395 data-nosnippet>395</a>            <span class="macro">warn!</span>(
-<a href=#396 id=396 data-nosnippet>396</a>                <span class="string">"setting QuicTransportConfig::default_path_max_idle to {:?}, above the recommended maximum {:?}"</span>,
-<a href=#397 id=397 data-nosnippet>397</a>                timeout, PATH_MAX_IDLE_TIMEOUT
-<a href=#398 id=398 data-nosnippet>398</a>            );
+<a href=#391 id=391 data-nosnippet>391</a>    /// Note: this method will ignore values higher than the recommended 6500 ms and will log a warning.
+<a href=#392 id=392 data-nosnippet>392</a>    </span><span class="kw">pub fn </span>default_path_max_idle_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>, timeout: Duration) -&gt; <span class="kw-2">&amp;mut </span><span class="self">Self </span>{
+<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw">if </span>timeout &gt; PATH_MAX_IDLE_TIMEOUT {
+<a href=#394 id=394 data-nosnippet>394</a>            <span class="macro">warn!</span>(
+<a href=#395 id=395 data-nosnippet>395</a>                <span class="string">"QuicTransportConfig::default_path_max_idle must be at most {:?}, ignoring user supplied value"</span>,
+<a href=#396 id=396 data-nosnippet>396</a>                PATH_MAX_IDLE_TIMEOUT
+<a href=#397 id=397 data-nosnippet>397</a>            );
+<a href=#398 id=398 data-nosnippet>398</a>            <span class="kw">return </span><span class="self">self</span>;
 <a href=#399 id=399 data-nosnippet>399</a>        }
 <a href=#400 id=400 data-nosnippet>400</a>        <span class="self">self</span>.<span class="number">0</span>.default_path_max_idle_timeout(<span class="prelude-val">Some</span>(timeout));
 <a href=#401 id=401 data-nosnippet>401</a>        <span class="self">self
@@ -408,38 +408,40 @@
 <a href=#408 id=408 data-nosnippet>408</a>    /// [`QuicTransportConfig::keep_alive_interval`] will keep the connection active, with no
 <a href=#409 id=409 data-nosnippet>409</a>    /// control over which path is used for this.
 <a href=#410 id=410 data-nosnippet>410</a>    ///
-<a href=#411 id=411 data-nosnippet>411</a>    /// Note: setting this timeout higher than 5 seconds is not recommended and will log a warning.
+<a href=#411 id=411 data-nosnippet>411</a>    /// Note: this method will ignore values higher than the recommended 5 seconds and will log a warning.
 <a href=#412 id=412 data-nosnippet>412</a>    </span><span class="kw">pub fn </span>default_path_keep_alive_interval(<span class="kw-2">&amp;mut </span><span class="self">self</span>, interval: Duration) -&gt; <span class="kw-2">&amp;mut </span><span class="self">Self </span>{
 <a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">if </span>interval &gt; HEARTBEAT_INTERVAL {
 <a href=#414 id=414 data-nosnippet>414</a>            <span class="macro">warn!</span>(
-<a href=#415 id=415 data-nosnippet>415</a>                <span class="string">"setting QuicTransportConfig::default_path_keep_alive to {:?}, above the recommended maximum {:?}"</span>,
-<a href=#416 id=416 data-nosnippet>416</a>                interval, HEARTBEAT_INTERVAL
+<a href=#415 id=415 data-nosnippet>415</a>                <span class="string">"QuicTransportConfig::default_path_keep_alive must be at most {:?}, ignoring user supplied value"</span>,
+<a href=#416 id=416 data-nosnippet>416</a>                HEARTBEAT_INTERVAL
 <a href=#417 id=417 data-nosnippet>417</a>            );
-<a href=#418 id=418 data-nosnippet>418</a>        }
-<a href=#419 id=419 data-nosnippet>419</a>        <span class="self">self</span>.<span class="number">0</span>.default_path_keep_alive_interval(<span class="prelude-val">Some</span>(interval));
-<a href=#420 id=420 data-nosnippet>420</a>        <span class="self">self
-<a href=#421 id=421 data-nosnippet>421</a>    </span>}
-<a href=#422 id=422 data-nosnippet>422</a>
-<a href=#423 id=423 data-nosnippet>423</a>    <span class="doccomment">/// Sets the maximum number of nat traversal addresses this endpoint allows the remote to
-<a href=#424 id=424 data-nosnippet>424</a>    /// advertise
-<a href=#425 id=425 data-nosnippet>425</a>    ///
-<a href=#426 id=426 data-nosnippet>426</a>    /// Setting this to any nonzero value will enable Iroh's holepunching, loosely based in the Nat
-<a href=#427 id=427 data-nosnippet>427</a>    /// Traversal Extension for QUIC, see
-<a href=#428 id=428 data-nosnippet>428</a>    /// &lt;https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html&gt;
-<a href=#429 id=429 data-nosnippet>429</a>    ///
-<a href=#430 id=430 data-nosnippet>430</a>    /// This implementation expects the multipath extension to be enabled as well. If not yet
-<a href=#431 id=431 data-nosnippet>431</a>    /// enabled via [`Self::max_concurrent_multipath_paths`], a default value of
-<a href=#432 id=432 data-nosnippet>432</a>    /// 12 will be used.
-<a href=#433 id=433 data-nosnippet>433</a>    ///
-<a href=#434 id=434 data-nosnippet>434</a>    /// Note: setting this value to lower than 12 is not recommended and will log a warning.
-<a href=#435 id=435 data-nosnippet>435</a>    </span><span class="kw">pub fn </span>set_max_remote_nat_traversal_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, max_addresses: u8) -&gt; <span class="kw-2">&amp;mut </span><span class="self">Self </span>{
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">if </span>max_addresses &lt; MAX_MULTIPATH_PATHS <span class="kw">as </span>u8 {
-<a href=#437 id=437 data-nosnippet>437</a>            <span class="macro">warn!</span>(
-<a href=#438 id=438 data-nosnippet>438</a>                <span class="string">"setting QuicTransportConfig::max_remote_nat_traversal_addresses to {}, below the recommended minimum {}"</span>,
-<a href=#439 id=439 data-nosnippet>439</a>                max_addresses, MAX_MULTIPATH_PATHS
-<a href=#440 id=440 data-nosnippet>440</a>            );
-<a href=#441 id=441 data-nosnippet>441</a>        }
-<a href=#442 id=442 data-nosnippet>442</a>        <span class="self">self</span>.<span class="number">0</span>.set_max_remote_nat_traversal_addresses(max_addresses);
-<a href=#443 id=443 data-nosnippet>443</a>        <span class="self">self
-<a href=#444 id=444 data-nosnippet>444</a>    </span>}
-<a href=#445 id=445 data-nosnippet>445</a>}</code></pre></div></section></main></body></html>
+<a href=#418 id=418 data-nosnippet>418</a>            <span class="kw">return </span><span class="self">self</span>;
+<a href=#419 id=419 data-nosnippet>419</a>        }
+<a href=#420 id=420 data-nosnippet>420</a>        <span class="self">self</span>.<span class="number">0</span>.default_path_keep_alive_interval(<span class="prelude-val">Some</span>(interval));
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="self">self
+<a href=#422 id=422 data-nosnippet>422</a>    </span>}
+<a href=#423 id=423 data-nosnippet>423</a>
+<a href=#424 id=424 data-nosnippet>424</a>    <span class="doccomment">/// Sets the maximum number of nat traversal addresses this endpoint allows the remote to
+<a href=#425 id=425 data-nosnippet>425</a>    /// advertise
+<a href=#426 id=426 data-nosnippet>426</a>    ///
+<a href=#427 id=427 data-nosnippet>427</a>    /// Setting this to any nonzero value will enable Iroh's holepunching, loosely based in the Nat
+<a href=#428 id=428 data-nosnippet>428</a>    /// Traversal Extension for QUIC, see
+<a href=#429 id=429 data-nosnippet>429</a>    /// &lt;https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html&gt;
+<a href=#430 id=430 data-nosnippet>430</a>    ///
+<a href=#431 id=431 data-nosnippet>431</a>    /// This implementation expects the multipath extension to be enabled as well. If not yet
+<a href=#432 id=432 data-nosnippet>432</a>    /// enabled via [`Self::max_concurrent_multipath_paths`], a default value of
+<a href=#433 id=433 data-nosnippet>433</a>    /// 12 will be used.
+<a href=#434 id=434 data-nosnippet>434</a>    ///
+<a href=#435 id=435 data-nosnippet>435</a>    /// Note: this method will ignore values less than the recommended 12 and will log a warning.
+<a href=#436 id=436 data-nosnippet>436</a>    </span><span class="kw">pub fn </span>set_max_remote_nat_traversal_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, max_addresses: u8) -&gt; <span class="kw-2">&amp;mut </span><span class="self">Self </span>{
+<a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">if </span>max_addresses &lt; MAX_MULTIPATH_PATHS <span class="kw">as </span>u8 {
+<a href=#438 id=438 data-nosnippet>438</a>            <span class="macro">warn!</span>(
+<a href=#439 id=439 data-nosnippet>439</a>                <span class="string">"QuicTransportConfig::max_remote_nat_traversal_addresses must be at least {}, ignoring user supplied value"</span>,
+<a href=#440 id=440 data-nosnippet>440</a>                MAX_MULTIPATH_PATHS
+<a href=#441 id=441 data-nosnippet>441</a>            );
+<a href=#442 id=442 data-nosnippet>442</a>            <span class="kw">return </span><span class="self">self</span>;
+<a href=#443 id=443 data-nosnippet>443</a>        }
+<a href=#444 id=444 data-nosnippet>444</a>        <span class="self">self</span>.<span class="number">0</span>.set_max_remote_nat_traversal_addresses(max_addresses);
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="self">self
+<a href=#446 id=446 data-nosnippet>446</a>    </span>}
+<a href=#447 id=447 data-nosnippet>447</a>}</code></pre></div></section></main></body></html>
