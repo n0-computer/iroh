@@ -33,7 +33,7 @@ use crate::{
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
     endpoint::DirectAddr,
     magicsock::{
-        HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
+        MagicsockMetrics,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
         remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
@@ -751,10 +751,6 @@ impl RemoteStateActor {
                     trace!("path open event for unknown path");
                     return;
                 };
-                // TODO: We configure this as defaults when we setup the endpoint, do we
-                //    really need to duplicate this?
-                path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
-                path.set_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT)).ok();
 
                 if let Ok(socketaddr) = path.remote_address()
                     && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
