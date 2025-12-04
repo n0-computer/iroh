@@ -1279,6 +1279,12 @@ impl RelayMode {
             RelayMode::Custom(relay_map) => relay_map.clone(),
         }
     }
+
+    /// Create a custom relay mode from a list of relays.
+    pub fn custom(map: impl IntoIterator<Item = RelayUrl>) -> Self {
+        let m = RelayMap::from_iter(map);
+        Self::Custom(m)
+    }
 }
 
 /// Environment variable to force the use of staging relays.
@@ -1314,11 +1320,12 @@ fn is_cgi() -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        str::FromStr,
         sync::Arc,
         time::{Duration, Instant},
     };
 
-    use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
+    use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, stream, time};
     use n0_tracing_test::traced_test;
@@ -2482,6 +2489,32 @@ mod tests {
         let dt1 = t1.elapsed().as_secs_f64();
 
         assert!(dt0 / dt1 < 20.0, "First round: {dt0}s, second round {dt1}s");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_custom_relay() -> Result {
+        let _ep = Endpoint::empty_builder(RelayMode::custom([RelayUrl::from_str(
+            "https://use1-1.relay.n0.iroh-canary.iroh.link.",
+        )?]))
+        .bind()
+        .await?;
+
+        let _ep = Endpoint::empty_builder(RelayMode::custom([
+            "https://use1-1.relay.n0.iroh-canary.iroh.link.".parse()?,
+            "https://euw-1.relay.n0.iroh-canary.iroh.link.".parse()?,
+        ]))
+        .bind()
+        .await?;
+
+        let relays = RelayMap::try_from_iter([
+            "https://use1-1.relay.n0.iroh.iroh.link/",
+            "https://euc1-1.relay.n0.iroh.iroh.link/",
+        ])?;
+        let _ep = Endpoint::empty_builder(RelayMode::Custom(relays))
+            .bind()
+            .await?;
+
         Ok(())
     }
 }

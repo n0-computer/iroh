@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use iroh_base::RelayUrl;
+use iroh_base::{RelayUrl, RelayUrlParseError};
 use serde::{Deserialize, Serialize};
 
 use crate::defaults::DEFAULT_RELAY_QUIC_PORT;
@@ -48,6 +48,29 @@ impl RelayMap {
         Self {
             relays: Default::default(),
         }
+    }
+
+    /// Creates a [`RelayMap`] from an iterator.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use iroh_relay::RelayMap;
+    /// let map =
+    ///     RelayMap::try_from_iter(["https://relay_0.cool.com", "https://relay_1.cool.com"]).unwrap();
+    /// ```
+    pub fn try_from_iter<'a, T: IntoIterator<Item = &'a str>>(
+        urls: T,
+    ) -> Result<Self, RelayUrlParseError> {
+        let relays: BTreeMap<RelayUrl, Arc<RelayConfig>> = urls
+            .into_iter()
+            .map(|t| {
+                t.parse()
+                    .map(|url: RelayUrl| (url.clone(), Arc::new(RelayConfig::from(url))))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self {
+            relays: Arc::new(RwLock::new(relays)),
+        })
     }
 
     /// Returns the URLs of all servers in this relay map.
