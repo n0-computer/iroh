@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>bytes::Bytes;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>iroh::{
 <a href=#8 id=8 data-nosnippet>8</a>    Endpoint, EndpointAddr, RelayMode, RelayUrl,
-<a href=#9 id=9 data-nosnippet>9</a>    endpoint::{Connection, ConnectionError, QuinnTransportConfig, RecvStream, SendStream},
+<a href=#9 id=9 data-nosnippet>9</a>    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
 <a href=#10 id=10 data-nosnippet>10</a>};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StackResultExt, StdResultExt};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tracing::{trace, warn};
@@ -122,10 +122,10 @@
 <a href=#122 id=122 data-nosnippet>122</a>    <span class="prelude-val">Ok</span>((endpoint, connection))
 <a href=#123 id=123 data-nosnippet>123</a>}
 <a href=#124 id=124 data-nosnippet>124</a>
-<a href=#125 id=125 data-nosnippet>125</a><span class="kw">pub fn </span>transport_config(max_streams: usize, initial_mtu: u16) -&gt; QuinnTransportConfig {
+<a href=#125 id=125 data-nosnippet>125</a><span class="kw">pub fn </span>transport_config(max_streams: usize, initial_mtu: u16) -&gt; QuicTransportConfig {
 <a href=#126 id=126 data-nosnippet>126</a>    <span class="comment">// High stream windows are chosen because the amount of concurrent streams
 <a href=#127 id=127 data-nosnippet>127</a>    // is configurable as a parameter.
-<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>config = QuinnTransportConfig::default();
+<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>config = QuicTransportConfig::default();
 <a href=#129 id=129 data-nosnippet>129</a>    config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
 <a href=#130 id=130 data-nosnippet>130</a>    config.initial_mtu(initial_mtu);
 <a href=#131 id=131 data-nosnippet>131</a>
