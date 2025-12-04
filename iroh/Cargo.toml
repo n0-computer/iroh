@@ -74,7 +74,7 @@ pkcs8 = "0.11.0-rc.7"
 rustls-platform-verifier = "0.5.3"
 
 # metrics
-iroh-metrics = { version = "0.37", default-features = false }
+iroh-metrics = { version = "0.38", default-features = false }
 
 # local-swarm-discovery
 swarm-discovery = { version = "0.4", optional = true }
