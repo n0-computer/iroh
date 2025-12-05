@@ -1081,7 +1081,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1838,7 +1838,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tokio",
  "tower-service",
  "tracing",
@@ -2266,7 +2266,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#51d88e684a1fc989075050e035ada5f9386352cb"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#f2f397faaa2eaf4e867f9d6d2a736c97b5b2e1c8"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2275,7 +2275,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2286,7 +2286,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#51d88e684a1fc989075050e035ada5f9386352cb"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#f2f397faaa2eaf4e867f9d6d2a736c97b5b2e1c8"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2310,13 +2310,13 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#51d88e684a1fc989075050e035ada5f9386352cb"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#f2f397faaa2eaf4e867f9d6d2a736c97b5b2e1c8"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2680,7 +2680,7 @@ dependencies = [
 [[package]]
 name = "n0-qlog"
 version = "0.15.2"
-source = "git+https://github.com/n0-computer/n0-qlog?branch=feat%2Fcustom-timers#55ff855e53a174a9adac91b615444d7af2e69891"
+source = "git+https://github.com/n0-computer/n0-qlog?branch=main#0d24ee5aae527c6659e7a19be63089ec06487660"
 dependencies = [
  "serde",
  "serde_json",
@@ -2842,7 +2842,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3302,7 +3302,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3339,9 +3339,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3610,7 +3610,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3733,7 +3733,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4302,7 +4302,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5072,7 +5072,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
