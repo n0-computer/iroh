@@ -58,14 +58,16 @@ pub use self::{
         RemoteEndpointIdError, ZeroRttStatus,
     },
     quic::{
-        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
-        ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
-        CryptoError, CryptoServerConfig, ExportKeyingMaterialError, FrameStats, HandshakeTokenKey,
-        IdleTimeout, MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, QuicTransportConfig,
+        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, BloomTokenLog, Chunk,
+        ClosedStream, ConnectionClose, ConnectionError, ConnectionStats, Controller,
+        ControllerFactory, ControllerMetrics, CryptoError, CryptoServerConfig, Dir,
+        ExportKeyingMaterialError, FrameStats, FrameType, HandshakeTokenKey, IdleTimeout,
+        MtuDiscoveryConfig, NoneTokenLog, OpenBi, OpenUni, PathStats, QuicTransportConfig,
         ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-        RetryError, SendDatagramError, SendStream, ServerConfig, Side, StoppedError, StreamId,
-        TransportError, TransportErrorCode, UdpStats, UnsupportedVersion, VarInt,
-        VarIntBoundsExceeded, WeakConnectionHandle, WriteError, Written,
+        RetryError, RttEstimator, SendDatagramError, SendStream, ServerConfig, Side, StoppedError,
+        StreamId, TimeSource, TokenLog, TransportError, TransportErrorCode, UdpStats,
+        UnsupportedVersion, ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError,
+        Written,
     },
 };
 pub use crate::magicsock::transports::TransportConfig;
