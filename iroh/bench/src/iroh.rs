@@ -10,7 +10,7 @@ use bytes::Bytes;
 use iroh::endpoint::QlogFileFactory;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
-    endpoint::{Connection, ConnectionError, QuinnTransportConfig, RecvStream, SendStream},
+    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
@@ -126,10 +126,10 @@ pub async fn connect_client(
     Ok((endpoint, connection))
 }
 
-pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuinnTransportConfig {
+pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuicTransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
-    let mut config = QuinnTransportConfig::default();
+    let mut config = QuicTransportConfig::default();
     config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
     config.initial_mtu(initial_mtu);
 
