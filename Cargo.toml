@@ -43,9 +43,9 @@ unused-async = "warn"
 
 
 [patch.crates-io]
-iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "Frando/qlog-timers" }
-iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "Frando/qlog-timers" }
-iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "Frando/qlog-timers" }
+iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "Frando/qlog-latest-multipath" }
+iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "Frando/qlog-latest-multipath" }
+iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "Frando/qlog-latest-multipath" }
 
 netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
 

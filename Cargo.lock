@@ -2266,7 +2266,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#419efc775dc7c3686c945482c6ed29f52db2258a"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#2ff0cdf4aa023333aef388451680b1c69530919e"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2275,7 +2275,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2286,7 +2286,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#419efc775dc7c3686c945482c6ed29f52db2258a"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#2ff0cdf4aa023333aef388451680b1c69530919e"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2310,13 +2310,13 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#419efc775dc7c3686c945482c6ed29f52db2258a"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#2ff0cdf4aa023333aef388451680b1c69530919e"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
