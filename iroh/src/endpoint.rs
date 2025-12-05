@@ -61,7 +61,7 @@ pub use self::{
         CryptoError, CryptoServerConfig, ExportKeyingMaterialError, FrameStats, HandshakeTokenKey,
         IdleTimeout, MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, QuicTransportConfig,
         ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-        RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId,
+        RetryError, SendDatagramError, SendStream, ServerConfig, Side, StoppedError, StreamId,
         TransportError, TransportErrorCode, UdpStats, UnsupportedVersion, VarInt,
         VarIntBoundsExceeded, WeakConnectionHandle, WriteError, Written,
     },

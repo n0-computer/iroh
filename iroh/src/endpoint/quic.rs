@@ -13,7 +13,7 @@ pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
     PathStats, ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-    RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId, VarInt,
+    RetryError, SendDatagramError, SendStream, ServerConfig, Side, StoppedError, StreamId, VarInt,
     VarIntBoundsExceeded, WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
