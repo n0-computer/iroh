@@ -1838,7 +1838,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2266,7 +2266,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#9b9902662812bcd7e36221682f1f7f7286e8a20d"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#51d88e684a1fc989075050e035ada5f9386352cb"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2275,7 +2275,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2286,7 +2286,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#9b9902662812bcd7e36221682f1f7f7286e8a20d"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#51d88e684a1fc989075050e035ada5f9386352cb"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2310,11 +2310,11 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-latest-multipath#9b9902662812bcd7e36221682f1f7f7286e8a20d"
+source = "git+https://github.com/n0-computer/quinn?branch=Frando%2Fqlog-timers#51d88e684a1fc989075050e035ada5f9386352cb"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -2680,7 +2680,7 @@ dependencies = [
 [[package]]
 name = "n0-qlog"
 version = "0.15.2"
-source = "git+https://github.com/n0-computer/n0-qlog?branch=main#e021c703ab92d5bf345efb1fc08d23793d294441"
+source = "git+https://github.com/n0-computer/n0-qlog?branch=feat%2Fcustom-timers#55ff855e53a174a9adac91b615444d7af2e69891"
 dependencies = [
  "serde",
  "serde_json",
@@ -3302,7 +3302,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3339,7 +3339,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -5072,7 +5072,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

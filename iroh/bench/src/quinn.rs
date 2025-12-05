@@ -5,6 +5,8 @@ use std::{
 };
 
 use bytes::Bytes;
+#[cfg(feature = "qlog")]
+use iroh::endpoint::QlogFileFactory;
 use n0_error::{Result, StdResultExt};
 use quinn::{
     Connection, Endpoint, RecvStream, SendStream, TransportConfig, crypto::rustls::QuicClientConfig,
@@ -115,6 +117,11 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig
     let mut acks = quinn::AckFrequencyConfig::default();
     acks.ack_eliciting_threshold(10u32.into());
     config.ack_frequency_config(Some(acks));
+
+    #[cfg(feature = "qlog")]
+    config.qlog_factory(Arc::new(
+        QlogFileFactory::from_env().with_prefix(format!("bench-quinn")),
+    ));
 
     config
 }

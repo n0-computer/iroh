@@ -1,9 +1,13 @@
+#[cfg(feature = "qlog")]
+use std::sync::Arc;
 use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
 
 use bytes::Bytes;
+#[cfg(feature = "qlog")]
+use iroh::endpoint::QlogFileFactory;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
     endpoint::{Connection, ConnectionError, QuinnTransportConfig, RecvStream, SendStream},
@@ -132,6 +136,11 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuinnTransportC
     let mut acks = quinn::AckFrequencyConfig::default();
     acks.ack_eliciting_threshold(10u32.into());
     config.ack_frequency_config(Some(acks));
+
+    #[cfg(feature = "qlog")]
+    config.qlog_factory(Arc::new(
+        QlogFileFactory::from_env().with_prefix(format!("bench-iroh")),
+    ));
 
     config
 }

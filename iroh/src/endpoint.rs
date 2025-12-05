@@ -48,6 +48,8 @@ use crate::{
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
+#[cfg(feature = "qlog")]
+mod qlog;
 
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
@@ -58,6 +60,8 @@ pub use quinn::{
     RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId,
     TransportConfig as QuinnTransportConfig, VarInt, WeakConnectionHandle, WriteError,
 };
+#[cfg(feature = "qlog")]
+pub use quinn::{QlogConfig, QlogFactory};
 pub use quinn_proto::{
     FrameStats, TransportError, TransportErrorCode, UdpStats, Written,
     congestion::{Controller, ControllerFactory},
@@ -73,6 +77,8 @@ pub use self::connection::{
     IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError,
     ZeroRttStatus,
 };
+#[cfg(feature = "qlog")]
+pub use self::qlog::QlogFileFactory;
 pub use crate::magicsock::transports::TransportConfig;
 
 /// Builder for [`Endpoint`].
@@ -1371,7 +1377,7 @@ mod tests {
         // Wait for the endpoint to be started to make sure it's up before clients try to connect
         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(server_secret_key)
-            .transport_config(qlog.server("server")?)
+            .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
             .insecure_skip_relay_cert_verify(true)
             .bind()
@@ -1412,7 +1418,7 @@ mod tests {
                 let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .insecure_skip_relay_cert_verify(true)
-                    .transport_config(qlog.client("client")?)
+                    .transport_config(qlog.create("client")?)
                     .bind()
                     .await?;
                 info!("client connecting");
@@ -1695,7 +1701,7 @@ mod tests {
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .insecure_skip_relay_cert_verify(true)
                 .relay_mode(RelayMode::Custom(relay_map))
-                .transport_config(qlog.client("client")?)
+                .transport_config(qlog.create("client")?)
                 .bind()
                 .await?;
             info!(me = %ep.id().fmt_short(), "client starting");
@@ -1731,7 +1737,7 @@ mod tests {
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .insecure_skip_relay_cert_verify(true)
-                .transport_config(qlog.server("server")?)
+                .transport_config(qlog.create("server")?)
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
