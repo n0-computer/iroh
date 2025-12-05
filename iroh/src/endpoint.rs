@@ -44,14 +44,12 @@ use crate::{
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
-#[cfg(feature = "qlog")]
-mod qlog;
 mod quic;
 
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 
 #[cfg(feature = "qlog")]
-pub use self::qlog::QlogFileFactory;
+pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,

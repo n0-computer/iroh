@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 #[cfg(feature = "qlog")]
 use std::sync::Arc;
 
+use crate::endpoint::QuicTransportConfig;
 use n0_error::Result;
 #[cfg(feature = "qlog")]
 use n0_future::time::Instant;
-use quinn::TransportConfig;
 
 #[cfg(feature = "qlog")]
 use crate::endpoint::QlogFileFactory;
@@ -59,35 +59,23 @@ impl QlogFileGroup {
         this
     }
 
-    /// Creates a [`TransportConfig`] that emits qlog files, if enabled.
+    /// Creates a [`QuicTransportConfig`] that emits qlog files, if enabled.
     ///
-    /// If the "qlog" feature is enabled, and the environment variable IROH_TEST_QLOG is set to "1",
+    /// If the "qlog" feature is enabled, and the environment variable IROH_TEST_QLOG is set,
     /// this returns a transport config that writes qlog configs to the configured output directory.
     /// Otherwise, a default transport config is returned.
-    pub fn create(&self, name: impl ToString) -> Result<TransportConfig> {
-        let config = if std::env::var("IROH_TEST_QLOG").ok().as_deref() == Some("1") {
-            self.transport_config(name.to_string())?
-        } else {
-            TransportConfig::default()
-        };
-        Ok(config)
-    }
+    pub fn create(&self, name: impl ToString) -> Result<QuicTransportConfig> {
+        let mut config = QuicTransportConfig::default();
 
-    fn transport_config(&self, name: String) -> Result<TransportConfig> {
-        let mut transport_config = TransportConfig::default();
         #[cfg(feature = "qlog")]
-        {
-            let qlog = self.qlog_factory(name);
-            transport_config.qlog_factory(Arc::new(qlog));
+        if std::env::var("IROH_TEST_QLOG").is_ok() {
+            let prefix = format!("{}.{}", self.title, name.to_string());
+            let factory = QlogFileFactory::new(self.directory.clone())
+                .with_prefix(prefix)
+                .with_start_instant(self.start.into());
+            config.qlog_factory(Arc::new(factory));
         }
-        Ok(transport_config)
-    }
 
-    #[cfg(feature = "qlog")]
-    fn qlog_factory(&self, name: String) -> QlogFileFactory {
-        let prefix = format!("{}.{}", self.title, name);
-        QlogFileFactory::new(self.directory.clone())
-            .with_prefix(prefix)
-            .with_start_instant(self.start)
+        Ok(config)
     }
 }

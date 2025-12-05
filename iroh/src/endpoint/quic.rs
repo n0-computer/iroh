@@ -6,6 +6,8 @@
 //! to limit or expand how those structs are used in iroh. By encapsulating them
 //! we can ensure the functionality needed to make iroh work.
 
+#[cfg(feature = "qlog")]
+use std::path::Path;
 use std::{sync::Arc, time::Duration};
 
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
@@ -17,7 +19,7 @@ pub use quinn::{
     VarIntBoundsExceeded, WeakConnectionHandle, WriteError,
 };
 #[cfg(feature = "qlog")]
-pub use quinn::{QlogConfig, QlogFactory};
+pub use quinn::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use quinn_proto::{
     FrameStats, IdleTimeout, TransportError, TransportErrorCode, UdpStats, Written,
     congestion::{Controller, ControllerFactory},
@@ -444,6 +446,41 @@ impl QuicTransportConfig {
             return self;
         }
         self.0.set_max_remote_nat_traversal_addresses(max_addresses);
+        self
+    }
+
+    /// Configures qlog capturing by setting a [`QlogFactory`].
+    ///
+    /// This assigns a [`QlogFactory`] that produces qlog capture configurations for
+    /// individual connections.
+    #[cfg(feature = "qlog")]
+    pub fn qlog_factory(&mut self, factory: Arc<dyn QlogFactory>) -> &mut Self {
+        self.0.qlog_factory(factory);
+        self
+    }
+
+    /// Configures qlog capturing through the `QLOGDIR` environment variable.
+    ///
+    /// This uses [`QlogFileFactory::from_env`] to create a factory to write qlog traces
+    /// into the directory set through the `QLOGDIR` environment variable.
+    ///
+    /// If `QLOGDIR` is not set, no traces will be written. If `QLOGDIR` is set to a path
+    /// that does not exist, it will be created.
+    ///
+    /// The files will be prefixed with `prefix`.
+    #[cfg(feature = "qlog")]
+    pub fn qlog_from_env(&mut self, prefix: &str) -> &mut Self {
+        self.0.qlog_from_env(prefix);
+        self
+    }
+
+    /// Configures qlog capturing into a directory.
+    ///
+    /// This uses [`QlogFileFactory`] to create a factory to write qlog traces into
+    /// the specified directory.  The files will be prefixed with `prefix`.
+    #[cfg(feature = "qlog")]
+    pub fn qlog_from_path(&mut self, path: impl AsRef<Path>, prefix: &str) -> &mut Self {
+        self.0.qlog_from_path(path, prefix);
         self
     }
 }
