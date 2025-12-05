@@ -877,7 +877,14 @@ impl RemoteStateActor {
         if let Some((rtt, addr)) = selected_path {
             let prev = self.selected_path.set(Some(addr.clone()));
             if prev.is_ok() {
-                debug!(?addr, ?rtt, ?prev, "selected new path");
+                event!(
+                    target: "iroh::_events::path::selected",
+                    Level::DEBUG,
+                    remote = %self.endpoint_id.fmt_short(),
+                    path_remote = ?addr,
+                    ?rtt,
+                    prev_remote = ?prev,
+                );
             }
             self.open_path(addr);
             self.close_redundant_paths(addr);
