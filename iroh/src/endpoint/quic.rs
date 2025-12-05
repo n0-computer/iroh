@@ -15,14 +15,15 @@ pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
     ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
     PathStats, ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-    RetryError, SendDatagramError, SendStream, ServerConfig, Side, StoppedError, StreamId, VarInt,
-    VarIntBoundsExceeded, WeakConnectionHandle, WriteError,
+    RetryError, SendDatagram, SendDatagramError, SendStream, ServerConfig, Side, StoppedError,
+    StreamId, VarInt, VarIntBoundsExceeded, WriteError,
 };
 #[cfg(feature = "qlog")]
 pub use quinn::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use quinn_proto::{
-    FrameStats, IdleTimeout, TransportError, TransportErrorCode, UdpStats, Written,
-    congestion::{Controller, ControllerFactory},
+    BloomTokenLog, Dir, FrameStats, FrameType, IdleTimeout, NoneTokenLog, RttEstimator, TimeSource,
+    TokenLog, TransportError, TransportErrorCode, UdpStats, ValidationTokenConfig, Written,
+    congestion::{Controller, ControllerFactory, ControllerMetrics},
     crypto::{
         AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
         ServerConfig as CryptoServerConfig, UnsupportedVersion,

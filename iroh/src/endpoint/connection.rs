@@ -32,16 +32,19 @@ use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
-use quinn::{
-    AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
-    RetryError, SendDatagramError, ServerConfig, Side, VarInt, WeakConnectionHandle,
-};
+use quinn::WeakConnectionHandle;
 use quinn_proto::PathId;
 use tracing::warn;
 
 use crate::{
     Endpoint,
-    endpoint::AfterHandshakeOutcome,
+    endpoint::{
+        AfterHandshakeOutcome,
+        quic::{
+            AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
+            RetryError, SendDatagram, SendDatagramError, ServerConfig, Side, VarInt,
+        },
+    },
     magicsock::{
         RemoteStateActorStoppedError,
         remote_map::{PathInfoList, PathsWatcher},
@@ -822,20 +825,18 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.send_datagram(data)
     }
 
-    // TODO: It seems `SendDatagram` is not yet exposed by quinn.  This has been fixed
-    //       upstream and will be in the next release.
-    // /// Transmits `data` as an unreliable, unordered application datagram
-    // ///
-    // /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
-    // /// conditions, which effectively prioritizes old datagrams over new datagrams.
-    // ///
-    // /// See [`send_datagram()`] for details.
-    // ///
-    // /// [`send_datagram()`]: Connection::send_datagram
-    // #[inline]
-    // pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
-    //     self.inner.send_datagram_wait(data)
-    // }
+    /// Transmits `data` as an unreliable, unordered application datagram
+    ///
+    /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
+    /// conditions, which effectively prioritizes old datagrams over new datagrams.
+    ///
+    /// See [`send_datagram()`] for details.
+    ///
+    /// [`send_datagram()`]: Connection::send_datagram
+    #[inline]
+    pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
+        self.inner.send_datagram_wait(data)
+    }
 
     /// Computes the maximum size of datagrams that may be passed to [`send_datagram`].
     ///
