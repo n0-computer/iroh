@@ -52,6 +52,9 @@ impl RelayMap {
 
     /// Creates a [`RelayMap`] from an iterator.
     ///
+    /// The conversion from a URL to a [`RelayConfig`] is done the same as when parsing it directly,
+    /// which means it is assumed to run QUIC on default settings as defined in [`RelayQuicConfig::default`].
+    ///
     /// # Example
     /// ```rust
     /// # use iroh_relay::RelayMap;
@@ -237,6 +240,8 @@ fn quic_config() -> Option<RelayQuicConfig> {
 
 /// Configuration for speaking to the QUIC endpoint on the relay
 /// server to do QUIC address discovery.
+///
+/// Defaults to using [`DEFAULT_RELAY_QUIC_PORT`].
 #[derive(Debug, Deserialize, Serialize, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub struct RelayQuicConfig {
     /// The port on which the connection should be bound to.
