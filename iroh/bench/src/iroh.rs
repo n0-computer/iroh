@@ -139,7 +139,7 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuicTransportCo
 
     #[cfg(feature = "qlog")]
     config.qlog_factory(Arc::new(
-        QlogFileFactory::from_env().with_prefix(format!("bench-iroh")),
+        QlogFileFactory::from_env().with_prefix("bench-iroh"),
     ));
 
     config

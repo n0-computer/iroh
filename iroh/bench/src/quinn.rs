@@ -120,7 +120,7 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig
 
     #[cfg(feature = "qlog")]
     config.qlog_factory(Arc::new(
-        QlogFileFactory::from_env().with_prefix(format!("bench-quinn")),
+        QlogFileFactory::from_env().with_prefix("bench-quinn"),
     ));
 
     config
