@@ -1261,7 +1261,19 @@ impl RelayMode {
         }
     }
 
-    /// Create a custom relay mode from a list of relays.
+    /// Create a custom relay mode from a list of [`RelayUrl`]s.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # fn main() -> n0_error::Result<()> {
+    /// # use iroh::RelayMode;
+    /// RelayMode::custom([
+    ///     "https://use1-1.relay.n0.iroh-canary.iroh.link.".parse()?,
+    ///     "https://euw-1.relay.n0.iroh-canary.iroh.link.".parse()?,
+    /// ]);
+    /// # Ok(()) }
+    /// ```
     pub fn custom(map: impl IntoIterator<Item = RelayUrl>) -> Self {
         let m = RelayMap::from_iter(map);
         Self::Custom(m)
@@ -2465,13 +2477,6 @@ mod tests {
         let _ep = Endpoint::empty_builder(RelayMode::custom([RelayUrl::from_str(
             "https://use1-1.relay.n0.iroh-canary.iroh.link.",
         )?]))
-        .bind()
-        .await?;
-
-        let _ep = Endpoint::empty_builder(RelayMode::custom([
-            "https://use1-1.relay.n0.iroh-canary.iroh.link.".parse()?,
-            "https://euw-1.relay.n0.iroh-canary.iroh.link.".parse()?,
-        ]))
         .bind()
         .await?;
 
