@@ -460,92 +460,93 @@
 <a href=#460 id=460 data-nosnippet>460</a>    /// In this case we don't simulate it via synthetically high RTT, but by dropping
 <a href=#461 id=461 data-nosnippet>461</a>    /// all packets on the server-side for 2 seconds.
 <a href=#462 id=462 data-nosnippet>462</a>    </span><span class="attr">#[tokio::test]
-<a href=#463 id=463 data-nosnippet>463</a>    #[traced_test]
+<a href=#463 id=463 data-nosnippet>463</a>    </span><span class="comment">// #[traced_test]
 <a href=#464 id=464 data-nosnippet>464</a>    </span><span class="kw">async fn </span>test_qad_connect_delayed() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#465 id=465 data-nosnippet>465</a>        <span class="comment">// Create a socket for our QAD server.  We need the socket separately because we
-<a href=#466 id=466 data-nosnippet>466</a>        // need to pop off messages before we attach it to the Quinn Endpoint.
-<a href=#467 id=467 data-nosnippet>467</a>        </span><span class="kw">let </span>socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
-<a href=#468 id=468 data-nosnippet>468</a>            .<span class="kw">await
-<a href=#469 id=469 data-nosnippet>469</a>            </span>.std_context(<span class="string">"bind"</span>)<span class="question-mark">?</span>;
-<a href=#470 id=470 data-nosnippet>470</a>        <span class="kw">let </span>server_addr = socket.local_addr().std_context(<span class="string">"local addr"</span>)<span class="question-mark">?</span>;
-<a href=#471 id=471 data-nosnippet>471</a>        <span class="macro">info!</span>(addr = <span class="question-mark">?</span>server_addr, <span class="string">"server socket bound"</span>);
-<a href=#472 id=472 data-nosnippet>472</a>
-<a href=#473 id=473 data-nosnippet>473</a>        <span class="comment">// Create a QAD server with a self-signed cert, all manually.
-<a href=#474 id=474 data-nosnippet>474</a>        </span><span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.into()])
-<a href=#475 id=475 data-nosnippet>475</a>            .std_context(<span class="string">"self signed"</span>)<span class="question-mark">?</span>;
-<a href=#476 id=476 data-nosnippet>476</a>        <span class="kw">let </span>key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
-<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span><span class="kw-2">mut </span>server_crypto = rustls::ServerConfig::builder()
-<a href=#478 id=478 data-nosnippet>478</a>            .with_no_client_auth()
-<a href=#479 id=479 data-nosnippet>479</a>            .with_single_cert(<span class="macro">vec!</span>[cert.cert.into()], key.into())
-<a href=#480 id=480 data-nosnippet>480</a>            .std_context(<span class="string">"tls"</span>)<span class="question-mark">?</span>;
-<a href=#481 id=481 data-nosnippet>481</a>        server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
-<a href=#482 id=482 data-nosnippet>482</a>        server_crypto.alpn_protocols = <span class="macro">vec!</span>[ALPN_QUIC_ADDR_DISC.to_vec()];
-<a href=#483 id=483 data-nosnippet>483</a>        <span class="kw">let </span><span class="kw-2">mut </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(
-<a href=#484 id=484 data-nosnippet>484</a>            QuicServerConfig::try_from(server_crypto).std_context(<span class="string">"config"</span>)<span class="question-mark">?</span>,
-<a href=#485 id=485 data-nosnippet>485</a>        ));
-<a href=#486 id=486 data-nosnippet>486</a>        <span class="kw">let </span>transport_config = Arc::get_mut(<span class="kw-2">&amp;mut </span>server_config.transport).unwrap();
-<a href=#487 id=487 data-nosnippet>487</a>        transport_config.send_observed_address_reports(<span class="bool-val">true</span>);
-<a href=#488 id=488 data-nosnippet>488</a>
-<a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">let </span>start = Instant::now();
-<a href=#490 id=490 data-nosnippet>490</a>        <span class="kw">let </span>server_task = tokio::spawn(
-<a href=#491 id=491 data-nosnippet>491</a>            <span class="kw">async move </span>{
-<a href=#492 id=492 data-nosnippet>492</a>                <span class="macro">info!</span>(<span class="string">"Dropping all packets"</span>);
-<a href=#493 id=493 data-nosnippet>493</a>                time::timeout(Duration::from_secs(<span class="number">2</span>), <span class="kw">async </span>{
-<a href=#494 id=494 data-nosnippet>494</a>                    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">1500</span>];
-<a href=#495 id=495 data-nosnippet>495</a>                    <span class="kw">loop </span>{
-<a href=#496 id=496 data-nosnippet>496</a>                        <span class="kw">let </span>(len, src) = socket.recv_from(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
-<a href=#497 id=497 data-nosnippet>497</a>                        <span class="macro">debug!</span>(%len, <span class="question-mark">?</span>src, <span class="string">"Dropped a packet"</span>);
-<a href=#498 id=498 data-nosnippet>498</a>                    }
-<a href=#499 id=499 data-nosnippet>499</a>                })
-<a href=#500 id=500 data-nosnippet>500</a>                .<span class="kw">await
-<a href=#501 id=501 data-nosnippet>501</a>                </span>.ok();
-<a href=#502 id=502 data-nosnippet>502</a>                <span class="macro">info!</span>(<span class="string">"starting server"</span>);
-<a href=#503 id=503 data-nosnippet>503</a>                <span class="kw">let </span>server = quinn::Endpoint::new(
-<a href=#504 id=504 data-nosnippet>504</a>                    Default::default(),
-<a href=#505 id=505 data-nosnippet>505</a>                    <span class="prelude-val">Some</span>(server_config),
-<a href=#506 id=506 data-nosnippet>506</a>                    socket.into_std().unwrap(),
-<a href=#507 id=507 data-nosnippet>507</a>                    Arc::new(quinn::TokioRuntime),
-<a href=#508 id=508 data-nosnippet>508</a>                )
-<a href=#509 id=509 data-nosnippet>509</a>                .std_context(<span class="string">"endpoint new"</span>)<span class="question-mark">?</span>;
-<a href=#510 id=510 data-nosnippet>510</a>                <span class="macro">info!</span>(<span class="string">"accepting conn"</span>);
-<a href=#511 id=511 data-nosnippet>511</a>                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.expect(<span class="string">"missing conn"</span>);
-<a href=#512 id=512 data-nosnippet>512</a>                <span class="macro">info!</span>(<span class="string">"incoming!"</span>);
-<a href=#513 id=513 data-nosnippet>513</a>                <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.std_context(<span class="string">"incoming"</span>)<span class="question-mark">?</span>;
-<a href=#514 id=514 data-nosnippet>514</a>                conn.closed().<span class="kw">await</span>;
-<a href=#515 id=515 data-nosnippet>515</a>                server.wait_idle().<span class="kw">await</span>;
-<a href=#516 id=516 data-nosnippet>516</a>                n0_error::Ok(())
-<a href=#517 id=517 data-nosnippet>517</a>            }
-<a href=#518 id=518 data-nosnippet>518</a>            .instrument(<span class="macro">info_span!</span>(<span class="string">"server"</span>)),
-<a href=#519 id=519 data-nosnippet>519</a>        );
-<a href=#520 id=520 data-nosnippet>520</a>        <span class="kw">let </span>server_task = AbortOnDropHandle::new(server_task);
-<a href=#521 id=521 data-nosnippet>521</a>
-<a href=#522 id=522 data-nosnippet>522</a>        <span class="macro">info!</span>(<span class="string">"starting client"</span>);
-<a href=#523 id=523 data-nosnippet>523</a>        <span class="kw">let </span>client_endpoint =
-<a href=#524 id=524 data-nosnippet>524</a>            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
-<a href=#525 id=525 data-nosnippet>525</a>                .std_context(<span class="string">"client"</span>)<span class="question-mark">?</span>;
-<a href=#526 id=526 data-nosnippet>526</a>
-<a href=#527 id=527 data-nosnippet>527</a>        <span class="comment">// create the client configuration used for the client endpoint when they
-<a href=#528 id=528 data-nosnippet>528</a>        // initiate a connection with the server
-<a href=#529 id=529 data-nosnippet>529</a>        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::client::make_dangerous_client_config();
-<a href=#530 id=530 data-nosnippet>530</a>        <span class="kw">let </span>quic_client = QuicClient::new(client_endpoint.clone(), client_config);
-<a href=#531 id=531 data-nosnippet>531</a>
-<a href=#532 id=532 data-nosnippet>532</a>        <span class="comment">// Now we should still connect, but it should take more than 1s.
-<a href=#533 id=533 data-nosnippet>533</a>        </span><span class="macro">info!</span>(<span class="string">"making QAD request"</span>);
-<a href=#534 id=534 data-nosnippet>534</a>        <span class="kw">let </span>(addr, latency) = time::timeout(
-<a href=#535 id=535 data-nosnippet>535</a>            Duration::from_secs(<span class="number">10</span>),
-<a href=#536 id=536 data-nosnippet>536</a>            quic_client.get_addr_and_latency(server_addr, <span class="string">"localhost"</span>),
-<a href=#537 id=537 data-nosnippet>537</a>        )
-<a href=#538 id=538 data-nosnippet>538</a>        .<span class="kw">await
-<a href=#539 id=539 data-nosnippet>539</a>        </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">??</span>;
-<a href=#540 id=540 data-nosnippet>540</a>        <span class="kw">let </span>duration = start.elapsed();
-<a href=#541 id=541 data-nosnippet>541</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>duration, <span class="question-mark">?</span>addr, <span class="question-mark">?</span>latency, <span class="string">"QAD succeeded"</span>);
-<a href=#542 id=542 data-nosnippet>542</a>        <span class="macro">assert!</span>(duration &gt;= Duration::from_secs(<span class="number">1</span>));
-<a href=#543 id=543 data-nosnippet>543</a>
-<a href=#544 id=544 data-nosnippet>544</a>        time::timeout(Duration::from_secs(<span class="number">10</span>), server_task)
-<a href=#545 id=545 data-nosnippet>545</a>            .<span class="kw">await
-<a href=#546 id=546 data-nosnippet>546</a>            </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
-<a href=#547 id=547 data-nosnippet>547</a>            </span>.std_context(<span class="string">"server task"</span>)<span class="question-mark">??</span>;
-<a href=#548 id=548 data-nosnippet>548</a>
-<a href=#549 id=549 data-nosnippet>549</a>        <span class="prelude-val">Ok</span>(())
-<a href=#550 id=550 data-nosnippet>550</a>    }
-<a href=#551 id=551 data-nosnippet>551</a>}</code></pre></div></section></main></body></html>
+<a href=#465 id=465 data-nosnippet>465</a>        tracing_subscriber::fmt::try_init().ok();
+<a href=#466 id=466 data-nosnippet>466</a>        <span class="comment">// Create a socket for our QAD server.  We need the socket separately because we
+<a href=#467 id=467 data-nosnippet>467</a>        // need to pop off messages before we attach it to the Quinn Endpoint.
+<a href=#468 id=468 data-nosnippet>468</a>        </span><span class="kw">let </span>socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
+<a href=#469 id=469 data-nosnippet>469</a>            .<span class="kw">await
+<a href=#470 id=470 data-nosnippet>470</a>            </span>.std_context(<span class="string">"bind"</span>)<span class="question-mark">?</span>;
+<a href=#471 id=471 data-nosnippet>471</a>        <span class="kw">let </span>server_addr = socket.local_addr().std_context(<span class="string">"local addr"</span>)<span class="question-mark">?</span>;
+<a href=#472 id=472 data-nosnippet>472</a>        <span class="macro">info!</span>(addr = <span class="question-mark">?</span>server_addr, <span class="string">"server socket bound"</span>);
+<a href=#473 id=473 data-nosnippet>473</a>
+<a href=#474 id=474 data-nosnippet>474</a>        <span class="comment">// Create a QAD server with a self-signed cert, all manually.
+<a href=#475 id=475 data-nosnippet>475</a>        </span><span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.into()])
+<a href=#476 id=476 data-nosnippet>476</a>            .std_context(<span class="string">"self signed"</span>)<span class="question-mark">?</span>;
+<a href=#477 id=477 data-nosnippet>477</a>        <span class="kw">let </span>key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
+<a href=#478 id=478 data-nosnippet>478</a>        <span class="kw">let </span><span class="kw-2">mut </span>server_crypto = rustls::ServerConfig::builder()
+<a href=#479 id=479 data-nosnippet>479</a>            .with_no_client_auth()
+<a href=#480 id=480 data-nosnippet>480</a>            .with_single_cert(<span class="macro">vec!</span>[cert.cert.into()], key.into())
+<a href=#481 id=481 data-nosnippet>481</a>            .std_context(<span class="string">"tls"</span>)<span class="question-mark">?</span>;
+<a href=#482 id=482 data-nosnippet>482</a>        server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+<a href=#483 id=483 data-nosnippet>483</a>        server_crypto.alpn_protocols = <span class="macro">vec!</span>[ALPN_QUIC_ADDR_DISC.to_vec()];
+<a href=#484 id=484 data-nosnippet>484</a>        <span class="kw">let </span><span class="kw-2">mut </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(
+<a href=#485 id=485 data-nosnippet>485</a>            QuicServerConfig::try_from(server_crypto).std_context(<span class="string">"config"</span>)<span class="question-mark">?</span>,
+<a href=#486 id=486 data-nosnippet>486</a>        ));
+<a href=#487 id=487 data-nosnippet>487</a>        <span class="kw">let </span>transport_config = Arc::get_mut(<span class="kw-2">&amp;mut </span>server_config.transport).unwrap();
+<a href=#488 id=488 data-nosnippet>488</a>        transport_config.send_observed_address_reports(<span class="bool-val">true</span>);
+<a href=#489 id=489 data-nosnippet>489</a>
+<a href=#490 id=490 data-nosnippet>490</a>        <span class="kw">let </span>start = Instant::now();
+<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw">let </span>server_task = tokio::spawn(
+<a href=#492 id=492 data-nosnippet>492</a>            <span class="kw">async move </span>{
+<a href=#493 id=493 data-nosnippet>493</a>                <span class="macro">info!</span>(<span class="string">"Dropping all packets"</span>);
+<a href=#494 id=494 data-nosnippet>494</a>                time::timeout(Duration::from_secs(<span class="number">2</span>), <span class="kw">async </span>{
+<a href=#495 id=495 data-nosnippet>495</a>                    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">1500</span>];
+<a href=#496 id=496 data-nosnippet>496</a>                    <span class="kw">loop </span>{
+<a href=#497 id=497 data-nosnippet>497</a>                        <span class="kw">let </span>(len, src) = socket.recv_from(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
+<a href=#498 id=498 data-nosnippet>498</a>                        <span class="macro">debug!</span>(%len, <span class="question-mark">?</span>src, <span class="string">"Dropped a packet"</span>);
+<a href=#499 id=499 data-nosnippet>499</a>                    }
+<a href=#500 id=500 data-nosnippet>500</a>                })
+<a href=#501 id=501 data-nosnippet>501</a>                .<span class="kw">await
+<a href=#502 id=502 data-nosnippet>502</a>                </span>.ok();
+<a href=#503 id=503 data-nosnippet>503</a>                <span class="macro">info!</span>(<span class="string">"starting server"</span>);
+<a href=#504 id=504 data-nosnippet>504</a>                <span class="kw">let </span>server = quinn::Endpoint::new(
+<a href=#505 id=505 data-nosnippet>505</a>                    Default::default(),
+<a href=#506 id=506 data-nosnippet>506</a>                    <span class="prelude-val">Some</span>(server_config),
+<a href=#507 id=507 data-nosnippet>507</a>                    socket.into_std().unwrap(),
+<a href=#508 id=508 data-nosnippet>508</a>                    Arc::new(quinn::TokioRuntime),
+<a href=#509 id=509 data-nosnippet>509</a>                )
+<a href=#510 id=510 data-nosnippet>510</a>                .std_context(<span class="string">"endpoint new"</span>)<span class="question-mark">?</span>;
+<a href=#511 id=511 data-nosnippet>511</a>                <span class="macro">info!</span>(<span class="string">"accepting conn"</span>);
+<a href=#512 id=512 data-nosnippet>512</a>                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.expect(<span class="string">"missing conn"</span>);
+<a href=#513 id=513 data-nosnippet>513</a>                <span class="macro">info!</span>(<span class="string">"incoming!"</span>);
+<a href=#514 id=514 data-nosnippet>514</a>                <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.std_context(<span class="string">"incoming"</span>)<span class="question-mark">?</span>;
+<a href=#515 id=515 data-nosnippet>515</a>                conn.closed().<span class="kw">await</span>;
+<a href=#516 id=516 data-nosnippet>516</a>                server.wait_idle().<span class="kw">await</span>;
+<a href=#517 id=517 data-nosnippet>517</a>                n0_error::Ok(())
+<a href=#518 id=518 data-nosnippet>518</a>            }
+<a href=#519 id=519 data-nosnippet>519</a>            .instrument(<span class="macro">info_span!</span>(<span class="string">"server"</span>)),
+<a href=#520 id=520 data-nosnippet>520</a>        );
+<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">let </span>server_task = AbortOnDropHandle::new(server_task);
+<a href=#522 id=522 data-nosnippet>522</a>
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="macro">info!</span>(<span class="string">"starting client"</span>);
+<a href=#524 id=524 data-nosnippet>524</a>        <span class="kw">let </span>client_endpoint =
+<a href=#525 id=525 data-nosnippet>525</a>            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
+<a href=#526 id=526 data-nosnippet>526</a>                .std_context(<span class="string">"client"</span>)<span class="question-mark">?</span>;
+<a href=#527 id=527 data-nosnippet>527</a>
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="comment">// create the client configuration used for the client endpoint when they
+<a href=#529 id=529 data-nosnippet>529</a>        // initiate a connection with the server
+<a href=#530 id=530 data-nosnippet>530</a>        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::client::make_dangerous_client_config();
+<a href=#531 id=531 data-nosnippet>531</a>        <span class="kw">let </span>quic_client = QuicClient::new(client_endpoint.clone(), client_config);
+<a href=#532 id=532 data-nosnippet>532</a>
+<a href=#533 id=533 data-nosnippet>533</a>        <span class="comment">// Now we should still connect, but it should take more than 1s.
+<a href=#534 id=534 data-nosnippet>534</a>        </span><span class="macro">info!</span>(<span class="string">"making QAD request"</span>);
+<a href=#535 id=535 data-nosnippet>535</a>        <span class="kw">let </span>(addr, latency) = time::timeout(
+<a href=#536 id=536 data-nosnippet>536</a>            Duration::from_secs(<span class="number">10</span>),
+<a href=#537 id=537 data-nosnippet>537</a>            quic_client.get_addr_and_latency(server_addr, <span class="string">"localhost"</span>),
+<a href=#538 id=538 data-nosnippet>538</a>        )
+<a href=#539 id=539 data-nosnippet>539</a>        .<span class="kw">await
+<a href=#540 id=540 data-nosnippet>540</a>        </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">??</span>;
+<a href=#541 id=541 data-nosnippet>541</a>        <span class="kw">let </span>duration = start.elapsed();
+<a href=#542 id=542 data-nosnippet>542</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>duration, <span class="question-mark">?</span>addr, <span class="question-mark">?</span>latency, <span class="string">"QAD succeeded"</span>);
+<a href=#543 id=543 data-nosnippet>543</a>        <span class="macro">assert!</span>(duration &gt;= Duration::from_secs(<span class="number">1</span>));
+<a href=#544 id=544 data-nosnippet>544</a>
+<a href=#545 id=545 data-nosnippet>545</a>        time::timeout(Duration::from_secs(<span class="number">10</span>), server_task)
+<a href=#546 id=546 data-nosnippet>546</a>            .<span class="kw">await
+<a href=#547 id=547 data-nosnippet>547</a>            </span>.std_context(<span class="string">"timeout"</span>)<span class="question-mark">?
+<a href=#548 id=548 data-nosnippet>548</a>            </span>.std_context(<span class="string">"server task"</span>)<span class="question-mark">??</span>;
+<a href=#549 id=549 data-nosnippet>549</a>
+<a href=#550 id=550 data-nosnippet>550</a>        <span class="prelude-val">Ok</span>(())
+<a href=#551 id=551 data-nosnippet>551</a>    }
+<a href=#552 id=552 data-nosnippet>552</a>}</code></pre></div></section></main></body></html>
