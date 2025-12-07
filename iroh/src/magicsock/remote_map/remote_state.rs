@@ -869,14 +869,39 @@ impl RemoteStateActor {
                 }
             })
             .min();
-        let selected_path = direct_path.or_else(|| {
-            // Find the fasted relay path.
-            path_rtts
-                .iter()
-                .filter(|(addr, _rtt)| addr.is_relay())
-                .map(|(addr, rtt)| (*rtt, addr))
-                .min()
-        });
+        let relay_path = direct_path
+            .is_some()
+            .then(|| {
+                // Find the fasted relay path.
+                path_rtts
+                    .iter()
+                    .filter(|(addr, _rtt)| addr.is_relay())
+                    .map(|(addr, rtt)| (*rtt, addr))
+                    .min()
+            })
+            .flatten();
+
+        let selected_path = match (self.selected_path.get(), direct_path) {
+            (Some(ref addr @ transports::Addr::Ip(_)), Some((new_rtt, new_direct_addr))) => {
+                let current_rtt = path_rtts.get(addr);
+                if let Some(&current_rtt) = current_rtt {
+                    if current_rtt > new_rtt + Duration::from_millis(10) {
+                        // Switch to a new path it is at least 10ms better
+                        // TODO: what number is right?
+                        // TODO: should we take IPv6 vs IPv4 into consideration here?
+                        Some((new_rtt, new_direct_addr))
+                    } else {
+                        // Current path is good enough
+                        None
+                    }
+                } else {
+                    // use new path, we have no RTT information for the current path
+                    Some((new_rtt, new_direct_addr))
+                }
+            }
+            _ => direct_path.or(relay_path),
+        };
+
         if let Some((rtt, addr)) = selected_path {
             let prev = self.selected_path.set(Some(addr.clone()));
             if prev.is_ok() {
