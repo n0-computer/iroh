@@ -151,7 +151,11 @@ impl QadConns {
         if let Some((_, ref conn)) = self.v4 {
             if let Some(mut r) = conn.observer.get() {
                 // grab latest rtt
-                r.latency = conn.conn.rtt();
+
+                use quinn_proto::PathId;
+                if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
+                    r.latency = latency;
+                }
                 return Some(ProbeReport::QadIpv4(r));
             }
         }
@@ -162,7 +166,11 @@ impl QadConns {
         if let Some((_, ref conn)) = self.v6 {
             if let Some(mut r) = conn.observer.get() {
                 // grab latest rtt
-                r.latency = conn.conn.rtt();
+
+                use quinn_proto::PathId;
+                if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
+                    r.latency = latency;
+                }
                 return Some(ProbeReport::QadIpv6(r));
             }
         }
@@ -766,6 +774,8 @@ async fn run_probe_v4(
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
+    use quinn_proto::PathId;
+
     let relay_addr = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay)
         .await
         .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
@@ -791,7 +801,7 @@ async fn run_probe_v4(
     let report = QadProbeReport {
         relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
-        latency: conn.rtt(),
+        latency: conn.rtt(PathId::ZERO).unwrap_or_default(),
     };
 
     let observer = Watchable::new(None);
@@ -805,7 +815,7 @@ async fn run_probe_v4(
                 // if we've sent to an ipv4 address, but received an observed address
                 // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
                 let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
-                let latency = conn.rtt();
+                let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
                 observer
                     .set(val.map(|addr| QadProbeReport {
                         relay: endpoint.clone(),
@@ -837,6 +847,8 @@ async fn run_probe_v6(
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
+    use quinn_proto::PathId;
+
     let relay_addr = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay)
         .await
         .map_err(|source| e!(QadProbeError::GetRelayAddr { source }))?;
@@ -862,7 +874,7 @@ async fn run_probe_v6(
     let report = QadProbeReport {
         relay: relay.url.clone(),
         addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
-        latency: conn.rtt(),
+        latency: conn.rtt(PathId::ZERO).unwrap_or_default(),
     };
 
     let observer = Watchable::new(None);
@@ -876,7 +888,7 @@ async fn run_probe_v6(
                 // if we've sent to an ipv4 address, but received an observed address
                 // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
                 let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
-                let latency = conn.rtt();
+                let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
                 observer
                     .set(val.map(|addr| QadProbeReport {
                         relay: endpoint.clone(),

@@ -66,10 +66,6 @@ mod path_state;
 // /// Even if we have some non-relay route that works.
 // const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
-/// The value which we close paths.
-// TODO: Quinn should just do this.  Also, I made this value up.
-const APPLICATION_ABANDON_PATH: u8 = 30;
-
 /// The time after which an idle [`RemoteStateActor`] stops.
 ///
 /// The actor only enters the idle state if no connections are active and no inbox senders exist
@@ -802,7 +798,7 @@ impl RemoteStateActor {
                     };
                     if let Some(path) = conn.path(*path_id) {
                         trace!(?path_remote, ?conn_id, ?path_id, "closing path");
-                        if let Err(err) = path.close(APPLICATION_ABANDON_PATH.into()) {
+                        if let Err(err) = path.close() {
                             trace!(
                                 ?path_remote,
                                 ?conn_id,
@@ -912,7 +908,7 @@ impl RemoteStateActor {
                     .and_then(|conn| conn.path(*path_id))
                 {
                     trace!(?path_remote, ?conn_id, ?path_id, "closing direct path");
-                    match path.close(APPLICATION_ABANDON_PATH.into()) {
+                    match path.close() {
                         Err(quinn_proto::ClosePathError::LastOpenPath) => {
                             error!("could not close last open path");
                         }
