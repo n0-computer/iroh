@@ -148,11 +148,24 @@ jobs:
       continue-on-error: true
       run: |
         cd ../chuck/netsim
+        mkdir -p qlogs
         # split sim_paths by comma
         IFS=',' read -ra sim_paths <<< "${{ inputs.sim_paths }}"
         for sim_path in "${sim_paths[@]}"; do
           sudo python3 main.py ${{ inputs.debug_logs && '--debug' || ''}} ${{ inputs.visualizations && '--visualize' || ''}} --max-workers=${{ inputs.max_workers }} --integration $sim_path
         done
+
+    - name: Package qlogs
+      if: always()
+      run: |
+        cd ../chuck/netsim
+        if [ -d "qlogs" ] && [ "$(ls -A qlogs)" ]; then
+          tar czf qlogs.tar.gz qlogs/
+          echo "Packaged qlogs: $(du -h qlogs.tar.gz)"
+        else
+          echo "No qlog files to package"
+          touch qlogs.tar.gz
+        fi
 
     - name: Generate report
       id: generate_report
@@ -195,6 +208,21 @@ jobs:
       with:
         name: netsim-report-${{ env.LAST_COMMIT_SHA }}
         path: report.tar.gz
+        retention-days: 3
+        overwrite: true
+
+    - name: Move qlogs
+      if: always()
+      run: |
+        cp ../chuck/netsim/qlogs.tar.gz ./qlogs.tar.gz || touch ./qlogs.tar.gz
+
+    - name: Upload qlogs
+      if: always()
+      uses: actions/upload-artifact@v5
+      id: upload-qlogs
+      with:
+        name: netsim-qlogs-${{ env.LAST_COMMIT_SHA }}
+        path: qlogs.tar.gz
         retention-days: 3
         overwrite: true
 

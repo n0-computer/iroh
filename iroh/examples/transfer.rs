@@ -193,6 +193,14 @@ impl EndpointArgs {
     async fn bind_endpoint(self) -> Result<Endpoint> {
         let mut builder = Endpoint::builder();
 
+        #[cfg(feature = "qlog")]
+        {
+            use iroh::endpoint::QuicTransportConfig;
+            let mut config = QuicTransportConfig::default();
+            config.qlog_from_env("transfer");
+            builder = builder.transport_config(config);
+        }
+
         let secret_key = match std::env::var("IROH_SECRET") {
             Ok(s) => SecretKey::from_str(&s)
                 .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
