@@ -52,6 +52,12 @@ pub struct Config {
     /// Config for pkarr rate limit
     #[serde(default)]
     pub pkarr_put_rate_limit: RateLimitConfig,
+
+    /// Location where all data of iroh-dns-server is stored.
+    ///
+    /// If unset, will use `IROH_DNS_DATA_DIR` environment variable if set,
+    /// and otherwise a `iroh-dns` directory in the host system's data directory.
+    pub data_dir: Option<PathBuf>,
 }
 
 /// The config for the store.
@@ -168,21 +174,26 @@ impl Config {
     }
 
     /// Get the data directory.
-    pub fn data_dir() -> Result<PathBuf> {
-        let dir = if let Some(val) = env::var_os("IROH_DNS_DATA_DIR") {
-            PathBuf::from(val)
+    pub fn data_dir(&self) -> Result<PathBuf> {
+        let dir = if let Some(dir) = &self.data_dir {
+            dir.clone()
         } else {
-            let path = dirs_next::data_dir()
-                .std_context("operating environment provides no directory for application data")?;
+            if let Some(val) = env::var_os("IROH_DNS_DATA_DIR") {
+                PathBuf::from(val)
+            } else {
+                let path = dirs_next::data_dir().std_context(
+                    "operating environment provides no directory for application data",
+                )?;
 
-            path.join("iroh-dns")
+                path.join("iroh-dns")
+            }
         };
         Ok(dir)
     }
 
     /// Get the path to the store database file.
-    pub fn signed_packet_store_path() -> Result<PathBuf> {
-        Ok(Self::data_dir()?.join("signed-packets-1.db"))
+    pub fn signed_packet_store_path(&self) -> Result<PathBuf> {
+        Ok(self.data_dir()?.join("signed-packets-1.db"))
     }
 
     /// Get the address where the metrics server should be bound, if set.
@@ -243,6 +254,7 @@ impl Default for Config {
             metrics: None,
             mainline: None,
             pkarr_put_rate_limit: RateLimitConfig::default(),
+            data_dir: None,
         }
     }
 }

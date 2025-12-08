@@ -2,6 +2,7 @@
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
     time::Instant,
 };
 
@@ -30,7 +31,7 @@ mod rate_limiting;
 mod tls;
 
 pub use self::{rate_limiting::RateLimitConfig, tls::CertMode};
-use crate::{config::Config, state::AppState};
+use crate::state::AppState;
 
 /// Config for the HTTP server
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -72,6 +73,7 @@ impl HttpServer {
         https_config: Option<HttpsConfig>,
         rate_limit_config: RateLimitConfig,
         state: AppState,
+        cert_cache_dir: PathBuf,
     ) -> Result<HttpServer> {
         if http_config.is_none() && https_config.is_none() {
             bail_any!("Either http or https config is required");
@@ -110,19 +112,19 @@ impl HttpServer {
                 config.port,
             );
             let acceptor = {
-                let cache_path = Config::data_dir()?
-                    .join("cert_cache")
-                    .join(config.cert_mode.to_string());
-                tokio::fs::create_dir_all(&cache_path)
+                tokio::fs::create_dir_all(&cert_cache_dir)
                     .await
                     .with_std_context(|_| {
-                        format!("failed to create cert cache dir at {cache_path:?}")
+                        format!(
+                            "failed to create cert cache dir at {}",
+                            cert_cache_dir.display()
+                        )
                     })?;
                 config
                     .cert_mode
                     .build(
                         config.domains,
-                        cache_path,
+                        cert_cache_dir,
                         config.letsencrypt_contact,
                         config.letsencrypt_prod.unwrap_or(false),
                     )
@@ -289,4 +291,220 @@ async fn metrics_middleware(
         state.metrics.http_requests_error.inc();
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use hickory_resolver::{
+        config::{NameServerConfig, ResolverConfig, ResolverOpts},
+        name_server::TokioConnectionProvider,
+    };
+    use hickory_server::proto::rr::RecordType;
+    use iroh::{
+        RelayUrl, SecretKey,
+        discovery::{EndpointInfo, pkarr::PkarrRelayClient},
+        endpoint_info::EndpointIdExt,
+    };
+    use n0_error::StdResultExt;
+    use rand::SeedableRng;
+
+    use crate::{http::HttpsConfig, server::Server};
+
+    #[tokio::test]
+    async fn test_doh() -> n0_error::Result {
+        tracing_subscriber::fmt::init();
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(0);
+        let dir = tempfile::tempdir()?;
+        let https_config = HttpsConfig {
+            port: 0,
+            bind_addr: None,
+            domains: vec!["localhost".to_string()],
+            cert_mode: crate::http::CertMode::SelfSigned,
+            letsencrypt_contact: None,
+            letsencrypt_prod: None,
+        };
+        let server =
+            Server::spawn_for_tests_with_options(dir.path(), None, None, Some(https_config))
+                .await?;
+
+        let (name_z32, signed_packet) = {
+            let secret_key = SecretKey::generate(&mut rng);
+            let endpoint_id = secret_key.public();
+            let relay_url: RelayUrl = "https://relay.example.".parse()?;
+            let endpoint_info =
+                EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
+            (
+                secret_key.public().to_z32(),
+                endpoint_info.to_pkarr_signed_packet(&secret_key, 30)?,
+            )
+        };
+
+        let http_url = server.http_url().expect("http is bound");
+        let pkarr = PkarrRelayClient::new(format!("{http_url}pkarr").parse().anyerr()?);
+        pkarr.publish(&signed_packet).await?;
+
+        // Create a reqwest client that does not verify certificates.
+        let client = reqwest::Client::builder()
+            .http2_prior_knowledge()
+            .use_preconfigured_tls(self::tls::insecure_tls_config())
+            .build()
+            .anyerr()?;
+
+        // Fetch as JSON via HTTP.
+        let url = format!(
+            "{http_url}dns-query?name={}&type=txt",
+            format_args!("_iroh.{name_z32}."),
+        );
+        let res = client
+            .get(url)
+            .header("accept", "application/dns-json")
+            .send()
+            .await
+            .anyerr()?
+            .json::<super::doh::DnsResponse>()
+            .await
+            .anyerr()?;
+        assert_eq!(res.answer.len(), 1);
+        assert_eq!(res.answer[0].name, format!("_iroh.{name_z32}."));
+        assert_eq!(res.answer[0].data, "relay=https://relay.example./");
+
+        // Fetch as JSON via HTTPS.
+        let https_url = server.https_url().expect("https is bound");
+        let url = format!(
+            "{https_url}dns-query?name={}&type=txt",
+            format_args!("_iroh.{name_z32}."),
+        );
+        let res = client
+            .get(url)
+            .header("accept", "application/dns-json")
+            .send()
+            .await
+            .anyerr()?
+            .json::<super::doh::DnsResponse>()
+            .await
+            .anyerr()?;
+        assert_eq!(res.answer.len(), 1);
+        assert_eq!(res.answer[0].name, format!("_iroh.{name_z32}."));
+        assert_eq!(res.answer[0].data, "relay=https://relay.example./");
+
+        // Fetch over HTTPS via hickory-resolver
+        let client = {
+            let config = {
+                let mut config = ResolverConfig::new();
+                let mut name_server = NameServerConfig::new(
+                    server.https_addr().expect("https is bound"),
+                    hickory_server::proto::xfer::Protocol::Https,
+                );
+                name_server.tls_dns_name = Some("localhost".to_string());
+                config.add_name_server(name_server);
+                config
+            };
+
+            let opts = {
+                let mut opts = ResolverOpts::default();
+                opts.tls_config = self::tls::insecure_tls_config();
+                opts
+            };
+
+            hickory_resolver::Resolver::builder_with_config(
+                config,
+                TokioConnectionProvider::default(),
+            )
+            .with_options(opts)
+            .build()
+        };
+
+        let res = client
+            .txt_lookup(format!("_iroh.{name_z32}."))
+            .await
+            .anyerr()?;
+        let records = res.as_lookup().records();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].record_type(), RecordType::TXT);
+        let txt_data = records[0].data().as_txt().unwrap().txt_data();
+        assert_eq!(&txt_data[0][..], b"relay=https://relay.example./");
+
+        server.shutdown().await?;
+        Ok(())
+    }
+
+    mod tls {
+        use std::sync::Arc;
+
+        use rustls::{
+            DigitallySignedStruct, RootCertStore,
+            client::{
+                ClientConfig,
+                danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+            },
+            crypto::{
+                CryptoProvider, ring::default_provider, verify_tls12_signature,
+                verify_tls13_signature,
+            },
+            pki_types::{CertificateDer, ServerName, UnixTime},
+        };
+
+        #[derive(Debug)]
+        struct NoCertificateVerification(CryptoProvider);
+
+        impl Default for NoCertificateVerification {
+            fn default() -> Self {
+                Self(default_provider())
+            }
+        }
+
+        impl ServerCertVerifier for NoCertificateVerification {
+            fn verify_server_cert(
+                &self,
+                _end_entity: &CertificateDer<'_>,
+                _intermediates: &[CertificateDer<'_>],
+                _server_name: &ServerName<'_>,
+                _ocsp: &[u8],
+                _now: UnixTime,
+            ) -> Result<ServerCertVerified, rustls::Error> {
+                Ok(ServerCertVerified::assertion())
+            }
+
+            fn verify_tls12_signature(
+                &self,
+                message: &[u8],
+                cert: &CertificateDer<'_>,
+                dss: &DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, rustls::Error> {
+                verify_tls12_signature(
+                    message,
+                    cert,
+                    dss,
+                    &self.0.signature_verification_algorithms,
+                )
+            }
+
+            fn verify_tls13_signature(
+                &self,
+                message: &[u8],
+                cert: &CertificateDer<'_>,
+                dss: &DigitallySignedStruct,
+            ) -> Result<HandshakeSignatureValid, rustls::Error> {
+                verify_tls13_signature(
+                    message,
+                    cert,
+                    dss,
+                    &self.0.signature_verification_algorithms,
+                )
+            }
+
+            fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+                self.0.signature_verification_algorithms.supported_schemes()
+            }
+        }
+
+        pub(super) fn insecure_tls_config() -> ClientConfig {
+            let mut cfg = ClientConfig::builder()
+                .with_root_certificates(RootCertStore::empty())
+                .with_no_client_auth();
+            cfg.dangerous()
+                .set_certificate_verifier(Arc::new(NoCertificateVerification::default()));
+            cfg
+        }
+    }
 }
