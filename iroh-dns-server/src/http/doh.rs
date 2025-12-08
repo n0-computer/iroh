@@ -25,7 +25,6 @@ mod extract;
 mod response;
 
 use self::extract::{DnsMimeType, DnsRequestBody, DnsRequestQuery};
-
 #[cfg(test)]
 pub(crate) use self::response::DnsResponse;
 
