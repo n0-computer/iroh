@@ -426,7 +426,6 @@ impl RemoteStateActor {
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
-                    transport_summary: TransportSummary::default(),
                 })
                 .into_mut();
 
@@ -486,9 +485,8 @@ impl RemoteStateActor {
     }
 
     fn handle_connection_close(&mut self, conn_id: ConnId) {
-        if let Some(state) = self.connections.remove(&conn_id) {
+        if self.connections.remove(&conn_id).is_some() {
             self.metrics.num_conns_closed.inc();
-            state.transport_summary.record(&self.metrics);
         }
         if self.connections.is_empty() {
             trace!("last connection closed - clearing selected_path");
@@ -1047,8 +1045,6 @@ struct ConnectionState {
     open_paths: FxHashMap<PathId, transports::Addr>,
     /// Reverse map of [`Self::paths].
     path_ids: FxHashMap<transports::Addr, PathId>,
-    /// Summary over transports used in this connection, for metrics tracking.
-    transport_summary: TransportSummary,
 }
 
 impl ConnectionState {
@@ -1060,7 +1056,6 @@ impl ConnectionState {
 
     /// Tracks an open path for the connection.
     fn add_open_path(&mut self, remote: transports::Addr, path_id: PathId) {
-        self.transport_summary.add_path(&remote);
         self.paths.insert(path_id, remote.clone());
         self.open_paths.insert(path_id, remote.clone());
         self.path_ids.insert(remote, path_id);
@@ -1307,44 +1302,6 @@ impl Future for OnClosed {
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         let (_close_reason, _stats) = std::task::ready!(Pin::new(&mut self.inner).poll(cx));
         Poll::Ready(self.conn_id)
-    }
-}
-
-/// Used for metrics tracking.
-#[derive(Debug, Clone, Copy, Default)]
-enum TransportSummary {
-    #[default]
-    None,
-    IpOnly,
-    RelayOnly,
-    IpAndRelay,
-}
-
-impl TransportSummary {
-    fn add_path(&mut self, addr: &transports::Addr) {
-        use transports::Addr;
-        *self = match (*self, addr) {
-            (TransportSummary::None | TransportSummary::IpOnly, Addr::Ip(_)) => Self::IpOnly,
-            (TransportSummary::None | TransportSummary::RelayOnly, Addr::Relay(_, _)) => {
-                Self::RelayOnly
-            }
-            _ => Self::IpAndRelay,
-        }
-    }
-
-    fn record(&self, metrics: &MagicsockMetrics) {
-        match self {
-            TransportSummary::IpOnly => {
-                metrics.num_conns_transport_ip_only.inc();
-            }
-            TransportSummary::RelayOnly => {
-                metrics.num_conns_transport_relay_only.inc();
-            }
-            TransportSummary::IpAndRelay => {
-                metrics.num_conns_transport_ip_and_relay.inc();
-            }
-            TransportSummary::None => {}
-        }
     }
 }
 

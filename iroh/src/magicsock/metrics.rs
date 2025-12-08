@@ -43,12 +43,6 @@ pub struct Metrics {
     pub num_conns_opened: Counter,
     /// Number of connections closed (only handshaked connections are counted).
     pub num_conns_closed: Counter,
-    /// Number of connections that had only relay paths over their lifetime.
-    pub num_conns_transport_relay_only: Counter,
-    /// Number of connections that had only IP paths over their lifetime.
-    pub num_conns_transport_ip_only: Counter,
-    /// Number of connections that had both IP and relay paths.
-    pub num_conns_transport_ip_and_relay: Counter,
 
     pub actor_tick_main: Counter,
     pub actor_tick_msg: Counter,
