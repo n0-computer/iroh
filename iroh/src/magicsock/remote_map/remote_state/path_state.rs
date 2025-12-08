@@ -9,7 +9,7 @@ use tokio::sync::oneshot;
 use tracing::trace;
 
 use super::Source;
-use crate::{discovery::DiscoveryError, magicsock::transports};
+use crate::{discovery::DiscoveryError, magicsock::transports, metrics::MagicsockMetrics};
 
 /// Maximum number of IP paths we keep around per endpoint.
 pub(super) const MAX_IP_PATHS: usize = 30;
@@ -54,7 +54,16 @@ impl RemotePathState {
     /// Insert a new address of an open path into our list of paths.
     ///
     /// This will emit pending resolve requests and trigger pruning paths.
-    pub(super) fn insert_open_path(&mut self, addr: transports::Addr, source: Source) {
+    pub(super) fn insert_open_path(
+        &mut self,
+        addr: transports::Addr,
+        source: Source,
+        metrics: &MagicsockMetrics,
+    ) {
+        match addr {
+            transports::Addr::Ip(_) => metrics.transport_paths_ip_added.inc(),
+            transports::Addr::Relay(_, _) => metrics.transport_paths_relay_added.inc(),
+        };
         let state = self.paths.entry(addr).or_default();
         state.status = PathStatus::Open;
         state.sources.insert(source.clone(), Instant::now());
@@ -66,8 +75,14 @@ impl RemotePathState {
     ///
     /// If this path does not exist, it does nothing to the
     /// `RemotePathState`
-    pub(super) fn abandoned_path(&mut self, addr: &transports::Addr) {
+    pub(super) fn abandoned_path(&mut self, addr: &transports::Addr, metrics: &MagicsockMetrics) {
         if let Some(state) = self.paths.get_mut(addr) {
+            if matches!(state.status, PathStatus::Open) {
+                match addr {
+                    transports::Addr::Ip(_) => metrics.transport_paths_ip_removed.inc(),
+                    transports::Addr::Relay(_, _) => metrics.transport_paths_relay_removed.inc(),
+                };
+            }
             match state.status {
                 PathStatus::Open | PathStatus::Inactive(_) => {
                     state.status = PathStatus::Inactive(Instant::now());
@@ -497,7 +512,7 @@ mod tests {
 
         assert!(state.is_empty());
 
-        state.insert_open_path(addr.clone(), source.clone());
+        state.insert_open_path(addr.clone(), source.clone(), &Default::default());
 
         assert!(!state.is_empty());
         assert!(state.paths.contains_key(&addr));
@@ -510,24 +525,30 @@ mod tests {
     #[test]
     fn test_abandoned_path() {
         let mut state = RemotePathState::default();
+        let metrics = Default::default();
 
         // Test: Open goes to Inactive
         let addr_open = ip_addr(1000);
-        state.insert_open_path(addr_open.clone(), Source::Udp);
+        state.insert_open_path(addr_open.clone(), Source::Udp, &metrics);
         assert!(matches!(state.paths[&addr_open].status, PathStatus::Open));
+        assert_eq!(metrics.transport_paths_ip_added.get(), 1);
 
-        state.abandoned_path(&addr_open);
+        state.abandoned_path(&addr_open, &metrics);
         assert!(matches!(
             state.paths[&addr_open].status,
             PathStatus::Inactive(_)
         ));
+        assert_eq!(metrics.transport_paths_ip_added.get(), 1);
+        assert_eq!(metrics.transport_paths_ip_removed.get(), 1);
 
         // Test: Inactive stays Inactive
-        state.abandoned_path(&addr_open);
+        state.abandoned_path(&addr_open, &metrics);
         assert!(matches!(
             state.paths[&addr_open].status,
             PathStatus::Inactive(_)
         ));
+        assert_eq!(metrics.transport_paths_ip_added.get(), 1);
+        assert_eq!(metrics.transport_paths_ip_removed.get(), 1);
 
         // Test: Unknown goes to Unusable
         let addr_unknown = ip_addr(2000);
@@ -536,18 +557,33 @@ mod tests {
             state.paths[&addr_unknown].status,
             PathStatus::Unknown
         ));
+        assert_eq!(metrics.transport_paths_ip_added.get(), 1);
+        assert_eq!(metrics.transport_paths_ip_removed.get(), 1);
 
-        state.abandoned_path(&addr_unknown);
+        state.abandoned_path(&addr_unknown, &metrics);
         assert!(matches!(
             state.paths[&addr_unknown].status,
             PathStatus::Unusable
         ));
+        assert_eq!(metrics.transport_paths_ip_added.get(), 1);
+        assert_eq!(metrics.transport_paths_ip_removed.get(), 1);
 
         // Test: Unusable stays Unusable
-        state.abandoned_path(&addr_unknown);
+        state.abandoned_path(&addr_unknown, &metrics);
         assert!(matches!(
             state.paths[&addr_unknown].status,
             PathStatus::Unusable
         ));
+        assert_eq!(metrics.transport_paths_ip_added.get(), 1);
+        assert_eq!(metrics.transport_paths_ip_removed.get(), 1);
+
+        // Test: Unusable can go to open
+        state.insert_open_path(addr_unknown.clone(), Source::Udp, &metrics);
+        assert!(matches!(
+            state.paths[&addr_unknown].status,
+            PathStatus::Open
+        ));
+        assert_eq!(metrics.transport_paths_ip_added.get(), 2);
+        assert_eq!(metrics.transport_paths_ip_removed.get(), 1);
     }
 }

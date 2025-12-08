@@ -443,8 +443,11 @@ impl RemoteStateActor {
                 };
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
-                self.paths
-                    .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
+                self.paths.insert_open_path(
+                    path_remote.clone(),
+                    Source::Connection { _0: Private },
+                    &self.metrics,
+                );
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -767,8 +770,11 @@ impl RemoteStateActor {
                         ?path_id,
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id);
-                    self.paths
-                        .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
+                    self.paths.insert_open_path(
+                        path_remote.clone(),
+                        Source::Connection { _0: Private },
+                        &self.metrics,
+                    );
                 }
 
                 self.select_path();
@@ -777,7 +783,7 @@ impl RemoteStateActor {
                 trace!(?path_stats, "path abandoned");
                 // This is the last event for this path.
                 if let Some(addr) = conn_state.remove_path(&id) {
-                    self.paths.abandoned_path(&addr);
+                    self.paths.abandoned_path(&addr, &self.metrics);
                 }
             }
             PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
