@@ -137,27 +137,28 @@
 <a href=#137 id=137 data-nosnippet>137</a>}
 <a href=#138 id=138 data-nosnippet>138</a>
 <a href=#139 id=139 data-nosnippet>139</a><span class="kw">async fn </span>load_certs(filename: <span class="kw">impl </span>AsRef&lt;Path&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt; {
-<a href=#140 id=140 data-nosnippet>140</a>    <span class="kw">let </span>certfile = tokio::fs::read(filename)
-<a href=#141 id=141 data-nosnippet>141</a>        .<span class="kw">await
-<a href=#142 id=142 data-nosnippet>142</a>        </span>.std_context(<span class="string">"cannot open certificate file"</span>)<span class="question-mark">?</span>;
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">let </span>certs: Vec&lt;CertificateDer&gt; = CertificateDer::pem_slice_iter(<span class="kw-2">&amp;</span>certfile)
-<a href=#144 id=144 data-nosnippet>144</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#145 id=145 data-nosnippet>145</a>        .std_context(<span class="string">"reading certs"</span>)<span class="question-mark">?</span>;
-<a href=#146 id=146 data-nosnippet>146</a>
-<a href=#147 id=147 data-nosnippet>147</a>    <span class="prelude-val">Ok</span>(certs)
-<a href=#148 id=148 data-nosnippet>148</a>}
-<a href=#149 id=149 data-nosnippet>149</a>
-<a href=#150 id=150 data-nosnippet>150</a><span class="kw">async fn </span>load_secret_key(filename: <span class="kw">impl </span>AsRef&lt;Path&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;PrivateKeyDer&lt;<span class="lifetime">'static</span>&gt;&gt; {
-<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">let </span>keyfile = tokio::fs::read(filename.as_ref())
+<a href=#140 id=140 data-nosnippet>140</a>    <span class="kw">let </span>filename = filename.as_ref();
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">let </span>certfile = tokio::fs::read(filename)
+<a href=#142 id=142 data-nosnippet>142</a>        .<span class="kw">await
+<a href=#143 id=143 data-nosnippet>143</a>        </span>.with_std_context(|<span class="kw">_</span>| <span class="macro">format!</span>(<span class="string">"cannot open certificate file at {}"</span>, filename.display()))<span class="question-mark">?</span>;
+<a href=#144 id=144 data-nosnippet>144</a>    CertificateDer::pem_slice_iter(<span class="kw-2">&amp;</span>certfile)
+<a href=#145 id=145 data-nosnippet>145</a>        .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#146 id=146 data-nosnippet>146</a>        .with_std_context(|<span class="kw">_</span>| <span class="macro">format!</span>(<span class="string">"cannot parse certificates from {}"</span>, filename.display()))
+<a href=#147 id=147 data-nosnippet>147</a>}
+<a href=#148 id=148 data-nosnippet>148</a>
+<a href=#149 id=149 data-nosnippet>149</a><span class="kw">async fn </span>load_secret_key(filename: <span class="kw">impl </span>AsRef&lt;Path&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;PrivateKeyDer&lt;<span class="lifetime">'static</span>&gt;&gt; {
+<a href=#150 id=150 data-nosnippet>150</a>    <span class="kw">let </span>filename = filename.as_ref();
+<a href=#151 id=151 data-nosnippet>151</a>    <span class="kw">let </span>keyfile = tokio::fs::read(filename)
 <a href=#152 id=152 data-nosnippet>152</a>        .<span class="kw">await
-<a href=#153 id=153 data-nosnippet>153</a>        </span>.std_context(<span class="string">"cannot open secret key file"</span>)<span class="question-mark">?</span>;
-<a href=#154 id=154 data-nosnippet>154</a>    PrivateKeyDer::from_pem_slice(<span class="kw-2">&amp;</span>keyfile).std_context(<span class="string">"cannot parse secret key .pem file"</span>)
-<a href=#155 id=155 data-nosnippet>155</a>}
-<a href=#156 id=156 data-nosnippet>156</a>
-<a href=#157 id=157 data-nosnippet>157</a><span class="kw">static </span>UNSAFE_HOSTNAME_CHARACTERS: OnceLock&lt;regex::Regex&gt; = OnceLock::new();
-<a href=#158 id=158 data-nosnippet>158</a>
-<a href=#159 id=159 data-nosnippet>159</a><span class="kw">fn </span>escape_hostname(hostname: <span class="kw-2">&amp;</span>str) -&gt; Cow&lt;<span class="lifetime">'_</span>, str&gt; {
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">let </span>regex = UNSAFE_HOSTNAME_CHARACTERS
-<a href=#161 id=161 data-nosnippet>161</a>        .get_or_init(|| regex::Regex::new(<span class="string">r"[^a-zA-Z0-9-\.]"</span>).expect(<span class="string">"valid regex"</span>));
-<a href=#162 id=162 data-nosnippet>162</a>    regex.replace_all(hostname, <span class="string">""</span>)
-<a href=#163 id=163 data-nosnippet>163</a>}</code></pre></div></section></main></body></html>
+<a href=#153 id=153 data-nosnippet>153</a>        </span>.with_std_context(|<span class="kw">_</span>| <span class="macro">format!</span>(<span class="string">"cannot open secret key file at {}"</span>, filename.display()))<span class="question-mark">?</span>;
+<a href=#154 id=154 data-nosnippet>154</a>    PrivateKeyDer::from_pem_slice(<span class="kw-2">&amp;</span>keyfile)
+<a href=#155 id=155 data-nosnippet>155</a>        .with_std_context(|<span class="kw">_</span>| <span class="macro">format!</span>(<span class="string">"cannot parse secret key from {}"</span>, filename.display()))
+<a href=#156 id=156 data-nosnippet>156</a>}
+<a href=#157 id=157 data-nosnippet>157</a>
+<a href=#158 id=158 data-nosnippet>158</a><span class="kw">static </span>UNSAFE_HOSTNAME_CHARACTERS: OnceLock&lt;regex::Regex&gt; = OnceLock::new();
+<a href=#159 id=159 data-nosnippet>159</a>
+<a href=#160 id=160 data-nosnippet>160</a><span class="kw">fn </span>escape_hostname(hostname: <span class="kw-2">&amp;</span>str) -&gt; Cow&lt;<span class="lifetime">'_</span>, str&gt; {
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">let </span>regex = UNSAFE_HOSTNAME_CHARACTERS
+<a href=#162 id=162 data-nosnippet>162</a>        .get_or_init(|| regex::Regex::new(<span class="string">r"[^a-zA-Z0-9-\.]"</span>).expect(<span class="string">"valid regex"</span>));
+<a href=#163 id=163 data-nosnippet>163</a>    regex.replace_all(hostname, <span class="string">""</span>)
+<a href=#164 id=164 data-nosnippet>164</a>}</code></pre></div></section></main></body></html>
