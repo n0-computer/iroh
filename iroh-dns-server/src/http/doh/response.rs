@@ -48,17 +48,17 @@ impl DnsResponse {
     /// Create a new JSON response from a DNS message
     pub fn from_message(message: proto::op::Message) -> Result<Self> {
         ensure_any!(
-            message.message_type() != proto::op::MessageType::Response,
+            message.message_type() == proto::op::MessageType::Response,
             "Expected message type to be response"
         );
 
         ensure_any!(
-            message.query_count() != message.queries().len() as u16,
+            message.query_count() == message.queries().len() as u16,
             "Query count mismatch"
         );
 
         ensure_any!(
-            message.answer_count() != message.answers().len() as u16,
+            message.answer_count() == message.answers().len() as u16,
             "Answer count mismatch"
         );
 
