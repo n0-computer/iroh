@@ -18,12 +18,12 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{ensure, stack_error};
-use n0_future::time::Duration;
+use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+use self::hooks::EndpointHooksList;
 pub use super::magicsock::{
     DirectAddr, DirectAddrType, PathInfo,
     remote_map::{PathInfoList, Source},
@@ -35,39 +35,38 @@ use crate::dns::DnsResolver;
 use crate::{
     discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
     endpoint::presets::Preset,
-    magicsock::{
-        self, HEARTBEAT_INTERVAL, Handle, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT,
-        RemoteStateActorStoppedError, mapped_addrs::MappedAddr,
-    },
+    magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
     net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
 mod connection;
+pub(crate) mod hooks;
 pub mod presets;
+mod quic;
 
-// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
-pub use quinn::{
-    AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
-    ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
-    PathStats, ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-    RetryError, SendDatagramError, SendStream, ServerConfig, StoppedError, StreamId,
-    TransportConfig as QuinnTransportConfig, VarInt, WeakConnectionHandle, WriteError,
-};
-pub use quinn_proto::{
-    FrameStats, TransportError, TransportErrorCode, UdpStats, Written,
-    congestion::{Controller, ControllerFactory},
-    crypto::{
-        AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
-        ServerConfig as CryptoServerConfig, UnsupportedVersion,
+pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
+
+#[cfg(feature = "qlog")]
+pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
+pub use self::{
+    connection::{
+        Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
+        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt,
+        IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        RemoteEndpointIdError, ZeroRttStatus,
     },
-};
-
-pub use self::connection::{
-    Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-    ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt, IncomingZeroRttConnection,
-    OutgoingZeroRtt, OutgoingZeroRttConnection, RemoteEndpointIdError, ZeroRttStatus,
+    quic::{
+        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
+        ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
+        CryptoError, CryptoServerConfig, ExportKeyingMaterialError, FrameStats, HandshakeTokenKey,
+        IdleTimeout, MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, QuicTransportConfig,
+        ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
+        RetryError, SendDatagramError, SendStream, ServerConfig, Side, StoppedError, StreamId,
+        TransportError, TransportErrorCode, UdpStats, UnsupportedVersion, VarInt,
+        VarIntBoundsExceeded, WeakConnectionHandle, WriteError, Written,
+    },
 };
 pub use crate::magicsock::transports::TransportConfig;
 
@@ -81,7 +80,7 @@ pub use crate::magicsock::transports::TransportConfig;
 pub struct Builder {
     secret_key: Option<SecretKey>,
     alpn_protocols: Vec<Vec<u8>>,
-    transport_config: quinn::TransportConfig,
+    transport_config: QuicTransportConfig,
     keylog: bool,
     discovery: Vec<Box<dyn DynIntoDiscovery>>,
     discovery_user_data: Option<UserData>,
@@ -92,6 +91,7 @@ pub struct Builder {
     insecure_skip_relay_cert_verify: bool,
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
+    hooks: EndpointHooksList,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -128,9 +128,6 @@ impl Builder {
 
     /// Creates an empty builder with no discovery services.
     pub fn empty(relay_mode: RelayMode) -> Self {
-        let mut transport_config = quinn::TransportConfig::default();
-        transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
-
         let mut transports = vec![
             #[cfg(not(wasm_browser))]
             TransportConfig::default_ipv4(),
@@ -143,7 +140,7 @@ impl Builder {
         Self {
             secret_key: Default::default(),
             alpn_protocols: Default::default(),
-            transport_config: quinn::TransportConfig::default(),
+            transport_config: QuicTransportConfig::default(),
             keylog: Default::default(),
             discovery: Default::default(),
             discovery_user_data: Default::default(),
@@ -154,30 +151,21 @@ impl Builder {
             insecure_skip_relay_cert_verify: false,
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
+            hooks: Default::default(),
         }
     }
 
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint.
-    pub async fn bind(mut self) -> Result<Endpoint, BindError> {
+    pub async fn bind(self) -> Result<Endpoint, BindError> {
         let mut rng = rand::rng();
         let secret_key = self
             .secret_key
             .unwrap_or_else(move || SecretKey::generate(&mut rng));
 
-        // Override some transport config settings.
-        self.transport_config
-            .keep_alive_interval(Some(HEARTBEAT_INTERVAL));
-        self.transport_config
-            .default_path_keep_alive_interval(Some(HEARTBEAT_INTERVAL));
-        self.transport_config
-            .default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
-        self.transport_config
-            .max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS);
-
         let static_config = StaticConfig {
-            transport_config: Arc::new(self.transport_config),
+            transport_config: self.transport_config.clone(),
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
             keylog: self.keylog,
         };
@@ -199,6 +187,7 @@ impl Builder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
+            hooks: self.hooks,
         };
 
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
@@ -374,7 +363,7 @@ impl Builder {
 
     // # Methods for more specialist customisation.
 
-    /// Sets a custom [`quinn::TransportConfig`] for this endpoint.
+    /// Sets a custom [`QuicTransportConfig`] for this endpoint.
     ///
     /// The transport config contains parameters governing the QUIC state machine.
     ///
@@ -385,7 +374,7 @@ impl Builder {
     ///
     /// Please be aware that changing some settings may have adverse effects on establishing
     /// and maintaining direct connections.
-    pub fn transport_config(mut self, transport_config: quinn::TransportConfig) -> Self {
+    pub fn transport_config(mut self, transport_config: QuicTransportConfig) -> Self {
         self.transport_config = transport_config;
         self
     }
@@ -453,13 +442,28 @@ impl Builder {
         self.max_tls_tickets = n;
         self
     }
+
+    /// Install hooks onto the endpoint.
+    ///
+    /// Endpoint hooks intercept the connection establishment process of an [`Endpoint`].
+    ///
+    /// You can install multiple [`EndpointHooks`] by calling this function multiple times.
+    /// Order matters: hooks are invoked in the order they were installed onto the endpoint
+    /// builder. Once a hook returns reject, further processing
+    /// is aborted and other hooks won't be invoked.
+    ///
+    /// See [`EndpointHooks`] for details on the possible interception points in the connection lifecycle.
+    pub fn hooks(mut self, hooks: impl EndpointHooks + 'static) -> Self {
+        self.hooks.push(hooks);
+        self
+    }
 }
 
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 #[derive(Debug)]
 struct StaticConfig {
     tls_config: tls::TlsConfig,
-    transport_config: Arc<quinn::TransportConfig>,
+    transport_config: QuicTransportConfig,
     keylog: bool,
 }
 
@@ -470,7 +474,7 @@ impl StaticConfig {
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(self.transport_config.clone());
+        server_config.transport_config(self.transport_config.to_arc());
 
         server_config
     }
@@ -528,6 +532,8 @@ pub enum ConnectWithOptsError {
         /// Private source type, cannot be created publicly.
         source: RemoteStateActorStoppedError,
     },
+    #[error("Connection was rejected locally")]
+    LocallyRejected,
 }
 
 #[allow(missing_docs)]
@@ -686,6 +692,11 @@ impl Endpoint {
         options: ConnectOptions,
     ) -> Result<Connecting, ConnectWithOptsError> {
         let endpoint_addr: EndpointAddr = endpoint_addr.into();
+        if let BeforeConnectOutcome::Reject =
+            self.msock.hooks.before_connect(&endpoint_addr, alpn).await
+        {
+            return Err(e!(ConnectWithOptsError::LocallyRejected));
+        }
         let endpoint_id = endpoint_addr.id;
 
         tracing::Span::current().record("remote", tracing::field::display(endpoint_id.fmt_short()));
@@ -704,7 +715,8 @@ impl Endpoint {
 
         let transport_config = options
             .transport_config
-            .unwrap_or(self.static_config.transport_config.clone());
+            .map(|cfg| cfg.to_arc())
+            .unwrap_or(self.static_config.transport_config.to_arc());
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
@@ -717,7 +729,7 @@ impl Endpoint {
                 .tls_config
                 .make_client_config(alpn_protocols, self.static_config.keylog);
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-            client_config.transport_config(transport_config);
+            client_config.transport_config(transport_config.clone());
             client_config
         };
 
@@ -913,13 +925,6 @@ impl Endpoint {
     // # Methods for less common getters.
     //
     // Partially they return things passed into the builder.
-
-    /// Returns the currently lowest latency for this endpoint.
-    ///
-    /// Will return `None` if we do not have any address information for the given `endpoint_id`.
-    pub async fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
-        self.msock.latency(endpoint_id).await
-    }
 
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
@@ -1147,7 +1152,7 @@ impl Endpoint {
 /// Options for the [`Endpoint::connect_with_opts`] function.
 #[derive(Default, Debug, Clone)]
 pub struct ConnectOptions {
-    transport_config: Option<Arc<quinn::TransportConfig>>,
+    transport_config: Option<QuicTransportConfig>,
     additional_alpns: Vec<Vec<u8>>,
 }
 
@@ -1161,7 +1166,7 @@ impl ConnectOptions {
     }
 
     /// Sets the QUIC transport config options for this connection.
-    pub fn with_transport_config(mut self, transport_config: Arc<quinn::TransportConfig>) -> Self {
+    pub fn with_transport_config(mut self, transport_config: QuicTransportConfig) -> Self {
         self.transport_config = Some(transport_config);
         self
     }
@@ -1291,7 +1296,10 @@ fn is_cgi() -> bool {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
@@ -1309,7 +1317,7 @@ mod tests {
         discovery::static_provider::StaticProvider,
         endpoint::{ConnectOptions, Connection},
         protocol::{AcceptError, ProtocolHandler, Router},
-        test_utils::{run_relay_server, run_relay_server_with},
+        test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -1339,9 +1347,12 @@ mod tests {
         let server_secret_key = SecretKey::generate(&mut rng);
         let server_peer_id = server_secret_key.public();
 
+        let qlog = QlogFileGroup::from_env("endpoint_connect_close");
+
         // Wait for the endpoint to be started to make sure it's up before clients try to connect
         let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
             .secret_key(server_secret_key)
+            .transport_config(qlog.create("server")?)
             .alpns(vec![TEST_ALPN.to_vec()])
             .insecure_skip_relay_cert_verify(true)
             .bind()
@@ -1382,6 +1393,7 @@ mod tests {
                 let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map))
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .insecure_skip_relay_cert_verify(true)
+                    .transport_config(qlog.create("client")?)
                     .bind()
                     .await?;
                 info!("client connecting");
@@ -1649,11 +1661,13 @@ mod tests {
         // discovery.  Wait until there is a direct connection.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
+        let qlog = Arc::new(QlogFileGroup::from_env("two_relay_only_becomes_direct"));
 
         #[instrument(name = "client", skip_all)]
         async fn connect(
             relay_map: RelayMap,
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
+            qlog: Arc<QlogFileGroup>,
         ) -> Result<quinn::ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let secret = SecretKey::generate(&mut rng);
@@ -1662,6 +1676,7 @@ mod tests {
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .insecure_skip_relay_cert_verify(true)
                 .relay_mode(RelayMode::Custom(relay_map))
+                .transport_config(qlog.create("client")?)
                 .bind()
                 .await?;
             info!(me = %ep.id().fmt_short(), "client starting");
@@ -1689,6 +1704,7 @@ mod tests {
         async fn accept(
             relay_map: RelayMap,
             node_addr_tx: oneshot::Sender<EndpointAddr>,
+            qlog: Arc<QlogFileGroup>,
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
             let secret = SecretKey::generate(&mut rng);
@@ -1696,6 +1712,7 @@ mod tests {
                 .secret_key(secret)
                 .alpns(vec![TEST_ALPN.to_vec()])
                 .insecure_skip_relay_cert_verify(true)
+                .transport_config(qlog.create("server")?)
                 .relay_mode(RelayMode::Custom(relay_map))
                 .bind()
                 .await?;
@@ -1720,8 +1737,8 @@ mod tests {
             Ok(())
         }
 
-        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
-        let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
+        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx, qlog.clone()));
+        let client_task = tokio::spawn(connect(relay_map, node_addr_rx, qlog));
 
         server_task.await.anyerr()??;
         let conn_closed = dbg!(client_task.await.anyerr()??);

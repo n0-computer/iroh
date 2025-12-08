@@ -195,40 +195,6 @@ impl IpSender {
         SocketAddr::new(addr.ip().to_canonical(), addr.port())
     }
 
-    pub(super) async fn send(
-        &self,
-        dst: SocketAddr,
-        src: Option<IpAddr>,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        let total_bytes = transmit.contents.len() as u64;
-        let res = self
-            .sender
-            .send(&quinn_udp::Transmit {
-                destination: Self::canonical_addr(dst),
-                ecn: transmit.ecn,
-                contents: transmit.contents,
-                segment_size: transmit.segment_size,
-                src_ip: src,
-            })
-            .await;
-
-        match res {
-            Ok(res) => {
-                match dst {
-                    SocketAddr::V4(_) => {
-                        self.metrics.send_ipv4.inc_by(total_bytes);
-                    }
-                    SocketAddr::V6(_) => {
-                        self.metrics.send_ipv6.inc_by(total_bytes);
-                    }
-                }
-                Ok(res)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
     pub(super) fn poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,

@@ -15,4 +15,4 @@ test-group = 'run-in-isolation'
 threads-required = 32
 
 [profile.default]
-slow-timeout = { period = "20s", terminate-after = 3 }
+slow-timeout = { period = "10s", terminate-after = 3 }

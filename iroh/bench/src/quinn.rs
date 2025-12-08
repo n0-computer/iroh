@@ -116,6 +116,9 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig
     acks.ack_eliciting_threshold(10u32.into());
     config.ack_frequency_config(Some(acks));
 
+    #[cfg(feature = "qlog")]
+    config.qlog_from_env("bench-iroh");
+
     config
 }
 

@@ -244,32 +244,6 @@ impl RelaySender {
         true
     }
 
-    pub(super) async fn send(
-        &self,
-        dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        let contents = datagrams_from_transmit(transmit);
-
-        let item = RelaySendItem {
-            remote_endpoint: dest_endpoint,
-            url: dest_url.clone(),
-            datagrams: contents,
-        };
-
-        let Some(sender) = self.sender.get_ref() else {
-            return Err(io::Error::other("channel closed"));
-        };
-        match sender.send(item).await {
-            Ok(_) => Ok(()),
-            Err(mpsc::error::SendError(_)) => Err(io::Error::new(
-                io::ErrorKind::ConnectionReset,
-                "channel to actor is closed",
-            )),
-        }
-    }
-
     pub(super) fn poll_send(
         &mut self,
         cx: &mut Context,
