@@ -32,7 +32,7 @@ pub struct Metrics {
      */
     /// The number of NAT traversal attempts initiated.
     pub holepunch_attempt: Counter,
-    /// The number of successfull NAT traversal attempts.
+    /// The number of successful NAT traversal attempts.
     pub holepunch_success: Counter,
 
     /*
