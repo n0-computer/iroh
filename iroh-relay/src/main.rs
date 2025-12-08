@@ -26,6 +26,7 @@ use tokio_rustls_acme::{AcmeConfig, caches::DirCache};
 use tracing::{debug, warn};
 use tracing_subscriber::{EnvFilter, prelude::*};
 use url::Url;
+use webpki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
@@ -64,8 +65,9 @@ fn load_certs(
     let certfile = std::fs::File::open(filename).std_context("cannot open certificate file")?;
     let mut reader = std::io::BufReader::new(certfile);
 
-    let certs: Result<Vec<_>, std::io::Error> = rustls_pemfile::certs(&mut reader).collect();
-    let certs = certs.std_context("reading cert")?;
+    let certs: Vec<CertificateDer> = CertificateDer::pem_reader_iter(&mut reader)
+        .collect::<Result<Vec<_>, _>>()
+        .std_context("reading certs")?;
 
     Ok(certs)
 }
@@ -76,30 +78,8 @@ fn load_secret_key(
     let filename = filename.as_ref();
     let keyfile = std::fs::File::open(filename)
         .with_std_context(|_| format!("cannot open secret key file {}", filename.display()))?;
-    let mut reader = std::io::BufReader::new(keyfile);
-
-    loop {
-        match rustls_pemfile::read_one(&mut reader)
-            .std_context("cannot parse secret key .pem file")?
-        {
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
-            }
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs8(key));
-            }
-            Some(rustls_pemfile::Item::Sec1Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Sec1(key));
-            }
-            None => break,
-            _ => {}
-        }
-    }
-
-    bail_any!(
-        "no keys found in {} (encrypted keys not supported)",
-        filename.display()
-    );
+    let reader = std::io::BufReader::new(keyfile);
+    PrivateKeyDer::from_pem_reader(reader).std_context("cannot parse secret key .pem file")
 }
 
 /// Configuration for the relay-server.
