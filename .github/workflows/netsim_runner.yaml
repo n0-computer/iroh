@@ -14,10 +14,6 @@ on:
         required: true
         type: string
         default: "main"
-      debug_logs:
-        required: false
-        type: boolean
-        default: false
       build_profile:
         required: false
         type: string
@@ -42,6 +38,10 @@ on:
         required: false
         type: boolean
         default: false
+      test_filter:
+        required: false
+        type: string
+        default: ""
   workflow_call:
     inputs:
       branch:
@@ -55,10 +55,6 @@ on:
         required: true
         type: string
         default: "main"
-      debug_logs:
-        required: false
-        type: boolean
-        default: false
       build_profile:
         required: false
         type: string
@@ -83,6 +79,10 @@ on:
         required: false
         type: boolean
         default: false
+      test_filter:
+        required: false
+        type: string
+        default: ""
 
 env:
   RUST_BACKTRACE: 1
@@ -152,7 +152,7 @@ jobs:
         # split sim_paths by comma
         IFS=',' read -ra sim_paths <<< "${{ inputs.sim_paths }}"
         for sim_path in "${sim_paths[@]}"; do
-          sudo python3 main.py ${{ inputs.debug_logs && '--debug' || ''}} --max-workers=${{ inputs.max_workers }} --integration $sim_path
+          sudo python3 main.py ${{ inputs.test_filter && format('--filter {0}', inputs.test_filter) || '' }} --max-workers=${{ inputs.max_workers }} --integration $sim_path
         done
 
     - name: Package qlogs
