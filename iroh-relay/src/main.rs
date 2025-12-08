@@ -19,7 +19,7 @@ use iroh_relay::{
     },
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
-use n0_error::{AnyError as Error, Result, StdResultExt, bail_any};
+use n0_error::{Result, StdResultExt, bail_any};
 use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{AcmeConfig, caches::DirCache};
@@ -62,24 +62,19 @@ enum CertMode {
 fn load_certs(
     filename: impl AsRef<Path>,
 ) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
-    let certfile = std::fs::File::open(filename).std_context("cannot open certificate file")?;
-    let mut reader = std::io::BufReader::new(certfile);
-
-    let certs: Vec<CertificateDer> = CertificateDer::pem_reader_iter(&mut reader)
+    let filename = filename.as_ref();
+    CertificateDer::pem_file_iter(filename)
+        .with_std_context(|_| format!("failed to open certificate file at {}", filename.display()))?
         .collect::<Result<Vec<_>, _>>()
-        .std_context("reading certs")?;
-
-    Ok(certs)
+        .with_std_context(|_| format!("failed to read certificates from {}", filename.display()))
 }
 
 fn load_secret_key(
     filename: impl AsRef<Path>,
 ) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
     let filename = filename.as_ref();
-    let keyfile = std::fs::File::open(filename)
-        .with_std_context(|_| format!("cannot open secret key file {}", filename.display()))?;
-    let reader = std::io::BufReader::new(keyfile);
-    PrivateKeyDer::from_pem_reader(reader).std_context("cannot parse secret key .pem file")
+    PrivateKeyDer::from_pem_file(filename)
+        .with_std_context(|_| format!("failed to read secret key from {}", filename.display()))
 }
 
 /// Configuration for the relay-server.
@@ -553,7 +548,7 @@ async fn maybe_load_tls(
             let (private_key, certs) = tokio::task::spawn_blocking(move || {
                 let key = load_secret_key(key_path)?;
                 let certs = load_certs(cert_path)?;
-                Ok::<_, Error>((key, certs))
+                n0_error::Ok((key, certs))
             })
             .await
             .std_context("join")??;

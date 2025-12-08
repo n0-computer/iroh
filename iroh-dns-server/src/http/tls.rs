@@ -137,21 +137,22 @@ impl TlsAcceptor {
 }
 
 async fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<CertificateDer<'static>>> {
+    let filename = filename.as_ref();
     let certfile = tokio::fs::read(filename)
         .await
-        .std_context("cannot open certificate file")?;
-    let certs: Vec<CertificateDer> = CertificateDer::pem_slice_iter(&certfile)
+        .with_std_context(|_| format!("cannot open certificate file at {}", filename.display()))?;
+    CertificateDer::pem_slice_iter(&certfile)
         .collect::<Result<Vec<_>, _>>()
-        .std_context("reading certs")?;
-
-    Ok(certs)
+        .with_std_context(|_| format!("cannot parse certificates from {}", filename.display()))
 }
 
 async fn load_secret_key(filename: impl AsRef<Path>) -> Result<PrivateKeyDer<'static>> {
-    let keyfile = tokio::fs::read(filename.as_ref())
+    let filename = filename.as_ref();
+    let keyfile = tokio::fs::read(filename)
         .await
-        .std_context("cannot open secret key file")?;
-    PrivateKeyDer::from_pem_slice(&keyfile).std_context("cannot parse secret key .pem file")
+        .with_std_context(|_| format!("cannot open secret key file at {}", filename.display()))?;
+    PrivateKeyDer::from_pem_slice(&keyfile)
+        .with_std_context(|_| format!("cannot parse secret key from {}", filename.display()))
 }
 
 static UNSAFE_HOSTNAME_CHARACTERS: OnceLock<regex::Regex> = OnceLock::new();
