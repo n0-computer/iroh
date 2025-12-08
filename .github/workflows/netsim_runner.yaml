@@ -30,10 +30,10 @@ on:
         required: false
         type: boolean
         default: false
-      visualizations:
+      qlog:
         required: false
         type: boolean
-        default: false
+        default: true
       pr_number:
         required: false
         type: string
@@ -71,10 +71,10 @@ on:
         required: false
         type: boolean
         default: false
-      visualizations:
+      qlog:
         required: false
         type: boolean
-        default: false
+        default: true
       pr_number:
         required: false
         type: string
@@ -148,15 +148,15 @@ jobs:
       continue-on-error: true
       run: |
         cd ../chuck/netsim
-        mkdir -p qlogs
+        ${{ inputs.qlog && 'mkdir -p qlogs' || '' }}
         # split sim_paths by comma
         IFS=',' read -ra sim_paths <<< "${{ inputs.sim_paths }}"
         for sim_path in "${sim_paths[@]}"; do
-          sudo python3 main.py ${{ inputs.debug_logs && '--debug' || ''}} ${{ inputs.visualizations && '--visualize' || ''}} --max-workers=${{ inputs.max_workers }} --integration $sim_path
+          sudo python3 main.py ${{ inputs.debug_logs && '--debug' || ''}} --max-workers=${{ inputs.max_workers }} --integration $sim_path
         done
 
     - name: Package qlogs
-      if: always()
+      if: ${{ always() && inputs.qlog }}
       run: |
         cd ../chuck/netsim
         if [ -d "qlogs" ] && [ "$(ls -A qlogs)" ]; then
@@ -212,12 +212,12 @@ jobs:
         overwrite: true
 
     - name: Move qlogs
-      if: always()
+      if: ${{ always() && inputs.qlog }}
       run: |
         cp ../chuck/netsim/qlogs.tar.gz ./qlogs.tar.gz || touch ./qlogs.tar.gz
 
     - name: Upload qlogs
-      if: always()
+      if: ${{ always() && inputs.qlog }}
       uses: actions/upload-artifact@v5
       id: upload-qlogs
       with:

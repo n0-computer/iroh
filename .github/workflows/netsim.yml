@@ -42,6 +42,7 @@ jobs:
       sim_paths: "sims/iroh,sims/integration"
       pr_number: ""
       publish_metrics: true
+      qlog: false
       build_profile: "optimized-release"
 
   netsim-perf:
