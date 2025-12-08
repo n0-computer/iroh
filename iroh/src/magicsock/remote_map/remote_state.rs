@@ -651,7 +651,7 @@ impl RemoteStateActor {
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
     async fn do_holepunching(&mut self, conn: quinn::Connection) {
-        self.metrics.nat_traversal.inc();
+        self.metrics.holepunch_attempt.inc();
         let local_candidates = self
             .local_direct_addrs
             .get()
@@ -675,6 +675,7 @@ impl RemoteStateActor {
                     when: Instant::now(),
                     local_candidates,
                     remote_candidates,
+                    success: false,
                 });
             }
             Err(err) => {
@@ -775,6 +776,17 @@ impl RemoteStateActor {
                     conn_state.add_open_path(path_remote.clone(), path_id);
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
+
+                    // Check if this path is the result of a holepunch attempt, and if so update metrics.
+                    if let transports::Addr::Ip(ip_addr) = &path_remote
+                        && let Some(hp) = self.last_holepunch.as_mut()
+                        && !hp.success
+                    {
+                        if hp.remote_candidates.contains(&ip_addr) {
+                            hp.success = true;
+                            self.metrics.holepunch_success.inc();
+                        }
+                    }
                 }
 
                 self.select_path();
@@ -1126,6 +1138,7 @@ struct HolepunchAttempt {
     ///
     /// Like [`Self::local_candidates`] we may not have used them.
     remote_candidates: BTreeSet<SocketAddr>,
+    success: bool,
 }
 
 /// Newtype to track Connections.
