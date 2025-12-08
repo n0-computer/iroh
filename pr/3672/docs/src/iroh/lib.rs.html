@@ -253,31 +253,29 @@
 <a href=#253 id=253 data-nosnippet>253</a>#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 <a href=#254 id=254 data-nosnippet>254</a>#![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 <a href=#255 id=255 data-nosnippet>255</a>
-<a href=#256 id=256 data-nosnippet>256</a></span><span class="kw">mod </span>disco;
-<a href=#257 id=257 data-nosnippet>257</a><span class="kw">mod </span>key;
-<a href=#258 id=258 data-nosnippet>258</a><span class="kw">mod </span>magicsock;
-<a href=#259 id=259 data-nosnippet>259</a><span class="kw">mod </span>tls;
-<a href=#260 id=260 data-nosnippet>260</a>
-<a href=#261 id=261 data-nosnippet>261</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>util;
-<a href=#262 id=262 data-nosnippet>262</a><span class="attr">#[cfg(wasm_browser)]
-<a href=#263 id=263 data-nosnippet>263</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>web_runtime;
-<a href=#264 id=264 data-nosnippet>264</a>
-<a href=#265 id=265 data-nosnippet>265</a><span class="kw">pub mod </span>defaults;
-<a href=#266 id=266 data-nosnippet>266</a><span class="kw">pub mod </span>discovery;
-<a href=#267 id=267 data-nosnippet>267</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#268 id=268 data-nosnippet>268</a></span><span class="kw">pub mod </span>dns;
-<a href=#269 id=269 data-nosnippet>269</a><span class="kw">pub mod </span>endpoint;
-<a href=#270 id=270 data-nosnippet>270</a><span class="kw">pub mod </span>metrics;
-<a href=#271 id=271 data-nosnippet>271</a><span class="kw">pub mod </span>net_report;
-<a href=#272 id=272 data-nosnippet>272</a><span class="kw">pub mod </span>protocol;
-<a href=#273 id=273 data-nosnippet>273</a>
-<a href=#274 id=274 data-nosnippet>274</a><span class="kw">pub use </span>endpoint::{Endpoint, RelayMode};
-<a href=#275 id=275 data-nosnippet>275</a><span class="kw">pub use </span>iroh_base::{
-<a href=#276 id=276 data-nosnippet>276</a>    EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
-<a href=#277 id=277 data-nosnippet>277</a>    Signature, SignatureError, TransportAddr,
-<a href=#278 id=278 data-nosnippet>278</a>};
-<a href=#279 id=279 data-nosnippet>279</a><span class="kw">pub use </span>iroh_relay::{RelayConfig, RelayMap, endpoint_info};
-<a href=#280 id=280 data-nosnippet>280</a><span class="kw">pub use </span>n0_watcher::Watcher;
-<a href=#281 id=281 data-nosnippet>281</a>
-<a href=#282 id=282 data-nosnippet>282</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#283 id=283 data-nosnippet>283</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>
+<a href=#256 id=256 data-nosnippet>256</a></span><span class="kw">mod </span>magicsock;
+<a href=#257 id=257 data-nosnippet>257</a><span class="kw">mod </span>tls;
+<a href=#258 id=258 data-nosnippet>258</a>
+<a href=#259 id=259 data-nosnippet>259</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>util;
+<a href=#260 id=260 data-nosnippet>260</a><span class="attr">#[cfg(wasm_browser)]
+<a href=#261 id=261 data-nosnippet>261</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>web_runtime;
+<a href=#262 id=262 data-nosnippet>262</a>
+<a href=#263 id=263 data-nosnippet>263</a><span class="kw">pub mod </span>defaults;
+<a href=#264 id=264 data-nosnippet>264</a><span class="kw">pub mod </span>discovery;
+<a href=#265 id=265 data-nosnippet>265</a><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#266 id=266 data-nosnippet>266</a></span><span class="kw">pub mod </span>dns;
+<a href=#267 id=267 data-nosnippet>267</a><span class="kw">pub mod </span>endpoint;
+<a href=#268 id=268 data-nosnippet>268</a><span class="kw">pub mod </span>metrics;
+<a href=#269 id=269 data-nosnippet>269</a><span class="kw">pub mod </span>net_report;
+<a href=#270 id=270 data-nosnippet>270</a><span class="kw">pub mod </span>protocol;
+<a href=#271 id=271 data-nosnippet>271</a>
+<a href=#272 id=272 data-nosnippet>272</a><span class="kw">pub use </span>endpoint::{Endpoint, RelayMode};
+<a href=#273 id=273 data-nosnippet>273</a><span class="kw">pub use </span>iroh_base::{
+<a href=#274 id=274 data-nosnippet>274</a>    EndpointAddr, EndpointId, KeyParsingError, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
+<a href=#275 id=275 data-nosnippet>275</a>    Signature, SignatureError, TransportAddr,
+<a href=#276 id=276 data-nosnippet>276</a>};
+<a href=#277 id=277 data-nosnippet>277</a><span class="kw">pub use </span>iroh_relay::{RelayConfig, RelayMap, endpoint_info};
+<a href=#278 id=278 data-nosnippet>278</a><span class="kw">pub use </span>n0_watcher::Watcher;
+<a href=#279 id=279 data-nosnippet>279</a>
+<a href=#280 id=280 data-nosnippet>280</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#281 id=281 data-nosnippet>281</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>

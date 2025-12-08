@@ -3,12 +3,12 @@
     fn <a href="#tymethod.initial_keys" class="fn">initial_keys</a>(
         &amp;self,
         version: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>,
-        dst_cid: &amp;ConnectionId,
+        dst_cid: ConnectionId,
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Keys, <a class="struct" href="struct.UnsupportedVersion.html" title="struct iroh::endpoint::UnsupportedVersion">UnsupportedVersion</a>&gt;;
 <span class="item-spacer"></span>    fn <a href="#tymethod.retry_tag" class="fn">retry_tag</a>(
         &amp;self,
         version: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>,
-        orig_dst_cid: &amp;ConnectionId,
+        orig_dst_cid: ConnectionId,
         packet: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>],
     ) -&gt; [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">16</a>];
 <span class="item-spacer"></span>    fn <a href="#tymethod.start_session" class="fn">start_session</a>(
@@ -20,12 +20,12 @@
 </div></details><h2 id="required-methods" class="section-header">Required Methods<a href="#required-methods" class="anchor">§</a></h2><div class="methods"><details class="toggle method-toggle" open><summary><section id="tymethod.initial_keys" class="method"><h4 class="code-header">fn <a href="#tymethod.initial_keys" class="fn">initial_keys</a>(
     &amp;self,
     version: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>,
-    dst_cid: &amp;ConnectionId,
+    dst_cid: ConnectionId,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Keys, <a class="struct" href="struct.UnsupportedVersion.html" title="struct iroh::endpoint::UnsupportedVersion">UnsupportedVersion</a>&gt;</h4></section></summary><div class="docblock"><p>Create the initial set of keys given the client’s initial destination ConnectionId</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="tymethod.retry_tag" class="method"><h4 class="code-header">fn <a href="#tymethod.retry_tag" class="fn">retry_tag</a>(
     &amp;self,
     version: <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u32.html">u32</a>,
-    orig_dst_cid: &amp;ConnectionId,
+    orig_dst_cid: ConnectionId,
     packet: &amp;[<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>],
 ) -&gt; [<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.u8.html">u8</a>; <a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.array.html">16</a>]</h4></section></summary><div class="docblock"><p>Generate the integrity tag for a retry packet</p>
 <p>Never called if <code>initial_keys</code> rejected <code>version</code>.</p>
