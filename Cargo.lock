@@ -1838,7 +1838,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2266,7 +2266,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#abbe27bf0738a6d8c31f6971e2c926818d594d71"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#67df91c6670cc48ff2043563e4da388541b4e20b"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2286,7 +2286,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#abbe27bf0738a6d8c31f6971e2c926818d594d71"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#67df91c6670cc48ff2043563e4da388541b4e20b"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2301,6 +2301,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-platform-verifier 0.6.2",
  "slab",
+ "sorted-index-buffer",
  "thiserror 2.0.17",
  "tinyvec",
  "tracing",
@@ -2310,11 +2311,11 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#abbe27bf0738a6d8c31f6971e2c926818d594d71"
+source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#67df91c6670cc48ff2043563e4da388541b4e20b"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -3303,7 +3304,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3340,7 +3341,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -4106,6 +4107,12 @@ dependencies = [
  "libc",
  "windows-sys 0.60.2",
 ]
+
+[[package]]
+name = "sorted-index-buffer"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d96a9d278ef78c991bf2faabd578b41199037846ff96fbb093f84bb50adaa00"
 
 [[package]]
 name = "spez"
