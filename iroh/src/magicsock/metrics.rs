@@ -45,13 +45,13 @@ pub struct Metrics {
     pub num_conns_closed: Counter,
 
     /// Number of IP transport paths opened.
-    pub transport_paths_ip_added: Counter,
+    pub transport_ip_paths_added: Counter,
     /// Number of IP transport paths closed.
-    pub transport_paths_ip_removed: Counter,
+    pub transport_ip_paths_removed: Counter,
     /// Number of relay transport paths opened.
-    pub transport_paths_relay_added: Counter,
+    pub transport_relay_paths_added: Counter,
     /// Number of relay transport paths closed.
-    pub transport_paths_relay_removed: Counter,
+    pub transport_relay_paths_removed: Counter,
 
     pub actor_tick_main: Counter,
     pub actor_tick_msg: Counter,
@@ -60,25 +60,4 @@ pub struct Metrics {
     pub actor_tick_direct_addr_heartbeat: Counter,
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
-    // /// Histogram of connection latency in milliseconds across all endpoint connections.
-    // #[default(Histogram::new(vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, f64::INFINITY]))]
-    // pub connection_latency_ms: Histogram,
-    // /*
-    // * Path Congestion Metrics
-    // */
-    // /// Number of times a path was marked as outdated due to consecutive ping failures.
-    // pub path_marked_outdated: Counter,
-    // /// Number of ping failures recorded across all paths.
-    // pub path_ping_failures: Counter,
-    // /// Number of consecutive failure resets (path recovered).
-    // pub path_failure_resets: Counter,
-    // /// Histogram of packet loss rates (0.0-1.0) observed on UDP paths.
-    // #[default(Histogram::new(vec![0.0, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0]))]
-    // pub path_packet_loss_rate: Histogram,
-    // /// Histogram of RTT variance (in milliseconds) as a congestion indicator.
-    // #[default(Histogram::new(vec![0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0]))]
-    // pub path_rtt_variance_ms: Histogram,
-    // /// Histogram of path quality scores (0.0-1.0).
-    // #[default(Histogram::new(vec![0.0, 0.3, 0.5, 0.7, 0.85, 0.95, 1.0]))]
-    // pub path_quality_score: Histogram,
 }

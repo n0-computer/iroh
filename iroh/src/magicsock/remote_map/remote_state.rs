@@ -192,7 +192,7 @@ impl RemoteStateActor {
         Self {
             endpoint_id,
             local_endpoint_id,
-            metrics,
+            metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
             discovery,
@@ -200,7 +200,7 @@ impl RemoteStateActor {
             connections_close: Default::default(),
             path_events: Default::default(),
             addr_events: Default::default(),
-            paths: Default::default(),
+            paths: RemotePathState::new(metrics),
             last_holepunch: None,
             selected_path: Default::default(),
             scheduled_holepunch: None,
@@ -443,11 +443,8 @@ impl RemoteStateActor {
                 };
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
-                self.paths.insert_open_path(
-                    path_remote.clone(),
-                    Source::Connection { _0: Private },
-                    &self.metrics,
-                );
+                self.paths
+                    .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -770,11 +767,8 @@ impl RemoteStateActor {
                         ?path_id,
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id);
-                    self.paths.insert_open_path(
-                        path_remote.clone(),
-                        Source::Connection { _0: Private },
-                        &self.metrics,
-                    );
+                    self.paths
+                        .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 }
 
                 self.select_path();
@@ -783,7 +777,7 @@ impl RemoteStateActor {
                 trace!(?path_stats, "path abandoned");
                 // This is the last event for this path.
                 if let Some(addr) = conn_state.remove_path(&id) {
-                    self.paths.abandoned_path(&addr, &self.metrics);
+                    self.paths.abandoned_path(&addr);
                 }
             }
             PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
