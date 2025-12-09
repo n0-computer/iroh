@@ -30,10 +30,10 @@ pub struct Metrics {
     /*
      * Holepunching metrics
      */
-    /// The number of NAT traversal attempts initiated.
-    pub holepunch_attempt: Counter,
-    /// The number of successful NAT traversal attempts.
-    pub holepunch_success: Counter,
+    /// The number of remote endpoints for which of NAT traversal was initiated.
+    pub remote_holepunch_attempts: Counter,
+    /// The number of remote endpoints for which of NAT traversal was initiated and successful.
+    pub remote_holepunch_success: Counter,
 
     /*
      * Connection Metrics

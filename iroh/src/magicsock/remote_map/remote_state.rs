@@ -161,6 +161,10 @@ pub(super) struct RemoteStateActor {
     paths: RemotePathState,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
+    /// Whether we think we holepunched this remote.
+    ///
+    /// This is, for now, only used in stats. The value is never reset, so use with care.
+    has_holepunched: bool,
     /// The path we currently consider the preferred path to the remote endpoint.
     ///
     /// **We expect this path to work.** If we become aware this path is broken then it is
@@ -208,6 +212,7 @@ impl RemoteStateActor {
             addr_events: Default::default(),
             paths: RemotePathState::new(metrics),
             last_holepunch: None,
+            has_holepunched: false,
             selected_path: Default::default(),
             scheduled_holepunch: None,
             scheduled_open_path: None,
@@ -651,7 +656,6 @@ impl RemoteStateActor {
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
     async fn do_holepunching(&mut self, conn: quinn::Connection) {
-        self.metrics.holepunch_attempt.inc();
         let local_candidates = self
             .local_direct_addrs
             .get()
@@ -671,11 +675,13 @@ impl RemoteStateActor {
                     ?local_candidates,
                     ?remote_candidates,
                 );
+                if self.last_holepunch.is_none() {
+                    self.metrics.remote_holepunch_attempts.inc();
+                }
                 self.last_holepunch = Some(HolepunchAttempt {
                     when: Instant::now(),
                     local_candidates,
                     remote_candidates,
-                    success: false,
                 });
             }
             Err(err) => {
@@ -778,13 +784,13 @@ impl RemoteStateActor {
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
 
                     // Check if this path is the result of a holepunch attempt, and if so update metrics.
-                    if let transports::Addr::Ip(ip_addr) = &path_remote
+                    if !self.has_holepunched
+                        && let transports::Addr::Ip(ip_addr) = &path_remote
                         && let Some(hp) = self.last_holepunch.as_mut()
-                        && !hp.success
                     {
                         if hp.remote_candidates.contains(&ip_addr) {
-                            hp.success = true;
-                            self.metrics.holepunch_success.inc();
+                            self.has_holepunched = true;
+                            self.metrics.remote_holepunch_success.inc();
                         }
                     }
                 }
@@ -1138,7 +1144,6 @@ struct HolepunchAttempt {
     ///
     /// Like [`Self::local_candidates`] we may not have used them.
     remote_candidates: BTreeSet<SocketAddr>,
-    success: bool,
 }
 
 /// Newtype to track Connections.
