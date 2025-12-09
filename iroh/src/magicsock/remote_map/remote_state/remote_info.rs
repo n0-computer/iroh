@@ -9,7 +9,7 @@ use crate::endpoint::Source;
 #[derive(Debug, Clone)]
 pub struct RemoteInfo {
     pub(super) endpoint_id: EndpointId,
-    pub(super) addrs: Vec<RemoteAddr>,
+    pub(super) addrs: Vec<TransportAddrInfo>,
 }
 
 impl RemoteInfo {
@@ -21,8 +21,15 @@ impl RemoteInfo {
     /// Returns an iterator over known all addresses for this remote.
     ///
     /// Note that this may include outdated or unusable addresses.
-    pub fn addrs(&self) -> impl Iterator<Item = &RemoteAddr> {
+    pub fn addrs(&self) -> impl Iterator<Item = &TransportAddrInfo> {
         self.addrs.iter()
+    }
+
+    /// Converts into an iterator over known all addresses for this remote.
+    ///
+    /// Note that this may include outdated or unusable addresses.
+    pub fn into_addrs(self) -> impl Iterator<Item = TransportAddrInfo> {
+        self.addrs.into_iter()
     }
 
     /// Returns a [`EndpointAddr`] that includes all addresses that are not [`AddrUsage::Unusable`].
@@ -30,7 +37,7 @@ impl RemoteInfo {
         let addrs = self
             .addrs
             .into_iter()
-            .filter(|a| !matches!(a.usage(), AddrUsage::Unusable))
+            .filter(|a| !matches!(a.usage(), TransportAddrUsage::Unusable))
             .map(|a| a.addr);
 
         EndpointAddr {
@@ -42,13 +49,13 @@ impl RemoteInfo {
 
 /// Address of a remote with some metadata
 #[derive(Debug, Clone)]
-pub struct RemoteAddr {
+pub struct TransportAddrInfo {
     pub(super) addr: TransportAddr,
-    pub(super) usage: AddrUsage,
-    pub(super) last_source: Source,
+    pub(super) usage: TransportAddrUsage,
+    pub(super) most_recent_source: Source,
 }
 
-impl RemoteAddr {
+impl TransportAddrInfo {
     /// Returns the [`TransportAddr`].
     pub fn addr(&self) -> &TransportAddr {
         &self.addr
@@ -60,7 +67,7 @@ impl RemoteAddr {
     }
 
     /// Returns information how this address is used.
-    pub fn usage(&self) -> AddrUsage {
+    pub fn usage(&self) -> TransportAddrUsage {
         self.usage
     }
 
@@ -68,19 +75,19 @@ impl RemoteAddr {
     ///
     /// We may learn about new addresses from multiple sources. This returns the most recent source
     /// that told us about this address.
-    pub fn last_source(&self) -> &Source {
-        &self.last_source
+    pub fn most_recent_source(&self) -> &Source {
+        &self.most_recent_source
     }
 }
 
 /// Information how a transport address is used.
 #[derive(Debug, Copy, Clone)]
-pub enum AddrUsage {
+pub enum TransportAddrUsage {
     /// The address is in active use.
     Active,
     /// The address was used, but is not currently.
     Inactive {
-        /// Instant when this address was last used.
+        /// Time when this address was last used.
         last_used: Instant,
     },
     /// We tried to use this address, but failed.

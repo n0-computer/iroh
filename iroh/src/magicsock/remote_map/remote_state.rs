@@ -24,7 +24,7 @@ use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
-pub use self::remote_info::{AddrUsage, RemoteAddr, RemoteInfo};
+pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
 use self::{
     guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
     path_state::RemotePathState,

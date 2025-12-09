@@ -13,7 +13,9 @@ use tokio::sync::mpsc;
 
 pub(crate) use self::remote_state::PathsWatcher;
 pub(super) use self::remote_state::RemoteStateMessage;
-pub use self::remote_state::{AddrUsage, PathInfo, PathInfoList, RemoteAddr, RemoteInfo};
+pub use self::remote_state::{
+    PathInfo, PathInfoList, RemoteInfo, TransportAddrInfo, TransportAddrUsage,
+};
 use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
     DirectAddr, MagicsockMetrics,

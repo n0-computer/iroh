@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap;
 use tokio::sync::oneshot;
 use tracing::trace;
 
-use super::{AddrUsage, RemoteAddr, Source};
+use super::{Source, TransportAddrInfo, TransportAddrUsage};
 use crate::{discovery::DiscoveryError, magicsock::transports, metrics::MagicsockMetrics};
 
 /// Maximum number of IP paths we keep around per endpoint.
@@ -62,21 +62,23 @@ impl RemotePathState {
             metrics,
         }
     }
-    pub(super) fn to_remote_addrs(&self) -> Vec<RemoteAddr> {
+    pub(super) fn to_remote_addrs(&self) -> Vec<TransportAddrInfo> {
         self.paths
             .iter()
             .flat_map(|(addr, state)| {
                 let usage = match state.status {
-                    PathStatus::Open => AddrUsage::Active,
-                    PathStatus::Inactive(instant) => AddrUsage::Inactive { last_used: instant },
-                    PathStatus::Unusable => AddrUsage::Unusable,
-                    PathStatus::Unknown => AddrUsage::Unknown,
+                    PathStatus::Open => TransportAddrUsage::Active,
+                    PathStatus::Inactive(instant) => {
+                        TransportAddrUsage::Inactive { last_used: instant }
+                    }
+                    PathStatus::Unusable => TransportAddrUsage::Unusable,
+                    PathStatus::Unknown => TransportAddrUsage::Unknown,
                 };
                 let last_source = state.sources.iter().max_by(|a, b| a.1.cmp(b.1))?;
-                Some(RemoteAddr {
+                Some(TransportAddrInfo {
                     addr: addr.clone().into(),
                     usage,
-                    last_source: last_source.0.clone(),
+                    most_recent_source: last_source.0.clone(),
                 })
             })
             .collect()

@@ -51,7 +51,7 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::dns::DnsResolver;
 pub use crate::magicsock::{
     DirectAddr, DirectAddrType, PathInfo,
-    remote_map::{AddrUsage, PathInfoList, RemoteAddr, RemoteInfo, Source},
+    remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
     transports::TransportConfig,
 };
 use crate::{
