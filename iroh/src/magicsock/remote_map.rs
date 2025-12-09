@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 pub(crate) use self::remote_state::PathsWatcher;
 pub(super) use self::remote_state::RemoteStateMessage;
-pub use self::remote_state::{PathInfo, PathInfoList};
+pub use self::remote_state::{AddrUsage, PathInfo, PathInfoList, RemoteAddr, RemoteInfo};
 use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
     DirectAddr, MagicsockMetrics,
@@ -116,6 +116,17 @@ impl RemoteMap {
                 sender
             }
         }
+    }
+
+    pub(super) fn remote_state_actor_if_exists(
+        &self,
+        eid: EndpointId,
+    ) -> Option<mpsc::Sender<RemoteStateMessage>> {
+        self.actor_handles
+            .lock()
+            .expect("poisoned")
+            .get(&eid)
+            .and_then(|handle| handle.sender.get())
     }
 
     /// Starts a new remote state actor and returns a handle and a sender.

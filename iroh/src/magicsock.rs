@@ -58,7 +58,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
     endpoint::hooks::EndpointHooksList,
-    magicsock::remote_map::PathsWatcher,
+    magicsock::remote_map::{PathsWatcher, RemoteInfo},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -311,6 +311,16 @@ impl MagicSock {
             Ok(Err(err)) => Ok(Err(err)),
             Err(_) => Err(RemoteStateActorStoppedError::new()),
         }
+    }
+
+    /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
+    ///
+    /// Returns `None` if no actor is running for the remote.
+    pub(crate) async fn remote_info(&self, id: EndpointId) -> Option<RemoteInfo> {
+        let actor = self.remote_map.remote_state_actor_if_exists(id)?;
+        let (tx, rx) = oneshot::channel();
+        actor.send(RemoteStateMessage::RemoteInfo(tx)).await.ok()?;
+        rx.await.ok()
     }
 
     pub(crate) async fn insert_relay(

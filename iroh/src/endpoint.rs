@@ -23,31 +23,6 @@ use n0_watcher::Watcher;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
-use self::hooks::EndpointHooksList;
-pub use super::magicsock::{
-    DirectAddr, DirectAddrType, PathInfo,
-    remote_map::{PathInfoList, Source},
-};
-#[cfg(wasm_browser)]
-use crate::discovery::pkarr::PkarrResolver;
-#[cfg(not(wasm_browser))]
-use crate::dns::DnsResolver;
-use crate::{
-    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
-    endpoint::presets::Preset,
-    magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
-    metrics::EndpointMetrics,
-    net_report::Report,
-    tls::{self, DEFAULT_MAX_TLS_TICKETS},
-};
-
-mod connection;
-pub(crate) mod hooks;
-pub mod presets;
-mod quic;
-
-pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
-
 #[cfg(feature = "qlog")]
 pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
@@ -57,6 +32,7 @@ pub use self::{
         IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
         RemoteEndpointIdError, ZeroRttStatus,
     },
+    hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks},
     quic::{
         AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
@@ -68,7 +44,28 @@ pub use self::{
         VarIntBoundsExceeded, WeakConnectionHandle, WriteError, Written,
     },
 };
-pub use crate::magicsock::transports::TransportConfig;
+use self::{hooks::EndpointHooksList, presets::Preset};
+#[cfg(wasm_browser)]
+use crate::discovery::pkarr::PkarrResolver;
+#[cfg(not(wasm_browser))]
+use crate::dns::DnsResolver;
+pub use crate::magicsock::{
+    DirectAddr, DirectAddrType, PathInfo,
+    remote_map::{AddrUsage, PathInfoList, RemoteAddr, RemoteInfo, Source},
+    transports::TransportConfig,
+};
+use crate::{
+    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
+    magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
+    metrics::EndpointMetrics,
+    net_report::Report,
+    tls::{self, DEFAULT_MAX_TLS_TICKETS},
+};
+
+mod connection;
+pub(crate) mod hooks;
+pub mod presets;
+mod quic;
 
 /// Builder for [`Endpoint`].
 ///
@@ -1058,6 +1055,18 @@ impl Endpoint {
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &EndpointMetrics {
         &self.msock.metrics
+    }
+
+    /// Returns addressing information about a recently used remote endpoint.
+    ///
+    /// The returned [`RemoteInfo`] contains a list of all transport addresses for the remote
+    /// that we know about.
+    ///
+    /// Returns `None` if the endpoint doesn't have information about the remote.
+    /// When remote endpoints are no longer used, our endpoint will keep information around
+    /// for a little while, and then drop it. Afterwards, this will return `None`.
+    pub async fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+        self.msock.remote_info(endpoint_id).await
     }
 
     // # Methods for less common state updates.
