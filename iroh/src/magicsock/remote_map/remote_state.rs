@@ -787,12 +787,10 @@ impl RemoteStateActor {
                     if !self.has_holepunched
                         && let transports::Addr::Ip(ip_addr) = &path_remote
                         && let Some(hp) = self.last_holepunch.as_mut()
-                    {
-                        if hp.remote_candidates.contains(&ip_addr) {
+                        && hp.remote_candidates.contains(ip_addr) {
                             self.has_holepunched = true;
                             self.metrics.remote_holepunch_success.inc();
                         }
-                    }
                 }
 
                 self.select_path();
