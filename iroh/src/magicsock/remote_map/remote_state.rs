@@ -865,7 +865,7 @@ impl RemoteStateActor {
             .filter_map(|(addr, rtts)| rtts.into_iter().min().map(|rtt| (addr, rtt)))
             .collect();
 
-        // Find the fastest direct or relay path.
+        // Find the fastest direct IPv4 path.
         let direct_path_ipv4 = path_rtts
             .iter()
             .filter_map(|(addr, rtt)| {
@@ -876,6 +876,8 @@ impl RemoteStateActor {
                 }
             })
             .min_by_key(|(_addr, rtt)| *rtt);
+
+        // Find the fastest direct IPv6 path.
         let direct_path_ipv6 = path_rtts
             .iter()
             .filter_map(|(addr, rtt)| {
@@ -887,7 +889,7 @@ impl RemoteStateActor {
             })
             .min_by_key(|(_addr, rtt)| *rtt);
 
-        // Find the fasted relay path.
+        // Find the fastests relay path.
         let relay_path = path_rtts
             .iter()
             .filter(|(addr, _rtt)| addr.is_relay())
