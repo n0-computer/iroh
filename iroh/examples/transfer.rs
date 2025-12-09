@@ -422,7 +422,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
-    tokio::time::timeout(Duration::from_secs(3), endpoint.close())
+    tokio::time::timeout(Duration::from_secs(30), endpoint.close())
         .await
         .anyerr()?;
 

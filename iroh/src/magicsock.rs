@@ -997,7 +997,9 @@ impl Handle {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+        debug!("wait_idle start");
         self.endpoint.wait_idle().await;
+        debug!("wait_idle done");
 
         if self.msock.is_closed() {
             return;
