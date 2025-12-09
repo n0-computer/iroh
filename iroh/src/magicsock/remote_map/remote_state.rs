@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, VecDeque},
-    net::SocketAddr,
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::Arc,
     task::Poll,
@@ -73,6 +73,15 @@ mod path_state;
 /// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
 /// in a high frequency, and to keep data about previous path around for subsequent connections.
 const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The minimum RTT difference to make it worth switching IP paths
+const RTT_SWITCHING_MIN_IP: Duration = Duration::from_millis(5);
+
+/// The minimum RTT difference to make it worth switching relay paths
+const RTT_SWITCHING_MIN_RELAY: Duration = Duration::from_millis(3);
+
+/// How much do we prefer IPv6 over IPv4?
+const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
 
 /// A stream of events from all paths for all connections.
 ///
@@ -857,58 +866,55 @@ impl RemoteStateActor {
             .collect();
 
         // Find the fastest direct or relay path.
-        const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
-        let direct_path = path_rtts
+        let direct_path_ipv4 = path_rtts
             .iter()
-            .filter(|(addr, _rtt)| addr.is_ip())
-            .map(|(addr, rtt)| {
-                if addr.is_ipv4() {
-                    (*rtt + IPV6_RTT_ADVANTAGE, addr)
+            .filter_map(|(addr, rtt)| {
+                if let transports::Addr::Ip(SocketAddr::V4(addr)) = *addr {
+                    Some((addr, *rtt))
                 } else {
-                    (*rtt, addr)
+                    None
                 }
             })
-            .min();
-        let relay_path = direct_path
-            .is_some()
-            .then(|| {
-                // Find the fasted relay path.
-                path_rtts
-                    .iter()
-                    .filter(|(addr, _rtt)| addr.is_relay())
-                    .map(|(addr, rtt)| (*rtt, addr))
-                    .min()
-            })
-            .flatten();
-
-        let selected_path = match (self.selected_path.get(), direct_path) {
-            (Some(ref addr @ transports::Addr::Ip(_)), Some((new_rtt, new_direct_addr))) => {
-                let current_rtt = path_rtts.get(addr);
-                if let Some(&current_rtt) = current_rtt {
-                    if current_rtt > new_rtt + Duration::from_millis(10) {
-                        // Switch to a new path it is at least 10ms better
-                        // TODO: what number is right?
-                        // TODO: should we take IPv6 vs IPv4 into consideration here?
-                        Some((new_rtt, new_direct_addr))
-                    } else {
-                        // Current path is good enough
-                        None
-                    }
+            .min_by_key(|(_addr, rtt)| *rtt);
+        let direct_path_ipv6 = path_rtts
+            .iter()
+            .filter_map(|(addr, rtt)| {
+                if let transports::Addr::Ip(SocketAddr::V6(addr)) = *addr {
+                    Some((addr, *rtt))
                 } else {
-                    // use new path, we have no RTT information for the current path
-                    Some((new_rtt, new_direct_addr))
+                    None
                 }
-            }
-            _ => direct_path.or(relay_path),
-        };
+            })
+            .min_by_key(|(_addr, rtt)| *rtt);
 
-        if let Some((rtt, addr)) = selected_path {
+        // Find the fasted relay path.
+        let relay_path = path_rtts
+            .iter()
+            .filter(|(addr, _rtt)| addr.is_relay())
+            .min_by_key(|(_addr, rtt)| *rtt)
+            .map(|(addr, rtt)| (addr.clone(), *rtt));
+
+        let current_path = self.selected_path.get().map(|addr| {
+            let rtt = path_rtts.get(&addr).copied();
+            (addr, rtt)
+        });
+        let selected_path = select_best_path(
+            current_path.clone(),
+            direct_path_ipv4,
+            direct_path_ipv6,
+            relay_path,
+        );
+
+        // Apply our new path
+        if let Some((addr, rtt)) = selected_path {
             let prev = self.selected_path.set(Some(addr.clone()));
             if prev.is_ok() {
                 debug!(?addr, ?rtt, ?prev, "selected new path");
             }
-            self.open_path(addr);
-            self.close_redundant_paths(addr);
+            self.open_path(&addr);
+            self.close_redundant_paths(&addr);
+        } else {
+            trace!(?current_path, "keeping current path");
         }
     }
 
@@ -954,6 +960,230 @@ impl RemoteStateActor {
                 }
             }
         }
+    }
+}
+
+fn select_best_path(
+    current_path: Option<(transports::Addr, Option<Duration>)>,
+    direct_path_ipv4: Option<(SocketAddrV4, Duration)>,
+    direct_path_ipv6: Option<(SocketAddrV6, Duration)>,
+    relay_path: Option<(transports::Addr, Duration)>,
+) -> Option<(transports::Addr, Duration)> {
+    let (current_path, current_rtt) = current_path.unzip();
+    let current_rtt = current_rtt.flatten();
+    match (current_path, direct_path_ipv4, direct_path_ipv6) {
+        (
+            Some(transports::Addr::Ip(SocketAddr::V4(addr_v4))),
+            Some((new_direct_addr, new_rtt)),
+            None,
+        ) => {
+            // IPv4 -> IPv4, no IPv6
+            if let Some(current_rtt) = current_rtt {
+                if current_rtt > new_rtt + RTT_SWITCHING_MIN_IP && addr_v4 != new_direct_addr {
+                    // Switch to a new path
+                    Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+                } else {
+                    // Current path is good enough
+                    None
+                }
+            } else {
+                // Use new path, we have no RTT information for the current path
+                Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+            }
+        }
+        (Some(transports::Addr::Ip(SocketAddr::V4(_))), None, Some((new_direct_addr, new_rtt))) => {
+            // IPv4 -> IPv6, no IPv4
+            if let Some(current_rtt) = current_rtt {
+                if current_rtt > new_rtt + IPV6_RTT_ADVANTAGE {
+                    // Switch to a new path
+                    Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+                } else {
+                    // Current path is good enough
+                    None
+                }
+            } else {
+                // Use new path, we have no RTT information for the current path
+                Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+            }
+        }
+        (
+            Some(transports::Addr::Ip(SocketAddr::V6(addr_v6))),
+            None,
+            Some((new_direct_addr, new_rtt)),
+        ) => {
+            // IPv6 -> IPv6, no IPv4
+            if let Some(current_rtt) = current_rtt {
+                if current_rtt > new_rtt + RTT_SWITCHING_MIN_IP && addr_v6 != new_direct_addr {
+                    // Switch to a new path
+                    Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+                } else {
+                    // Current path is good enough
+                    None
+                }
+            } else {
+                // Use new path, we have no RTT information for the current path
+                Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+            }
+        }
+        (Some(transports::Addr::Ip(SocketAddr::V6(_))), Some((new_direct_addr, new_rtt)), None) => {
+            // IPv6 -> IPv4, no IPv6
+            if let Some(current_rtt) = current_rtt {
+                if current_rtt > new_rtt + RTT_SWITCHING_MIN_IP {
+                    // Switch to a new path
+                    Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+                } else {
+                    // Current path is good enough
+                    None
+                }
+            } else {
+                // Use new path, we have no RTT information for the current path
+                Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+            }
+        }
+        (
+            Some(transports::Addr::Ip(_)),
+            Some((new_direct_addr_v4, new_rtt_v4)),
+            Some((new_direct_addr_v6, new_rtt_v6)),
+        ) => {
+            // v4/v6, new v4 and new v6
+            if let Some(current_rtt) = current_rtt {
+                if current_rtt >= new_rtt_v4 + RTT_SWITCHING_MIN_IP
+                    || current_rtt >= new_rtt_v6 + RTT_SWITCHING_MIN_RELAY
+                {
+                    Some(select_v4_v6(
+                        new_direct_addr_v4,
+                        new_rtt_v4,
+                        new_direct_addr_v6,
+                        new_rtt_v6,
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                // no current rtt available
+                Some(select_v4_v6(
+                    new_direct_addr_v4,
+                    new_rtt_v4,
+                    new_direct_addr_v6,
+                    new_rtt_v6,
+                ))
+            }
+        }
+        (
+            Some(transports::Addr::Relay(_, _)),
+            Some((new_direct_addr_v4, new_rtt_v4)),
+            Some((new_direct_addr_v6, new_rtt_v6)),
+        ) => {
+            // relay path previously, new v4 and new v6
+            if let Some(current_rtt) = current_rtt {
+                // anything at least as good, that is direct we want to use
+                if current_rtt >= new_rtt_v4 || current_rtt >= new_rtt_v6 {
+                    Some(select_v4_v6(
+                        new_direct_addr_v4,
+                        new_rtt_v4,
+                        new_direct_addr_v6,
+                        new_rtt_v6,
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                // no current rtt available
+                Some(select_v4_v6(
+                    new_direct_addr_v4,
+                    new_rtt_v4,
+                    new_direct_addr_v6,
+                    new_rtt_v6,
+                ))
+            }
+        }
+        (Some(transports::Addr::Relay(_, _)), Some((new_direct_addr, new_rtt)), None) => {
+            // relay path previously, use our new selection IPv4
+            Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+        }
+        (Some(transports::Addr::Relay(_, _)), None, Some((new_direct_addr, new_rtt))) => {
+            // relay path previously, use our new selection IPv6
+            Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+        }
+        (None, Some((new_direct_addr, new_rtt)), None) => {
+            // no direct path previously, use our new selection IPv4
+            Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+        }
+        (None, None, Some((new_direct_addr, new_rtt))) => {
+            // no direct path previously, use our new selection IPv6
+            Some((transports::Addr::Ip(new_direct_addr.into()), new_rtt))
+        }
+        (None, Some((new_direct_addr_v4, new_rtt_v4)), Some((new_direct_addr_v6, new_rtt_v6))) => {
+            // no existing path, new v4 and new v6
+            Some(select_v4_v6(
+                new_direct_addr_v4,
+                new_rtt_v4,
+                new_direct_addr_v6,
+                new_rtt_v6,
+            ))
+        }
+
+        (None, None, None) => {
+            // no direct paths available
+            relay_path
+        }
+        (Some(transports::Addr::Ip(_)), None, None) => {
+            // existing direct, no new direct
+
+            // compare direct with relay
+            if let Some(current_rtt) = current_rtt {
+                if let Some((relay_addr, new_rtt)) = relay_path {
+                    if current_rtt > new_rtt + RTT_SWITCHING_MIN_IP {
+                        // Switch to a new path
+                        Some((relay_addr, new_rtt))
+                    } else {
+                        // Current path is good enough
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                // no new option available
+                None
+            }
+        }
+        (Some(transports::Addr::Relay(_, _)), None, None) => {
+            // existing relay
+
+            // compare relay paths
+            if let Some(current_rtt) = current_rtt {
+                if let Some((relay_addr, new_rtt)) = relay_path {
+                    if current_rtt > new_rtt + RTT_SWITCHING_MIN_RELAY {
+                        // Switch to a new path
+                        Some((relay_addr, new_rtt))
+                    } else {
+                        // Current path is good enough
+                        None
+                    }
+                } else {
+                    // no new option available
+                    None
+                }
+            } else {
+                // no new option available
+                None
+            }
+        }
+    }
+}
+
+/// Compare two IP addrs v4 & v6 and selecte the "best" one
+fn select_v4_v6(
+    addr_v4: SocketAddrV4,
+    rtt_v4: Duration,
+    addr_v6: SocketAddrV6,
+    rtt_v6: Duration,
+) -> (transports::Addr, Duration) {
+    if rtt_v6 <= rtt_v4 + IPV6_RTT_ADVANTAGE {
+        (transports::Addr::Ip(addr_v6.into()), rtt_v6)
+    } else {
+        (transports::Addr::Ip(addr_v4.into()), rtt_v4)
     }
 }
 
@@ -1343,4 +1573,33 @@ fn to_transports_addr(
             None
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use super::*;
+
+    #[test]
+    fn test_select_v4_v6_addr() {
+        let v4 = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1);
+        let v6 = SocketAddrV6::new(Ipv6Addr::LOCALHOST, 1, 0, 0);
+
+        // Same RTT, prefer v6
+        let (addr, rtt) =
+            select_v4_v6(v4, Duration::from_millis(10), v6, Duration::from_millis(10));
+        assert_eq!(addr, transports::Addr::Ip(v6.into()));
+        assert_eq!(rtt, Duration::from_millis(10));
+
+        // v4 better
+        let (addr, rtt) = select_v4_v6(v4, Duration::from_millis(1), v6, Duration::from_millis(10));
+        assert_eq!(addr, transports::Addr::Ip(v4.into()));
+        assert_eq!(rtt, Duration::from_millis(1));
+
+        // v6 better
+        let (addr, rtt) = select_v4_v6(v4, Duration::from_millis(10), v6, Duration::from_millis(1));
+        assert_eq!(addr, transports::Addr::Ip(v6.into()));
+        assert_eq!(rtt, Duration::from_millis(1));
+    }
 }
