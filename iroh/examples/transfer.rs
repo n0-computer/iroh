@@ -257,6 +257,13 @@ impl EndpointArgs {
             builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
         }
 
+        #[cfg(feature = "qlog")]
+        {
+            let mut transport_config = iroh::endpoint::QuicTransportConfig::default();
+            transport_config.qlog_from_env("transfer");
+            builder = builder.transport_config(transport_config)
+        }
+
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
         if self.mdns {
