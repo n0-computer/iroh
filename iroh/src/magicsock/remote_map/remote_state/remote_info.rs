@@ -32,7 +32,7 @@ impl RemoteInfo {
         self.addrs.into_iter()
     }
 
-    /// Returns a [`EndpointAddr`] that includes all addresses that are not [`AddrUsage::Unusable`].
+    /// Returns a [`EndpointAddr`] that includes all addresses that are not [`TransportAddrUsage::Unusable`].
     pub fn into_endpoint_addr(self) -> EndpointAddr {
         let addrs = self
             .addrs
