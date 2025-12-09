@@ -889,17 +889,17 @@ impl RemoteStateActor {
             })
             .min_by_key(|(_addr, rtt)| *rtt);
 
-        // Find the fastests relay path.
+        // Find the fastest relay path.
         let relay_path = path_rtts
             .iter()
             .filter(|(addr, _rtt)| addr.is_relay())
             .min_by_key(|(_addr, rtt)| *rtt)
             .map(|(addr, rtt)| (addr.clone(), *rtt));
 
-        let current_path = self.selected_path.get().map(|addr| {
-            let rtt = path_rtts.get(&addr).copied();
-            (addr, rtt)
-        });
+        let current_path = self
+            .selected_path
+            .get()
+            .and_then(|addr| path_rtts.get(&addr).copied().map(|rtt| (addr, rtt)));
         let selected_path = select_best_path(
             current_path.clone(),
             direct_path_ipv4,
@@ -968,13 +968,12 @@ impl RemoteStateActor {
 /// Returns `Some` if a new path should be selected, `None` if the `current_path` should
 /// continued to be used.
 fn select_best_path(
-    current_path: Option<(transports::Addr, Option<Duration>)>,
+    current_path: Option<(transports::Addr, Duration)>,
     direct_path_ipv4: Option<(SocketAddrV4, Duration)>,
     direct_path_ipv6: Option<(SocketAddrV6, Duration)>,
     new_relay_path: Option<(transports::Addr, Duration)>,
 ) -> Option<(transports::Addr, Duration)> {
     let (current_path, current_rtt) = current_path.unzip();
-    let current_rtt = current_rtt.flatten();
     match (current_path, direct_path_ipv4, direct_path_ipv6) {
         (
             Some(transports::Addr::Ip(SocketAddr::V4(addr_v4))),
