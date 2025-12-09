@@ -30,10 +30,10 @@
 <a href=#30 id=30 data-nosnippet>30</a>    <span class="comment">/*
 <a href=#31 id=31 data-nosnippet>31</a>     * Holepunching metrics
 <a href=#32 id=32 data-nosnippet>32</a>     */
-<a href=#33 id=33 data-nosnippet>33</a>    </span><span class="doccomment">/// The number of NAT traversal attempts initiated.
-<a href=#34 id=34 data-nosnippet>34</a>    </span><span class="kw">pub </span>holepunch_attempt: Counter,
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// The number of successful NAT traversal attempts.
-<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub </span>holepunch_success: Counter,
+<a href=#33 id=33 data-nosnippet>33</a>    </span><span class="doccomment">/// The number of remote endpoints for which of NAT traversal was initiated.
+<a href=#34 id=34 data-nosnippet>34</a>    </span><span class="kw">pub </span>remote_holepunch_attempts: Counter,
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// The number of remote endpoints for which of NAT traversal was initiated and successful.
+<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub </span>remote_holepunch_success: Counter,
 <a href=#37 id=37 data-nosnippet>37</a>
 <a href=#38 id=38 data-nosnippet>38</a>    <span class="comment">/*
 <a href=#39 id=39 data-nosnippet>39</a>     * Connection Metrics
