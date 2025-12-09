@@ -963,11 +963,13 @@ impl RemoteStateActor {
     }
 }
 
+/// Returns `Some` if a new path should be selected, `None` if the `current_path` should
+/// continued to be used.
 fn select_best_path(
     current_path: Option<(transports::Addr, Option<Duration>)>,
     direct_path_ipv4: Option<(SocketAddrV4, Duration)>,
     direct_path_ipv6: Option<(SocketAddrV6, Duration)>,
-    relay_path: Option<(transports::Addr, Duration)>,
+    new_relay_path: Option<(transports::Addr, Duration)>,
 ) -> Option<(transports::Addr, Duration)> {
     let (current_path, current_rtt) = current_path.unzip();
     let current_rtt = current_rtt.flatten();
@@ -1125,14 +1127,14 @@ fn select_best_path(
 
         (None, None, None) => {
             // no direct paths available
-            relay_path
+            new_relay_path
         }
         (Some(transports::Addr::Ip(_)), None, None) => {
             // existing direct, no new direct
 
             // compare direct with relay
             if let Some(current_rtt) = current_rtt {
-                if let Some((relay_addr, new_rtt)) = relay_path {
+                if let Some((relay_addr, new_rtt)) = new_relay_path {
                     if current_rtt > new_rtt + RTT_SWITCHING_MIN_IP {
                         // Switch to a new path
                         Some((relay_addr, new_rtt))
@@ -1153,7 +1155,7 @@ fn select_best_path(
 
             // compare relay paths
             if let Some(current_rtt) = current_rtt {
-                if let Some((relay_addr, new_rtt)) = relay_path {
+                if let Some((relay_addr, new_rtt)) = new_relay_path {
                     if current_rtt > new_rtt + RTT_SWITCHING_MIN_RELAY {
                         // Switch to a new path
                         Some((relay_addr, new_rtt))
@@ -1173,7 +1175,7 @@ fn select_best_path(
     }
 }
 
-/// Compare two IP addrs v4 & v6 and selecte the "best" one
+/// Compare two IP addrs v4 & v6 and selects the "best" one.
 fn select_v4_v6(
     addr_v4: SocketAddrV4,
     rtt_v4: Duration,
