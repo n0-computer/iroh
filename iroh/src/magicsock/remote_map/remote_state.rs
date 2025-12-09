@@ -192,7 +192,7 @@ impl RemoteStateActor {
         Self {
             endpoint_id,
             local_endpoint_id,
-            metrics,
+            metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
             discovery,
@@ -200,7 +200,7 @@ impl RemoteStateActor {
             connections_close: Default::default(),
             path_events: Default::default(),
             addr_events: Default::default(),
-            paths: Default::default(),
+            paths: RemotePathState::new(metrics),
             last_holepunch: None,
             selected_path: Default::default(),
             scheduled_holepunch: None,
@@ -273,11 +273,7 @@ impl RemoteStateActor {
                     self.trigger_holepunching().await;
                 }
                 Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
-                    self.connections.remove(&conn_id);
-                    if self.connections.is_empty() {
-                        trace!("last connection closed - clearing selected_path");
-                        self.selected_path.set(None).ok();
-                    }
+                    self.handle_connection_close(conn_id);
                 }
                 res = self.local_direct_addrs.updated() => {
                     if let Err(n0_watcher::Disconnected) = res {
@@ -397,6 +393,7 @@ impl RemoteStateActor {
     ) {
         let pub_open_paths = Watchable::default();
         if let Some(conn) = handle.upgrade() {
+            self.metrics.num_conns_opened.inc();
             // Remove any conflicting stable_ids from the local state.
             let conn_id = ConnId(conn.stable_id());
             self.connections.remove(&conn_id);
@@ -485,6 +482,16 @@ impl RemoteStateActor {
         self.paths.resolve_remote(tx);
         // Start discovery if we have no selected path.
         self.trigger_discovery();
+    }
+
+    fn handle_connection_close(&mut self, conn_id: ConnId) {
+        if self.connections.remove(&conn_id).is_some() {
+            self.metrics.num_conns_closed.inc();
+        }
+        if self.connections.is_empty() {
+            trace!("last connection closed - clearing selected_path");
+            self.selected_path.set(None).ok();
+        }
     }
 
     fn handle_discovery_item(&mut self, item: Option<Result<DiscoveryItem, DiscoveryError>>) {
@@ -1052,7 +1059,6 @@ impl ConnectionState {
         self.paths.insert(path_id, remote.clone());
         self.open_paths.insert(path_id, remote.clone());
         self.path_ids.insert(remote, path_id);
-
         self.update_pub_path_info();
     }
 

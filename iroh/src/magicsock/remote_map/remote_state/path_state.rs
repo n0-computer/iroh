@@ -1,6 +1,9 @@
 //! The state kept for each network path to a remote endpoint.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
 
 use n0_error::e;
 use n0_future::time::Instant;
@@ -9,7 +12,7 @@ use tokio::sync::oneshot;
 use tracing::trace;
 
 use super::Source;
-use crate::{discovery::DiscoveryError, magicsock::transports};
+use crate::{discovery::DiscoveryError, magicsock::transports, metrics::MagicsockMetrics};
 
 /// Maximum number of IP paths we keep around per endpoint.
 pub(super) const MAX_IP_PATHS: usize = 30;
@@ -23,7 +26,7 @@ pub(super) const MAX_INACTIVE_IP_PATHS: usize = 10;
 ///
 /// Also stores a list of resolve requests which are triggered once at least one path is known,
 /// or once this struct is notified of a failed discovery run.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct RemotePathState {
     /// All possible paths we are aware of.
     ///
@@ -32,6 +35,7 @@ pub(super) struct RemotePathState {
     paths: FxHashMap<transports::Addr, PathState>,
     /// Pending resolve requests from [`Self::resolve_remote`].
     pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
+    metrics: Arc<MagicsockMetrics>,
 }
 
 /// Describes the usability of this path, i.e. whether it has ever been opened,
@@ -51,10 +55,21 @@ pub(super) enum PathStatus {
 }
 
 impl RemotePathState {
+    pub(super) fn new(metrics: Arc<MagicsockMetrics>) -> Self {
+        Self {
+            paths: Default::default(),
+            pending_resolve_requests: Default::default(),
+            metrics,
+        }
+    }
     /// Insert a new address of an open path into our list of paths.
     ///
     /// This will emit pending resolve requests and trigger pruning paths.
     pub(super) fn insert_open_path(&mut self, addr: transports::Addr, source: Source) {
+        match addr {
+            transports::Addr::Ip(_) => self.metrics.transport_ip_paths_added.inc(),
+            transports::Addr::Relay(_, _) => self.metrics.transport_relay_paths_added.inc(),
+        };
         let state = self.paths.entry(addr).or_default();
         state.status = PathStatus::Open;
         state.sources.insert(source.clone(), Instant::now());
@@ -68,6 +83,14 @@ impl RemotePathState {
     /// `RemotePathState`
     pub(super) fn abandoned_path(&mut self, addr: &transports::Addr) {
         if let Some(state) = self.paths.get_mut(addr) {
+            if matches!(state.status, PathStatus::Open) {
+                match addr {
+                    transports::Addr::Ip(_) => self.metrics.transport_ip_paths_removed.inc(),
+                    transports::Addr::Relay(_, _) => {
+                        self.metrics.transport_relay_paths_removed.inc()
+                    }
+                };
+            }
             match state.status {
                 PathStatus::Open | PathStatus::Inactive(_) => {
                     state.status = PathStatus::Inactive(Instant::now());
@@ -491,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_insert_open_path() {
-        let mut state = RemotePathState::default();
+        let mut state = RemotePathState::new(Default::default());
         let addr = ip_addr(1000);
         let source = Source::Udp;
 
@@ -509,18 +532,22 @@ mod tests {
 
     #[test]
     fn test_abandoned_path() {
-        let mut state = RemotePathState::default();
+        let metrics = Arc::new(MagicsockMetrics::default());
+        let mut state = RemotePathState::new(metrics.clone());
 
         // Test: Open goes to Inactive
         let addr_open = ip_addr(1000);
         state.insert_open_path(addr_open.clone(), Source::Udp);
         assert!(matches!(state.paths[&addr_open].status, PathStatus::Open));
+        assert_eq!(metrics.transport_ip_paths_added.get(), 1);
 
         state.abandoned_path(&addr_open);
         assert!(matches!(
             state.paths[&addr_open].status,
             PathStatus::Inactive(_)
         ));
+        assert_eq!(metrics.transport_ip_paths_added.get(), 1);
+        assert_eq!(metrics.transport_ip_paths_removed.get(), 1);
 
         // Test: Inactive stays Inactive
         state.abandoned_path(&addr_open);
@@ -528,6 +555,8 @@ mod tests {
             state.paths[&addr_open].status,
             PathStatus::Inactive(_)
         ));
+        assert_eq!(metrics.transport_ip_paths_added.get(), 1);
+        assert_eq!(metrics.transport_ip_paths_removed.get(), 1);
 
         // Test: Unknown goes to Unusable
         let addr_unknown = ip_addr(2000);
@@ -536,12 +565,16 @@ mod tests {
             state.paths[&addr_unknown].status,
             PathStatus::Unknown
         ));
+        assert_eq!(metrics.transport_ip_paths_added.get(), 1);
+        assert_eq!(metrics.transport_ip_paths_removed.get(), 1);
 
         state.abandoned_path(&addr_unknown);
         assert!(matches!(
             state.paths[&addr_unknown].status,
             PathStatus::Unusable
         ));
+        assert_eq!(metrics.transport_ip_paths_added.get(), 1);
+        assert_eq!(metrics.transport_ip_paths_removed.get(), 1);
 
         // Test: Unusable stays Unusable
         state.abandoned_path(&addr_unknown);
@@ -549,5 +582,16 @@ mod tests {
             state.paths[&addr_unknown].status,
             PathStatus::Unusable
         ));
+        assert_eq!(metrics.transport_ip_paths_added.get(), 1);
+        assert_eq!(metrics.transport_ip_paths_removed.get(), 1);
+
+        // Test: Unusable can go to open
+        state.insert_open_path(addr_unknown.clone(), Source::Udp);
+        assert!(matches!(
+            state.paths[&addr_unknown].status,
+            PathStatus::Open
+        ));
+        assert_eq!(metrics.transport_ip_paths_added.get(), 2);
+        assert_eq!(metrics.transport_ip_paths_removed.get(), 1);
     }
 }
