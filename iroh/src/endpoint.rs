@@ -33,11 +33,11 @@ use crate::discovery::pkarr::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
+    NetReport,
     discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
     endpoint::presets::Preset,
     magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
-    net_report::Report,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
@@ -867,8 +867,8 @@ impl Endpoint {
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
-    /// [`crate::net_report::TIMEOUT`], so you can be sure that at least one
-    /// [`crate::net_report::Report`] has been attempted.
+    /// [`crate::NET_REPORT_TIMEOUT`]s, so you can be sure that at least one
+    /// [`crate::NetReport`] has been attempted.
     ///
     /// To understand if the endpoint has gone back "offline",
     /// you must use the [`Endpoint::watch_addr`] method, to
@@ -906,7 +906,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<NetReport>> + use<> {
         self.msock.net_report()
     }
 

@@ -41,6 +41,7 @@ mod imp {
 
     impl Options {
         /// Create an [`Options`] that disables all probes
+        #[allow(dead_code)]
         pub fn disabled() -> Self {
             Self {
                 quic_config: None,
@@ -57,6 +58,7 @@ mod imp {
         }
 
         /// Enable or disable https probe
+        #[allow(dead_code)]
         pub fn https(mut self, enable: bool) -> Self {
             self.https = enable;
             self
