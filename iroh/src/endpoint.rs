@@ -58,16 +58,16 @@ pub use self::{
         RemoteEndpointIdError, ZeroRttStatus,
     },
     quic::{
-        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, BloomTokenLog, Chunk,
-        ClosedStream, ConnectionClose, ConnectionError, ConnectionStats, Controller,
+        AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
+        Codec, ConnectionClose, ConnectionError, ConnectionId, ConnectionStats, Controller,
         ControllerFactory, ControllerMetrics, CryptoError, CryptoServerConfig, Dir,
-        ExportKeyingMaterialError, FrameStats, FrameType, HandshakeTokenKey, IdleTimeout,
-        MtuDiscoveryConfig, NoneTokenLog, OpenBi, OpenUni, PathStats, QuicTransportConfig,
-        ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-        RetryError, RttEstimator, SendDatagramError, SendStream, ServerConfig, Side, StoppedError,
-        StreamId, TimeSource, TokenLog, TransportError, TransportErrorCode, UdpStats,
-        UnsupportedVersion, ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError,
-        Written,
+        ExportKeyingMaterialError, FrameStats, FrameType, HandshakeTokenKey, HeaderKey,
+        IdleTimeout, Keys, MtuDiscoveryConfig, OpenBi, OpenUni, PacketKey, PathId, PathStats,
+        QuicConnectError, QuicTransportConfig, ReadDatagram, ReadError, ReadExactError,
+        ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagramError, SendStream,
+        ServerConfig, Session, Side, StoppedError, StreamId, TimeSource, TokenLog, TokenReuseError,
+        TransportError, TransportErrorCode, TransportParameters, UdpStats, UnsupportedVersion,
+        ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError, Written,
     },
 };
 pub use crate::magicsock::transports::TransportConfig;
@@ -471,11 +471,11 @@ struct StaticConfig {
 
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> ServerConfig {
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> quinn::ServerConfig {
         let quic_server_config = self
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
-        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(self.transport_config.to_arc());
 
         server_config

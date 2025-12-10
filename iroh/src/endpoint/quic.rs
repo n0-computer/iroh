@@ -8,26 +8,86 @@
 
 #[cfg(feature = "qlog")]
 use std::path::Path;
-use std::{sync::Arc, time::Duration};
 
-// Missing still: SendDatagram and ConnectionClose::frame_type's Type.
-pub use quinn::{
-    AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
-    ConnectionClose, ConnectionError, ConnectionStats, MtuDiscoveryConfig, OpenBi, OpenUni,
-    PathStats, ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-    RetryError, SendDatagram, SendDatagramError, SendStream, ServerConfig, Side, StoppedError,
-    StreamId, VarInt, VarIntBoundsExceeded, WriteError,
+use std::{
+    net::{SocketAddrV4, SocketAddrV6},
+    sync::Arc,
+    time::Duration,
 };
+
 #[cfg(feature = "qlog")]
 pub use quinn::{QlogConfig, QlogFactory, QlogFileFactory};
+
+/// `quinn` types that are used in the public iroh API.
+// Each type is notated with the iroh type or quinn type that uses it.
+pub use quinn::{
+    AcceptBi,             // iroh::endpoint::Connection
+    AcceptUni,            // iroh::endpoint::Connection
+    AckFrequencyConfig,   // iroh::endpoint::quic::QuicTransportConfig
+    ClosedStream,         // iroh::protocol::AcceptError, quinn::RecvStream, quinn::SendStream
+    ConnectionError,      // iroh::endpoint::ConnectError
+    ConnectionStats,      // iroh::endpoint::Connection
+    Dir,                  // quinn::StreamId
+    IdleTimeout,          // iroh::endpoint::quic::QuicTransportConfig
+    MtuDiscoveryConfig,   // iroh::endpoint::quic::QuicTransportConfig
+    OpenBi,               // iroh::endpoint::Connection
+    OpenUni,              // iroh::endpoint::Connection
+    PathStats,            // iroh::magicsock::remote_map::remote_state::PathInfo
+    ReadDatagram,         // iroh::endpoint::Connection
+    ReadError,            // quinn::RecvStream
+    ReadExactError,       // quinn::RecvStream
+    ReadToEndError,       // quinn::RecvStream
+    RecvStream,           // quinn::AcceptBi, quinn::AcceptUni, quinn::OpenBi, quinn::OpenUni
+    ResetError,           // quinn::RecvStream
+    SendDatagram,         // iroh::endpoint::Connection
+    SendDatagramError,    // iroh::endpoint::Connection
+    SendStream,           // quinn::AcceptBi, quinn::OpenUni
+    Side,                 // iroh::endpoint::Connection, quinn::StreamId,
+    StoppedError,         // quinn::SendStream
+    StreamId,             // quinn::RecvStream
+    VarInt,               // various
+    VarIntBoundsExceeded, // quinn::VarInt, quinn::IdleTimeout
+    WriteError,           // quinn::SendStream
+    Written,              // quinn::SendStream
+};
+/// `quinn_proto` types that are used in the public iroh API.
+// Each type is notated with the iroh type or quinn type that uses it.
 pub use quinn_proto::{
-    BloomTokenLog, Dir, FrameStats, FrameType, IdleTimeout, NoneTokenLog, RttEstimator, TimeSource,
-    TokenLog, TransportError, TransportErrorCode, UdpStats, ValidationTokenConfig, Written,
-    congestion::{Controller, ControllerFactory, ControllerMetrics},
-    crypto::{
-        AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
-        ServerConfig as CryptoServerConfig, UnsupportedVersion,
+    ApplicationClose,                 // quinn::ConnectionError
+    Chunk,                            // quinn::RecvStream
+    ConnectError as QuicConnectError, // iroh::endpoint::ConnectWithOptsError
+    ConnectionClose,                  // quinn::ConnectionError
+    ConnectionId,                     // quinn_proto::crypto::ServerConfig
+    FrameStats,                       // quinn::ConnectionStats
+    FrameType,                        // quinn_proto::TransportError
+    PathId,                           // quinn_proto::crypto::PacketKey
+    RttEstimator,                     // quinn_proto::congestion::Controller
+    TimeSource,                       // iroh::endpoint::quic::ServerConfig
+    TokenLog,                         // quinn::ValidationTokenConfig
+    TokenReuseError,                  // quinn::TokenLog
+    TransportError,                   // quinn::ConnectionError
+    TransportErrorCode,               // quinn_proto::TransportError
+    UdpStats,                         // quinn::ConnectionStats
+    ValidationTokenConfig,            // iroh::endpoint::quic::::ServerConfig
+    coding::Codec,                    // quinn_proto::TransportErrorCode, quinn::StreamId
+    congestion::{
+        Controller,        // iroh::endpoint::Connection
+        ControllerFactory, // iroh::endpoint::quic::QuicTransportConfig
+        ControllerMetrics, // quinn_proto::congestion::Controller
     },
+    crypto::{
+        AeadKey,                            // quinn::HandshakeTokenKey
+        CryptoError, // quinn_proto::crypto::CryptoError, quinn_proto::crypto::PacketKey
+        ExportKeyingMaterialError, // iroh::endpoint::Connection
+        HandshakeTokenKey, // iroh::endpoint::quic::ServerConfig
+        HeaderKey,   // quinn_proto::crypto::Keys
+        Keys,        // quinn_proto::crypto::Session
+        PacketKey,   // quinn_proto::crypto::Keys
+        ServerConfig as CryptoServerConfig, // iroh::endpoint::quic::ServerConfig
+        Session,     // quinn_proto::crypto::ServerConfig
+        UnsupportedVersion, // quinn_proto::ConnectError
+    },
+    transport_parameters::TransportParameters, // quinn_proto::crypot::ServerConfig
 };
 use tracing::warn;
 
@@ -72,7 +132,7 @@ impl Default for QuicTransportConfig {
 
 impl QuicTransportConfig {
     /// Return an `Arc`-d [`quinn::TransportConfig`]
-    pub(super) fn to_arc(&self) -> Arc<quinn::TransportConfig> {
+    pub(crate) fn to_arc(&self) -> Arc<quinn::TransportConfig> {
         Arc::new(self.0.clone())
     }
 
@@ -483,5 +543,171 @@ impl QuicTransportConfig {
     pub fn qlog_from_path(&mut self, path: impl AsRef<Path>, prefix: &str) -> &mut Self {
         self.0.qlog_from_path(path, prefix);
         self
+    }
+}
+
+/// Parameters governing incoming connections
+///
+/// Default values should be suitable for most internet applications.
+// Note: used in `iroh::endpoint::connection::Incoming::accept_with`
+// This is new-typed since `quinn::ServerConfig` takes a `TransportConfig`, which we new-type as a `QuicTransportConfig`
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    inner: quinn::ServerConfig,
+    transport: QuicTransportConfig,
+}
+
+impl ServerConfig {
+    /// Transport configuration to use for incoming connections
+    pub fn transport(&self) -> QuicTransportConfig {
+        self.transport.clone()
+    }
+
+    /// TLS configuration used for incoming connections
+    ///
+    /// Must be set to use TLS 1.3 only.
+    pub fn crypto(&self) -> Arc<dyn CryptoServerConfig> {
+        self.inner.crypto.clone()
+    }
+
+    /// Configuration for sending and handling validation tokens
+    pub fn validation_token(&self) -> ValidationTokenConfig {
+        self.inner.validation_token.clone()
+    }
+
+    pub(crate) fn to_arc(&self) -> Arc<quinn::ServerConfig> {
+        Arc::new(self.inner.clone())
+    }
+
+    /// Create a default config with a particular handshake token key
+    pub fn new(crypto: Arc<dyn CryptoServerConfig>, token_key: Arc<dyn HandshakeTokenKey>) -> Self {
+        let mut inner = quinn::ServerConfig::new(crypto, token_key);
+        let transport = QuicTransportConfig::default();
+        inner.transport_config(transport.to_arc());
+        Self { inner, transport }
+    }
+
+    /// Set a custom [`TransportConfig`]
+    pub fn transport_config(&mut self, transport: QuicTransportConfig) -> &mut Self {
+        self.inner.transport_config(transport.to_arc());
+        self.transport = transport;
+        self
+    }
+
+    /// Set a custom [`ValidationTokenConfig`]
+    pub fn validation_token_config(
+        &mut self,
+        validation_token: ValidationTokenConfig,
+    ) -> &mut Self {
+        self.inner.validation_token_config(validation_token);
+        self
+    }
+
+    /// Private key used to authenticate data included in handshake tokens
+    pub fn token_key(&mut self, value: Arc<dyn HandshakeTokenKey>) -> &mut Self {
+        self.inner.token_key(value);
+        self
+    }
+
+    /// Duration after a retry token was issued for which it's considered valid
+    ///
+    /// Defaults to 15 seconds.
+    pub fn retry_token_lifetime(&mut self, value: Duration) -> &mut Self {
+        self.inner.retry_token_lifetime(value);
+        self
+    }
+
+    /// Whether to allow clients to migrate to new addresses
+    ///
+    /// Improves behavior for clients that move between different internet connections or suffer NAT
+    /// rebinding. Enabled by default.
+    pub fn migration(&mut self, value: bool) -> &mut Self {
+        self.inner.migration(value);
+        self
+    }
+
+    /// The preferred IPv4 address that will be communicated to clients during handshaking
+    ///
+    /// If the client is able to reach this address, it will switch to it.
+    pub fn preferred_address_v4(&mut self, address: Option<SocketAddrV4>) -> &mut Self {
+        self.inner.preferred_address_v4(address);
+        self
+    }
+
+    /// The preferred IPv6 address that will be communicated to clients during handshaking
+    ///
+    /// If the client is able to reach this address, it will switch to it.
+    pub fn preferred_address_v6(&mut self, address: Option<SocketAddrV6>) -> &mut Self {
+        self.inner.preferred_address_v6(address);
+        self
+    }
+
+    /// Maximum number of [`Incoming`][crate::Incoming] to allow to exist at a time
+    ///
+    /// An [`Incoming`][crate::Incoming] comes into existence when an incoming connection attempt
+    /// is received and stops existing when the application either accepts it or otherwise disposes
+    /// of it. While this limit is reached, new incoming connection attempts are immediately
+    /// refused. Larger values have greater worst-case memory consumption, but accommodate greater
+    /// application latency in handling incoming connection attempts.
+    ///
+    /// The default value is set to 65536. With a typical Ethernet MTU of 1500 bytes, this limits
+    /// memory consumption from this to under 100 MiB--a generous amount that still prevents memory
+    /// exhaustion in most contexts.
+    pub fn max_incoming(&mut self, max_incoming: usize) -> &mut Self {
+        self.inner.max_incoming(max_incoming);
+        self
+    }
+
+    /// Maximum number of received bytes to buffer for each [`Incoming`][crate::Incoming]
+    ///
+    /// An [`Incoming`][crate::Incoming] comes into existence when an incoming connection attempt
+    /// is received and stops existing when the application either accepts it or otherwise disposes
+    /// of it. This limit governs only packets received within that period, and does not include
+    /// the first packet. Packets received in excess of this limit are dropped, which may cause
+    /// 0-RTT or handshake data to have to be retransmitted.
+    ///
+    /// The default value is set to 10 MiB--an amount such that in most situations a client would
+    /// not transmit that much 0-RTT data faster than the server handles the corresponding
+    /// [`Incoming`][crate::Incoming].
+    pub fn incoming_buffer_size(&mut self, incoming_buffer_size: u64) -> &mut Self {
+        self.inner.incoming_buffer_size(incoming_buffer_size);
+        self
+    }
+
+    /// Maximum number of received bytes to buffer for all [`Incoming`][crate::Incoming]
+    /// collectively
+    ///
+    /// An [`Incoming`][crate::Incoming] comes into existence when an incoming connection attempt
+    /// is received and stops existing when the application either accepts it or otherwise disposes
+    /// of it. This limit governs only packets received within that period, and does not include
+    /// the first packet. Packets received in excess of this limit are dropped, which may cause
+    /// 0-RTT or handshake data to have to be retransmitted.
+    ///
+    /// The default value is set to 100 MiB--a generous amount that still prevents memory
+    /// exhaustion in most contexts.
+    pub fn incoming_buffer_size_total(&mut self, incoming_buffer_size_total: u64) -> &mut Self {
+        self.inner
+            .incoming_buffer_size_total(incoming_buffer_size_total);
+        self
+    }
+
+    /// Object to get current [`SystemTime`]
+    ///
+    /// This exists to allow system time to be mocked in tests, or wherever else desired.
+    ///
+    /// Defaults to [`StdSystemTime`], which simply calls [`SystemTime::now()`](SystemTime::now).
+    pub fn time_source(&mut self, time_source: Arc<dyn TimeSource>) -> &mut Self {
+        self.inner.time_source(time_source);
+        self
+    }
+
+    /// Create a server config with the given [`crypto::ServerConfig`]
+    ///
+    /// Uses a randomized handshake token key.
+    pub fn with_crypto(crypto: Arc<dyn quinn_proto::crypto::ServerConfig>) -> Self {
+        let mut inner = quinn::ServerConfig::with_crypto(crypto);
+        let transport = QuicTransportConfig::default();
+        inner.transport_config(transport.to_arc());
+        Self { inner, transport }
     }
 }

@@ -21,7 +21,6 @@ use std::{
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr},
     pin::Pin,
-    sync::Arc,
     task::Poll,
 };
 
@@ -42,7 +41,7 @@ use crate::{
         AfterHandshakeOutcome,
         quic::{
             AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
-            RetryError, SendDatagram, SendDatagramError, ServerConfig, Side, VarInt,
+            SendDatagram, SendDatagramError, ServerConfig, Side, VarInt,
         },
     },
     magicsock::{
@@ -106,12 +105,9 @@ impl Incoming {
     /// See [`accept()`] for more details.
     ///
     /// [`accept()`]: Incoming::accept
-    pub fn accept_with(
-        self,
-        server_config: Arc<ServerConfig>,
-    ) -> Result<Accepting, ConnectionError> {
+    pub fn accept_with(self, server_config: ServerConfig) -> Result<Accepting, ConnectionError> {
         self.inner
-            .accept_with(server_config)
+            .accept_with(server_config.to_arc())
             .map(|conn| Accepting::new(conn, self.ep))
     }
 
@@ -126,7 +122,7 @@ impl Incoming {
     ///
     /// Errors if `remote_address_validated()` is true.
     #[allow(clippy::result_large_err)]
-    pub fn retry(self) -> Result<(), RetryError> {
+    pub fn retry(self) -> Result<(), quinn::RetryError> {
         self.inner.retry()
     }
 
