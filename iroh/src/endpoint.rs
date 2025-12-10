@@ -1060,7 +1060,7 @@ impl Endpoint {
     /// Returns addressing information about a recently used remote endpoint.
     ///
     /// The returned [`RemoteInfo`] contains a list of all transport addresses for the remote
-    /// that we know about.
+    /// that we know about. This is a snapshot in time and not a watcher.
     ///
     /// Returns `None` if the endpoint doesn't have information about the remote.
     /// When remote endpoints are no longer used, our endpoint will keep information around
