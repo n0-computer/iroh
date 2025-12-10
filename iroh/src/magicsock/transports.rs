@@ -494,6 +494,7 @@ impl TransportsSender {
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
+        let mut found_transport = false;
         match dst {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
@@ -503,6 +504,7 @@ impl TransportsSender {
             Addr::Ip(addr) => {
                 for sender in &mut self.ip {
                     if sender.is_valid_send_addr(addr) {
+                        found_transport = true;
                         match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
@@ -519,6 +521,7 @@ impl TransportsSender {
             Addr::Relay(url, endpoint_id) => {
                 for sender in &mut self.relay {
                     if sender.is_valid_send_addr(url, endpoint_id) {
+                        found_transport = true;
                         match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
@@ -533,7 +536,13 @@ impl TransportsSender {
                 }
             }
         }
-        Poll::Pending
+        if found_transport {
+            Poll::Pending
+        } else {
+            Poll::Ready(Err(io::Error::other(format!(
+                "no transport available for {dst:?}"
+            ))))
+        }
     }
 }
 
