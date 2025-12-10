@@ -2276,7 +2276,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#3ca48c7ca5b13c0ee247f5ff38e993469d6a0d56"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#a5729a3812f70c44b0c80f1d972647861274cbd1"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2296,7 +2296,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#3ca48c7ca5b13c0ee247f5ff38e993469d6a0d56"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#a5729a3812f70c44b0c80f1d972647861274cbd1"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2321,7 +2321,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#3ca48c7ca5b13c0ee247f5ff38e993469d6a0d56"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#a5729a3812f70c44b0c80f1d972647861274cbd1"
 dependencies = [
  "cfg_aliases",
  "libc",
