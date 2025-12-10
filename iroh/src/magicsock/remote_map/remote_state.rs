@@ -360,7 +360,7 @@ impl RemoteStateActor {
         } else {
             trace!(
                 paths = ?self.paths.addrs().collect::<Vec<_>>(),
-                "sending datagram to all known paths",
+                "sending datagram without selected_path (fallback to all paths)",
             );
             if self.paths.is_empty() {
                 warn!("Cannot send datagrams: No paths to remote endpoint known");
@@ -439,31 +439,44 @@ impl RemoteStateActor {
             // is needed.
             if let Some(path) = conn.path(PathId::ZERO)
                 && let Ok(socketaddr) = path.remote_address()
-                && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
             {
-                trace!(?path_remote, "added new connection");
-                let path_remote_is_ip = path_remote.is_ip();
-                let status = match path_remote {
-                    transports::Addr::Ip(_) => PathStatus::Available,
-                    transports::Addr::Relay(_, _) => PathStatus::Backup,
-                };
-                path.set_status(status).ok();
-                conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
-                self.paths
-                    .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
-                self.select_path();
+                if let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr) {
+                    trace!(?path_remote, "added new connection");
+                    let path_remote_is_ip = path_remote.is_ip();
+                    let status = match path_remote {
+                        transports::Addr::Ip(_) => PathStatus::Available,
+                        transports::Addr::Relay(_, _) => PathStatus::Backup,
+                    };
+                    path.set_status(status).ok();
+                    conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
+                    self.paths
+                        .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
+                    self.select_path();
 
-                if path_remote_is_ip {
-                    // We may have raced this with a relay address.  Try and add any
-                    // relay addresses we have back.
-                    let relays = self
-                        .paths
-                        .addrs()
-                        .filter(|a| a.is_relay())
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    for remote in relays {
-                        self.open_path(&remote);
+                    if path_remote_is_ip {
+                        // We may have raced this with a relay address.  Try and add any
+                        // relay addresses we have back.
+                        let relays = self
+                            .paths
+                            .addrs()
+                            .filter(|a| a.is_relay())
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        for remote in relays {
+                            self.open_path(&remote);
+                        }
+                    }
+                } else {
+                    // Fallback for relay-only mode: PathId(0) remote address is not mapped
+                    // (e.g. EndpointIdMappedAddr), but we have known relay paths to use.
+                    let relay_addr = self.paths.addrs().find(|a| a.is_relay()).cloned();
+                    if let Some(relay_addr) = relay_addr {
+                        trace!(?relay_addr, "added new connection (relay-only fallback)");
+                        path.set_status(PathStatus::Backup).ok();
+                        conn_state.add_open_path(relay_addr.clone(), PathId::ZERO);
+                        self.paths
+                            .insert_open_path(relay_addr, Source::Connection { _0: Private });
+                        self.select_path();
                     }
                 }
             }
