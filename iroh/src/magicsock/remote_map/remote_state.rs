@@ -15,7 +15,7 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use quinn::{PathStats, WeakConnectionHandle};
+use quinn::WeakConnectionHandle;
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -33,7 +33,7 @@ use self::{
 use super::Source;
 use crate::{
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
-    endpoint::DirectAddr,
+    endpoint::{DirectAddr, quic::PathStats},
     magicsock::{
         MagicsockMetrics,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},

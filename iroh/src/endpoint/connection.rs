@@ -32,7 +32,6 @@ use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use quinn::WeakConnectionHandle;
-use quinn_proto::PathId;
 use tracing::warn;
 
 use crate::{
@@ -40,8 +39,9 @@ use crate::{
     endpoint::{
         AfterHandshakeOutcome,
         quic::{
-            AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
-            SendDatagram, SendDatagramError, ServerConfig, Side, VarInt,
+            AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
+            ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
+            SendDatagramError, ServerConfig, Side, VarInt,
         },
     },
     magicsock::{
@@ -122,8 +122,10 @@ impl Incoming {
     ///
     /// Errors if `remote_address_validated()` is true.
     #[allow(clippy::result_large_err)]
-    pub fn retry(self) -> Result<(), quinn::RetryError> {
-        self.inner.retry()
+    pub fn retry(self) -> Result<(), RetryError> {
+        self.inner
+            .retry()
+            .map_err(|err| e!(RetryError { err, ep: self.ep }))
     }
 
     /// Ignores this incoming connection attempt, not sending any packet in response.
@@ -161,6 +163,24 @@ impl IntoFuture for Incoming {
             let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
             Ok(conn)
         }))
+    }
+}
+
+/// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
+#[stack_error(derive, add_meta, from_sources)]
+#[error("retry() with validated Incoming")]
+pub struct RetryError {
+    err: quinn::RetryError,
+    ep: Endpoint,
+}
+
+impl RetryError {
+    /// Get the [`Incoming`]
+    pub fn into_incoming(self) -> Incoming {
+        Incoming {
+            inner: self.err.into_incoming(),
+            ep: self.ep,
+        }
     }
 }
 
@@ -521,7 +541,7 @@ impl Accepting {
     ///
     /// See also documentation for [`Connecting::into_0rtt`].
     ///
-    /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
+    /// [`RecvStream::is_0rtt`]: crate::endpoint::RecvStream::is_0rtt
     pub fn into_0rtt(self) -> IncomingZeroRttConnection {
         let (quinn_conn, zrtt_accepted) = self
             .inner
@@ -725,8 +745,8 @@ impl<T: ConnectionState> Connection<T> {
     /// without writing anything to [`SendStream`] will never succeed.
     ///
     /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
+    /// [`SendStream`]: crate::endpoint::SendStream
+    /// [`RecvStream`]: crate::endpoint::RecvStream
     #[inline]
     pub fn open_bi(&self) -> OpenBi<'_> {
         self.inner.open_bi()
@@ -746,8 +766,8 @@ impl<T: ConnectionState> Connection<T> {
     /// writing anything to the connected [`SendStream`] will never succeed.
     ///
     /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
+    /// [`SendStream`]: crate::endpoint::SendStream
+    /// [`RecvStream`]: crate::endpoint::RecvStream
     #[inline]
     pub fn accept_bi(&self) -> AcceptBi<'_> {
         self.inner.accept_bi()
@@ -876,10 +896,7 @@ impl<T: ConnectionState> Connection<T> {
 
     /// Current state of the congestion control algorithm, for debugging purposes.
     #[inline]
-    pub fn congestion_state(
-        &self,
-        path_id: PathId,
-    ) -> Option<Box<dyn quinn_proto::congestion::Controller>> {
+    pub fn congestion_state(&self, path_id: PathId) -> Option<Box<dyn Controller>> {
         self.inner.congestion_state(path_id)
     }
 
@@ -931,7 +948,7 @@ impl<T: ConnectionState> Connection<T> {
         output: &mut [u8],
         label: &[u8],
         context: &[u8],
-    ) -> Result<(), quinn_proto::crypto::ExportKeyingMaterialError> {
+    ) -> Result<(), ExportKeyingMaterialError> {
         self.inner.export_keying_material(output, label, context)
     }
 

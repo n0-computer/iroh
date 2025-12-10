@@ -1,9 +1,8 @@
 use std::pin::Pin;
 
 use iroh_base::EndpointAddr;
-use quinn::VarInt;
 
-use crate::endpoint::connection::ConnectionInfo;
+use crate::endpoint::{connection::ConnectionInfo, quic::VarInt};
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

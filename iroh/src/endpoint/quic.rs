@@ -8,15 +8,11 @@
 
 #[cfg(feature = "qlog")]
 use std::path::Path;
-
 use std::{
     net::{SocketAddrV4, SocketAddrV6},
     sync::Arc,
     time::Duration,
 };
-
-#[cfg(feature = "qlog")]
-pub use quinn::{QlogConfig, QlogFactory, QlogFileFactory};
 
 /// `quinn` types that are used in the public iroh API.
 // Each type is notated with the iroh type or quinn type that uses it.
@@ -50,6 +46,8 @@ pub use quinn::{
     WriteError,           // quinn::SendStream
     Written,              // quinn::SendStream
 };
+#[cfg(feature = "qlog")]
+pub use quinn::{QlogConfig, QlogFactory, QlogFileFactory};
 /// `quinn_proto` types that are used in the public iroh API.
 // Each type is notated with the iroh type or quinn type that uses it.
 pub use quinn_proto::{
@@ -587,7 +585,7 @@ impl ServerConfig {
         Self { inner, transport }
     }
 
-    /// Set a custom [`TransportConfig`]
+    /// Set a custom [`QuicTransportConfig`]
     pub fn transport_config(&mut self, transport: QuicTransportConfig) -> &mut Self {
         self.inner.transport_config(transport.to_arc());
         self.transport = transport;
@@ -642,9 +640,9 @@ impl ServerConfig {
         self
     }
 
-    /// Maximum number of [`Incoming`][crate::Incoming] to allow to exist at a time
+    /// Maximum number of [`Incoming`] to allow to exist at a time
     ///
-    /// An [`Incoming`][crate::Incoming] comes into existence when an incoming connection attempt
+    /// An [`Incoming`] comes into existence when an incoming connection attempt
     /// is received and stops existing when the application either accepts it or otherwise disposes
     /// of it. While this limit is reached, new incoming connection attempts are immediately
     /// refused. Larger values have greater worst-case memory consumption, but accommodate greater
@@ -653,14 +651,16 @@ impl ServerConfig {
     /// The default value is set to 65536. With a typical Ethernet MTU of 1500 bytes, this limits
     /// memory consumption from this to under 100 MiB--a generous amount that still prevents memory
     /// exhaustion in most contexts.
+    ///
+    /// [`Incoming`]: crate::endpoint::Incoming
     pub fn max_incoming(&mut self, max_incoming: usize) -> &mut Self {
         self.inner.max_incoming(max_incoming);
         self
     }
 
-    /// Maximum number of received bytes to buffer for each [`Incoming`][crate::Incoming]
+    /// Maximum number of received bytes to buffer for each [`Incoming`]
     ///
-    /// An [`Incoming`][crate::Incoming] comes into existence when an incoming connection attempt
+    /// An [`Incoming`] comes into existence when an incoming connection attempt
     /// is received and stops existing when the application either accepts it or otherwise disposes
     /// of it. This limit governs only packets received within that period, and does not include
     /// the first packet. Packets received in excess of this limit are dropped, which may cause
@@ -668,16 +668,18 @@ impl ServerConfig {
     ///
     /// The default value is set to 10 MiB--an amount such that in most situations a client would
     /// not transmit that much 0-RTT data faster than the server handles the corresponding
-    /// [`Incoming`][crate::Incoming].
+    /// [`Incoming`].
+    ///
+    /// [`Incoming`]: crate::endpoint::Incoming
     pub fn incoming_buffer_size(&mut self, incoming_buffer_size: u64) -> &mut Self {
         self.inner.incoming_buffer_size(incoming_buffer_size);
         self
     }
 
-    /// Maximum number of received bytes to buffer for all [`Incoming`][crate::Incoming]
+    /// Maximum number of received bytes to buffer for all [`Incoming`]
     /// collectively
     ///
-    /// An [`Incoming`][crate::Incoming] comes into existence when an incoming connection attempt
+    /// An [`Incoming`] comes into existence when an incoming connection attempt
     /// is received and stops existing when the application either accepts it or otherwise disposes
     /// of it. This limit governs only packets received within that period, and does not include
     /// the first packet. Packets received in excess of this limit are dropped, which may cause
@@ -685,6 +687,8 @@ impl ServerConfig {
     ///
     /// The default value is set to 100 MiB--a generous amount that still prevents memory
     /// exhaustion in most contexts.
+    ///
+    /// [`Incoming`]: crate::endpoint::Incoming
     pub fn incoming_buffer_size_total(&mut self, incoming_buffer_size_total: u64) -> &mut Self {
         self.inner
             .incoming_buffer_size_total(incoming_buffer_size_total);
@@ -695,16 +699,18 @@ impl ServerConfig {
     ///
     /// This exists to allow system time to be mocked in tests, or wherever else desired.
     ///
-    /// Defaults to [`StdSystemTime`], which simply calls [`SystemTime::now()`](SystemTime::now).
+    /// Defaults to [`quinn::StdSystemTime`], which simply calls [`SystemTime::now()`](std::time::SystemTime::now).
+    ///
+    /// [`SystemTime`]: std::time::SystemTime
     pub fn time_source(&mut self, time_source: Arc<dyn TimeSource>) -> &mut Self {
         self.inner.time_source(time_source);
         self
     }
 
-    /// Create a server config with the given [`crypto::ServerConfig`]
+    /// Create a server config with the given [`CryptoServerConfig`]
     ///
     /// Uses a randomized handshake token key.
-    pub fn with_crypto(crypto: Arc<dyn quinn_proto::crypto::ServerConfig>) -> Self {
+    pub fn with_crypto(crypto: Arc<dyn CryptoServerConfig>) -> Self {
         let mut inner = quinn::ServerConfig::with_crypto(crypto);
         let transport = QuicTransportConfig::default();
         inner.transport_config(transport.to_arc());
