@@ -452,13 +452,6 @@ impl Addr {
         matches!(self, Self::Ip(_))
     }
 
-    pub(crate) fn is_ipv4(&self) -> bool {
-        match self {
-            Addr::Ip(socket_addr) => socket_addr.is_ipv4(),
-            Addr::Relay(_, _) => false,
-        }
-    }
-
     /// Returns `None` if not an `Ip`.
     pub(crate) fn into_socket_addr(self) -> Option<SocketAddr> {
         match self {
@@ -692,7 +685,10 @@ impl quinn::UdpSender for MagicSender {
 
                 let sender = self.msock.remote_map.remote_state_actor(node_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
-                return match sender.try_send(RemoteStateMessage::SendDatagram(transmit)) {
+                return match sender.try_send(RemoteStateMessage::SendDatagram(
+                    self.sender.clone(),
+                    transmit,
+                )) {
                     Ok(()) => {
                         trace!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(), "sent transmit");
                         Poll::Ready(Ok(()))

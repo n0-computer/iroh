@@ -64,6 +64,18 @@ The relay server will run over http on port 3340, as it does using the `--dev` f
 
 The relay will use the configured TLS certificates for the QUIC connection, but use http (rather than https) for the server.
 
+### Using iroh-relay as a library to run in-process relays in integration tests
+
+When using iroh as a transport library in an application or other library, there is a simple way of running an in-process relay server:
+
+- Enable `test-utils` feature of the `iroh` crate
+```toml
+iroh = { version = "0.95", features = ["test-utils"] }
+```
+- Spawn a relay server by calling [`iroh::test_utils::run_relay_server().await`](https://docs.rs/iroh/latest/iroh/test_utils/fn.run_relay_server.html)
+This will start a relay server with a self-signed TLS certificate, listening on a localhost port, and return the server's URL.
+- For the iroh endpoints to successfully connect to the relay, disable TLS certificate verification by calling [`Endpoint::insecure_skip_relay_cert_verify`](https://docs.rs/iroh/latest/iroh/endpoint/struct.Builder.html#method.insecure_skip_relay_cert_verify).
+
 # License
 
 This project is licensed under either of

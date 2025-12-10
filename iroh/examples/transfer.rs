@@ -45,6 +45,9 @@ const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 ///
 /// --mdns needs the `discovery-local-network` feature
 ///
+/// To emit qlog files, enable the `qlog` feature and set the QLOGDIR
+/// environment variable to the path where qlog files should be written to.
+///
 /// To enable all features, run the example with --all-features:
 ///
 /// cargo run --release --example transfer --all-features -- ARGS
@@ -171,9 +174,12 @@ enum Commands {
     },
     /// Fetch data.
     Fetch {
+        /// Endpoint id of the remote to connect to.
         remote_id: EndpointId,
+        /// Optionally set a relay URL for the remote.
         #[clap(long)]
         remote_relay_url: Option<RelayUrl>,
+        /// Optionally set direct addresses for the remote.
         #[clap(long)]
         remote_direct_address: Vec<SocketAddr>,
         #[clap(flatten)]
@@ -298,6 +304,12 @@ impl EndpointArgs {
             let (net, port) = parse_ipv6_net(&addr)
                 .with_context(|_| format!("invalid bind-addr-v6-additional: {addr}"))?;
             builder = builder.bind_addr_v6(net, 0, port);
+        }
+        #[cfg(feature = "qlog")]
+        {
+            let mut transport_config = iroh::endpoint::QuicTransportConfig::default();
+            transport_config.qlog_from_env("transfer");
+            builder = builder.transport_config(transport_config)
         }
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;

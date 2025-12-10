@@ -302,6 +302,8 @@ impl QuicClient {
         server_addr: SocketAddr,
         host: &str,
     ) -> Result<(SocketAddr, std::time::Duration), Error> {
+        use quinn_proto::PathId;
+
         let connecting = self
             .ep
             .connect_with(self.client_config.clone(), server_addr, host);
@@ -334,7 +336,7 @@ impl QuicClient {
         // if we've sent to an ipv4 address, but received an observed address
         // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
         observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
-        let latency = conn.rtt();
+        let latency = conn.rtt(PathId::ZERO).unwrap_or_default();
         // gracefully close the connections
         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
         Ok((observed_addr, latency))
@@ -458,8 +460,9 @@ mod tests {
     /// In this case we don't simulate it via synthetically high RTT, but by dropping
     /// all packets on the server-side for 2 seconds.
     #[tokio::test]
-    #[traced_test]
+    // #[traced_test]
     async fn test_qad_connect_delayed() -> Result {
+        tracing_subscriber::fmt::try_init().ok();
         // Create a socket for our QAD server.  We need the socket separately because we
         // need to pop off messages before we attach it to the Quinn Endpoint.
         let socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
