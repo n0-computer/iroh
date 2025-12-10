@@ -163,7 +163,7 @@
 <a href=#163 id=163 data-nosnippet>163</a>    </span>last_holepunch: <span class="prelude-ty">Option</span>&lt;HolepunchAttempt&gt;,
 <a href=#164 id=164 data-nosnippet>164</a>    <span class="doccomment">/// Whether we think we holepunched this remote.
 <a href=#165 id=165 data-nosnippet>165</a>    ///
-<a href=#166 id=166 data-nosnippet>166</a>    /// This is, for now, only used in stats. The value is never reset, so use with care.
+<a href=#166 id=166 data-nosnippet>166</a>    /// This is, for now, only used for metrics tracking. The value is never reset, so use with care.
 <a href=#167 id=167 data-nosnippet>167</a>    </span>has_holepunched: bool,
 <a href=#168 id=168 data-nosnippet>168</a>    <span class="doccomment">/// The path we currently consider the preferred path to the remote endpoint.
 <a href=#169 id=169 data-nosnippet>169</a>    ///
@@ -786,7 +786,7 @@
 <a href=#786 id=786 data-nosnippet>786</a>                    <span class="comment">// Check if this path is the result of a holepunch attempt, and if so update metrics.
 <a href=#787 id=787 data-nosnippet>787</a>                    </span><span class="kw">if </span>!<span class="self">self</span>.has_holepunched
 <a href=#788 id=788 data-nosnippet>788</a>                        &amp;&amp; <span class="kw">let </span>transports::Addr::Ip(ip_addr) = <span class="kw-2">&amp;</span>path_remote
-<a href=#789 id=789 data-nosnippet>789</a>                        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(hp) = <span class="self">self</span>.last_holepunch.as_mut()
+<a href=#789 id=789 data-nosnippet>789</a>                        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(hp) = <span class="self">self</span>.last_holepunch.as_ref()
 <a href=#790 id=790 data-nosnippet>790</a>                        &amp;&amp; hp.remote_candidates.contains(ip_addr)
 <a href=#791 id=791 data-nosnippet>791</a>                    {
 <a href=#792 id=792 data-nosnippet>792</a>                        <span class="self">self</span>.has_holepunched = <span class="bool-val">true</span>;
