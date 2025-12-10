@@ -1,6 +1,6 @@
 use std::{
     collections::{BTreeSet, VecDeque},
-    net::SocketAddr,
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::Arc,
     task::Poll,
@@ -33,7 +33,7 @@ use crate::{
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
     endpoint::DirectAddr,
     magicsock::{
-        HEARTBEAT_INTERVAL, MagicsockMetrics, PATH_MAX_IDLE_TIMEOUT,
+        MagicsockMetrics,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr, UserMappedAddr},
         remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
@@ -51,16 +51,6 @@ mod guarded_channel;
 mod path_state;
 
 // TODO: use this
-// /// Number of addresses that are not active that we keep around per endpoint.
-// ///
-// /// See [`RemoteState::prune_direct_addresses`].
-// pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
-
-// TODO: use this
-// /// How long since an endpoint path was last alive before it might be pruned.
-// const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
-
-// TODO: use this
 // /// The latency at or under which we don't try to upgrade to a better path.
 // const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
@@ -76,10 +66,6 @@ mod path_state;
 // /// Even if we have some non-relay route that works.
 // const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
-/// The value which we close paths.
-// TODO: Quinn should just do this.  Also, I made this value up.
-const APPLICATION_ABANDON_PATH: u8 = 30;
-
 /// The time after which an idle [`RemoteStateActor`] stops.
 ///
 /// The actor only enters the idle state if no connections are active and no inbox senders exist
@@ -87,6 +73,12 @@ const APPLICATION_ABANDON_PATH: u8 = 30;
 /// is not an issue; a timeout here serves the purpose of not stopping-and-recreating actors
 /// in a high frequency, and to keep data about previous path around for subsequent connections.
 const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// The minimum RTT difference to make it worth switching IP paths
+const RTT_SWITCHING_MIN_IP: Duration = Duration::from_millis(5);
+
+/// How much do we prefer IPv6 over IPv4?
+const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
 
 /// A stream of events from all paths for all connections.
 ///
@@ -140,7 +132,6 @@ pub(super) struct RemoteStateActor {
     //
     /// Metrics.
     metrics: Arc<MagicsockMetrics>,
-    sender: TransportsSender,
     /// Our local addresses.
     ///
     /// These are our local addresses and any reflexive transport addresses.
@@ -205,13 +196,12 @@ impl RemoteStateActor {
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
-        sender: TransportsSender,
         discovery: ConcurrentDiscovery,
     ) -> Self {
         Self {
             endpoint_id,
             local_endpoint_id,
-            metrics,
+            metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
             user_mapped_addrs,
@@ -220,13 +210,12 @@ impl RemoteStateActor {
             connections_close: Default::default(),
             path_events: Default::default(),
             addr_events: Default::default(),
-            paths: Default::default(),
+            paths: RemotePathState::new(metrics),
             last_holepunch: None,
             selected_path: Default::default(),
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            sender,
             discovery_stream: Either::Left(n0_future::stream::pending()),
         }
     }
@@ -294,11 +283,7 @@ impl RemoteStateActor {
                     self.trigger_holepunching().await;
                 }
                 Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
-                    self.connections.remove(&conn_id);
-                    if self.connections.is_empty() {
-                        trace!("last connection closed - clearing selected_path");
-                        self.selected_path.set(None).ok();
-                    }
+                    self.handle_connection_close(conn_id);
                 }
                 res = self.local_direct_addrs.updated() => {
                     if let Err(n0_watcher::Disconnected) = res {
@@ -346,8 +331,8 @@ impl RemoteStateActor {
     async fn handle_message(&mut self, msg: RemoteStateMessage) {
         // trace!("handling message");
         match msg {
-            RemoteStateMessage::SendDatagram(transmit) => {
-                self.handle_msg_send_datagram(transmit).await;
+            RemoteStateMessage::SendDatagram(sender, transmit) => {
+                self.handle_msg_send_datagram(sender, transmit).await;
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
                 self.handle_msg_add_connection(handle, tx).await;
@@ -355,14 +340,15 @@ impl RemoteStateActor {
             RemoteStateMessage::ResolveRemote(addrs, tx) => {
                 self.handle_msg_resolve_remote(addrs, tx);
             }
-            RemoteStateMessage::Latency(tx) => {
-                self.handle_msg_latency(tx);
-            }
         }
     }
 
     /// Handles [`RemoteStateMessage::SendDatagram`].
-    async fn handle_msg_send_datagram(&mut self, transmit: OwnedTransmit) {
+    async fn handle_msg_send_datagram(
+        &mut self,
+        mut sender: TransportsSender,
+        transmit: OwnedTransmit,
+    ) {
         // Sending datagrams might fail, e.g. because we don't have the right transports set
         // up to handle sending this owned transmit to.
         // After all, we try every single path that we know (relay URL, IP address), even
@@ -372,7 +358,7 @@ impl RemoteStateActor {
         if let Some(addr) = self.selected_path.get() {
             trace!(?addr, "sending datagram to selected path");
 
-            if let Err(err) = send_datagram(&mut self.sender, addr.clone(), transmit).await {
+            if let Err(err) = send_datagram(&mut sender, addr.clone(), transmit).await {
                 debug!(?addr, "failed to send datagram on selected_path: {err:#}");
             }
         } else {
@@ -396,7 +382,7 @@ impl RemoteStateActor {
                 {
                     trace!(%sockaddr, "not sending datagram to our own address");
                 } else if let Err(err) =
-                    send_datagram(&mut self.sender, addr.clone(), transmit.clone()).await
+                    send_datagram(&mut sender, addr.clone(), transmit.clone()).await
                 {
                     debug!(?addr, "failed to send datagram: {err:#}");
                 }
@@ -417,6 +403,7 @@ impl RemoteStateActor {
     ) {
         let pub_open_paths = Watchable::default();
         if let Some(conn) = handle.upgrade() {
+            self.metrics.num_conns_opened.inc();
             // Remove any conflicting stable_ids from the local state.
             let conn_id = ConnId(conn.stable_id());
             self.connections.remove(&conn_id);
@@ -468,7 +455,7 @@ impl RemoteStateActor {
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
                 self.paths
-                    .insert(path_remote, Source::Connection { _0: Private });
+                    .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 self.select_path();
 
                 if path_remote_is_ip {
@@ -508,27 +495,14 @@ impl RemoteStateActor {
         self.trigger_discovery();
     }
 
-    /// Handles [`RemoteStateMessage::Latency`].
-    fn handle_msg_latency(&self, tx: oneshot::Sender<Option<Duration>>) {
-        let rtt = self.selected_path.get().and_then(|addr| {
-            for conn_state in self.connections.values() {
-                let Some(path_id) = conn_state.path_ids.get(&addr) else {
-                    continue;
-                };
-                if !conn_state.open_paths.contains_key(path_id) {
-                    continue;
-                }
-                if let Some(rtt) = conn_state
-                    .handle
-                    .upgrade()
-                    .and_then(|conn| conn.path_stats(*path_id).map(|stats| stats.rtt))
-                {
-                    return Some(rtt);
-                }
-            }
-            None
-        });
-        tx.send(rtt).ok();
+    fn handle_connection_close(&mut self, conn_id: ConnId) {
+        if self.connections.remove(&conn_id).is_some() {
+            self.metrics.num_conns_closed.inc();
+        }
+        if self.connections.is_empty() {
+            trace!("last connection closed - clearing selected_path");
+            self.selected_path.set(None).ok();
+        }
     }
 
     fn handle_discovery_item(&mut self, item: Option<Result<DiscoveryItem, DiscoveryError>>) {
@@ -793,10 +767,6 @@ impl RemoteStateActor {
                     trace!("path open event for unknown path");
                     return;
                 };
-                // TODO: We configure this as defaults when we setup the endpoint, do we
-                //    really need to duplicate this?
-                path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
-                path.set_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT)).ok();
 
                 if let Ok(socketaddr) = path.remote_address()
                     && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
@@ -811,7 +781,7 @@ impl RemoteStateActor {
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id);
                     self.paths
-                        .insert(path_remote, Source::Connection { _0: Private });
+                        .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 }
 
                 self.select_path();
@@ -819,7 +789,9 @@ impl RemoteStateActor {
             PathEvent::Abandoned { id, path_stats } => {
                 trace!(?path_stats, "path abandoned");
                 // This is the last event for this path.
-                conn_state.remove_path(&id);
+                if let Some(addr) = conn_state.remove_path(&id) {
+                    self.paths.abandoned_path(&addr);
+                }
             }
             PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
                 let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
@@ -846,7 +818,7 @@ impl RemoteStateActor {
                     };
                     if let Some(path) = conn.path(*path_id) {
                         trace!(?path_remote, ?conn_id, ?path_id, "closing path");
-                        if let Err(err) = path.close(APPLICATION_ABANDON_PATH.into()) {
+                        if let Err(err) = path.close() {
                             trace!(
                                 ?path_remote,
                                 ?conn_id,
@@ -897,34 +869,58 @@ impl RemoteStateActor {
             .filter_map(|(addr, rtts)| rtts.into_iter().min().map(|rtt| (addr, rtt)))
             .collect();
 
-        // Find the fastest direct or relay path.
-        const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
-        let direct_path = path_rtts
+        // Find the fastest direct IPv4 path.
+        let direct_path_ipv4 = path_rtts
             .iter()
-            .filter(|(addr, _rtt)| addr.is_ip())
-            .map(|(addr, rtt)| {
-                if addr.is_ipv4() {
-                    (*rtt + IPV6_RTT_ADVANTAGE, addr)
+            .filter_map(|(addr, rtt)| {
+                if let transports::Addr::Ip(SocketAddr::V4(addr)) = *addr {
+                    Some((addr, *rtt))
                 } else {
-                    (*rtt, addr)
+                    None
                 }
             })
-            .min();
-        let selected_path = direct_path.or_else(|| {
-            // Find the fasted relay path.
-            path_rtts
-                .iter()
-                .filter(|(addr, _rtt)| addr.is_relay())
-                .map(|(addr, rtt)| (*rtt, addr))
-                .min()
-        });
-        if let Some((rtt, addr)) = selected_path {
+            .min_by_key(|(_addr, rtt)| *rtt);
+
+        // Find the fastest direct IPv6 path.
+        let direct_path_ipv6 = path_rtts
+            .iter()
+            .filter_map(|(addr, rtt)| {
+                if let transports::Addr::Ip(SocketAddr::V6(addr)) = *addr {
+                    Some((addr, *rtt))
+                } else {
+                    None
+                }
+            })
+            .min_by_key(|(_addr, rtt)| *rtt);
+
+        // Find the fastest relay path.
+        let relay_path = path_rtts
+            .iter()
+            .filter(|(addr, _rtt)| addr.is_relay())
+            .min_by_key(|(_addr, rtt)| *rtt)
+            .map(|(addr, rtt)| (addr.clone(), *rtt));
+
+        let current_path = self
+            .selected_path
+            .get()
+            .and_then(|addr| path_rtts.get(&addr).copied().map(|rtt| (addr, rtt)));
+        let selected_path = select_best_path(
+            current_path.clone(),
+            direct_path_ipv4,
+            direct_path_ipv6,
+            relay_path,
+        );
+
+        // Apply our new path
+        if let Some((addr, rtt)) = selected_path {
             let prev = self.selected_path.set(Some(addr.clone()));
             if prev.is_ok() {
                 debug!(?addr, ?rtt, ?prev, "selected new path");
             }
-            self.open_path(addr);
-            self.close_redundant_paths(addr);
+            self.open_path(&addr);
+            self.close_redundant_paths(&addr);
+        } else {
+            trace!(?current_path, "keeping current path");
         }
     }
 
@@ -956,7 +952,7 @@ impl RemoteStateActor {
                     .and_then(|conn| conn.path(*path_id))
                 {
                     trace!(?path_remote, ?conn_id, ?path_id, "closing direct path");
-                    match path.close(APPLICATION_ABANDON_PATH.into()) {
+                    match path.close() {
                         Err(quinn_proto::ClosePathError::LastOpenPath) => {
                             error!("could not close last open path");
                         }
@@ -970,6 +966,87 @@ impl RemoteStateActor {
                 }
             }
         }
+    }
+}
+
+/// Returns `Some` if a new path should be selected, `None` if the `current_path` should
+/// continued to be used.
+fn select_best_path(
+    current_path: Option<(transports::Addr, Duration)>,
+    direct_path_ipv4: Option<(SocketAddrV4, Duration)>,
+    direct_path_ipv6: Option<(SocketAddrV6, Duration)>,
+    new_relay_path: Option<(transports::Addr, Duration)>,
+) -> Option<(transports::Addr, Duration)> {
+    // Determine the best new IP path.
+    let best_ip_path = match (direct_path_ipv4, direct_path_ipv6) {
+        (Some((addr_v4, rtt_v4)), Some((addr_v6, rtt_v6))) => {
+            Some(select_v4_v6(addr_v4, rtt_v4, addr_v6, rtt_v6))
+        }
+        (None, Some((addr_v6, rtt_v6))) => Some((addr_v6.into(), rtt_v6)),
+        (Some((addr_v4, rtt_v4)), None) => Some((addr_v4.into(), rtt_v4)),
+        (None, None) => None,
+    };
+    let best_ip_path = best_ip_path.map(|(addr, rtt)| (transports::Addr::Ip(addr), rtt));
+
+    match current_path {
+        None => {
+            // If we currently have no path
+            if best_ip_path.is_some() {
+                // Use the best IP path
+                best_ip_path
+            } else {
+                // Use the new relay path
+                new_relay_path
+            }
+        }
+        Some((transports::Addr::Relay(..), _)) => {
+            // If we have a current path, but it is relay
+            if best_ip_path.is_some() {
+                //  Use the best IP path
+                best_ip_path
+            } else {
+                // Use the new relay path
+                new_relay_path
+            }
+        }
+        Some((transports::Addr::Ip(_), current_rtt)) => {
+            match &best_ip_path {
+                Some((_, new_rtt)) => {
+                    // Comparing available IP paths
+                    if current_rtt >= *new_rtt + RTT_SWITCHING_MIN_IP {
+                        // New IP path is faster
+                        best_ip_path
+                    } else {
+                        // New IP is not faster
+                        None
+                    }
+                }
+                None => {
+                    // No new IP path, don't switch away
+                    None
+                }
+            }
+        }
+        Some((transports::Addr::User(_), _)) => {
+            // todo: when should we select an user path?
+            None
+        }
+    }
+}
+
+/// Compare two IP addrs v4 & v6 and selects the "best" one.
+///
+/// This prefers IPv6 paths over IPv4 paths.
+fn select_v4_v6(
+    addr_v4: SocketAddrV4,
+    rtt_v4: Duration,
+    addr_v6: SocketAddrV6,
+    rtt_v6: Duration,
+) -> (SocketAddr, Duration) {
+    if rtt_v6 <= rtt_v4 + IPV6_RTT_ADVANTAGE {
+        (addr_v6.into(), rtt_v6)
+    } else {
+        (addr_v4.into(), rtt_v4)
     }
 }
 
@@ -1003,7 +1080,7 @@ pub(crate) enum RemoteStateMessage {
     /// operation with a bunch more copying.  So it should only be used for sending QUIC
     /// Initial packets.
     #[debug("SendDatagram(..)")]
-    SendDatagram(OwnedTransmit),
+    SendDatagram(TransportsSender, OwnedTransmit),
     /// Adds an active connection to this remote endpoint.
     ///
     /// The connection will now be managed by this actor.  Holepunching will happen when
@@ -1024,11 +1101,6 @@ pub(crate) enum RemoteStateMessage {
         BTreeSet<TransportAddr>,
         oneshot::Sender<Result<(), DiscoveryError>>,
     ),
-    /// Returns the current latency to the remote endpoint.
-    ///
-    /// TODO: This is more of a placeholder message currently.  Check MagicSock::latency.
-    #[debug("Latency(..)")]
-    Latency(oneshot::Sender<Option<Duration>>),
 }
 
 /// A handle to a [`RemoteStateActor`].
@@ -1105,16 +1177,17 @@ impl ConnectionState {
         self.paths.insert(path_id, remote.clone());
         self.open_paths.insert(path_id, remote.clone());
         self.path_ids.insert(remote, path_id);
-
         self.update_pub_path_info();
     }
 
     /// Completely removes a path from this connection.
-    fn remove_path(&mut self, path_id: &PathId) {
-        if let Some(addr) = self.paths.remove(path_id) {
-            self.path_ids.remove(&addr);
+    fn remove_path(&mut self, path_id: &PathId) -> Option<transports::Addr> {
+        let addr = self.paths.remove(path_id);
+        if let Some(ref addr) = addr {
+            self.path_ids.remove(addr);
         }
         self.open_paths.remove(path_id);
+        addr
     }
 
     /// Removes the path from the open paths.
@@ -1364,4 +1437,33 @@ fn to_transports_addr(
             None
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use super::*;
+
+    #[test]
+    fn test_select_v4_v6_addr() {
+        let v4 = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1);
+        let v6 = SocketAddrV6::new(Ipv6Addr::LOCALHOST, 1, 0, 0);
+
+        // Same RTT, prefer v6
+        let (addr, rtt) =
+            select_v4_v6(v4, Duration::from_millis(10), v6, Duration::from_millis(10));
+        assert_eq!(addr, v6.into());
+        assert_eq!(rtt, Duration::from_millis(10));
+
+        // v4 better
+        let (addr, rtt) = select_v4_v6(v4, Duration::from_millis(1), v6, Duration::from_millis(10));
+        assert_eq!(addr, v4.into());
+        assert_eq!(rtt, Duration::from_millis(1));
+
+        // v6 better
+        let (addr, rtt) = select_v4_v6(v4, Duration::from_millis(10), v6, Duration::from_millis(1));
+        assert_eq!(addr, v6.into());
+        assert_eq!(rtt, Duration::from_millis(1));
+    }
 }

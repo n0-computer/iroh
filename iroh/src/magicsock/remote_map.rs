@@ -18,7 +18,6 @@ use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
     DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
-    transports::TransportsSender,
 };
 use crate::{discovery::ConcurrentDiscovery, magicsock::mapped_addrs::UserMappedAddr};
 
@@ -60,7 +59,6 @@ pub(crate) struct RemoteMap {
     metrics: Arc<MagicsockMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    sender: TransportsSender,
     discovery: ConcurrentDiscovery,
 }
 
@@ -70,7 +68,6 @@ impl RemoteMap {
         local_endpoint_id: EndpointId,
         metrics: Arc<MagicsockMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        sender: TransportsSender,
         discovery: ConcurrentDiscovery,
     ) -> Self {
         Self {
@@ -81,7 +78,6 @@ impl RemoteMap {
             local_endpoint_id,
             metrics,
             local_direct_addrs,
-            sender,
             discovery,
         }
     }
@@ -141,7 +137,6 @@ impl RemoteMap {
             self.relay_mapped_addrs.clone(),
             self.user_mapped_addrs.clone(),
             self.metrics.clone(),
-            self.sender.clone(),
             self.discovery.clone(),
         )
         .start();
@@ -194,11 +189,6 @@ pub enum Source {
         _0: Private,
     },
     /// We established a connection on this address.
-    ///
-    /// Currently this means the path was in uses as [`PathId::ZERO`] when the a connection
-    /// was added to the `RemoteStateActor`.
-    ///
-    /// [`PathId::ZERO`]: quinn_proto::PathId::ZERO
     #[strum(serialize = "Connection")]
     Connection {
         /// private marker

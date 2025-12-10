@@ -36,6 +36,7 @@ use quinn::{
     AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
     RetryError, SendDatagramError, ServerConfig, Side, VarInt, WeakConnectionHandle,
 };
+use quinn_proto::PathId;
 use tracing::warn;
 
 use crate::{
@@ -866,8 +867,8 @@ impl<T: ConnectionState> Connection<T> {
 
     /// Current best estimate of this connection's latency (round-trip-time).
     #[inline]
-    pub fn rtt(&self) -> Duration {
-        self.inner.rtt()
+    pub fn rtt(&self, path_id: PathId) -> Option<Duration> {
+        self.inner.rtt(path_id)
     }
 
     /// Returns connection statistics.
@@ -878,8 +879,11 @@ impl<T: ConnectionState> Connection<T> {
 
     /// Current state of the congestion control algorithm, for debugging purposes.
     #[inline]
-    pub fn congestion_state(&self) -> Box<dyn quinn_proto::congestion::Controller> {
-        self.inner.congestion_state()
+    pub fn congestion_state(
+        &self,
+        path_id: PathId,
+    ) -> Option<Box<dyn quinn_proto::congestion::Controller>> {
+        self.inner.congestion_state(path_id)
     }
 
     /// Parameters negotiated during the handshake.

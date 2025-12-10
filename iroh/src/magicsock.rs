@@ -391,18 +391,6 @@ impl MagicSock {
         })
     }
 
-    // TODO: Build better info to expose to the user about remote nodes.  We probably want
-    // to expose this as part of path information instead.
-    pub(crate) async fn latency(&self, eid: EndpointId) -> Option<Duration> {
-        let remote_state = self.remote_map.remote_state_actor(eid);
-        let (tx, rx) = oneshot::channel();
-        remote_state
-            .send(RemoteStateMessage::Latency(tx))
-            .await
-            .ok();
-        rx.await.unwrap_or_default()
-    }
-
     /// Stores a new set of direct addresses.
     ///
     /// If the direct addresses have changed from the previous set, they are published to
@@ -860,7 +848,6 @@ impl Handle {
                 secret_key.public(),
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
-                transports.create_sender(),
                 discovery.clone(),
             )
         };
@@ -1630,7 +1617,6 @@ mod tests {
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
-        // TODO: ensure panics in this function are reported ok
         if matches!(loss, ExpectedLoss::AlmostNone) {
             for info in conn.paths().get().iter() {
                 assert!(
@@ -1641,10 +1627,10 @@ mod tests {
             }
         }
 
-        info!("close");
-        conn.close(0u32.into(), b"done");
-        info!("wait idle");
+        conn.closed().await;
+        info!("closed");
         ep.endpoint().wait_idle().await;
+        info!("idle");
 
         Ok(())
     }
@@ -1695,10 +1681,10 @@ mod tests {
             }
         }
 
-        info!("close");
         conn.close(0u32.into(), b"done");
-        info!("wait idle");
+        info!("closed");
         ep.endpoint().wait_idle().await;
+        info!("idle");
         Ok(())
     }
 
@@ -1719,26 +1705,26 @@ mod tests {
         let recv_endpoint_id = receiver.id();
         info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
 
-        let receiver_task = tokio::spawn(echo_receiver(receiver, loss));
+        let receiver_task = AbortOnDropHandle::new(tokio::spawn(echo_receiver(receiver, loss)));
         let sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).await;
         let sender_is_err = match sender_res {
             Ok(()) => false,
             Err(err) => {
-                eprintln!("[sender] Error:\n{err:#?}");
+                error!("[sender] Error:\n{err:#?}");
                 true
             }
         };
         let receiver_is_err = match receiver_task.await {
             Ok(Ok(())) => false,
             Ok(Err(err)) => {
-                eprintln!("[receiver] Error:\n{err:#?}");
+                error!("[receiver] Error:\n{err:#?}");
                 true
             }
             Err(joinerr) => {
                 if joinerr.is_panic() {
                     std::panic::resume_unwind(joinerr.into_panic());
                 } else {
-                    eprintln!("[receiver] Error:\n{joinerr:#?}");
+                    error!("[receiver] Error:\n{joinerr:#?}");
                 }
                 true
             }
@@ -1812,6 +1798,7 @@ mod tests {
             rng.fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
             run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
+            info!("\n-- round {i} finished");
         }
 
         Ok(())
