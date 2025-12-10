@@ -37,7 +37,7 @@ use n0_watcher::{self, Watchable, Watcher};
 #[cfg(not(wasm_browser))]
 use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
-use quinn::{ServerConfig, WeakConnectionHandle};
+use quinn::WeakConnectionHandle;
 use rand::Rng;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -130,7 +130,7 @@ pub(crate) struct Options {
     pub(crate) proxy_url: Option<Url>,
 
     /// ServerConfig for the internal QUIC endpoint
-    pub(crate) server_config: ServerConfig,
+    pub(crate) server_config: quinn::ServerConfig,
 
     /// Skip verification of SSL certificates from relay servers
     ///
@@ -1493,7 +1493,6 @@ mod tests {
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
     use n0_watcher::Watcher;
-    use quinn::ServerConfig;
     use rand::{CryptoRng, Rng, RngCore, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
@@ -1504,6 +1503,7 @@ mod tests {
         Endpoint, RelayMode, SecretKey,
         discovery::static_provider::StaticProvider,
         dns::DnsResolver,
+        endpoint::QuicTransportConfig,
         magicsock::{
             Handle, MagicSock, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
@@ -1535,12 +1535,13 @@ mod tests {
     }
 
     /// Generate a server config with no ALPNS and a default transport configuration
-    fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
+    fn make_default_server_config(secret_key: &SecretKey) -> quinn::ServerConfig {
         let quic_server_config =
             crate::tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
                 .make_server_config(vec![], false);
-        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+        let transport = QuicTransportConfig::default();
+        server_config.transport_config(transport.to_arc());
         server_config
     }
 
@@ -1947,7 +1948,7 @@ mod tests {
     async fn magicsock_ep(secret_key: SecretKey) -> Result<Handle> {
         let quic_server_config = tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
             .make_server_config(vec![ALPN.to_vec()], true);
-        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
         let dns_resolver = DnsResolver::new();
