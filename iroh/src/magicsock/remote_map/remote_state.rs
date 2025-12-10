@@ -440,6 +440,12 @@ impl RemoteStateActor {
             if let Some(path) = conn.path(PathId::ZERO)
                 && let Ok(socketaddr) = path.remote_address()
             {
+                trace!(
+                    paths_count = self.paths.addrs().count(),
+                    relay_paths = ?self.paths.addrs().filter(|a| a.is_relay()).collect::<Vec<_>>(),
+                    %socketaddr,
+                    "handle_msg_add_connection paths state"
+                );
                 if let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr) {
                     trace!(?path_remote, "added new connection");
                     let path_remote_is_ip = path_remote.is_ip();
@@ -477,6 +483,12 @@ impl RemoteStateActor {
                         self.paths
                             .insert_open_path(relay_addr, Source::Connection { _0: Private });
                         self.select_path();
+                    } else {
+                        warn!(
+                            paths_count = self.paths.addrs().count(),
+                            %socketaddr,
+                            "relay-only fallback: no relay path found"
+                        );
                     }
                 }
             }
