@@ -2276,6 +2276,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#3ca48c7ca5b13c0ee247f5ff38e993469d6a0d56"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2284,7 +2285,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2295,6 +2296,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#3ca48c7ca5b13c0ee247f5ff38e993469d6a0d56"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2319,12 +2321,13 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#3ca48c7ca5b13c0ee247f5ff38e993469d6a0d56"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
