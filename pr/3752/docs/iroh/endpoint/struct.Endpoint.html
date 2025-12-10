@@ -208,7 +208,7 @@ registry.write().unwrap().register_all(endpoint.metrics());
 <span class="macro">assert!</span>(res.contains(<span class="string">r#"TYPE magicsock_recv_datagrams counter"#</span>));
 <span class="macro">assert!</span>(res.contains(<span class="string">r#"magicsock_recv_datagrams_total 0"#</span>));</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.remote_info" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1068-1070">Source</a><h4 class="code-header">pub async fn <a href="#method.remote_info" class="fn">remote_info</a>(&amp;self, endpoint_id: <a class="type" href="../type.EndpointId.html" title="type iroh::EndpointId">EndpointId</a>) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.RemoteInfo.html" title="struct iroh::endpoint::RemoteInfo">RemoteInfo</a>&gt;</h4></section></summary><div class="docblock"><p>Returns addressing information about a recently used remote endpoint.</p>
 <p>The returned <a href="struct.RemoteInfo.html" title="struct iroh::endpoint::RemoteInfo"><code>RemoteInfo</code></a> contains a list of all transport addresses for the remote
-that we know about.</p>
+that we know about. This is a snapshot in time and not a watcher.</p>
 <p>Returns <code>None</code> if the endpoint doesn’t have information about the remote.
 When remote endpoints are no longer used, our endpoint will keep information around
 for a little while, and then drop it. Afterwards, this will return <code>None</code>.</p>
