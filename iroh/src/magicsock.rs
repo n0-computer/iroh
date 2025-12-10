@@ -979,6 +979,11 @@ impl Handle {
     #[instrument(skip_all)]
     pub(crate) async fn close(&self) {
         trace!(me = ?self.public_key, "magicsock closing...");
+
+        // Set closing flag BEFORE wait_idle() to prevent new net_report runs
+        // from creating QAD connections while we're draining existing ones.
+        self.msock.closing.store(true, Ordering::Relaxed);
+
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
 
@@ -1002,7 +1007,6 @@ impl Handle {
         if self.msock.is_closed() {
             return;
         }
-        self.msock.closing.store(true, Ordering::Relaxed);
         self.shutdown_token.cancel();
 
         // MutexGuard is not held across await points
