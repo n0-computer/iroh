@@ -2104,7 +2104,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
- "iroh-quinn-udp",
+ "iroh-quinn-udp 0.6.0 (git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_close_delay)",
  "iroh-relay",
  "n0-error",
  "n0-future",
@@ -2281,7 +2281,7 @@ dependencies = [
  "bytes",
  "cfg_aliases",
  "iroh-quinn-proto",
- "iroh-quinn-udp",
+ "iroh-quinn-udp 0.6.0 (git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_close_delay)",
  "pin-project-lite",
  "rustc-hash",
  "rustls",
@@ -2316,6 +2316,18 @@ dependencies = [
  "tinyvec",
  "tracing",
  "web-time",
+]
+
+[[package]]
+name = "iroh-quinn-udp"
+version = "0.6.0"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#d4b64212e572052d8b7cbba15da29dcd9aa462e3"
+dependencies = [
+ "cfg_aliases",
+ "libc",
+ "socket2 0.5.10",
+ "tracing",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2787,7 +2799,7 @@ dependencies = [
  "bytes",
  "cfg_aliases",
  "derive_more 2.1.0",
- "iroh-quinn-udp",
+ "iroh-quinn-udp 0.6.0 (git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic)",
  "js-sys",
  "libc",
  "n0-error",
@@ -5835,3 +5847,13 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[patch.unused]]
+name = "iroh-quinn"
+version = "0.14.0"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#d4b64212e572052d8b7cbba15da29dcd9aa462e3"
+
+[[patch.unused]]
+name = "iroh-quinn-proto"
+version = "0.13.0"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#d4b64212e572052d8b7cbba15da29dcd9aa462e3"

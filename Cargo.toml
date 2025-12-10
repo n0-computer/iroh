@@ -43,9 +43,9 @@ unused-async = "warn"
 
 
 [patch.crates-io]
-iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "arqu/fix_close_delay" }
-iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "arqu/fix_close_delay" }
-iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "arqu/fix_close_delay" }
+iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "arqu/fix_cid_panic" }
+iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "arqu/fix_cid_panic" }
+iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "arqu/fix_cid_panic" }
 netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
 
 # iroh-quinn = { path = "../quinn/quinn" }
