@@ -2276,7 +2276,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#67df91c6670cc48ff2043563e4da388541b4e20b"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_close_delay#29eaf7cf4d089fbc15b26e0ea277132a72c818f5"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2296,7 +2296,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#67df91c6670cc48ff2043563e4da388541b4e20b"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_close_delay#29eaf7cf4d089fbc15b26e0ea277132a72c818f5"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2321,7 +2321,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main-iroh#67df91c6670cc48ff2043563e4da388541b4e20b"
+source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_close_delay#29eaf7cf4d089fbc15b26e0ea277132a72c818f5"
 dependencies = [
  "cfg_aliases",
  "libc",
