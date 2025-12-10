@@ -2276,7 +2276,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#3ca48c7ca5b13c0ee247f5ff38e993469d6a0d56"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2296,7 +2295,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#3ca48c7ca5b13c0ee247f5ff38e993469d6a0d56"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2321,7 +2319,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=arqu%2Ffix_cid_panic#3ca48c7ca5b13c0ee247f5ff38e993469d6a0d56"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -5095,7 +5092,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
