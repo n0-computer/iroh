@@ -163,7 +163,7 @@ pub(super) struct RemoteStateActor {
     last_holepunch: Option<HolepunchAttempt>,
     /// Whether we think we holepunched this remote.
     ///
-    /// This is, for now, only used in stats. The value is never reset, so use with care.
+    /// This is, for now, only used for metrics tracking. The value is never reset, so use with care.
     has_holepunched: bool,
     /// The path we currently consider the preferred path to the remote endpoint.
     ///
@@ -786,7 +786,7 @@ impl RemoteStateActor {
                     // Check if this path is the result of a holepunch attempt, and if so update metrics.
                     if !self.has_holepunched
                         && let transports::Addr::Ip(ip_addr) = &path_remote
-                        && let Some(hp) = self.last_holepunch.as_mut()
+                        && let Some(hp) = self.last_holepunch.as_ref()
                         && hp.remote_candidates.contains(ip_addr)
                     {
                         self.has_holepunched = true;

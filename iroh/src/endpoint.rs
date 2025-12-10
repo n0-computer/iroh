@@ -1695,8 +1695,13 @@ mod tests {
                 }
             }
             info!("Have direct connection");
+            // Validate holepunch metrics.
+            assert_eq!(ep.metrics().magicsock.remote_holepunch_attempts.get(), 1);
+            assert_eq!(ep.metrics().magicsock.remote_holepunch_success.get(), 1);
+
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
+
             Ok(conn.closed().await)
         }
 
