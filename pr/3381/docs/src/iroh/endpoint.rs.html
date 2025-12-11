@@ -33,11 +33,11 @@
 <a href=#33 id=33 data-nosnippet>33</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
 <a href=#35 id=35 data-nosnippet>35</a><span class="kw">use crate</span>::{
-<a href=#36 id=36 data-nosnippet>36</a>    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
-<a href=#37 id=37 data-nosnippet>37</a>    endpoint::presets::Preset,
-<a href=#38 id=38 data-nosnippet>38</a>    magicsock::{<span class="self">self</span>, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
-<a href=#39 id=39 data-nosnippet>39</a>    metrics::EndpointMetrics,
-<a href=#40 id=40 data-nosnippet>40</a>    net_report::Report,
+<a href=#36 id=36 data-nosnippet>36</a>    NetReport,
+<a href=#37 id=37 data-nosnippet>37</a>    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
+<a href=#38 id=38 data-nosnippet>38</a>    endpoint::presets::Preset,
+<a href=#39 id=39 data-nosnippet>39</a>    magicsock::{<span class="self">self</span>, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
+<a href=#40 id=40 data-nosnippet>40</a>    metrics::EndpointMetrics,
 <a href=#41 id=41 data-nosnippet>41</a>    tls::{<span class="self">self</span>, DEFAULT_MAX_TLS_TICKETS},
 <a href=#42 id=42 data-nosnippet>42</a>};
 <a href=#43 id=43 data-nosnippet>43</a>
@@ -867,8 +867,8 @@
 <a href=#867 id=867 data-nosnippet>867</a>    ///
 <a href=#868 id=868 data-nosnippet>868</a>    /// This has no timeout, so if that is needed, you need to wrap it in a
 <a href=#869 id=869 data-nosnippet>869</a>    /// timeout. We recommend using a timeout close to
-<a href=#870 id=870 data-nosnippet>870</a>    /// [`crate::net_report::TIMEOUT`], so you can be sure that at least one
-<a href=#871 id=871 data-nosnippet>871</a>    /// [`crate::net_report::Report`] has been attempted.
+<a href=#870 id=870 data-nosnippet>870</a>    /// [`crate::NET_REPORT_TIMEOUT`]s, so you can be sure that at least one
+<a href=#871 id=871 data-nosnippet>871</a>    /// [`crate::NetReport`] has been attempted.
 <a href=#872 id=872 data-nosnippet>872</a>    ///
 <a href=#873 id=873 data-nosnippet>873</a>    /// To understand if the endpoint has gone back "offline",
 <a href=#874 id=874 data-nosnippet>874</a>    /// you must use the [`Endpoint::watch_addr`] method, to
@@ -906,7 +906,7 @@
 <a href=#906 id=906 data-nosnippet>906</a>    /// # });
 <a href=#907 id=907 data-nosnippet>907</a>    /// ```
 <a href=#908 id=908 data-nosnippet>908</a>    </span><span class="attr">#[doc(hidden)]
-<a href=#909 id=909 data-nosnippet>909</a>    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;Report&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#909 id=909 data-nosnippet>909</a>    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NetReport&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
 <a href=#910 id=910 data-nosnippet>910</a>        <span class="self">self</span>.msock.net_report()
 <a href=#911 id=911 data-nosnippet>911</a>    }
 <a href=#912 id=912 data-nosnippet>912</a>

@@ -124,8 +124,8 @@ Event if no relays are configured, this will still wait for a relay connection.<
 <p>Once this has been resolved once, this will always immediately resolve.</p>
 <p>This has no timeout, so if that is needed, you need to wrap it in a
 timeout. We recommend using a timeout close to
-<a href="../net_report/constant.TIMEOUT.html" title="constant iroh::net_report::TIMEOUT"><code>crate::net_report::TIMEOUT</code></a>, so you can be sure that at least one
-<a href="../net_report/struct.Report.html" title="struct iroh::net_report::Report"><code>crate::net_report::Report</code></a> has been attempted.</p>
+<a href="../constant.NET_REPORT_TIMEOUT.html" title="constant iroh::NET_REPORT_TIMEOUT"><code>crate::NET_REPORT_TIMEOUT</code></a>s, so you can be sure that at least one
+<a href="../struct.NetReport.html" title="struct iroh::NetReport"><code>crate::NetReport</code></a> has been attempted.</p>
 <p>To understand if the endpoint has gone back “offline”,
 you must use the <a href="struct.Endpoint.html#method.watch_addr" title="method iroh::endpoint::Endpoint::watch_addr"><code>Endpoint::watch_addr</code></a> method, to
 get information on the current relay and direct address information.</p>

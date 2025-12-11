@@ -76,9 +76,9 @@
 <a href=#76 id=76 data-nosnippet>76</a></span><span class="attr">#[derive(Debug, Clone, Default)]
 <a href=#77 id=77 data-nosnippet>77</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>IfStateDetails {
 <a href=#78 id=78 data-nosnippet>78</a>    <span class="doccomment">/// Do we have IPv4 capbilities
-<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="kw">pub </span>have_v4: bool,
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) have_v4: bool,
 <a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// Do we have IPv6 capbilities
-<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="kw">pub </span>have_v6: bool,
+<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) have_v6: bool,
 <a href=#82 id=82 data-nosnippet>82</a>}
 <a href=#83 id=83 data-nosnippet>83</a>
 <a href=#84 id=84 data-nosnippet>84</a><span class="kw">impl </span>IfStateDetails {
@@ -105,11 +105,11 @@
 <a href=#105 id=105 data-nosnippet>105</a>/// Factored out so it can be disabled easily in browsers.
 <a href=#106 id=106 data-nosnippet>106</a></span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#107 id=107 data-nosnippet>107</a>#[derive(Debug, Clone)]
-<a href=#108 id=108 data-nosnippet>108</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>SocketState {
+<a href=#108 id=108 data-nosnippet>108</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>SocketState {
 <a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// QUIC client to do QUIC address Discovery
-<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) quic_client: <span class="prelude-ty">Option</span>&lt;QuicClient&gt;,
+<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) quic_client: <span class="prelude-ty">Option</span>&lt;QuicClient&gt;,
 <a href=#111 id=111 data-nosnippet>111</a>    <span class="doccomment">/// The DNS resolver to use for probes that need to resolve DNS records.
-<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) dns_resolver: DnsResolver,
+<a href=#112 id=112 data-nosnippet>112</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) dns_resolver: DnsResolver,
 <a href=#113 id=113 data-nosnippet>113</a>}
 <a href=#114 id=114 data-nosnippet>114</a>
 <a href=#115 id=115 data-nosnippet>115</a><span class="kw">impl </span>Client {
@@ -468,16 +468,16 @@
 <a href=#468 id=468 data-nosnippet>468</a>
 <a href=#469 id=469 data-nosnippet>469</a><span class="doccomment">/// Pieces needed to do QUIC address discovery.
 <a href=#470 id=470 data-nosnippet>470</a></span><span class="attr">#[derive(derive_more::Debug, Clone)]
-<a href=#471 id=471 data-nosnippet>471</a></span><span class="kw">pub struct </span>QuicConfig {
+<a href=#471 id=471 data-nosnippet>471</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>QuicConfig {
 <a href=#472 id=472 data-nosnippet>472</a>    <span class="doccomment">/// A QUIC Endpoint
 <a href=#473 id=473 data-nosnippet>473</a>    </span><span class="attr">#[debug(<span class="string">"quinn::Endpoint"</span>)]
-<a href=#474 id=474 data-nosnippet>474</a>    </span><span class="kw">pub </span>ep: quinn::Endpoint,
+<a href=#474 id=474 data-nosnippet>474</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) ep: quinn::Endpoint,
 <a href=#475 id=475 data-nosnippet>475</a>    <span class="doccomment">/// A client config.
-<a href=#476 id=476 data-nosnippet>476</a>    </span><span class="kw">pub </span>client_config: rustls::ClientConfig,
+<a href=#476 id=476 data-nosnippet>476</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) client_config: rustls::ClientConfig,
 <a href=#477 id=477 data-nosnippet>477</a>    <span class="doccomment">/// Enable ipv4 QUIC address discovery probes
-<a href=#478 id=478 data-nosnippet>478</a>    </span><span class="kw">pub </span>ipv4: bool,
+<a href=#478 id=478 data-nosnippet>478</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) ipv4: bool,
 <a href=#479 id=479 data-nosnippet>479</a>    <span class="doccomment">/// Enable ipv6 QUIC address discovery probes
-<a href=#480 id=480 data-nosnippet>480</a>    </span><span class="kw">pub </span>ipv6: bool,
+<a href=#480 id=480 data-nosnippet>480</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) ipv6: bool,
 <a href=#481 id=481 data-nosnippet>481</a>}
 <a href=#482 id=482 data-nosnippet>482</a>
 <a href=#483 id=483 data-nosnippet>483</a><span class="kw">impl </span>Probe {
@@ -638,7 +638,7 @@
 <a href=#638 id=638 data-nosnippet>638</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#639 id=639 data-nosnippet>639</a>#[stack_error(derive, add_meta)]
 <a href=#640 id=640 data-nosnippet>640</a>#[non_exhaustive]
-<a href=#641 id=641 data-nosnippet>641</a></span><span class="kw">pub enum </span>GetRelayAddrError {
+<a href=#641 id=641 data-nosnippet>641</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>GetRelayAddrError {
 <a href=#642 id=642 data-nosnippet>642</a>    <span class="attr">#[error(<span class="string">"No valid hostname in the relay URL"</span>)]
 <a href=#643 id=643 data-nosnippet>643</a>    </span>InvalidHostname,
 <a href=#644 id=644 data-nosnippet>644</a>    <span class="attr">#[error(<span class="string">"No suitable relay address found for {url} ({addr_type})"</span>)]
@@ -758,7 +758,7 @@
 <a href=#758 id=758 data-nosnippet>758</a>
 <a href=#759 id=759 data-nosnippet>759</a><span class="attr">#[stack_error(derive, add_meta)]
 <a href=#760 id=760 data-nosnippet>760</a>#[non_exhaustive]
-<a href=#761 id=761 data-nosnippet>761</a></span><span class="kw">pub enum </span>MeasureHttpsLatencyError {
+<a href=#761 id=761 data-nosnippet>761</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>MeasureHttpsLatencyError {
 <a href=#762 id=762 data-nosnippet>762</a>    <span class="attr">#[error(transparent)]
 <a href=#763 id=763 data-nosnippet>763</a>    </span>InvalidUrl {
 <a href=#764 id=764 data-nosnippet>764</a>        <span class="attr">#[error(std_err, from)]
