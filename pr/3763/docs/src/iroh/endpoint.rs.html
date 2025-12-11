@@ -1308,7 +1308,7 @@
 <a href=#1308 id=1308 data-nosnippet>1308</a>    <span class="kw">use </span>quinn::ConnectionError;
 <a href=#1309 id=1309 data-nosnippet>1309</a>    <span class="kw">use </span>rand::SeedableRng;
 <a href=#1310 id=1310 data-nosnippet>1310</a>    <span class="kw">use </span>tokio::sync::oneshot;
-<a href=#1311 id=1311 data-nosnippet>1311</a>    <span class="kw">use </span>tracing::{Instrument, error_span, info, info_span, instrument};
+<a href=#1311 id=1311 data-nosnippet>1311</a>    <span class="kw">use </span>tracing::{Instrument, debug_span, info, info_span, instrument};
 <a href=#1312 id=1312 data-nosnippet>1312</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#1313 id=1313 data-nosnippet>1313</a>
 <a href=#1314 id=1314 data-nosnippet>1314</a>    <span class="kw">use </span><span class="kw">super</span>::Endpoint;
@@ -1487,7 +1487,7 @@
 <a href=#1487 id=1487 data-nosnippet>1487</a>                }
 <a href=#1488 id=1488 data-nosnippet>1488</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
 <a href=#1489 id=1489 data-nosnippet>1489</a>            }
-<a href=#1490 id=1490 data-nosnippet>1490</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"server"</span>)),
+<a href=#1490 id=1490 data-nosnippet>1490</a>            .instrument(<span class="macro">debug_span!</span>(<span class="string">"server"</span>)),
 <a href=#1491 id=1491 data-nosnippet>1491</a>        );
 <a href=#1492 id=1492 data-nosnippet>1492</a>
 <a href=#1493 id=1493 data-nosnippet>1493</a>        <span class="kw">let </span>start = Instant::now();
@@ -1527,7 +1527,7 @@
 <a href=#1527 id=1527 data-nosnippet>1527</a>                <span class="macro">info!</span>(<span class="string">"client closed"</span>);
 <a href=#1528 id=1528 data-nosnippet>1528</a>                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
 <a href=#1529 id=1529 data-nosnippet>1529</a>            }
-<a href=#1530 id=1530 data-nosnippet>1530</a>            .instrument(<span class="macro">error_span!</span>(<span class="string">"client"</span>, %i))
+<a href=#1530 id=1530 data-nosnippet>1530</a>            .instrument(<span class="macro">debug_span!</span>(<span class="string">"client"</span>, %i))
 <a href=#1531 id=1531 data-nosnippet>1531</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1532 id=1532 data-nosnippet>1532</a>            <span class="macro">info!</span>(<span class="string">"[client] round {i} done in {:?}"</span>, round_start.elapsed());
 <a href=#1533 id=1533 data-nosnippet>1533</a>        }
