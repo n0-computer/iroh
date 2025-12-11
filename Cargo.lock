@@ -321,8 +321,26 @@ version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1ab4a3ec9ea8a657c72d99a03a824af695bd0fb5ec639ccbd9cd3543b41a5f9"
 dependencies = [
+ "bytes",
+ "fs-err",
+ "http 1.4.0",
+ "http-body",
+ "hyper",
+ "hyper-util",
+ "tokio",
+ "tokio-rustls",
+ "tower-service",
+]
+
+[[package]]
+name = "axum-server"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1df331683d982a0b9492b38127151e6453639cd34926eb9c07d4cd8c6d22bfc"
+dependencies = [
  "arc-swap",
  "bytes",
+ "either",
  "fs-err",
  "http 1.4.0",
  "http-body",
@@ -330,7 +348,6 @@ dependencies = [
  "hyper-util",
  "pin-project-lite",
  "rustls",
- "rustls-pemfile",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
@@ -2221,7 +2238,7 @@ version = "0.95.1"
 dependencies = [
  "async-trait",
  "axum",
- "axum-server",
+ "axum-server 0.8.0",
  "base64-url",
  "bytes",
  "clap",
@@ -4493,7 +4510,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfdba5ab34e36bb015bb2cdfc13a3ee3473bcba240162f96301a3eacef2f769d"
 dependencies = [
  "async-trait",
- "axum-server",
+ "axum-server 0.7.3",
  "base64",
  "chrono",
  "futures",
