@@ -1008,25 +1008,25 @@
 <a href=#1008 id=1008 data-nosnippet>1008</a>        <span class="comment">// Initiate closing all connections, and refuse future connections.
 <a href=#1009 id=1009 data-nosnippet>1009</a>        </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
 <a href=#1010 id=1010 data-nosnippet>1010</a>
-<a href=#1011 id=1011 data-nosnippet>1011</a>        <span class="comment">// Start cancellation of all actors
-<a href=#1012 id=1012 data-nosnippet>1012</a>        </span><span class="self">self</span>.shutdown_token.cancel();
-<a href=#1013 id=1013 data-nosnippet>1013</a>
-<a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="comment">// In the history of this code, this call had been
-<a href=#1015 id=1015 data-nosnippet>1015</a>        // - removed: https://github.com/n0-computer/iroh/pull/1753
-<a href=#1016 id=1016 data-nosnippet>1016</a>        // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
-<a href=#1017 id=1017 data-nosnippet>1017</a>        // - then removed again: https://github.com/n0-computer/iroh/pull/3165
-<a href=#1018 id=1018 data-nosnippet>1018</a>        // and finally added back in together with this comment.
-<a href=#1019 id=1019 data-nosnippet>1019</a>        // So before removing this call, please consider carefully.
-<a href=#1020 id=1020 data-nosnippet>1020</a>        // Among other things, this call tries its best to make sure that any queued close frames
-<a href=#1021 id=1021 data-nosnippet>1021</a>        // (e.g. via the call to `endpoint.close(...)` above), are flushed out to the sockets
-<a href=#1022 id=1022 data-nosnippet>1022</a>        // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
-<a href=#1023 id=1023 data-nosnippet>1023</a>        // This allows the other endpoints for these connections to be notified to release
-<a href=#1024 id=1024 data-nosnippet>1024</a>        // their resources, or - depending on the protocol - that all data was received.
-<a href=#1025 id=1025 data-nosnippet>1025</a>        // With the current quinn API, this is the only way to ensure protocol code can use
-<a href=#1026 id=1026 data-nosnippet>1026</a>        // connection close codes, and close the endpoint properly.
-<a href=#1027 id=1027 data-nosnippet>1027</a>        // If this call is skipped, then connections that protocols close just shortly before the
-<a href=#1028 id=1028 data-nosnippet>1028</a>        // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-<a href=#1029 id=1029 data-nosnippet>1029</a>        </span><span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
+<a href=#1011 id=1011 data-nosnippet>1011</a>        <span class="comment">// In the history of this code, this call had been
+<a href=#1012 id=1012 data-nosnippet>1012</a>        // - removed: https://github.com/n0-computer/iroh/pull/1753
+<a href=#1013 id=1013 data-nosnippet>1013</a>        // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
+<a href=#1014 id=1014 data-nosnippet>1014</a>        // - then removed again: https://github.com/n0-computer/iroh/pull/3165
+<a href=#1015 id=1015 data-nosnippet>1015</a>        // and finally added back in together with this comment.
+<a href=#1016 id=1016 data-nosnippet>1016</a>        // So before removing this call, please consider carefully.
+<a href=#1017 id=1017 data-nosnippet>1017</a>        // Among other things, this call tries its best to make sure that any queued close frames
+<a href=#1018 id=1018 data-nosnippet>1018</a>        // (e.g. via the call to `endpoint.close(...)` above), are flushed out to the sockets
+<a href=#1019 id=1019 data-nosnippet>1019</a>        // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
+<a href=#1020 id=1020 data-nosnippet>1020</a>        // This allows the other endpoints for these connections to be notified to release
+<a href=#1021 id=1021 data-nosnippet>1021</a>        // their resources, or - depending on the protocol - that all data was received.
+<a href=#1022 id=1022 data-nosnippet>1022</a>        // With the current quinn API, this is the only way to ensure protocol code can use
+<a href=#1023 id=1023 data-nosnippet>1023</a>        // connection close codes, and close the endpoint properly.
+<a href=#1024 id=1024 data-nosnippet>1024</a>        // If this call is skipped, then connections that protocols close just shortly before the
+<a href=#1025 id=1025 data-nosnippet>1025</a>        // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+<a href=#1026 id=1026 data-nosnippet>1026</a>        </span><span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
+<a href=#1027 id=1027 data-nosnippet>1027</a>
+<a href=#1028 id=1028 data-nosnippet>1028</a>        <span class="comment">// Start cancellation of all actors
+<a href=#1029 id=1029 data-nosnippet>1029</a>        </span><span class="self">self</span>.shutdown_token.cancel();
 <a href=#1030 id=1030 data-nosnippet>1030</a>
 <a href=#1031 id=1031 data-nosnippet>1031</a>        <span class="comment">// MutexGuard is not held across await points
 <a href=#1032 id=1032 data-nosnippet>1032</a>        </span><span class="kw">let </span>task = <span class="self">self</span>.actor_task.lock().expect(<span class="string">"poisoned"</span>).take();
