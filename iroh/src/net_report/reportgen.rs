@@ -76,9 +76,9 @@ pub(super) struct Client {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct IfStateDetails {
     /// Do we have IPv4 capbilities
-    pub have_v4: bool,
+    pub(crate) have_v4: bool,
     /// Do we have IPv6 capbilities
-    pub have_v6: bool,
+    pub(crate) have_v6: bool,
 }
 
 impl IfStateDetails {
@@ -105,11 +105,11 @@ impl From<netwatch::netmon::State> for IfStateDetails {
 /// Factored out so it can be disabled easily in browsers.
 #[cfg(not(wasm_browser))]
 #[derive(Debug, Clone)]
-pub(crate) struct SocketState {
+pub(super) struct SocketState {
     /// QUIC client to do QUIC address Discovery
-    pub(crate) quic_client: Option<QuicClient>,
+    pub(super) quic_client: Option<QuicClient>,
     /// The DNS resolver to use for probes that need to resolve DNS records.
-    pub(crate) dns_resolver: DnsResolver,
+    pub(super) dns_resolver: DnsResolver,
 }
 
 impl Client {
@@ -468,16 +468,16 @@ pub(super) enum QuicError {
 
 /// Pieces needed to do QUIC address discovery.
 #[derive(derive_more::Debug, Clone)]
-pub struct QuicConfig {
+pub(crate) struct QuicConfig {
     /// A QUIC Endpoint
     #[debug("quinn::Endpoint")]
-    pub ep: quinn::Endpoint,
+    pub(crate) ep: quinn::Endpoint,
     /// A client config.
-    pub client_config: rustls::ClientConfig,
+    pub(crate) client_config: rustls::ClientConfig,
     /// Enable ipv4 QUIC address discovery probes
-    pub ipv4: bool,
+    pub(crate) ipv4: bool,
     /// Enable ipv6 QUIC address discovery probes
-    pub ipv6: bool,
+    pub(crate) ipv6: bool,
 }
 
 impl Probe {
@@ -638,7 +638,7 @@ fn get_quic_port(relay: &RelayConfig) -> Option<u16> {
 #[cfg(not(wasm_browser))]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
-pub enum GetRelayAddrError {
+pub(super) enum GetRelayAddrError {
     #[error("No valid hostname in the relay URL")]
     InvalidHostname,
     #[error("No suitable relay address found for {url} ({addr_type})")]
@@ -758,7 +758,7 @@ async fn relay_lookup_ipv6_staggered(
 
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
-pub enum MeasureHttpsLatencyError {
+pub(super) enum MeasureHttpsLatencyError {
     #[error(transparent)]
     InvalidUrl {
         #[error(std_err, from)]
