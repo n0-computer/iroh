@@ -368,7 +368,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 
             // We sent the last message, so wait for the client to close the connection once
             // it received this message.
-            let res = tokio::time::timeout(Duration::from_secs(3), async move {
+            let res = tokio::time::timeout(Duration::from_secs(4), async move {
                 let closed = conn.closed().await;
                 let remote = endpoint_id.fmt_short();
                 if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
@@ -385,7 +385,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
                 HumanBytes((size as f64 / duration.as_secs_f64()) as u64)
             );
             if res.is_err() {
-                println!("[{remote}] Did not disconnect within 3 seconds");
+                println!("[{remote}] Error: Did not disconnect within 4 seconds");
             } else {
                 println!("[{remote}] Disconnected");
             }
@@ -422,7 +422,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
-    tokio::time::timeout(Duration::from_secs(3), endpoint.close())
+    tokio::time::timeout(Duration::from_secs(4), endpoint.close())
         .await
         .anyerr()?;
 
