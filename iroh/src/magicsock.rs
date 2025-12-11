@@ -233,7 +233,7 @@ impl MagicSock {
     }
 
     fn is_closing(&self) -> bool {
-        self.closing.load(Ordering::Relaxed)
+        self.closing.load(Ordering::SeqCst)
     }
 
     pub(crate) fn is_closed(&self) -> bool {
@@ -601,6 +601,7 @@ struct DirectAddrUpdateState {
     net_reporter: Arc<AsyncMutex<net_report::Client>>,
     relay_map: RelayMap,
     run_done: mpsc::Sender<()>,
+    shutdown_token: CancellationToken,
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
@@ -628,6 +629,7 @@ impl DirectAddrUpdateState {
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
+        shutdown_token: CancellationToken,
     ) -> Self {
         DirectAddrUpdateState {
             want_update: Default::default(),
@@ -637,6 +639,7 @@ impl DirectAddrUpdateState {
             msock,
             relay_map,
             run_done,
+            shutdown_token,
         }
     }
 
@@ -679,7 +682,7 @@ impl DirectAddrUpdateState {
         self.port_mapper.procure_mapping();
         // Don't start a net report probe if we know
         // we are shutting down
-        if self.msock.is_closing() || self.msock.is_closed() {
+        if self.msock.is_closing() || self.msock.is_closed() || self.shutdown_token.is_cancelled() {
             debug!("skipping net_report, socket is shutting down");
             return;
         }
@@ -693,24 +696,31 @@ impl DirectAddrUpdateState {
         let msock = self.msock.clone();
 
         let run_done = self.run_done.clone();
+
+        // Ensure that reports are cancelled when we shutdown
+        let token = self.shutdown_token.child_token();
         task::spawn(
             async move {
-                let fut = time::timeout(
-                    NET_REPORT_TIMEOUT,
-                    net_reporter.get_report(if_state, why.is_major()),
-                );
-                match fut.await {
-                    Ok(report) => {
-                        msock.net_report.set((Some(report), why)).ok();
-                    }
-                    Err(time::Elapsed { .. }) => {
-                        warn!("net_report report timed out");
-                    }
-                }
+                token
+                    .run_until_cancelled(async move {
+                        let fut = time::timeout(
+                            NET_REPORT_TIMEOUT,
+                            net_reporter.get_report(if_state, why.is_major()),
+                        );
+                        match fut.await {
+                            Ok(report) => {
+                                msock.net_report.set((Some(report), why)).ok();
+                            }
+                            Err(time::Elapsed { .. }) => {
+                                warn!("net_report report timed out");
+                            }
+                        }
 
-                // mark run as finished
-                debug!("direct addr update done ({:?})", why);
-                run_done.send(()).await.ok();
+                        // mark run as finished
+                        debug!("direct addr update done ({:?})", why);
+                        run_done.send(()).await.ok();
+                    })
+                    .await
             }
             .instrument(tracing::Span::current()),
         );
@@ -930,6 +940,7 @@ impl Handle {
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
             direct_addr_done_tx,
+            shutdown_token.child_token(),
         );
 
         let netmon_watcher = network_monitor.interface_state();
