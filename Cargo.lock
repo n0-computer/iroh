@@ -3688,12 +3688,11 @@ dependencies = [
 
 [[package]]
 name = "rustls-cert-file-reader"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f351eaf1dd003022222d2b1399caac198fefeab45c46b0f98bb03fc7cda9bb27"
+checksum = "8bb47c2a50fdfdaf95b0ac8b12620fc327da1fd4adbb30d0c56d866b005873ff"
 dependencies = [
  "rustls-cert-read",
- "rustls-pemfile",
  "rustls-pki-types",
  "thiserror 2.0.17",
  "tokio",

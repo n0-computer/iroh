@@ -79,7 +79,7 @@ ahash = { version = "0.8.11", optional = true } # minimal version fix
 rcgen = { version = "0.14", optional = true }
 reloadable-state = { version = "0.1", optional = true }
 rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
-rustls-cert-file-reader = { version = "0.4.1", optional = true }
+rustls-cert-file-reader = { version = "0.4.2", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 time = { version = "0.3.37", optional = true }
 tokio-rustls-acme = { version = "0.8", optional = true }
