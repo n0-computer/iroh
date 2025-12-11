@@ -983,7 +983,16 @@ impl Handle {
         if self.msock.is_closed() {
             return;
         }
-        self.msock.closing.store(true, Ordering::Relaxed);
+
+        // Only set closing if not already set
+        if self
+            .msock
+            .closing
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
 
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
