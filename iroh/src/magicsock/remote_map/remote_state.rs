@@ -22,6 +22,7 @@ use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
+use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
 use self::{
@@ -216,7 +217,7 @@ impl RemoteStateActor {
         }
     }
 
-    pub(super) fn start(self) -> RemoteStateHandle {
+    pub(super) fn start(self, shutdown_token: CancellationToken) -> RemoteStateHandle {
         let (tx, rx) = guarded_channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
@@ -226,7 +227,7 @@ impl RemoteStateActor {
         // we don't explicitly set a span we get the spans from whatever call happens to
         // first create the actor, which is often very confusing as it then keeps those
         // spans for all logging of the actor.
-        let task = task::spawn(self.run(rx).instrument(info_span!(
+        let task = task::spawn(self.run(rx, shutdown_token).instrument(info_span!(
             parent: None,
             "RemoteStateActor",
             me = %me.fmt_short(),
@@ -243,7 +244,11 @@ impl RemoteStateActor {
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
     /// discipline is needed to not turn pending for a long time.
-    async fn run(mut self, mut inbox: GuardedReceiver<RemoteStateMessage>) {
+    async fn run(
+        mut self,
+        mut inbox: GuardedReceiver<RemoteStateMessage>,
+        shutdown_token: CancellationToken,
+    ) {
         trace!("actor started");
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
@@ -265,6 +270,11 @@ impl RemoteStateActor {
             }
             tokio::select! {
                 biased;
+
+                _ = shutdown_token.cancelled() => {
+                    trace!("actor cancelled");
+                    break;
+                }
                 msg = inbox.recv() => {
                     match msg {
                         Some(msg) => self.handle_message(msg).await,

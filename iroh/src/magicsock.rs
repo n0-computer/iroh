@@ -839,6 +839,7 @@ impl Handle {
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
                 discovery.clone(),
+                shutdown_token.child_token(),
             )
         };
 
@@ -979,8 +980,16 @@ impl Handle {
     #[instrument(skip_all)]
     pub(crate) async fn close(&self) {
         trace!(me = ?self.public_key, "magicsock closing...");
+        if self.msock.is_closed() {
+            return;
+        }
+        self.msock.closing.store(true, Ordering::Relaxed);
+
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
+
+        // Start cancellation of all actors
+        self.shutdown_token.cancel();
 
         // In the history of this code, this call had been
         // - removed: https://github.com/n0-computer/iroh/pull/1753
@@ -998,12 +1007,6 @@ impl Handle {
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
         self.endpoint.wait_idle().await;
-
-        if self.msock.is_closed() {
-            return;
-        }
-        self.msock.closing.store(true, Ordering::Relaxed);
-        self.shutdown_token.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
