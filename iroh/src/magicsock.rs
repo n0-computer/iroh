@@ -1008,9 +1008,6 @@ impl Handle {
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
 
-        // Start cancellation of all actors
-        self.shutdown_token.cancel();
-
         // In the history of this code, this call had been
         // - removed: https://github.com/n0-computer/iroh/pull/1753
         // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
@@ -1027,6 +1024,9 @@ impl Handle {
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
         self.endpoint.wait_idle().await;
+
+        // Start cancellation of all actors
+        self.shutdown_token.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
