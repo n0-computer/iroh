@@ -99,11 +99,10 @@ enum QadProbeError {
 use self::reportgen::SocketState;
 pub use self::{
     metrics::Metrics,
-    options::Options,
     probes::Probe,
     report::{RelayLatencies, Report},
-    reportgen::QuicConfig,
 };
+pub(crate) use self::{options::Options, reportgen::QuicConfig};
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const ENOUGH_ENDPOINTS: usize = 3;
