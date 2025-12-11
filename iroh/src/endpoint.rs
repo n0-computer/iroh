@@ -1308,7 +1308,7 @@ mod tests {
     use quinn::ConnectionError;
     use rand::SeedableRng;
     use tokio::sync::oneshot;
-    use tracing::{Instrument, error_span, info, info_span, instrument};
+    use tracing::{Instrument, debug_span, info, info_span, instrument};
     use tracing_test::traced_test;
 
     use super::Endpoint;
@@ -1487,7 +1487,7 @@ mod tests {
                 }
                 Ok::<_, Error>(())
             }
-            .instrument(error_span!("server")),
+            .instrument(debug_span!("server")),
         );
 
         let start = Instant::now();
@@ -1527,7 +1527,7 @@ mod tests {
                 info!("client closed");
                 Ok::<_, Error>(())
             }
-            .instrument(error_span!("client", %i))
+            .instrument(debug_span!("client", %i))
             .await?;
             info!("[client] round {i} done in {:?}", round_start.elapsed());
         }
