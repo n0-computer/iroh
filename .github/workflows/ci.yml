@@ -355,5 +355,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - run: pip install --user codespell[toml]
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-codespell-2.4.1
+      - run: pip install --user codespell[toml]==2.4.1
       - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl,keep-alives --skip=CHANGELOG.md
