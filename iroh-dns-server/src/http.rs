@@ -309,12 +309,13 @@ mod tests {
     };
     use n0_error::StdResultExt;
     use rand::SeedableRng;
+    use tracing_test::traced_test;
 
     use crate::{http::HttpsConfig, server::Server};
 
     #[tokio::test]
+    #[traced_test]
     async fn test_doh() -> n0_error::Result {
-        tracing_subscriber::fmt::init();
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(0);
         let dir = tempfile::tempdir()?;
         let https_config = HttpsConfig {
