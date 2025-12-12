@@ -204,25 +204,41 @@ jobs:
             path: target/${{ matrix.cargo_targets }}/optimized-release/iroh.exe
             compression-level: 0
 
-        - name: Setup awscli on linux
-          if: matrix.name == 'ubuntu-latest'
-          run: |
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip awscliv2.zip
-            sudo ./aws/install --update
+        - name: Cache AWS CLI
+          if: matrix.os != 'windows-latest'
+          id: cache-awscli
+          uses: actions/cache@v4
+          with:
+            path: ~/awscli
+            key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
 
-        - name: Setup awscli on linux
-          if: matrix.name == 'ubuntu-arm-latest'
+        - name: Download awscli on linux x86_64
+          if: matrix.name == 'ubuntu-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
-            unzip awscliv2.zip
-            sudo ./aws/install --update
+            mkdir -p ~/awscli
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
+            cd ~/awscli && unzip -q awscliv2.zip
 
-        - name: Setup awscli on mac
+        - name: Download awscli on linux arm
+          if: matrix.name == 'ubuntu-arm-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
+          run: |
+            mkdir -p ~/awscli
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o ~/awscli/awscliv2.zip
+            cd ~/awscli && unzip -q awscliv2.zip
+
+        - name: Download awscli on mac
+          if: matrix.os == 'macos-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
+          run: |
+            mkdir -p ~/awscli
+            curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o ~/awscli/AWSCLIV2.pkg
+
+        - name: Install awscli on linux
+          if: matrix.os == 'ubuntu-latest'
+          run: sudo ~/awscli/aws/install --update
+
+        - name: Install awscli on mac
           if: matrix.os == 'macos-latest'
-          run: |
-            curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
-            sudo installer -pkg AWSCLIV2.pkg -target /
+          run: sudo installer -pkg ~/awscli/AWSCLIV2.pkg -target /
 
         - name: Set aws credentials
           if: matrix.os != 'windows-latest'

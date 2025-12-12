@@ -164,16 +164,31 @@ jobs:
         python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
         python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
 
+    - name: Cache AWS CLI
+      if: always()
+      id: cache-awscli
+      uses: actions/cache@v4
+      with:
+        path: ~/awscli
+        key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
+
+    - name: Download awscli
+      if: always() && steps.cache-awscli.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p ~/awscli
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
+        cd ~/awscli && unzip -q awscliv2.zip
+
+    - name: Install awscli
+      if: always()
+      run: sudo ~/awscli/aws/install --update
+
     - name: Upload report
       if: always()
       run: |
         export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
         export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
         export AWS_DEFAULT_REGION=us-west-2
-
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip -q awscliv2.zip
-        sudo ./aws/install --update
 
         cd ../chuck/netsim
 
