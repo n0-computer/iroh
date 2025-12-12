@@ -53,8 +53,8 @@ pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
     connection::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
-        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt,
-        IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
+        ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingFuture,
+        IncomingZeroRtt, IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
         RemoteEndpointIdError, RetryError, ZeroRttStatus,
     },
     quic::{
