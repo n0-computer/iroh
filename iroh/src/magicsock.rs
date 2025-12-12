@@ -130,7 +130,7 @@ pub(crate) struct Options {
     pub(crate) proxy_url: Option<Url>,
 
     /// ServerConfig for the internal QUIC endpoint
-    pub(crate) server_config: quinn::ServerConfig,
+    pub(crate) server_config: quinn_proto::ServerConfig,
 
     /// Skip verification of SSL certificates from relay servers
     ///

@@ -104,14 +104,14 @@ use crate::magicsock::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TI
 /// well with QUIC multipath. Adjusting those settings may cause suboptimal usage.
 ///
 /// Look at the following methods for more details:
-/// - [`QuicTransportConfig::default_path_keep_alive_interval`]
-/// - [`QuicTransportConfig::default_path_max_idle_timeout`]
-/// - [`QuicTransportConfig::max_concurrent_multipath_paths`]
-/// - [`QuicTransportConfig::set_max_remote_nat_traversal_addresses`]
+/// - [`QuicTransportConfigBuilder::default_path_keep_alive_interval`]
+/// - [`QuicTransportConfigBuilder::default_path_max_idle_timeout`]
+/// - [`QuicTransportConfigBuilder::max_concurrent_multipath_paths`]
+/// - [`QuicTransportConfigBuilder::set_max_remote_nat_traversal_addresses`]
 #[derive(Debug, Clone)]
-pub struct QuicTransportConfig(pub(crate) quinn::TransportConfig);
+pub struct QuicTransportConfigBuilder(quinn::TransportConfig);
 
-impl Default for QuicTransportConfig {
+impl Default for QuicTransportConfigBuilder {
     fn default() -> Self {
         let mut cfg = quinn::TransportConfig::default();
         // Override some transport config settings.
@@ -124,10 +124,26 @@ impl Default for QuicTransportConfig {
     }
 }
 
+/// todo: docs
+#[derive(Debug, Clone)]
+pub struct QuicTransportConfig(Arc<quinn::TransportConfig>);
+
+impl Default for QuicTransportConfig {
+    fn default() -> Self {
+        QuicTransportConfigBuilder::default().build()
+    }
+}
+
 impl QuicTransportConfig {
-    /// Return an `Arc`-d [`quinn::TransportConfig`].
     pub(crate) fn to_inner_arc(&self) -> Arc<quinn::TransportConfig> {
-        Arc::new(self.0.clone())
+        self.0.clone()
+    }
+}
+
+impl QuicTransportConfigBuilder {
+    /// Todo: docs
+    pub fn build(self) -> QuicTransportConfig {
+        QuicTransportConfig(Arc::new(self.0))
     }
 
     /// Maximum number of incoming bidirectional streams that may be open concurrently.
@@ -245,13 +261,13 @@ impl QuicTransportConfig {
     }
 
     /// The initial value to be used as the maximum UDP payload size before running MTU discovery
-    /// (see [`QuicTransportConfig::mtu_discovery_config`]).
+    /// (see [`QuicTransportConfigBuilder::mtu_discovery_config`]).
     ///
     /// Must be at least 1200, which is the default, and known to be safe for typical internet
     /// applications. Larger values are more efficient, but increase the risk of packet loss due to
     /// exceeding the network path's IP MTU. If the provided value is higher than what the network
     /// path actually supports, packet loss will eventually trigger black hole detection and bring
-    /// it down to [`QuicTransportConfig::min_mtu`].
+    /// it down to [`QuicTransportConfigBuilder::min_mtu`].
     pub fn initial_mtu(&mut self, value: u16) -> &mut Self {
         self.0.initial_mtu(value);
         self
@@ -260,15 +276,15 @@ impl QuicTransportConfig {
     /// The maximum UDP payload size guaranteed to be supported by the network.
     ///
     /// Must be at least 1200, which is the default, and lower than or equal to
-    /// [`QuicTransportConfig::initial_mtu`].
+    /// [`QuicTransportConfigBuilder::initial_mtu`].
     ///
     /// Real-world MTUs can vary according to ISP, VPN, and properties of intermediate network links
     /// outside of either endpoint's control. Extreme care should be used when raising this value
     /// outside of private networks where these factors are fully controlled. If the provided value
     /// is higher than what the network path actually supports, the result will be unpredictable and
     /// catastrophic packet loss, without a possibility of repair. Prefer
-    /// [`QuicTransportConfig::initial_mtu`] together with
-    /// [`QuicTransportConfig::mtu_discovery_config`] to set a maximum UDP payload size that robustly
+    /// [`QuicTransportConfigBuilder::initial_mtu`] together with
+    /// [`QuicTransportConfigBuilder::mtu_discovery_config`] to set a maximum UDP payload size that robustly
     /// adapts to the network.
     pub fn min_mtu(&mut self, value: u16) -> &mut Self {
         self.0.min_mtu(value);
@@ -444,7 +460,7 @@ impl QuicTransportConfig {
     /// Sets a default per-path maximum idle timeout.
     ///
     /// If the path is idle for this long the path will be abandoned. Bear in mind this will
-    /// interact with the [`QuicTransportConfig::max_idle_timeout`], if the last path is
+    /// interact with the [`QuicTransportConfigBuilder::max_idle_timeout`], if the last path is
     /// abandoned the entire connection will be closed.
     ///
     /// Note: this method will ignore values higher than the recommended 6500 ms and will log a warning.
@@ -463,8 +479,8 @@ impl QuicTransportConfig {
     /// Sets a default per-path keep alive interval.
     ///
     /// Note that this does not interact with the connection-wide
-    /// [`QuicTransportConfig::keep_alive_interval`].  This setting will keep this path active,
-    /// [`QuicTransportConfig::keep_alive_interval`] will keep the connection active, with no
+    /// [`QuicTransportConfigBuilder::keep_alive_interval`].  This setting will keep this path active,
+    /// [`QuicTransportConfigBuilder::keep_alive_interval`] will keep the connection active, with no
     /// control over which path is used for this.
     ///
     /// Note: this method will ignore values higher than the recommended 5 seconds and will log a warning.
@@ -544,29 +560,51 @@ impl QuicTransportConfig {
 ///
 /// Default values should be suitable for most internet applications.
 ///
-/// To create a [`ServerConfig`] compatible with your [`Endpoint`] identity, use the [`Endpoint::create_server_config`] method.
+/// To create a [`ServerConfig`] compatible with your [`Endpoint`] identity, use the [`Endpoint::create_server_config_builder`] method.
 ///
 /// [`Endpoint`]: crate::Endpoint
-/// [`Endpoint::create_server_config`]: crate::Endpoint::create_server_config
+/// [`Endpoint::create_server_config_builder`]: crate::Endpoint::create_server_config_builder
 // Note: used in `iroh::endpoint::connection::Incoming::accept_with`
 // This is new-typed since `quinn::ServerConfig` takes a `TransportConfig`, which we new-type as a `QuicTransportConfig`
 #[derive(Debug, Clone)]
-pub struct ServerConfig {
+pub struct ServerConfigBuilder {
     inner: quinn::ServerConfig,
     transport: QuicTransportConfig,
 }
 
+/// todo: docs
+#[derive(Debug, Clone)]
+pub struct ServerConfig(Arc<quinn::ServerConfig>);
+
 impl ServerConfig {
+    pub(crate) fn to_inner_arc(&self) -> Arc<quinn::ServerConfig> {
+        self.0.clone()
+    }
+
+    /// Transport configuration used for incoming connections.
+    pub fn transport_config(&self) -> QuicTransportConfig {
+        QuicTransportConfig(self.0.transport.clone())
+    }
+
+    /// TLS configuration used for incoming connections.
+    pub fn crypto(&self) -> Arc<dyn CryptoServerConfig> {
+        self.0.crypto.clone()
+    }
+
+    /// Configuration for sending and handling validation tokens.
+    pub fn validation_token(&self) -> ValidationTokenConfig {
+        self.0.validation_token.clone()
+    }
+}
+
+impl ServerConfigBuilder {
+    /// todo: docs
+    pub fn build(self) -> ServerConfig {
+        ServerConfig(Arc::new(self.inner))
+    }
+
     pub(crate) fn new(inner: quinn::ServerConfig, transport: QuicTransportConfig) -> Self {
         Self { inner, transport }
-    }
-
-    pub(crate) fn to_inner_arc(&self) -> Arc<quinn::ServerConfig> {
-        Arc::new(self.inner.clone())
-    }
-
-    pub(crate) fn into_inner(self) -> quinn::ServerConfig {
-        self.inner
     }
 
     /// Transport configuration used for incoming connections.
@@ -611,15 +649,6 @@ impl ServerConfig {
     /// Defaults to 15 seconds.
     pub fn set_retry_token_lifetime(&mut self, value: Duration) -> &mut Self {
         self.inner.retry_token_lifetime(value);
-        self
-    }
-
-    /// Whether to allow clients to migrate to new addresses.
-    ///
-    /// Improves behavior for clients that move between different internet connections or suffer NAT
-    /// rebinding. Enabled by default.
-    pub fn set_migration(&mut self, value: bool) -> &mut Self {
-        self.inner.migration(value);
         self
     }
 

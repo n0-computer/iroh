@@ -509,7 +509,7 @@ mod tests {
     use super::*;
     use crate::{
         Endpoint, RelayMode,
-        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig},
+        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfigBuilder},
     };
 
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
@@ -727,10 +727,10 @@ mod tests {
         .await;
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
-        let mut config = QuicTransportConfig::default();
-        config.keep_alive_interval(Duration::from_secs(1));
-        config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()));
-        let opts = ConnectOptions::new().with_transport_config(config);
+        let mut builder = QuicTransportConfigBuilder::default();
+        builder.keep_alive_interval(Duration::from_secs(1));
+        builder.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()));
+        let opts = ConnectOptions::new().with_transport_config(builder.build());
 
         let res = ep2
             .connect_with_opts(ep1.id(), TEST_ALPN, opts)

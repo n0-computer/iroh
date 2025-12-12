@@ -103,13 +103,14 @@ impl Incoming {
 
     /// Accepts this incoming connection using a custom configuration.
     ///
-    /// Use the [`Endpoint::create_server_config`] method to create a [`ServerConfig`]
-    /// that can be customized.
+    /// Use the [`Endpoint::create_server_config_builder`] method to create a [`ServerConfigBuilder`]
+    /// to customize a [`ServerConfig`].
     ///
     /// See [`accept()`] for more details.
     ///
     /// [`accept()`]: Incoming::accept
-    /// [`Endpoint::create_server_config`]: crate::Endpoint::create_server_config
+    /// [`Endpoint::create_server_config_builder`]: crate::Endpoint::create_server_config_builder
+    /// [`ServerConfigBuilder`]: crate::endpoint::ServerConfigBuilder
     /// [`ServerConfig`]: crate::endpoint::ServerConfig
     pub fn accept_with(
         self,

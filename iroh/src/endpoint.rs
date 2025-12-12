@@ -63,12 +63,12 @@ pub use self::{
         ControllerFactory, ControllerMetrics, CryptoError, CryptoServerConfig, Dir,
         ExportKeyingMaterialError, FrameStats, FrameType, HandshakeTokenKey, HeaderKey,
         IdleTimeout, Keys, MtuDiscoveryConfig, OpenBi, OpenUni, PacketKey, PathId, PathStats,
-        QuicConnectError, QuicTransportConfig, ReadDatagram, ReadError, ReadExactError,
-        ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram, SendDatagramError,
-        SendStream, ServerConfig, Session, Side, StoppedError, StreamId, TimeSource, TokenLog,
-        TokenReuseError, TransportError, TransportErrorCode, TransportParameters, UdpStats,
-        UnsupportedVersion, ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError,
-        Written,
+        QuicConnectError, QuicTransportConfig, QuicTransportConfigBuilder, ReadDatagram, ReadError,
+        ReadExactError, ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram,
+        SendDatagramError, SendStream, ServerConfig, ServerConfigBuilder, Session, Side,
+        StoppedError, StreamId, TimeSource, TokenLog, TokenReuseError, TransportError,
+        TransportErrorCode, TransportParameters, UdpStats, UnsupportedVersion,
+        ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError, Written,
     },
 };
 pub use crate::magicsock::transports::TransportConfig;
@@ -172,9 +172,7 @@ impl Builder {
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
             keylog: self.keylog,
         };
-        let server_config = static_config
-            .create_server_config(self.alpn_protocols)
-            .into_inner();
+        let server_config = static_config.create_server_config(self.alpn_protocols);
 
         #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
@@ -474,14 +472,13 @@ struct StaticConfig {
 
 impl StaticConfig {
     /// Create a [`ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> ServerConfig {
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> quinn_proto::ServerConfig {
         let quic_server_config = self
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
         let mut inner = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         inner.transport_config(self.transport_config.to_inner_arc());
-
-        ServerConfig::new(inner, self.transport_config.clone())
+        inner
     }
 }
 
@@ -604,9 +601,7 @@ impl Endpoint {
     /// Note that this *overrides* the current list of ALPNs.
     pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) {
         let server_config = self.static_config.create_server_config(alpns);
-        self.msock
-            .endpoint()
-            .set_server_config(Some(server_config.into_inner()));
+        self.msock.endpoint().set_server_config(Some(server_config));
     }
 
     /// Adds the provided configuration to the [`RelayMap`].
@@ -1151,9 +1146,13 @@ impl Endpoint {
         self.msock.is_closed()
     }
 
-    /// Create a [`ServerConfig`] for this endpoint that includes the given alpns.
-    pub fn create_server_config(&self, alpns: Vec<Vec<u8>>) -> ServerConfig {
-        self.static_config.create_server_config(alpns)
+    /// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
+    ///
+    /// Use the [`ServerConfigBuilder`] to customize the [`ServerConfig`] connection configuration
+    /// for a connection accepted using the [`Incoming::accept_with`] method.
+    pub fn create_server_config_builder(&self, alpns: Vec<Vec<u8>>) -> ServerConfigBuilder {
+        let inner = self.static_config.create_server_config(alpns);
+        ServerConfigBuilder::new(inner, self.static_config.transport_config.clone())
     }
 
     // # Remaining private methods
