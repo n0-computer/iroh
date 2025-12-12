@@ -680,12 +680,12 @@ impl DirectAddrUpdateState {
         mut net_reporter: tokio::sync::OwnedMutexGuard<net_report::Client>,
     ) {
         debug!("starting direct addr update ({:?})", why);
-        #[cfg(not(wasm_browser))]
-        self.port_mapper.procure_mapping();
         // Don't start a net report probe if we know
         // we are shutting down
         if self.msock.is_closing() || self.msock.is_closed() || self.shutdown_token.is_cancelled() {
             debug!("skipping net_report, socket is shutting down");
+            // deactivate portmapper
+            self.port_mapper.deactivate();
             return;
         }
         if self.relay_map.is_empty() {
@@ -693,6 +693,9 @@ impl DirectAddrUpdateState {
             self.msock.net_report.set((None, why)).ok();
             return;
         }
+
+        #[cfg(not(wasm_browser))]
+        self.port_mapper.procure_mapping();
 
         debug!("requesting net_report report");
         let msock = self.msock.clone();
