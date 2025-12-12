@@ -716,6 +716,15 @@ impl RemoteStateActor {
                 Some(path_id) => {
                     trace!(?conn_id, ?path_id, "opening new path");
                     conn_state.add_path(open_addr.clone(), path_id);
+                    // We still need to ensure that the path status is set correctly,
+                    // in case the path was opened by QNT, which opens all IP paths
+                    // using PATH_STATUS_BACKUP. We need to switch the selected path
+                    // to use PATH_STATUS_AVAILABLE though!
+                    if let Some(path) = conn.path(path_id) {
+                        if let Err(e) = path.set_status(path_status) {
+                            warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
+                        }
+                    }
                 }
                 None => {
                     let ret = now_or_never(fut);
