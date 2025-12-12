@@ -8,11 +8,7 @@
 
 #[cfg(feature = "qlog")]
 use std::path::Path;
-use std::{
-    net::{SocketAddrV4, SocketAddrV6},
-    sync::Arc,
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 /// `quinn` types that are used in the public iroh API.
 // Each type is notated with the iroh type or quinn type that uses it.
@@ -129,12 +125,12 @@ impl Default for QuicTransportConfig {
 }
 
 impl QuicTransportConfig {
-    /// Return an `Arc`-d [`quinn::TransportConfig`]
-    pub(crate) fn to_arc(&self) -> Arc<quinn::TransportConfig> {
+    /// Return an `Arc`-d [`quinn::TransportConfig`].
+    pub(crate) fn to_inner_arc(&self) -> Arc<quinn::TransportConfig> {
         Arc::new(self.0.clone())
     }
 
-    /// Maximum number of incoming bidirectional streams that may be open concurrently
+    /// Maximum number of incoming bidirectional streams that may be open concurrently.
     ///
     /// Must be nonzero for the peer to open any bidirectional streams.
     ///
@@ -145,7 +141,7 @@ impl QuicTransportConfig {
         self
     }
 
-    /// Variant of `max_concurrent_bidi_streams` affecting unidirectional streams
+    /// Variant of `max_concurrent_bidi_streams` affecting unidirectional streams.
     pub fn max_concurrent_uni_streams(&mut self, value: VarInt) -> &mut Self {
         self.0.max_concurrent_uni_streams(value);
         self
@@ -202,7 +198,7 @@ impl QuicTransportConfig {
         self
     }
 
-    /// Maximum number of bytes to transmit to a peer without acknowledgment
+    /// Maximum number of bytes to transmit to a peer without acknowledgment.
     ///
     /// Provides an upper bound on memory when communicating with peers that issue large amounts of
     /// flow control credit. Endpoints that wish to handle large numbers of connections robustly
@@ -236,13 +232,13 @@ impl QuicTransportConfig {
     }
 
     /// Maximum reordering in time space before time based loss detection considers a packet lost,
-    /// as a factor of RTT
+    /// as a factor of RTT.
     pub fn time_threshold(&mut self, value: f32) -> &mut Self {
         self.0.time_threshold(value);
         self
     }
 
-    /// The RTT used before an RTT sample is taken
+    /// The RTT used before an RTT sample is taken.
     pub fn initial_rtt(&mut self, value: Duration) -> &mut Self {
         self.0.initial_rtt(value);
         self
@@ -287,7 +283,7 @@ impl QuicTransportConfig {
         self
     }
 
-    /// Pad UDP datagrams carrying application data to current maximum UDP payload size
+    /// Pad UDP datagrams carrying application data to current maximum UDP payload size.
     ///
     /// Disabled by default. UDP datagrams containing loss probes are exempt from padding.
     ///
@@ -301,7 +297,7 @@ impl QuicTransportConfig {
         self
     }
 
-    /// Specifies the ACK frequency config (see [`AckFrequencyConfig`] for details)
+    /// Specifies the ACK frequency config (see [`AckFrequencyConfig`] for details).
     ///
     /// The provided configuration will be ignored if the peer does not support the acknowledgement
     /// frequency QUIC extension.
@@ -320,7 +316,7 @@ impl QuicTransportConfig {
         self
     }
 
-    /// Period of inactivity before sending a keep-alive packet
+    /// Period of inactivity before sending a keep-alive packet.
     ///
     /// Keep-alive packets prevent an inactive but otherwise healthy connection from timing out.
     ///
@@ -332,13 +328,13 @@ impl QuicTransportConfig {
         self
     }
 
-    /// Maximum quantity of out-of-order crypto layer data to buffer
+    /// Maximum quantity of out-of-order crypto layer data to buffer.
     pub fn crypto_buffer_size(&mut self, value: usize) -> &mut Self {
         self.0.crypto_buffer_size(value);
         self
     }
 
-    /// Whether the implementation is permitted to set the spin bit on this connection
+    /// Whether the implementation is permitted to set the spin bit on this connection.
     ///
     /// This allows passive observers to easily judge the round trip time of a connection, which can
     /// be useful for network administration but sacrifices a small amount of privacy.
@@ -348,7 +344,7 @@ impl QuicTransportConfig {
     }
 
     /// Maximum number of incoming application datagram bytes to buffer, or None to disable
-    /// incoming datagrams
+    /// incoming datagrams.
     ///
     /// The peer is forbidden to send single datagrams larger than this size. If the aggregate size
     /// of all datagrams that have been received from the peer but not consumed by the application
@@ -358,7 +354,7 @@ impl QuicTransportConfig {
         self
     }
 
-    /// Maximum number of outgoing application datagram bytes to buffer
+    /// Maximum number of outgoing application datagram bytes to buffer.
     ///
     /// While datagrams are sent ASAP, it is possible for an application to generate data faster
     /// than the link, or even the underlying hardware, can transmit them. This limits the amount of
@@ -369,7 +365,7 @@ impl QuicTransportConfig {
         self
     }
 
-    /// How to construct new `congestion::Controller`s
+    /// How to construct new `congestion::Controller`s.
     ///
     /// Typically the refcounted configuration of a `congestion::Controller`,
     /// e.g. a `congestion::NewRenoConfig`.
@@ -389,7 +385,7 @@ impl QuicTransportConfig {
     }
 
     /// Whether to use "Generic Segmentation Offload" to accelerate transmits, when supported by the
-    /// environment
+    /// environment.
     ///
     /// Defaults to `true`.
     ///
@@ -445,7 +441,7 @@ impl QuicTransportConfig {
         self
     }
 
-    /// Sets a default per-path maximum idle timeout
+    /// Sets a default per-path maximum idle timeout.
     ///
     /// If the path is idle for this long the path will be abandoned. Bear in mind this will
     /// interact with the [`QuicTransportConfig::max_idle_timeout`], if the last path is
@@ -464,7 +460,7 @@ impl QuicTransportConfig {
         self
     }
 
-    /// Sets a default per-path keep alive interval
+    /// Sets a default per-path keep alive interval.
     ///
     /// Note that this does not interact with the connection-wide
     /// [`QuicTransportConfig::keep_alive_interval`].  This setting will keep this path active,
@@ -485,7 +481,7 @@ impl QuicTransportConfig {
     }
 
     /// Sets the maximum number of nat traversal addresses this endpoint allows the remote to
-    /// advertise
+    /// advertise.
     ///
     /// Setting this to any nonzero value will enable Iroh's holepunching, loosely based in the Nat
     /// Traversal Extension for QUIC, see
@@ -544,9 +540,14 @@ impl QuicTransportConfig {
     }
 }
 
-/// Parameters governing incoming connections
+/// Parameters governing incoming connections.
 ///
 /// Default values should be suitable for most internet applications.
+///
+/// To create a [`ServerConfig`] compatible with your [`Endpoint`] identity, use the [`Endpoint::create_server_config`] method.
+///
+/// [`Endpoint`]: crate::Endpoint
+/// [`Endpoint::create_server_config`]: crate::Endpoint::create_server_config
 // Note: used in `iroh::endpoint::connection::Incoming::accept_with`
 // This is new-typed since `quinn::ServerConfig` takes a `TransportConfig`, which we new-type as a `QuicTransportConfig`
 #[derive(Debug, Clone)]
@@ -556,44 +557,42 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
-    /// Transport configuration to use for incoming connections
-    pub fn transport(&self) -> QuicTransportConfig {
+    pub(crate) fn new(inner: quinn::ServerConfig, transport: QuicTransportConfig) -> Self {
+        Self { inner, transport }
+    }
+
+    pub(crate) fn to_inner_arc(&self) -> Arc<quinn::ServerConfig> {
+        Arc::new(self.inner.clone())
+    }
+
+    pub(crate) fn into_inner(self) -> quinn::ServerConfig {
+        self.inner
+    }
+
+    /// Transport configuration used for incoming connections.
+    pub fn transport_config(&self) -> QuicTransportConfig {
         self.transport.clone()
     }
 
-    /// TLS configuration used for incoming connections
-    ///
-    /// Must be set to use TLS 1.3 only.
+    /// TLS configuration used for incoming connections.
     pub fn crypto(&self) -> Arc<dyn CryptoServerConfig> {
         self.inner.crypto.clone()
     }
 
-    /// Configuration for sending and handling validation tokens
+    /// Configuration for sending and handling validation tokens.
     pub fn validation_token(&self) -> ValidationTokenConfig {
         self.inner.validation_token.clone()
     }
 
-    pub(crate) fn to_arc(&self) -> Arc<quinn::ServerConfig> {
-        Arc::new(self.inner.clone())
-    }
-
-    /// Create a default config with a particular handshake token key
-    pub fn new(crypto: Arc<dyn CryptoServerConfig>, token_key: Arc<dyn HandshakeTokenKey>) -> Self {
-        let mut inner = quinn::ServerConfig::new(crypto, token_key);
-        let transport = QuicTransportConfig::default();
-        inner.transport_config(transport.to_arc());
-        Self { inner, transport }
-    }
-
-    /// Set a custom [`QuicTransportConfig`]
-    pub fn transport_config(&mut self, transport: QuicTransportConfig) -> &mut Self {
-        self.inner.transport_config(transport.to_arc());
+    /// Sets a custom [`QuicTransportConfig`].
+    pub fn set_transport_config(&mut self, transport: QuicTransportConfig) -> &mut Self {
+        self.inner.transport_config(transport.to_inner_arc());
         self.transport = transport;
         self
     }
 
-    /// Set a custom [`ValidationTokenConfig`]
-    pub fn validation_token_config(
+    /// Sets a custom [`ValidationTokenConfig`].
+    pub fn set_validation_token_config(
         &mut self,
         validation_token: ValidationTokenConfig,
     ) -> &mut Self {
@@ -602,7 +601,7 @@ impl ServerConfig {
     }
 
     /// Private key used to authenticate data included in handshake tokens
-    pub fn token_key(&mut self, value: Arc<dyn HandshakeTokenKey>) -> &mut Self {
+    pub fn set_token_key(&mut self, value: Arc<dyn HandshakeTokenKey>) -> &mut Self {
         self.inner.token_key(value);
         self
     }
@@ -610,37 +609,21 @@ impl ServerConfig {
     /// Duration after a retry token was issued for which it's considered valid
     ///
     /// Defaults to 15 seconds.
-    pub fn retry_token_lifetime(&mut self, value: Duration) -> &mut Self {
+    pub fn set_retry_token_lifetime(&mut self, value: Duration) -> &mut Self {
         self.inner.retry_token_lifetime(value);
         self
     }
 
-    /// Whether to allow clients to migrate to new addresses
+    /// Whether to allow clients to migrate to new addresses.
     ///
     /// Improves behavior for clients that move between different internet connections or suffer NAT
     /// rebinding. Enabled by default.
-    pub fn migration(&mut self, value: bool) -> &mut Self {
+    pub fn set_migration(&mut self, value: bool) -> &mut Self {
         self.inner.migration(value);
         self
     }
 
-    /// The preferred IPv4 address that will be communicated to clients during handshaking
-    ///
-    /// If the client is able to reach this address, it will switch to it.
-    pub fn preferred_address_v4(&mut self, address: Option<SocketAddrV4>) -> &mut Self {
-        self.inner.preferred_address_v4(address);
-        self
-    }
-
-    /// The preferred IPv6 address that will be communicated to clients during handshaking
-    ///
-    /// If the client is able to reach this address, it will switch to it.
-    pub fn preferred_address_v6(&mut self, address: Option<SocketAddrV6>) -> &mut Self {
-        self.inner.preferred_address_v6(address);
-        self
-    }
-
-    /// Maximum number of [`Incoming`] to allow to exist at a time
+    /// Maximum number of [`Incoming`] to allow to exist at a time.
     ///
     /// An [`Incoming`] comes into existence when an incoming connection attempt
     /// is received and stops existing when the application either accepts it or otherwise disposes
@@ -653,12 +636,12 @@ impl ServerConfig {
     /// exhaustion in most contexts.
     ///
     /// [`Incoming`]: crate::endpoint::Incoming
-    pub fn max_incoming(&mut self, max_incoming: usize) -> &mut Self {
+    pub fn set_max_incoming(&mut self, max_incoming: usize) -> &mut Self {
         self.inner.max_incoming(max_incoming);
         self
     }
 
-    /// Maximum number of received bytes to buffer for each [`Incoming`]
+    /// Maximum number of received bytes to buffer for each [`Incoming`].
     ///
     /// An [`Incoming`] comes into existence when an incoming connection attempt
     /// is received and stops existing when the application either accepts it or otherwise disposes
@@ -671,13 +654,13 @@ impl ServerConfig {
     /// [`Incoming`].
     ///
     /// [`Incoming`]: crate::endpoint::Incoming
-    pub fn incoming_buffer_size(&mut self, incoming_buffer_size: u64) -> &mut Self {
+    pub fn set_incoming_buffer_size(&mut self, incoming_buffer_size: u64) -> &mut Self {
         self.inner.incoming_buffer_size(incoming_buffer_size);
         self
     }
 
     /// Maximum number of received bytes to buffer for all [`Incoming`]
-    /// collectively
+    /// collectively.
     ///
     /// An [`Incoming`] comes into existence when an incoming connection attempt
     /// is received and stops existing when the application either accepts it or otherwise disposes
@@ -689,31 +672,21 @@ impl ServerConfig {
     /// exhaustion in most contexts.
     ///
     /// [`Incoming`]: crate::endpoint::Incoming
-    pub fn incoming_buffer_size_total(&mut self, incoming_buffer_size_total: u64) -> &mut Self {
+    pub fn set_incoming_buffer_size_total(&mut self, incoming_buffer_size_total: u64) -> &mut Self {
         self.inner
             .incoming_buffer_size_total(incoming_buffer_size_total);
         self
     }
 
-    /// Object to get current [`SystemTime`]
+    /// Object to get current [`SystemTime`].
     ///
     /// This exists to allow system time to be mocked in tests, or wherever else desired.
     ///
     /// Defaults to [`quinn::StdSystemTime`], which simply calls [`SystemTime::now()`](std::time::SystemTime::now).
     ///
     /// [`SystemTime`]: std::time::SystemTime
-    pub fn time_source(&mut self, time_source: Arc<dyn TimeSource>) -> &mut Self {
+    pub fn set_time_source(&mut self, time_source: Arc<dyn TimeSource>) -> &mut Self {
         self.inner.time_source(time_source);
         self
-    }
-
-    /// Create a server config with the given [`CryptoServerConfig`]
-    ///
-    /// Uses a randomized handshake token key.
-    pub fn with_crypto(crypto: Arc<dyn CryptoServerConfig>) -> Self {
-        let mut inner = quinn::ServerConfig::with_crypto(crypto);
-        let transport = QuicTransportConfig::default();
-        inner.transport_config(transport.to_arc());
-        Self { inner, transport }
     }
 }

@@ -172,7 +172,9 @@ impl Builder {
             tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
             keylog: self.keylog,
         };
-        let server_config = static_config.create_server_config(self.alpn_protocols);
+        let server_config = static_config
+            .create_server_config(self.alpn_protocols)
+            .into_inner();
 
         #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
@@ -471,15 +473,15 @@ struct StaticConfig {
 }
 
 impl StaticConfig {
-    /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> quinn::ServerConfig {
+    /// Create a [`ServerConfig`] with the specified ALPN protocols.
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> ServerConfig {
         let quic_server_config = self
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
-        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(self.transport_config.to_arc());
+        let mut inner = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+        inner.transport_config(self.transport_config.to_inner_arc());
 
-        server_config
+        ServerConfig::new(inner, self.transport_config.clone())
     }
 }
 
@@ -602,7 +604,9 @@ impl Endpoint {
     /// Note that this *overrides* the current list of ALPNs.
     pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) {
         let server_config = self.static_config.create_server_config(alpns);
-        self.msock.endpoint().set_server_config(Some(server_config));
+        self.msock
+            .endpoint()
+            .set_server_config(Some(server_config.into_inner()));
     }
 
     /// Adds the provided configuration to the [`RelayMap`].
@@ -718,8 +722,8 @@ impl Endpoint {
 
         let transport_config = options
             .transport_config
-            .map(|cfg| cfg.to_arc())
-            .unwrap_or(self.static_config.transport_config.to_arc());
+            .map(|cfg| cfg.to_inner_arc())
+            .unwrap_or(self.static_config.transport_config.to_inner_arc());
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
@@ -1150,6 +1154,11 @@ impl Endpoint {
     /// Check if this endpoint is still alive, or already closed.
     pub fn is_closed(&self) -> bool {
         self.msock.is_closed()
+    }
+
+    /// Create a [`ServerConfig`] for this endpoint that includes the given alpns.
+    pub fn create_server_config(&self, alpns: Vec<Vec<u8>>) -> ServerConfig {
+        self.static_config.create_server_config(alpns)
     }
 
     // # Remaining private methods
