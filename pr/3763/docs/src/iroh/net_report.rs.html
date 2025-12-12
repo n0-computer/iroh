@@ -520,7 +520,7 @@
 <a href=#520 id=520 data-nosnippet>520</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>ipv4_pending = !v4_buf.is_empty();
 <a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">let </span><span class="kw-2">mut </span>ipv6_pending = !v6_buf.is_empty();
 <a href=#522 id=522 data-nosnippet>522</a>
-<a href=#523 id=523 data-nosnippet>523</a>        <span class="kw">while </span>!v4_buf.is_empty() &amp;&amp; !v6_buf.is_empty() {
+<a href=#523 id=523 data-nosnippet>523</a>        <span class="kw">while </span>!v4_buf.is_empty() || !v6_buf.is_empty() {
 <a href=#524 id=524 data-nosnippet>524</a>            <span class="comment">// We early-abort the tasks once we have at least `enough_relays` reports,
 <a href=#525 id=525 data-nosnippet>525</a>            // and at least one ipv4 and one ipv6 report completed (if they were started, see comment above).
 <a href=#526 id=526 data-nosnippet>526</a>
@@ -1025,7 +1025,7 @@
 <a href=#1025 id=1025 data-nosnippet>1025</a>            <span class="kw">let </span>cancel = CancellationToken::new();
 <a href=#1026 id=1026 data-nosnippet>1026</a>            <span class="macro">println!</span>(<span class="string">"--round {i}"</span>);
 <a href=#1027 id=1027 data-nosnippet>1027</a>            <span class="kw">let </span>r = client
-<a href=#1028 id=1028 data-nosnippet>1028</a>                .get_report(if_state.clone(), <span class="bool-val">false</span>, CancellationToken::new())
+<a href=#1028 id=1028 data-nosnippet>1028</a>                .get_report(if_state.clone(), <span class="bool-val">false</span>, cancel.child_token())
 <a href=#1029 id=1029 data-nosnippet>1029</a>                .<span class="kw">await</span>;
 <a href=#1030 id=1030 data-nosnippet>1030</a>
 <a href=#1031 id=1031 data-nosnippet>1031</a>            <span class="macro">assert!</span>(r.has_udp(), <span class="string">"want UDP"</span>);
