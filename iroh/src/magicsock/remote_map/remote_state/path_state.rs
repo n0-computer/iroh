@@ -62,27 +62,25 @@ impl RemotePathState {
             metrics,
         }
     }
+
     pub(super) fn to_remote_addrs(&self) -> Vec<TransportAddrInfo> {
         self.paths
             .iter()
             .flat_map(|(addr, state)| {
                 let usage = match state.status {
                     PathStatus::Open => TransportAddrUsage::Active,
-                    PathStatus::Inactive(instant) => {
-                        TransportAddrUsage::Inactive { last_used: instant }
+                    PathStatus::Inactive(_) | PathStatus::Unusable | PathStatus::Unknown => {
+                        TransportAddrUsage::Inactive
                     }
-                    PathStatus::Unusable => TransportAddrUsage::Unusable,
-                    PathStatus::Unknown => TransportAddrUsage::Unknown,
                 };
-                let last_source = state.sources.iter().max_by(|a, b| a.1.cmp(b.1))?;
                 Some(TransportAddrInfo {
                     addr: addr.clone().into(),
                     usage,
-                    most_recent_source: last_source.0.clone(),
                 })
             })
             .collect()
     }
+
     /// Insert a new address of an open path into our list of paths.
     ///
     /// This will emit pending resolve requests and trigger pruning paths.

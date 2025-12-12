@@ -1,11 +1,12 @@
-use std::collections::BTreeSet;
-
-use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
-use n0_future::time::Instant;
-
-use crate::endpoint::Source;
+use iroh_base::{EndpointId, TransportAddr};
 
 /// Information about a remote endpoint.
+///
+/// This information is a snapshot in time, i.e. it is not updating and may
+/// already be outdated by the time you are reading this. Updated information
+/// can only be retrieved by calling [`Endpoint::remote_info`] again.
+///
+/// [`Endpoint::remote_info`]: crate::Endpoint::remote_info
 #[derive(Debug, Clone)]
 pub struct RemoteInfo {
     pub(super) endpoint_id: EndpointId,
@@ -27,23 +28,23 @@ impl RemoteInfo {
 
     /// Converts into an iterator over known all addresses for this remote.
     ///
-    /// Note that this may include outdated or unusable addresses.
+    /// Note that this may include outdated or unusable addresses. You can use [`TransportAddrInfo::usage`]
+    /// to filter for addresses that are actively used.
+    ///
+    /// You can use this to construct an [`EndpointAddr`] for this remote:
+    ///
+    /// ```no_run
+    /// # use iroh::{Endpoint, EndpointId, EndpointAddr};
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// # let endpoint = Endpoint::bind().await.unwrap();
+    /// # let remote_id = EndpointId::from_bytes(&[0u8; 32]).unwrap();
+    /// let info = endpoint.remote_info(remote_id).unwrap();
+    /// let addr = EndpointAddr::from_parts(info.id(), info.into_addrs().map(|addr| addr.into_addr()));
+    /// # }
+    /// ```
     pub fn into_addrs(self) -> impl Iterator<Item = TransportAddrInfo> {
         self.addrs.into_iter()
-    }
-
-    /// Returns a [`EndpointAddr`] that includes all addresses that are not [`TransportAddrUsage::Unusable`].
-    pub fn into_endpoint_addr(self) -> EndpointAddr {
-        let addrs = self
-            .addrs
-            .into_iter()
-            .filter(|a| !matches!(a.usage(), TransportAddrUsage::Unusable))
-            .map(|a| a.addr);
-
-        EndpointAddr {
-            id: self.endpoint_id,
-            addrs: BTreeSet::from_iter(addrs),
-        }
     }
 }
 
@@ -52,7 +53,6 @@ impl RemoteInfo {
 pub struct TransportAddrInfo {
     pub(super) addr: TransportAddr,
     pub(super) usage: TransportAddrUsage,
-    pub(super) most_recent_source: Source,
 }
 
 impl TransportAddrInfo {
@@ -70,28 +70,20 @@ impl TransportAddrInfo {
     pub fn usage(&self) -> TransportAddrUsage {
         self.usage
     }
+}
 
-    /// Returns the most recent source of this address.
-    ///
-    /// We may learn about new addresses from multiple sources. This returns the most recent source
-    /// that told us about this address.
-    pub fn most_recent_source(&self) -> &Source {
-        &self.most_recent_source
+impl From<TransportAddrInfo> for TransportAddr {
+    fn from(value: TransportAddrInfo) -> Self {
+        value.addr
     }
 }
 
 /// Information how a transport address is used.
 #[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
 pub enum TransportAddrUsage {
     /// The address is in active use.
     Active,
-    /// The address was used, but is not currently.
-    Inactive {
-        /// Time when this address was last used.
-        last_used: Instant,
-    },
-    /// We tried to use this address, but failed.
-    Unusable,
-    /// We have not tried to use this address.
-    Unknown,
+    /// The address is not currently used.
+    Inactive,
 }
