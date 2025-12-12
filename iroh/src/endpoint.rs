@@ -23,6 +23,31 @@ use n0_watcher::Watcher;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+use self::hooks::EndpointHooksList;
+pub use super::magicsock::{
+    DirectAddr, DirectAddrType, PathInfo,
+    remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
+};
+#[cfg(wasm_browser)]
+use crate::discovery::pkarr::PkarrResolver;
+#[cfg(not(wasm_browser))]
+use crate::dns::DnsResolver;
+use crate::{
+    NetReport,
+    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
+    endpoint::presets::Preset,
+    magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
+    metrics::EndpointMetrics,
+    tls::{self, DEFAULT_MAX_TLS_TICKETS},
+};
+
+mod connection;
+pub(crate) mod hooks;
+pub mod presets;
+mod quic;
+
+pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
+
 #[cfg(feature = "qlog")]
 pub use self::quic::{QlogConfig, QlogFactory, QlogFileFactory};
 pub use self::{
@@ -32,7 +57,6 @@ pub use self::{
         IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
         RemoteEndpointIdError, ZeroRttStatus,
     },
-    hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks},
     quic::{
         AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
         ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
@@ -44,28 +68,7 @@ pub use self::{
         VarIntBoundsExceeded, WeakConnectionHandle, WriteError, Written,
     },
 };
-use self::{hooks::EndpointHooksList, presets::Preset};
-#[cfg(wasm_browser)]
-use crate::discovery::pkarr::PkarrResolver;
-#[cfg(not(wasm_browser))]
-use crate::dns::DnsResolver;
-pub use crate::magicsock::{
-    DirectAddr, DirectAddrType, PathInfo,
-    remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
-    transports::TransportConfig,
-};
-use crate::{
-    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
-    magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
-    metrics::EndpointMetrics,
-    net_report::Report,
-    tls::{self, DEFAULT_MAX_TLS_TICKETS},
-};
-
-mod connection;
-pub(crate) mod hooks;
-pub mod presets;
-mod quic;
+pub use crate::magicsock::transports::TransportConfig;
 
 /// Builder for [`Endpoint`].
 ///
@@ -864,8 +867,8 @@ impl Endpoint {
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
-    /// [`crate::net_report::TIMEOUT`], so you can be sure that at least one
-    /// [`crate::net_report::Report`] has been attempted.
+    /// [`crate::NET_REPORT_TIMEOUT`]s, so you can be sure that at least one
+    /// [`crate::NetReport`] has been attempted.
     ///
     /// To understand if the endpoint has gone back "offline",
     /// you must use the [`Endpoint::watch_addr`] method, to
@@ -903,7 +906,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<NetReport>> + use<> {
         self.msock.net_report()
     }
 

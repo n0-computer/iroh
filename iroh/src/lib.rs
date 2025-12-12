@@ -266,7 +266,7 @@ pub mod discovery;
 pub mod dns;
 pub mod endpoint;
 pub mod metrics;
-pub mod net_report;
+mod net_report;
 pub mod protocol;
 
 pub use endpoint::{Endpoint, RelayMode};
@@ -276,6 +276,7 @@ pub use iroh_base::{
 };
 pub use iroh_relay::{RelayConfig, RelayMap, endpoint_info};
 pub use n0_watcher::Watcher;
+pub use net_report::{Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
