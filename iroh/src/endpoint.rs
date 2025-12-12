@@ -71,7 +71,7 @@ pub use self::{
         VarIntBoundsExceeded, WriteError, Written,
     },
 };
-pub use crate::magicsock::transports::TransportConfig;
+pub use crate::magicsock::{CreateHandleError, transports::TransportConfig};
 
 /// Builder for [`Endpoint`].
 ///

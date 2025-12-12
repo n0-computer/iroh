@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, hash_map},
     hash::Hash,
-    net::{IpAddr, SocketAddr},
+    // net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -208,40 +208,3 @@ pub enum Source {
 /// Helper to ensure certain `Source` variants can not be constructed externally.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
 struct Private;
-
-/// An (Ip, Port) pair.
-///
-/// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
-/// addresses include fields that can't be assumed consistent even within a single connection.
-#[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[display("{}", SocketAddr::from(*self))]
-pub struct IpPort {
-    ip: IpAddr,
-    port: u16,
-}
-
-impl From<SocketAddr> for IpPort {
-    fn from(socket_addr: SocketAddr) -> Self {
-        Self {
-            ip: socket_addr.ip(),
-            port: socket_addr.port(),
-        }
-    }
-}
-
-impl From<IpPort> for SocketAddr {
-    fn from(ip_port: IpPort) -> Self {
-        let IpPort { ip, port } = ip_port;
-        (ip, port).into()
-    }
-}
-
-impl IpPort {
-    pub fn ip(&self) -> &IpAddr {
-        &self.ip
-    }
-
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-}
