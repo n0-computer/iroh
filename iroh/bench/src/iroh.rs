@@ -6,7 +6,10 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
-    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
+    endpoint::{
+        Connection, ConnectionError, QuicTransportConfig, QuicTransportConfigBuilder, RecvStream,
+        SendStream,
+    },
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
@@ -125,18 +128,18 @@ pub async fn connect_client(
 pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuicTransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
-    let mut config = QuicTransportConfig::default();
-    config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
-    config.initial_mtu(initial_mtu);
+    let mut builder = QuicTransportConfigBuilder::default();
+    builder.max_concurrent_uni_streams(max_streams.try_into().unwrap());
+    builder.initial_mtu(initial_mtu);
 
     let mut acks = quinn::AckFrequencyConfig::default();
     acks.ack_eliciting_threshold(10u32.into());
-    config.ack_frequency_config(Some(acks));
+    builder.ack_frequency_config(Some(acks));
 
     #[cfg(feature = "qlog")]
-    config.qlog_from_env("bench-iroh");
+    builder.qlog_from_env("bench-iroh");
 
-    config
+    builder.build()
 }
 
 async fn drain_stream(
