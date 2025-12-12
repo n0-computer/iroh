@@ -1577,7 +1577,7 @@
 <a href=#1577 id=1577 data-nosnippet>1577</a>                .make_server_config(<span class="macro">vec!</span>[], <span class="bool-val">false</span>);
 <a href=#1578 id=1578 data-nosnippet>1578</a>        <span class="kw">let </span><span class="kw-2">mut </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
 <a href=#1579 id=1579 data-nosnippet>1579</a>        <span class="kw">let </span>transport = QuicTransportConfig::default();
-<a href=#1580 id=1580 data-nosnippet>1580</a>        server_config.transport_config(transport.to_arc());
+<a href=#1580 id=1580 data-nosnippet>1580</a>        server_config.transport_config(transport.to_inner_arc());
 <a href=#1581 id=1581 data-nosnippet>1581</a>        server_config
 <a href=#1582 id=1582 data-nosnippet>1582</a>    }
 <a href=#1583 id=1583 data-nosnippet>1583</a>
