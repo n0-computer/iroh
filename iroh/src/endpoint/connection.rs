@@ -21,6 +21,7 @@ use std::{
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr},
     pin::Pin,
+    sync::Arc,
     task::Poll,
 };
 
@@ -102,12 +103,20 @@ impl Incoming {
 
     /// Accepts this incoming connection using a custom configuration.
     ///
+    /// Use the [`Endpoint::create_server_config`] method to create a [`ServerConfig`]
+    /// that can be customized.
+    ///
     /// See [`accept()`] for more details.
     ///
     /// [`accept()`]: Incoming::accept
-    pub fn accept_with(self, server_config: ServerConfig) -> Result<Accepting, ConnectionError> {
+    /// [`Endpoint::create_server_config`]: crate::Endpoint::create_server_config
+    /// [`ServerConfig`]: crate::endpoint::ServerConfig
+    pub fn accept_with(
+        self,
+        server_config: Arc<ServerConfig>,
+    ) -> Result<Accepting, ConnectionError> {
         self.inner
-            .accept_with(server_config.to_arc())
+            .accept_with(server_config.to_inner_arc())
             .map(|conn| Accepting::new(conn, self.ep))
     }
 

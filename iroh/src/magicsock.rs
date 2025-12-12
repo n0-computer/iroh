@@ -1589,7 +1589,7 @@ mod tests {
                 .make_server_config(vec![], false);
         let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         let transport = QuicTransportConfig::default();
-        server_config.transport_config(transport.to_arc());
+        server_config.transport_config(transport.to_inner_arc());
         server_config
     }
 
