@@ -155,6 +155,8 @@ pub(crate) struct Handle {
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
     /// Token to cancel the actor task and shutdown the relay transport.
     shutdown_token: CancellationToken,
+    /// Token to cancel running netreports.
+    shutdown_token_netreport: CancellationToken,
     // quinn endpoint
     endpoint: quinn::Endpoint,
 }
@@ -699,28 +701,29 @@ impl DirectAddrUpdateState {
 
         // Ensure that reports are cancelled when we shutdown
         let token = self.shutdown_token.child_token();
+        let inner_token = token.child_token();
         task::spawn(
             async move {
-                token
-                    .run_until_cancelled(async move {
-                        let fut = time::timeout(
-                            NET_REPORT_TIMEOUT,
-                            net_reporter.get_report(if_state, why.is_major()),
-                        );
-                        match fut.await {
-                            Ok(report) => {
-                                msock.net_report.set((Some(report), why)).ok();
-                            }
-                            Err(time::Elapsed { .. }) => {
-                                warn!("net_report report timed out");
-                            }
-                        }
+                let fut = token.run_until_cancelled(time::timeout(
+                    NET_REPORT_TIMEOUT,
+                    net_reporter.get_report(if_state, why.is_major(), inner_token),
+                ));
 
-                        // mark run as finished
-                        debug!("direct addr update done ({:?})", why);
-                        run_done.send(()).await.ok();
-                    })
-                    .await
+                match fut.await {
+                    Some(Ok(report)) => {
+                        msock.net_report.set((Some(report), why)).ok();
+                    }
+                    Some(Err(time::Elapsed { .. })) => {
+                        warn!("net_report report timed out");
+                    }
+                    None => {
+                        trace!("net_report cancelled");
+                    }
+                }
+
+                // mark run as finished
+                debug!("direct addr update done ({:?})", why);
+                run_done.send(()).await.ok();
             }
             .instrument(tracing::Span::current()),
         );
@@ -933,6 +936,7 @@ impl Handle {
         );
 
         let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
+        let shutdown_token_netreport = CancellationToken::new();
         let direct_addr_update_state = DirectAddrUpdateState::new(
             msock.clone(),
             #[cfg(not(wasm_browser))]
@@ -940,7 +944,7 @@ impl Handle {
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
             direct_addr_done_tx,
-            shutdown_token.child_token(),
+            shutdown_token_netreport.clone(),
         );
 
         let netmon_watcher = network_monitor.interface_state();
@@ -973,6 +977,7 @@ impl Handle {
             actor_task,
             endpoint,
             shutdown_token,
+            shutdown_token_netreport,
         })
     }
 
@@ -1005,6 +1010,9 @@ impl Handle {
             return;
         }
 
+        // Cancel any running netreports
+        self.shutdown_token_netreport.cancel();
+
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
 
@@ -1023,7 +1031,9 @@ impl Handle {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+        trace!("wait_idle start");
         self.endpoint.wait_idle().await;
+        trace!("wait_idle done");
 
         // Start cancellation of all actors
         self.shutdown_token.cancel();

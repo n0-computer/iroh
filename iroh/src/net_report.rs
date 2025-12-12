@@ -201,7 +201,7 @@ impl QadConns {
 struct QadConn {
     conn: quinn::Connection,
     observer: Watchable<Option<QadProbeReport>>,
-    _handle: AbortOnDropHandle<()>,
+    _handle: AbortOnDropHandle<Option<()>>,
 }
 
 #[derive(Debug)]
@@ -267,7 +267,12 @@ impl Client {
     /// Generates a [`Report`].
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub(crate) async fn get_report(&mut self, if_state: IfStateDetails, is_major: bool) -> Report {
+    pub(crate) async fn get_report(
+        &mut self,
+        if_state: IfStateDetails,
+        is_major: bool,
+        shutdown_token: CancellationToken,
+    ) -> Report {
         let now = Instant::now();
 
         let mut do_full = is_major
@@ -312,6 +317,7 @@ impl Client {
             self.relay_map.clone(),
             self.probes.clone(),
             if_state.clone(),
+            shutdown_token.child_token(),
             #[cfg(not(wasm_browser))]
             self.socket_state.clone(),
             #[cfg(any(test, feature = "test-utils"))]
@@ -320,7 +326,12 @@ impl Client {
 
         #[cfg(not(wasm_browser))]
         let reports = self
-            .spawn_qad_probes(&if_state, enough_relays, do_full)
+            .spawn_qad_probes(
+                &if_state,
+                enough_relays,
+                do_full,
+                shutdown_token.child_token(),
+            )
             .await;
 
         #[cfg(not(wasm_browser))]
@@ -407,6 +418,7 @@ impl Client {
         if_state: &IfStateDetails,
         enough_relays: usize,
         do_full: bool,
+        shutdown_token: CancellationToken,
     ) -> Vec<ProbeReport> {
         use tracing::{Instrument, warn_span};
 
@@ -458,9 +470,9 @@ impl Client {
         const MAX_RELAYS: usize = 5;
 
         let mut v4_buf = JoinSet::new();
-        let cancel_v4 = CancellationToken::new();
+        let cancel_v4 = shutdown_token.child_token();
         let mut v6_buf = JoinSet::new();
-        let cancel_v6 = CancellationToken::new();
+        let cancel_v6 = shutdown_token.child_token();
 
         let relays = self.relay_map.relays::<Vec<_>>();
         for relay in relays.into_iter().take(MAX_RELAYS) {
@@ -470,12 +482,13 @@ impl Client {
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
                 let relay_url = relay.url.clone();
+                let inner_token = cancel_v4.child_token();
                 v4_buf.spawn(
                     cancel_v4
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v4(relay, quic_client, dns_resolver),
+                            run_probe_v4(relay, quic_client, dns_resolver, inner_token),
                         ))
                         .instrument(warn_span!("QADv4", %relay_url)),
                 );
@@ -486,12 +499,13 @@ impl Client {
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
                 let relay_url = relay.url.clone();
+                let inner_token = cancel_v6.child_token();
                 v6_buf.spawn(
                     cancel_v6
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v6(relay, quic_client, dns_resolver),
+                            run_probe_v6(relay, quic_client, dns_resolver, inner_token),
                         ))
                         .instrument(warn_span!("QADv6", %relay_url)),
                 );
@@ -518,6 +532,11 @@ impl Client {
 
             tokio::select! {
                 biased;
+
+                _ = shutdown_token.cancelled() => {
+                    trace!("qad report cancelled");
+                    break;
+                }
 
                 val = v4_buf.join_next(), if !v4_buf.is_empty() => {
                     let span = warn_span!("QADv4");
@@ -553,7 +572,9 @@ impl Client {
                         Some(Ok(Some(Err(time::Elapsed { .. })))) => {
                             debug!("probe timed out");
                         }
-                        None => {}
+                        None => {
+                            debug!("report canceled");
+                        }
                     }
                 }
                 val = v6_buf.join_next(), if !v6_buf.is_empty() => {
@@ -590,7 +611,9 @@ impl Client {
                         Some(Ok(Some(Err(time::Elapsed { .. })))) => {
                             debug!("probe timed out");
                         }
-                        None => {}
+                        None => {
+                            debug!("report canceled");
+                        }
                     }
                 }
                 else => {
@@ -598,6 +621,10 @@ impl Client {
                 }
             }
         }
+
+        // make sure to cancel all outstanding reports
+        v4_buf.abort_all();
+        v6_buf.abort_all();
 
         reports
     }
@@ -772,6 +799,7 @@ async fn run_probe_v4(
     relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
+    shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
     use quinn_proto::PathId;
 
@@ -805,7 +833,7 @@ async fn run_probe_v4(
 
     let observer = Watchable::new(None);
     let endpoint = relay.url.clone();
-    let handle = task::spawn({
+    let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
         let conn = conn.clone();
         let observer = observer.clone();
         async move {
@@ -827,7 +855,7 @@ async fn run_probe_v4(
                 }
             }
         }
-    });
+    }));
     let handle = AbortOnDropHandle::new(handle);
 
     Ok((
@@ -845,6 +873,7 @@ async fn run_probe_v6(
     relay: Arc<RelayConfig>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
+    shutdown_token: CancellationToken,
 ) -> n0_error::Result<(QadProbeReport, QadConn), QadProbeError> {
     use quinn_proto::PathId;
 
@@ -878,7 +907,7 @@ async fn run_probe_v6(
 
     let observer = Watchable::new(None);
     let endpoint = relay.url.clone();
-    let handle = task::spawn({
+    let handle = task::spawn(shutdown_token.run_until_cancelled_owned({
         let observer = observer.clone();
         let conn = conn.clone();
         async move {
@@ -900,7 +929,7 @@ async fn run_probe_v6(
                 }
             }
         }
-    });
+    }));
     let handle = AbortOnDropHandle::new(handle);
 
     Ok((
@@ -994,7 +1023,9 @@ mod tests {
         for i in 0..5 {
             let cancel = CancellationToken::new();
             println!("--round {i}");
-            let r = client.get_report(if_state.clone(), false).await;
+            let r = client
+                .get_report(if_state.clone(), false, CancellationToken::new())
+                .await;
 
             assert!(r.has_udp(), "want UDP");
             dbg!(&r);

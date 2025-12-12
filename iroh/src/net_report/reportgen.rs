@@ -122,6 +122,7 @@ impl Client {
         relay_map: RelayMap,
         protocols: BTreeSet<Probe>,
         if_state: IfStateDetails,
+        shutdown_token: CancellationToken,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
         #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
     ) -> (Self, mpsc::Receiver<ProbeFinished>) {
@@ -137,7 +138,11 @@ impl Client {
             insecure_skip_relay_cert_verify,
             if_state,
         };
-        let task = task::spawn(actor.run().instrument(warn_span!("reportgen-actor")));
+        let task = task::spawn(
+            actor
+                .run(shutdown_token)
+                .instrument(warn_span!("reportgen-actor")),
+        );
         (
             Self {
                 _drop_guard: AbortOnDropHandle::new(task),
@@ -195,13 +200,17 @@ pub(super) enum ProbeFinished {
 }
 
 impl Actor {
-    async fn run(self) {
-        match time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
-            Ok(()) => trace!("reportgen actor finished"),
-            Err(time::Elapsed { .. }) => {
-                warn!("reportgen timed out");
-            }
-        }
+    async fn run(self, shutdown_token: CancellationToken) {
+        shutdown_token
+            .run_until_cancelled_owned(async {
+                match time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
+                    Ok(()) => trace!("reportgen actor finished"),
+                    Err(time::Elapsed { .. }) => {
+                        warn!("reportgen timed out");
+                    }
+                }
+            })
+            .await;
     }
 
     /// Runs the main reportgen actor logic.
@@ -895,9 +904,10 @@ mod tests {
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
         let dns_resolver = DnsResolver::default();
 
-        let (report, conn) = super::super::run_probe_v4(relay, quic_client, dns_resolver)
-            .await
-            .unwrap();
+        let (report, conn) =
+            super::super::run_probe_v4(relay, quic_client, dns_resolver, CancellationToken::new())
+                .await
+                .unwrap();
 
         assert_eq!(report.addr, client_addr);
         drop(conn);
