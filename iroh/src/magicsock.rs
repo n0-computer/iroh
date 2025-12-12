@@ -153,12 +153,35 @@ pub(crate) struct Handle {
     msock: Arc<MagicSock>,
     // empty when shutdown
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
-    /// Token to cancel the actor task and shutdown the relay transport.
-    shutdown_token: CancellationToken,
-    /// Token to cancel running netreports.
-    shutdown_token_netreport: CancellationToken,
     // quinn endpoint
     endpoint: quinn::Endpoint,
+}
+
+#[derive(Debug)]
+struct ShutdownState {
+    at_close_start: CancellationToken,
+    at_endpoint_closed: CancellationToken,
+    closed: AtomicBool,
+}
+
+impl Default for ShutdownState {
+    fn default() -> Self {
+        Self {
+            at_close_start: CancellationToken::new(),
+            at_endpoint_closed: CancellationToken::new(),
+            closed: AtomicBool::new(false),
+        }
+    }
+}
+
+impl ShutdownState {
+    fn is_closing(&self) -> bool {
+        self.at_close_start.is_cancelled()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Relaxed)
+    }
 }
 
 /// Iroh connectivity layer.
@@ -178,11 +201,8 @@ pub(crate) struct MagicSock {
     /// EndpointId of this endpoint.
     public_key: PublicKey,
 
-    // - State Management
-    /// Close is in progress (or done)
-    closing: AtomicBool,
-    /// Close was called.
-    closed: AtomicBool,
+    // - Shutdown Management
+    shutdown: ShutdownState,
 
     // - Networking Info
     /// Our discovered direct addresses.
@@ -234,12 +254,12 @@ impl MagicSock {
         })
     }
 
-    fn is_closing(&self) -> bool {
-        self.closing.load(Ordering::SeqCst)
+    pub(crate) fn is_closed(&self) -> bool {
+        self.shutdown.is_closed()
     }
 
-    pub(crate) fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::SeqCst)
+    fn is_closing(&self) -> bool {
+        self.shutdown.is_closing()
     }
 
     /// Get the cached version of addresses.
@@ -682,7 +702,7 @@ impl DirectAddrUpdateState {
         debug!("starting direct addr update ({:?})", why);
         // Don't start a net report probe if we know
         // we are shutting down
-        if self.msock.is_closing() || self.msock.is_closed() || self.shutdown_token.is_cancelled() {
+        if self.shutdown_token.is_cancelled() {
             debug!("skipping net_report, socket is shutting down");
             // deactivate portmapper
             self.port_mapper.deactivate();
@@ -861,9 +881,8 @@ impl Handle {
 
         let msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
-            closing: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
             actor_sender: actor_sender.clone(),
+            shutdown: ShutdownState::default(),
             ipv6_reported,
             remote_map,
             discovery,
@@ -939,7 +958,6 @@ impl Handle {
         );
 
         let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
-        let shutdown_token_netreport = CancellationToken::new();
         let direct_addr_update_state = DirectAddrUpdateState::new(
             msock.clone(),
             #[cfg(not(wasm_browser))]
@@ -947,7 +965,7 @@ impl Handle {
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
             direct_addr_done_tx,
-            shutdown_token_netreport.clone(),
+            msock.shutdown.at_close_start.child_token(),
         );
 
         let netmon_watcher = network_monitor.interface_state();
@@ -979,8 +997,6 @@ impl Handle {
             msock,
             actor_task,
             endpoint,
-            shutdown_token,
-            shutdown_token_netreport,
         })
     }
 
@@ -1003,18 +1019,8 @@ impl Handle {
             return;
         }
 
-        // Only set closing if not already set
-        if self
-            .msock
-            .closing
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            return;
-        }
-
-        // Cancel any running netreports
-        self.shutdown_token_netreport.cancel();
+        // Cancel at_close_start token, which cancels running netreports.
+        self.msock.shutdown.at_close_start.cancel();
 
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
@@ -1039,7 +1045,7 @@ impl Handle {
         trace!("wait_idle done");
 
         // Start cancellation of all actors
-        self.shutdown_token.cancel();
+        self.msock.shutdown.at_endpoint_closed.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
@@ -1060,7 +1066,7 @@ impl Handle {
             }
         }
 
-        self.msock.closed.store(true, Ordering::SeqCst);
+        self.msock.shutdown.closed.store(true, Ordering::SeqCst);
 
         trace!("magicsock closed");
     }
