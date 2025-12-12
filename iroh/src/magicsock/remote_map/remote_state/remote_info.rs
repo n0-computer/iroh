@@ -43,6 +43,8 @@ impl RemoteInfo {
     /// let addr = EndpointAddr::from_parts(info.id(), info.into_addrs().map(|addr| addr.into_addr()));
     /// # }
     /// ```
+    ///
+    /// [`EndpointAddr`]: crate::EndpointAddr
     pub fn into_addrs(self) -> impl Iterator<Item = TransportAddrInfo> {
         self.addrs.into_iter()
     }
