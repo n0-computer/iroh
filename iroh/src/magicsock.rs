@@ -69,10 +69,7 @@ pub(crate) mod mapped_addrs;
 pub(crate) mod remote_map;
 pub(crate) mod transports;
 
-use self::{
-    mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
-    transports::Addr,
-};
+use self::mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
 pub use self::{metrics::Metrics, remote_map::PathInfo};
 
 // TODO: Use this
@@ -439,28 +436,6 @@ impl MagicSock {
             .ok();
     }
 
-    #[cfg_attr(windows, allow(dead_code))]
-    fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs = self.local_addrs_watch.peek();
-
-        let mut ipv4_addr = None;
-        for addr in addrs {
-            match addr {
-                Addr::Ip(addr @ SocketAddr::V6(_)) => {
-                    return Ok(*addr);
-                }
-                Addr::Ip(addr @ SocketAddr::V4(_)) if ipv4_addr.is_none() => {
-                    ipv4_addr.replace(*addr);
-                }
-                _ => {}
-            }
-        }
-        match ipv4_addr {
-            Some(addr) => Ok(addr),
-            None => Err(io::Error::other("no valid socket available")),
-        }
-    }
-
     /// Process datagrams received from all the transports.
     ///
     /// All the `bufs` and `metas` should have initialized packets in them.
@@ -481,24 +456,6 @@ impl MagicSock {
             source_addrs.len(),
             "non matching bufs & source_addrs"
         );
-
-        // Adding the IP address we received something on results in Quinn using this
-        // address on the send path to send from.  However we let Quinn use a
-        // EndpointIdMappedAddress, not a real address.  So we used to substitute our bind address
-        // here so that Quinn would send on the right address.  But that would sometimes
-        // result in the wrong address family and Windows trips up on that.
-        //
-        // What should be done is that this dst_ip from the RecvMeta is stored in the
-        // RemoteState/PathState.  Then on the send path it should be retrieved from the
-        // RemoteState/PathState together with the send address and substituted at send time.
-        // This is relevant for IPv6 link-local addresses where the OS otherwise does not
-        // know which interface to send from.
-        #[cfg(not(windows))]
-        let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-        // Reasoning for this here:
-        // https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
-        #[cfg(windows)]
-        let dst_ip = None;
 
         // zip is slow :(
         for i in 0..metas.len() {
@@ -549,9 +506,6 @@ impl MagicSock {
                     quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
             }
-
-            // Normalize local_ip
-            quinn_meta.dst_ip = dst_ip;
         }
     }
 
