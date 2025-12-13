@@ -416,7 +416,7 @@ impl RouterBuilder {
     }
 
     /// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
-    #[must_use = "The router shuts down when dropped"]
+    #[must_use = "Router aborts when dropped, use Router::shutdown to shut the router down cleanly"]
     pub fn spawn(self) -> Router {
         // Update the endpoint with our alpns.
         let alpns = self
