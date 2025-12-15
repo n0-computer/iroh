@@ -49,6 +49,9 @@ use crate::{
 /// attempted more frequently than at this interval.
 const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
+/// How often are we checking if we still have a good connection.
+const CHECK_CONNECTIONS_INTERVAL: Duration = Duration::from_secs(5);
+
 mod guarded_channel;
 mod path_state;
 mod remote_info;
@@ -164,6 +167,9 @@ pub(super) struct RemoteStateActor {
     paths: RemotePathState,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
+    /// If we have any indication that we want to holepunch asap.
+    needs_holepunching: Watchable<bool>,
+
     /// The path we currently consider the preferred path to the remote endpoint.
     ///
     /// **We expect this path to work.** If we become aware this path is broken then it is
@@ -211,6 +217,7 @@ impl RemoteStateActor {
             addr_events: Default::default(),
             paths: RemotePathState::new(metrics),
             last_holepunch: None,
+            needs_holepunching: Default::default(),
             selected_path: Default::default(),
             scheduled_holepunch: None,
             scheduled_open_path: None,
@@ -254,6 +261,8 @@ impl RemoteStateActor {
         trace!("actor started");
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
+        let mut needs_holepunching_watcher = self.needs_holepunching.watch();
+
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -270,6 +279,9 @@ impl RemoteStateActor {
                     .as_mut()
                     .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
             }
+            let check_connections = time::interval(CHECK_CONNECTIONS_INTERVAL);
+            n0_future::pin!(check_connections);
+
             tokio::select! {
                 biased;
 
@@ -288,7 +300,7 @@ impl RemoteStateActor {
                 }
                 Some((id, evt)) = self.addr_events.next() => {
                     trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
-                    self.trigger_holepunching().await;
+                    self.trigger_holepunching();
                 }
                 Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
                     self.handle_connection_close(conn_id);
@@ -300,7 +312,7 @@ impl RemoteStateActor {
                     }
                     self.local_addrs_updated();
                     trace!("local addrs updated, triggering holepunching");
-                    self.trigger_holepunching().await;
+                    self.trigger_holepunching();
                 }
                 _ = &mut scheduled_path_open => {
                     trace!("triggering scheduled path_open");
@@ -313,10 +325,18 @@ impl RemoteStateActor {
                 _ = &mut scheduled_hp => {
                     trace!("triggering scheduled holepunching");
                     self.scheduled_holepunch = None;
-                    self.trigger_holepunching().await;
+                    self.trigger_holepunching();
                 }
                 item = self.discovery_stream.next() => {
                     self.handle_discovery_item(item);
+                }
+                need_hp = needs_holepunching_watcher.updated() => {
+                    if matches!(need_hp, Ok(true)) {
+                        self.trigger_holepunching();
+                    }
+                }
+                _ = check_connections.tick() => {
+                    self.check_connections();
                 }
                 _ = &mut idle_timeout => {
                     if self.connections.is_empty() && inbox.close_if_idle() {
@@ -343,7 +363,7 @@ impl RemoteStateActor {
                 self.handle_msg_send_datagram(sender, transmit).await;
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
-                self.handle_msg_add_connection(handle, tx).await;
+                self.handle_msg_add_connection(handle, tx);
             }
             RemoteStateMessage::ResolveRemote(addrs, tx) => {
                 self.handle_msg_resolve_remote(addrs, tx);
@@ -356,6 +376,22 @@ impl RemoteStateActor {
                 };
                 tx.send(info).ok();
             }
+        }
+    }
+
+    /// Handles regularly checking if any paths need hole punching currently
+    fn check_connections(&mut self) {
+        let mut is_goodenough = true;
+        for conn in self.connections.values() {
+            // If we have at least 1 non relay path, we consider the connection good enough for now
+            // TODO: evaluate other criteria, like current RTT etc
+            let is_conn_goodenough = conn.open_paths.iter().any(|(_, addr)| !addr.is_relay());
+            is_goodenough &= is_conn_goodenough;
+        }
+
+        if !is_goodenough {
+            debug!("connections are not good enough, noting holepunch");
+            self.trigger_holepunching();
         }
     }
 
@@ -412,7 +448,7 @@ impl RemoteStateActor {
     /// Handles [`RemoteStateMessage::AddConnection`].
     ///
     /// Error returns are fatal and kill the actor.
-    async fn handle_msg_add_connection(
+    fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
         tx: oneshot::Sender<PathsWatcher>,
@@ -487,7 +523,7 @@ impl RemoteStateActor {
                     }
                 }
             }
-            self.trigger_holepunching().await;
+            self.trigger_holepunching();
         }
         tx.send(PathsWatcher::new(
             pub_open_paths.watch(),
@@ -607,7 +643,7 @@ impl RemoteStateActor {
     /// - If there are no changes in local or remote candidate addresses since the
     ///   last attempt **and** there was a recent attempt, a trigger_holepunching call
     ///   will be scheduled instead.
-    async fn trigger_holepunching(&mut self) {
+    fn trigger_holepunching(&mut self) {
         if self.connections.is_empty() {
             trace!("not holepunching: no connections");
             return;
@@ -665,12 +701,12 @@ impl RemoteStateActor {
             }
         }
 
-        self.do_holepunching(conn).await;
+        self.do_holepunching(conn);
     }
 
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
-    async fn do_holepunching(&mut self, conn: quinn::Connection) {
+    fn do_holepunching(&mut self, conn: quinn::Connection) {
         self.metrics.nat_traversal.inc();
         let local_candidates = self
             .local_direct_addrs
@@ -678,6 +714,8 @@ impl RemoteStateActor {
             .iter()
             .map(|daddr| daddr.addr)
             .collect::<BTreeSet<_>>();
+
+        // try up to 3 times, with a short delay
         match conn.initiate_nat_traversal_round() {
             Ok(remote_candidates) => {
                 let remote_candidates = remote_candidates
@@ -698,7 +736,9 @@ impl RemoteStateActor {
                 });
             }
             Err(err) => {
+                // TODO: distinguish between fatal and temporary errors
                 warn!("failed to initiate NAT traversal: {err:#}");
+                self.needs_holepunching.set(true).ok();
             }
         }
     }
