@@ -7,7 +7,7 @@
         &amp;self,
         side: <a class="enum" href="enum.Side.html" title="enum iroh::endpoint::Side">Side</a>,
         remote: <a class="enum" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/enum.SocketAddr.html" title="enum core::net::socket_addr::SocketAddr">SocketAddr</a>,
-        initial_dst_cid: <a class="struct" href="struct.ConnectionId.html" title="struct iroh::endpoint::ConnectionId">ConnectionId</a>,
+        initial_dst_cid: ConnectionId,
         now: <a class="struct" href="https://doc.rust-lang.org/nightly/std/time/struct.Instant.html" title="struct std::time::Instant">Instant</a>,
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.QlogConfig.html" title="struct iroh::endpoint::QlogConfig">QlogConfig</a>&gt;;
 }</code></pre><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>qlog</code></strong> only.</div></span><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Constructs a <a href="struct.QlogConfig.html" title="struct iroh::endpoint::QlogConfig"><code>QlogConfig</code></a> for individual connections.</p>
@@ -16,7 +16,7 @@
     &amp;self,
     side: <a class="enum" href="enum.Side.html" title="enum iroh::endpoint::Side">Side</a>,
     remote: <a class="enum" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/enum.SocketAddr.html" title="enum core::net::socket_addr::SocketAddr">SocketAddr</a>,
-    initial_dst_cid: <a class="struct" href="struct.ConnectionId.html" title="struct iroh::endpoint::ConnectionId">ConnectionId</a>,
+    initial_dst_cid: ConnectionId,
     now: <a class="struct" href="https://doc.rust-lang.org/nightly/std/time/struct.Instant.html" title="struct std::time::Instant">Instant</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.QlogConfig.html" title="struct iroh::endpoint::QlogConfig">QlogConfig</a>&gt;</h4></section></summary><div class="docblock"><p>Returns a <a href="struct.QlogConfig.html" title="struct iroh::endpoint::QlogConfig"><code>QlogConfig</code></a> for a connection, if logging should be enabled.</p>
 <p>If <code>None</code> is returned, qlog capture is disabled for the connection.</p>
