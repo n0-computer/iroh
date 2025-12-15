@@ -140,7 +140,7 @@ pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuicTransportCo
 }
 
 async fn drain_stream(
-    stream: &mut RecvStream,
+    mut stream: RecvStream,
     read_unordered: bool,
 ) -> Result<(usize, Duration, u64)> {
     let mut read = 0;
@@ -152,7 +152,8 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
+        let mut stream = stream.into_unordered();
+        while let Some(chunk) = stream.read_chunk(usize::MAX).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -224,7 +225,7 @@ pub async fn handle_client_stream(
 ) -> Result<(TransferResult, TransferResult)> {
     let start = Instant::now();
 
-    let (mut send_stream, mut recv_stream) = connection
+    let (mut send_stream, recv_stream) = connection
         .open_bi()
         .await
         .std_context("failed to open stream")?;
@@ -234,7 +235,7 @@ pub async fn handle_client_stream(
     let upload_result = TransferResult::new(start.elapsed(), upload_size, Duration::default(), 0);
 
     let start = Instant::now();
-    let (size, ttfb, num_chunks) = drain_stream(&mut recv_stream, read_unordered).await?;
+    let (size, ttfb, num_chunks) = drain_stream(recv_stream, read_unordered).await?;
     let download_result = TransferResult::new(start.elapsed(), size as u64, ttfb, num_chunks);
 
     Ok((upload_result, download_result))
@@ -260,7 +261,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
 
         server_tasks.push(tokio::spawn(async move {
             loop {
-                let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
+                let (mut send_stream, recv_stream) = match connection.accept_bi().await {
                     Err(ConnectionError::ApplicationClosed(_)) => break,
                     Err(e) => {
                         eprintln!("accepting stream failed: {e:?}");
@@ -271,7 +272,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 trace!("stream established");
 
                 tokio::spawn(async move {
-                    drain_stream(&mut recv_stream, opt.read_unordered).await?;
+                    drain_stream(recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
                     n0_error::Ok(())
                 });
