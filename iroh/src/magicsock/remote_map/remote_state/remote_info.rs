@@ -39,7 +39,7 @@ impl RemoteInfo {
     /// # async fn main() {
     /// # let endpoint = Endpoint::bind().await.unwrap();
     /// # let remote_id = EndpointId::from_bytes(&[0u8; 32]).unwrap();
-    /// let info = endpoint.remote_info(remote_id).unwrap();
+    /// let info = endpoint.remote_info(remote_id).await.unwrap();
     /// let addr = EndpointAddr::from_parts(info.id(), info.into_addrs().map(|addr| addr.into_addr()));
     /// # }
     /// ```
