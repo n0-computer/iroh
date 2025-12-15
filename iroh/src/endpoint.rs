@@ -67,7 +67,7 @@ pub use self::{
         ReadExactError, ReadToEndError, RecvStream, ResetError, RttEstimator, SendDatagram,
         SendDatagramError, SendStream, ServerConfig, ServerConfigBuilder, Session, Side,
         StoppedError, StreamId, TimeSource, TokenLog, TokenReuseError, TransportError,
-        TransportErrorCode, TransportParameters, UdpStats, UnsupportedVersion,
+        TransportErrorCode, TransportParameters, UdpStats, UnorderedRecvStream, UnsupportedVersion,
         ValidationTokenConfig, VarInt, VarIntBoundsExceeded, WriteError, Written,
     },
 };
