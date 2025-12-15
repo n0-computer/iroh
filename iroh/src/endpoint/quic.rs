@@ -37,6 +37,7 @@ pub use quinn::{
     Side,                 // iroh::endpoint::Connection, quinn::StreamId,
     StoppedError,         // quinn::SendStream
     StreamId,             // quinn::RecvStream
+    UnorderedRecvStream,  // quinn::RecvStream
     VarInt,               // various
     VarIntBoundsExceeded, // quinn::VarInt, quinn::IdleTimeout
     WriteError,           // quinn::SendStream
