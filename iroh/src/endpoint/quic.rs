@@ -87,6 +87,10 @@ use tracing::warn;
 
 use crate::magicsock::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT};
 
+/// Builder for a [`QuicTransportConfig`].
+#[derive(Debug, Clone)]
+pub struct QuicTransportConfigBuilder(quinn::TransportConfig);
+
 /// Parameters governing the core QUIC state machine
 ///
 /// Default values should be suitable for most internet applications. Applications protocols which
@@ -100,6 +104,8 @@ use crate::magicsock::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TI
 /// performance at lower bandwidths and latencies. The default configuration is tuned for a 100Mbps
 /// link with a 100ms round trip time.
 ///
+/// Use the [`QuicTransportConfigBuilder`] to customize these tunable fields.
+///
 /// In iroh, the config has some specific default values that make iroh's holepunching work
 /// well with QUIC multipath. Adjusting those settings may cause suboptimal usage.
 ///
@@ -108,29 +114,31 @@ use crate::magicsock::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TI
 /// - [`QuicTransportConfigBuilder::default_path_max_idle_timeout`]
 /// - [`QuicTransportConfigBuilder::max_concurrent_multipath_paths`]
 /// - [`QuicTransportConfigBuilder::set_max_remote_nat_traversal_addresses`]
-#[derive(Debug, Clone)]
-pub struct QuicTransportConfigBuilder(quinn::TransportConfig);
-
-impl Default for QuicTransportConfigBuilder {
-    fn default() -> Self {
-        let mut cfg = quinn::TransportConfig::default();
-        // Override some transport config settings.
-        cfg.keep_alive_interval(Some(HEARTBEAT_INTERVAL));
-        cfg.default_path_keep_alive_interval(Some(HEARTBEAT_INTERVAL));
-        cfg.default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
-        cfg.max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS + 1);
-        cfg.set_max_remote_nat_traversal_addresses(MAX_MULTIPATH_PATHS as u8);
-        Self(cfg)
-    }
-}
-
-/// todo: docs
+///
+/// # Examples
+/// ```
+/// use std::time::Duration;
+///
+/// use iroh::endpoint::QuicTransportConfig;
+///
+/// let _cfg = QuicTransportConfig::builder()
+///     .max_idle_timeout(Duration::from_secs(35))
+///     .build();
+/// ```
 #[derive(Debug, Clone)]
 pub struct QuicTransportConfig(Arc<quinn::TransportConfig>);
 
+impl QuicTransportConfig {
+    /// Returns a default [`QuicTransportConfigBuilder`] that allows customizing
+    /// a [`QuicTransportConfig`].
+    pub fn builder() -> QuicTransportConfigBuilder {
+        QuicTransportConfigBuilder::new()
+    }
+}
+
 impl Default for QuicTransportConfig {
     fn default() -> Self {
-        QuicTransportConfigBuilder::default().build()
+        QuicTransportConfigBuilder::new().build()
     }
 }
 
@@ -141,7 +149,19 @@ impl QuicTransportConfig {
 }
 
 impl QuicTransportConfigBuilder {
-    /// Todo: docs
+    /// Create a default [`QuicTransportConfigBuilder`].
+    fn new() -> Self {
+        let mut cfg = quinn::TransportConfig::default();
+        // Override some transport config settings.
+        cfg.keep_alive_interval(Some(HEARTBEAT_INTERVAL));
+        cfg.default_path_keep_alive_interval(Some(HEARTBEAT_INTERVAL));
+        cfg.default_path_max_idle_timeout(Some(PATH_MAX_IDLE_TIMEOUT));
+        cfg.max_concurrent_multipath_paths(MAX_MULTIPATH_PATHS + 1);
+        cfg.set_max_remote_nat_traversal_addresses(MAX_MULTIPATH_PATHS as u8);
+        Self(cfg)
+    }
+
+    /// Build a [`QuicTransportConfig`] from the builder.
     pub fn build(self) -> QuicTransportConfig {
         QuicTransportConfig(Arc::new(self.0))
     }
@@ -152,13 +172,13 @@ impl QuicTransportConfigBuilder {
     ///
     /// Worst-case memory use is directly proportional to `max_concurrent_bidi_streams *
     /// stream_receive_window`, with an upper bound proportional to `receive_window`.
-    pub fn max_concurrent_bidi_streams(&mut self, value: VarInt) -> &mut Self {
+    pub fn max_concurrent_bidi_streams(mut self, value: VarInt) -> Self {
         self.0.max_concurrent_bidi_streams(value);
         self
     }
 
     /// Variant of `max_concurrent_bidi_streams` affecting unidirectional streams.
-    pub fn max_concurrent_uni_streams(&mut self, value: VarInt) -> &mut Self {
+    pub fn max_concurrent_uni_streams(mut self, value: VarInt) -> Self {
         self.0.max_concurrent_uni_streams(value);
         self
     }
@@ -185,7 +205,7 @@ impl QuicTransportConfigBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn max_idle_timeout(&mut self, value: Option<IdleTimeout>) -> &mut Self {
+    pub fn max_idle_timeout(mut self, value: Option<IdleTimeout>) -> Self {
         self.0.max_idle_timeout(value);
         self
     }
@@ -198,7 +218,7 @@ impl QuicTransportConfigBuilder {
     /// stream doesn't monopolize receive buffers, which may otherwise occur if the application
     /// chooses not to read from a large stream for a time while still requiring data on other
     /// streams.
-    pub fn stream_receive_window(&mut self, value: VarInt) -> &mut Self {
+    pub fn stream_receive_window(mut self, value: VarInt) -> Self {
         self.0.stream_receive_window(value);
         self
     }
@@ -209,7 +229,7 @@ impl QuicTransportConfigBuilder {
     /// This should be set to at least the expected connection latency multiplied by the maximum
     /// desired throughput. Larger values can be useful to allow maximum throughput within a
     /// stream while another is blocked.
-    pub fn receive_window(&mut self, value: VarInt) -> &mut Self {
+    pub fn receive_window(mut self, value: VarInt) -> Self {
         self.0.receive_window(value);
         self
     }
@@ -220,7 +240,7 @@ impl QuicTransportConfigBuilder {
     /// flow control credit. Endpoints that wish to handle large numbers of connections robustly
     /// should take care to set this low enough to guarantee memory exhaustion does not occur if
     /// every connection uses the entire window.
-    pub fn send_window(&mut self, value: u64) -> &mut Self {
+    pub fn send_window(mut self, value: u64) -> Self {
         self.0.send_window(value);
         self
     }
@@ -235,27 +255,27 @@ impl QuicTransportConfigBuilder {
     ///
     /// Disabling fairness can reduce fragmentation and protocol overhead for workloads that use
     /// many small streams.
-    pub fn send_fairness(&mut self, value: bool) -> &mut Self {
+    pub fn send_fairness(mut self, value: bool) -> Self {
         self.0.send_fairness(value);
         self
     }
 
     /// Maximum reordering in packet number space before FACK style loss detection considers a
     /// packet lost. Should not be less than 3, per RFC5681.
-    pub fn packet_threshold(&mut self, value: u32) -> &mut Self {
+    pub fn packet_threshold(mut self, value: u32) -> Self {
         self.0.packet_threshold(value);
         self
     }
 
     /// Maximum reordering in time space before time based loss detection considers a packet lost,
     /// as a factor of RTT.
-    pub fn time_threshold(&mut self, value: f32) -> &mut Self {
+    pub fn time_threshold(mut self, value: f32) -> Self {
         self.0.time_threshold(value);
         self
     }
 
     /// The RTT used before an RTT sample is taken.
-    pub fn initial_rtt(&mut self, value: Duration) -> &mut Self {
+    pub fn initial_rtt(mut self, value: Duration) -> Self {
         self.0.initial_rtt(value);
         self
     }
@@ -268,7 +288,7 @@ impl QuicTransportConfigBuilder {
     /// exceeding the network path's IP MTU. If the provided value is higher than what the network
     /// path actually supports, packet loss will eventually trigger black hole detection and bring
     /// it down to [`QuicTransportConfigBuilder::min_mtu`].
-    pub fn initial_mtu(&mut self, value: u16) -> &mut Self {
+    pub fn initial_mtu(mut self, value: u16) -> Self {
         self.0.initial_mtu(value);
         self
     }
@@ -286,7 +306,7 @@ impl QuicTransportConfigBuilder {
     /// [`QuicTransportConfigBuilder::initial_mtu`] together with
     /// [`QuicTransportConfigBuilder::mtu_discovery_config`] to set a maximum UDP payload size that robustly
     /// adapts to the network.
-    pub fn min_mtu(&mut self, value: u16) -> &mut Self {
+    pub fn min_mtu(mut self, value: u16) -> Self {
         self.0.min_mtu(value);
         self
     }
@@ -294,7 +314,7 @@ impl QuicTransportConfigBuilder {
     /// Specifies the MTU discovery config (see [`MtuDiscoveryConfig`] for details).
     ///
     /// Enabled by default.
-    pub fn mtu_discovery_config(&mut self, value: Option<MtuDiscoveryConfig>) -> &mut Self {
+    pub fn mtu_discovery_config(mut self, value: Option<MtuDiscoveryConfig>) -> Self {
         self.0.mtu_discovery_config(value);
         self
     }
@@ -308,7 +328,7 @@ impl QuicTransportConfigBuilder {
     /// well as the total size of stream write bursts can be inferred by observers under certain
     /// conditions. This analysis requires either an uncongested connection or application datagrams
     /// too large to be coalesced.
-    pub fn pad_to_mtu(&mut self, value: bool) -> &mut Self {
+    pub fn pad_to_mtu(mut self, value: bool) -> Self {
         self.0.pad_to_mtu(value);
         self
     }
@@ -321,13 +341,13 @@ impl QuicTransportConfigBuilder {
     /// Defaults to `None`, which disables controlling the peer's acknowledgement frequency. Even
     /// if set to `None`, the local side still supports the acknowledgement frequency QUIC
     /// extension and may use it in other ways.
-    pub fn ack_frequency_config(&mut self, value: Option<AckFrequencyConfig>) -> &mut Self {
+    pub fn ack_frequency_config(mut self, value: Option<AckFrequencyConfig>) -> Self {
         self.0.ack_frequency_config(value);
         self
     }
 
     /// Number of consecutive PTOs after which network is considered to be experiencing persistent congestion.
-    pub fn persistent_congestion_threshold(&mut self, value: u32) -> &mut Self {
+    pub fn persistent_congestion_threshold(mut self, value: u32) -> Self {
         self.0.persistent_congestion_threshold(value);
         self
     }
@@ -339,13 +359,13 @@ impl QuicTransportConfigBuilder {
     /// `None` to disable, which is the default. Only one side of any given connection needs keep-alive
     /// enabled for the connection to be preserved. Must be set lower than the idle_timeout of both
     /// peers to be effective.
-    pub fn keep_alive_interval(&mut self, value: Duration) -> &mut Self {
+    pub fn keep_alive_interval(mut self, value: Duration) -> Self {
         self.0.keep_alive_interval(Some(value));
         self
     }
 
     /// Maximum quantity of out-of-order crypto layer data to buffer.
-    pub fn crypto_buffer_size(&mut self, value: usize) -> &mut Self {
+    pub fn crypto_buffer_size(mut self, value: usize) -> Self {
         self.0.crypto_buffer_size(value);
         self
     }
@@ -354,7 +374,7 @@ impl QuicTransportConfigBuilder {
     ///
     /// This allows passive observers to easily judge the round trip time of a connection, which can
     /// be useful for network administration but sacrifices a small amount of privacy.
-    pub fn allow_spin(&mut self, value: bool) -> &mut Self {
+    pub fn allow_spin(mut self, value: bool) -> Self {
         self.0.allow_spin(value);
         self
     }
@@ -365,7 +385,7 @@ impl QuicTransportConfigBuilder {
     /// The peer is forbidden to send single datagrams larger than this size. If the aggregate size
     /// of all datagrams that have been received from the peer but not consumed by the application
     /// exceeds this value, old datagrams are dropped until it is no longer exceeded.
-    pub fn datagram_receive_buffer_size(&mut self, value: Option<usize>) -> &mut Self {
+    pub fn datagram_receive_buffer_size(mut self, value: Option<usize>) -> Self {
         self.0.datagram_receive_buffer_size(value);
         self
     }
@@ -376,7 +396,7 @@ impl QuicTransportConfigBuilder {
     /// than the link, or even the underlying hardware, can transmit them. This limits the amount of
     /// memory that may be consumed in that case. When the send buffer is full and a new datagram is
     /// sent, older datagrams are dropped until sufficient space is available.
-    pub fn datagram_send_buffer_size(&mut self, value: usize) -> &mut Self {
+    pub fn datagram_send_buffer_size(mut self, value: usize) -> Self {
         self.0.datagram_send_buffer_size(value);
         self
     }
@@ -393,9 +413,9 @@ impl QuicTransportConfigBuilder {
     /// config.congestion_controller_factory(Arc::new(congestion::NewRenoConfig::default()));
     /// ```
     pub fn congestion_controller_factory(
-        &mut self,
+        mut self,
         factory: Arc<dyn ControllerFactory + Send + Sync + 'static>,
-    ) -> &mut Self {
+    ) -> Self {
         self.0.congestion_controller_factory(factory);
         self
     }
@@ -410,7 +430,7 @@ impl QuicTransportConfigBuilder {
     /// by all network interface drivers or packet inspection tools. `quinn-udp` will attempt to
     /// disable GSO automatically when unavailable, but this can lead to spurious packet loss at
     /// startup, temporarily degrading performance.
-    pub fn enable_segmentation_offload(&mut self, enabled: bool) -> &mut Self {
+    pub fn enable_segmentation_offload(mut self, enabled: bool) -> Self {
         self.0.enable_segmentation_offload(enabled);
         self
     }
@@ -419,7 +439,7 @@ impl QuicTransportConfigBuilder {
     ///
     /// This will aid peers in inferring their reachable address, which in most NATd networks
     /// will not be easily available to them.
-    pub fn send_observed_address_reports(&mut self, enabled: bool) -> &mut Self {
+    pub fn send_observed_address_reports(mut self, enabled: bool) -> Self {
         self.0.send_observed_address_reports(enabled);
         self
     }
@@ -430,7 +450,7 @@ impl QuicTransportConfigBuilder {
     /// address reports will do so if this transport parameter is set. In general, observed address
     /// reports cannot be trusted. This, however, can aid the current endpoint in inferring its
     /// reachable address, which in most NATd networks will not be easily available.
-    pub fn receive_observed_address_reports(&mut self, enabled: bool) -> &mut Self {
+    pub fn receive_observed_address_reports(mut self, enabled: bool) -> Self {
         self.0.receive_observed_address_reports(enabled);
         self
     }
@@ -445,7 +465,7 @@ impl QuicTransportConfigBuilder {
     /// enable multipath as well.
     ///
     /// Note: this method will ignore values less than the recommended 13 and will log a warning.
-    pub fn max_concurrent_multipath_paths(&mut self, max_concurrent: u32) -> &mut Self {
+    pub fn max_concurrent_multipath_paths(mut self, max_concurrent: u32) -> Self {
         if max_concurrent < MAX_MULTIPATH_PATHS + 1 {
             warn!(
                 "QuicTransportConfig::max_concurrent_multipath_paths must be at minimum {}, ignoring user supplied value",
@@ -464,7 +484,7 @@ impl QuicTransportConfigBuilder {
     /// abandoned the entire connection will be closed.
     ///
     /// Note: this method will ignore values higher than the recommended 6500 ms and will log a warning.
-    pub fn default_path_max_idle_timeout(&mut self, timeout: Duration) -> &mut Self {
+    pub fn default_path_max_idle_timeout(mut self, timeout: Duration) -> Self {
         if timeout > PATH_MAX_IDLE_TIMEOUT {
             warn!(
                 "QuicTransportConfig::default_path_max_idle must be at most {:?}, ignoring user supplied value",
@@ -484,7 +504,7 @@ impl QuicTransportConfigBuilder {
     /// control over which path is used for this.
     ///
     /// Note: this method will ignore values higher than the recommended 5 seconds and will log a warning.
-    pub fn default_path_keep_alive_interval(&mut self, interval: Duration) -> &mut Self {
+    pub fn default_path_keep_alive_interval(mut self, interval: Duration) -> Self {
         if interval > HEARTBEAT_INTERVAL {
             warn!(
                 "QuicTransportConfig::default_path_keep_alive must be at most {:?}, ignoring user supplied value",
@@ -508,7 +528,7 @@ impl QuicTransportConfigBuilder {
     /// 12 will be used.
     ///
     /// Note: this method will ignore values less than the recommended 12 and will log a warning.
-    pub fn set_max_remote_nat_traversal_addresses(&mut self, max_addresses: u8) -> &mut Self {
+    pub fn set_max_remote_nat_traversal_addresses(mut self, max_addresses: u8) -> Self {
         if max_addresses < MAX_MULTIPATH_PATHS as u8 {
             warn!(
                 "QuicTransportConfig::max_remote_nat_traversal_addresses must be at least {}, ignoring user supplied value",
@@ -525,7 +545,7 @@ impl QuicTransportConfigBuilder {
     /// This assigns a [`QlogFactory`] that produces qlog capture configurations for
     /// individual connections.
     #[cfg(feature = "qlog")]
-    pub fn qlog_factory(&mut self, factory: Arc<dyn QlogFactory>) -> &mut Self {
+    pub fn qlog_factory(mut self, factory: Arc<dyn QlogFactory>) -> Self {
         self.0.qlog_factory(factory);
         self
     }
@@ -540,7 +560,7 @@ impl QuicTransportConfigBuilder {
     ///
     /// The files will be prefixed with `prefix`.
     #[cfg(feature = "qlog")]
-    pub fn qlog_from_env(&mut self, prefix: &str) -> &mut Self {
+    pub fn qlog_from_env(mut self, prefix: &str) -> Self {
         self.0.qlog_from_env(prefix);
         self
     }
@@ -550,15 +570,24 @@ impl QuicTransportConfigBuilder {
     /// This uses [`QlogFileFactory`] to create a factory to write qlog traces into
     /// the specified directory.  The files will be prefixed with `prefix`.
     #[cfg(feature = "qlog")]
-    pub fn qlog_from_path(&mut self, path: impl AsRef<Path>, prefix: &str) -> &mut Self {
+    pub fn qlog_from_path(mut self, path: impl AsRef<Path>, prefix: &str) -> Self {
         self.0.qlog_from_path(path, prefix);
         self
     }
 }
 
-/// Parameters governing incoming connections.
+/// A builder for a [`ServerConfig`].
+#[derive(Debug, Clone)]
+pub struct ServerConfigBuilder {
+    inner: quinn::ServerConfig,
+    transport: QuicTransportConfig,
+}
+
+/// Parameters governing incoming connections
 ///
 /// Default values should be suitable for most internet applications.
+///
+/// Use a [`ServerConfigBuilder`] to adjust the default values.
 ///
 /// To create a [`ServerConfig`] compatible with your [`Endpoint`] identity, use the [`Endpoint::create_server_config_builder`] method.
 ///
@@ -566,13 +595,6 @@ impl QuicTransportConfigBuilder {
 /// [`Endpoint::create_server_config_builder`]: crate::Endpoint::create_server_config_builder
 // Note: used in `iroh::endpoint::connection::Incoming::accept_with`
 // This is new-typed since `quinn::ServerConfig` takes a `TransportConfig`, which we new-type as a `QuicTransportConfig`
-#[derive(Debug, Clone)]
-pub struct ServerConfigBuilder {
-    inner: quinn::ServerConfig,
-    transport: QuicTransportConfig,
-}
-
-/// todo: docs
 #[derive(Debug, Clone)]
 pub struct ServerConfig(Arc<quinn::ServerConfig>);
 
@@ -598,7 +620,7 @@ impl ServerConfig {
 }
 
 impl ServerConfigBuilder {
-    /// todo: docs
+    /// Build a [`ServerConfig`] from a [`ServerConfigBuilder`].
     pub fn build(self) -> ServerConfig {
         ServerConfig(Arc::new(self.inner))
     }
@@ -607,39 +629,21 @@ impl ServerConfigBuilder {
         Self { inner, transport }
     }
 
-    /// Transport configuration used for incoming connections.
-    pub fn transport_config(&self) -> QuicTransportConfig {
-        self.transport.clone()
-    }
-
-    /// TLS configuration used for incoming connections.
-    pub fn crypto(&self) -> Arc<dyn CryptoServerConfig> {
-        self.inner.crypto.clone()
-    }
-
-    /// Configuration for sending and handling validation tokens.
-    pub fn validation_token(&self) -> ValidationTokenConfig {
-        self.inner.validation_token.clone()
-    }
-
     /// Sets a custom [`QuicTransportConfig`].
-    pub fn set_transport_config(&mut self, transport: QuicTransportConfig) -> &mut Self {
+    pub fn set_transport_config(mut self, transport: QuicTransportConfig) -> Self {
         self.inner.transport_config(transport.to_inner_arc());
         self.transport = transport;
         self
     }
 
     /// Sets a custom [`ValidationTokenConfig`].
-    pub fn set_validation_token_config(
-        &mut self,
-        validation_token: ValidationTokenConfig,
-    ) -> &mut Self {
+    pub fn set_validation_token_config(mut self, validation_token: ValidationTokenConfig) -> Self {
         self.inner.validation_token_config(validation_token);
         self
     }
 
     /// Private key used to authenticate data included in handshake tokens
-    pub fn set_token_key(&mut self, value: Arc<dyn HandshakeTokenKey>) -> &mut Self {
+    pub fn set_token_key(mut self, value: Arc<dyn HandshakeTokenKey>) -> Self {
         self.inner.token_key(value);
         self
     }
@@ -647,7 +651,7 @@ impl ServerConfigBuilder {
     /// Duration after a retry token was issued for which it's considered valid
     ///
     /// Defaults to 15 seconds.
-    pub fn set_retry_token_lifetime(&mut self, value: Duration) -> &mut Self {
+    pub fn set_retry_token_lifetime(mut self, value: Duration) -> Self {
         self.inner.retry_token_lifetime(value);
         self
     }
@@ -665,7 +669,7 @@ impl ServerConfigBuilder {
     /// exhaustion in most contexts.
     ///
     /// [`Incoming`]: crate::endpoint::Incoming
-    pub fn set_max_incoming(&mut self, max_incoming: usize) -> &mut Self {
+    pub fn set_max_incoming(mut self, max_incoming: usize) -> Self {
         self.inner.max_incoming(max_incoming);
         self
     }
@@ -683,7 +687,7 @@ impl ServerConfigBuilder {
     /// [`Incoming`].
     ///
     /// [`Incoming`]: crate::endpoint::Incoming
-    pub fn set_incoming_buffer_size(&mut self, incoming_buffer_size: u64) -> &mut Self {
+    pub fn set_incoming_buffer_size(mut self, incoming_buffer_size: u64) -> Self {
         self.inner.incoming_buffer_size(incoming_buffer_size);
         self
     }
@@ -701,7 +705,7 @@ impl ServerConfigBuilder {
     /// exhaustion in most contexts.
     ///
     /// [`Incoming`]: crate::endpoint::Incoming
-    pub fn set_incoming_buffer_size_total(&mut self, incoming_buffer_size_total: u64) -> &mut Self {
+    pub fn set_incoming_buffer_size_total(mut self, incoming_buffer_size_total: u64) -> Self {
         self.inner
             .incoming_buffer_size_total(incoming_buffer_size_total);
         self
@@ -714,7 +718,7 @@ impl ServerConfigBuilder {
     /// Defaults to [`quinn::StdSystemTime`], which simply calls [`SystemTime::now()`](std::time::SystemTime::now).
     ///
     /// [`SystemTime`]: std::time::SystemTime
-    pub fn set_time_source(&mut self, time_source: Arc<dyn TimeSource>) -> &mut Self {
+    pub fn set_time_source(mut self, time_source: Arc<dyn TimeSource>) -> Self {
         self.inner.time_source(time_source);
         self
     }
