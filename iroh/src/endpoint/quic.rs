@@ -52,7 +52,6 @@ pub use quinn_proto::{
     Chunk,                            // quinn::RecvStream
     ConnectError as QuicConnectError, // iroh::endpoint::ConnectWithOptsError
     ConnectionClose,                  // quinn::ConnectionError
-    ConnectionId,                     // quinn_proto::crypto::ServerConfig
     FrameStats,                       // quinn::ConnectionStats
     FrameType,                        // quinn_proto::TransportError
     PathId,                           // quinn_proto::crypto::PacketKey
@@ -71,15 +70,13 @@ pub use quinn_proto::{
         ControllerMetrics, // quinn_proto::congestion::Controller
     },
     crypto::{
-        AeadKey,                            // quinn::HandshakeTokenKey
+        AeadKey,                   // quinn::HandshakeTokenKey
         CryptoError, // quinn_proto::crypto::CryptoError, quinn_proto::crypto::PacketKey
         ExportKeyingMaterialError, // iroh::endpoint::Connection
         HandshakeTokenKey, // iroh::endpoint::quic::ServerConfig
         HeaderKey,   // quinn_proto::crypto::Keys
         Keys,        // quinn_proto::crypto::Session
         PacketKey,   // quinn_proto::crypto::Keys
-        ServerConfig as CryptoServerConfig, // iroh::endpoint::quic::ServerConfig
-        Session,     // quinn_proto::crypto::ServerConfig
         UnsupportedVersion, // quinn_proto::ConnectError
     },
     transport_parameters::TransportParameters, // quinn_proto::crypot::ServerConfig
@@ -602,21 +599,6 @@ pub struct ServerConfig(Arc<quinn::ServerConfig>);
 impl ServerConfig {
     pub(crate) fn to_inner_arc(&self) -> Arc<quinn::ServerConfig> {
         self.0.clone()
-    }
-
-    /// Transport configuration used for incoming connections.
-    pub fn transport_config(&self) -> QuicTransportConfig {
-        QuicTransportConfig(self.0.transport.clone())
-    }
-
-    /// TLS configuration used for incoming connections.
-    pub fn crypto(&self) -> Arc<dyn CryptoServerConfig> {
-        self.0.crypto.clone()
-    }
-
-    /// Configuration for sending and handling validation tokens.
-    pub fn validation_token(&self) -> ValidationTokenConfig {
-        self.0.validation_token.clone()
     }
 }
 
