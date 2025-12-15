@@ -120,7 +120,7 @@ pub struct QuicTransportConfigBuilder(quinn::TransportConfig);
 /// use iroh::endpoint::QuicTransportConfig;
 ///
 /// let _cfg = QuicTransportConfig::builder()
-///     .max_idle_timeout(Duration::from_secs(35))
+///     .send_observed_address_reports(true)
 ///     .build();
 /// ```
 #[derive(Debug, Clone)]
@@ -193,13 +193,15 @@ impl QuicTransportConfigBuilder {
     /// # use std::{convert::TryInto, time::Duration};
     /// # use iroh::endpoint::{QuicTransportConfig, VarInt, VarIntBoundsExceeded};
     /// # fn main() -> Result<(), VarIntBoundsExceeded> {
-    /// let mut config = QuicTransportConfig::default();
-    ///
-    /// // Set the idle timeout as `VarInt`-encoded milliseconds
-    /// config.max_idle_timeout(Some(VarInt::from_u32(10_000).into()));
+    /// let mut builder = QuicTransportConfig::builder()
+    ///     // Set the idle timeout as `VarInt`-encoded milliseconds
+    ///     .max_idle_timeout(Some(VarInt::from_u32(10_000).into()));
     ///
     /// // Set the idle timeout as a `Duration`
-    /// config.max_idle_timeout(Some(Duration::from_secs(10).try_into()?));
+    /// builder = builder.max_idle_timeout(Some(Duration::from_secs(10).try_into()?));
+    ///
+    /// let _cfg = builder.build();
+    ///
     /// # Ok(())
     /// # }
     /// ```
@@ -407,8 +409,9 @@ impl QuicTransportConfigBuilder {
     /// # Example
     /// ```
     /// # use iroh::endpoint::QuicTransportConfig; use quinn_proto::congestion; use std::sync::Arc;
-    /// let mut config = QuicTransportConfig::default();
-    /// config.congestion_controller_factory(Arc::new(congestion::NewRenoConfig::default()));
+    /// let config = QuicTransportConfig::builder()
+    ///     .congestion_controller_factory(Arc::new(congestion::NewRenoConfig::default()))
+    ///     .build();
     /// ```
     pub fn congestion_controller_factory(
         mut self,
