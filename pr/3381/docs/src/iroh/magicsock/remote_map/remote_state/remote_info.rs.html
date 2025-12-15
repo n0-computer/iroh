@@ -39,7 +39,7 @@
 <a href=#39 id=39 data-nosnippet>39</a>    /// # async fn main() {
 <a href=#40 id=40 data-nosnippet>40</a>    /// # let endpoint = Endpoint::bind().await.unwrap();
 <a href=#41 id=41 data-nosnippet>41</a>    /// # let remote_id = EndpointId::from_bytes(&amp;[0u8; 32]).unwrap();
-<a href=#42 id=42 data-nosnippet>42</a>    /// let info = endpoint.remote_info(remote_id).unwrap();
+<a href=#42 id=42 data-nosnippet>42</a>    /// let info = endpoint.remote_info(remote_id).await.unwrap();
 <a href=#43 id=43 data-nosnippet>43</a>    /// let addr = EndpointAddr::from_parts(info.id(), info.into_addrs().map(|addr| addr.into_addr()));
 <a href=#44 id=44 data-nosnippet>44</a>    /// # }
 <a href=#45 id=45 data-nosnippet>45</a>    /// ```
