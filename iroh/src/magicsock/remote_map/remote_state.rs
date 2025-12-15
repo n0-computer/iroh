@@ -24,6 +24,7 @@ use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
 use self::{
     guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
     path_state::RemotePathState,
@@ -49,6 +50,7 @@ const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
 mod guarded_channel;
 mod path_state;
+mod remote_info;
 
 // TODO: use this
 // /// The latency at or under which we don't try to upgrade to a better path.
@@ -335,6 +337,14 @@ impl RemoteStateActor {
             }
             RemoteStateMessage::ResolveRemote(addrs, tx) => {
                 self.handle_msg_resolve_remote(addrs, tx);
+            }
+            RemoteStateMessage::RemoteInfo(tx) => {
+                let addrs = self.paths.to_remote_addrs();
+                let info = RemoteInfo {
+                    endpoint_id: self.endpoint_id,
+                    addrs,
+                };
+                tx.send(info).ok();
             }
         }
     }
@@ -1099,6 +1109,10 @@ pub(crate) enum RemoteStateMessage {
         BTreeSet<TransportAddr>,
         oneshot::Sender<Result<(), DiscoveryError>>,
     ),
+    /// Returns information about the remote.
+    ///
+    /// This currently only includes a list of all known transport addresses for the remote.
+    RemoteInfo(oneshot::Sender<RemoteInfo>),
 }
 
 /// A handle to a [`RemoteStateActor`].

@@ -26,7 +26,7 @@ use url::Url;
 use self::hooks::EndpointHooksList;
 pub use super::magicsock::{
     DirectAddr, DirectAddrType, PathInfo,
-    remote_map::{PathInfoList, Source},
+    remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
 };
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
@@ -1058,6 +1058,18 @@ impl Endpoint {
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &EndpointMetrics {
         &self.msock.metrics
+    }
+
+    /// Returns addressing information about a recently used remote endpoint.
+    ///
+    /// The returned [`RemoteInfo`] contains a list of all transport addresses for the remote
+    /// that we know about. This is a snapshot in time and not a watcher.
+    ///
+    /// Returns `None` if the endpoint doesn't have information about the remote.
+    /// When remote endpoints are no longer used, our endpoint will keep information around
+    /// for a little while, and then drop it. Afterwards, this will return `None`.
+    pub async fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
+        self.msock.remote_info(endpoint_id).await
     }
 
     // # Methods for less common state updates.
