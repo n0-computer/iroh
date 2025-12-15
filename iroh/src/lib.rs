@@ -252,6 +252,7 @@
 #![cfg_attr(wasm_browser, allow(unused))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
+#![warn(unnameable_types)]
 
 mod magicsock;
 mod tls;

@@ -669,6 +669,7 @@ pub struct Connection<State: ConnectionState = HandshakeCompleted> {
 }
 
 #[doc(hidden)]
+#[allow(unnameable_types)]
 #[derive(Debug, Clone)]
 pub struct HandshakeCompletedData {
     info: StaticInfo,
@@ -683,17 +684,20 @@ struct StaticInfo {
 }
 
 #[doc(hidden)]
+#[allow(unnameable_types)]
 #[derive(Debug, Clone)]
 pub struct IncomingZeroRttData {
     accepted: Shared<BoxFuture<Result<Connection, ConnectingError>>>,
 }
 
 #[doc(hidden)]
+#[allow(unnameable_types)]
 #[derive(Debug, Clone)]
 pub struct OutgoingZeroRttData {
     accepted: Shared<BoxFuture<Result<ZeroRttStatus, ConnectingError>>>,
 }
 
+#[allow(unnameable_types)]
 mod sealed {
     pub trait Sealed {}
 }
