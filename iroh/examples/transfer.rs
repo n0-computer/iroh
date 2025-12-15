@@ -410,7 +410,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
     // Use the Quinn API to send and recv content.
-    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+    let (mut send, recv) = conn.open_bi().await.anyerr()?;
 
     let message = format!("{me} is saying hello!");
     send.write_all(message.as_bytes()).await.anyerr()?;
@@ -418,7 +418,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     send.finish().anyerr()?;
     println!("Sent: \"{message}\"");
 
-    let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false).await?;
+    let (len, time_to_first_byte, chnk) = drain_stream(recv, false).await?;
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
@@ -439,7 +439,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
 }
 
 async fn drain_stream(
-    stream: &mut iroh::endpoint::RecvStream,
+    mut stream: iroh::endpoint::RecvStream,
     read_unordered: bool,
 ) -> Result<(usize, Duration, u64)> {
     let mut read = 0;
@@ -451,7 +451,8 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
+        let mut stream = stream.into_unordered();
+        while let Some(chunk) = stream.read_chunk(usize::MAX).await.anyerr()? {
             if first_byte {
                 time_to_first_byte = download_start.elapsed();
                 first_byte = false;
