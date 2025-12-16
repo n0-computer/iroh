@@ -35,7 +35,7 @@
 <a href=#35 id=35 data-nosnippet>35</a>
 <a href=#36 id=36 data-nosnippet>36</a><span class="kw">pub fn </span>run_iroh(opt: Opt) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
 <a href=#37 id=37 data-nosnippet>37</a>    <span class="kw">let </span>server_span = <span class="macro">tracing::error_span!</span>(<span class="string">"server"</span>);
-<a href=#38 id=38 data-nosnippet>38</a>    <span class="kw">let </span>runtime = rt();
+<a href=#38 id=38 data-nosnippet>38</a>    <span class="kw">let </span>runtime = rt(opt.workers_per_ep);
 <a href=#39 id=39 data-nosnippet>39</a>
 <a href=#40 id=40 data-nosnippet>40</a>    <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
 <a href=#41 id=41 data-nosnippet>41</a>    </span><span class="kw">let </span>(relay_url, relay_server) = <span class="kw">if </span>opt.only_relay {
@@ -70,7 +70,7 @@
 <a href=#70 id=70 data-nosnippet>70</a>        <span class="kw">let </span>relay_url = relay_url.clone();
 <a href=#71 id=71 data-nosnippet>71</a>        handles.push(std::thread::spawn(<span class="kw">move </span>|| {
 <a href=#72 id=72 data-nosnippet>72</a>            <span class="kw">let </span>_guard = <span class="macro">tracing::error_span!</span>(<span class="string">"client"</span>, id).entered();
-<a href=#73 id=73 data-nosnippet>73</a>            <span class="kw">let </span>runtime = rt();
+<a href=#73 id=73 data-nosnippet>73</a>            <span class="kw">let </span>runtime = rt(opt.workers_per_ep);
 <a href=#74 id=74 data-nosnippet>74</a>            <span class="kw">match </span>runtime.block_on(iroh::client(server_addr, relay_url.clone(), opt)) {
 <a href=#75 id=75 data-nosnippet>75</a>                <span class="prelude-val">Ok</span>(stats) =&gt; <span class="prelude-val">Ok</span>(stats),
 <a href=#76 id=76 data-nosnippet>76</a>                <span class="prelude-val">Err</span>(e) =&gt; {
@@ -112,7 +112,7 @@
 <a href=#112 id=112 data-nosnippet>112</a>    <span class="kw">use </span>rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 <a href=#113 id=113 data-nosnippet>113</a>
 <a href=#114 id=114 data-nosnippet>114</a>    <span class="kw">let </span>server_span = <span class="macro">tracing::error_span!</span>(<span class="string">"server"</span>);
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span>runtime = rt();
+<a href=#115 id=115 data-nosnippet>115</a>    <span class="kw">let </span>runtime = rt(opt.workers_per_ep);
 <a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.into()]).unwrap();
 <a href=#117 id=117 data-nosnippet>117</a>    <span class="kw">let </span>key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
 <a href=#118 id=118 data-nosnippet>118</a>    <span class="kw">let </span>cert = CertificateDer::from(cert.cert);
@@ -134,7 +134,7 @@
 <a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">let </span>cert = cert.clone();
 <a href=#135 id=135 data-nosnippet>135</a>        handles.push(std::thread::spawn(<span class="kw">move </span>|| {
 <a href=#136 id=136 data-nosnippet>136</a>            <span class="kw">let </span>_guard = <span class="macro">tracing::error_span!</span>(<span class="string">"client"</span>, id).entered();
-<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span>runtime = rt();
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span>runtime = rt(opt.workers_per_ep);
 <a href=#138 id=138 data-nosnippet>138</a>            <span class="kw">match </span>runtime.block_on(quinn::client(server_addr, cert, opt)) {
 <a href=#139 id=139 data-nosnippet>139</a>                <span class="prelude-val">Ok</span>(stats) =&gt; <span class="prelude-val">Ok</span>(stats),
 <a href=#140 id=140 data-nosnippet>140</a>                <span class="prelude-val">Err</span>(e) =&gt; {
