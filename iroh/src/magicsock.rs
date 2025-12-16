@@ -150,10 +150,35 @@ pub(crate) struct Handle {
     msock: Arc<MagicSock>,
     // empty when shutdown
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
-    /// Token to cancel the actor task and shutdown the relay transport.
-    shutdown_token: CancellationToken,
     // quinn endpoint
     endpoint: quinn::Endpoint,
+}
+
+#[derive(Debug)]
+struct ShutdownState {
+    at_close_start: CancellationToken,
+    at_endpoint_closed: CancellationToken,
+    closed: AtomicBool,
+}
+
+impl Default for ShutdownState {
+    fn default() -> Self {
+        Self {
+            at_close_start: CancellationToken::new(),
+            at_endpoint_closed: CancellationToken::new(),
+            closed: AtomicBool::new(false),
+        }
+    }
+}
+
+impl ShutdownState {
+    fn is_closing(&self) -> bool {
+        self.at_close_start.is_cancelled()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Relaxed)
+    }
 }
 
 /// Iroh connectivity layer.
@@ -173,11 +198,8 @@ pub(crate) struct MagicSock {
     /// EndpointId of this endpoint.
     public_key: PublicKey,
 
-    // - State Management
-    /// Close is in progress (or done)
-    closing: AtomicBool,
-    /// Close was called.
-    closed: AtomicBool,
+    // - Shutdown Management
+    shutdown: ShutdownState,
 
     // - Networking Info
     /// Our discovered direct addresses.
@@ -229,12 +251,12 @@ impl MagicSock {
         })
     }
 
-    fn is_closing(&self) -> bool {
-        self.closing.load(Ordering::Relaxed)
+    pub(crate) fn is_closed(&self) -> bool {
+        self.shutdown.is_closed()
     }
 
-    pub(crate) fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::SeqCst)
+    fn is_closing(&self) -> bool {
+        self.shutdown.is_closing()
     }
 
     /// Get the cached version of addresses.
@@ -565,6 +587,7 @@ struct DirectAddrUpdateState {
     net_reporter: Arc<AsyncMutex<net_report::Client>>,
     relay_map: RelayMap,
     run_done: mpsc::Sender<()>,
+    shutdown_token: CancellationToken,
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
@@ -592,6 +615,7 @@ impl DirectAddrUpdateState {
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
+        shutdown_token: CancellationToken,
     ) -> Self {
         DirectAddrUpdateState {
             want_update: Default::default(),
@@ -601,6 +625,7 @@ impl DirectAddrUpdateState {
             msock,
             relay_map,
             run_done,
+            shutdown_token,
         }
     }
 
@@ -639,12 +664,13 @@ impl DirectAddrUpdateState {
         mut net_reporter: tokio::sync::OwnedMutexGuard<net_report::Client>,
     ) {
         debug!("starting direct addr update ({:?})", why);
-        #[cfg(not(wasm_browser))]
-        self.port_mapper.procure_mapping();
         // Don't start a net report probe if we know
         // we are shutting down
-        if self.msock.is_closing() || self.msock.is_closed() {
+        if self.shutdown_token.is_cancelled() {
             debug!("skipping net_report, socket is shutting down");
+            // deactivate portmapper
+            #[cfg(not(wasm_browser))]
+            self.port_mapper.deactivate();
             return;
         }
         if self.relay_map.is_empty() {
@@ -653,22 +679,33 @@ impl DirectAddrUpdateState {
             return;
         }
 
+        #[cfg(not(wasm_browser))]
+        self.port_mapper.procure_mapping();
+
         debug!("requesting net_report report");
         let msock = self.msock.clone();
 
         let run_done = self.run_done.clone();
+
+        // Ensure that reports are cancelled when we shutdown
+        let token = self.shutdown_token.child_token();
+        let inner_token = token.child_token();
         task::spawn(
             async move {
-                let fut = time::timeout(
+                let fut = token.run_until_cancelled(time::timeout(
                     NET_REPORT_TIMEOUT,
-                    net_reporter.get_report(if_state, why.is_major()),
-                );
+                    net_reporter.get_report(if_state, why.is_major(), inner_token),
+                ));
+
                 match fut.await {
-                    Ok(report) => {
+                    Some(Ok(report)) => {
                         msock.net_report.set((Some(report), why)).ok();
                     }
-                    Err(time::Elapsed { .. }) => {
+                    Some(Err(time::Elapsed { .. })) => {
                         warn!("net_report report timed out");
+                    }
+                    None => {
+                        trace!("net_report cancelled");
                     }
                 }
 
@@ -728,7 +765,6 @@ impl Handle {
 
         // Currently we only support a single relay transport
         if relay_transport_configs.len() > 1 {
-            dbg!(&transport_configs, &relay_transport_configs);
             bail!(CreateHandleError::InvalidTransportConfig);
         }
         let relay_map = relay_transport_configs
@@ -758,7 +794,9 @@ impl Handle {
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
         };
-        let shutdown_token = CancellationToken::new();
+
+        let shutdown_state = ShutdownState::default();
+        let shutdown_token = shutdown_state.at_endpoint_closed.child_token();
 
         let transports = Transports::bind(
             &transport_configs,
@@ -803,14 +841,14 @@ impl Handle {
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
                 discovery.clone(),
+                shutdown_token.child_token(),
             )
         };
 
         let msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
-            closing: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
             actor_sender: actor_sender.clone(),
+            shutdown: shutdown_state,
             ipv6_reported,
             remote_map,
             discovery,
@@ -893,6 +931,7 @@ impl Handle {
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
             direct_addr_done_tx,
+            msock.shutdown.at_close_start.child_token(),
         );
 
         let netmon_watcher = network_monitor.interface_state();
@@ -924,7 +963,6 @@ impl Handle {
             msock,
             actor_task,
             endpoint,
-            shutdown_token,
         })
     }
 
@@ -942,7 +980,14 @@ impl Handle {
     /// [`Poll::Pending`]: std::task::Poll::Pending
     #[instrument(skip_all)]
     pub(crate) async fn close(&self) {
+        if self.msock.is_closed() || self.msock.is_closing() {
+            return;
+        }
         trace!(me = ?self.public_key, "magicsock closing...");
+
+        // Cancel at_close_start token, which cancels running netreports.
+        self.msock.shutdown.at_close_start.cancel();
+
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
 
@@ -961,13 +1006,12 @@ impl Handle {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+        trace!("wait_idle start");
         self.endpoint.wait_idle().await;
+        trace!("wait_idle done");
 
-        if self.msock.is_closed() {
-            return;
-        }
-        self.msock.closing.store(true, Ordering::Relaxed);
-        self.shutdown_token.cancel();
+        // Start cancellation of all actors
+        self.msock.shutdown.at_endpoint_closed.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
@@ -988,7 +1032,7 @@ impl Handle {
             }
         }
 
-        self.msock.closed.store(true, Ordering::SeqCst);
+        self.msock.shutdown.closed.store(true, Ordering::SeqCst);
 
         trace!("magicsock closed");
     }
@@ -1057,7 +1101,7 @@ impl Actor {
         // Interval timer to remove closed `RemoteStateActor` handles from the endpoint map.
         let mut remote_map_gc = time::interval(remote_map::REMOTE_MAP_GC_INTERVAL);
 
-        loop {
+        while !shutdown_token.is_cancelled() {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
             let portmap_watcher_changed = portmap_watcher.changed();
@@ -1066,7 +1110,7 @@ impl Actor {
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
-                    debug!("shutting down");
+                    debug!("tick: shutting down");
                     return;
                 }
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
@@ -1164,7 +1208,11 @@ impl Actor {
                     self.handle_network_change(is_major).await;
                 }
                 _ = remote_map_gc.tick() => {
+                    trace!("tick: gc map");
                     self.msock.remote_map.remove_closed_remote_state_actors();
+                }
+                else => {
+                    trace!("tick: else");
                 }
             }
         }
