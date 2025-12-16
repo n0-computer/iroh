@@ -980,10 +980,10 @@
 <a href=#980 id=980 data-nosnippet>980</a>    /// [`Poll::Pending`]: std::task::Poll::Pending
 <a href=#981 id=981 data-nosnippet>981</a>    </span><span class="attr">#[instrument(skip_all)]
 <a href=#982 id=982 data-nosnippet>982</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#983 id=983 data-nosnippet>983</a>        <span class="macro">trace!</span>(me = <span class="question-mark">?</span><span class="self">self</span>.public_key, <span class="string">"magicsock closing..."</span>);
-<a href=#984 id=984 data-nosnippet>984</a>        <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
-<a href=#985 id=985 data-nosnippet>985</a>            <span class="kw">return</span>;
-<a href=#986 id=986 data-nosnippet>986</a>        }
+<a href=#983 id=983 data-nosnippet>983</a>        <span class="kw">if </span><span class="self">self</span>.msock.is_closed() || <span class="self">self</span>.msock.is_closing() {
+<a href=#984 id=984 data-nosnippet>984</a>            <span class="kw">return</span>;
+<a href=#985 id=985 data-nosnippet>985</a>        }
+<a href=#986 id=986 data-nosnippet>986</a>        <span class="macro">trace!</span>(me = <span class="question-mark">?</span><span class="self">self</span>.public_key, <span class="string">"magicsock closing..."</span>);
 <a href=#987 id=987 data-nosnippet>987</a>
 <a href=#988 id=988 data-nosnippet>988</a>        <span class="comment">// Cancel at_close_start token, which cancels running netreports.
 <a href=#989 id=989 data-nosnippet>989</a>        </span><span class="self">self</span>.msock.shutdown.at_close_start.cancel();
