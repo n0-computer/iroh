@@ -25,6 +25,7 @@ env:
   SCCACHE_CACHE_SIZE: "10G"
   CRATES_LIST: "iroh,iroh-bench,iroh-dns-server,iroh-relay"
   IROH_FORCE_STAGING_RELAYS: "1"
+  NEXTEST_VERSION: "0.9.80"
 
 jobs:
   build_and_test_nix:
@@ -66,7 +67,7 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
-          tool: nextest@0.9.80
+          tool: nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -179,11 +180,19 @@ jobs:
           rustup target add ${{ matrix.target }}
           rustup set default-host ${{ matrix.target }}
 
+      - name: Cache cargo-nextest
+        id: cache-nextest
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-nextest.exe
+          key: nextest-windows-${{ env.NEXTEST_VERSION }}
+
       - name: Install cargo-nextest
+        if: steps.cache-nextest.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
-          Invoke-WebRequest -OutFile $tmp https://get.nexte.st/latest/windows
+          Invoke-WebRequest -OutFile $tmp https://get.nexte.st/${{ env.NEXTEST_VERSION }}/windows
           $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
           $tmp | Expand-Archive -DestinationPath $outputDir -Force
           $tmp | Remove-Item
