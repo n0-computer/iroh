@@ -76,6 +76,21 @@ pub struct Opt {
     pub only_relay: bool,
     #[clap(long, default_value_t = false)]
     pub use_ipv6: bool,
+
+    /// How many tokio worker threads to use for each endpoint in the benchmark.
+    ///
+    /// Defaults to 1, a single-threaded runtime.
+    /// Set this to 0 to have each endpoint use a full multi-threaded tokio runtime with as many
+    /// workers as CPU parallelism detected.
+    ///
+    /// Setting this to 2 is a very reasonable value.
+    /// When quinn runs a single connection, it can run one task (the EndpointDriver) for all
+    /// receive-based work, and one task (the ConnectionDriver) for all send-based tasks.
+    /// If quinn is only given a single worker, then work distribution may be unfair, resulting
+    /// in acknowledgements not being processed timely enough, causing congestion control issues,
+    /// although ideally that problem is fixed in some other way in quinn.
+    #[clap(long, default_value_t = 1)]
+    pub workers_per_ep: usize,
 }
 
 pub enum EndpointSelector {
@@ -140,16 +155,18 @@ pub fn configure_tracing_subscriber() {
     .unwrap();
 }
 
-pub fn rt() -> Runtime {
-    Builder::new_multi_thread()
-        // We need at least one thread for the EndpointDriver, and another for the ConnectionDriver.
-        // If we don't do this, then sometimes the connection driver will starve the endpoint driver
-        // of resources too much. This makes the endpoint driver receive acks with too long of a delay.
-        // This means it processes ACKs way too late, messing up congestion control.
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .unwrap()
+pub fn rt(workers: usize) -> Runtime {
+    let mut builder = match workers {
+        // 0 means "use as many threads as detected CPU parallelism" implicitly.
+        0 => Builder::new_multi_thread(),
+        1 => Builder::new_current_thread(),
+        workers => {
+            let mut b = Builder::new_multi_thread();
+            b.worker_threads(workers);
+            b
+        }
+    };
+    builder.enable_all().build().unwrap()
 }
 
 fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {

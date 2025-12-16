@@ -35,7 +35,7 @@ fn main() {
 
 pub fn run_iroh(opt: Opt) -> Result<()> {
     let server_span = tracing::error_span!("server");
-    let runtime = rt();
+    let runtime = rt(opt.workers_per_ep);
 
     #[cfg(feature = "local-relay")]
     let (relay_url, relay_server) = if opt.only_relay {
@@ -70,7 +70,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         let relay_url = relay_url.clone();
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
-            let runtime = rt();
+            let runtime = rt(opt.workers_per_ep);
             match runtime.block_on(iroh::client(server_addr, relay_url.clone(), opt)) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
@@ -112,7 +112,7 @@ pub fn run_quinn(opt: Opt) -> Result<()> {
     use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 
     let server_span = tracing::error_span!("server");
-    let runtime = rt();
+    let runtime = rt(opt.workers_per_ep);
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let cert = CertificateDer::from(cert.cert);
@@ -134,7 +134,7 @@ pub fn run_quinn(opt: Opt) -> Result<()> {
         let cert = cert.clone();
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
-            let runtime = rt();
+            let runtime = rt(opt.workers_per_ep);
             match runtime.block_on(quinn::client(server_addr, cert, opt)) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
