@@ -10,6 +10,7 @@ use iroh_base::{EndpointId, RelayUrl};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 pub(crate) use self::remote_state::PathsWatcher;
 pub(super) use self::remote_state::RemoteStateMessage;
@@ -60,6 +61,7 @@ pub(crate) struct RemoteMap {
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     discovery: ConcurrentDiscovery,
+    shutdown_token: CancellationToken,
 }
 
 impl RemoteMap {
@@ -69,6 +71,7 @@ impl RemoteMap {
         metrics: Arc<MagicsockMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         discovery: ConcurrentDiscovery,
+        shutdown_token: CancellationToken,
     ) -> Self {
         Self {
             actor_handles: Mutex::new(FxHashMap::default()),
@@ -78,6 +81,7 @@ impl RemoteMap {
             metrics,
             local_direct_addrs,
             discovery,
+            shutdown_token,
         }
     }
 
@@ -148,7 +152,7 @@ impl RemoteMap {
             self.metrics.clone(),
             self.discovery.clone(),
         )
-        .start();
+        .start(self.shutdown_token.child_token());
         let sender = handle.sender.get().expect("just created");
         (handle, sender)
     }

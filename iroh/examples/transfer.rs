@@ -18,10 +18,10 @@ use iroh::{
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{ConnectionError, PathInfoList},
 };
-use n0_error::{Result, StackResultExt, StdResultExt};
+use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::task::AbortOnDropHandle;
 use tokio_stream::StreamExt;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use url::Url;
 
 // Transfer ALPN that we are using to communicate over the `Endpoint`
@@ -295,7 +295,7 @@ impl EndpointArgs {
         if self.relay_only {
             endpoint.online().await;
         } else if !self.no_relay {
-            tokio::time::timeout(Duration::from_secs(4), endpoint.online())
+            tokio::time::timeout(Duration::from_secs(3), endpoint.online())
                 .await
                 .ok();
         }
@@ -385,7 +385,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
                 HumanBytes((size as f64 / duration.as_secs_f64()) as u64)
             );
             if res.is_err() {
-                println!("[{remote}] Did not disconnect within 3 seconds");
+                println!("[{remote}] Error: Did not disconnect within 3 seconds");
             } else {
                 println!("[{remote}] Disconnected");
             }
@@ -420,11 +420,14 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
 
     let (len, time_to_first_byte, chnk) = drain_stream(recv, false).await?;
 
+    conn.close(0u32.into(), b"done");
+
     // We received the last message: close all connections and allow for the close
     // message to be sent.
-    tokio::time::timeout(Duration::from_secs(3), endpoint.close())
-        .await
-        .anyerr()?;
+    if let Err(_err) = tokio::time::timeout(Duration::from_secs(5), endpoint.close()).await {
+        error!("Endpoint closing timed out");
+        bail_any!("Failed to shutdown endpoint in time");
+    }
 
     let duration = start.elapsed();
     println!(
