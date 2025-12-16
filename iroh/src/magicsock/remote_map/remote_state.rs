@@ -382,7 +382,7 @@ impl RemoteStateActor {
         }
 
         if !is_goodenough {
-            debug!("connections are not good enough, noting holepunch");
+            debug!("connections are not good enough, triggering holepunching");
             self.trigger_holepunching();
         }
     }
