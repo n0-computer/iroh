@@ -141,7 +141,15 @@ pub fn configure_tracing_subscriber() {
 }
 
 pub fn rt() -> Runtime {
-    Builder::new_current_thread().enable_all().build().unwrap()
+    Builder::new_multi_thread()
+        // We need at least one thread for the EndpointDriver, and another for the ConnectionDriver.
+        // If we don't do this, then sometimes the connection driver will starve the endpoint driver
+        // of resources too much. This makes the endpoint driver receive acks with too long of a delay.
+        // This means it processes ACKs way too late, messing up congestion control.
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap()
 }
 
 fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
