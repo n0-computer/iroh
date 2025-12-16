@@ -212,31 +212,31 @@ jobs:
             path: ~/awscli
             key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
 
-        - name: Download awscli on linux x86_64
+        - name: Download awscli (linux x86_64)
           if: matrix.name == 'ubuntu-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
             mkdir -p ~/awscli
             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
-            cd ~/awscli && unzip -q awscliv2.zip
+            cd ~/awscli && unzip -oq awscliv2.zip
 
-        - name: Download awscli on linux arm
+        - name: Download awscli (linux aarch64)
           if: matrix.name == 'ubuntu-arm-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
             mkdir -p ~/awscli
             curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o ~/awscli/awscliv2.zip
-            cd ~/awscli && unzip -q awscliv2.zip
+            cd ~/awscli && unzip -oq awscliv2.zip
 
-        - name: Download awscli on mac
+        - name: Download awscli (mac)
           if: matrix.os == 'macos-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
             mkdir -p ~/awscli
             curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o ~/awscli/AWSCLIV2.pkg
 
-        - name: Install awscli on linux
-          if: matrix.os == 'ubuntu-latest'
+        - name: Install awscli (linux)
+          if: matrix.os == 'ubuntu-latest' || matrix.name == 'ubuntu-arm-latest'
           run: sudo ~/awscli/aws/install --update
 
-        - name: Install awscli on mac
+        - name: Install awscli (mac)
           if: matrix.os == 'macos-latest'
           run: sudo installer -pkg ~/awscli/AWSCLIV2.pkg -target /
 

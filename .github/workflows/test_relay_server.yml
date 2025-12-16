@@ -38,11 +38,22 @@ jobs:
           run: |
             cargo build --release --all-features --bin iroh-relay
 
-        - name: Setup awscli on linux
+        - name: Cache AWS CLI
+          id: cache-awscli
+          uses: actions/cache@v4
+          with:
+            path: ~/awscli
+            key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
+
+        - name: Download awscli
+          if: steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip awscliv2.zip
-            sudo ./aws/install --update
+            mkdir -p ~/awscli
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
+            cd ~/awscli && unzip -oq awscliv2.zip
+
+        - name: Install awscli
+          run: sudo ~/awscli/aws/install --update
         - name: Set aws credentials
           run: |
                 echo "AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}" >> $GITHUB_ENV
