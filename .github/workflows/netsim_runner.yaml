@@ -177,7 +177,7 @@ jobs:
       run: |
         mkdir -p ~/awscli
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
-        cd ~/awscli && unzip -q awscliv2.zip
+        cd ~/awscli && unzip -oq awscliv2.zip
 
     - name: Install awscli
       if: always()
