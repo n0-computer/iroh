@@ -263,6 +263,9 @@ impl RemoteStateActor {
         n0_future::pin!(idle_timeout);
         let mut needs_holepunching_watcher = self.needs_holepunching.watch();
 
+        let check_connections = time::interval(CHECK_CONNECTIONS_INTERVAL);
+        n0_future::pin!(check_connections);
+
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -279,8 +282,6 @@ impl RemoteStateActor {
                     .as_mut()
                     .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
             }
-            let check_connections = time::interval(CHECK_CONNECTIONS_INTERVAL);
-            n0_future::pin!(check_connections);
 
             tokio::select! {
                 biased;
@@ -715,7 +716,6 @@ impl RemoteStateActor {
             .map(|daddr| daddr.addr)
             .collect::<BTreeSet<_>>();
 
-        // try up to 3 times, with a short delay
         match conn.initiate_nat_traversal_round() {
             Ok(remote_candidates) => {
                 let remote_candidates = remote_candidates
