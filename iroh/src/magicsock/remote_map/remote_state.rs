@@ -167,8 +167,6 @@ pub(super) struct RemoteStateActor {
     paths: RemotePathState,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
-    /// If we have any indication that we want to holepunch asap.
-    needs_holepunching: Watchable<bool>,
 
     /// The path we currently consider the preferred path to the remote endpoint.
     ///
@@ -217,7 +215,6 @@ impl RemoteStateActor {
             addr_events: Default::default(),
             paths: RemotePathState::new(metrics),
             last_holepunch: None,
-            needs_holepunching: Default::default(),
             selected_path: Default::default(),
             scheduled_holepunch: None,
             scheduled_open_path: None,
@@ -261,7 +258,6 @@ impl RemoteStateActor {
         trace!("actor started");
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
-        let mut needs_holepunching_watcher = self.needs_holepunching.watch();
 
         let check_connections = time::interval(CHECK_CONNECTIONS_INTERVAL);
         n0_future::pin!(check_connections);
@@ -330,11 +326,6 @@ impl RemoteStateActor {
                 }
                 item = self.discovery_stream.next() => {
                     self.handle_discovery_item(item);
-                }
-                need_hp = needs_holepunching_watcher.updated() => {
-                    if matches!(need_hp, Ok(true)) {
-                        self.trigger_holepunching();
-                    }
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -736,9 +727,23 @@ impl RemoteStateActor {
                 });
             }
             Err(err) => {
-                // TODO: distinguish between fatal and temporary errors
-                warn!("failed to initiate NAT traversal: {err:#}");
-                self.needs_holepunching.set(true).ok();
+                debug!("failed to initiate NAT traversal: {err:#}");
+                use quinn_proto::iroh_hp::Error;
+                match err {
+                    Error::Closed
+                    | Error::TooManyAddresses
+                    | Error::WrongConnectionSide
+                    | Error::ExtensionNotNegotiated => {
+                        // Fatal, no need to retry for now
+                    }
+                    Error::Multipath(_) | Error::NotEnoughAddresses => {
+                        // Retry in a bit
+                        let now = Instant::now();
+                        let next_hp = now + Duration::from_millis(100);
+                        trace!(scheduled_in = ?(next_hp - now), "holepunching retry");
+                        self.scheduled_holepunch = Some(next_hp);
+                    }
+                }
             }
         }
     }
