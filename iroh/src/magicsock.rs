@@ -1415,6 +1415,8 @@ impl Actor {
 
             // Notify all transports
             self.network_change_sender.on_network_change(r);
+            // Notify connections
+            self.msock.remote_map.on_network_change(r);
         }
 
         #[cfg(not(wasm_browser))]

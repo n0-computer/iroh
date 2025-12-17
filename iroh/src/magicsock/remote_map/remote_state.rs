@@ -40,6 +40,7 @@ use crate::{
         remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
     },
+    net_report::Report,
     util::MaybeFuture,
 };
 
@@ -190,6 +191,9 @@ pub(super) struct RemoteStateActor {
     //
     /// Stream of discovery results, or always pending if discovery is not running.
     discovery_stream: DiscoveryStream,
+
+    /// Last Net Report
+    last_report: Option<Report>,
 }
 
 impl RemoteStateActor {
@@ -220,6 +224,7 @@ impl RemoteStateActor {
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
             discovery_stream: Either::Left(n0_future::stream::pending()),
+            last_report: None,
         }
     }
 
@@ -367,6 +372,9 @@ impl RemoteStateActor {
                     addrs,
                 };
                 tx.send(info).ok();
+            }
+            RemoteStateMessage::NetworkChange(report) => {
+                self.last_report.replace(report);
             }
         }
     }
@@ -707,7 +715,26 @@ impl RemoteStateActor {
             .map(|daddr| daddr.addr)
             .collect::<BTreeSet<_>>();
 
-        match conn.initiate_nat_traversal_round() {
+        let all_rtts = self.calculate_path_rtts();
+        let relay_mapped_addrs = self.relay_mapped_addrs.clone();
+        let relay_latencies = self.last_report.as_ref().map(|r| r.relay_latency.clone());
+        let rtt_hints = |addr: &SocketAddr| {
+            let addr = relay_mapped_addrs.to_transport_addr(*addr)?;
+            match addr {
+                transports::Addr::Relay(url, _id) => {
+                    // Relay case, grab the latency from net_report
+                    relay_latencies.as_ref().and_then(|l| l.get(&url))
+                }
+                addr @ transports::Addr::Ip(_) => {
+                    // IP case, grab the worst latency we currently have
+                    all_rtts
+                        .get(&addr)
+                        .and_then(|rtts| rtts.iter().max().copied())
+                }
+            }
+        };
+
+        match conn.initiate_nat_traversal_round(rtt_hints) {
             Ok(remote_candidates) => {
                 let remote_candidates = remote_candidates
                     .iter()
@@ -776,7 +803,8 @@ impl RemoteStateActor {
             if conn.side().is_server() {
                 continue;
             }
-            let fut = conn.open_path_ensure(quic_addr, path_status);
+            let rtt_hint = None; // TODO
+            let fut = conn.open_path_ensure(quic_addr, path_status, rtt_hint);
             match fut.path_id() {
                 Some(path_id) => {
                     trace!(?conn_id, ?path_id, "opening new path");
@@ -905,6 +933,20 @@ impl RemoteStateActor {
         }
     }
 
+    fn calculate_path_rtts(&self) -> FxHashMap<transports::Addr, Vec<Duration>> {
+        let mut rtts: FxHashMap<transports::Addr, Vec<Duration>> = FxHashMap::default();
+        for conn_state in self.connections.values() {
+            let Some(conn) = conn_state.handle.upgrade() else {
+                continue;
+            };
+            for (path_id, addr) in conn_state.open_paths.iter() {
+                if let Some(stats) = conn.path_stats(*path_id) {
+                    rtts.entry(addr.clone()).or_default().push(stats.rtt);
+                }
+            }
+        }
+        rtts
+    }
     /// Selects the path with the lowest RTT, prefers direct paths.
     ///
     /// If there are direct paths, this selects the direct path with the lowest RTT.  If
@@ -914,22 +956,9 @@ impl RemoteStateActor {
     /// direct paths are closed for all connections.
     #[instrument(skip_all)]
     fn select_path(&mut self) {
+        let all_path_rtts = self.calculate_path_rtts();
         // Find the lowest RTT across all connections for each open path.  The long way, so
         // we get to log *all* RTTs.
-        let mut all_path_rtts: FxHashMap<transports::Addr, Vec<Duration>> = FxHashMap::default();
-        for conn_state in self.connections.values() {
-            let Some(conn) = conn_state.handle.upgrade() else {
-                continue;
-            };
-            for (path_id, addr) in conn_state.open_paths.iter() {
-                if let Some(stats) = conn.path_stats(*path_id) {
-                    all_path_rtts
-                        .entry(addr.clone())
-                        .or_default()
-                        .push(stats.rtt);
-                }
-            }
-        }
         trace!(?all_path_rtts, "dumping all path RTTs");
         let path_rtts: FxHashMap<transports::Addr, Duration> = all_path_rtts
             .into_iter()
@@ -1175,6 +1204,7 @@ pub(crate) enum RemoteStateMessage {
     ///
     /// This currently only includes a list of all known transport addresses for the remote.
     RemoteInfo(oneshot::Sender<RemoteInfo>),
+    NetworkChange(Report),
 }
 
 /// A handle to a [`RemoteStateActor`].

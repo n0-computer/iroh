@@ -197,7 +197,7 @@ impl RelayLatencies {
     }
 
     /// Returns the lowest latency across records.
-    pub(super) fn get(&self, url: &RelayUrl) -> Option<Duration> {
+    pub(crate) fn get(&self, url: &RelayUrl) -> Option<Duration> {
         let mut list = Vec::with_capacity(3);
         if let Some(val) = self.https.get(url) {
             list.push(*val);

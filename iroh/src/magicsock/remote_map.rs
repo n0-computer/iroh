@@ -21,6 +21,7 @@ use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
     DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
+    net_report::Report,
 };
 use crate::discovery::ConcurrentDiscovery;
 
@@ -96,6 +97,17 @@ impl RemoteMap {
     pub(super) fn remove_closed_remote_state_actors(&self) {
         let mut handles = self.actor_handles.lock().expect("poisoned");
         handles.retain(|_eid, handle| !handle.sender.is_closed())
+    }
+
+    pub(super) fn on_network_change(&self, report: &Report) {
+        let handles = self.actor_handles.lock().expect("poisoned");
+        for (_, handle) in &*handles {
+            if let Some(sender) = handle.sender.get() {
+                sender
+                    .try_send(RemoteStateMessage::NetworkChange(report.clone()))
+                    .ok();
+            }
+        }
     }
 
     /// Returns the sender for the [`RemoteStateActor`].
