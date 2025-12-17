@@ -101,7 +101,7 @@ impl RemoteMap {
 
     pub(super) fn on_network_change(&self, report: &Report) {
         let handles = self.actor_handles.lock().expect("poisoned");
-        for (_, handle) in &*handles {
+        for handle in handles.values() {
             if let Some(sender) = handle.sender.get() {
                 sender
                     .try_send(RemoteStateMessage::NetworkChange(report.clone()))

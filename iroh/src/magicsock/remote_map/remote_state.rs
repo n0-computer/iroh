@@ -793,6 +793,21 @@ impl RemoteStateActor {
                 .private_socket_addr(),
         };
 
+        let rtt_hint = match &open_addr {
+            transports::Addr::Relay(url, _) => {
+                // Relay case, grab the latency from net_report
+                self.last_report
+                    .as_ref()
+                    .and_then(|r| r.relay_latency.get(url))
+            }
+            addr @ transports::Addr::Ip(_) => {
+                let all_rtts = self.calculate_path_rtts();
+                all_rtts
+                    .get(addr)
+                    .and_then(|rtts| rtts.iter().max().copied())
+            }
+        };
+
         for (conn_id, conn_state) in self.connections.iter_mut() {
             if conn_state.path_ids.contains_key(open_addr) {
                 continue;
@@ -803,7 +818,7 @@ impl RemoteStateActor {
             if conn.side().is_server() {
                 continue;
             }
-            let rtt_hint = None; // TODO
+
             let fut = conn.open_path_ensure(quic_addr, path_status, rtt_hint);
             match fut.path_id() {
                 Some(path_id) => {
