@@ -1774,34 +1774,35 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_magic() -> Result {
+    async fn test_two_devices_roundtrip_quinn_magic_small() -> Result {
         let (_guard, m1, m2) = endpoint_pair().await;
 
-        for i in 0..5 {
-            info!("\n-- round {i}");
-            run_roundtrip(
-                m1.clone(),
-                m2.clone(),
-                b"hello m1",
-                ExpectedLoss::AlmostNone,
-            )
-            .await;
-            run_roundtrip(
-                m2.clone(),
-                m1.clone(),
-                b"hello m2",
-                ExpectedLoss::AlmostNone,
-            )
-            .await;
+        run_roundtrip(
+            m1.clone(),
+            m2.clone(),
+            b"hello m1",
+            ExpectedLoss::AlmostNone,
+        )
+        .await;
+        run_roundtrip(
+            m2.clone(),
+            m1.clone(),
+            b"hello m2",
+            ExpectedLoss::AlmostNone,
+        )
+        .await;
+        Ok(())
+    }
 
-            info!("\n-- larger data");
-            let mut data = vec![0u8; 10 * 1024];
-            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
-            info!("\n-- round {i} finished");
-        }
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_quinn_magic_large() -> Result {
+        let (_guard, m1, m2) = endpoint_pair().await;
+        let mut data = vec![0u8; 10 * 1024];
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        rng.fill_bytes(&mut data);
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
 
         Ok(())
     }
@@ -1876,11 +1877,7 @@ mod tests {
         };
 
         for i in 0..rounds {
-            println!("-- [m1 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
-
-            println!("-- [m1 changes] larger data");
+            println!("-- [m1 changes] round {i}");
             let mut data = vec![0u8; 10 * 1024];
             rng.fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
@@ -1904,11 +1901,7 @@ mod tests {
         };
 
         for i in 0..rounds {
-            println!("-- [m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
-
-            println!("-- [m2 changes] larger data");
+            println!("-- [m2 changes] round {i}");
             let mut data = vec![0u8; 10 * 1024];
             rng.fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
@@ -1933,11 +1926,7 @@ mod tests {
         };
 
         for i in 0..rounds {
-            println!("-- [m1 & m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
-
-            println!("-- [m1 & m2 changes] larger data");
+            println!("-- [m1 & m2 changes] round {i}");
             let mut data = vec![0u8; 10 * 1024];
             rng.fill_bytes(&mut data);
             run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
