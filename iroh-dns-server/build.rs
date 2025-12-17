@@ -1,14 +1,6 @@
-use cfg_aliases::cfg_aliases;
 use vergen_gitcl::{BuildBuilder, CargoBuilder, Emitter, GitclBuilder, RustcBuilder};
 
 fn main() {
-    // Setup cfg aliases
-    cfg_aliases! {
-        // Convenience aliases
-        wasm_browser: { all(target_family = "wasm", target_os = "unknown") },
-    }
-
-    // Emit build-time environment variables
     if let Err(e) = emit_vergen() {
         eprintln!("vergen error: {e}");
     }

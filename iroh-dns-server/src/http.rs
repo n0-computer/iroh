@@ -6,7 +6,7 @@ use std::{
 };
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{ConnectInfo, Request, State},
     handler::Handler,
     http::Method,
@@ -192,6 +192,34 @@ impl HttpServer {
     }
 }
 
+/// Health check response
+#[derive(Serialize)]
+struct Health {
+    status: &'static str,
+    version: &'static str,
+    git_hash: &'static str,
+    http_requests: u64,
+    http_requests_success: u64,
+    http_requests_error: u64,
+    dns_requests: u64,
+    dns_lookup_success: u64,
+    dns_lookup_notfound: u64,
+}
+
+async fn healthz(State(state): State<AppState>) -> Json<Health> {
+    Json(Health {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
+        git_hash: option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"),
+        http_requests: state.metrics.http_requests.get(),
+        http_requests_success: state.metrics.http_requests_success.get(),
+        http_requests_error: state.metrics.http_requests_error.get(),
+        dns_requests: state.metrics.dns_requests.get(),
+        dns_lookup_success: state.metrics.dns_lookup_success.get(),
+        dns_lookup_notfound: state.metrics.dns_lookup_notfound.get(),
+    })
+}
+
 pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -> Router {
     // configure cors middleware
     let cors = CorsLayer::new()
@@ -232,7 +260,9 @@ pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -
                 get(pkarr::get).put(pkarr::put)
             },
         )
+        // Deprecated: use /healthz instead
         .route("/healthcheck", get(|| async { "OK" }))
+        .route("/healthz", get(healthz))
         .route("/", get(|| async { "Hi!" }))
         .with_state(state.clone());
 

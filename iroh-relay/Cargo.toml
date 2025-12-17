@@ -86,6 +86,7 @@ tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connec
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
 sha1 = { version = "0.11.0-rc.2", optional = true }
 toml = { version = "0.9", optional = true }
+serde_json = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
@@ -133,6 +134,7 @@ tracing-test = "0.2.5"
 
 [build-dependencies]
 cfg_aliases = { version = "0.2.1" }
+vergen-gitcl = { version = "1.0.8", features = ["build", "cargo", "rustc", "emit_and_set"] }
 
 [features]
 default = ["metrics"]
@@ -152,6 +154,7 @@ server = [
     "dep:simdutf8",
     "dep:sha1",
     "dep:toml",
+    "dep:serde_json",
     "dep:tracing-subscriber",
     "quinn/platform-verifier",
     "quinn/runtime-tokio",
