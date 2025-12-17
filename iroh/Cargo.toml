@@ -109,6 +109,8 @@ console_error_panic_hook = "0.1"
 postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rand_chacha = "0.9"
+memory-stats = "1"
+human_bytes = "0.4.3"
 
 # *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
