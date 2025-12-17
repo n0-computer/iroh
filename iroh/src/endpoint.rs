@@ -1450,7 +1450,7 @@ mod tests {
         let test_start = Instant::now();
         let n_clients = 5;
         let n_chunks_per_client = 2;
-        let chunk_size = 10;
+        let chunk_size = 100;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let server_secret_key = SecretKey::generate(&mut rng);
