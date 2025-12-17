@@ -1450,7 +1450,7 @@
 <a href=#1450 id=1450 data-nosnippet>1450</a>        <span class="kw">let </span>test_start = Instant::now();
 <a href=#1451 id=1451 data-nosnippet>1451</a>        <span class="kw">let </span>n_clients = <span class="number">5</span>;
 <a href=#1452 id=1452 data-nosnippet>1452</a>        <span class="kw">let </span>n_chunks_per_client = <span class="number">2</span>;
-<a href=#1453 id=1453 data-nosnippet>1453</a>        <span class="kw">let </span>chunk_size = <span class="number">10</span>;
+<a href=#1453 id=1453 data-nosnippet>1453</a>        <span class="kw">let </span>chunk_size = <span class="number">100</span>;
 <a href=#1454 id=1454 data-nosnippet>1454</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
 <a href=#1455 id=1455 data-nosnippet>1455</a>        <span class="kw">let </span>(relay_map, relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span>.unwrap();
 <a href=#1456 id=1456 data-nosnippet>1456</a>        <span class="kw">let </span>server_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
