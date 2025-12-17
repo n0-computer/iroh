@@ -1743,15 +1743,13 @@ mod tests {
     /// the endpoints rebind.
     async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
         let discovery = StaticProvider::new();
-        let ep1 = Endpoint::builder()
-            .relay_mode(RelayMode::Disabled)
+        let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
             .discovery(discovery.clone())
             .bind()
             .await
             .unwrap();
-        let ep2 = Endpoint::builder()
-            .relay_mode(RelayMode::Disabled)
+        let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
             .discovery(discovery.clone())
             .bind()
