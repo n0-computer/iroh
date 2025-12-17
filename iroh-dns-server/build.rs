@@ -1,22 +1,14 @@
-use vergen_gitcl::{BuildBuilder, CargoBuilder, Emitter, GitclBuilder, RustcBuilder};
+use vergen_gitcl::{Emitter, GitclBuilder};
 
 fn main() {
+    // Emit build-time environment variables
     if let Err(e) = emit_vergen() {
         eprintln!("vergen error: {e}");
     }
 }
 
 fn emit_vergen() -> Result<(), Box<dyn std::error::Error>> {
-    let build = BuildBuilder::all_build()?;
-    let cargo = CargoBuilder::all_cargo()?;
-    let gitcl = GitclBuilder::all_git()?;
-    let rustc = RustcBuilder::all_rustc()?;
-
-    Emitter::default()
-        .add_instructions(&build)?
-        .add_instructions(&cargo)?
-        .add_instructions(&gitcl)?
-        .add_instructions(&rustc)?
-        .emit()?;
+    let gitcl = GitclBuilder::default().sha(false).build()?;
+    Emitter::default().add_instructions(&gitcl)?.emit()?;
     Ok(())
 }

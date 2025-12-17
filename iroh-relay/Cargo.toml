@@ -133,9 +133,8 @@ serde_json = "1"
 tracing-test = "0.2.5"
 
 [build-dependencies]
-cfg_aliases = { version = "0.2.1" }
-vergen-gitcl = { version = "1.0.8", features = ["build", "cargo", "rustc", "emit_and_set"] }
-cargo_metadata = "0.19.2"  # min version fix
+cfg_aliases = "0.2.1"
+vergen-gitcl = "1.0.8"
 
 [features]
 default = ["metrics"]
