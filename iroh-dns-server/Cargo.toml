@@ -74,6 +74,7 @@ harness = false
 
 [build-dependencies]
 vergen-gitcl = { version = "1.0.8", features = ["build", "cargo", "rustc", "emit_and_set"] }
+cargo_metadata = "0.19.2"  # min version fix
 
 [package.metadata.docs.rs]
 all-features = true
