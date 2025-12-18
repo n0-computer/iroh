@@ -268,9 +268,10 @@ impl EndpointArgs {
 
         #[cfg(feature = "qlog")]
         {
-            let mut transport_config = iroh::endpoint::QuicTransportConfig::default();
-            transport_config.qlog_from_env("transfer");
-            builder = builder.transport_config(transport_config)
+            let cfg = iroh::endpoint::QuicTransportConfig::builder()
+                .qlog_from_env("transfer")
+                .build();
+            builder = builder.transport_config(cfg)
         }
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;

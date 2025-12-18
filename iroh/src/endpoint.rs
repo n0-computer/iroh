@@ -44,7 +44,7 @@ use crate::{
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
-mod quic;
+pub(crate) mod quic;
 
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 
@@ -55,17 +55,20 @@ pub use self::{
         Accept, Accepting, AlpnError, AuthenticationError, Connecting, ConnectingError, Connection,
         ConnectionInfo, ConnectionState, HandshakeCompleted, Incoming, IncomingZeroRtt,
         IncomingZeroRttConnection, OutgoingZeroRtt, OutgoingZeroRttConnection,
-        RemoteEndpointIdError, ZeroRttStatus,
+        RemoteEndpointIdError, RetryError, ZeroRttStatus,
     },
     quic::{
         AcceptBi, AcceptUni, AckFrequencyConfig, AeadKey, ApplicationClose, Chunk, ClosedStream,
-        ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
-        CryptoError, CryptoServerConfig, ExportKeyingMaterialError, FrameStats, HandshakeTokenKey,
-        IdleTimeout, MtuDiscoveryConfig, OpenBi, OpenUni, PathStats, QuicTransportConfig,
-        ReadDatagram, ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError,
-        RetryError, SendDatagramError, SendStream, ServerConfig, Side, StoppedError, StreamId,
-        TransportError, TransportErrorCode, UdpStats, UnsupportedVersion, VarInt,
-        VarIntBoundsExceeded, WeakConnectionHandle, WriteError, Written,
+        Codec, ConnectionClose, ConnectionError, ConnectionStats, Controller, ControllerFactory,
+        ControllerMetrics, CryptoError, Dir, ExportKeyingMaterialError, FrameStats, FrameType,
+        HandshakeTokenKey, HeaderKey, IdleTimeout, Keys, MtuDiscoveryConfig, OpenBi, OpenUni,
+        PacketKey, PathId, PathStats, QuicConnectError, QuicTransportConfig,
+        QuicTransportConfigBuilder, ReadDatagram, ReadError, ReadExactError, ReadToEndError,
+        RecvStream, ResetError, RttEstimator, SendDatagram, SendDatagramError, SendStream,
+        ServerConfig, ServerConfigBuilder, Side, StoppedError, StreamId, TimeSource, TokenLog,
+        TokenReuseError, TransportError, TransportErrorCode, TransportParameters, UdpStats,
+        UnorderedRecvStream, UnsupportedVersion, ValidationTokenConfig, VarInt,
+        VarIntBoundsExceeded, WriteError, Written,
     },
 };
 pub use crate::magicsock::transports::TransportConfig;
@@ -468,15 +471,14 @@ struct StaticConfig {
 }
 
 impl StaticConfig {
-    /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> ServerConfig {
+    /// Create a [`ServerConfig`] with the specified ALPN protocols.
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> quinn_proto::ServerConfig {
         let quic_server_config = self
             .tls_config
             .make_server_config(alpn_protocols, self.keylog);
-        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(self.transport_config.to_arc());
-
-        server_config
+        let mut inner = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+        inner.transport_config(self.transport_config.to_inner_arc());
+        inner
     }
 }
 
@@ -525,7 +527,7 @@ pub enum ConnectWithOptsError {
     #[error("Unable to connect to remote")]
     Quinn {
         #[error(std_err)]
-        source: quinn_proto::ConnectError,
+        source: QuicConnectError,
     },
     #[error("Internal consistency error")]
     InternalConsistencyError {
@@ -715,8 +717,8 @@ impl Endpoint {
 
         let transport_config = options
             .transport_config
-            .map(|cfg| cfg.to_arc())
-            .unwrap_or(self.static_config.transport_config.to_arc());
+            .map(|cfg| cfg.to_inner_arc())
+            .unwrap_or(self.static_config.transport_config.to_inner_arc());
 
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
@@ -1144,6 +1146,15 @@ impl Endpoint {
         self.msock.is_closed()
     }
 
+    /// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
+    ///
+    /// Use the [`ServerConfigBuilder`] to customize the [`ServerConfig`] connection configuration
+    /// for a connection accepted using the [`Incoming::accept_with`] method.
+    pub fn create_server_config_builder(&self, alpns: Vec<Vec<u8>>) -> ServerConfigBuilder {
+        let inner = self.static_config.create_server_config(alpns);
+        ServerConfigBuilder::new(inner, self.static_config.transport_config.clone())
+    }
+
     // # Remaining private methods
 
     #[cfg(test)]
@@ -1313,7 +1324,6 @@ mod tests {
     use n0_future::{BufferedStreamExt, StreamExt, stream, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use quinn::ConnectionError;
     use rand::SeedableRng;
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, info, info_span, instrument};
@@ -1322,7 +1332,7 @@ mod tests {
     use crate::{
         RelayMap, RelayMode,
         discovery::static_provider::StaticProvider,
-        endpoint::{ConnectOptions, Connection},
+        endpoint::{ApplicationClose, ConnectOptions, Connection, ConnectionError},
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
@@ -1380,13 +1390,13 @@ mod tests {
                 conn.close(7u8.into(), b"bye");
 
                 let res = conn.accept_uni().await;
-                assert_eq!(res.unwrap_err(), quinn::ConnectionError::LocallyClosed);
+                assert_eq!(res.unwrap_err(), ConnectionError::LocallyClosed);
 
                 let res = stream.read_to_end(10).await;
                 assert_eq!(
                     res.unwrap_err(),
                     quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
-                        quinn::ConnectionError::LocallyClosed
+                        ConnectionError::LocallyClosed
                     ))
                 );
                 info!("server test completed");
@@ -1417,11 +1427,10 @@ mod tests {
                 info!("waiting for closed");
                 // Remote now closes the connection, we should see an error sometime soon.
                 let err = conn.closed().await;
-                let expected_err =
-                    quinn::ConnectionError::ApplicationClosed(quinn::ApplicationClose {
-                        error_code: 7u8.into(),
-                        reason: b"bye".to_vec().into(),
-                    });
+                let expected_err = ConnectionError::ApplicationClosed(ApplicationClose {
+                    error_code: 7u8.into(),
+                    reason: b"bye".to_vec().into(),
+                });
                 assert_eq!(err, expected_err);
 
                 info!("opening new - expect it to fail");
@@ -1631,7 +1640,7 @@ mod tests {
         let ep1_nodeaddr = ep1.addr();
 
         #[instrument(name = "client", skip_all)]
-        async fn connect(ep: Endpoint, dst: EndpointAddr) -> Result<quinn::ConnectionError> {
+        async fn connect(ep: Endpoint, dst: EndpointAddr) -> Result<ConnectionError> {
             info!(me = %ep.id().fmt_short(), "client starting");
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let mut send = conn.open_uni().await.anyerr()?;
@@ -1660,7 +1669,7 @@ mod tests {
         let conn_closed = dbg!(ep2_connect.await.anyerr()??);
         assert!(matches!(
             conn_closed,
-            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+            ConnectionError::ApplicationClosed(ApplicationClose { .. })
         ));
 
         Ok(())
@@ -1680,7 +1689,7 @@ mod tests {
             relay_map: RelayMap,
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
             qlog: Arc<QlogFileGroup>,
-        ) -> Result<quinn::ConnectionError> {
+        ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let secret = SecretKey::generate(&mut rng);
             let ep = Endpoint::builder()
@@ -1756,7 +1765,7 @@ mod tests {
         let conn_closed = dbg!(client_task.await.anyerr()??);
         assert!(matches!(
             conn_closed,
-            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+            ConnectionError::ApplicationClosed(ApplicationClose { .. })
         ));
 
         Ok(())
@@ -1774,7 +1783,7 @@ mod tests {
         async fn connect(
             relay_map: RelayMap,
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
-        ) -> Result<quinn::ConnectionError> {
+        ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let secret = SecretKey::generate(&mut rng);
             let ep = Endpoint::builder()
@@ -1853,7 +1862,7 @@ mod tests {
         let conn_closed = dbg!(client_task.await.anyerr()??);
         assert!(matches!(
             conn_closed,
-            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+            ConnectionError::ApplicationClosed(ApplicationClose { .. })
         ));
 
         Ok(())
@@ -1920,7 +1929,7 @@ mod tests {
         async fn accept(
             relay_map: RelayMap,
             node_addr_tx: oneshot::Sender<EndpointAddr>,
-        ) -> Result<quinn::ConnectionError> {
+        ) -> Result<ConnectionError> {
             let secret = SecretKey::from([1u8; 32]);
             let ep = Endpoint::builder()
                 .secret_key(secret)
@@ -1968,7 +1977,7 @@ mod tests {
         let conn_closed = dbg!(server_task.await.anyerr()??);
         assert!(matches!(
             conn_closed,
-            ConnectionError::ApplicationClosed(quinn::ApplicationClose { .. })
+            ConnectionError::ApplicationClosed(ApplicationClose { .. })
         ));
 
         Ok(())
