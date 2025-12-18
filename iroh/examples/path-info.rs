@@ -1,6 +1,10 @@
 use std::{
+    alloc::{GlobalAlloc, Layout},
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::Duration,
 };
 
@@ -9,23 +13,47 @@ use iroh::{
     Endpoint, EndpointAddr, EndpointId, Watcher,
     endpoint::{Incoming, PathInfoList},
 };
-use memory_stats::memory_stats;
 use n0_error::Result;
 use n0_future::StreamExt;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
+struct TrackingAllocator;
+
+static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+
+unsafe impl GlobalAlloc for TrackingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe {
+            let size = layout.size();
+            let ptr = std::alloc::System.alloc(layout);
+            if !ptr.is_null() {
+                ALLOCATED.fetch_add(size, Ordering::SeqCst);
+            }
+            ptr
+        }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        ALLOCATED.fetch_sub(layout.size(), Ordering::SeqCst);
+        unsafe {
+            std::alloc::System.dealloc(ptr, layout);
+        }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: TrackingAllocator = TrackingAllocator;
+
+fn print_usage() {
+    let alloc = ALLOCATED.load(Ordering::SeqCst);
+    println!("current mem usage: {}", human_bytes(alloc as f64));
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("start");
-    if let Some(usage) = memory_stats() {
-        println!(
-            "Current physical memory usage: {}",
-            human_bytes(usage.physical_mem as f64)
-        );
-    } else {
-        println!("Couldn't get the current memory usage :(");
-    }
+    print_usage();
     // create server endpoint
     // run it
     // after each connection, add all the path infos to the peermanager
@@ -34,79 +62,49 @@ async fn main() -> Result<()> {
         .alpns(vec![b"test".into()])
         .bind()
         .await?;
+
+    println!("built endpoint");
+    print_usage();
+
     let peer_manager: PeerManager = Arc::new(Mutex::new(HashMap::new()));
     let ep = server.clone();
     let pm = Arc::clone(&peer_manager);
     tokio::spawn(run_server(ep, pm));
 
     println!("after server start");
-    if let Some(usage) = memory_stats() {
-        println!(
-            "Current physical memory usage: {}",
-            human_bytes(usage.physical_mem as f64)
-        );
-    } else {
-        println!("Couldn't get the current memory usage :(");
-    }
+    print_usage();
     let server_addr = server.addr();
     let mut client_set = JoinSet::new();
     let cancel = CancellationToken::new();
-    for _ in 0..100 {
-        client_set.spawn(run_client(server_addr.clone(), cancel.child_token()));
-    }
-    // give time for the server to accept
-    tokio::time::sleep(Duration::from_secs(3)).await;
-    println!("before cancel");
-    if let Some(usage) = memory_stats() {
-        println!(
-            "Current physical memory usage: {}",
-            human_bytes(usage.physical_mem as f64)
-        );
-    } else {
-        println!("Couldn't get the current memory usage :(");
-    }
+    {
+        for _ in 0..100 {
+            client_set.spawn(run_client(server_addr.clone(), cancel.child_token()));
+        }
+        // give time for the server to accept
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        println!("before cancel");
+        print_usage();
 
-    cancel.cancel();
-    client_set.join_all().await;
-
+        cancel.cancel();
+        client_set.join_all().await;
+    }
     println!("after clients close");
-    if let Some(usage) = memory_stats() {
-        println!(
-            "Current physical memory usage: {}",
-            human_bytes(usage.physical_mem as f64)
-        );
-    } else {
-        println!("Couldn't get the current memory usage :(");
-    }
+    print_usage();
 
     server.close().await;
+    drop(server);
+    println!("closed server");
+    print_usage();
 
-    println!("after server close");
-    if let Some(usage) = memory_stats() {
-        println!(
-            "Current physical memory usage: {}",
-            human_bytes(usage.physical_mem as f64)
-        );
-    } else {
-        println!("Couldn't get the current memory usage :(");
-    }
     drop(peer_manager);
-    println!("after peer manager dropped");
-    if let Some(usage) = memory_stats() {
-        println!(
-            "Current physical memory usage: {}",
-            human_bytes(usage.physical_mem as f64)
-        );
-    } else {
-        println!("Couldn't get the current memory usage :(");
-    }
+    println!("dropped peer_manager");
+    print_usage();
     Ok(())
 }
 
 type PeerManager = Arc<Mutex<HashMap<EndpointId, PathInfoList>>>;
 
 async fn run_server(ep: Endpoint, pm: PeerManager) {
-    println!("running server");
     let mut set = JoinSet::new();
     while let Some(incoming) = ep.accept().await {
         // println!("accepted incoming");
