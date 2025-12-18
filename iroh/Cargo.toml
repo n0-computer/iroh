@@ -127,8 +127,7 @@ tokio = { version = "1", features = [
 ] }
 serde_json = "1"
 iroh-relay = { path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
-tracing-test = "0.2.5"
-# tracing-test = { git = "https://github.com/Frando/tracing-test", branch = "feat/color-and-filter-on-cli", features = ["pretty-log-printing"] }
+n0-tracing-test = "0.3"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",

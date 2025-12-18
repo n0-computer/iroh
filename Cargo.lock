@@ -1164,7 +1164,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1920,7 +1920,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tokio",
  "tower-service",
  "tracing",
@@ -2180,6 +2180,7 @@ dependencies = [
  "iroh-relay",
  "n0-error",
  "n0-future",
+ "n0-tracing-test",
  "n0-watcher",
  "netdev",
  "netwatch",
@@ -2211,7 +2212,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-subscriber-wasm",
- "tracing-test",
  "url",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
@@ -2286,6 +2286,7 @@ dependencies = [
  "lru 0.16.2",
  "n0-error",
  "n0-future",
+ "n0-tracing-test",
  "pkarr",
  "rand",
  "rand_chacha",
@@ -2308,7 +2309,6 @@ dependencies = [
  "tower_governor",
  "tracing",
  "tracing-subscriber",
- "tracing-test",
  "ttl_cache",
  "url",
  "vergen-gitcl",
@@ -2359,7 +2359,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2400,9 +2400,9 @@ source = "git+https://github.com/n0-computer/quinn?branch=main#4dcb3a7f05d1b3eb5
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2430,6 +2430,7 @@ dependencies = [
  "lru 0.16.2",
  "n0-error",
  "n0-future",
+ "n0-tracing-test",
  "num_enum",
  "pin-project",
  "pkarr",
@@ -2460,7 +2461,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "tracing-test",
  "url",
  "vergen-gitcl",
  "webpki-roots",
@@ -2778,6 +2778,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "n0-tracing-test"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "274dc19cfda091561b364e4f61b39aa959ade203232f9794884f1911022e8e59"
+dependencies = [
+ "n0-tracing-test-macro",
+ "tracing-core",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "n0-tracing-test-macro"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab691281e87f2453a860e76dde99157f4464df18cb7cb3eb9c3847161ccc4ce1"
+dependencies = [
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "n0-watcher"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2930,7 +2951,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3390,7 +3411,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3427,9 +3448,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3698,7 +3719,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3820,7 +3841,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4395,7 +4416,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4820,27 +4841,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-test"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "557b891436fe0d5e0e363427fc7f217abf9ccd510d5136549847bdcbcd011d68"
-dependencies = [
- "tracing-core",
- "tracing-subscriber",
- "tracing-test-macro",
-]
-
-[[package]]
-name = "tracing-test-macro"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04659ddb06c87d233c566112c1c9c5b9e98256d9af50ec3bc9c8327f873a7568"
-dependencies = [
- "quote",
- "syn",
-]
-
-[[package]]
 name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5208,7 +5208,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

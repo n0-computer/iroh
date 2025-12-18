@@ -26,9 +26,9 @@ mod tests {
         endpoint_info::EndpointInfo,
     };
     use n0_error::{Result, StdResultExt};
+    use n0_tracing_test::traced_test;
     use pkarr::{SignedPacket, Timestamp};
     use rand::{CryptoRng, SeedableRng};
-    use tracing_test::traced_test;
 
     use crate::{
         ZoneStore,

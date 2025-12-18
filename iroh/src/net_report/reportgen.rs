@@ -875,7 +875,7 @@ mod tests {
 
     use iroh_relay::dns::DnsResolver;
     use n0_error::{Result, StdResultExt};
-    use tracing_test::traced_test;
+    use n0_tracing_test::traced_test;
 
     use super::{super::test_utils, *};
 

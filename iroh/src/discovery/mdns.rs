@@ -548,8 +548,8 @@ mod tests {
         use iroh_base::{SecretKey, TransportAddr};
         use n0_error::{AnyError as Error, Result, StdResultExt, bail_any};
         use n0_future::StreamExt;
+        use n0_tracing_test::traced_test;
         use rand::{CryptoRng, SeedableRng};
-        use tracing_test::traced_test;
 
         use super::super::*;
         use crate::discovery::UserData;

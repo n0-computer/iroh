@@ -1218,10 +1218,10 @@ mod tests {
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use iroh_relay::{PingTracker, protos::relay::Datagrams};
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
+    use n0_tracing_test::traced_test;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, info, info_span};
-    use tracing_test::traced_test;
 
     use super::{
         ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
