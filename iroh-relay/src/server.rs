@@ -28,6 +28,7 @@ use iroh_base::EndpointId;
 use iroh_base::RelayUrl;
 use n0_error::{e, stack_error};
 use n0_future::{StreamExt, future::Boxed};
+use serde::Serialize;
 use tokio::{
     net::TcpListener,
     task::{JoinError, JoinSet},
@@ -380,7 +381,8 @@ impl Server {
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
-                    .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
+                    .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler))
+                    .request_handler(Method::GET, "/healthz", Box::new(healthz_handler));
                 if let Some(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
@@ -672,6 +674,31 @@ fn is_challenge_char(c: char) -> bool {
         || c == '.'
         || c == '-'
         || c == '_'
+}
+
+/// Health check response
+#[derive(Serialize)]
+struct Health {
+    status: &'static str,
+    version: &'static str,
+    git_hash: &'static str,
+}
+
+fn healthz_handler(
+    _r: Request<Incoming>,
+    response: ResponseBuilder,
+) -> HyperResult<Response<BytesBody>> {
+    let health = Health {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
+        git_hash: option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"),
+    };
+    let body = serde_json::to_string(&health).unwrap_or_else(|_| r#"{"status":"error"}"#.into());
+    response
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/json")
+        .body(body.into())
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 /// This is a future that never returns, drop it to cancel/abort.
