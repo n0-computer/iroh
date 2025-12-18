@@ -29,16 +29,24 @@ use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use futures_util::{FutureExt, future::Shared};
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
-use n0_future::time::Duration;
+use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
 use quinn::{
     AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
-    RetryError, SendDatagramError, ServerConfig, VarInt,
+    RetryError, SendDatagramError, ServerConfig, Side, VarInt, WeakConnectionHandle,
 };
+use quinn_proto::PathId;
 use tracing::warn;
 
-use crate::{Endpoint, discovery::DiscoveryTask, endpoint::rtt_actor::RttMessage};
+use crate::{
+    Endpoint,
+    endpoint::AfterHandshakeOutcome,
+    magicsock::{
+        RemoteStateActorStoppedError,
+        remote_map::{PathInfoList, PathsWatcher},
+    },
+};
 
 /// Future produced by [`Endpoint::accept`].
 #[derive(derive_more::Debug)]
@@ -149,41 +157,27 @@ impl IntoFuture for Incoming {
     type IntoFuture = IncomingFuture;
 
     fn into_future(self) -> Self::IntoFuture {
-        IncomingFuture {
-            inner: self.inner.into_future(),
-            ep: self.ep,
-        }
+        IncomingFuture(Box::pin(async move {
+            let quinn_conn = self.inner.into_future().await?;
+            let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
+            Ok(conn)
+        }))
     }
 }
 
 /// Adaptor to let [`Incoming`] be `await`ed like a [`Connecting`].
-#[derive(Debug)]
-#[pin_project]
-pub struct IncomingFuture {
-    #[pin]
-    inner: quinn::IncomingFuture,
-    ep: Endpoint,
-}
+#[derive(derive_more::Debug)]
+#[debug("IncomingFuture")]
+pub struct IncomingFuture(BoxFuture<Result<Connection, ConnectingError>>);
 
 impl Future for IncomingFuture {
     type Output = Result<Connection, ConnectingError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this.inner.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
-            Poll::Ready(Ok(inner)) => {
-                let conn = match conn_from_quinn_conn(inner) {
-                    Ok(conn) => conn,
-                    Err(err) => return Poll::Ready(Err(err.into())),
-                };
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
-                Poll::Ready(Ok(conn))
-            }
-        }
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        self.0.poll_unpin(cx)
     }
 }
+
 /// Extracts the ALPN protocol from the peer's handshake data.
 fn alpn_from_quinn_conn(conn: &quinn::Connection) -> Option<Vec<u8>> {
     let data = conn.handshake_data()?;
@@ -207,35 +201,73 @@ async fn alpn_from_quinn_connecting(conn: &mut quinn::Connecting) -> Result<Vec<
 #[stack_error(add_meta, derive, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
+#[derive(Clone)]
 pub enum AuthenticationError {
     #[error(transparent)]
     RemoteId { source: RemoteEndpointIdError },
     #[error("no ALPN provided")]
     NoAlpn {},
-    #[error(transparent)]
-    ConnectionError {
-        #[error(std_err)]
-        source: ConnectionError,
-    },
 }
 
 /// Converts a `quinn::Connection` to a `Connection`.
 ///
-/// ## Errors
+/// Returns an error if there was a connection error, the handshake data has not completed
+/// or if the remote did not set an ALPN.
 ///
-/// Returns a [`AuthenticationError`] if the handshake data has
-/// not completed, or if no alpn was set by the remote node.
-fn conn_from_quinn_conn(conn: quinn::Connection) -> Result<Connection, AuthenticationError> {
-    if let Some(reason) = conn.close_reason() {
-        return Err(e!(AuthenticationError::ConnectionError { source: reason }));
-    }
-    Ok(Connection {
-        info: HandshakeCompletedData {
-            endpoint_id: remote_id_from_quinn_conn(&conn)?,
-            alpn: alpn_from_quinn_conn(&conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?,
-        },
-        inner: conn,
+/// Otherwise returns a future that completes once the connection has been registered with the
+/// magicsock. This future can return an [`RemoteStateActorStoppedError`], which will only be
+/// emitted if the endpoint is closing.
+///
+/// The returned future is `'static`, so it can be stored without being lifetime-bound on `&ep`.
+fn conn_from_quinn_conn(
+    conn: quinn::Connection,
+    ep: &Endpoint,
+) -> Result<
+    impl Future<Output = Result<Connection, ConnectingError>> + Send + 'static,
+    ConnectingError,
+> {
+    let info = match static_info_from_conn(&conn) {
+        Ok(val) => val,
+        Err(auth_err) => {
+            // If the authentication error raced with a connection error, the connection
+            // error wins.
+            if let Some(conn_err) = conn.close_reason() {
+                return Err(e!(ConnectingError::ConnectionError { source: conn_err }));
+            } else {
+                return Err(e!(ConnectingError::HandshakeFailure { source: auth_err }));
+            }
+        }
+    };
+
+    // Register this connection with the magicsock.
+    let fut = ep
+        .msock
+        .register_connection(info.endpoint_id, conn.weak_handle());
+
+    // Check hooks
+    let msock = ep.msock.clone();
+    Ok(async move {
+        let paths = fut.await?;
+        let conn = Connection {
+            data: HandshakeCompletedData { info, paths },
+            inner: conn,
+        };
+
+        if let AfterHandshakeOutcome::Reject { error_code, reason } =
+            msock.hooks.after_handshake(&conn.to_info()).await
+        {
+            conn.close(error_code, &reason);
+            return Err(e!(ConnectingError::LocallyRejected));
+        }
+
+        Ok(conn)
     })
+}
+
+fn static_info_from_conn(conn: &quinn::Connection) -> Result<StaticInfo, AuthenticationError> {
+    let endpoint_id = remote_id_from_quinn_conn(conn)?;
+    let alpn = alpn_from_quinn_conn(conn).ok_or_else(|| e!(AuthenticationError::NoAlpn))?;
+    Ok(StaticInfo { endpoint_id, alpn })
 }
 
 /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -284,24 +316,31 @@ fn remote_id_from_quinn_conn(
 ///
 /// This future resolves to a [`Connection`] once the handshake completes.
 #[derive(derive_more::Debug)]
-#[pin_project]
 pub struct Connecting {
-    #[pin]
     inner: quinn::Connecting,
+    /// Future to register the connection with the magicsock.
+    ///
+    /// This is set and polled after `inner` completes. We are using an option instead of an enum
+    /// because we need infallible access to `inner` in some methods.
+    #[debug("{}", register_with_magicsock.as_ref().map(|_| "Some(RegisterWithMagicsockFut)").unwrap_or("None"))]
+    register_with_magicsock: Option<RegisterWithMagicsockFut>,
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
     remote_endpoint_id: EndpointId,
-    /// We run discovery as long as we haven't established a connection yet.
-    #[debug("Option<DiscoveryTask>")]
-    _discovery_drop_guard: Option<DiscoveryTask>,
 }
+
+type RegisterWithMagicsockFut = BoxFuture<Result<Connection, ConnectingError>>;
 
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
-#[pin_project]
 pub struct Accepting {
-    #[pin]
     inner: quinn::Connecting,
+    /// Future to register the connection with the magicsock.
+    ///
+    /// This is set and polled after `inner` completes. We are using an option instead of an enum
+    /// because we need infallible access to `inner` in some methods.
+    #[debug("{}", register_with_magicsock.as_ref().map(|_| "Some(RegisterWithMagicsockFut)").unwrap_or("None"))]
+    register_with_magicsock: Option<RegisterWithMagicsockFut>,
     ep: Endpoint,
 }
 
@@ -323,6 +362,8 @@ pub enum AlpnError {
 #[stack_error(add_meta, derive, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
+#[derive(Clone)]
+#[allow(private_interfaces)]
 pub enum ConnectingError {
     #[error(transparent)]
     ConnectionError {
@@ -331,6 +372,13 @@ pub enum ConnectingError {
     },
     #[error("Failure finalizing the handshake")]
     HandshakeFailure { source: AuthenticationError },
+    #[error("internal consistency error")]
+    InternalConsistencyError {
+        /// Private source type, cannot be created publicly.
+        source: RemoteStateActorStoppedError,
+    },
+    #[error("Connection was rejected locally")]
+    LocallyRejected,
 }
 
 impl Connecting {
@@ -338,13 +386,12 @@ impl Connecting {
         inner: quinn::Connecting,
         ep: Endpoint,
         remote_endpoint_id: EndpointId,
-        _discovery_drop_guard: Option<DiscoveryTask>,
     ) -> Self {
         Self {
             inner,
             ep,
             remote_endpoint_id,
-            _discovery_drop_guard,
+            register_with_magicsock: None,
         }
     }
 
@@ -386,30 +433,25 @@ impl Connecting {
     #[allow(clippy::result_large_err)]
     pub fn into_0rtt(self) -> Result<OutgoingZeroRttConnection, Connecting> {
         match self.inner.into_0rtt() {
-            Ok((inner, zrtt_accepted)) => {
-                let accepted = ZeroRttAccepted {
-                    inner: zrtt_accepted,
-                    _discovery_drop_guard: self._discovery_drop_guard,
-                }
-                .shared();
-                // This call is why `self.remote_endpoint_id` was introduced.
-                // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
-                // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
-                // `Connection::remote_endpoint_id`.
-                // Instead, we provide `self.remote_endpoint_id` here - we know it in advance,
-                // after all.
-                try_send_rtt_msg(&inner, &self.ep, self.remote_endpoint_id);
+            Ok((quinn_conn, zrtt_accepted)) => {
+                let accepted: BoxFuture<_> = Box::pin({
+                    let quinn_conn = quinn_conn.clone();
+                    async move {
+                        let accepted = zrtt_accepted.await;
+                        let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
+                        Ok(match accepted {
+                            true => ZeroRttStatus::Accepted(conn),
+                            false => ZeroRttStatus::Rejected(conn),
+                        })
+                    }
+                });
+                let accepted = accepted.shared();
                 Ok(Connection {
-                    info: OutgoingZeroRttData { accepted },
-                    inner,
+                    inner: quinn_conn,
+                    data: OutgoingZeroRttData { accepted },
                 })
             }
-            Err(inner) => Err(Self {
-                inner,
-                ep: self.ep,
-                remote_endpoint_id: self.remote_endpoint_id,
-                _discovery_drop_guard: self._discovery_drop_guard,
-            }),
+            Err(inner) => Err(Self { inner, ..self }),
         }
     }
 
@@ -432,21 +474,14 @@ impl Connecting {
 impl Future for Connecting {
     type Output = Result<Connection, ConnectingError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this.inner.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
-            Poll::Ready(Ok(inner)) => {
-                let conn = match conn_from_quinn_conn(inner) {
-                    Ok(conn) => conn,
-                    Err(err) => {
-                        return Poll::Ready(Err(err.into()));
-                    }
-                };
-
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
-                Poll::Ready(Ok(conn))
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        loop {
+            if let Some(fut) = &mut self.register_with_magicsock {
+                return fut.poll_unpin(cx).map_err(Into::into);
+            } else {
+                let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
+                let fut = conn_from_quinn_conn(quinn_conn, &self.ep)?;
+                self.register_with_magicsock = Some(Box::pin(fut.err_into()));
             }
         }
     }
@@ -454,7 +489,11 @@ impl Future for Connecting {
 
 impl Accepting {
     pub(crate) fn new(inner: quinn::Connecting, ep: Endpoint) -> Self {
-        Self { inner, ep }
+        Self {
+            inner,
+            ep,
+            register_with_magicsock: None,
+        }
     }
 
     /// Converts this [`Accepting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
@@ -485,18 +524,24 @@ impl Accepting {
     ///
     /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
     pub fn into_0rtt(self) -> IncomingZeroRttConnection {
-        let (inner, accepted) = self
+        let (quinn_conn, zrtt_accepted) = self
             .inner
             .into_0rtt()
             .expect("incoming connections can always be converted to 0-RTT");
-        let accepted = ZeroRttAccepted {
-            inner: accepted,
-            _discovery_drop_guard: None,
-        }
-        .shared();
-        Connection {
-            info: IncomingZeroRttData { accepted },
-            inner,
+
+        let accepted: BoxFuture<_> = Box::pin({
+            let quinn_conn = quinn_conn.clone();
+            async move {
+                let _ = zrtt_accepted.await;
+                let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
+                Ok(conn)
+            }
+        });
+        let accepted = accepted.shared();
+
+        IncomingZeroRttConnection {
+            inner: quinn_conn,
+            data: IncomingZeroRttData { accepted },
         }
     }
 
@@ -514,46 +559,18 @@ impl Accepting {
 impl Future for Accepting {
     type Output = Result<Connection, ConnectingError>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        match this.inner.poll(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err.into())),
-            Poll::Ready(Ok(inner)) => {
-                let conn = match conn_from_quinn_conn(inner) {
-                    Ok(conn) => conn,
-                    Err(err) => return Poll::Ready(Err(err.into())),
+    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        loop {
+            if let Some(fut) = &mut self.register_with_magicsock {
+                return fut.poll_unpin(cx).map_err(Into::into);
+            } else {
+                let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
+                match conn_from_quinn_conn(quinn_conn, &self.ep) {
+                    Err(err) => return Poll::Ready(Err(err)),
+                    Ok(fut) => self.register_with_magicsock = Some(Box::pin(fut.err_into())),
                 };
-
-                try_send_rtt_msg(conn.quinn_connection(), this.ep, conn.remote_id());
-                Poll::Ready(Ok(conn))
             }
         }
-    }
-}
-
-/// Future that completes when a connection is fully established.
-///
-/// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
-/// value is meaningless.
-#[derive(derive_more::Debug)]
-#[debug("ZeroRttAccepted")]
-struct ZeroRttAccepted {
-    inner: quinn::ZeroRttAccepted,
-    /// When we call `Connecting::into_0rtt`, we don't want to stop discovery, so we transfer the task
-    /// to this future.
-    /// When `quinn::ZeroRttAccepted` resolves, we've successfully received data from the remote.
-    /// Thus, that's the right time to drop discovery to preserve the behaviour similar to
-    /// `Connecting` -> `Connection` without 0-RTT.
-    /// Should we eventually decide to keep the discovery task alive for the duration of the whole
-    /// `Connection`, then this task should be transferred to the `Connection` instead of here.
-    _discovery_drop_guard: Option<DiscoveryTask>,
-}
-
-impl Future for ZeroRttAccepted {
-    type Output = bool;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.inner).poll(cx)
     }
 }
 
@@ -571,7 +588,7 @@ impl Future for ZeroRttAccepted {
 pub type OutgoingZeroRttConnection = Connection<OutgoingZeroRtt>;
 
 /// Returned from [`OutgoingZeroRttConnection::handshake_completed`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ZeroRttStatus {
     /// If the 0-RTT data was accepted, you can continue to use any streams
     /// that were created before the handshake was completed.
@@ -615,16 +632,23 @@ pub type IncomingZeroRttConnection = Connection<IncomingZeroRtt>;
 /// connection without losing application data.
 ///
 /// May be cloned to obtain another handle to the same connection.
-#[derive(derive_more::Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct Connection<State: ConnectionState = HandshakeCompleted> {
     inner: quinn::Connection,
     /// State-specific information
-    info: State::Data,
+    data: State::Data,
 }
 
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct HandshakeCompletedData {
+    info: StaticInfo,
+    paths: PathsWatcher,
+}
+
+/// Static info from a completed TLS handshake.
+#[derive(Debug, Clone)]
+struct StaticInfo {
     endpoint_id: EndpointId,
     alpn: Vec<u8>,
 }
@@ -632,13 +656,13 @@ pub struct HandshakeCompletedData {
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct IncomingZeroRttData {
-    accepted: Shared<ZeroRttAccepted>,
+    accepted: Shared<BoxFuture<Result<Connection, ConnectingError>>>,
 }
 
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct OutgoingZeroRttData {
-    accepted: Shared<ZeroRttAccepted>,
+    accepted: Shared<BoxFuture<Result<ZeroRttStatus, ConnectingError>>>,
 }
 
 mod sealed {
@@ -671,6 +695,7 @@ impl sealed::Sealed for IncomingZeroRtt {}
 impl ConnectionState for IncomingZeroRtt {
     type Data = IncomingZeroRttData;
 }
+
 impl sealed::Sealed for OutgoingZeroRtt {}
 impl ConnectionState for OutgoingZeroRtt {
     type Data = OutgoingZeroRttData;
@@ -679,13 +704,10 @@ impl ConnectionState for OutgoingZeroRtt {
 #[allow(missing_docs)]
 #[stack_error(add_meta, derive)]
 #[error("Protocol error: no remote id available")]
+#[derive(Clone)]
 pub struct RemoteEndpointIdError;
 
 impl<T: ConnectionState> Connection<T> {
-    fn quinn_connection(&self) -> &quinn::Connection {
-        &self.inner
-    }
-
     /// Initiates a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
@@ -845,8 +867,8 @@ impl<T: ConnectionState> Connection<T> {
 
     /// Current best estimate of this connection's latency (round-trip-time).
     #[inline]
-    pub fn rtt(&self) -> Duration {
-        self.inner.rtt()
+    pub fn rtt(&self, path_id: PathId) -> Option<Duration> {
+        self.inner.rtt(path_id)
     }
 
     /// Returns connection statistics.
@@ -857,8 +879,11 @@ impl<T: ConnectionState> Connection<T> {
 
     /// Current state of the congestion control algorithm, for debugging purposes.
     #[inline]
-    pub fn congestion_state(&self) -> Box<dyn quinn_proto::congestion::Controller> {
-        self.inner.congestion_state()
+    pub fn congestion_state(
+        &self,
+        path_id: PathId,
+    ) -> Option<Box<dyn quinn_proto::congestion::Controller>> {
+        self.inner.congestion_state(path_id)
     }
 
     /// Parameters negotiated during the handshake.
@@ -941,7 +966,7 @@ impl<T: ConnectionState> Connection<T> {
 impl Connection<HandshakeCompleted> {
     /// Extracts the ALPN protocol from the peer's handshake data.
     pub fn alpn(&self) -> &[u8] {
-        &self.info.alpn
+        &self.data.info.alpn
     }
 
     /// Returns the [`EndpointId`] from the peer's TLS certificate.
@@ -953,7 +978,41 @@ impl Connection<HandshakeCompleted> {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     pub fn remote_id(&self) -> EndpointId {
-        self.info.endpoint_id
+        self.data.info.endpoint_id
+    }
+
+    /// Returns a [`Watcher`] for the network paths of this connection.
+    ///
+    /// A connection can have several network paths to the remote endpoint, commonly there
+    /// will be a path via the relay server and a holepunched path.
+    ///
+    /// The watcher is updated whenever a path is opened or closed, or when the path selected
+    /// for transmission changes (see [`PathInfo::is_selected`]).
+    ///
+    /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
+    /// transmission path.
+    ///
+    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
+    /// [`PathInfo`]: crate::magicsock::PathInfo
+    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
+        self.data.paths.clone()
+    }
+
+    /// Returns the side of the connection (client or server).
+    pub fn side(&self) -> Side {
+        self.inner.side()
+    }
+
+    /// Returns a connection info struct.
+    ///
+    /// A [`ConnectionInfo`] is a weak handle to the connection that does not keep the connection alive,
+    /// but does allow to access some information about the connection and to wait for the connection to be closed.
+    pub fn to_info(&self) -> ConnectionInfo {
+        ConnectionInfo {
+            data: self.data.clone(),
+            inner: self.inner.weak_handle(),
+            side: self.side(),
+        }
     }
 }
 
@@ -965,19 +1024,18 @@ impl Connection<IncomingZeroRtt> {
 
     /// Waits until the full handshake occurs and then returns a [`Connection`].
     ///
-    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// This may fail with [`ConnectingError::ConnectionError`], if there was
     /// some general failure with the connection, such as a network timeout since
     /// we accepted the connection.
     ///
-    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
     /// doesn't use the right TLS authentication, which usually every iroh endpoint
     /// uses and requires.
     ///
     /// Thus, those errors should only occur if someone connects to you with a
     /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn handshake_completed(self) -> Result<Connection, AuthenticationError> {
-        let _ = self.info.accepted.clone().await;
-        conn_from_quinn_conn(self.inner)
+    pub async fn handshake_completed(&self) -> Result<Connection, ConnectingError> {
+        self.data.accepted.clone().await
     }
 }
 
@@ -996,58 +1054,101 @@ impl Connection<OutgoingZeroRtt> {
     /// the handshake will error and any data sent should be re-sent on a
     /// new stream.
     ///
-    /// This may fail with [`AuthenticationError::ConnectionError`], if there was
+    /// This may fail with [`ConnectingError::ConnectionError`], if there was
     /// some general failure with the connection, such as a network timeout since
     /// we initiated the connection.
     ///
-    /// This may fail with other [`AuthenticationError`]s, if the other side
+    /// This may fail with [`ConnectingError::HandshakeFailure`], if the other side
     /// doesn't use the right TLS authentication, which usually every iroh endpoint
     /// uses and requires.
     ///
     /// Thus, those errors should only occur if someone connects to you with a
     /// modified iroh endpoint or with a plain QUIC client.
-    pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, AuthenticationError> {
-        let accepted = self.info.accepted.clone().await;
-        let conn = conn_from_quinn_conn(self.inner.clone())?;
-
-        Ok(match accepted {
-            true => ZeroRttStatus::Accepted(conn),
-            false => ZeroRttStatus::Rejected(conn),
-        })
+    pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, ConnectingError> {
+        self.data.accepted.clone().await
     }
 }
 
-/// Try send a message to the rtt-actor.
+/// Information about a connection.
 ///
-/// If we can't notify the actor that will impact performance a little, but we can still
-/// function.
-fn try_send_rtt_msg(conn: &quinn::Connection, ep: &Endpoint, remote_id: EndpointId) {
-    let Some(conn_type_changes) = ep.conn_type(remote_id) else {
-        warn!(?conn, "failed to create conn_type stream");
-        return;
-    };
-    let rtt_msg = RttMessage::NewConnection {
-        connection: conn.weak_handle(),
-        conn_type_changes: conn_type_changes.stream(),
-        endpoint_id: remote_id,
-    };
-    if let Err(err) = ep.rtt_actor.msg_tx.try_send(rtt_msg) {
-        warn!(?conn, "rtt-actor not reachable: {err:#}");
+/// A [`ConnectionInfo`] is a weak handle to a connection that exposes some information about the connection,
+/// but does not keep the connection alive.
+#[derive(Debug, Clone)]
+pub struct ConnectionInfo {
+    side: Side,
+    data: HandshakeCompletedData,
+    inner: WeakConnectionHandle,
+}
+
+#[allow(missing_docs)]
+impl ConnectionInfo {
+    pub fn alpn(&self) -> &[u8] {
+        &self.data.info.alpn
+    }
+
+    pub fn remote_id(&self) -> EndpointId {
+        self.data.info.endpoint_id
+    }
+
+    pub fn is_alive(&self) -> bool {
+        self.inner.upgrade().is_some()
+    }
+
+    /// Returns a [`Watcher`] for the network paths of this connection.
+    ///
+    /// A connection can have several network paths to the remote endpoint, commonly there
+    /// will be a path via the relay server and a holepunched path.
+    ///
+    /// The watcher is updated whenever a path is opened or closed, or when the path selected
+    /// for transmission changes (see [`PathInfo::is_selected`]).
+    ///
+    /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
+    /// transmission path.
+    ///
+    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
+    /// [`PathInfo`]: crate::magicsock::PathInfo
+    pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
+        self.data.paths.clone()
+    }
+
+    /// Returns connection statistics.
+    ///
+    /// Returns `None` if the connection has been dropped.
+    pub fn stats(&self) -> Option<ConnectionStats> {
+        self.inner.upgrade().map(|conn| conn.stats())
+    }
+
+    /// Returns the side of the connection (client or server).
+    pub fn side(&self) -> Side {
+        self.side
+    }
+
+    /// Waits for the connection to be closed, and returns the close reason and final connection stats.
+    ///
+    /// Returns `None` if the connection has been dropped already before this call.
+    pub async fn closed(&self) -> Option<(ConnectionError, ConnectionStats)> {
+        let fut = self.inner.upgrade()?.on_closed();
+        Some(fut.await)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use iroh_base::{EndpointAddr, SecretKey};
     use n0_error::{Result, StackResultExt, StdResultExt};
+    use n0_future::StreamExt;
+    use n0_tracing_test::traced_test;
+    use n0_watcher::Watcher;
     use rand::SeedableRng;
-    use tracing::{Instrument, info_span, trace_span};
-    use tracing_test::traced_test;
+    use tracing::{Instrument, error_span, info, info_span, trace_span};
 
     use super::Endpoint;
     use crate::{
         RelayMode,
-        endpoint::{ConnectOptions, Incoming, ZeroRttStatus},
+        endpoint::{ConnectOptions, Incoming, PathInfo, PathInfoList, ZeroRttStatus},
+        test_utils::run_relay_server,
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -1255,6 +1356,96 @@ mod tests {
             .context("client connect 3")?;
 
         tokio::join!(client.close(), server.close());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_paths_watcher() -> Result {
+        const ALPN: &[u8] = b"test";
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let (relay_map, _relay_map, _guard) = run_relay_server().await?;
+        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .secret_key(SecretKey::generate(&mut rng))
+            .insecure_skip_relay_cert_verify(true)
+            .alpns(vec![ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .secret_key(SecretKey::generate(&mut rng))
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .await?;
+
+        server.online().await;
+        let server_addr = server.addr();
+        info!("server addr: {server_addr:?}");
+
+        let (conn_client, conn_server) = tokio::join!(
+            async { client.connect(server_addr, ALPN).await.unwrap() },
+            async { server.accept().await.unwrap().await.unwrap() }
+        );
+        info!("connected");
+        let mut paths_client = conn_client.paths().stream();
+        let mut paths_server = conn_server.paths().stream();
+
+        /// Advances the path stream until at least one IP and one relay paths are available.
+        ///
+        /// Panics if the path stream finishes before that happens.
+        async fn wait_for_paths(
+            stream: &mut n0_watcher::Stream<impl n0_watcher::Watcher<Value = PathInfoList> + Unpin>,
+        ) {
+            loop {
+                let paths = stream.next().await.expect("paths stream ended");
+                info!(?paths, "paths");
+                if paths.len() >= 2
+                    && paths.iter().any(PathInfo::is_relay)
+                    && paths.iter().any(PathInfo::is_ip)
+                {
+                    info!("break");
+                    return;
+                }
+            }
+        }
+
+        // Verify that both connections are notified of path changes and get an IP and a relay path.
+        tokio::join!(
+            async {
+                tokio::time::timeout(Duration::from_secs(1), wait_for_paths(&mut paths_server))
+                    .instrument(error_span!("paths-server"))
+                    .await
+                    .unwrap()
+            },
+            async {
+                tokio::time::timeout(Duration::from_secs(1), wait_for_paths(&mut paths_client))
+                    .instrument(error_span!("paths-client"))
+                    .await
+                    .unwrap()
+            }
+        );
+
+        // Close the client connection.
+        info!("close client conn");
+        conn_client.close(0u32.into(), b"");
+
+        // Verify that the path watch streams close.
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), paths_client.next())
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), paths_server.next())
+                .await
+                .unwrap(),
+            None
+        );
+
+        server.close().await;
+        client.close().await;
+
         Ok(())
     }
 }

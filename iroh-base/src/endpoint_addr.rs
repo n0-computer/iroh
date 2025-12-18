@@ -54,6 +54,18 @@ pub enum TransportAddr {
     Ip(SocketAddr),
 }
 
+impl TransportAddr {
+    /// Whether this is a transport address via a relay server.
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::Relay(_))
+    }
+
+    /// Whether this is an IP transport address.
+    pub fn is_ip(&self) -> bool {
+        matches!(self, Self::Ip(_))
+    }
+}
+
 impl EndpointAddr {
     /// Creates a new [`EndpointAddr`] with no network level addresses.
     ///

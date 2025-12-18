@@ -1,9 +1,11 @@
+#[cfg(feature = "metrics")]
 use std::collections::BTreeMap;
 
 use clap::Parser;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
 use iroh_bench::quinn;
 use iroh_bench::{Commands, Opt, configure_tracing_subscriber, iroh, rt, s2n};
+#[cfg(feature = "metrics")]
 use iroh_metrics::{MetricValue, MetricsGroup};
 use n0_error::Result;
 
@@ -52,6 +54,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         iroh::server_endpoint(&runtime, &relay_url, &opt)
     };
 
+    #[cfg(feature = "metrics")]
     let endpoint_metrics = endpoint.metrics().clone();
 
     let server_thread = std::thread::spawn(move || {
@@ -86,6 +89,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         }
     }
 
+    #[cfg(feature = "metrics")]
     if opt.metrics {
         // print metrics
         println!("\nMetrics:");
@@ -158,6 +162,7 @@ pub fn run_s2n(_opt: s2n::Opt) -> Result<()> {
     unimplemented!()
 }
 
+#[cfg(feature = "metrics")]
 fn collect_and_print(category: &'static str, metrics: &dyn MetricsGroup) {
     let mut map = BTreeMap::new();
     for item in metrics.iter() {

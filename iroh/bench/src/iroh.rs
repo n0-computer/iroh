@@ -6,7 +6,7 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     Endpoint, EndpointAddr, RelayMode, RelayUrl,
-    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
+    endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
@@ -34,11 +34,9 @@ pub fn server_endpoint(
         #[cfg(feature = "local-relay")]
         {
             builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
-            let path_selection = match opt.only_relay {
-                true => iroh::endpoint::PathSelection::RelayOnly,
-                false => iroh::endpoint::PathSelection::default(),
-            };
-            builder = builder.path_selection(path_selection);
+            if opt.only_relay {
+                builder = builder.clear_ip_transports();
+            }
         }
         let ep = builder
             .alpns(vec![ALPN.to_vec()])
@@ -95,11 +93,9 @@ pub async fn connect_client(
     #[cfg(feature = "local-relay")]
     {
         builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
-        let path_selection = match opt.only_relay {
-            true => iroh::endpoint::PathSelection::RelayOnly,
-            false => iroh::endpoint::PathSelection::default(),
-        };
-        builder = builder.path_selection(path_selection);
+        if opt.only_relay {
+            builder = builder.clear_ip_transports();
+        }
     }
     let endpoint = builder
         .alpns(vec![ALPN.to_vec()])
@@ -126,23 +122,25 @@ pub async fn connect_client(
     Ok((endpoint, connection))
 }
 
-pub fn transport_config(max_streams: usize, initial_mtu: u16) -> TransportConfig {
+pub fn transport_config(max_streams: usize, initial_mtu: u16) -> QuicTransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
-    let mut config = TransportConfig::default();
+    let mut config = QuicTransportConfig::default();
     config.max_concurrent_uni_streams(max_streams.try_into().unwrap());
     config.initial_mtu(initial_mtu);
 
-    // TODO: re-enable when we upgrade quinn version
-    // let mut acks = quinn::AckFrequencyConfig::default();
-    // acks.ack_eliciting_threshold(10u32.into());
-    // config.ack_frequency_config(Some(acks));
+    let mut acks = quinn::AckFrequencyConfig::default();
+    acks.ack_eliciting_threshold(10u32.into());
+    config.ack_frequency_config(Some(acks));
+
+    #[cfg(feature = "qlog")]
+    config.qlog_from_env("bench-iroh");
 
     config
 }
 
 async fn drain_stream(
-    stream: &mut RecvStream,
+    mut stream: RecvStream,
     read_unordered: bool,
 ) -> Result<(usize, Duration, u64)> {
     let mut read = 0;
@@ -154,7 +152,8 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
+        let mut stream = stream.into_unordered();
+        while let Some(chunk) = stream.read_chunk(usize::MAX).await.anyerr()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -226,7 +225,7 @@ pub async fn handle_client_stream(
 ) -> Result<(TransferResult, TransferResult)> {
     let start = Instant::now();
 
-    let (mut send_stream, mut recv_stream) = connection
+    let (mut send_stream, recv_stream) = connection
         .open_bi()
         .await
         .std_context("failed to open stream")?;
@@ -236,7 +235,7 @@ pub async fn handle_client_stream(
     let upload_result = TransferResult::new(start.elapsed(), upload_size, Duration::default(), 0);
 
     let start = Instant::now();
-    let (size, ttfb, num_chunks) = drain_stream(&mut recv_stream, read_unordered).await?;
+    let (size, ttfb, num_chunks) = drain_stream(recv_stream, read_unordered).await?;
     let download_result = TransferResult::new(start.elapsed(), size as u64, ttfb, num_chunks);
 
     Ok((upload_result, download_result))
@@ -262,7 +261,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
 
         server_tasks.push(tokio::spawn(async move {
             loop {
-                let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
+                let (mut send_stream, recv_stream) = match connection.accept_bi().await {
                     Err(ConnectionError::ApplicationClosed(_)) => break,
                     Err(e) => {
                         eprintln!("accepting stream failed: {e:?}");
@@ -273,7 +272,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 trace!("stream established");
 
                 tokio::spawn(async move {
-                    drain_stream(&mut recv_stream, opt.read_unordered).await?;
+                    drain_stream(recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
                     n0_error::Ok(())
                 });

@@ -314,10 +314,6 @@ impl ActiveRelayActor {
     ///
     /// Primarily switches between the dialing and connected states.
     async fn run(mut self) {
-        // TODO(frando): decide what this metric means, it's either wrong here or in endpoint_state.rs.
-        // From the existing description, it is wrong here.
-        // self.metrics.num_relay_conns_added.inc();
-
         let mut backoff = Self::build_backoff();
 
         while let Err(err) = self.run_once().await {
@@ -341,9 +337,6 @@ impl ActiveRelayActor {
             }
         }
         debug!("exiting");
-        // TODO(frando): decide what this metric means, it's either wrong here or in endpoint_state.rs.
-        // From the existing description, it is wrong here.
-        // self.metrics.num_relay_conns_removed.inc();
     }
 
     fn build_backoff() -> impl Backoff {
@@ -393,7 +386,7 @@ impl ActiveRelayActor {
     /// Returns `None` if the actor needs to shut down.  Returns `Some(Ok(client))` when the
     /// connection is established, and `Some(Err(err))` if dialing the relay failed.
     async fn run_dialing(&mut self) -> Option<Result<iroh_relay::client::Client, DialError>> {
-        debug!("Actor loop: connecting to relay.");
+        trace!("Actor loop: connecting to relay.");
 
         // We regularly flush the relay_datagrams_send queue so it is not full of stale
         // packets while reconnecting.  Those datagrams are dropped and the QUIC congestion
@@ -836,7 +829,7 @@ pub(super) struct RelayActor {
     cancel_token: CancellationToken,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub my_relay: Watchable<Option<RelayUrl>>,
     pub secret_key: SecretKey,
@@ -1225,10 +1218,10 @@ mod tests {
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use iroh_relay::{PingTracker, protos::relay::Datagrams};
     use n0_error::{AnyError as Error, Result, StackResultExt, StdResultExt};
+    use n0_tracing_test::traced_test;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{Instrument, info, info_span};
-    use tracing_test::traced_test;
 
     use super::{
         ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
@@ -1466,7 +1459,6 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    #[ignore = "flaky"]
     async fn test_active_relay_inactive() -> Result {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 
@@ -1488,11 +1480,11 @@ mod tests {
         );
 
         // Wait until the actor is connected to the relay server.
-        tokio::time::timeout(Duration::from_millis(200), async {
+        tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let (tx, rx) = oneshot::channel();
                 inbox_tx.send(ActiveRelayMessage::PingServer(tx)).await.ok();
-                if tokio::time::timeout(Duration::from_millis(100), rx)
+                if tokio::time::timeout(Duration::from_millis(200), rx)
                     .await
                     .map(|resp| resp.is_ok())
                     .unwrap_or_default()
@@ -1504,12 +1496,12 @@ mod tests {
         .await
         .std_context("timeout")?;
 
-        // From now on, we pause time
-        tokio::time::pause();
         // We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
         info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2");
+        tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / 2).await;
+        tokio::time::resume();
 
         assert!(
             tokio::time::timeout(Duration::from_millis(100), &mut task)
@@ -1520,15 +1512,20 @@ mod tests {
 
         // If we advance time a lot it should finish.
         info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME");
+        tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
+        tokio::time::resume();
+
+        // We resume time for these timeouts, as there's actual I/O happening,
+        // for example closing the TCP stream, so we actually need the tokio
+        // runtime to idle a bit while the kernel is doing its thing.
         assert!(
-            tokio::time::timeout(Duration::from_millis(1000), task)
+            tokio::time::timeout(Duration::from_secs(1), task)
                 .await
                 .is_ok(),
             "actor task still running"
         );
 
-        tokio::time::resume();
         cancel_token.cancel();
         Ok(())
     }

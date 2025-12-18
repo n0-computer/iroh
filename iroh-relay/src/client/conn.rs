@@ -10,7 +10,7 @@ use std::{
 use iroh_base::SecretKey;
 use n0_error::{ensure, stack_error};
 use n0_future::{Sink, Stream};
-use tracing::debug;
+use tracing::trace;
 
 use super::KeyCache;
 #[cfg(not(wasm_browser))]
@@ -88,9 +88,9 @@ impl Conn {
         let mut conn = WsBytesFramed { io };
 
         // exchange information with the server
-        debug!("server_handshake: started");
+        trace!("server_handshake: started");
         handshake::clientside(&mut conn, secret_key).await?;
-        debug!("server_handshake: done");
+        trace!("server_handshake: done");
 
         Ok(Self { conn, key_cache })
     }

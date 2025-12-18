@@ -14,7 +14,7 @@ use n0_future::{
 use n0_watcher::{Watchable, Watcher as _};
 use tokio::sync::mpsc;
 use tokio_util::sync::{CancellationToken, PollSender};
-use tracing::{Instrument, error, info_span, trace, warn};
+use tracing::{Instrument, error, info_span, warn};
 
 use super::{Addr, Transmit};
 
@@ -147,7 +147,7 @@ impl RelayTransport {
                 .segment_size
                 .map_or(dm.datagrams.contents.len(), |s| u16::from(s) as usize);
             meta_out.ecn = None;
-            meta_out.dst_ip = None; // TODO: insert the relay url for this relay
+            meta_out.dst_ip = None;
 
             *addr = (dm.url, dm.src).into();
             num_msgs += 1;
@@ -244,42 +244,6 @@ impl RelaySender {
         true
     }
 
-    pub(super) async fn send(
-        &self,
-        dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        let contents = datagrams_from_transmit(transmit);
-
-        let item = RelaySendItem {
-            remote_endpoint: dest_endpoint,
-            url: dest_url.clone(),
-            datagrams: contents,
-        };
-
-        let dest_endpoint = item.remote_endpoint;
-        let dest_url = item.url.clone();
-        let Some(sender) = self.sender.get_ref() else {
-            return Err(io::Error::other("channel closed"));
-        };
-        match sender.send(item).await {
-            Ok(_) => {
-                trace!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-                        "send relay: message queued");
-                Ok(())
-            }
-            Err(mpsc::error::SendError(_)) => {
-                error!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-                        "send relay: message dropped, channel to actor is closed");
-                Err(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    "channel to actor is closed",
-                ))
-            }
-        }
-    }
-
     pub(super) fn poll_send(
         &mut self,
         cx: &mut Context,
@@ -289,81 +253,24 @@ impl RelaySender {
     ) -> Poll<io::Result<()>> {
         match ready!(self.sender.poll_reserve(cx)) {
             Ok(()) => {
-                trace!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-                    "send relay: message queued");
-
                 let contents = datagrams_from_transmit(transmit);
                 let item = RelaySendItem {
                     remote_endpoint: dest_endpoint,
                     url: dest_url.clone(),
                     datagrams: contents,
                 };
-                let dest_endpoint = item.remote_endpoint;
-                let dest_url = item.url.clone();
-
                 match self.sender.send_item(item) {
                     Ok(()) => Poll::Ready(Ok(())),
-                    Err(_err) => {
-                        error!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-                      "send relay: message dropped, channel to actor is closed");
-                        Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::ConnectionReset,
-                            "channel to actor is closed",
-                        )))
-                    }
+                    Err(_err) => Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::ConnectionReset,
+                        "channel to actor is closed",
+                    ))),
                 }
             }
-            Err(_err) => {
-                error!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-                      "send relay: message dropped, channel to actor is closed");
-                Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    "channel to actor is closed",
-                )))
-            }
-        }
-    }
-
-    pub(super) fn try_send(
-        &self,
-        dest_url: RelayUrl,
-        dest_endpoint: EndpointId,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        let contents = datagrams_from_transmit(transmit);
-
-        let item = RelaySendItem {
-            remote_endpoint: dest_endpoint,
-            url: dest_url.clone(),
-            datagrams: contents,
-        };
-
-        let dest_endpoint = item.remote_endpoint;
-        let dest_url = item.url.clone();
-
-        let Some(sender) = self.sender.get_ref() else {
-            return Err(io::Error::other("channel closed"));
-        };
-
-        match sender.try_send(item) {
-            Ok(_) => {
-                trace!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-                       "send relay: message queued");
-                Ok(())
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                error!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-                    "send relay: message dropped, channel to actor is closed");
-                Err(io::Error::new(
-                    io::ErrorKind::ConnectionReset,
-                    "channel to actor is closed",
-                ))
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-                      "send relay: message dropped, channel to actor is full");
-                Err(io::Error::new(io::ErrorKind::WouldBlock, "channel full"))
-            }
+            Err(_err) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "channel to actor is closed",
+            ))),
         }
     }
 }

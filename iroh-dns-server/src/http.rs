@@ -6,7 +6,7 @@ use std::{
 };
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{ConnectInfo, Request, State},
     handler::Handler,
     http::Method,
@@ -192,6 +192,22 @@ impl HttpServer {
     }
 }
 
+/// Health check response
+#[derive(Serialize)]
+struct Health {
+    status: &'static str,
+    version: &'static str,
+    git_hash: &'static str,
+}
+
+async fn healthz() -> Json<Health> {
+    Json(Health {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
+        git_hash: option_env!("VERGEN_GIT_SHA").unwrap_or("unknown"),
+    })
+}
+
 pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -> Router {
     // configure cors middleware
     let cors = CorsLayer::new()
@@ -232,7 +248,9 @@ pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -
                 get(pkarr::get).put(pkarr::put)
             },
         )
+        // Deprecated: use /healthz instead
         .route("/healthcheck", get(|| async { "OK" }))
+        .route("/healthz", get(healthz))
         .route("/", get(|| async { "Hi!" }))
         .with_state(state.clone());
 
