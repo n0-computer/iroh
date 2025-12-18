@@ -494,6 +494,7 @@ impl TransportsSender {
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
+        let mut has_valid_sender = false;
         match dst {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
@@ -503,6 +504,7 @@ impl TransportsSender {
             Addr::Ip(addr) => {
                 for sender in &mut self.ip {
                     if sender.is_valid_send_addr(addr) {
+                        has_valid_sender = true;
                         match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
@@ -519,6 +521,7 @@ impl TransportsSender {
             Addr::Relay(url, endpoint_id) => {
                 for sender in &mut self.relay {
                     if sender.is_valid_send_addr(url, endpoint_id) {
+                        has_valid_sender = true;
                         match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
@@ -533,7 +536,15 @@ impl TransportsSender {
                 }
             }
         }
-        Poll::Pending
+
+        if has_valid_sender {
+            // We have valid senders, but they are not ready so we return pending.
+            Poll::Pending
+        } else {
+            // We "blackhole" data that we have not found any usable transport for on
+            // to make sure the QUIC stack picks up that currently this data does not arrive.
+            Poll::Ready(Ok(()))
+        }
     }
 }
 

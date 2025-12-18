@@ -1702,38 +1702,43 @@ mod tests {
         receiver: Endpoint,
         payload: &[u8],
         loss: ExpectedLoss,
-    ) {
-        let send_endpoint_id = sender.id();
-        let recv_endpoint_id = receiver.id();
-        info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
+    ) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(4), async move {
+            let send_endpoint_id = sender.id();
+            let recv_endpoint_id = receiver.id();
+            info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
 
-        let receiver_task = AbortOnDropHandle::new(tokio::spawn(echo_receiver(receiver, loss)));
-        let sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).await;
-        let sender_is_err = match sender_res {
-            Ok(()) => false,
-            Err(err) => {
-                error!("[sender] Error:\n{err:#?}");
-                true
-            }
-        };
-        let receiver_is_err = match receiver_task.await {
-            Ok(Ok(())) => false,
-            Ok(Err(err)) => {
-                error!("[receiver] Error:\n{err:#?}");
-                true
-            }
-            Err(joinerr) => {
-                if joinerr.is_panic() {
-                    std::panic::resume_unwind(joinerr.into_panic());
-                } else {
-                    error!("[receiver] Error:\n{joinerr:#?}");
+            let receiver_task = AbortOnDropHandle::new(tokio::spawn(echo_receiver(receiver, loss)));
+            let sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).await;
+            let sender_is_err = match sender_res {
+                Ok(()) => false,
+                Err(err) => {
+                    error!("[sender] Error:\n{err:#?}");
+                    true
                 }
-                true
+            };
+            let receiver_is_err = match receiver_task.await {
+                Ok(Ok(())) => false,
+                Ok(Err(err)) => {
+                    error!("[receiver] Error:\n{err:#?}");
+                    true
+                }
+                Err(joinerr) => {
+                    if joinerr.is_panic() {
+                        std::panic::resume_unwind(joinerr.into_panic());
+                    } else {
+                        error!("[receiver] Error:\n{joinerr:#?}");
+                    }
+                    true
+                }
+            };
+            if sender_is_err || receiver_is_err {
+                panic!("Sender or receiver errored");
             }
-        };
-        if sender_is_err || receiver_is_err {
-            panic!("Sender or receiver errored");
-        }
+        })
+        .await
+        .std_context("timeout")?;
+        Ok(())
     }
 
     /// Returns a pair of endpoints with a shared [`StaticDiscovery`].
@@ -1781,14 +1786,14 @@ mod tests {
             b"hello m1",
             ExpectedLoss::AlmostNone,
         )
-        .await;
+        .await?;
         run_roundtrip(
             m2.clone(),
             m1.clone(),
             b"hello m2",
             ExpectedLoss::AlmostNone,
         )
-        .await;
+        .await?;
         Ok(())
     }
 
@@ -1799,8 +1804,8 @@ mod tests {
         let mut data = vec![0u8; 10 * 1024];
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         rng.fill_bytes(&mut data);
-        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
-        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await?;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await?;
 
         Ok(())
     }
@@ -1837,36 +1842,26 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    #[traced_test]
-    async fn test_two_devices_roundtrip_network_change() -> Result {
-        time::timeout(
-            Duration::from_secs(90),
-            test_two_devices_roundtrip_network_change_impl(),
-        )
-        .await
-        .std_context("timeout")?
+    fn offset(rng: &mut rand_chacha::ChaCha8Rng) -> Duration {
+        let delay = rng.random_range(1..=5);
+        Duration::from_millis(delay * 50)
     }
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    async fn test_two_devices_roundtrip_network_change_impl() -> Result {
+    /// Regular network changes to m1 only.
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_network_change_only_a() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (_guard, m1, m2) = endpoint_pair().await;
 
-        let offset = |rng: &mut rand_chacha::ChaCha8Rng| {
-            let delay = rng.random_range(10..=500);
-            Duration::from_millis(delay)
-        };
-        let rounds = 5;
-
-        // Regular network changes to m1 only.
-        let m1_network_change_guard = {
+        let _network_change_guard = {
             let m1 = m1.clone();
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 loop {
-                    println!("[m1] network change");
+                    info!("[m1] network change");
                     m1.magic_sock().force_network_change(true).await;
                     time::sleep(offset(&mut rng)).await;
                 }
@@ -1874,64 +1869,40 @@ mod tests {
             AbortOnDropHandle::new(task)
         };
 
-        for i in 0..rounds {
-            println!("-- [m1 changes] round {i}");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
-        }
+        let mut data = vec![0u8; 10 * 1024];
+        rng.fill_bytes(&mut data);
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await?;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await?;
 
-        std::mem::drop(m1_network_change_guard);
+        Ok(())
+    }
 
-        // Regular network changes to m2 only.
-        let m2_network_change_guard = {
-            let m2 = m2.clone();
-            let mut rng = rng.clone();
-            let task = tokio::spawn(async move {
-                loop {
-                    println!("[m2] network change");
-                    m2.magic_sock().force_network_change(true).await;
-                    time::sleep(offset(&mut rng)).await;
-                }
-            });
-            AbortOnDropHandle::new(task)
-        };
+    /// Regular network changes to both m1 and m2.
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_network_change_a_and_b() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let (_guard, m1, m2) = endpoint_pair().await;
 
-        for i in 0..rounds {
-            println!("-- [m2 changes] round {i}");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
-        }
-
-        std::mem::drop(m2_network_change_guard);
-
-        // Regular network changes to both m1 and m2 only.
-        let m1_m2_network_change_guard = {
+        let _network_change_guard = {
             let m1 = m1.clone();
             let m2 = m2.clone();
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
-                println!("-- [m1] network change");
+                info!("-- [m1] network change");
                 m1.magic_sock().force_network_change(true).await;
-                println!("-- [m2] network change");
+                info!("-- [m2] network change");
                 m2.magic_sock().force_network_change(true).await;
                 time::sleep(offset(&mut rng)).await;
             });
             AbortOnDropHandle::new(task)
         };
 
-        for i in 0..rounds {
-            println!("-- [m1 & m2 changes] round {i}");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
-        }
+        let mut data = vec![0u8; 10 * 1024];
+        rng.fill_bytes(&mut data);
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await?;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await?;
 
-        std::mem::drop(m1_m2_network_change_guard);
         Ok(())
     }
 
@@ -1963,12 +1934,12 @@ mod tests {
 
         // See if we can get endpoints.
         let eps0 = ms.ip_addrs().get();
-        println!("{eps0:?}");
+        info!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
         let eps1 = ms.ip_addrs().get();
-        println!("{eps1:?}");
+        info!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
 

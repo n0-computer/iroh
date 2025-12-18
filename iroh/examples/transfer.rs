@@ -162,6 +162,9 @@ enum Commands {
     },
 }
 
+/// How long we maximally wait for a clean shutdown
+const SHUTDOWN_TIME: Duration = Duration::from_secs(4);
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -368,7 +371,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 
             // We sent the last message, so wait for the client to close the connection once
             // it received this message.
-            let res = tokio::time::timeout(Duration::from_secs(3), async move {
+            let res = tokio::time::timeout(SHUTDOWN_TIME, async move {
                 let closed = conn.closed().await;
                 let remote = endpoint_id.fmt_short();
                 if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
@@ -385,7 +388,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
                 HumanBytes((size as f64 / duration.as_secs_f64()) as u64)
             );
             if res.is_err() {
-                println!("[{remote}] Error: Did not disconnect within 3 seconds");
+                println!("[{remote}] Error: Did not disconnect within {SHUTDOWN_TIME:?}",);
             } else {
                 println!("[{remote}] Disconnected");
             }
@@ -422,21 +425,25 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
 
     conn.close(0u32.into(), b"done");
 
+    let transfer_time = start.elapsed();
+    let start = Instant::now();
+
     // We received the last message: close all connections and allow for the close
     // message to be sent.
-    if let Err(_err) = tokio::time::timeout(Duration::from_secs(5), endpoint.close()).await {
+    if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
         error!("Endpoint closing timed out");
         bail_any!("Failed to shutdown endpoint in time");
     }
 
-    let duration = start.elapsed();
+    let shutdown_time = start.elapsed();
     println!(
-        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks)",
+        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks) (Shutdown took {:.4}s)",
         HumanBytes(len as u64),
-        duration.as_secs_f64(),
-        HumanBytes((len as f64 / duration.as_secs_f64()) as u64),
+        transfer_time.as_secs_f64(),
+        HumanBytes((len as f64 / transfer_time.as_secs_f64()) as u64),
         time_to_first_byte.as_secs_f64(),
-        chnk
+        chnk,
+        shutdown_time.as_secs_f64(),
     );
     Ok(())
 }
