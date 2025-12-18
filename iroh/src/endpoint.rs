@@ -1468,34 +1468,35 @@ mod tests {
 
         info!(time = ?test_start.elapsed(), "test setup done");
 
-        let barrier = Arc::new(tokio::sync::Barrier::new(2));
-
         // The server accepts the connections of the clients sequentially.
-        let s_b = barrier.clone();
         let server = tokio::spawn(
             async move {
                 let eps = ep.bound_sockets();
 
                 info!(me = %ep.id().fmt_short(), eps = ?eps, "server listening on");
                 for i in 0..n_clients {
-                    let round_start = Instant::now();
-                    info!("[server] round {i}");
-                    let incoming = ep.accept().await.anyerr()?;
-                    let conn = incoming.await.anyerr()?;
-                    let endpoint_id = conn.remote_id();
-                    info!(%i, peer = %endpoint_id.fmt_short(), "accepted connection");
-                    let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
-                    let mut buf = vec![0u8; chunk_size];
-                    for _i in 0..n_chunks_per_client {
-                        recv.read_exact(&mut buf).await.anyerr()?;
-                        send.write_all(&buf).await.anyerr()?;
-                    }
-                    info!(%i, peer = %endpoint_id.fmt_short(), "finishing");
-                    send.finish().anyerr()?;
-                    conn.closed().await; // we're the last to send data, so we wait for the other side to close
-                    info!(%i, peer = %endpoint_id.fmt_short(), "finished");
-                    info!("[server] round {i} done in {:?}", round_start.elapsed());
-                    s_b.wait().await;
+                    tokio::time::timeout(Duration::from_secs(4), async {
+                        let round_start = Instant::now();
+                        info!("[server] round {i}");
+                        let incoming = ep.accept().await.anyerr()?;
+                        let conn = incoming.await.anyerr()?;
+                        let endpoint_id = conn.remote_id();
+                        info!(%i, peer = %endpoint_id.fmt_short(), "accepted connection");
+                        let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+                        let mut buf = vec![0u8; chunk_size];
+                        for _i in 0..n_chunks_per_client {
+                            recv.read_exact(&mut buf).await.anyerr()?;
+                            send.write_all(&buf).await.anyerr()?;
+                        }
+                        info!(%i, peer = %endpoint_id.fmt_short(), "finishing");
+                        send.finish().anyerr()?;
+                        conn.closed().await; // we're the last to send data, so we wait for the other side to close
+                        info!(%i, peer = %endpoint_id.fmt_short(), "finished");
+                        info!("[server] round {i} done in {:?}", round_start.elapsed());
+                        Ok::<_, Error>(())
+                    })
+                    .await
+                    .std_context("timeout")??;
                 }
                 Ok::<_, Error>(())
             }
@@ -1507,58 +1508,51 @@ mod tests {
                 let round_start = Instant::now();
                 info!("[client] round {i}");
                 let client_secret_key = SecretKey::generate(&mut rng);
-                async {
-                    info!("client binding");
-                    let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-                        .alpns(vec![TEST_ALPN.to_vec()])
-                        .insecure_skip_relay_cert_verify(true)
-                        .secret_key(client_secret_key)
-                        .bind()
-                        .await?;
-                    let eps = ep.bound_sockets();
+                tokio::time::timeout(
+                    Duration::from_secs(4),
+                    async {
+                        info!("client binding");
+                        let ep = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+                            .alpns(vec![TEST_ALPN.to_vec()])
+                            .insecure_skip_relay_cert_verify(true)
+                            .secret_key(client_secret_key)
+                            .bind()
+                            .await?;
+                        let eps = ep.bound_sockets();
 
-                    info!(me = %ep.id().fmt_short(), eps=?eps, "client bound");
-                    let endpoint_addr =
-                        EndpointAddr::new(server_endpoint_id).with_relay_url(relay_url.clone());
-                    info!(to = ?endpoint_addr, "client connecting");
-                    let conn = ep.connect(endpoint_addr, TEST_ALPN).await.anyerr()?;
-                    info!("client connected");
-                    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+                        info!(me = %ep.id().fmt_short(), eps=?eps, "client bound");
+                        let endpoint_addr =
+                            EndpointAddr::new(server_endpoint_id).with_relay_url(relay_url.clone());
+                        info!(to = ?endpoint_addr, "client connecting");
+                        let conn = ep.connect(endpoint_addr, TEST_ALPN).await.anyerr()?;
+                        info!("client connected");
+                        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
 
-                    for i in 0..n_chunks_per_client {
-                        let mut buf = vec![i; chunk_size];
-                        send.write_all(&buf).await.anyerr()?;
-                        recv.read_exact(&mut buf).await.anyerr()?;
-                        assert_eq!(buf, vec![i; chunk_size]);
+                        for i in 0..n_chunks_per_client {
+                            let mut buf = vec![i; chunk_size];
+                            send.write_all(&buf).await.anyerr()?;
+                            recv.read_exact(&mut buf).await.anyerr()?;
+                            assert_eq!(buf, vec![i; chunk_size]);
+                        }
+                        // we're the last to receive data, so we close
+                        conn.close(0u32.into(), b"bye!");
+                        info!("client finished");
+                        ep.close().await;
+                        info!("client closed");
+
+                        Ok::<_, Error>(())
                     }
-                    // we're the last to receive data, so we close
-                    conn.close(0u32.into(), b"bye!");
-                    info!("client finished");
-                    ep.close().await;
-                    info!("client closed");
-
-                    barrier.wait().await;
-
-                    Ok::<_, Error>(())
-                }
-                .instrument(debug_span!("client", %i))
-                .await?;
+                    .instrument(debug_span!("client", %i)),
+                )
+                .await
+                .std_context("timeout")??;
                 info!("[client] round {i} done in {:?}", round_start.elapsed());
             }
             Ok::<_, Error>(())
         });
 
-        // We appear to have seen this being very slow at times.  So ensure we fail if this
-        // test is too slow.  We're only making two connections transferring very little
-        // data, this really shouldn't take long.
-        let (server, client) = tokio::time::timeout(
-            Duration::from_secs(15),
-            n0_future::future::zip(server, client),
-        )
-        .await
-        .anyerr()?;
-        server.anyerr()??;
-        client.anyerr()??;
+        server.await.anyerr()??;
+        client.await.anyerr()??;
         Ok(())
     }
 
