@@ -1540,12 +1540,12 @@ mod tests {
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
     use rand::{CryptoRng, Rng, RngCore, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
-    use tracing_test::traced_test;
 
     use super::Options;
     use crate::{

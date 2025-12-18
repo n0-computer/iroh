@@ -1311,12 +1311,12 @@ mod tests {
     use iroh_base::{EndpointAddr, EndpointId, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
     use n0_future::{BufferedStreamExt, StreamExt, stream, time};
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, info, info_span, instrument};
-    use tracing_test::traced_test;
 
     use super::Endpoint;
     use crate::{

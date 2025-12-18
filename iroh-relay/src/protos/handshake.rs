@@ -534,10 +534,10 @@ mod tests {
     use iroh_base::{PublicKey, SecretKey};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
+    use n0_tracing_test::traced_test;
     use rand::SeedableRng;
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
     use tracing::{Instrument, info_span};
-    use tracing_test::traced_test;
 
     use super::{
         ClientAuth, KeyMaterialClientAuth, Mechanism, ServerChallenge, ServerConfirmsAuth,

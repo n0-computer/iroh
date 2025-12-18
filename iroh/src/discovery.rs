@@ -502,9 +502,9 @@ mod tests {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StackResultExt};
     use n0_future::{StreamExt, time};
+    use n0_tracing_test::traced_test;
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
-    use tracing_test::traced_test;
 
     use super::*;
     use crate::{
@@ -823,9 +823,9 @@ mod test_dns_pkarr {
     use iroh_relay::{RelayMap, endpoint_info::UserData};
     use n0_error::{AnyError as Error, Result, StackResultExt};
     use n0_future::time::Duration;
+    use n0_tracing_test::traced_test;
     use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
-    use tracing_test::traced_test;
 
     use crate::{
         Endpoint, RelayMode,

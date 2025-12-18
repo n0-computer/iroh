@@ -1139,10 +1139,10 @@ mod tests {
     use iroh_base::{EndpointAddr, SecretKey};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::StreamExt;
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use rand::SeedableRng;
     use tracing::{Instrument, error_span, info, info_span, trace_span};
-    use tracing_test::traced_test;
 
     use super::Endpoint;
     use crate::{

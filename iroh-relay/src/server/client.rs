@@ -481,9 +481,9 @@ mod tests {
     use iroh_base::SecretKey;
     use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::Stream;
+    use n0_tracing_test::traced_test;
     use rand::SeedableRng;
     use tracing::info;
-    use tracing_test::traced_test;
 
     use super::*;
     use crate::{client::conn::Conn, protos::common::FrameType};

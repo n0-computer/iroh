@@ -784,9 +784,9 @@ mod tests {
     use iroh_base::{EndpointId, RelayUrl, SecretKey};
     use n0_error::Result;
     use n0_future::{FutureExt, SinkExt, StreamExt};
+    use n0_tracing_test::traced_test;
     use rand::SeedableRng;
     use tracing::{info, instrument};
-    use tracing_test::traced_test;
 
     use super::{
         Access, AccessConfig, NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER, RelayConfig,

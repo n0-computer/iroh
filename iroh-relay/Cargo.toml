@@ -130,7 +130,7 @@ tokio = { version = "1", features = [
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = "1"
-tracing-test = { package = "n0-tracing-test", version = "0.3" }
+n0-tracing-test = "0.3"
 
 [build-dependencies]
 cfg_aliases = "0.2.1"

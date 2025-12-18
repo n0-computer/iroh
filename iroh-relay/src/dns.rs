@@ -778,7 +778,7 @@ fn add_jitter(delay: &u64) -> Duration {
 pub(crate) mod tests {
     use std::sync::atomic::AtomicUsize;
 
-    use tracing_test::traced_test;
+    use n0_tracing_test::traced_test;
 
     use super::*;
 

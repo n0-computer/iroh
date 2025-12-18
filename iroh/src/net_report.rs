@@ -987,8 +987,8 @@ mod tests {
     use iroh_base::RelayUrl;
     use iroh_relay::dns::DnsResolver;
     use n0_error::{Result, StdResultExt};
+    use n0_tracing_test::traced_test;
     use tokio_util::sync::CancellationToken;
-    use tracing_test::traced_test;
 
     use super::*;
     use crate::net_report::probes::Probe;
