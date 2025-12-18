@@ -1851,8 +1851,8 @@
 <a href=#1851 id=1851 data-nosnippet>1851</a>        <span class="kw">let </span>(_guard, m1, m2) = endpoint_pair().<span class="kw">await</span>;
 <a href=#1852 id=1852 data-nosnippet>1852</a>
 <a href=#1853 id=1853 data-nosnippet>1853</a>        <span class="kw">let </span>offset = |rng: <span class="kw-2">&amp;mut </span>rand_chacha::ChaCha8Rng| {
-<a href=#1854 id=1854 data-nosnippet>1854</a>            <span class="kw">let </span>delay = rng.random_range(<span class="number">10</span>..=<span class="number">250</span>);
-<a href=#1855 id=1855 data-nosnippet>1855</a>            Duration::from_millis(delay)
+<a href=#1854 id=1854 data-nosnippet>1854</a>            <span class="kw">let </span>delay = rng.random_range(<span class="number">1</span>..=<span class="number">5</span>);
+<a href=#1855 id=1855 data-nosnippet>1855</a>            Duration::from_millis(delay * <span class="number">50</span>)
 <a href=#1856 id=1856 data-nosnippet>1856</a>        };
 <a href=#1857 id=1857 data-nosnippet>1857</a>
 <a href=#1858 id=1858 data-nosnippet>1858</a>        <span class="comment">// Regular network changes to m1 only.
