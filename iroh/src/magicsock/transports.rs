@@ -262,8 +262,8 @@ impl Transports {
     }
 
     #[cfg(wasm_browser)]
-    pub(crate) fn max_transmit_segments(&self) -> usize {
-        1
+    pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
+        NonZeroUsize::MIN
     }
 
     #[cfg(not(wasm_browser))]
