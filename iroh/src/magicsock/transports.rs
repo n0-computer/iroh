@@ -28,8 +28,7 @@ pub use self::ip::Config as IpConfig;
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 
-/// Manages the different underlying data transports that the magicsock
-/// can support.
+/// Manages the different underlying data transports that the magicsock can support.
 #[derive(Debug)]
 pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
@@ -504,6 +503,7 @@ impl TransportsSender {
                 }
                 SocketAddr::V6(_) => {
                     for sender in self.ip.v6_iter_mut().filter(|s| s.is_valid_send_addr(addr)) {
+                        has_valid_sender = true;
                         match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
@@ -518,18 +518,20 @@ impl TransportsSender {
                 }
             },
             Addr::Relay(url, endpoint_id) => {
-                for sender in &mut self.relay {
-                    if sender.is_valid_send_addr(url, endpoint_id) {
-                        has_valid_sender = true;
-                        match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
-                            Poll::Pending => {}
-                            Poll::Ready(res) => {
-                                match &res {
-                                    Ok(()) => trace!("sent"),
-                                    Err(err) => trace!("send failed: {err:#}"),
-                                }
-                                return Poll::Ready(res);
+                for sender in self
+                    .relay
+                    .iter_mut()
+                    .filter(|s| s.is_valid_send_addr(url, endpoint_id))
+                {
+                    has_valid_sender = true;
+                    match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
+                        Poll::Pending => {}
+                        Poll::Ready(res) => {
+                            match &res {
+                                Ok(()) => trace!("sent"),
+                                Err(err) => trace!("send failed: {err:#}"),
                             }
+                            return Poll::Ready(res);
                         }
                     }
                 }
@@ -697,7 +699,7 @@ impl quinn::UdpSender for MagicSender {
                 let sender = self.msock.remote_map.remote_state_actor(node_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
                 return match sender.try_send(RemoteStateMessage::SendDatagram(
-                    self.sender.clone(),
+                    Box::new(self.sender.clone()),
                     transmit,
                 )) {
                     Ok(()) => {

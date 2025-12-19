@@ -414,7 +414,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 
             // We sent the last message, so wait for the client to close the connection once
             // it received this message.
-            let res = tokio::time::timeout(SHUTDOWN_TIME, async move {
+            let res = tokio::time::timeout(SHUTDOWN_TIME, async {
                 let closed = conn.closed().await;
                 let remote = endpoint_id.fmt_short();
                 if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
