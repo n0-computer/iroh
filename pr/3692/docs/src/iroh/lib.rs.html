@@ -266,7 +266,7 @@
 <a href=#266 id=266 data-nosnippet>266</a></span><span class="kw">pub mod </span>dns;
 <a href=#267 id=267 data-nosnippet>267</a><span class="kw">pub mod </span>endpoint;
 <a href=#268 id=268 data-nosnippet>268</a><span class="kw">pub mod </span>metrics;
-<a href=#269 id=269 data-nosnippet>269</a><span class="kw">pub mod </span>net_report;
+<a href=#269 id=269 data-nosnippet>269</a><span class="kw">mod </span>net_report;
 <a href=#270 id=270 data-nosnippet>270</a><span class="kw">pub mod </span>protocol;
 <a href=#271 id=271 data-nosnippet>271</a>
 <a href=#272 id=272 data-nosnippet>272</a><span class="kw">pub use </span>endpoint::{Endpoint, RelayMode};
@@ -276,6 +276,7 @@
 <a href=#276 id=276 data-nosnippet>276</a>};
 <a href=#277 id=277 data-nosnippet>277</a><span class="kw">pub use </span>iroh_relay::{RelayConfig, RelayMap, endpoint_info};
 <a href=#278 id=278 data-nosnippet>278</a><span class="kw">pub use </span>n0_watcher::Watcher;
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#281 id=281 data-nosnippet>281</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>
+<a href=#279 id=279 data-nosnippet>279</a><span class="kw">pub use </span>net_report::{Report <span class="kw">as </span>NetReport, TIMEOUT <span class="kw">as </span>NET_REPORT_TIMEOUT};
+<a href=#280 id=280 data-nosnippet>280</a>
+<a href=#281 id=281 data-nosnippet>281</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#282 id=282 data-nosnippet>282</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>

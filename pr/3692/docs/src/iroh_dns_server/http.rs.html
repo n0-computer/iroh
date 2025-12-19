@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>};
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>axum::{
-<a href=#9 id=9 data-nosnippet>9</a>    Router,
+<a href=#9 id=9 data-nosnippet>9</a>    Json, Router,
 <a href=#10 id=10 data-nosnippet>10</a>    extract::{ConnectInfo, Request, State},
 <a href=#11 id=11 data-nosnippet>11</a>    handler::Handler,
 <a href=#12 id=12 data-nosnippet>12</a>    http::Method,
@@ -192,83 +192,101 @@
 <a href=#192 id=192 data-nosnippet>192</a>    }
 <a href=#193 id=193 data-nosnippet>193</a>}
 <a href=#194 id=194 data-nosnippet>194</a>
-<a href=#195 id=195 data-nosnippet>195</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_app(state: AppState, rate_limit_config: <span class="kw-2">&amp;</span>RateLimitConfig) -&gt; Router {
-<a href=#196 id=196 data-nosnippet>196</a>    <span class="comment">// configure cors middleware
-<a href=#197 id=197 data-nosnippet>197</a>    </span><span class="kw">let </span>cors = CorsLayer::new()
-<a href=#198 id=198 data-nosnippet>198</a>        <span class="comment">// allow `GET` and `POST` when accessing the resource
-<a href=#199 id=199 data-nosnippet>199</a>        </span>.allow_methods([Method::GET, Method::POST, Method::PUT])
-<a href=#200 id=200 data-nosnippet>200</a>        <span class="comment">// allow requests from any origin
-<a href=#201 id=201 data-nosnippet>201</a>        </span>.allow_origin(cors::Any);
+<a href=#195 id=195 data-nosnippet>195</a><span class="doccomment">/// Health check response
+<a href=#196 id=196 data-nosnippet>196</a></span><span class="attr">#[derive(Serialize)]
+<a href=#197 id=197 data-nosnippet>197</a></span><span class="kw">struct </span>Health {
+<a href=#198 id=198 data-nosnippet>198</a>    status: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#199 id=199 data-nosnippet>199</a>    version: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#200 id=200 data-nosnippet>200</a>    git_hash: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#201 id=201 data-nosnippet>201</a>}
 <a href=#202 id=202 data-nosnippet>202</a>
-<a href=#203 id=203 data-nosnippet>203</a>    <span class="comment">// configure tracing middleware
-<a href=#204 id=204 data-nosnippet>204</a>    </span><span class="kw">let </span>trace = TraceLayer::new_for_http().make_span_with(|request: <span class="kw-2">&amp;</span>http::Request&lt;<span class="kw">_</span>&gt;| {
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">let </span>conn_info = request
-<a href=#206 id=206 data-nosnippet>206</a>            .extensions()
-<a href=#207 id=207 data-nosnippet>207</a>            .get::&lt;ConnectInfo&lt;SocketAddr&gt;&gt;()
-<a href=#208 id=208 data-nosnippet>208</a>            .expect(<span class="string">"connectinfo extension to be present"</span>);
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>span = <span class="macro">span!</span>(
-<a href=#210 id=210 data-nosnippet>210</a>        Level::DEBUG,
-<a href=#211 id=211 data-nosnippet>211</a>            <span class="string">"http_request"</span>,
-<a href=#212 id=212 data-nosnippet>212</a>            method = <span class="question-mark">?</span>request.method(),
-<a href=#213 id=213 data-nosnippet>213</a>            uri = <span class="question-mark">?</span>request.uri(),
-<a href=#214 id=214 data-nosnippet>214</a>            src = %conn_info.<span class="number">0</span>,
-<a href=#215 id=215 data-nosnippet>215</a>            );
-<a href=#216 id=216 data-nosnippet>216</a>        span
-<a href=#217 id=217 data-nosnippet>217</a>    });
+<a href=#203 id=203 data-nosnippet>203</a><span class="kw">async fn </span>healthz() -&gt; Json&lt;Health&gt; {
+<a href=#204 id=204 data-nosnippet>204</a>    Json(Health {
+<a href=#205 id=205 data-nosnippet>205</a>        status: <span class="string">"ok"</span>,
+<a href=#206 id=206 data-nosnippet>206</a>        version: <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>),
+<a href=#207 id=207 data-nosnippet>207</a>        git_hash: <span class="macro">option_env!</span>(<span class="string">"VERGEN_GIT_SHA"</span>).unwrap_or(<span class="string">"unknown"</span>),
+<a href=#208 id=208 data-nosnippet>208</a>    })
+<a href=#209 id=209 data-nosnippet>209</a>}
+<a href=#210 id=210 data-nosnippet>210</a>
+<a href=#211 id=211 data-nosnippet>211</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_app(state: AppState, rate_limit_config: <span class="kw-2">&amp;</span>RateLimitConfig) -&gt; Router {
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="comment">// configure cors middleware
+<a href=#213 id=213 data-nosnippet>213</a>    </span><span class="kw">let </span>cors = CorsLayer::new()
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="comment">// allow `GET` and `POST` when accessing the resource
+<a href=#215 id=215 data-nosnippet>215</a>        </span>.allow_methods([Method::GET, Method::POST, Method::PUT])
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="comment">// allow requests from any origin
+<a href=#217 id=217 data-nosnippet>217</a>        </span>.allow_origin(cors::Any);
 <a href=#218 id=218 data-nosnippet>218</a>
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="comment">// configure rate limiting middleware
-<a href=#220 id=220 data-nosnippet>220</a>    </span><span class="kw">let </span>rate_limit = rate_limiting::create(rate_limit_config);
-<a href=#221 id=221 data-nosnippet>221</a>
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="comment">// configure routes
-<a href=#223 id=223 data-nosnippet>223</a>    //
-<a href=#224 id=224 data-nosnippet>224</a>    // only the pkarr::put route gets a rate limit
-<a href=#225 id=225 data-nosnippet>225</a>    </span><span class="kw">let </span>router = Router::new()
-<a href=#226 id=226 data-nosnippet>226</a>        .route(<span class="string">"/dns-query"</span>, get(doh::get).post(doh::post))
-<a href=#227 id=227 data-nosnippet>227</a>        .route(
-<a href=#228 id=228 data-nosnippet>228</a>            <span class="string">"/pkarr/{key}"</span>,
-<a href=#229 id=229 data-nosnippet>229</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(rate_limit) = rate_limit {
-<a href=#230 id=230 data-nosnippet>230</a>                get(pkarr::get).put(pkarr::put.layer(rate_limit))
-<a href=#231 id=231 data-nosnippet>231</a>            } <span class="kw">else </span>{
-<a href=#232 id=232 data-nosnippet>232</a>                get(pkarr::get).put(pkarr::put)
-<a href=#233 id=233 data-nosnippet>233</a>            },
-<a href=#234 id=234 data-nosnippet>234</a>        )
-<a href=#235 id=235 data-nosnippet>235</a>        .route(<span class="string">"/healthcheck"</span>, get(|| <span class="kw">async </span>{ <span class="string">"OK" </span>}))
-<a href=#236 id=236 data-nosnippet>236</a>        .route(<span class="string">"/"</span>, get(|| <span class="kw">async </span>{ <span class="string">"Hi!" </span>}))
-<a href=#237 id=237 data-nosnippet>237</a>        .with_state(state.clone());
-<a href=#238 id=238 data-nosnippet>238</a>
-<a href=#239 id=239 data-nosnippet>239</a>    <span class="comment">// configure app
-<a href=#240 id=240 data-nosnippet>240</a>    </span>router
-<a href=#241 id=241 data-nosnippet>241</a>        .layer(cors)
-<a href=#242 id=242 data-nosnippet>242</a>        .layer(trace)
-<a href=#243 id=243 data-nosnippet>243</a>        .route_layer(middleware::from_fn_with_state(state, metrics_middleware))
-<a href=#244 id=244 data-nosnippet>244</a>}
-<a href=#245 id=245 data-nosnippet>245</a>
-<a href=#246 id=246 data-nosnippet>246</a><span class="doccomment">/// Record request metrics.
-<a href=#247 id=247 data-nosnippet>247</a></span><span class="comment">// TODO:
-<a href=#248 id=248 data-nosnippet>248</a>// * Request duration would be much better tracked as a histogram.
-<a href=#249 id=249 data-nosnippet>249</a>// * It would be great to attach labels to the metrics, so that the recorded metrics
-<a href=#250 id=250 data-nosnippet>250</a>// can filter by method etc.
-<a href=#251 id=251 data-nosnippet>251</a>//
-<a href=#252 id=252 data-nosnippet>252</a>// See also
-<a href=#253 id=253 data-nosnippet>253</a>// https://github.com/tokio-rs/axum/blob/main/examples/prometheus-metrics/src/main.rs#L114
-<a href=#254 id=254 data-nosnippet>254</a></span><span class="kw">async fn </span>metrics_middleware(
-<a href=#255 id=255 data-nosnippet>255</a>    State(state): State&lt;AppState&gt;,
-<a href=#256 id=256 data-nosnippet>256</a>    req: Request,
-<a href=#257 id=257 data-nosnippet>257</a>    next: Next,
-<a href=#258 id=258 data-nosnippet>258</a>) -&gt; <span class="kw">impl </span>IntoResponse {
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="kw">let </span>start = Instant::now();
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="kw">let </span>response = next.run(req).<span class="kw">await</span>;
-<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>latency = start.elapsed().as_millis();
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">let </span>status = response.status();
-<a href=#263 id=263 data-nosnippet>263</a>    state
-<a href=#264 id=264 data-nosnippet>264</a>        .metrics
-<a href=#265 id=265 data-nosnippet>265</a>        .http_requests_duration_ms
-<a href=#266 id=266 data-nosnippet>266</a>        .inc_by(latency <span class="kw">as </span>u64);
-<a href=#267 id=267 data-nosnippet>267</a>    state.metrics.http_requests.inc();
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="kw">if </span>status.is_success() {
-<a href=#269 id=269 data-nosnippet>269</a>        state.metrics.http_requests_success.inc();
-<a href=#270 id=270 data-nosnippet>270</a>    } <span class="kw">else </span>{
-<a href=#271 id=271 data-nosnippet>271</a>        state.metrics.http_requests_error.inc();
-<a href=#272 id=272 data-nosnippet>272</a>    }
-<a href=#273 id=273 data-nosnippet>273</a>    response
-<a href=#274 id=274 data-nosnippet>274</a>}</code></pre></div></section></main></body></html>
+<a href=#219 id=219 data-nosnippet>219</a>    <span class="comment">// configure tracing middleware
+<a href=#220 id=220 data-nosnippet>220</a>    </span><span class="kw">let </span>trace = TraceLayer::new_for_http().make_span_with(|request: <span class="kw-2">&amp;</span>http::Request&lt;<span class="kw">_</span>&gt;| {
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>conn_info = request
+<a href=#222 id=222 data-nosnippet>222</a>            .extensions()
+<a href=#223 id=223 data-nosnippet>223</a>            .get::&lt;ConnectInfo&lt;SocketAddr&gt;&gt;()
+<a href=#224 id=224 data-nosnippet>224</a>            .expect(<span class="string">"connectinfo extension to be present"</span>);
+<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>span = <span class="macro">span!</span>(
+<a href=#226 id=226 data-nosnippet>226</a>        Level::DEBUG,
+<a href=#227 id=227 data-nosnippet>227</a>            <span class="string">"http_request"</span>,
+<a href=#228 id=228 data-nosnippet>228</a>            method = <span class="question-mark">?</span>request.method(),
+<a href=#229 id=229 data-nosnippet>229</a>            uri = <span class="question-mark">?</span>request.uri(),
+<a href=#230 id=230 data-nosnippet>230</a>            src = %conn_info.<span class="number">0</span>,
+<a href=#231 id=231 data-nosnippet>231</a>            );
+<a href=#232 id=232 data-nosnippet>232</a>        span
+<a href=#233 id=233 data-nosnippet>233</a>    });
+<a href=#234 id=234 data-nosnippet>234</a>
+<a href=#235 id=235 data-nosnippet>235</a>    <span class="comment">// configure rate limiting middleware
+<a href=#236 id=236 data-nosnippet>236</a>    </span><span class="kw">let </span>rate_limit = rate_limiting::create(rate_limit_config);
+<a href=#237 id=237 data-nosnippet>237</a>
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="comment">// configure routes
+<a href=#239 id=239 data-nosnippet>239</a>    //
+<a href=#240 id=240 data-nosnippet>240</a>    // only the pkarr::put route gets a rate limit
+<a href=#241 id=241 data-nosnippet>241</a>    </span><span class="kw">let </span>router = Router::new()
+<a href=#242 id=242 data-nosnippet>242</a>        .route(<span class="string">"/dns-query"</span>, get(doh::get).post(doh::post))
+<a href=#243 id=243 data-nosnippet>243</a>        .route(
+<a href=#244 id=244 data-nosnippet>244</a>            <span class="string">"/pkarr/{key}"</span>,
+<a href=#245 id=245 data-nosnippet>245</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(rate_limit) = rate_limit {
+<a href=#246 id=246 data-nosnippet>246</a>                get(pkarr::get).put(pkarr::put.layer(rate_limit))
+<a href=#247 id=247 data-nosnippet>247</a>            } <span class="kw">else </span>{
+<a href=#248 id=248 data-nosnippet>248</a>                get(pkarr::get).put(pkarr::put)
+<a href=#249 id=249 data-nosnippet>249</a>            },
+<a href=#250 id=250 data-nosnippet>250</a>        )
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="comment">// Deprecated: use /healthz instead
+<a href=#252 id=252 data-nosnippet>252</a>        </span>.route(<span class="string">"/healthcheck"</span>, get(|| <span class="kw">async </span>{ <span class="string">"OK" </span>}))
+<a href=#253 id=253 data-nosnippet>253</a>        .route(<span class="string">"/healthz"</span>, get(healthz))
+<a href=#254 id=254 data-nosnippet>254</a>        .route(<span class="string">"/"</span>, get(|| <span class="kw">async </span>{ <span class="string">"Hi!" </span>}))
+<a href=#255 id=255 data-nosnippet>255</a>        .with_state(state.clone());
+<a href=#256 id=256 data-nosnippet>256</a>
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="comment">// configure app
+<a href=#258 id=258 data-nosnippet>258</a>    </span>router
+<a href=#259 id=259 data-nosnippet>259</a>        .layer(cors)
+<a href=#260 id=260 data-nosnippet>260</a>        .layer(trace)
+<a href=#261 id=261 data-nosnippet>261</a>        .route_layer(middleware::from_fn_with_state(state, metrics_middleware))
+<a href=#262 id=262 data-nosnippet>262</a>}
+<a href=#263 id=263 data-nosnippet>263</a>
+<a href=#264 id=264 data-nosnippet>264</a><span class="doccomment">/// Record request metrics.
+<a href=#265 id=265 data-nosnippet>265</a></span><span class="comment">// TODO:
+<a href=#266 id=266 data-nosnippet>266</a>// * Request duration would be much better tracked as a histogram.
+<a href=#267 id=267 data-nosnippet>267</a>// * It would be great to attach labels to the metrics, so that the recorded metrics
+<a href=#268 id=268 data-nosnippet>268</a>// can filter by method etc.
+<a href=#269 id=269 data-nosnippet>269</a>//
+<a href=#270 id=270 data-nosnippet>270</a>// See also
+<a href=#271 id=271 data-nosnippet>271</a>// https://github.com/tokio-rs/axum/blob/main/examples/prometheus-metrics/src/main.rs#L114
+<a href=#272 id=272 data-nosnippet>272</a></span><span class="kw">async fn </span>metrics_middleware(
+<a href=#273 id=273 data-nosnippet>273</a>    State(state): State&lt;AppState&gt;,
+<a href=#274 id=274 data-nosnippet>274</a>    req: Request,
+<a href=#275 id=275 data-nosnippet>275</a>    next: Next,
+<a href=#276 id=276 data-nosnippet>276</a>) -&gt; <span class="kw">impl </span>IntoResponse {
+<a href=#277 id=277 data-nosnippet>277</a>    <span class="kw">let </span>start = Instant::now();
+<a href=#278 id=278 data-nosnippet>278</a>    <span class="kw">let </span>response = next.run(req).<span class="kw">await</span>;
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">let </span>latency = start.elapsed().as_millis();
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">let </span>status = response.status();
+<a href=#281 id=281 data-nosnippet>281</a>    state
+<a href=#282 id=282 data-nosnippet>282</a>        .metrics
+<a href=#283 id=283 data-nosnippet>283</a>        .http_requests_duration_ms
+<a href=#284 id=284 data-nosnippet>284</a>        .inc_by(latency <span class="kw">as </span>u64);
+<a href=#285 id=285 data-nosnippet>285</a>    state.metrics.http_requests.inc();
+<a href=#286 id=286 data-nosnippet>286</a>    <span class="kw">if </span>status.is_success() {
+<a href=#287 id=287 data-nosnippet>287</a>        state.metrics.http_requests_success.inc();
+<a href=#288 id=288 data-nosnippet>288</a>    } <span class="kw">else </span>{
+<a href=#289 id=289 data-nosnippet>289</a>        state.metrics.http_requests_error.inc();
+<a href=#290 id=290 data-nosnippet>290</a>    }
+<a href=#291 id=291 data-nosnippet>291</a>    response
+<a href=#292 id=292 data-nosnippet>292</a>}</code></pre></div></section></main></body></html>
