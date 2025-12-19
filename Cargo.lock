@@ -2350,7 +2350,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#d840435447d4947e44ad44b55e0be6a1094f39cc"
+source = "git+https://github.com/n0-computer/quinn?branch=feat-ping-path#6861f4f0b2d4b28db5a6d44cbd3d3708cf1725d7"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2370,7 +2370,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#d840435447d4947e44ad44b55e0be6a1094f39cc"
+source = "git+https://github.com/n0-computer/quinn?branch=feat-ping-path#6861f4f0b2d4b28db5a6d44cbd3d3708cf1725d7"
 dependencies = [
  "bytes",
  "derive_more 2.1.0",
@@ -2396,13 +2396,13 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#d840435447d4947e44ad44b55e0be6a1094f39cc"
+source = "git+https://github.com/n0-computer/quinn?branch=feat-ping-path#6861f4f0b2d4b28db5a6d44cbd3d3708cf1725d7"
 dependencies = [
  "cfg_aliases",
  "libc",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
