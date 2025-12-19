@@ -77,6 +77,7 @@ jobs:
         run: cross build --all --target ${{ matrix.target }}
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   android_build:
     name: Android Build Only
@@ -164,6 +165,7 @@ jobs:
         run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   wasm_test:
     name: Build & test wasm32 for browsers
@@ -345,10 +347,11 @@ jobs:
     secrets: inherit
     with:
       branch: ${{ github.ref }}
-      max_workers: 4
+      max_workers: 6
       netsim_branch: "main"
-      sim_paths: "sims/iroh/iroh.json,sims/integration"
+      sim_paths: ${{ github.event_name == 'pull_request' && 'sims/integration' || 'sims/iroh/iroh.json,sims/integration' }}
       pr_number: ${{ github.event.pull_request.number || '' }}
+      skip: ${{ github.event_name == 'pull_request' && 'intg_iroh_full__1_to_3,intg_iroh_full__1_to_1x3,intg_iroh_relay_only__1_to_3' || '' }}
 
   codespell:
     timeout-minutes: 30
