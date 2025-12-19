@@ -53,7 +53,7 @@ use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
-    endpoint::{Accepting, Connection, RemoteEndpointIdError},
+    endpoint::{Accepting, Connection, RemoteEndpointIdError, quic},
 };
 
 /// The built router.
@@ -146,8 +146,8 @@ impl From<std::io::Error> for AcceptError {
     }
 }
 
-impl From<quinn::ClosedStream> for AcceptError {
-    fn from(err: quinn::ClosedStream) -> Self {
+impl From<quic::ClosedStream> for AcceptError {
+    fn from(err: quic::ClosedStream) -> Self {
         Self::from_err(err)
     }
 }
@@ -416,6 +416,7 @@ impl RouterBuilder {
     }
 
     /// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
+    #[must_use = "Router aborts when dropped, use Router::shutdown to shut the router down cleanly"]
     pub fn spawn(self) -> Router {
         // Update the endpoint with our alpns.
         let alpns = self
@@ -606,14 +607,13 @@ mod tests {
     use std::{sync::Mutex, time::Duration};
 
     use n0_error::{Result, StdResultExt};
-    use quinn::ApplicationClose;
 
     use super::*;
     use crate::{
         RelayMode,
         endpoint::{
-            BeforeConnectOutcome, ConnectError, ConnectWithOptsError, ConnectionError,
-            EndpointHooks,
+            ApplicationClose, BeforeConnectOutcome, ConnectError, ConnectWithOptsError,
+            ConnectionError, EndpointHooks,
         },
     };
 

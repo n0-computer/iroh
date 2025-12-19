@@ -16,10 +16,7 @@ use tracing::{Instrument, debug, trace, warn};
 
 use crate::{
     PingTracker,
-    protos::{
-        disco,
-        relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
-    },
+    protos::relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
     server::{
         clients::Clients,
         metrics::Metrics,
@@ -61,8 +58,6 @@ pub(super) struct Client {
     handle: AbortOnDropHandle<()>,
     /// Queue of packets intended for the client.
     send_queue: mpsc::Sender<Packet>,
-    /// Queue of disco packets intended for the client.
-    disco_send_queue: mpsc::Sender<Packet>,
     /// Channel to notify the client that a previous sender has disconnected.
     peer_gone: mpsc::Sender<EndpointId>,
 }
@@ -87,14 +82,12 @@ impl Client {
         let done = CancellationToken::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
 
-        let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
 
         let actor = Actor {
             stream,
             timeout: write_timeout,
             send_queue: send_queue_r,
-            disco_send_queue: disco_send_queue_r,
             endpoint_gone: peer_gone_r,
             endpoint_id,
             connection_id,
@@ -118,7 +111,6 @@ impl Client {
             handle: AbortOnDropHandle::new(handle),
             done,
             send_queue: send_queue_s,
-            disco_send_queue: disco_send_queue_s,
             peer_gone: peer_gone_s,
         }
     }
@@ -151,14 +143,6 @@ impl Client {
         data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
         self.send_queue.try_send(Packet { src, data })
-    }
-
-    pub(super) fn try_send_disco_packet(
-        &self,
-        src: EndpointId,
-        data: Datagrams,
-    ) -> Result<(), TrySendError<Packet>> {
-        self.disco_send_queue.try_send(Packet { src, data })
     }
 
     pub(super) fn try_send_peer_gone(
@@ -215,10 +199,6 @@ pub enum RunError {
         #[error(from)]
         source: HandleFrameError,
     },
-    #[error("Server.disco_send_queue dropped")]
-    DiscoSendQueuePacketDrop {},
-    #[error("Failed to send disco packet")]
-    DiscoPacketSend { source: WriteFrameError },
     #[error("Server.send_queue dropped")]
     SendQueuePacketDrop {},
     #[error("Failed to send packet")]
@@ -258,8 +238,6 @@ struct Actor {
     timeout: Duration,
     /// Packets queued to send to the client
     send_queue: mpsc::Receiver<Packet>,
-    /// Important packets queued to send to the client
-    disco_send_queue: mpsc::Receiver<Packet>,
     /// Notify the client that a previous sender has disconnected
     endpoint_gone: mpsc::Receiver<EndpointId>,
     /// [`EndpointId`] of this client
@@ -325,13 +303,6 @@ impl Actor {
                         .await?;
                     // reset the ping interval, we just received a message
                     ping_interval.reset();
-                }
-                // First priority, disco packets
-                packet = self.disco_send_queue.recv() => {
-                    let packet = packet.ok_or_else(|| e!(RunError::DiscoSendQueuePacketDrop))?;
-                    self.send_disco_packet(packet)
-                        .await
-                        .map_err(|err| e!(RunError::DiscoPacketSend, err))?;
                 }
                 // Second priority, sending regular packets
                 packet = self.send_queue.recv() => {
@@ -411,20 +382,6 @@ impl Actor {
         }
     }
 
-    async fn send_disco_packet(&mut self, packet: Packet) -> Result<(), WriteFrameError> {
-        trace!("send disco packet");
-        match self.send_raw(packet).await {
-            Ok(()) => {
-                self.metrics.disco_packets_sent.inc();
-                Ok(())
-            }
-            Err(err) => {
-                self.metrics.disco_packets_dropped.inc();
-                Err(err)
-            }
-        }
-    }
-
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
@@ -467,23 +424,12 @@ impl Actor {
         dst: EndpointId,
         data: Datagrams,
     ) -> Result<(), ForwardPacketError> {
-        if disco::looks_like_disco_wrapper(&data.contents) {
-            self.metrics.disco_packets_recv.inc();
-            self.clients
-                .send_disco_packet(dst, data, self.endpoint_id, &self.metrics)?;
-        } else {
-            self.metrics.send_packets_recv.inc();
-            self.clients
-                .send_packet(dst, data, self.endpoint_id, &self.metrics)?;
-        }
+        self.metrics.send_packets_recv.inc();
+        self.clients
+            .send_packet(dst, data, self.endpoint_id, &self.metrics)?;
+
         Ok(())
     }
-}
-
-#[derive(Debug)]
-pub(crate) enum PacketScope {
-    Disco,
-    Data,
 }
 
 #[derive(Debug)]
@@ -493,9 +439,8 @@ pub(crate) enum SendError {
 }
 
 #[stack_error(derive, add_meta)]
-#[error("failed to forward {scope:?} packet: {reason:?}")]
+#[error("failed to forward packet: {reason:?}")]
 pub struct ForwardPacketError {
-    scope: PacketScope,
     reason: SendError,
 }
 
@@ -536,9 +481,9 @@ mod tests {
     use iroh_base::SecretKey;
     use n0_error::{Result, StdResultExt, bail_any};
     use n0_future::Stream;
+    use n0_tracing_test::traced_test;
     use rand::SeedableRng;
     use tracing::info;
-    use tracing_test::traced_test;
 
     use super::*;
     use crate::{client::conn::Conn, protos::common::FrameType};
@@ -572,7 +517,6 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
-        let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
 
         let endpoint_id = SecretKey::generate(&mut rng).public();
@@ -586,7 +530,6 @@ mod tests {
             stream,
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
-            disco_send_queue: disco_send_queue_r,
             endpoint_gone: peer_gone_r,
             connection_id: 0,
             endpoint_id,
@@ -611,23 +554,6 @@ mod tests {
             data: Datagrams::from(&data[..]),
         };
         send_queue_s
-            .send(packet.clone())
-            .await
-            .std_context("send")?;
-        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut io_rw)
-            .await
-            .anyerr()?;
-        assert_eq!(
-            frame,
-            RelayToClientMsg::Datagrams {
-                remote_endpoint_id: endpoint_id,
-                datagrams: data.to_vec().into()
-            }
-        );
-
-        // send disco packet
-        println!("  send disco packet");
-        disco_send_queue_s
             .send(packet.clone())
             .await
             .std_context("send")?;
@@ -671,20 +597,6 @@ mod tests {
             .send(ClientToRelayMsg::Datagrams {
                 dst_endpoint_id: target,
                 datagrams: Datagrams::from(data),
-            })
-            .await
-            .std_context("send")?;
-
-        // send disco packet
-        println!("  send disco packet");
-        // starts with `MAGIC` & key, then data
-        let mut disco_data = disco::MAGIC.as_bytes().to_vec();
-        disco_data.extend_from_slice(target.as_bytes());
-        disco_data.extend_from_slice(data);
-        io_rw
-            .send(ClientToRelayMsg::Datagrams {
-                dst_endpoint_id: target,
-                datagrams: disco_data.clone().into(),
             })
             .await
             .std_context("send")?;

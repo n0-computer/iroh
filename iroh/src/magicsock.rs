@@ -37,7 +37,7 @@ use n0_watcher::{self, Watchable, Watcher};
 #[cfg(not(wasm_browser))]
 use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
-use quinn::{ServerConfig, WeakConnectionHandle};
+use quinn::WeakConnectionHandle;
 use rand::Rng;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -58,7 +58,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
     endpoint::hooks::EndpointHooksList,
-    magicsock::remote_map::PathsWatcher,
+    magicsock::remote_map::{PathsWatcher, RemoteInfo},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -69,10 +69,7 @@ pub(crate) mod mapped_addrs;
 pub(crate) mod remote_map;
 pub(crate) mod transports;
 
-use self::{
-    mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
-    transports::Addr,
-};
+use self::mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
 pub use self::{metrics::Metrics, remote_map::PathInfo};
 
 // TODO: Use this
@@ -133,7 +130,7 @@ pub(crate) struct Options {
     pub(crate) proxy_url: Option<Url>,
 
     /// ServerConfig for the internal QUIC endpoint
-    pub(crate) server_config: ServerConfig,
+    pub(crate) server_config: quinn_proto::ServerConfig,
 
     /// Skip verification of SSL certificates from relay servers
     ///
@@ -153,10 +150,35 @@ pub(crate) struct Handle {
     msock: Arc<MagicSock>,
     // empty when shutdown
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
-    /// Token to cancel the actor task and shutdown the relay transport.
-    shutdown_token: CancellationToken,
     // quinn endpoint
     endpoint: quinn::Endpoint,
+}
+
+#[derive(Debug)]
+struct ShutdownState {
+    at_close_start: CancellationToken,
+    at_endpoint_closed: CancellationToken,
+    closed: AtomicBool,
+}
+
+impl Default for ShutdownState {
+    fn default() -> Self {
+        Self {
+            at_close_start: CancellationToken::new(),
+            at_endpoint_closed: CancellationToken::new(),
+            closed: AtomicBool::new(false),
+        }
+    }
+}
+
+impl ShutdownState {
+    fn is_closing(&self) -> bool {
+        self.at_close_start.is_cancelled()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Relaxed)
+    }
 }
 
 /// Iroh connectivity layer.
@@ -176,11 +198,8 @@ pub(crate) struct MagicSock {
     /// EndpointId of this endpoint.
     public_key: PublicKey,
 
-    // - State Management
-    /// Close is in progress (or done)
-    closing: AtomicBool,
-    /// Close was called.
-    closed: AtomicBool,
+    // - Shutdown Management
+    shutdown: ShutdownState,
 
     // - Networking Info
     /// Our discovered direct addresses.
@@ -232,12 +251,12 @@ impl MagicSock {
         })
     }
 
-    fn is_closing(&self) -> bool {
-        self.closing.load(Ordering::Relaxed)
+    pub(crate) fn is_closed(&self) -> bool {
+        self.shutdown.is_closed()
     }
 
-    pub(crate) fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::SeqCst)
+    fn is_closing(&self) -> bool {
+        self.shutdown.is_closing()
     }
 
     /// Get the cached version of addresses.
@@ -311,6 +330,16 @@ impl MagicSock {
             Ok(Err(err)) => Ok(Err(err)),
             Err(_) => Err(RemoteStateActorStoppedError::new()),
         }
+    }
+
+    /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
+    ///
+    /// Returns `None` if no actor is running for the remote.
+    pub(crate) async fn remote_info(&self, id: EndpointId) -> Option<RemoteInfo> {
+        let actor = self.remote_map.remote_state_actor_if_exists(id)?;
+        let (tx, rx) = oneshot::channel();
+        actor.send(RemoteStateMessage::RemoteInfo(tx)).await.ok()?;
+        rx.await.ok()
     }
 
     pub(crate) async fn insert_relay(
@@ -439,28 +468,6 @@ impl MagicSock {
             .ok();
     }
 
-    #[cfg_attr(windows, allow(dead_code))]
-    fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs = self.local_addrs_watch.peek();
-
-        let mut ipv4_addr = None;
-        for addr in addrs {
-            match addr {
-                Addr::Ip(addr @ SocketAddr::V6(_)) => {
-                    return Ok(*addr);
-                }
-                Addr::Ip(addr @ SocketAddr::V4(_)) if ipv4_addr.is_none() => {
-                    ipv4_addr.replace(*addr);
-                }
-                _ => {}
-            }
-        }
-        match ipv4_addr {
-            Some(addr) => Ok(addr),
-            None => Err(io::Error::other("no valid socket available")),
-        }
-    }
-
     /// Process datagrams received from all the transports.
     ///
     /// All the `bufs` and `metas` should have initialized packets in them.
@@ -481,24 +488,6 @@ impl MagicSock {
             source_addrs.len(),
             "non matching bufs & source_addrs"
         );
-
-        // Adding the IP address we received something on results in Quinn using this
-        // address on the send path to send from.  However we let Quinn use a
-        // EndpointIdMappedAddress, not a real address.  So we used to substitute our bind address
-        // here so that Quinn would send on the right address.  But that would sometimes
-        // result in the wrong address family and Windows trips up on that.
-        //
-        // What should be done is that this dst_ip from the RecvMeta is stored in the
-        // RemoteState/PathState.  Then on the send path it should be retrieved from the
-        // RemoteState/PathState together with the send address and substituted at send time.
-        // This is relevant for IPv6 link-local addresses where the OS otherwise does not
-        // know which interface to send from.
-        #[cfg(not(windows))]
-        let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-        // Reasoning for this here:
-        // https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
-        #[cfg(windows)]
-        let dst_ip = None;
 
         // zip is slow :(
         for i in 0..metas.len() {
@@ -549,9 +538,6 @@ impl MagicSock {
                     quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
             }
-
-            // Normalize local_ip
-            quinn_meta.dst_ip = dst_ip;
         }
     }
 
@@ -601,6 +587,7 @@ struct DirectAddrUpdateState {
     net_reporter: Arc<AsyncMutex<net_report::Client>>,
     relay_map: RelayMap,
     run_done: mpsc::Sender<()>,
+    shutdown_token: CancellationToken,
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
@@ -628,6 +615,7 @@ impl DirectAddrUpdateState {
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
+        shutdown_token: CancellationToken,
     ) -> Self {
         DirectAddrUpdateState {
             want_update: Default::default(),
@@ -637,6 +625,7 @@ impl DirectAddrUpdateState {
             msock,
             relay_map,
             run_done,
+            shutdown_token,
         }
     }
 
@@ -675,12 +664,13 @@ impl DirectAddrUpdateState {
         mut net_reporter: tokio::sync::OwnedMutexGuard<net_report::Client>,
     ) {
         debug!("starting direct addr update ({:?})", why);
-        #[cfg(not(wasm_browser))]
-        self.port_mapper.procure_mapping();
         // Don't start a net report probe if we know
         // we are shutting down
-        if self.msock.is_closing() || self.msock.is_closed() {
+        if self.shutdown_token.is_cancelled() {
             debug!("skipping net_report, socket is shutting down");
+            // deactivate portmapper
+            #[cfg(not(wasm_browser))]
+            self.port_mapper.deactivate();
             return;
         }
         if self.relay_map.is_empty() {
@@ -689,22 +679,33 @@ impl DirectAddrUpdateState {
             return;
         }
 
+        #[cfg(not(wasm_browser))]
+        self.port_mapper.procure_mapping();
+
         debug!("requesting net_report report");
         let msock = self.msock.clone();
 
         let run_done = self.run_done.clone();
+
+        // Ensure that reports are cancelled when we shutdown
+        let token = self.shutdown_token.child_token();
+        let inner_token = token.child_token();
         task::spawn(
             async move {
-                let fut = time::timeout(
+                let fut = token.run_until_cancelled(time::timeout(
                     NET_REPORT_TIMEOUT,
-                    net_reporter.get_report(if_state, why.is_major()),
-                );
+                    net_reporter.get_report(if_state, why.is_major(), inner_token),
+                ));
+
                 match fut.await {
-                    Ok(report) => {
+                    Some(Ok(report)) => {
                         msock.net_report.set((Some(report), why)).ok();
                     }
-                    Err(time::Elapsed { .. }) => {
+                    Some(Err(time::Elapsed { .. })) => {
                         warn!("net_report report timed out");
+                    }
+                    None => {
+                        trace!("net_report cancelled");
                     }
                 }
 
@@ -764,7 +765,6 @@ impl Handle {
 
         // Currently we only support a single relay transport
         if relay_transport_configs.len() > 1 {
-            dbg!(&transport_configs, &relay_transport_configs);
             bail!(CreateHandleError::InvalidTransportConfig);
         }
         let relay_map = relay_transport_configs
@@ -794,7 +794,9 @@ impl Handle {
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
         };
-        let shutdown_token = CancellationToken::new();
+
+        let shutdown_state = ShutdownState::default();
+        let shutdown_token = shutdown_state.at_endpoint_closed.child_token();
 
         let transports = Transports::bind(
             &transport_configs,
@@ -839,14 +841,14 @@ impl Handle {
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
                 discovery.clone(),
+                shutdown_token.child_token(),
             )
         };
 
         let msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
-            closing: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
             actor_sender: actor_sender.clone(),
+            shutdown: shutdown_state,
             ipv6_reported,
             remote_map,
             discovery,
@@ -929,6 +931,7 @@ impl Handle {
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
             direct_addr_done_tx,
+            msock.shutdown.at_close_start.child_token(),
         );
 
         let netmon_watcher = network_monitor.interface_state();
@@ -960,7 +963,6 @@ impl Handle {
             msock,
             actor_task,
             endpoint,
-            shutdown_token,
         })
     }
 
@@ -978,7 +980,14 @@ impl Handle {
     /// [`Poll::Pending`]: std::task::Poll::Pending
     #[instrument(skip_all)]
     pub(crate) async fn close(&self) {
+        if self.msock.is_closed() || self.msock.is_closing() {
+            return;
+        }
         trace!(me = ?self.public_key, "magicsock closing...");
+
+        // Cancel at_close_start token, which cancels running netreports.
+        self.msock.shutdown.at_close_start.cancel();
+
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
 
@@ -997,13 +1006,12 @@ impl Handle {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+        trace!("wait_idle start");
         self.endpoint.wait_idle().await;
+        trace!("wait_idle done");
 
-        if self.msock.is_closed() {
-            return;
-        }
-        self.msock.closing.store(true, Ordering::Relaxed);
-        self.shutdown_token.cancel();
+        // Start cancellation of all actors
+        self.msock.shutdown.at_endpoint_closed.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
@@ -1024,7 +1032,7 @@ impl Handle {
             }
         }
 
-        self.msock.closed.store(true, Ordering::SeqCst);
+        self.msock.shutdown.closed.store(true, Ordering::SeqCst);
 
         trace!("magicsock closed");
     }
@@ -1093,7 +1101,7 @@ impl Actor {
         // Interval timer to remove closed `RemoteStateActor` handles from the endpoint map.
         let mut remote_map_gc = time::interval(remote_map::REMOTE_MAP_GC_INTERVAL);
 
-        loop {
+        while !shutdown_token.is_cancelled() {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
             let portmap_watcher_changed = portmap_watcher.changed();
@@ -1102,7 +1110,7 @@ impl Actor {
 
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
-                    debug!("shutting down");
+                    debug!("tick: shutting down");
                     return;
                 }
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
@@ -1200,7 +1208,11 @@ impl Actor {
                     self.handle_network_change(is_major).await;
                 }
                 _ = remote_map_gc.tick() => {
+                    trace!("tick: gc map");
                     self.msock.remote_map.remove_closed_remote_state_actors();
+                }
+                else => {
+                    trace!("tick: else");
                 }
             }
         }
@@ -1528,18 +1540,18 @@ mod tests {
     use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::{MergeBounded, StreamExt, time};
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use quinn::ServerConfig;
     use rand::{CryptoRng, Rng, RngCore, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
-    use tracing_test::traced_test;
 
     use super::Options;
     use crate::{
         Endpoint, RelayMode, SecretKey,
         discovery::static_provider::StaticProvider,
         dns::DnsResolver,
+        endpoint::QuicTransportConfig,
         magicsock::{
             Handle, MagicSock, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
@@ -1571,12 +1583,13 @@ mod tests {
     }
 
     /// Generate a server config with no ALPNS and a default transport configuration
-    fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
+    fn make_default_server_config(secret_key: &SecretKey) -> quinn::ServerConfig {
         let quic_server_config =
             crate::tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
                 .make_server_config(vec![], false);
-        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+        let transport = QuicTransportConfig::default();
+        server_config.transport_config(transport.to_inner_arc());
         server_config
     }
 
@@ -1690,38 +1703,43 @@ mod tests {
         receiver: Endpoint,
         payload: &[u8],
         loss: ExpectedLoss,
-    ) {
-        let send_endpoint_id = sender.id();
-        let recv_endpoint_id = receiver.id();
-        info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
+    ) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(4), async move {
+            let send_endpoint_id = sender.id();
+            let recv_endpoint_id = receiver.id();
+            info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
 
-        let receiver_task = AbortOnDropHandle::new(tokio::spawn(echo_receiver(receiver, loss)));
-        let sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).await;
-        let sender_is_err = match sender_res {
-            Ok(()) => false,
-            Err(err) => {
-                error!("[sender] Error:\n{err:#?}");
-                true
-            }
-        };
-        let receiver_is_err = match receiver_task.await {
-            Ok(Ok(())) => false,
-            Ok(Err(err)) => {
-                error!("[receiver] Error:\n{err:#?}");
-                true
-            }
-            Err(joinerr) => {
-                if joinerr.is_panic() {
-                    std::panic::resume_unwind(joinerr.into_panic());
-                } else {
-                    error!("[receiver] Error:\n{joinerr:#?}");
+            let receiver_task = AbortOnDropHandle::new(tokio::spawn(echo_receiver(receiver, loss)));
+            let sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).await;
+            let sender_is_err = match sender_res {
+                Ok(()) => false,
+                Err(err) => {
+                    error!("[sender] Error:\n{err:#?}");
+                    true
                 }
-                true
+            };
+            let receiver_is_err = match receiver_task.await {
+                Ok(Ok(())) => false,
+                Ok(Err(err)) => {
+                    error!("[receiver] Error:\n{err:#?}");
+                    true
+                }
+                Err(joinerr) => {
+                    if joinerr.is_panic() {
+                        std::panic::resume_unwind(joinerr.into_panic());
+                    } else {
+                        error!("[receiver] Error:\n{joinerr:#?}");
+                    }
+                    true
+                }
+            };
+            if sender_is_err || receiver_is_err {
+                panic!("Sender or receiver errored");
             }
-        };
-        if sender_is_err || receiver_is_err {
-            panic!("Sender or receiver errored");
-        }
+        })
+        .await
+        .std_context("timeout")?;
+        Ok(())
     }
 
     /// Returns a pair of endpoints with a shared [`StaticDiscovery`].
@@ -1731,15 +1749,13 @@ mod tests {
     /// the endpoints rebind.
     async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
         let discovery = StaticProvider::new();
-        let ep1 = Endpoint::builder()
-            .relay_mode(RelayMode::Disabled)
+        let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
             .discovery(discovery.clone())
             .bind()
             .await
             .unwrap();
-        let ep2 = Endpoint::builder()
-            .relay_mode(RelayMode::Disabled)
+        let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
             .discovery(discovery.clone())
             .bind()
@@ -1762,34 +1778,35 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_magic() -> Result {
+    async fn test_two_devices_roundtrip_quinn_magic_small() -> Result {
         let (_guard, m1, m2) = endpoint_pair().await;
 
-        for i in 0..5 {
-            info!("\n-- round {i}");
-            run_roundtrip(
-                m1.clone(),
-                m2.clone(),
-                b"hello m1",
-                ExpectedLoss::AlmostNone,
-            )
-            .await;
-            run_roundtrip(
-                m2.clone(),
-                m1.clone(),
-                b"hello m2",
-                ExpectedLoss::AlmostNone,
-            )
-            .await;
+        run_roundtrip(
+            m1.clone(),
+            m2.clone(),
+            b"hello m1",
+            ExpectedLoss::AlmostNone,
+        )
+        .await?;
+        run_roundtrip(
+            m2.clone(),
+            m1.clone(),
+            b"hello m2",
+            ExpectedLoss::AlmostNone,
+        )
+        .await?;
+        Ok(())
+    }
 
-            info!("\n-- larger data");
-            let mut data = vec![0u8; 10 * 1024];
-            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
-            info!("\n-- round {i} finished");
-        }
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_quinn_magic_large() -> Result {
+        let (_guard, m1, m2) = endpoint_pair().await;
+        let mut data = vec![0u8; 10 * 1024];
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        rng.fill_bytes(&mut data);
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await?;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await?;
 
         Ok(())
     }
@@ -1826,36 +1843,26 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    #[traced_test]
-    async fn test_two_devices_roundtrip_network_change() -> Result {
-        time::timeout(
-            Duration::from_secs(90),
-            test_two_devices_roundtrip_network_change_impl(),
-        )
-        .await
-        .std_context("timeout")?
+    fn offset(rng: &mut rand_chacha::ChaCha8Rng) -> Duration {
+        let delay = rng.random_range(1..=5);
+        Duration::from_millis(delay * 50)
     }
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    async fn test_two_devices_roundtrip_network_change_impl() -> Result {
+    /// Regular network changes to m1 only.
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_network_change_only_a() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         let (_guard, m1, m2) = endpoint_pair().await;
 
-        let offset = |rng: &mut rand_chacha::ChaCha8Rng| {
-            let delay = rng.random_range(10..=500);
-            Duration::from_millis(delay)
-        };
-        let rounds = 5;
-
-        // Regular network changes to m1 only.
-        let m1_network_change_guard = {
+        let _network_change_guard = {
             let m1 = m1.clone();
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 loop {
-                    println!("[m1] network change");
+                    info!("[m1] network change");
                     m1.magic_sock().force_network_change(true).await;
                     time::sleep(offset(&mut rng)).await;
                 }
@@ -1863,76 +1870,40 @@ mod tests {
             AbortOnDropHandle::new(task)
         };
 
-        for i in 0..rounds {
-            println!("-- [m1 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
+        let mut data = vec![0u8; 10 * 1024];
+        rng.fill_bytes(&mut data);
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await?;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await?;
 
-            println!("-- [m1 changes] larger data");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
-        }
+        Ok(())
+    }
 
-        std::mem::drop(m1_network_change_guard);
+    /// Regular network changes to both m1 and m2.
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_network_change_a_and_b() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let (_guard, m1, m2) = endpoint_pair().await;
 
-        // Regular network changes to m2 only.
-        let m2_network_change_guard = {
-            let m2 = m2.clone();
-            let mut rng = rng.clone();
-            let task = tokio::spawn(async move {
-                loop {
-                    println!("[m2] network change");
-                    m2.magic_sock().force_network_change(true).await;
-                    time::sleep(offset(&mut rng)).await;
-                }
-            });
-            AbortOnDropHandle::new(task)
-        };
-
-        for i in 0..rounds {
-            println!("-- [m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
-
-            println!("-- [m2 changes] larger data");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
-        }
-
-        std::mem::drop(m2_network_change_guard);
-
-        // Regular network changes to both m1 and m2 only.
-        let m1_m2_network_change_guard = {
+        let _network_change_guard = {
             let m1 = m1.clone();
             let m2 = m2.clone();
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
-                println!("-- [m1] network change");
+                info!("-- [m1] network change");
                 m1.magic_sock().force_network_change(true).await;
-                println!("-- [m2] network change");
+                info!("-- [m2] network change");
                 m2.magic_sock().force_network_change(true).await;
                 time::sleep(offset(&mut rng)).await;
             });
             AbortOnDropHandle::new(task)
         };
 
-        for i in 0..rounds {
-            println!("-- [m1 & m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
+        let mut data = vec![0u8; 10 * 1024];
+        rng.fill_bytes(&mut data);
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await?;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await?;
 
-            println!("-- [m1 & m2 changes] larger data");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
-        }
-
-        std::mem::drop(m1_m2_network_change_guard);
         Ok(())
     }
 
@@ -1964,12 +1935,12 @@ mod tests {
 
         // See if we can get endpoints.
         let eps0 = ms.ip_addrs().get();
-        println!("{eps0:?}");
+        info!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
         let eps1 = ms.ip_addrs().get();
-        println!("{eps1:?}");
+        info!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
 
@@ -1983,7 +1954,7 @@ mod tests {
     async fn magicsock_ep(secret_key: SecretKey) -> Result<Handle> {
         let quic_server_config = tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
             .make_server_config(vec![ALPN.to_vec()], true);
-        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
         let dns_resolver = DnsResolver::new();

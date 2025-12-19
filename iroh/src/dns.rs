@@ -15,7 +15,7 @@ pub use iroh_relay::dns::{
 pub(crate) mod tests {
     use std::time::Duration;
 
-    use tracing_test::traced_test;
+    use n0_tracing_test::traced_test;
 
     use super::DnsResolver;
     use crate::defaults::staging::NA_EAST_RELAY_HOSTNAME;

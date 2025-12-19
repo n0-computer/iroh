@@ -364,9 +364,9 @@ mod tests {
         task::AbortOnDropHandle,
         time::{self, Instant},
     };
+    use n0_tracing_test::traced_test;
     use quinn::crypto::rustls::QuicServerConfig;
     use tracing::{Instrument, debug, info, info_span};
-    use tracing_test::traced_test;
     use webpki_types::PrivatePkcs8KeyDer;
 
     use super::*;
