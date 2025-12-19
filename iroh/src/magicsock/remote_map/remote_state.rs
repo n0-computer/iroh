@@ -86,6 +86,11 @@ const RTT_SWITCHING_MIN_IP: Duration = Duration::from_millis(5);
 /// How much do we prefer IPv6 over IPv4?
 const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
 
+// TODO: is this a good time?
+const PER_IP_PATH_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+// TODO: is this a good time?
+const PER_IP_PATH_KEEP_ALIVE: Duration = Duration::from_secs(4);
+
 /// A stream of events from all paths for all connections.
 ///
 /// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
@@ -781,14 +786,16 @@ impl RemoteStateActor {
                 Some(path_id) => {
                     trace!(?conn_id, ?path_id, "opening new path");
                     conn_state.add_path(open_addr.clone(), path_id);
-                    // We still need to ensure that the path status is set correctly,
-                    // in case the path was opened by QNT, which opens all IP paths
-                    // using PATH_STATUS_BACKUP. We need to switch the selected path
-                    // to use PATH_STATUS_AVAILABLE though!
                     if let Some(path) = conn.path(path_id) {
+                        // We still need to ensure that the path status is set correctly,
+                        // in case the path was opened by QNT, which opens all IP paths
+                        // using PATH_STATUS_BACKUP. We need to switch the selected path
+                        // to use PATH_STATUS_AVAILABLE though!
                         if let Err(e) = path.set_status(path_status) {
                             warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
                         }
+
+                        ensure_path_settings(open_addr, &path);
                     }
                 }
                 None => {
@@ -846,6 +853,8 @@ impl RemoteStateActor {
                         ?conn_id,
                         ?path_id,
                     );
+                    ensure_path_settings(&path_remote, &path);
+
                     conn_state.add_open_path(path_remote.clone(), path_id);
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
@@ -1117,6 +1126,19 @@ fn select_v4_v6(
         (addr_v6.into(), rtt_v6)
     } else {
         (addr_v4.into(), rtt_v4)
+    }
+}
+
+fn ensure_path_settings(addr: &transports::Addr, path: &quinn::Path) {
+    trace!(?addr, "updating path settings");
+    if addr.is_ip() {
+        // Ensure non relay paths are kept alive, and do timeout if they faile to connect.
+        if let Err(e) = path.set_max_idle_timeout(Some(PER_IP_PATH_IDLE_TIMEOUT)) {
+            warn!(?e, ?addr, "Setting path max idle timeout failed");
+        }
+        if let Err(e) = path.set_keep_alive_interval(Some(PER_IP_PATH_KEEP_ALIVE)) {
+            warn!(?e, ?addr, "Setting keep alive interval failed");
+        }
     }
 }
 
