@@ -77,6 +77,7 @@ jobs:
         run: cross build --all --target ${{ matrix.target }}
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   android_build:
     name: Android Build Only
@@ -164,6 +165,7 @@ jobs:
         run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   wasm_test:
     name: Build & test wasm32 for browsers
