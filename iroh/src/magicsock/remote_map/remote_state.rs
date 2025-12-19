@@ -368,6 +368,28 @@ impl RemoteStateActor {
                 };
                 tx.send(info).ok();
             }
+            RemoteStateMessage::NetworkChange { is_major } => {
+                self.handle_network_change(is_major);
+            }
+        }
+    }
+
+    fn handle_network_change(&mut self, is_major: bool) {
+        for conn in self.connections.values() {
+            if let Some(quinn_conn) = conn.handle.upgrade() {
+                for (path_id, addr) in &conn.open_paths {
+                    if let Some(path) = quinn_conn.path(*path_id) {
+                        // Ping the current path
+                        if let Err(err) = path.ping() {
+                            warn!(%err, ?path_id, ?addr, "failed to ping path");
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_major {
+            self.trigger_holepunching();
         }
     }
 
@@ -1175,6 +1197,8 @@ pub(crate) enum RemoteStateMessage {
     ///
     /// This currently only includes a list of all known transport addresses for the remote.
     RemoteInfo(oneshot::Sender<RemoteInfo>),
+    /// The network status has changed in some way
+    NetworkChange { is_major: bool },
 }
 
 /// A handle to a [`RemoteStateActor`].
