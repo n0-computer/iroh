@@ -15,7 +15,6 @@ use iroh::{
 };
 use n0_error::Result;
 use n0_future::StreamExt;
-use quinn::PathStats;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -53,6 +52,13 @@ fn print_usage() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args: Vec<_> = std::env::args().collect();
+    let mut with_peer_manager = false;
+    if args.len() > 1 {
+        println!("running the example with a peer manager");
+        with_peer_manager = true;
+    }
+
     println!("start");
     print_usage();
     // create server endpoint
@@ -67,12 +73,17 @@ async fn main() -> Result<()> {
     println!("built endpoint");
     print_usage();
 
-    let peer_manager: PeerManager = Arc::new(Mutex::new(HashMap::new()));
-    let path_stats_list: PathStatsList = Arc::new(Mutex::new(Vec::new()));
+    let peer_manager: PeerManager = if with_peer_manager {
+        Arc::new(Mutex::new(Some(HashMap::new())))
+    } else {
+        Arc::new(Mutex::new(None))
+    };
+    // let path_stats_list: PathStatsList = Arc::new(Mutex::new(Vec::new()));
     let ep = server.clone();
     let pm = Arc::clone(&peer_manager);
-    let ps = Arc::clone(&path_stats_list);
-    tokio::spawn(run_server(ep, pm, ps));
+    // let ps = Arc::clone(&path_stats_list);
+    // tokio::spawn(run_server(ep, pm, ps));
+    tokio::spawn(run_server(ep, pm));
 
     println!("after server start");
     print_usage();
@@ -99,10 +110,10 @@ async fn main() -> Result<()> {
     println!("closed server");
     print_usage();
 
-    {
-        let ps = path_stats_list.lock().expect("not poisoned");
-        println!("pathstats: {:#?}", ps);
-    }
+    // {
+    //     let ps = path_stats_list.lock().expect("not poisoned");
+    //     println!("pathstats: {:#?}", ps);
+    // }
 
     // {
     //     let pm = peer_manager.lock().expect("not poisoned");
@@ -112,22 +123,21 @@ async fn main() -> Result<()> {
     println!("dropped peer_manager");
     print_usage();
 
-    drop(path_stats_list);
-    println!("dropped path stats list");
-    print_usage();
+    // drop(path_stats_list);
+    // println!("dropped path stats list");
+    // print_usage();
     Ok(())
 }
 
-type PeerManager = Arc<Mutex<HashMap<EndpointId, PathInfoList>>>;
-type PathStatsList = Arc<Mutex<Vec<PathStats>>>;
+type PeerManager = Arc<Mutex<Option<HashMap<EndpointId, PathInfoList>>>>;
+// type PathStatsList = Arc<Mutex<Vec<PathStats>>>;
 
-async fn run_server(ep: Endpoint, pm: PeerManager, ps: PathStatsList) {
+async fn run_server(ep: Endpoint, pm: PeerManager) {
     let mut set = JoinSet::new();
     while let Some(incoming) = ep.accept().await {
         // println!("accepted incoming");
         let pm = Arc::clone(&pm);
-        let ps = Arc::clone(&ps);
-        set.spawn(handle_incoming(incoming, pm, ps));
+        set.spawn(handle_incoming(incoming, pm));
     }
     set.join_all().await;
 }
@@ -153,7 +163,7 @@ async fn run_client(server_addr: EndpointAddr, cancel: CancellationToken) -> Res
 async fn handle_incoming(
     incoming: Incoming,
     peer_manager: PeerManager,
-    path_stats: PathStatsList,
+    // path_stats: PathStatsList,
 ) -> Result<()> {
     // println!("handling incoming");
     let conn = match incoming.await {
@@ -168,21 +178,23 @@ async fn handle_incoming(
     let mut paths = conn.paths().stream();
     while let Some(path_infos) = paths.next().await {
         // println!("In paths iterator: {path_infos:?}");
-        {
-            let stats: Vec<PathStats> = path_infos
-                .iter()
-                .map(|info| {
-                    println!("{info:?}");
-                    info.stats().clone()
-                })
-                .collect();
-            let mut ps = path_stats.lock().expect("peer state lock poisoned");
-            ps.extend(&stats);
-        }
+        // {
+        //     let stats: Vec<PathStats> = path_infos
+        //         .iter()
+        //         .map(|info| {
+        //             // println!("{info:?}");
+        //             info.stats().clone()
+        //         })
+        //         .collect();
+        //     let mut ps = path_stats.lock().expect("peer state lock poisoned");
+        //     ps.extend(&stats);
+        // }
 
         // println!("{remote_id:?}: insert {} path infos", path_infos.len());
         let mut pm = peer_manager.lock().expect("peer manager lock poisoned");
-        pm.insert(remote_id, path_infos);
+        if let Some(pm) = pm.as_mut() {
+            pm.insert(remote_id, path_infos);
+        }
     }
     conn.closed().await;
     Ok(())
