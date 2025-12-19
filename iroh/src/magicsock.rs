@@ -1232,6 +1232,8 @@ impl Actor {
         } else {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
+
+        self.msock.remote_map.on_network_change(is_major);
     }
 
     fn handle_relay_map_change(&mut self) {
