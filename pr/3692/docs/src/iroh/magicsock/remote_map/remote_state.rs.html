@@ -390,7 +390,7 @@
 <a href=#390 id=390 data-nosnippet>390</a>    <span class="doccomment">/// Handles [`RemoteStateMessage::SendDatagram`].
 <a href=#391 id=391 data-nosnippet>391</a>    </span><span class="kw">async fn </span>handle_msg_send_datagram(
 <a href=#392 id=392 data-nosnippet>392</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw-2">mut </span>sender: TransportsSender,
+<a href=#393 id=393 data-nosnippet>393</a>        <span class="kw-2">mut </span>sender: Box&lt;TransportsSender&gt;,
 <a href=#394 id=394 data-nosnippet>394</a>        transmit: OwnedTransmit,
 <a href=#395 id=395 data-nosnippet>395</a>    ) {
 <a href=#396 id=396 data-nosnippet>396</a>        <span class="comment">// Sending datagrams might fail, e.g. because we don't have the right transports set
@@ -1150,7 +1150,7 @@
 <a href=#1150 id=1150 data-nosnippet>1150</a>    /// operation with a bunch more copying.  So it should only be used for sending QUIC
 <a href=#1151 id=1151 data-nosnippet>1151</a>    /// Initial packets.
 <a href=#1152 id=1152 data-nosnippet>1152</a>    </span><span class="attr">#[debug(<span class="string">"SendDatagram(..)"</span>)]
-<a href=#1153 id=1153 data-nosnippet>1153</a>    </span>SendDatagram(TransportsSender, OwnedTransmit),
+<a href=#1153 id=1153 data-nosnippet>1153</a>    </span>SendDatagram(Box&lt;TransportsSender&gt;, OwnedTransmit),
 <a href=#1154 id=1154 data-nosnippet>1154</a>    <span class="doccomment">/// Adds an active connection to this remote endpoint.
 <a href=#1155 id=1155 data-nosnippet>1155</a>    ///
 <a href=#1156 id=1156 data-nosnippet>1156</a>    /// The connection will now be managed by this actor.  Holepunching will happen when
