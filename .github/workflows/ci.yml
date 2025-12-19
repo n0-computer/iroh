@@ -345,10 +345,11 @@ jobs:
     secrets: inherit
     with:
       branch: ${{ github.ref }}
-      max_workers: 4
+      max_workers: 6
       netsim_branch: "main"
-      sim_paths: "sims/iroh/iroh.json,sims/integration"
+      sim_paths: ${{ github.event_name == 'pull_request' && 'sims/integration' || 'sims/iroh/iroh.json,sims/integration' }}
       pr_number: ${{ github.event.pull_request.number || '' }}
+      skip: ${{ github.event_name == 'pull_request' && 'intg_iroh_full__1_to_3,intg_iroh_full__1_to_1x3,intg_iroh_relay_only__1_to_3' || '' }}
 
   codespell:
     timeout-minutes: 30
