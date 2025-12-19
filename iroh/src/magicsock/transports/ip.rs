@@ -1,6 +1,7 @@
 use std::{
     io,
     net::{IpAddr, SocketAddr},
+    num::NonZeroUsize,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -106,11 +107,11 @@ impl IpTransport {
         self.local_addr.watch()
     }
 
-    pub(super) fn max_transmit_segments(&self) -> usize {
+    pub(super) fn max_transmit_segments(&self) -> NonZeroUsize {
         self.socket.max_gso_segments()
     }
 
-    pub(super) fn max_receive_segments(&self) -> usize {
+    pub(super) fn max_receive_segments(&self) -> NonZeroUsize {
         self.socket.gro_segments()
     }
 
