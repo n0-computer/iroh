@@ -2160,7 +2160,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#4cbbb68f3c80a14b5300ca8c987691ab842ba9d3"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2180,7 +2179,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#4cbbb68f3c80a14b5300ca8c987691ab842ba9d3"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2207,7 +2205,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.6.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#4cbbb68f3c80a14b5300ca8c987691ab842ba9d3"
 dependencies = [
  "cfg_aliases",
  "libc",

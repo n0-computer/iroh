@@ -15,6 +15,7 @@ use iroh::{
 };
 use n0_error::Result;
 use n0_future::StreamExt;
+use quinn::PathStats;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -67,9 +68,11 @@ async fn main() -> Result<()> {
     print_usage();
 
     let peer_manager: PeerManager = Arc::new(Mutex::new(HashMap::new()));
+    let path_stats_list: PathStatsList = Arc::new(Mutex::new(Vec::new()));
     let ep = server.clone();
     let pm = Arc::clone(&peer_manager);
-    tokio::spawn(run_server(ep, pm));
+    let ps = Arc::clone(&path_stats_list);
+    tokio::spawn(run_server(ep, pm, ps));
 
     println!("after server start");
     print_usage();
@@ -96,20 +99,35 @@ async fn main() -> Result<()> {
     println!("closed server");
     print_usage();
 
+    {
+        let ps = path_stats_list.lock().expect("not poisoned");
+        println!("pathstats: {:#?}", ps);
+    }
+
+    // {
+    //     let pm = peer_manager.lock().expect("not poisoned");
+    //     println!("peer_manager: {:#?}", pm);
+    // }
     drop(peer_manager);
     println!("dropped peer_manager");
+    print_usage();
+
+    drop(path_stats_list);
+    println!("dropped path stats list");
     print_usage();
     Ok(())
 }
 
 type PeerManager = Arc<Mutex<HashMap<EndpointId, PathInfoList>>>;
+type PathStatsList = Arc<Mutex<Vec<PathStats>>>;
 
-async fn run_server(ep: Endpoint, pm: PeerManager) {
+async fn run_server(ep: Endpoint, pm: PeerManager, ps: PathStatsList) {
     let mut set = JoinSet::new();
     while let Some(incoming) = ep.accept().await {
         // println!("accepted incoming");
         let pm = Arc::clone(&pm);
-        set.spawn(handle_incoming(incoming, pm));
+        let ps = Arc::clone(&ps);
+        set.spawn(handle_incoming(incoming, pm, ps));
     }
     set.join_all().await;
 }
@@ -132,7 +150,11 @@ async fn run_client(server_addr: EndpointAddr, cancel: CancellationToken) -> Res
     Ok(())
 }
 
-async fn handle_incoming(incoming: Incoming, peer_manager: PeerManager) -> Result<()> {
+async fn handle_incoming(
+    incoming: Incoming,
+    peer_manager: PeerManager,
+    path_stats: PathStatsList,
+) -> Result<()> {
     // println!("handling incoming");
     let conn = match incoming.await {
         Err(e) => {
@@ -145,6 +167,19 @@ async fn handle_incoming(incoming: Incoming, peer_manager: PeerManager) -> Resul
     let remote_id = conn.remote_id();
     let mut paths = conn.paths().stream();
     while let Some(path_infos) = paths.next().await {
+        // println!("In paths iterator: {path_infos:?}");
+        {
+            let stats: Vec<PathStats> = path_infos
+                .iter()
+                .map(|info| {
+                    println!("{info:?}");
+                    info.stats().clone()
+                })
+                .collect();
+            let mut ps = path_stats.lock().expect("peer state lock poisoned");
+            ps.extend(&stats);
+        }
+
         // println!("{remote_id:?}: insert {} path infos", path_infos.len());
         let mut pm = peer_manager.lock().expect("peer manager lock poisoned");
         pm.insert(remote_id, path_infos);

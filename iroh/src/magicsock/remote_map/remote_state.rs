@@ -1400,6 +1400,7 @@ impl PathsWatcher {
             move |(open_paths, selected_path)| {
                 let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
                 let Some(conn) = conn_handle.upgrade() else {
+                    println!("upgrade  failed");
                     return PathInfoList(Default::default());
                 };
                 let list = open_paths
@@ -1504,10 +1505,12 @@ impl PathInfo {
 
     /// Returns stats for this transmission path.
     pub fn stats(&self) -> PathStats {
-        self.handle
-            .upgrade()
-            .and_then(|conn| conn.path_stats(self.path_id))
-            .unwrap_or(self.stats)
+        if let Some(conn) = self.handle.upgrade() {
+            conn.path_stats(self.path_id).expect("stats to exist")
+        } else {
+            println!("upgrade failed");
+            self.stats
+        }
     }
 
     /// Current best estimate of this paths's latency (round-trip-time)
