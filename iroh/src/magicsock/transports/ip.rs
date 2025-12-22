@@ -1,6 +1,7 @@
 use std::{
     io,
     net::{IpAddr, SocketAddr},
+    num::NonZeroUsize,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -9,7 +10,7 @@ use std::{
 use n0_watcher::Watchable;
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
-use tracing::trace;
+use tracing::{debug, trace};
 
 use super::{Addr, Transmit};
 use crate::metrics::MagicsockMetrics;
@@ -22,7 +23,36 @@ pub(crate) struct IpTransport {
     metrics: Arc<MagicsockMetrics>,
 }
 
+fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
+    debug!(%addr, "binding");
+
+    // First try binding a preferred port, if specified
+    match netwatch::UdpSocket::bind_full(addr) {
+        Ok(socket) => {
+            let local_addr = socket.local_addr()?;
+            debug!(%addr, %local_addr, "successfully bound");
+            return Ok(socket);
+        }
+        Err(err) => {
+            debug!(%addr, "failed to bind: {err:#}");
+            // If that was already the fallback port, then error out
+            if addr.port() == 0 {
+                return Err(err);
+            }
+        }
+    }
+
+    // Otherwise, try binding with port 0
+    addr.set_port(0);
+    netwatch::UdpSocket::bind_full(addr)
+}
+
 impl IpTransport {
+    pub(crate) fn bind(bind_addr: SocketAddr, metrics: Arc<MagicsockMetrics>) -> io::Result<Self> {
+        let socket = bind_with_fallback(bind_addr)?;
+        Ok(Self::new(bind_addr, Arc::new(socket), metrics.clone()))
+    }
+
     pub(crate) fn new(
         bind_addr: SocketAddr,
         socket: Arc<UdpSocket>,
@@ -51,8 +81,21 @@ impl IpTransport {
         match self.socket.poll_recv_quinn(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
-                for (addr, el) in source_addrs.iter_mut().zip(metas.iter()).take(n) {
-                    *addr = el.addr.into();
+                for (source_addr, meta) in source_addrs.iter_mut().zip(metas.iter_mut()).take(n) {
+                    if meta.addr.is_ipv4() {
+                        // The AsyncUdpSocket is an AF_INET6 socket and needs to show this
+                        // as coming from an IPv4-mapped IPv6 addresses, since Quinn will
+                        // use those when sending on an INET6 socket.
+                        let v6_ip = match meta.addr.ip() {
+                            IpAddr::V4(ipv4_addr) => ipv4_addr.to_ipv6_mapped(),
+                            IpAddr::V6(ipv6_addr) => ipv6_addr,
+                        };
+                        meta.addr = SocketAddr::new(v6_ip.into(), meta.addr.port());
+                    }
+                    // The transport addresses are internal to iroh and we always want those
+                    // to remain the canonical address.
+                    *source_addr =
+                        SocketAddr::new(meta.addr.ip().to_canonical(), meta.addr.port()).into();
                 }
                 Poll::Ready(Ok(n))
             }
@@ -64,11 +107,11 @@ impl IpTransport {
         self.local_addr.watch()
     }
 
-    pub(super) fn max_transmit_segments(&self) -> usize {
+    pub(super) fn max_transmit_segments(&self) -> NonZeroUsize {
         self.socket.max_gso_segments()
     }
 
-    pub(super) fn max_receive_segments(&self) -> usize {
+    pub(super) fn max_receive_segments(&self) -> NonZeroUsize {
         self.socket.gro_segments()
     }
 
@@ -119,7 +162,7 @@ impl IpNetworkChangeSender {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[pin_project]
 pub(super) struct IpSender {
     bind_addr: SocketAddr,
@@ -143,42 +186,6 @@ impl IpSender {
         }
     }
 
-    pub(super) async fn send(
-        &self,
-        destination: SocketAddr,
-        src: Option<IpAddr>,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        trace!("sending to {}", destination);
-        let total_bytes = transmit.contents.len() as u64;
-        let res = self
-            .sender
-            .send(&quinn_udp::Transmit {
-                destination: Self::canonical_addr(destination),
-                ecn: transmit.ecn,
-                contents: transmit.contents,
-                segment_size: transmit.segment_size,
-                src_ip: src,
-            })
-            .await;
-        trace!("send res: {:?}", res);
-
-        match res {
-            Ok(res) => {
-                match destination {
-                    SocketAddr::V4(_) => {
-                        self.metrics.send_ipv4.inc_by(total_bytes);
-                    }
-                    SocketAddr::V6(_) => {
-                        self.metrics.send_ipv6.inc_by(total_bytes);
-                    }
-                }
-                Ok(res)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
     /// Creates a canonical socket address.
     ///
     /// We may be asked to send IPv4-mapped IPv6 addresses.  But our sockets are configured
@@ -192,15 +199,14 @@ impl IpSender {
     pub(super) fn poll_send(
         mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
-        destination: SocketAddr,
+        dst: SocketAddr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        trace!("sending to {}", destination);
         let total_bytes = transmit.contents.len() as u64;
         let res = Pin::new(&mut self.sender).poll_send(
             &quinn_udp::Transmit {
-                destination: Self::canonical_addr(destination),
+                destination: Self::canonical_addr(dst),
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
@@ -208,11 +214,10 @@ impl IpSender {
             },
             cx,
         );
-        trace!("send res: {:?}", res);
 
         match res {
             Poll::Ready(Ok(res)) => {
-                match destination {
+                match dst {
                     SocketAddr::V4(_) => {
                         self.metrics.send_ipv4.inc_by(total_bytes);
                     }
@@ -224,39 +229,6 @@ impl IpSender {
             }
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Pending => Poll::Pending,
-        }
-    }
-
-    pub(super) fn try_send(
-        &self,
-        destination: SocketAddr,
-        src: Option<IpAddr>,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        trace!("sending to {}", destination);
-        let total_bytes = transmit.contents.len() as u64;
-        let res = self.sender.try_send(&quinn_udp::Transmit {
-            destination,
-            ecn: transmit.ecn,
-            contents: transmit.contents,
-            segment_size: transmit.segment_size,
-            src_ip: src,
-        });
-        trace!("send res: {:?}", res);
-
-        match res {
-            Ok(res) => {
-                match destination {
-                    SocketAddr::V4(_) => {
-                        self.metrics.send_ipv4.inc_by(total_bytes);
-                    }
-                    SocketAddr::V6(_) => {
-                        self.metrics.send_ipv6.inc_by(total_bytes);
-                    }
-                }
-                Ok(res)
-            }
-            Err(err) => Err(err),
         }
     }
 }

@@ -65,7 +65,7 @@
 //!     endpoint::RelayMode,
 //! };
 //!
-//! # async fn wrapper() -> n0_snafu::Result<()> {
+//! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())
@@ -86,7 +86,7 @@
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
-//! # async fn wrapper() -> n0_snafu::Result<()> {
+//! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
 //!     .discovery(PkarrPublisher::n0_dns())
 //!     .discovery(DnsDiscovery::n0_dns())
@@ -113,23 +113,14 @@
 use std::sync::{Arc, RwLock};
 
 use iroh_base::{EndpointAddr, EndpointId};
-use n0_future::{
-    boxed::BoxStream,
-    stream::StreamExt,
-    task::{self, AbortOnDropHandle},
-    time::{self, Duration},
-};
-use nested_enum_utils::common_fields;
-use snafu::{IntoError, Snafu, ensure};
-use tokio::sync::oneshot;
-use tracing::{Instrument, debug, error_span, warn};
+use n0_error::{AnyError, e, stack_error};
+use n0_future::boxed::BoxStream;
 
 use crate::Endpoint;
 pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
-
 #[cfg(feature = "discovery-local-network")]
 pub mod mdns;
 pub mod pkarr;
@@ -181,20 +172,14 @@ impl<T: IntoDiscovery> DynIntoDiscovery for T {
 }
 
 /// IntoDiscovery errors
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
-#[snafu(module)]
 pub enum IntoDiscoveryError {
-    #[snafu(display("Service '{provenance}' error"))]
+    #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+        source: AnyError,
     },
 }
 
@@ -204,7 +189,10 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: T,
     ) -> Self {
-        into_discovery_error::UserSnafu { provenance }.into_error(Box::new(source))
+        e!(IntoDiscoveryError::User {
+            provenance,
+            source: AnyError::from_std(source)
+        })
     }
 
     /// Creates a new user error from an arbitrary boxed error type.
@@ -212,46 +200,56 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        into_discovery_error::UserSnafu { provenance }.into_error(source)
+        e!(IntoDiscoveryError::User {
+            provenance,
+            source: AnyError::from_std_box(source)
+        })
     }
 }
 
 /// Discovery errors
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
 #[allow(missing_docs)]
-#[derive(Debug, Snafu)]
+#[stack_error(derive, add_meta)]
 #[non_exhaustive]
+#[derive(Clone)]
 pub enum DiscoveryError {
-    #[snafu(display("No discovery service configured"))]
-    NoServiceConfigured {},
-    #[snafu(display("Discovery produced no results for {}", endpoint_id.fmt_short()))]
-    NoResults { endpoint_id: EndpointId },
-    #[snafu(display("Service '{provenance}' error"))]
+    #[error("No discovery service configured")]
+    NoServiceConfigured,
+    #[error("Discovery produced no results")]
+    NoResults,
+    #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+        source: Arc<AnyError>,
     },
 }
 
 impl DiscoveryError {
     /// Creates a new user error from an arbitrary error type.
+    #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
         provenance: &'static str,
         source: T,
     ) -> Self {
-        UserSnafu { provenance }.into_error(Box::new(source))
+        Self::from_err_any(provenance, AnyError::from_std(source))
     }
 
     /// Creates a new user error from an arbitrary boxed error type.
+    #[track_caller]
     pub fn from_err_box(
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        UserSnafu { provenance }.into_error(source)
+        Self::from_err_any(provenance, AnyError::from_std_box(source))
+    }
+
+    /// Creates a new user error from an arbitrary error type that can be converted into [`AnyError`].
+    #[track_caller]
+    pub fn from_err_any(provenance: &'static str, source: impl Into<AnyError>) -> Self {
+        e!(DiscoveryError::User {
+            provenance,
+            source: Arc::new(source.into())
+        })
     }
 }
 
@@ -492,160 +490,27 @@ impl Discovery for ConcurrentDiscovery {
     }
 }
 
-/// Maximum duration since the last control or data message received from an endpoint to make us
-/// start a discovery task.
-const MAX_AGE: Duration = Duration::from_secs(10);
-
-/// A wrapper around a tokio task which runs an endpoint discovery.
-pub(super) struct DiscoveryTask {
-    on_first_rx: oneshot::Receiver<Result<(), DiscoveryError>>,
-    _task: AbortOnDropHandle<()>,
-}
-
-impl DiscoveryTask {
-    /// Starts a discovery task.
-    pub(super) fn start(ep: Endpoint, endpoint_id: EndpointId) -> Result<Self, DiscoveryError> {
-        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
-        let (on_first_tx, on_first_rx) = oneshot::channel();
-        let me = ep.id();
-        let task = task::spawn(
-            async move { Self::run(ep, endpoint_id, on_first_tx).await }.instrument(
-                error_span!("discovery", me = %me.fmt_short(), endpoint = %endpoint_id.fmt_short()),
-            ),
-        );
-        Ok(Self {
-            _task: AbortOnDropHandle::new(task),
-            on_first_rx,
-        })
-    }
-
-    /// Starts a discovery task after a delay and only if no path to the endpoint was recently active.
-    ///
-    /// This returns `None` if we received data or control messages from the remote endpoint
-    /// recently enough. If not it returns a [`DiscoveryTask`].
-    ///
-    /// If `delay` is set, the [`DiscoveryTask`] will first wait for `delay` and then check again
-    /// if we recently received messages from remote endpoint. If true, the task will abort.
-    /// Otherwise, or if no `delay` is set, the discovery will be started.
-    pub(super) fn maybe_start_after_delay(
-        ep: &Endpoint,
-        endpoint_id: EndpointId,
-        delay: Option<Duration>,
-    ) -> Result<Option<Self>, DiscoveryError> {
-        // If discovery is not needed, don't even spawn a task.
-        if !ep.needs_discovery(endpoint_id, MAX_AGE) {
-            return Ok(None);
-        }
-        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
-        let (on_first_tx, on_first_rx) = oneshot::channel();
-        let ep = ep.clone();
-        let me = ep.id();
-        let task = task::spawn(
-            async move {
-                // If delay is set, wait and recheck if discovery is needed. If not, early-exit.
-                if let Some(delay) = delay {
-                    time::sleep(delay).await;
-                    if !ep.needs_discovery(endpoint_id, MAX_AGE) {
-                        debug!("no discovery needed, abort");
-                        on_first_tx.send(Ok(())).ok();
-                        return;
-                    }
-                }
-                Self::run(ep, endpoint_id, on_first_tx).await
-            }
-            .instrument(
-                error_span!("discovery", me = %me.fmt_short(), endpoint = %endpoint_id.fmt_short()),
-            ),
-        );
-        Ok(Some(Self {
-            _task: AbortOnDropHandle::new(task),
-            on_first_rx,
-        }))
-    }
-
-    /// Waits until the discovery task produced at least one result.
-    pub(super) async fn first_arrived(&mut self) -> Result<(), DiscoveryError> {
-        let fut = &mut self.on_first_rx;
-        fut.await.expect("sender dropped")?;
-        Ok(())
-    }
-
-    fn create_stream(
-        ep: &Endpoint,
-        endpoint_id: EndpointId,
-    ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
-        ensure!(!ep.discovery().is_empty(), NoServiceConfiguredSnafu);
-        let stream = ep
-            .discovery()
-            .resolve(endpoint_id)
-            .ok_or(NoResultsSnafu { endpoint_id }.build())?;
-        Ok(stream)
-    }
-
-    async fn run(
-        ep: Endpoint,
-        endpoint_id: EndpointId,
-        on_first_tx: oneshot::Sender<Result<(), DiscoveryError>>,
-    ) {
-        let mut stream = match Self::create_stream(&ep, endpoint_id) {
-            Ok(stream) => stream,
-            Err(err) => {
-                on_first_tx.send(Err(err)).ok();
-                return;
-            }
-        };
-        let mut on_first_tx = Some(on_first_tx);
-        debug!("starting");
-        loop {
-            match stream.next().await {
-                Some(Ok(r)) => {
-                    let provenance = r.provenance;
-                    let endpoint_addr = r.to_endpoint_addr();
-                    if endpoint_addr.is_empty() {
-                        debug!(%provenance, "empty address found");
-                        continue;
-                    }
-                    debug!(%provenance, addr = ?endpoint_addr, "new address found");
-                    let source = crate::magicsock::Source::Discovery {
-                        name: provenance.to_string(),
-                    };
-                    ep.add_endpoint_addr(endpoint_addr, source).ok();
-
-                    if let Some(tx) = on_first_tx.take() {
-                        tx.send(Ok(())).ok();
-                    }
-                }
-                Some(Err(err)) => {
-                    warn!(?err, "discovery service produced error");
-                    break;
-                }
-                None => break,
-            }
-        }
-        if let Some(tx) = on_first_tx.take() {
-            tx.send(Err(NoResultsSnafu { endpoint_id }.build())).ok();
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
         collections::HashMap,
         net::SocketAddr,
         sync::{Arc, Mutex},
-        time::SystemTime,
+        time::{Duration, SystemTime},
     };
 
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use n0_snafu::{Error, Result, ResultExt};
-    use quinn::{IdleTimeout, TransportConfig};
+    use n0_error::{AnyError as Error, Result, StackResultExt};
+    use n0_future::{StreamExt, time};
+    use n0_tracing_test::traced_test;
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
-    use tracing_test::traced_test;
 
     use super::*;
-    use crate::{Endpoint, RelayMode, endpoint::ConnectOptions};
+    use crate::{
+        Endpoint, RelayMode,
+        endpoint::{ConnectOptions, IdleTimeout, QuicTransportConfig},
+    };
 
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
 
@@ -862,10 +727,11 @@ mod tests {
         .await;
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
-        let mut config = TransportConfig::default();
-        config.keep_alive_interval(Some(Duration::from_secs(1)));
-        config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()));
-        let opts = ConnectOptions::new().with_transport_config(Arc::new(config));
+        let cfg = QuicTransportConfig::builder()
+            .keep_alive_interval(Duration::from_secs(1))
+            .max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()))
+            .build();
+        let opts = ConnectOptions::new().with_transport_config(cfg);
 
         let res = ep2
             .connect_with_opts(ep1.id(), TEST_ALPN, opts)
@@ -888,12 +754,10 @@ mod tests {
         let (ep2, _guard2) =
             new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
 
-        let ep1_wrong_addr = EndpointAddr {
-            id: ep1.id(),
-            addrs: [TransportAddr::Ip("240.0.0.1:1000".parse().unwrap())]
-                .into_iter()
-                .collect(),
-        };
+        let ep1_wrong_addr = EndpointAddr::from_parts(
+            ep1.id(),
+            [TransportAddr::Ip("240.0.0.1:1000".parse().unwrap())],
+        );
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -929,9 +793,9 @@ mod tests {
                 // Keep connections alive until the task is dropped.
                 let mut connections = Vec::new();
                 // we skip accept() errors, they can be caused by retransmits
-                while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
+                while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     // Just accept incoming connections, but don't do anything with them.
-                    let conn = connecting.await.context("connecting")?;
+                    let conn = accepting.await.context("accepting")?;
                     connections.push(conn);
                 }
 
@@ -958,11 +822,11 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
+    use n0_error::{AnyError as Error, Result, StackResultExt};
     use n0_future::time::Duration;
-    use n0_snafu::{Error, Result, ResultExt};
+    use n0_tracing_test::traced_test;
     use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
-    use tracing_test::traced_test;
 
     use crate::{
         Endpoint, RelayMode,
@@ -1038,10 +902,7 @@ mod test_dns_pkarr {
             .await?;
         println!("resolved {resolved:?}");
 
-        let expected_addr = EndpointAddr {
-            id: endpoint_id,
-            addrs: relay_url.into_iter().collect(),
-        };
+        let expected_addr = EndpointAddr::from_parts(endpoint_id, relay_url);
 
         assert_eq!(resolved.to_endpoint_addr(), expected_addr);
         assert_eq!(resolved.user_data(), Some(&user_data));
@@ -1091,8 +952,8 @@ mod test_dns_pkarr {
             let ep = ep.clone();
             async move {
                 // we skip accept() errors, they can be caused by retransmits
-                while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await.context("connecting")?;
+                while let Some(accepting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
+                    let _conn = accepting.await.context("accepting")?;
                     // Just accept incoming connections, but don't do anything with them.
                 }
 

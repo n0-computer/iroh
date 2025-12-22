@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use clap::Parser;
 use iroh::{Endpoint, EndpointAddr, RelayMode, RelayUrl, SecretKey};
 use iroh_base::TransportAddr;
-use n0_snafu::ResultExt;
+use n0_error::{Result, StdResultExt};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -30,7 +30,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> n0_snafu::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect (unreliable) example!\n");
     let args = Cli::parse();
@@ -83,11 +83,12 @@ async fn main() -> n0_snafu::Result<()> {
 
     // Send a datagram over the connection.
     let message = format!("{me} is saying 'hello!'");
-    conn.send_datagram(message.as_bytes().to_vec().into()).e()?;
+    conn.send_datagram(message.as_bytes().to_vec().into())
+        .anyerr()?;
 
     // Read a datagram over the connection.
-    let message = conn.read_datagram().await.e()?;
-    let message = String::from_utf8(message.into()).e()?;
+    let message = conn.read_datagram().await.anyerr()?;
+    let message = String::from_utf8(message.into()).anyerr()?;
     println!("received: {message}");
 
     Ok(())

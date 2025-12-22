@@ -17,10 +17,7 @@ use tracing::{debug, trace};
 use super::client::{Client, Config, ForwardPacketError};
 use crate::{
     protos::relay::Datagrams,
-    server::{
-        client::{PacketScope, SendError},
-        metrics::Metrics,
-    },
+    server::{client::SendError, metrics::Metrics},
 };
 
 /// Manages the connections to all currently connected clients.
@@ -129,7 +126,7 @@ impl Clients {
                     dst = %dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
-                Err(ForwardPacketError::new(PacketScope::Data, SendError::Full))
+                Err(ForwardPacketError::new(SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -137,53 +134,7 @@ impl Clients {
                     "can no longer write to client, dropping message and pruning connection"
                 );
                 client.start_shutdown();
-                Err(ForwardPacketError::new(
-                    PacketScope::Data,
-                    SendError::Closed,
-                ))
-            }
-        }
-    }
-
-    /// Attempt to send a disco packet to client with [`EndpointId`] `dst`.
-    pub(super) fn send_disco_packet(
-        &self,
-        dst: EndpointId,
-        data: Datagrams,
-        src: EndpointId,
-        metrics: &Metrics,
-    ) -> Result<(), ForwardPacketError> {
-        let Some(client) = self.0.clients.get(&dst) else {
-            debug!(
-                dst = %dst.fmt_short(),
-                "no connected client, dropped disco packet"
-            );
-            metrics.disco_packets_dropped.inc();
-            return Ok(());
-        };
-        match client.try_send_disco_packet(src, data) {
-            Ok(_) => {
-                // Record sent_to relationship
-                self.0.sent_to.entry(src).or_default().insert(dst);
-                Ok(())
-            }
-            Err(TrySendError::Full(_)) => {
-                debug!(
-                    dst = %dst.fmt_short(),
-                    "client too busy to receive disco packet, dropping packet"
-                );
-                Err(ForwardPacketError::new(PacketScope::Disco, SendError::Full))
-            }
-            Err(TrySendError::Closed(_)) => {
-                debug!(
-                    dst = %dst.fmt_short(),
-                    "can no longer write to client, dropping disco message and pruning connection"
-                );
-                client.start_shutdown();
-                Err(ForwardPacketError::new(
-                    PacketScope::Disco,
-                    SendError::Closed,
-                ))
+                Err(ForwardPacketError::new(SendError::Closed))
             }
         }
     }
@@ -194,8 +145,8 @@ mod tests {
     use std::time::Duration;
 
     use iroh_base::SecretKey;
+    use n0_error::{Result, StdResultExt};
     use n0_future::{Stream, StreamExt};
-    use n0_snafu::{Result, ResultExt};
     use rand::SeedableRng;
 
     use super::*;
@@ -206,7 +157,7 @@ mod tests {
     };
 
     async fn recv_frame<
-        E: snafu::Error + Sync + Send + 'static,
+        E: std::error::Error + Sync + Send + 'static,
         S: Stream<Item = Result<RelayToClientMsg, E>> + Unpin,
     >(
         frame_type: FrameType,
@@ -215,7 +166,7 @@ mod tests {
         match stream.next().await {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
-                    snafu::whatever!(
+                    n0_error::bail_any!(
                         "Unexpected frame, got {:?}, but expected {:?}",
                         frame.typ(),
                         frame_type
@@ -223,8 +174,8 @@ mod tests {
                 }
                 Ok(frame)
             }
-            Some(Err(err)) => Err(err).e(),
-            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type:?}"),
+            Some(Err(err)) => Err(err).anyerr(),
+            None => n0_error::bail_any!("Unexpected EOF, expected frame {frame_type:?}"),
         }
     }
 
@@ -265,17 +216,6 @@ mod tests {
             }
         );
 
-        // send disco packet
-        clients.send_disco_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
-        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a_rw).await?;
-        assert_eq!(
-            frame,
-            RelayToClientMsg::Datagrams {
-                remote_endpoint_id: b_key,
-                datagrams: data.to_vec().into(),
-            }
-        );
-
         {
             let client = clients.0.clients.get(&a_key).unwrap();
             // shutdown client a, this should trigger the removal from the clients list
@@ -293,7 +233,7 @@ mod tests {
             }
         })
         .await
-        .context("timeout")?;
+        .std_context("timeout")?;
         clients.shutdown().await;
 
         Ok(())

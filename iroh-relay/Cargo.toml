@@ -1,6 +1,6 @@
 [package]
 name = "iroh-relay"
-version = "0.94.0"
+version = "0.95.1"
 edition = "2024"
 readme = "README.md"
 description = "Iroh's relay server and client"
@@ -31,8 +31,8 @@ http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
-iroh-base = { version = "0.94.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
-iroh-metrics = { version = "0.36", default-features = false }
+iroh-base = { version = "0.95.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
+iroh-metrics = { version = "0.37", default-features = false }
 n0-future = "0.3.0"
 num_enum = "0.7"
 pin-project = "1"
@@ -42,8 +42,8 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
-quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["rustls-ring"] }
-quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
+quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "main", default-features = false, features = ["rustls-ring"] }
+quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/n0-computer/quinn", branch = "main" }
 rand = "0.9.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
@@ -61,7 +61,6 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
     "ring",
 ] }
-sha1 = "0.11.0-rc.2"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 url = { version = "2.5.3", features = ["serde"] }
@@ -70,9 +69,7 @@ webpki_types = { package = "rustls-pki-types", version = "1.12" }
 data-encoding = "2.6.0"
 lru = "0.16"
 z32 = "1.0.3"
-snafu = { version = "0.8.5", features = ["rust_1_81"] }
-n0-snafu = "0.2.2"
-nested_enum_utils = "0.2.0"
+n0-error = "0.1.0"
 
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }
@@ -87,7 +84,9 @@ time = { version = "0.3.37", optional = true }
 tokio-rustls-acme = { version = "0.8", optional = true }
 tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
+sha1 = { version = "0.11.0-rc.2", optional = true }
 toml = { version = "0.9", optional = true }
+serde_json = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
@@ -117,7 +116,6 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
-crypto_box = { version = "0.10.0-pre.0", features = ["serde", "chacha20"] }
 proptest = "1.2.0"
 rand_chacha = "0.9"
 tokio = { version = "1", features = [
@@ -132,10 +130,11 @@ tokio = { version = "1", features = [
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = "1"
-tracing-test = "0.2.5"
+n0-tracing-test = "0.3"
 
 [build-dependencies]
-cfg_aliases = { version = "0.2.1" }
+cfg_aliases = "0.2.1"
+vergen-gitcl = "1.0.8"
 
 [features]
 default = ["metrics"]
@@ -153,9 +152,10 @@ server = [
     "dep:tokio-rustls-acme",
     "dep:tokio-websockets",
     "dep:simdutf8",
+    "dep:sha1",
     "dep:toml",
+    "dep:serde_json",
     "dep:tracing-subscriber",
-    "quinn/log",
     "quinn/platform-verifier",
     "quinn/runtime-tokio",
     "iroh-metrics/service",

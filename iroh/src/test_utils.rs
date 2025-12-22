@@ -1,7 +1,6 @@
 //! Internal utilities to support testing.
 use std::net::Ipv4Addr;
 
-pub use dns_and_pkarr_servers::DnsPkarrServer;
 use iroh_base::RelayUrl;
 use iroh_relay::{
     RelayConfig, RelayMap, RelayQuicConfig,
@@ -11,6 +10,10 @@ use iroh_relay::{
     },
 };
 use tokio::sync::oneshot;
+
+pub use self::{dns_and_pkarr_servers::DnsPkarrServer, qlog::QlogFileGroup};
+
+mod qlog;
 
 /// A drop guard to clean up test infrastructure.
 ///
@@ -519,7 +522,7 @@ pub(crate) mod pkarr_dns_state {
     #[cfg(test)]
     mod tests {
         use iroh_base::EndpointId;
-        use n0_snafu::Result;
+        use n0_error::Result;
 
         #[test]
         fn test_endpoint_id_from_domain_name() -> Result {

@@ -16,7 +16,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.85"
+  MSRV: "1.89"
   SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
@@ -59,7 +59,16 @@ jobs:
           docker kill $(docker ps -q)
 
         # See https://github.com/cross-rs/cross/issues/1222
-      - uses: taiki-e/install-action@cross
+      - name: Cache cross
+        id: cache-cross
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cross
+          key: cross-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cross
+        if: steps.cache-cross.outputs.cache-hit != 'true'
+        uses: taiki-e/install-action@cross
 
       - name: build
         # cross tests are currently broken vor armv7 and aarch64
@@ -68,6 +77,7 @@ jobs:
         run: cross build --all --target ${{ matrix.target }}
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   android_build:
     name: Android Build Only
@@ -140,12 +150,22 @@ jobs:
           docker kill $(docker ps -q)
 
         # See https://github.com/cross-rs/cross/issues/1222
-      - uses: taiki-e/install-action@cross
+      - name: Cache cross
+        id: cache-cross
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cross
+          key: cross-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Install cross
+        if: steps.cache-cross.outputs.cache-hit != 'true'
+        uses: taiki-e/install-action@cross
 
       - name: test
         run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: cc
 
   wasm_test:
     name: Build & test wasm32 for browsers
@@ -168,7 +188,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
+        uses: cargo-bins/cargo-binstall@v1.16.3
 
       - name: Install wasm-bindgen-test-runner
         run: cargo binstall wasm-bindgen-cli --locked --no-confirm
@@ -327,15 +347,21 @@ jobs:
     secrets: inherit
     with:
       branch: ${{ github.ref }}
-      max_workers: 4
+      max_workers: 6
       netsim_branch: "main"
-      sim_paths: "sims/iroh/iroh.json,sims/integration"
+      sim_paths: ${{ github.event_name == 'pull_request' && 'sims/integration' || 'sims/iroh/iroh.json,sims/integration' }}
       pr_number: ${{ github.event.pull_request.number || '' }}
+      skip: ${{ github.event_name == 'pull_request' && 'intg_iroh_full__1_to_3,intg_iroh_full__1_to_1x3,intg_iroh_relay_only__1_to_3' || '' }}
 
   codespell:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - run: pip install --user codespell[toml]
-      - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-codespell-2.4.1
+      - run: pip install --user codespell[toml]==2.4.1
+      - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl,keep-alives --skip=CHANGELOG.md

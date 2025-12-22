@@ -10,8 +10,8 @@ use iroh::{
     discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
     endpoint_info::UserData,
 };
+use n0_error::Result;
 use n0_future::StreamExt;
-use n0_snafu::Result;
 use tokio::task::JoinSet;
 
 #[tokio::main]
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
             ep.set_user_data_for_discovery(Some(ud));
             tokio::time::sleep(Duration::from_secs(3)).await;
             ep.close().await;
-            Ok::<_, n0_snafu::Error>(())
+            n0_error::Ok(())
         });
     }
 

@@ -15,10 +15,10 @@ pub use iroh_relay::dns::{
 pub(crate) mod tests {
     use std::time::Duration;
 
-    use tracing_test::traced_test;
+    use n0_tracing_test::traced_test;
 
     use super::DnsResolver;
-    use crate::defaults::staging::NA_RELAY_HOSTNAME;
+    use crate::defaults::staging::NA_EAST_RELAY_HOSTNAME;
 
     const TIMEOUT: Duration = Duration::from_secs(5);
     const STAGGERING_DELAYS: &[u64] = &[200, 300];
@@ -28,7 +28,7 @@ pub(crate) mod tests {
     async fn test_dns_lookup_ipv4_ipv6() {
         let resolver = DnsResolver::new();
         let res: Vec<_> = resolver
-            .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
+            .lookup_ipv4_ipv6_staggered(NA_EAST_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
             .await
             .unwrap()
             .collect();

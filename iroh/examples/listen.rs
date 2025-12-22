@@ -6,14 +6,14 @@
 use std::time::Duration;
 
 use iroh::{Endpoint, RelayMode, SecretKey, endpoint::ConnectionError};
-use n0_snafu::ResultExt;
+use n0_error::{Result, StdResultExt};
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 
 #[tokio::main]
-async fn main() -> n0_snafu::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nlisten example!\n");
     let secret_key = SecretKey::generate(&mut rand::rng());
@@ -60,8 +60,8 @@ async fn main() -> n0_snafu::Result<()> {
     );
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
-        let mut connecting = match incoming.accept() {
-            Ok(connecting) => connecting,
+        let mut accepting = match incoming.accept() {
+            Ok(accepting) => accepting,
             Err(err) => {
                 warn!("incoming connection failed: {err:#}");
                 // we can carry on in these cases:
@@ -69,9 +69,9 @@ async fn main() -> n0_snafu::Result<()> {
                 continue;
             }
         };
-        let alpn = connecting.alpn().await?;
-        let conn = connecting.await.e()?;
-        let endpoint_id = conn.remote_id()?;
+        let alpn = accepting.alpn().await?;
+        let conn = accepting.await?;
+        let endpoint_id = conn.remote_id();
         info!(
             "new connection from {endpoint_id} with ALPN {}",
             String::from_utf8_lossy(&alpn),
@@ -81,16 +81,16 @@ async fn main() -> n0_snafu::Result<()> {
         tokio::spawn(async move {
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
-            let (mut send, mut recv) = conn.accept_bi().await.e()?;
+            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
             debug!("accepted bi stream, waiting for data...");
-            let message = recv.read_to_end(100).await.e()?;
-            let message = String::from_utf8(message).e()?;
+            let message = recv.read_to_end(100).await.anyerr()?;
+            let message = String::from_utf8(message).anyerr()?;
             println!("received: {message}");
 
             let message = format!("hi! you connected to {me}. bye bye");
-            send.write_all(message.as_bytes()).await.e()?;
+            send.write_all(message.as_bytes()).await.anyerr()?;
             // call `finish` to close the connection gracefully
-            send.finish().e()?;
+            send.finish().anyerr()?;
 
             // We sent the last message, so wait for the client to close the connection once
             // it received this message.
@@ -104,7 +104,7 @@ async fn main() -> n0_snafu::Result<()> {
             if res.is_err() {
                 println!("endpoint {endpoint_id} did not disconnect within 3 seconds");
             }
-            Ok::<_, n0_snafu::Error>(())
+            n0_error::Ok(())
         });
     }
     // stop with SIGINT (ctrl-c)
