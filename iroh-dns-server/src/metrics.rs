@@ -1,6 +1,6 @@
 //! Metrics support for the server
 
-use iroh_metrics::{Counter, MetricsGroup};
+use iroh_metrics::{Counter, Gauge, MetricsGroup};
 
 /// Metrics for iroh-dns-server
 #[derive(Debug, Default, MetricsGroup)]
@@ -38,4 +38,8 @@ pub struct Metrics {
     pub store_packets_updated: Counter,
     /// Number of expired packets
     pub store_packets_expired: Counter,
+    /// Current number of zones in the main cache
+    pub cache_zones: Gauge,
+    /// Current number of zones in the DHT cache
+    pub cache_zones_dht: Gauge,
 }
