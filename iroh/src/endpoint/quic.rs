@@ -63,7 +63,7 @@ pub use quinn_proto::{
     TransportErrorCode,               // quinn_proto::TransportError
     UdpStats,                         // quinn::ConnectionStats
     ValidationTokenConfig,            // iroh::endpoint::quic::::ServerConfig
-    coding::Codec,                    // quinn_proto::TransportErrorCode, quinn::StreamId
+    coding::{Decodable, Encodable},   // quinn_proto::TransportErrorCode, quinn::StreamId
     congestion::{
         Controller,        // iroh::endpoint::Connection
         ControllerFactory, // iroh::endpoint::quic::QuicTransportConfig

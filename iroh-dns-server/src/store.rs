@@ -103,7 +103,8 @@ impl ZoneStore {
         record_type: RecordType,
     ) -> Result<Option<Arc<RecordSet>>> {
         trace!("store resolve");
-        if let Some(rset) = self.cache.lock().await.resolve(pubkey, name, record_type) {
+        let mut cache = self.cache.lock().await;
+        if let Some(rset) = cache.resolve(pubkey, name, record_type) {
             debug!(
                 len = rset.records_without_rrsigs().count(),
                 "resolved from cache"
@@ -113,12 +114,9 @@ impl ZoneStore {
 
         if let Some(packet) = self.store.get(pubkey).await? {
             trace!(packet_timestamp = ?packet.timestamp(), "store hit");
-            return match self
-                .cache
-                .lock()
-                .await
-                .insert_and_resolve(&packet, name, record_type)
-            {
+            let result = cache.insert_and_resolve(&packet, name, record_type);
+            self.metrics.cache_zones.set(cache.cache_len() as i64);
+            return match result {
                 Ok(Some(rset)) => {
                     debug!(
                         len = rset.records_without_rrsigs().count(),
@@ -146,11 +144,11 @@ impl ZoneStore {
             let packet_opt = pkarr.resolve(&key).await;
             if let Some(packet) = packet_opt {
                 debug!("DHT resolve successful {:?}", packet);
-                return self
-                    .cache
-                    .lock()
-                    .await
-                    .insert_and_resolve_dht(&packet, name, record_type);
+                let result = cache.insert_and_resolve_dht(&packet, name, record_type);
+                self.metrics
+                    .cache_zones_dht
+                    .set(cache.dht_cache_len() as i64);
+                return result;
             } else {
                 debug!("DHT resolve failed");
             }
@@ -175,7 +173,12 @@ impl ZoneStore {
         let pubkey = PublicKeyBytes::from_signed_packet(&signed_packet);
         if self.store.upsert(signed_packet).await? {
             self.metrics.pkarr_publish_update.inc();
-            self.cache.lock().await.remove(&pubkey);
+            let mut cache = self.cache.lock().await;
+            cache.remove(&pubkey);
+            self.metrics.cache_zones.set(cache.cache_len() as i64);
+            self.metrics
+                .cache_zones_dht
+                .set(cache.dht_cache_len() as i64);
             Ok(true)
         } else {
             self.metrics.pkarr_publish_noop.inc();
@@ -266,6 +269,14 @@ impl ZoneCache {
     fn remove(&mut self, pubkey: &PublicKeyBytes) {
         self.cache.pop(pubkey);
         self.dht_cache.remove(pubkey);
+    }
+
+    fn cache_len(&self) -> usize {
+        self.cache.len()
+    }
+
+    fn dht_cache_len(&mut self) -> usize {
+        self.dht_cache.iter().count()
     }
 }
 
