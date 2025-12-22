@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use iroh_base::{EndpointId, RelayUrl};
+use iroh_base::{EndpointId, RelayUrl, UserAddr};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -22,7 +22,7 @@ use super::{
     DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
 };
-use crate::discovery::ConcurrentDiscovery;
+use crate::{discovery::ConcurrentDiscovery, magicsock::mapped_addrs::UserMappedAddr};
 
 mod remote_state;
 
@@ -51,6 +51,8 @@ pub(crate) struct RemoteMap {
     pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// The mapping between user provided addresses and their [`UserMappedAddr`]s.
+    pub(super) user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
 
     //
     // State needed to start a new RemoteStateHandle.
@@ -77,6 +79,7 @@ impl RemoteMap {
             actor_handles: Mutex::new(FxHashMap::default()),
             endpoint_mapped_addrs: Default::default(),
             relay_mapped_addrs: Default::default(),
+            user_mapped_addrs: Default::default(),
             local_endpoint_id,
             metrics,
             local_direct_addrs,
@@ -149,6 +152,7 @@ impl RemoteMap {
             self.local_endpoint_id,
             self.local_direct_addrs.clone(),
             self.relay_mapped_addrs.clone(),
+            self.user_mapped_addrs.clone(),
             self.metrics.clone(),
             self.discovery.clone(),
         )

@@ -24,6 +24,13 @@ pub use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+/// Types for defining custom transports
+pub mod transports {
+    pub use super::magicsock::transports::{
+        Addr, Transmit, UserSender, UserTransport, UserTransportConfig,
+    };
+}
+
 use self::hooks::EndpointHooksList;
 pub use super::magicsock::{
     DirectAddr, DirectAddrType, PathInfo,
@@ -37,7 +44,10 @@ use crate::{
     NetReport,
     discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
     endpoint::presets::Preset,
-    magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
+    magicsock::{
+        self, Handle,
+        RemoteStateActorStoppedError, mapped_addrs::MappedAddr, transports::UserTransportConfig,
+    },
     metrics::EndpointMetrics,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
@@ -272,6 +282,13 @@ impl Builder {
             scope_id,
             port,
         }));
+        self
+    }
+
+    /// Adds a custom user transport
+    pub fn add_user_transport(mut self, config: impl UserTransportConfig) -> Self {
+        self.transports
+            .push(TransportConfig::User(Box::new(config)));
         self
     }
 

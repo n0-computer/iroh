@@ -17,6 +17,7 @@ pub struct Metrics {
 
     // Data packets (non-disco)
     pub recv_data_relay: Counter,
+    pub recv_data_user: Counter,
     pub recv_data_ipv4: Counter,
     pub recv_data_ipv6: Counter,
     /// Number of QUIC datagrams received.
@@ -50,8 +51,12 @@ pub struct Metrics {
     pub transport_ip_paths_removed: Counter,
     /// Number of relay transport paths opened.
     pub transport_relay_paths_added: Counter,
+    /// Number of user transport paths opened.
+    pub transport_user_paths_added: Counter,
     /// Number of relay transport paths closed.
     pub transport_relay_paths_removed: Counter,
+    /// Number of user transport paths closed.
+    pub transport_user_paths_removed: Counter,
 
     pub actor_tick_main: Counter,
     pub actor_tick_msg: Counter,

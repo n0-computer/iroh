@@ -6,7 +6,7 @@ use std::{
     task::Poll,
 };
 
-use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{EndpointId, RelayUrl, TransportAddr, UserAddr};
 use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
@@ -36,7 +36,7 @@ use crate::{
     endpoint::{DirectAddr, quic::PathStats},
     magicsock::{
         MagicsockMetrics,
-        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
+        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr, UserMappedAddr},
         remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -144,6 +144,8 @@ pub(super) struct RemoteStateActor {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// The mapping between endpoints via a user transport and their [`UserMappedAddr`]s.
+    user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
     /// Discovery service, cloned from the magicsock.
     discovery: ConcurrentDiscovery,
 
@@ -199,6 +201,7 @@ impl RemoteStateActor {
         local_endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+        user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
         discovery: ConcurrentDiscovery,
     ) -> Self {
@@ -208,6 +211,7 @@ impl RemoteStateActor {
             metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
+            user_mapped_addrs,
             discovery,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
@@ -493,6 +497,7 @@ impl RemoteStateActor {
                 let path_remote_is_ip = path_remote.is_ip();
                 let status = match path_remote {
                     transports::Addr::Ip(_) => PathStatus::Available,
+                    transports::Addr::User(_) => PathStatus::Available,
                     transports::Addr::Relay(_, _) => PathStatus::Backup,
                 };
                 path.set_status(status).ok();
@@ -756,10 +761,12 @@ impl RemoteStateActor {
     fn open_path(&mut self, open_addr: &transports::Addr) {
         let path_status = match open_addr {
             transports::Addr::Ip(_) => PathStatus::Available,
+            transports::Addr::User(_) => PathStatus::Available,
             transports::Addr::Relay(_, _) => PathStatus::Backup,
         };
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
+            transports::Addr::User(addr) => self.user_mapped_addrs.get(addr).private_socket_addr(),
             transports::Addr::Relay(relay_url, eid) => self
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))
@@ -1100,6 +1107,10 @@ fn select_best_path(
                     None
                 }
             }
+        }
+        Some((transports::Addr::User(_), _)) => {
+            // todo: when should we select an user path?
+            None
         }
     }
 }
@@ -1505,6 +1516,7 @@ fn to_transports_addr(
     addrs.into_iter().filter_map(move |addr| match addr {
         TransportAddr::Relay(relay_url) => Some(transports::Addr::from((relay_url, endpoint_id))),
         TransportAddr::Ip(sockaddr) => Some(transports::Addr::from(sockaddr)),
+        TransportAddr::User(addr) => Some(transports::Addr::from(addr)),
         _ => {
             warn!(?addr, "Unsupported TransportAddr");
             None
