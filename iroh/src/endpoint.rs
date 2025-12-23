@@ -330,20 +330,19 @@ impl Builder {
         self
     }
 
-    /// Adds a discovery mechanism for this endpoint.
+    /// Adds an additional discovery mechanism for this endpoint.
     ///
-    /// The function `discovery`
-    /// will be called on endpoint creation with the configured secret key of
-    /// the endpoint. Discovery services that need to publish information need
-    /// to use this secret key to sign the information.
+    /// Once the endpoint is created the provided [`IntoDiscovery::into_discovery`] will be
+    /// called. This allows discovery services to finalize their configuration by e.g. using
+    /// the secret key from the endpoint which can be needed to sign published information.
     ///
-    /// If you add multiple discovery services, they will be combined using a
-    /// [`crate::discovery::ConcurrentDiscovery`].
+    /// This method can be called multiple times and all the discovery services passed in
+    /// will be combined using an internal instance of the
+    /// [`crate::discovery::ConcurrentDiscovery`]. To clear all discovery services, use
+    /// [`Self::clear_discovery`].
     ///
     /// If no discovery service is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
-    ///
-    /// To clear all discovery services, use [`Builder::clear_discovery`].
     ///
     /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
     pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
