@@ -295,8 +295,6 @@ async fn metrics_middleware(
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
     use hickory_resolver::{
         config::{NameServerConfig, ResolverConfig, ResolverOpts},
         name_server::TokioConnectionProvider,
@@ -308,8 +306,8 @@ mod tests {
         endpoint_info::EndpointIdExt,
     };
     use n0_error::StdResultExt;
+    use n0_tracing_test::traced_test;
     use rand::SeedableRng;
-    use tracing_test::traced_test;
 
     use crate::{http::HttpsConfig, server::Server};
 
@@ -320,7 +318,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let https_config = HttpsConfig {
             port: 0,
-            bind_addr: Some(Ipv4Addr::LOCALHOST.into()),
+            bind_addr: None,
             domains: vec!["localhost".to_string()],
             cert_mode: crate::http::CertMode::SelfSigned,
             letsencrypt_contact: None,
@@ -330,10 +328,11 @@ mod tests {
             Server::spawn_for_tests_with_options(dir.path(), None, None, Some(https_config))
                 .await?;
 
+        const RELAY_URL: &'static str = "https://relay.example./";
         let (name_z32, signed_packet) = {
             let secret_key = SecretKey::generate(&mut rng);
             let endpoint_id = secret_key.public();
-            let relay_url: RelayUrl = "https://relay.example.".parse()?;
+            let relay_url: RelayUrl = RELAY_URL.parse().expect("valid url");
             let endpoint_info =
                 EndpointInfo::new(endpoint_id).with_relay_url(Some(relay_url.clone()));
             (
@@ -369,7 +368,7 @@ mod tests {
             .anyerr()?;
         assert_eq!(res.answer.len(), 1);
         assert_eq!(res.answer[0].name, format!("_iroh.{name_z32}."));
-        assert_eq!(res.answer[0].data, "relay=https://relay.example./");
+        assert_eq!(res.answer[0].data, format!("relay={RELAY_URL}"));
 
         // Fetch as JSON via HTTPS.
         let https_url = server.https_url().expect("https is bound");
@@ -388,7 +387,7 @@ mod tests {
             .anyerr()?;
         assert_eq!(res.answer.len(), 1);
         assert_eq!(res.answer[0].name, format!("_iroh.{name_z32}."));
-        assert_eq!(res.answer[0].data, "relay=https://relay.example./");
+        assert_eq!(res.answer[0].data, format!("relay={RELAY_URL}"));
 
         // Fetch over HTTPS via hickory-resolver
         let client = {
@@ -425,7 +424,7 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].record_type(), RecordType::TXT);
         let txt_data = records[0].data().as_txt().unwrap().txt_data();
-        assert_eq!(&txt_data[0][..], b"relay=https://relay.example./");
+        assert_eq!(&txt_data[0][..], format!("relay={RELAY_URL}").as_bytes());
 
         server.shutdown().await?;
         Ok(())
