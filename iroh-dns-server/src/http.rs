@@ -328,7 +328,7 @@ mod tests {
             Server::spawn_for_tests_with_options(dir.path(), None, None, Some(https_config))
                 .await?;
 
-        const RELAY_URL: &'static str = "https://relay.example./";
+        const RELAY_URL: &str = "https://relay.example./";
         let (name_z32, signed_packet) = {
             let secret_key = SecretKey::generate(&mut rng);
             let endpoint_id = secret_key.public();
