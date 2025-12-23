@@ -7,6 +7,7 @@ use std::{
 };
 
 use iroh_base::{EndpointId, RelayUrl};
+use n0_future::task::JoinSet;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -46,7 +47,7 @@ pub(crate) struct RemoteMap {
     // State we keep about remote endpoints.
     //
     /// The actors tracking each remote endpoint.
-    actor_handles: Mutex<FxHashMap<EndpointId, RemoteStateHandle>>,
+    actor_senders: Mutex<FxHashMap<EndpointId, mpsc::Sender<RemoteStateMessage>>>,
     /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
     pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
@@ -62,6 +63,7 @@ pub(crate) struct RemoteMap {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     discovery: ConcurrentDiscovery,
     shutdown_token: CancellationToken,
+    actor_tasks: Mutex<JoinSet<(EndpointId, Vec<RemoteStateMessage>)>>,
 }
 
 impl RemoteMap {
@@ -74,7 +76,7 @@ impl RemoteMap {
         shutdown_token: CancellationToken,
     ) -> Self {
         Self {
-            actor_handles: Mutex::new(FxHashMap::default()),
+            actor_senders: Mutex::new(FxHashMap::default()),
             endpoint_mapped_addrs: Default::default(),
             relay_mapped_addrs: Default::default(),
             local_endpoint_id,
@@ -82,6 +84,7 @@ impl RemoteMap {
             local_direct_addrs,
             discovery,
             shutdown_token,
+            actor_tasks: Default::default(),
         }
     }
 
@@ -94,8 +97,34 @@ impl RemoteMap {
     /// This should be called periodically to remove handles to endpoint state actors
     /// that have shutdown after their idle timeout expired.
     pub(super) fn remove_closed_remote_state_actors(&self) {
-        let mut handles = self.actor_handles.lock().expect("poisoned");
-        handles.retain(|_eid, handle| !handle.sender.is_closed())
+        let mut senders = self.actor_senders.lock().expect("poisoned");
+        senders.retain(|_eid, sender| !sender.is_closed());
+        while let Some(result) = self.actor_tasks.lock().expect("poisoned").try_join_next() {
+            match result {
+                Ok((eid, leftover_msgs)) => {
+                    let entry = senders.entry(eid);
+                    if leftover_msgs.is_empty() {
+                        match entry {
+                            hash_map::Entry::Occupied(occupied_entry) => occupied_entry.remove(),
+                            hash_map::Entry::Vacant(_) => {
+                                panic!("this should be impossible TODO(matheus23)");
+                            }
+                        };
+                    } else {
+                        // The remote actor got messages while it was closing, so we're restarting
+                        debug!(%eid, "restarting terminated remote state actor: messages received during shutdown");
+                        let sender = self.start_remote_state_actor(eid, leftover_msgs);
+                        entry.insert_entry(sender);
+                    }
+                }
+                Err(err) => {
+                    if let Ok(panic) = err.try_into_panic() {
+                        error!("RemoteStateActor panicked.");
+                        std::panic::resume_unwind(panic);
+                    }
+                }
+            }
+        }
     }
 
     /// Returns the sender for the [`RemoteStateActor`].
@@ -111,14 +140,14 @@ impl RemoteMap {
                     sender
                 } else {
                     // The actor is dead: Start a new actor.
-                    let (handle, sender) = self.start_remote_state_actor(eid);
-                    entry.insert(handle);
+                    let sender = self.start_remote_state_actor(eid, vec![]);
+                    entry.insert(sender.clone());
                     sender
                 }
             }
             hash_map::Entry::Vacant(entry) => {
-                let (handle, sender) = self.start_remote_state_actor(eid);
-                entry.insert(handle);
+                let sender = self.start_remote_state_actor(eid, vec![]);
+                entry.insert(sender.clone());
                 sender
             }
         }
@@ -141,10 +170,11 @@ impl RemoteMap {
     fn start_remote_state_actor(
         &self,
         eid: EndpointId,
-    ) -> (RemoteStateHandle, mpsc::Sender<RemoteStateMessage>) {
+        initial_msgs: Vec<RemoteStateMessage>,
+    ) -> mpsc::Sender<RemoteStateMessage> {
         // Ensure there is a RemoteMappedAddr for this EndpointId.
         self.endpoint_mapped_addrs.get(&eid);
-        let handle = RemoteStateActor::new(
+        RemoteStateActor::new(
             eid,
             self.local_endpoint_id,
             self.local_direct_addrs.clone(),
@@ -152,9 +182,11 @@ impl RemoteMap {
             self.metrics.clone(),
             self.discovery.clone(),
         )
-        .start(self.shutdown_token.child_token());
-        let sender = handle.sender.get().expect("just created");
-        (handle, sender)
+        .start(
+            initial_msgs,
+            self.actor_tasks.lock().expect("poisoned").deref_mut(),
+            self.shutdown_token.clone(),
+        )
     }
 }
 
