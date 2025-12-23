@@ -11,6 +11,7 @@ use axum_server::{
 };
 use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::{FutureExt, future::Boxed as BoxFuture};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls_acme::{AcmeConfig, axum::AxumAcceptor, caches::DirCache};
@@ -135,49 +136,23 @@ impl TlsAcceptor {
     }
 }
 
-async fn load_certs(
-    filename: impl AsRef<Path>,
-) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
+async fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<CertificateDer<'static>>> {
+    let filename = filename.as_ref();
     let certfile = tokio::fs::read(filename)
         .await
-        .std_context("cannot open certificate file")?;
-    let mut reader = std::io::Cursor::new(certfile);
-    let certs: Result<Vec<_>, std::io::Error> = rustls_pemfile::certs(&mut reader).collect();
-    let certs = certs.anyerr()?;
-
-    Ok(certs)
+        .with_std_context(|_| format!("cannot open certificate file at {}", filename.display()))?;
+    CertificateDer::pem_slice_iter(&certfile)
+        .collect::<Result<Vec<_>, _>>()
+        .with_std_context(|_| format!("cannot parse certificates from {}", filename.display()))
 }
 
-async fn load_secret_key(
-    filename: impl AsRef<Path>,
-) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
-    let keyfile = tokio::fs::read(filename.as_ref())
+async fn load_secret_key(filename: impl AsRef<Path>) -> Result<PrivateKeyDer<'static>> {
+    let filename = filename.as_ref();
+    let keyfile = tokio::fs::read(filename)
         .await
-        .std_context("cannot open secret key file")?;
-    let mut reader = std::io::Cursor::new(keyfile);
-
-    loop {
-        match rustls_pemfile::read_one(&mut reader)
-            .std_context("cannot parse secret key .pem file")?
-        {
-            Some(rustls_pemfile::Item::Pkcs1Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs1(key));
-            }
-            Some(rustls_pemfile::Item::Pkcs8Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Pkcs8(key));
-            }
-            Some(rustls_pemfile::Item::Sec1Key(key)) => {
-                return Ok(rustls::pki_types::PrivateKeyDer::Sec1(key));
-            }
-            None => break,
-            _ => {}
-        }
-    }
-
-    bail_any!(
-        "no keys found in {} (encrypted keys not supported)",
-        filename.as_ref().display()
-    );
+        .with_std_context(|_| format!("cannot open secret key file at {}", filename.display()))?;
+    PrivateKeyDer::from_pem_slice(&keyfile)
+        .with_std_context(|_| format!("cannot parse secret key from {}", filename.display()))
 }
 
 static UNSAFE_HOSTNAME_CHARACTERS: OnceLock<regex::Regex> = OnceLock::new();

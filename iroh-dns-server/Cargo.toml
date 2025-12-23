@@ -36,7 +36,6 @@ rcgen = "0.14"
 redb = "3.1.0"
 regex = "1.10.3"
 rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
-rustls-pemfile = { version = "2.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 struct_iterable = "0.1.1"
