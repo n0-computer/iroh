@@ -295,6 +295,8 @@ async fn metrics_middleware(
 
 #[cfg(test)]
 mod tests {
+    use std::net::{IpAddr, Ipv4Addr};
+
     use hickory_resolver::{
         config::{NameServerConfig, ResolverConfig, ResolverOpts},
         name_server::TokioConnectionProvider,
@@ -318,7 +320,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let https_config = HttpsConfig {
             port: 0,
-            bind_addr: None,
+            bind_addr: Some(IpAddr::V4(Ipv4Addr::LOCALHOST)),
             domains: vec!["localhost".to_string()],
             cert_mode: crate::http::CertMode::SelfSigned,
             letsencrypt_contact: None,
