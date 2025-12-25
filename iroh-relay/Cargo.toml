@@ -20,7 +20,7 @@ workspace = true
 
 [dependencies]
 bytes = "1.7"
-derive_more = { version = "2.0.1", features = [
+derive_more = { version = "2.1.1", features = [
     "debug",
     "display",
     "from",
