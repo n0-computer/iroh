@@ -71,7 +71,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls", "http2"
 ] }
 serde_json = "1.0.145"
-tempfile = "3.23.0"
+tempfile = "3.24.0"
 
 [[bench]]
 name = "write"
