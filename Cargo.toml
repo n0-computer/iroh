@@ -53,6 +53,8 @@ netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "main" }
 # iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }
 # iroh-quinn-udp = { path = "../iroh-quinn/quinn-udp" }
 
+n0-future = { git = "https://github.com/n0-computer/n0-future.git", branch = "matheus23/poll-join-next" }
+
 # [patch."https://github.com/n0-computer/quinn"]
 # iroh-quinn = { path = "../iroh-quinn/quinn" }
 # iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }

@@ -11,6 +11,7 @@ use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
+    task::JoinSet,
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
@@ -19,10 +20,7 @@ use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinSet,
-};
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
