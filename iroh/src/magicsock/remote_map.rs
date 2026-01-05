@@ -3,7 +3,7 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::{Arc, Mutex},
-    time::Duration,
+    task::{Context, Poll, Waker, ready},
 };
 
 use iroh_base::{EndpointId, RelayUrl};
@@ -27,9 +27,6 @@ use super::{
 use crate::discovery::ConcurrentDiscovery;
 
 mod remote_state;
-
-/// Interval in which handles to closed [`RemoteStateActor`]s should be removed.
-pub(super) const REMOTE_MAP_GC_INTERVAL: Duration = Duration::from_secs(60);
 
 // TODO: use this
 // /// Number of endpoints that are inactive for which we keep info about. This limit is enforced
@@ -64,7 +61,16 @@ pub(crate) struct RemoteMap {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     discovery: ConcurrentDiscovery,
     shutdown_token: CancellationToken,
-    actor_tasks: Mutex<JoinSet<(EndpointId, Vec<RemoteStateMessage>)>>,
+    /// The join set into which `RemoteStateActor`s are spawned.
+    ///
+    /// We also host a waker in the same mutex, since we'll always need to lock/unlock both
+    /// at the same time.
+    /// The waker is there to allow `poll_cleanup` to be notified when the join set is populated
+    /// with another spawned task.
+    actor_tasks: Mutex<(
+        JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
+        Option<Waker>,
+    )>,
 }
 
 impl RemoteMap {
@@ -93,30 +99,37 @@ impl RemoteMap {
         self.endpoint_mapped_addrs.get(&eid)
     }
 
-    /// Removes the handles for terminated [`RemoteStateActor`]s from the endpoint map.
+    /// Potentially removes terminated [`RemoteStateActor`]s from the remote map.
     ///
-    /// This should be called periodically to remove handles to endpoint state actors
-    /// that have shutdown after their idle timeout expired.
-    pub(super) fn remove_closed_remote_state_actors(&self) {
+    /// Resolves to the endpoint ID that of the remote state actor that got cleaned up.
+    ///
+    /// Returns pending if there was no actor to be cleaned up right now, and registers
+    /// for moments where this could become the case.
+    ///
+    /// Only one task is allowed to poll this function concurrently.
+    pub(super) fn poll_cleanup(&self, cx: &mut Context<'_>) -> Poll<EndpointId> {
+        // always lock senders before tasks to avoid deadlocks.
         let mut senders = self.actor_senders.lock().expect("poisoned");
-        senders.retain(|_eid, sender| !sender.is_closed());
-        while let Some(result) = self.actor_tasks.lock().expect("poisoned").try_join_next() {
+        let mut tasks = self.actor_tasks.lock().expect("poisoned");
+        while let Some(result) = ready!(tasks.0.poll_join_next(cx)) {
             match result {
                 Ok((eid, leftover_msgs)) => {
                     let entry = senders.entry(eid);
                     if leftover_msgs.is_empty() {
+                        // the actor shut down cleanly
                         match entry {
                             hash_map::Entry::Occupied(occupied_entry) => occupied_entry.remove(),
                             hash_map::Entry::Vacant(_) => {
                                 panic!("this should be impossible TODO(matheus23)");
                             }
                         };
-                    } else {
-                        // The remote actor got messages while it was closing, so we're restarting
-                        debug!(%eid, "restarting terminated remote state actor: messages received during shutdown");
-                        let sender = self.start_remote_state_actor(eid, leftover_msgs);
-                        entry.insert_entry(sender);
+                        return Poll::Ready(eid);
                     }
+
+                    // The remote actor got messages while it was closing, so we're restarting
+                    debug!(%eid, "restarting terminated remote state actor: messages received during shutdown");
+                    let sender = self.start_remote_state_actor(eid, leftover_msgs, &mut tasks);
+                    entry.insert_entry(sender);
                 }
                 Err(err) => {
                     if let Ok(panic) = err.try_into_panic() {
@@ -126,6 +139,12 @@ impl RemoteMap {
                 }
             }
         }
+        // There's nothing to clean up.
+        // Let's get woken when there's another task.
+        // If we're called after that, then we'll fall into `poll_join_next` and
+        // properly wait for a task to finish.
+        tasks.1.replace(cx.waker().clone());
+        Poll::Pending
     }
 
     /// Returns the sender for the [`RemoteStateActor`].
@@ -134,13 +153,15 @@ impl RemoteMap {
     ///
     /// [`RemoteStateActor`]: remote_state::RemoteStateActor
     pub(super) fn remote_state_actor(&self, eid: EndpointId) -> mpsc::Sender<RemoteStateMessage> {
+        // always lock the sender first
         let mut senders = self.actor_senders.lock().expect("poisoned");
+        let mut actor_tasks = self.actor_tasks.lock().expect("poisoned");
         match senders.entry(eid) {
             hash_map::Entry::Occupied(mut entry) => {
                 let sender = entry.get();
                 if sender.is_closed() {
                     // The actor is dead: Start a new actor.
-                    let sender = self.start_remote_state_actor(eid, vec![]);
+                    let sender = self.start_remote_state_actor(eid, vec![], &mut actor_tasks);
                     entry.insert(sender.clone());
                     sender
                 } else {
@@ -148,7 +169,7 @@ impl RemoteMap {
                 }
             }
             hash_map::Entry::Vacant(entry) => {
-                let sender = self.start_remote_state_actor(eid, vec![]);
+                let sender = self.start_remote_state_actor(eid, vec![], &mut actor_tasks);
                 entry.insert(sender.clone());
                 sender
             }
@@ -189,10 +210,15 @@ impl RemoteMap {
         &self,
         eid: EndpointId,
         initial_msgs: Vec<RemoteStateMessage>,
+        actor_tasks: &mut (
+            JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
+            Option<Waker>,
+        ),
     ) -> mpsc::Sender<RemoteStateMessage> {
         // Ensure there is a RemoteMappedAddr for this EndpointId.
         self.endpoint_mapped_addrs.get(&eid);
-        RemoteStateActor::new(
+        let (ref mut tasks, ref mut waker) = *actor_tasks;
+        let sender = RemoteStateActor::new(
             eid,
             self.local_endpoint_id,
             self.local_direct_addrs.clone(),
@@ -200,11 +226,12 @@ impl RemoteMap {
             self.metrics.clone(),
             self.discovery.clone(),
         )
-        .start(
-            initial_msgs,
-            &mut self.actor_tasks.lock().expect("poisoned"),
-            self.shutdown_token.clone(),
-        )
+        .start(initial_msgs, tasks, self.shutdown_token.clone());
+        if let Some(waker) = waker.take() {
+            // Notify something waiting for changes to tasks when there's a new task.
+            waker.wake();
+        }
+        sender
     }
 }
 
