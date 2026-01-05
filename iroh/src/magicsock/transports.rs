@@ -696,15 +696,14 @@ impl quinn::UdpSender for MagicSender {
                         "oops, flub didn't think this would happen");
                 }
 
-                let sender = self.msock.remote_map.remote_state_actor(node_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
-                return match sender.try_send(RemoteStateMessage::SendDatagram(
-                    self.sender.clone(),
-                    transmit,
-                )) {
+                match self.msock.remote_map.try_send(
+                    node_id,
+                    RemoteStateMessage::SendDatagram(self.sender.clone(), transmit),
+                ) {
                     Ok(()) => {
                         trace!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(), "sent transmit");
-                        Poll::Ready(Ok(()))
+                        return Poll::Ready(Ok(()));
                     }
                     Err(err) => {
                         // We do not want to block the next send which might be on a
@@ -713,7 +712,7 @@ impl quinn::UdpSender for MagicSender {
                         // TODO: Revisit this: we might want to do something better.
                         debug!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(),
                             "RemoteStateActor inbox {err:#}, dropped transmit");
-                        Poll::Ready(Ok(()))
+                        return Poll::Ready(Ok(()));
                     }
                 };
             }

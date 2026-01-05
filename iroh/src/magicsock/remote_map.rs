@@ -10,7 +10,7 @@ use iroh_base::{EndpointId, RelayUrl};
 use n0_future::task::JoinSet;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, error::TrySendError};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
@@ -134,8 +134,8 @@ impl RemoteMap {
     ///
     /// [`RemoteStateActor`]: remote_state::RemoteStateActor
     pub(super) fn remote_state_actor(&self, eid: EndpointId) -> mpsc::Sender<RemoteStateMessage> {
-        let mut handles = self.actor_senders.lock().expect("poisoned");
-        match handles.entry(eid) {
+        let mut senders = self.actor_senders.lock().expect("poisoned");
+        match senders.entry(eid) {
             hash_map::Entry::Occupied(mut entry) => {
                 let sender = entry.get();
                 if sender.is_closed() {
@@ -153,6 +153,22 @@ impl RemoteMap {
                 sender
             }
         }
+    }
+
+    /// Try to send a message to the remote state actor, if it exists.
+    ///
+    /// Errors out with a `TrySendError`, if no remote state actor for given endpoint ID
+    /// is currently running, or if the receiver is already closed for it.
+    pub(super) fn try_send(
+        &self,
+        eid: EndpointId,
+        msg: RemoteStateMessage,
+    ) -> Result<(), TrySendError<RemoteStateMessage>> {
+        let senders = self.actor_senders.lock().expect("poisoned");
+        let Some(sender) = senders.get(&eid) else {
+            return Err(TrySendError::Closed(msg));
+        };
+        sender.try_send(msg)
     }
 
     pub(super) fn remote_state_actor_if_exists(
