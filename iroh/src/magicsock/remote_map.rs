@@ -61,16 +61,23 @@ pub(crate) struct RemoteMap {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     discovery: ConcurrentDiscovery,
     shutdown_token: CancellationToken,
-    /// The join set into which `RemoteStateActor`s are spawned.
+    /// The state kept for spawning new tasks for remote state actors and cleaning them up.
     ///
-    /// We also host a waker in the same mutex, since we'll always need to lock/unlock both
-    /// at the same time.
-    /// The waker is there to allow `poll_cleanup` to be notified when the join set is populated
-    /// with another spawned task.
-    actor_tasks: Mutex<(
-        JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
-        Option<Waker>,
-    )>,
+    /// The lock for this needs to be acquired *after* the lock for the `actor_senders` is acquired.
+    actor_tasks: Mutex<Tasks>,
+}
+
+/// Stores the join set into which `RemoteStateActor`s are spawned.
+///
+/// We also host a waker in here, since this struct will be wrapped in a mutex and we'll
+/// always need to lock/unlock both at the same time.
+///
+/// The waker is there to allow `poll_cleanup` to be notified when the join set is populated
+/// with another spawned task.
+#[derive(Debug, Default)]
+struct Tasks {
+    tasks: JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
+    poll_cleanup_waker: Option<Waker>,
 }
 
 impl RemoteMap {
@@ -111,7 +118,7 @@ impl RemoteMap {
         // always lock senders before tasks to avoid deadlocks.
         let mut senders = self.actor_senders.lock().expect("poisoned");
         let mut tasks = self.actor_tasks.lock().expect("poisoned");
-        while let Some(result) = ready!(tasks.0.poll_join_next(cx)) {
+        while let Some(result) = ready!(tasks.tasks.poll_join_next(cx)) {
             match result {
                 Ok((eid, leftover_msgs)) => {
                     let entry = senders.entry(eid);
@@ -143,7 +150,7 @@ impl RemoteMap {
         // Let's get woken when there's another task.
         // If we're called after that, then we'll fall into `poll_join_next` and
         // properly wait for a task to finish.
-        tasks.1.replace(cx.waker().clone());
+        tasks.poll_cleanup_waker.replace(cx.waker().clone());
         Poll::Pending
     }
 
@@ -210,14 +217,10 @@ impl RemoteMap {
         &self,
         eid: EndpointId,
         initial_msgs: Vec<RemoteStateMessage>,
-        actor_tasks: &mut (
-            JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
-            Option<Waker>,
-        ),
+        tasks: &mut Tasks,
     ) -> mpsc::Sender<RemoteStateMessage> {
         // Ensure there is a RemoteMappedAddr for this EndpointId.
         self.endpoint_mapped_addrs.get(&eid);
-        let (ref mut tasks, ref mut waker) = *actor_tasks;
         let sender = RemoteStateActor::new(
             eid,
             self.local_endpoint_id,
@@ -226,8 +229,8 @@ impl RemoteMap {
             self.metrics.clone(),
             self.discovery.clone(),
         )
-        .start(initial_msgs, tasks, self.shutdown_token.clone());
-        if let Some(waker) = waker.take() {
+        .start(initial_msgs, &mut tasks.tasks, self.shutdown_token.clone());
+        if let Some(waker) = tasks.poll_cleanup_waker.take() {
             // Notify something waiting for changes to tasks when there's a new task.
             waker.wake();
         }
