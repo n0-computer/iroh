@@ -12,13 +12,14 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error};
 
 pub(crate) use self::remote_state::PathsWatcher;
+use self::remote_state::RemoteStateActor;
 pub(super) use self::remote_state::RemoteStateMessage;
 pub use self::remote_state::{
     PathInfo, PathInfoList, RemoteInfo, TransportAddrInfo, TransportAddrUsage,
 };
-use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
     DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
@@ -133,16 +134,17 @@ impl RemoteMap {
     ///
     /// [`RemoteStateActor`]: remote_state::RemoteStateActor
     pub(super) fn remote_state_actor(&self, eid: EndpointId) -> mpsc::Sender<RemoteStateMessage> {
-        let mut handles = self.actor_handles.lock().expect("poisoned");
+        let mut handles = self.actor_senders.lock().expect("poisoned");
         match handles.entry(eid) {
             hash_map::Entry::Occupied(mut entry) => {
-                if let Some(sender) = entry.get().sender.get() {
-                    sender
-                } else {
+                let sender = entry.get();
+                if sender.is_closed() {
                     // The actor is dead: Start a new actor.
                     let sender = self.start_remote_state_actor(eid, vec![]);
                     entry.insert(sender.clone());
                     sender
+                } else {
+                    sender.clone()
                 }
             }
             hash_map::Entry::Vacant(entry) => {
@@ -157,11 +159,11 @@ impl RemoteMap {
         &self,
         eid: EndpointId,
     ) -> Option<mpsc::Sender<RemoteStateMessage>> {
-        self.actor_handles
+        self.actor_senders
             .lock()
             .expect("poisoned")
             .get(&eid)
-            .and_then(|handle| handle.sender.get())
+            .cloned()
     }
 
     /// Starts a new remote state actor and returns a handle and a sender.
@@ -184,7 +186,7 @@ impl RemoteMap {
         )
         .start(
             initial_msgs,
-            self.actor_tasks.lock().expect("poisoned").deref_mut(),
+            &mut self.actor_tasks.lock().expect("poisoned"),
             self.shutdown_token.clone(),
         )
     }

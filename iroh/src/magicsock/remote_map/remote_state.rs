@@ -11,7 +11,6 @@ use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
-    task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
@@ -20,7 +19,10 @@ use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
-use tokio::sync::{mpsc, oneshot};
+use tokio::{
+    sync::{mpsc, oneshot},
+    task::JoinSet,
+};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
@@ -243,10 +245,7 @@ impl RemoteStateActor {
                     remote = %endpoint_id.fmt_short(),
                 )),
         );
-        RemoteStateHandle {
-            sender: tx,
-            _task: AbortOnDropHandle::new(task),
-        }
+        tx
     }
 
     /// Runs the main loop of the actor.
@@ -1191,21 +1190,6 @@ pub(crate) enum RemoteStateMessage {
     ///
     /// This currently only includes a list of all known transport addresses for the remote.
     RemoteInfo(oneshot::Sender<RemoteInfo>),
-}
-
-/// A handle to a [`RemoteStateActor`].
-///
-/// Dropping this will stop the actor. The actor will also stop after an idle timeout
-/// if it has no connections, an empty inbox, and no other senders than the one stored
-/// in the endpoint map exist.
-#[derive(Debug)]
-pub(super) struct RemoteStateHandle {
-    /// Sender for the channel into the [`RemoteStateActor`].
-    ///
-    /// This is a [`GuardedSender`], from which we can get a sender but only if the receiver
-    /// hasn't been closed.
-    pub(super) sender: GuardedSender<RemoteStateMessage>,
-    _task: AbortOnDropHandle<()>,
 }
 
 /// Information about a holepunch attempt.
