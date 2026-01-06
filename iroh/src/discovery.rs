@@ -110,7 +110,7 @@
 //! [`MdnsDiscovery`]: mdns::MdnsDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, atomic::AtomicBool};
 
 use iroh_base::{EndpointAddr, EndpointId};
 use n0_error::{AnyError, e, stack_error};
@@ -403,6 +403,7 @@ pub struct ConcurrentDiscovery {
     services: Arc<RwLock<Vec<Box<dyn Discovery>>>>,
     /// The data last published, used to publish when adding a new service.
     last_data: Arc<RwLock<Option<EndpointData>>>,
+    stop_publishing: Arc<AtomicBool>,
 }
 
 impl ConcurrentDiscovery {
@@ -416,6 +417,7 @@ impl ConcurrentDiscovery {
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
+            stop_publishing: Default::default(),
         }
     }
 
@@ -448,6 +450,13 @@ impl ConcurrentDiscovery {
     pub fn len(&self) -> usize {
         self.services.read().expect("poisoned").len()
     }
+
+    /// Tells the discovery service to stop publishing new data.
+    /// Used when the endpoint is dropped.
+    pub(super) fn stop_publishing(&self) {
+        self.stop_publishing
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl<T> From<T> for ConcurrentDiscovery
@@ -459,12 +468,20 @@ where
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
+            stop_publishing: Default::default(),
         }
     }
 }
 
 impl Discovery for ConcurrentDiscovery {
     fn publish(&self, data: &EndpointData) {
+        if self
+            .stop_publishing
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            tracing::debug!("endpoint has been dropped, do not publish");
+            return;
+        }
         let services = self.services.read().expect("poisoned");
         for service in &*services {
             service.publish(data);

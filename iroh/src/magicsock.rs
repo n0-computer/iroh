@@ -1059,6 +1059,10 @@ impl Handle {
             return;
         }
         debug!("endpoint was dropped ungracefully, doing minimal cleanup");
+        // Cancel at_close_start token, which cancels running netreports.
+        self.msock.shutdown.at_close_start.cancel();
+        // Cancel at_endpoint_dropped_ungracefully, which stops new relay actors
+        // from being created.
         self.msock
             .shutdown
             .at_endpoint_dropped_ungracefully

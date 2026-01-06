@@ -150,6 +150,8 @@ struct ActiveRelayActor {
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
+    /// TODO
+    dropped_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
 }
 
@@ -193,6 +195,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
+    dropped_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
 }
 
@@ -264,6 +267,7 @@ impl ActiveRelayActor {
             relay_datagrams_recv,
             connection_opts,
             stop_token,
+            dropped_token,
             metrics,
         } = opts;
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
@@ -277,6 +281,7 @@ impl ActiveRelayActor {
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
+            dropped_token,
             metrics,
         }
     }
@@ -317,6 +322,10 @@ impl ActiveRelayActor {
         let mut backoff = Self::build_backoff();
 
         while let Err(err) = self.run_once().await {
+            if self.dropped_token.is_cancelled() {
+                debug!("endpoint dropped, don't attempt to create a new connection to the relay");
+                break;
+            }
             warn!("{err}");
             match err {
                 RelayConnectionError::Dial { .. } | RelayConnectionError::Handshake { .. } => {
@@ -336,7 +345,7 @@ impl ActiveRelayActor {
                 }
             }
         }
-        debug!("exiting");
+        debug!("exiting active relay actor");
     }
 
     fn build_backoff() -> impl Backoff {
@@ -1034,10 +1043,6 @@ impl RelayActor {
             return Some(handle.clone());
         }
 
-        if self.dropped_token.is_cancelled() {
-            return None;
-        }
-
         let mut found_relay: Option<RelayUrl> = None;
         // If we don't have an open connection to the remote endpoint's home relay, see if
         // we have an open connection to a relay endpoint where we'd heard from that peer
@@ -1068,15 +1073,24 @@ impl RelayActor {
             }
         }
         let url = found_relay.unwrap_or(url.clone());
-        Some(self.active_relay_handle(url))
+        self.active_relay_handle(url)
     }
 
     /// Returns the handle of the [`ActiveRelayActor`].
-    fn active_relay_handle(&mut self, url: RelayUrl) -> ActiveRelayHandle {
+    fn active_relay_handle(&mut self, url: RelayUrl) -> Option<ActiveRelayHandle> {
         match self.active_relays.get(&url) {
-            Some(e) => e.clone(),
+            Some(e) => Some(e.clone()),
             None => {
-                let handle = self.start_active_relay(url.clone());
+                if self.dropped_token.is_cancelled() {
+                    warn!(
+                        "The endpoint was dropped, do not create any new active relays to {url}."
+                    );
+                    return None;
+                }
+                let Some(handle) = self.start_active_relay(url.clone()) else {
+                    warn!("The endpoint was dropped, do not create any new active relays");
+                    return None;
+                };
                 if Some(&url) == self.config.my_relay.get().as_ref() {
                     if let Err(err) = handle
                         .inbox_addr
@@ -1087,12 +1101,12 @@ impl RelayActor {
                 }
                 self.active_relays.insert(url, handle.clone());
                 self.log_active_relay();
-                handle
+                Some(handle)
             }
         }
     }
 
-    fn start_active_relay(&mut self, url: RelayUrl) -> ActiveRelayHandle {
+    fn start_active_relay(&mut self, url: RelayUrl) -> Option<ActiveRelayHandle> {
         debug!(?url, "Adding relay connection");
 
         let connection_opts = RelayConnectionOptions {
@@ -1118,8 +1132,13 @@ impl RelayActor {
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
             connection_opts,
             stop_token: self.cancel_token.child_token(),
+            dropped_token: self.dropped_token.child_token(),
             metrics: self.config.metrics.clone(),
         };
+        if self.dropped_token.is_cancelled() {
+            debug!("endpoint dropped, not created new active relay actors");
+            return None;
+        }
         let actor = ActiveRelayActor::new(opts);
         self.active_relay_tasks.spawn(
             async move {
@@ -1133,7 +1152,7 @@ impl RelayActor {
             datagrams_send_queue: send_datagram_tx,
         };
         self.log_active_relay();
-        handle
+        Some(handle)
     }
 
     /// Closes the relay connections not originating from a local IP address.
@@ -1255,6 +1274,7 @@ mod tests {
     fn start_active_relay_actor(
         secret_key: SecretKey,
         stop_token: CancellationToken,
+        dropped_token: CancellationToken,
         url: RelayUrl,
         prio_inbox_rx: mpsc::Receiver<ActiveRelayPrioMessage>,
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
@@ -1276,6 +1296,7 @@ mod tests {
                 insecure_skip_cert_verify: true,
             },
             stop_token,
+            dropped_token,
             metrics: Default::default(),
         };
         let task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
@@ -1294,9 +1315,11 @@ mod tests {
         let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
+        let dropped_token = CancellationToken::new();
         let actor_task = start_active_relay_actor(
             secret_key.clone(),
             cancel_token.clone(),
+            dropped_token.clone(),
             relay_url.clone(),
             prio_inbox_rx,
             inbox_rx,
@@ -1390,9 +1413,11 @@ mod tests {
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
+        let dropped_token = CancellationToken::new();
         let task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
+            dropped_token.clone(),
             relay_url.clone(),
             prio_inbox_rx,
             inbox_rx,
@@ -1488,9 +1513,11 @@ mod tests {
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
+        let dropped_token = CancellationToken::new();
         let mut task = start_active_relay_actor(
             secret_key,
             cancel_token.clone(),
+            dropped_token.clone(),
             relay_url,
             prio_inbox_rx,
             inbox_rx,

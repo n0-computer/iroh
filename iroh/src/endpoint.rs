@@ -568,6 +568,8 @@ pub enum BindError {
 
 impl Drop for Endpoint {
     fn drop(&mut self) {
+        // tell discovery to stop publishing
+        self.discovery().stop_publishing();
         // Checks if the magicsock is in the process of dropping.
         // If not, it assumes the endpoint was dropped ungracefully and
         // notifies any underlying processes that need to do special clean up
