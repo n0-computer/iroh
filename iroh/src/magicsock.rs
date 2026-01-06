@@ -158,6 +158,9 @@ pub(crate) struct Handle {
 struct ShutdownState {
     at_close_start: CancellationToken,
     at_endpoint_closed: CancellationToken,
+    // Used by underlying processes that need to react in a special way if
+    // the endpoint was not dropped gracefully.
+    at_endpoint_dropped_ungracefully: CancellationToken,
     closed: AtomicBool,
 }
 
@@ -166,6 +169,7 @@ impl Default for ShutdownState {
         Self {
             at_close_start: CancellationToken::new(),
             at_endpoint_closed: CancellationToken::new(),
+            at_endpoint_dropped_ungracefully: CancellationToken::new(),
             closed: AtomicBool::new(false),
         }
     }
@@ -797,12 +801,16 @@ impl Handle {
 
         let shutdown_state = ShutdownState::default();
         let shutdown_token = shutdown_state.at_endpoint_closed.child_token();
+        let dropped_token = shutdown_state
+            .at_endpoint_dropped_ungracefully
+            .child_token();
 
         let transports = Transports::bind(
             &transport_configs,
             relay_actor_config,
             &metrics,
             shutdown_token.child_token(),
+            dropped_token.child_token(),
         )
         .map_err(|err| e!(CreateHandleError::BindSockets, err))?;
 
@@ -1035,6 +1043,26 @@ impl Handle {
         self.msock.shutdown.closed.store(true, Ordering::SeqCst);
 
         trace!("magicsock closed");
+    }
+
+    /// Called in the `impl Drop` for the `Endpoint` to notify any underlying
+    /// processes that the endpoint was dropped ungracefully, IF it was
+    /// dropped ungracefully.
+    ///
+    /// This allows certain processes that need to react in a special way if
+    /// the endpoint was dropped to react appropriately.
+    ///
+    /// For example, the RelayActor won't shutdown, but it also won't create
+    /// any new connections to a relay.
+    pub(super) fn maybe_endpoint_dropped_ungracefully(&self) {
+        if self.shutdown.is_closing() || self.shutdown.is_closed() {
+            return;
+        }
+        debug!("endpoint was dropped ungracefully, doing minimal cleanup");
+        self.msock
+            .shutdown
+            .at_endpoint_dropped_ungracefully
+            .cancel();
     }
 }
 

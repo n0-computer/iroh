@@ -216,7 +216,7 @@ enum RelayConnectionError {
     Dial { source: DialError },
     #[error("Failed to handshake with relay server")]
     Handshake { source: RunError },
-    #[error("Lost connection to relay server")]
+    #[error("Lost connection to relay server: {source:?}")]
     Established { source: RunError },
 }
 
@@ -827,6 +827,8 @@ pub(super) struct RelayActor {
     /// The tasks for the [`ActiveRelayActor`]s in `active_relays` above.
     active_relay_tasks: JoinSet<()>,
     cancel_token: CancellationToken,
+    /// If this token is cancelled, it means that the endpoint has been dropped ungracefully and we should not close the actor yet, but should instead ensure no new connections to the relay occur
+    dropped_token: CancellationToken,
 }
 
 #[derive(Debug, Clone)]
@@ -849,6 +851,9 @@ impl RelayActor {
         config: Config,
         relay_datagram_recv_queue: mpsc::Sender<RelayRecvDatagram>,
         cancel_token: CancellationToken,
+        // Token that indicates the endpoint was not dropped gracefully.
+        // In this case, the RelayActor should not create new active actors.
+        dropped_token: CancellationToken,
     ) -> Self {
         Self {
             config,
@@ -856,6 +861,7 @@ impl RelayActor {
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
+            dropped_token,
         }
     }
 
@@ -946,9 +952,16 @@ impl RelayActor {
         item: RelaySendItem,
     ) -> Option<impl Future<Output = ()> + use<>> {
         let url = item.url.clone();
-        let handle = self
+        let Some(handle) = self
             .active_relay_handle_for_endpoint(&item.url, &item.remote_endpoint)
-            .await;
+            .await
+        else {
+            warn!(
+                ?url,
+                "Dropped datagram(s): Endpoint dropped and no ActiveRelayActor for this url exists."
+            );
+            return None;
+        };
         match handle.datagrams_send_queue.try_send(item) {
             Ok(()) => None,
             Err(mpsc::error::TrySendError::Closed(_)) => {
@@ -1009,13 +1022,20 @@ impl RelayActor {
     /// The endpoint is expected to be reachable on `url`, but if no [`ActiveRelayActor`] for
     /// `url` exists but another existing [`ActiveRelayActor`] already knows about the endpoint,
     /// that other endpoint is used.
+    ///
+    /// Returns `None` if the endpoint has been dropped and we don't already
+    /// have an open connection to the given relay.
     async fn active_relay_handle_for_endpoint(
         &mut self,
         url: &RelayUrl,
         remote_endpoint: &EndpointId,
-    ) -> ActiveRelayHandle {
+    ) -> Option<ActiveRelayHandle> {
         if let Some(handle) = self.active_relays.get(url) {
-            return handle.clone();
+            return Some(handle.clone());
+        }
+
+        if self.dropped_token.is_cancelled() {
+            return None;
         }
 
         let mut found_relay: Option<RelayUrl> = None;
@@ -1048,7 +1068,7 @@ impl RelayActor {
             }
         }
         let url = found_relay.unwrap_or(url.clone());
-        self.active_relay_handle(url)
+        Some(self.active_relay_handle(url))
     }
 
     /// Returns the handle of the [`ActiveRelayActor`].

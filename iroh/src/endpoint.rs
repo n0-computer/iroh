@@ -566,6 +566,16 @@ pub enum BindError {
     },
 }
 
+impl Drop for Endpoint {
+    fn drop(&mut self) {
+        // Checks if the magicsock is in the process of dropping.
+        // If not, it assumes the endpoint was dropped ungracefully and
+        // notifies any underlying processes that need to do special clean up
+        // if an endpoint was dropped ungracefully.
+        self.msock.maybe_endpoint_dropped_ungracefully();
+    }
+}
+
 impl Endpoint {
     // The ordering of public methods is reflected directly in the documentation.  This is
     // roughly ordered by what is most commonly needed by users, but grouped in similar
@@ -1966,7 +1976,9 @@ mod tests {
             stream.finish().anyerr()?;
             info!("waiting conn.closed()");
 
-            Ok(conn.closed().await)
+            let res = conn.closed().await;
+            ep.close().await;
+            Ok(res)
         }
 
         let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));

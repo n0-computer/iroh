@@ -123,12 +123,14 @@ fn bind_ip(configs: &[TransportConfig], metrics: &EndpointMetrics) -> io::Result
 }
 
 impl Transports {
-    /// Binds the  transports.
+    /// Binds the transports.
     pub(crate) fn bind(
         configs: &[TransportConfig],
         relay_actor_config: RelayActorConfig,
         metrics: &EndpointMetrics,
         shutdown_token: CancellationToken,
+        // token that indicates the endpoint was dropped but not shutdown gracefully
+        dropped_token: CancellationToken,
     ) -> io::Result<Self> {
         #[cfg(not(wasm_browser))]
         let ip = bind_ip(configs, metrics)?;
@@ -136,7 +138,13 @@ impl Transports {
         let relay = configs
             .iter()
             .filter(|t| matches!(t, TransportConfig::Relay { .. }))
-            .map(|_c| RelayTransport::new(relay_actor_config.clone(), shutdown_token.child_token()))
+            .map(|_c| {
+                RelayTransport::new(
+                    relay_actor_config.clone(),
+                    shutdown_token.child_token(),
+                    dropped_token.child_token(),
+                )
+            })
             .collect();
 
         Ok(Self {
