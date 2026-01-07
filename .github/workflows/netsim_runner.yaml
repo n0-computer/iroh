@@ -100,7 +100,7 @@ jobs:
     runs-on: [self-hosted, linux, X64]
     steps:
     - name: Checkout
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
       with:
         submodules: recursive
         ref: ${{ inputs.branch }}
@@ -164,7 +164,7 @@ jobs:
     - name: Cache AWS CLI
       if: always()
       id: cache-awscli
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: ~/awscli
         key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
@@ -202,7 +202,7 @@ jobs:
 
     - name: Upload report
       if: always()
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v6
       id: upload-report
       with:
         name: netsim-report-${{ env.LAST_COMMIT_SHA }}
