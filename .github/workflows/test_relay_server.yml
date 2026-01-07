@@ -28,7 +28,7 @@ jobs:
             RUST_BACKTRACE: full
             RUSTV: stable
         steps:
-        - uses: actions/checkout@v5
+        - uses: actions/checkout@v6
         - name: Install rust stable
           uses: dtolnay/rust-toolchain@stable
         - name: Install sccache
@@ -40,7 +40,7 @@ jobs:
 
         - name: Cache AWS CLI
           id: cache-awscli
-          uses: actions/cache@v4
+          uses: actions/cache@v5
           with:
             path: ~/awscli
             key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
@@ -75,7 +75,7 @@ jobs:
         if: github.ref_name=='main'
         needs: build_relay_server
         steps:
-        - uses: actions/checkout@v5
+        - uses: actions/checkout@v6
         - name: Run Staging Deploy Playbook
           uses: arqu/action-ansible-playbook@master
           with:
