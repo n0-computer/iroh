@@ -96,8 +96,8 @@
 <a href=#96 id=96 data-nosnippet>96</a>                </span>.into_std()
 <a href=#97 id=97 data-nosnippet>97</a>                .anyerr()<span class="question-mark">?</span>;
 <a href=#98 id=98 data-nosnippet>98</a>            <span class="kw">let </span>bound_addr = listener.local_addr().anyerr()<span class="question-mark">?</span>;
-<a href=#99 id=99 data-nosnippet>99</a>            <span class="kw">let </span>fut = axum_server::from_tcp(listener)
-<a href=#100 id=100 data-nosnippet>100</a>                .serve(app.into_make_service_with_connect_info::&lt;SocketAddr&gt;());
+<a href=#99 id=99 data-nosnippet>99</a>            <span class="kw">let </span>fut = axum_server::from_tcp(listener)<span class="question-mark">?
+<a href=#100 id=100 data-nosnippet>100</a>                </span>.serve(app.into_make_service_with_connect_info::&lt;SocketAddr&gt;());
 <a href=#101 id=101 data-nosnippet>101</a>            <span class="macro">info!</span>(<span class="string">"HTTP server listening on {bind_addr}"</span>);
 <a href=#102 id=102 data-nosnippet>102</a>            tasks.spawn(fut);
 <a href=#103 id=103 data-nosnippet>103</a>            <span class="prelude-val">Some</span>(bound_addr)
@@ -136,8 +136,8 @@
 <a href=#136 id=136 data-nosnippet>136</a>                </span>.into_std()
 <a href=#137 id=137 data-nosnippet>137</a>                .anyerr()<span class="question-mark">?</span>;
 <a href=#138 id=138 data-nosnippet>138</a>            <span class="kw">let </span>bound_addr = listener.local_addr().anyerr()<span class="question-mark">?</span>;
-<a href=#139 id=139 data-nosnippet>139</a>            <span class="kw">let </span>fut = axum_server::from_tcp(listener)
-<a href=#140 id=140 data-nosnippet>140</a>                .acceptor(acceptor)
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="kw">let </span>fut = axum_server::from_tcp(listener)<span class="question-mark">?
+<a href=#140 id=140 data-nosnippet>140</a>                </span>.acceptor(acceptor)
 <a href=#141 id=141 data-nosnippet>141</a>                .serve(app.into_make_service_with_connect_info::&lt;SocketAddr&gt;());
 <a href=#142 id=142 data-nosnippet>142</a>            <span class="macro">info!</span>(<span class="string">"HTTPS server listening on {bind_addr}"</span>);
 <a href=#143 id=143 data-nosnippet>143</a>            tasks.spawn(fut);
