@@ -96,7 +96,7 @@ impl HttpServer {
                 .into_std()
                 .anyerr()?;
             let bound_addr = listener.local_addr().anyerr()?;
-            let fut = axum_server::from_tcp(listener)
+            let fut = axum_server::from_tcp(listener)?
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());
             info!("HTTP server listening on {bind_addr}");
             tasks.spawn(fut);
@@ -136,7 +136,7 @@ impl HttpServer {
                 .into_std()
                 .anyerr()?;
             let bound_addr = listener.local_addr().anyerr()?;
-            let fut = axum_server::from_tcp(listener)
+            let fut = axum_server::from_tcp(listener)?
                 .acceptor(acceptor)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());
             info!("HTTPS server listening on {bind_addr}");
