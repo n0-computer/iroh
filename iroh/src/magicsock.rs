@@ -18,7 +18,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
-    future::poll_fn,
     io,
     net::{IpAddr, SocketAddr},
     sync::{
@@ -1099,6 +1098,12 @@ impl Actor {
         // ensure we are doing an initial publish of our addresses
         self.msock.publish_my_addr();
 
+        let cleanup_remote_map = {
+            let msock = self.msock.clone();
+            async move { msock.remote_map.cleanup().await }
+        };
+        tokio::pin!(cleanup_remote_map);
+
         while !shutdown_token.is_cancelled() {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1205,9 +1210,7 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                eid = poll_fn(|cx| self.msock.remote_map.poll_cleanup(cx)) => {
-                    trace!(%eid, "cleaned up RemoteStateActor");
-                }
+                _ = &mut cleanup_remote_map => unreachable!("future never completes"),
                 else => {
                     trace!("tick: else");
                 }

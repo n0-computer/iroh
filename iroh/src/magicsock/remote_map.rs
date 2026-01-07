@@ -7,12 +7,12 @@ use std::{
 };
 
 use iroh_base::{EndpointId, RelayUrl};
-use n0_future::task::JoinSet;
+use n0_future::{future::poll_fn, task::JoinSet};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 pub(crate) use self::remote_state::PathsWatcher;
 use self::remote_state::RemoteStateActor;
@@ -161,6 +161,16 @@ impl RemoteMap {
         // properly wait for a task to finish.
         guard.poll_cleanup_waker.replace(cx.waker().clone());
         Poll::Pending
+    }
+
+    /// Removes terminated [`RemoteStateActor`]s from the map.
+    ///
+    /// The returned future never completes. Drop the future if you want to stop the cleanup loop.
+    pub(super) async fn cleanup(&self) {
+        loop {
+            let eid = poll_fn(|cx| self.poll_cleanup(cx)).await;
+            trace!(eid=%eid.fmt_short(), "cleaned up RemoteStateActor");
+        }
     }
 
     /// Returns the sender for the [`RemoteStateActor`].
