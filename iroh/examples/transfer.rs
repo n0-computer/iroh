@@ -292,21 +292,21 @@ impl EndpointArgs {
         }
 
         if let Some(addr) = self.bind_addr_v4 {
-            builder = builder.bind_addr_v4_default(*addr.ip(), addr.port());
+            builder = builder.bind_addr(addr)?;
         }
         for addr in self.bind_addr_v4_additional {
-            let (net, port) = parse_ipv4_net(&addr)
+            let (addr, prefix_len) = parse_ipv4_net(&addr)
                 .with_context(|_| format!("invalid bind-addr-v4-additional: {addr}"))?;
-            builder = builder.bind_addr_v4(net, port);
+            builder = builder.bind_addr_with_mask(addr, prefix_len)?;
         }
 
         if let Some(addr) = self.bind_addr_v6 {
-            builder = builder.bind_addr_v6_default(*addr.ip(), 0, addr.port());
+            builder = builder.bind_addr(addr)?;
         }
         for addr in self.bind_addr_v6_additional {
-            let (net, port) = parse_ipv6_net(&addr)
+            let (addr, prefix_len) = parse_ipv6_net(&addr)
                 .with_context(|_| format!("invalid bind-addr-v6-additional: {addr}"))?;
-            builder = builder.bind_addr_v6(net, 0, port);
+            builder = builder.bind_addr_with_mask(addr, prefix_len)?;
         }
         #[cfg(feature = "qlog")]
         {
@@ -633,16 +633,17 @@ fn watch_conn_type(
     AbortOnDropHandle::new(task)
 }
 
-fn parse_ipv4_net(s: &str) -> Result<(Ipv4Net, u16)> {
+fn parse_ipv4_net(s: &str) -> Result<(SocketAddrV4, u8)> {
     let (net, port) = s.split_once(":").std_context("missing colon")?;
     let net: Ipv4Net = net.parse().std_context("invalid net")?;
     let port: u16 = port.parse().std_context("invalid port")?;
-    Ok((net, port))
+
+    Ok((SocketAddrV4::new(net.addr(), port), net.prefix_len()))
 }
 
-fn parse_ipv6_net(s: &str) -> Result<(Ipv6Net, u16)> {
+fn parse_ipv6_net(s: &str) -> Result<(SocketAddrV6, u8)> {
     let (net, port) = s.rsplit_once(":").std_context("missing colon")?;
     let net: Ipv6Net = net.parse().std_context("invalid net")?;
     let port: u16 = port.parse().std_context("invalid port")?;
-    Ok((net, port))
+    Ok((SocketAddrV6::new(net.addr(), port, 0, 0), net.prefix_len()))
 }

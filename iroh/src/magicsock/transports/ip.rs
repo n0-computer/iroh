@@ -85,28 +85,25 @@ impl Config {
                     if let IpAddr::V4(src) = src {
                         return ip_addr.is_unspecified() || *ip_addr == src;
                     }
-                    return false;
+                    false
                 }
                 Self::V6Default { ip_addr, .. } => {
                     if let IpAddr::V6(src) = src {
                         return ip_addr.is_unspecified() || *ip_addr == src;
                     }
-                    return false;
+                    false
                 }
                 Self::V4 { ip_addr, .. } => {
                     if let IpAddr::V4(src) = src {
                         return ip_addr.addr().is_unspecified() || ip_addr.addr() == src;
                     }
-                    return false;
+                    false
                 }
-                Self::V6 {
-                    ip_addr, scope_id, ..
-                } => {
-                    // TODO: do we need to check scope_id?
+                Self::V6 { ip_addr, .. } => {
                     if let IpAddr::V6(src) = src {
                         return ip_addr.addr().is_unspecified() || ip_addr.addr() == src;
                     }
-                    return false;
+                    false
                 }
             }
         } else {
