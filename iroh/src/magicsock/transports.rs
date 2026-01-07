@@ -2,6 +2,7 @@ use std::{
     fmt,
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
+    num::NonZeroUsize,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -238,18 +239,18 @@ impl Transports {
     }
 
     #[cfg(not(wasm_browser))]
-    pub(crate) fn max_transmit_segments(&self) -> usize {
+    pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
         let res = self.ip.iter().map(|t| t.max_transmit_segments()).min();
-        res.unwrap_or(1)
+        res.unwrap_or(NonZeroUsize::MIN)
     }
 
     #[cfg(wasm_browser)]
-    pub(crate) fn max_transmit_segments(&self) -> usize {
-        1
+    pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
+        NonZeroUsize::MIN
     }
 
     #[cfg(not(wasm_browser))]
-    pub(crate) fn max_receive_segments(&self) -> usize {
+    pub(crate) fn max_receive_segments(&self) -> NonZeroUsize {
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
         // that quinn creates. Having buffers slightly bigger than necessary
         // isn't terrible, and makes sure a single socket can read the maximum
@@ -258,12 +259,12 @@ impl Transports {
         // and it's impossible and unnecessary to be refactored that way.
 
         let res = self.ip.iter().map(|t| t.max_receive_segments()).max();
-        res.unwrap_or(1)
+        res.unwrap_or(NonZeroUsize::MIN)
     }
 
     #[cfg(wasm_browser)]
-    pub(crate) fn max_receive_segments(&self) -> usize {
-        1
+    pub(crate) fn max_receive_segments(&self) -> NonZeroUsize {
+        NonZeroUsize::MIN
     }
 
     #[cfg(not(wasm_browser))]
@@ -466,7 +467,7 @@ pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: IpTransportsSender,
     relay: Vec<RelaySender>,
-    max_transmit_segments: usize,
+    max_transmit_segments: NonZeroUsize,
 }
 
 impl TransportsSender {
@@ -622,7 +623,7 @@ impl quinn::AsyncUdpSocket for MagicTransport {
         Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
     }
 
-    fn max_receive_segments(&self) -> usize {
+    fn max_receive_segments(&self) -> NonZeroUsize {
         self.transports.max_receive_segments()
     }
 
@@ -766,7 +767,7 @@ impl quinn::UdpSender for MagicSender {
         }
     }
 
-    fn max_transmit_segments(&self) -> usize {
+    fn max_transmit_segments(&self) -> NonZeroUsize {
         self.sender.max_transmit_segments
     }
 }
