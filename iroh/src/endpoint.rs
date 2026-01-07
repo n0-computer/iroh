@@ -186,7 +186,7 @@ impl ToSocketAddr for String {
     type Err = std::net::AddrParseError;
 
     fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        (&**self).to_socket_addr()
+        (**self).to_socket_addr()
     }
 }
 
