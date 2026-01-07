@@ -496,7 +496,7 @@ impl RemoteStateActor {
                     transports::Addr::Relay(_, _) => PathStatus::Backup,
                 };
                 path.set_status(status).ok();
-                conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &mut self.metrics);
+                conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 self.select_path();
@@ -846,7 +846,7 @@ impl RemoteStateActor {
                         ?conn_id,
                         ?path_id,
                     );
-                    conn_state.add_open_path(path_remote.clone(), path_id, &mut self.metrics);
+                    conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 }
