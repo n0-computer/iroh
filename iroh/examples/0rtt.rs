@@ -2,10 +2,13 @@ use std::{env, str::FromStr, time::Instant};
 
 use clap::Parser;
 use data_encoding::HEXLOWER;
-use iroh::{EndpointId, SecretKey, discovery::Discovery, endpoint::ZeroRttStatus};
+use iroh::{
+    EndpointId, SecretKey,
+    discovery::Discovery,
+    endpoint::{RecvStream, SendStream, ZeroRttStatus},
+};
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::StreamExt;
-use quinn::{RecvStream, SendStream};
 use tracing::{info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";

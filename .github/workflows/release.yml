@@ -66,7 +66,7 @@ jobs:
             echo "version is: ${{ env.RELEASE_VERSION }}"
           fi
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
       - name: Create GitHub release
@@ -135,13 +135,13 @@ jobs:
         steps:
         - name: Checkout
           if: inputs.base_hash == ''
-          uses: actions/checkout@v5
+          uses: actions/checkout@v6
           with:
             submodules: recursive
 
         - name: Checkout specified commit
           if: inputs.base_hash != ''
-          uses: actions/checkout@v5
+          uses: actions/checkout@v6
           with:
             ref: ${{ inputs.base_hash }}
             submodules: recursive
@@ -190,7 +190,7 @@ jobs:
 
         - name: attach artifacts
           if: matrix.os != 'windows-latest'
-          uses: actions/upload-artifact@v5
+          uses: actions/upload-artifact@v6
           with:
             name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}
             path: target/${{ matrix.cargo_targets }}/optimized-release/iroh
@@ -198,31 +198,47 @@ jobs:
 
         - name: attach artifacts
           if: matrix.os == 'windows-latest'
-          uses: actions/upload-artifact@v5
+          uses: actions/upload-artifact@v6
           with:
             name: iroh-windows-amd64.exe
             path: target/${{ matrix.cargo_targets }}/optimized-release/iroh.exe
             compression-level: 0
 
-        - name: Setup awscli on linux
-          if: matrix.name == 'ubuntu-latest'
-          run: |
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip awscliv2.zip
-            sudo ./aws/install --update
+        - name: Cache AWS CLI
+          if: matrix.os != 'windows-latest'
+          id: cache-awscli
+          uses: actions/cache@v5
+          with:
+            path: ~/awscli
+            key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
 
-        - name: Setup awscli on linux
-          if: matrix.name == 'ubuntu-arm-latest'
+        - name: Download awscli (linux x86_64)
+          if: matrix.name == 'ubuntu-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
-            unzip awscliv2.zip
-            sudo ./aws/install --update
+            mkdir -p ~/awscli
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
+            cd ~/awscli && unzip -oq awscliv2.zip
 
-        - name: Setup awscli on mac
+        - name: Download awscli (linux aarch64)
+          if: matrix.name == 'ubuntu-arm-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
+          run: |
+            mkdir -p ~/awscli
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o ~/awscli/awscliv2.zip
+            cd ~/awscli && unzip -oq awscliv2.zip
+
+        - name: Download awscli (mac)
+          if: matrix.os == 'macos-latest' && steps.cache-awscli.outputs.cache-hit != 'true'
+          run: |
+            mkdir -p ~/awscli
+            curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o ~/awscli/AWSCLIV2.pkg
+
+        - name: Install awscli (linux)
+          if: matrix.os == 'ubuntu-latest' || matrix.name == 'ubuntu-arm-latest'
+          run: sudo ~/awscli/aws/install --update
+
+        - name: Install awscli (mac)
           if: matrix.os == 'macos-latest'
-          run: |
-            curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
-            sudo installer -pkg AWSCLIV2.pkg -target /
+          run: sudo installer -pkg ~/awscli/AWSCLIV2.pkg -target /
 
         - name: Set aws credentials
           if: matrix.os != 'windows-latest'
@@ -283,7 +299,7 @@ jobs:
             asset_path: ${{ env.ASSET }}
 
         - name: attach artifacts
-          uses: actions/upload-artifact@v5
+          uses: actions/upload-artifact@v6
           if : matrix.os != 'windows-latest'
           with:
             name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle
@@ -292,7 +308,7 @@ jobs:
             retention-days: 1
 
         - name: attach artifacts
-          uses: actions/upload-artifact@v5
+          uses: actions/upload-artifact@v6
           if : matrix.os == 'windows-latest'
           with:
             name: iroh-${{ matrix.release-os }}-${{ matrix.release-arch }}-bundle

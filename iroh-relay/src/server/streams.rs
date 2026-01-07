@@ -488,8 +488,8 @@ mod tests {
 
     use n0_error::{Result, StdResultExt};
     use n0_future::time;
+    use n0_tracing_test::traced_test;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tracing_test::traced_test;
 
     use super::Bucket;
     use crate::server::{Metrics, streams::RateLimited};

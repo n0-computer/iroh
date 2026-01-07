@@ -1,6 +1,6 @@
 //! Options for creating a report gen client.
 
-pub use imp::Options;
+pub(crate) use imp::Options;
 
 #[cfg(not(wasm_browser))]
 mod imp {
@@ -14,7 +14,7 @@ mod imp {
     ///
     /// Use [`Options::quic_config`] to enable  QUIC address discovery.
     #[derive(Debug, Clone)]
-    pub struct Options {
+    pub(crate) struct Options {
         /// The configuration needed to launch QUIC address discovery probes.
         ///
         /// If not provided, will not run QUIC address discovery.
@@ -40,37 +40,21 @@ mod imp {
     }
 
     impl Options {
-        /// Create an [`Options`] that disables all probes
-        pub fn disabled() -> Self {
-            Self {
-                quic_config: None,
-                https: false,
-                #[cfg(any(test, feature = "test-utils"))]
-                insecure_skip_relay_cert_verify: false,
-            }
-        }
-
         /// Enable quic probes
-        pub fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
+        pub(crate) fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
             self.quic_config = quic_config;
-            self
-        }
-
-        /// Enable or disable https probe
-        pub fn https(mut self, enable: bool) -> Self {
-            self.https = enable;
             self
         }
 
         /// Skip cert verification
         #[cfg(any(test, feature = "test-utils"))]
-        pub fn insecure_skip_relay_cert_verify(mut self, skip: bool) -> Self {
+        pub(crate) fn insecure_skip_relay_cert_verify(mut self, skip: bool) -> Self {
             self.insecure_skip_relay_cert_verify = skip;
             self
         }
 
         /// Turn the options into set of valid protocols
-        pub fn as_protocols(&self) -> BTreeSet<Probe> {
+        pub(crate) fn as_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
             if let Some(ref quic) = self.quic_config {
                 if quic.ipv4 {
@@ -99,7 +83,7 @@ mod imp {
     /// Only HTTPS probes are supported in browsers.
     /// These are run by default.
     #[derive(Debug, Clone)]
-    pub struct Options {
+    pub(crate) struct Options {
         /// Enable https probes
         ///
         /// On by default
@@ -114,12 +98,12 @@ mod imp {
 
     impl Options {
         /// Create an [`Options`] that disables all probes
-        pub fn disabled() -> Self {
+        pub(crate) fn disabled() -> Self {
             Self { https: false }
         }
 
         /// Enable or disable https probe
-        pub fn https(mut self, enable: bool) -> Self {
+        pub(crate) fn https(mut self, enable: bool) -> Self {
             self.https = enable;
             self
         }

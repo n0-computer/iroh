@@ -10,10 +10,13 @@ use iroh_base::{EndpointId, RelayUrl};
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 pub(crate) use self::remote_state::PathsWatcher;
 pub(super) use self::remote_state::RemoteStateMessage;
-pub use self::remote_state::{PathInfo, PathInfoList};
+pub use self::remote_state::{
+    PathInfo, PathInfoList, RemoteInfo, TransportAddrInfo, TransportAddrUsage,
+};
 use self::remote_state::{RemoteStateActor, RemoteStateHandle};
 use super::{
     DirectAddr, MagicsockMetrics,
@@ -58,6 +61,7 @@ pub(crate) struct RemoteMap {
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     discovery: ConcurrentDiscovery,
+    shutdown_token: CancellationToken,
 }
 
 impl RemoteMap {
@@ -67,6 +71,7 @@ impl RemoteMap {
         metrics: Arc<MagicsockMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         discovery: ConcurrentDiscovery,
+        shutdown_token: CancellationToken,
     ) -> Self {
         Self {
             actor_handles: Mutex::new(FxHashMap::default()),
@@ -76,6 +81,7 @@ impl RemoteMap {
             metrics,
             local_direct_addrs,
             discovery,
+            shutdown_token,
         }
     }
 
@@ -118,6 +124,17 @@ impl RemoteMap {
         }
     }
 
+    pub(super) fn remote_state_actor_if_exists(
+        &self,
+        eid: EndpointId,
+    ) -> Option<mpsc::Sender<RemoteStateMessage>> {
+        self.actor_handles
+            .lock()
+            .expect("poisoned")
+            .get(&eid)
+            .and_then(|handle| handle.sender.get())
+    }
+
     /// Starts a new remote state actor and returns a handle and a sender.
     ///
     /// The handle is not inserted into the endpoint map, this must be done by the caller of this function.
@@ -135,7 +152,7 @@ impl RemoteMap {
             self.metrics.clone(),
             self.discovery.clone(),
         )
-        .start();
+        .start(self.shutdown_token.child_token());
         let sender = handle.sender.get().expect("just created");
         (handle, sender)
     }

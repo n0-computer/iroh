@@ -67,7 +67,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
 
                 let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
                 let mut bytes_sent = 0;
-                while let Some(chunk) = recv.read_chunk(10_000, true).await.anyerr()? {
+                while let Some(chunk) = recv.read_chunk(10_000).await.anyerr()? {
                     bytes_sent += chunk.bytes.len();
                     send.write_chunk(chunk.bytes).await.anyerr()?;
                 }

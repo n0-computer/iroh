@@ -113,12 +113,13 @@ mod auth {
 
     use iroh::{
         Endpoint, EndpointAddr, EndpointId,
-        endpoint::{AfterHandshakeOutcome, BeforeConnectOutcome, Connection, EndpointHooks},
+        endpoint::{
+            AfterHandshakeOutcome, BeforeConnectOutcome, Connection, ConnectionError, EndpointHooks,
+        },
         protocol::{AcceptError, ProtocolHandler},
     };
     use n0_error::{AnyError, Result, StackResultExt, StdResultExt, anyerr};
     use n0_future::task::AbortOnDropHandle;
-    use quinn::ConnectionError;
     use tokio::{
         sync::{mpsc, oneshot},
         task::JoinSet,

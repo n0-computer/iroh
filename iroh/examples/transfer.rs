@@ -18,10 +18,10 @@ use iroh::{
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{ConnectionError, PathInfoList},
 };
-use n0_error::{Result, StackResultExt, StdResultExt};
+use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::task::AbortOnDropHandle;
 use tokio_stream::StreamExt;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use url::Url;
 
 // Transfer ALPN that we are using to communicate over the `Endpoint`
@@ -162,6 +162,9 @@ enum Commands {
     },
 }
 
+/// How long we maximally wait for a clean shutdown
+const SHUTDOWN_TIME: Duration = Duration::from_secs(4);
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -265,9 +268,10 @@ impl EndpointArgs {
 
         #[cfg(feature = "qlog")]
         {
-            let mut transport_config = iroh::endpoint::QuicTransportConfig::default();
-            transport_config.qlog_from_env("transfer");
-            builder = builder.transport_config(transport_config)
+            let cfg = iroh::endpoint::QuicTransportConfig::builder()
+                .qlog_from_env("transfer")
+                .build();
+            builder = builder.transport_config(cfg)
         }
 
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
@@ -295,7 +299,7 @@ impl EndpointArgs {
         if self.relay_only {
             endpoint.online().await;
         } else if !self.no_relay {
-            tokio::time::timeout(Duration::from_secs(4), endpoint.online())
+            tokio::time::timeout(Duration::from_secs(3), endpoint.online())
                 .await
                 .ok();
         }
@@ -368,7 +372,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 
             // We sent the last message, so wait for the client to close the connection once
             // it received this message.
-            let res = tokio::time::timeout(Duration::from_secs(3), async move {
+            let res = tokio::time::timeout(SHUTDOWN_TIME, async move {
                 let closed = conn.closed().await;
                 let remote = endpoint_id.fmt_short();
                 if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
@@ -385,7 +389,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
                 HumanBytes((size as f64 / duration.as_secs_f64()) as u64)
             );
             if res.is_err() {
-                println!("[{remote}] Did not disconnect within 3 seconds");
+                println!("[{remote}] Error: Did not disconnect within {SHUTDOWN_TIME:?}",);
             } else {
                 println!("[{remote}] Disconnected");
             }
@@ -410,7 +414,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
     // Use the Quinn API to send and recv content.
-    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+    let (mut send, recv) = conn.open_bi().await.anyerr()?;
 
     let message = format!("{me} is saying hello!");
     send.write_all(message.as_bytes()).await.anyerr()?;
@@ -418,28 +422,35 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     send.finish().anyerr()?;
     println!("Sent: \"{message}\"");
 
-    let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false).await?;
+    let (len, time_to_first_byte, chnk) = drain_stream(recv, false).await?;
+
+    conn.close(0u32.into(), b"done");
+
+    let transfer_time = start.elapsed();
+    let start = Instant::now();
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
-    tokio::time::timeout(Duration::from_secs(3), endpoint.close())
-        .await
-        .anyerr()?;
+    if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
+        error!("Endpoint closing timed out");
+        bail_any!("Failed to shutdown endpoint in time");
+    }
 
-    let duration = start.elapsed();
+    let shutdown_time = start.elapsed();
     println!(
-        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks)",
+        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks) (Shutdown took {:.4}s)",
         HumanBytes(len as u64),
-        duration.as_secs_f64(),
-        HumanBytes((len as f64 / duration.as_secs_f64()) as u64),
+        transfer_time.as_secs_f64(),
+        HumanBytes((len as f64 / transfer_time.as_secs_f64()) as u64),
         time_to_first_byte.as_secs_f64(),
-        chnk
+        chnk,
+        shutdown_time.as_secs_f64(),
     );
     Ok(())
 }
 
 async fn drain_stream(
-    stream: &mut iroh::endpoint::RecvStream,
+    mut stream: iroh::endpoint::RecvStream,
     read_unordered: bool,
 ) -> Result<(usize, Duration, u64)> {
     let mut read = 0;
@@ -451,7 +462,8 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.anyerr()? {
+        let mut stream = stream.into_unordered();
+        while let Some(chunk) = stream.read_chunk(usize::MAX).await.anyerr()? {
             if first_byte {
                 time_to_first_byte = download_start.elapsed();
                 first_byte = false;

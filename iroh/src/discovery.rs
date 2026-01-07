@@ -502,9 +502,9 @@ mod tests {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StackResultExt};
     use n0_future::{StreamExt, time};
+    use n0_tracing_test::traced_test;
     use rand::{CryptoRng, Rng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
-    use tracing_test::traced_test;
 
     use super::*;
     use crate::{
@@ -727,10 +727,11 @@ mod tests {
         .await;
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
-        let mut config = QuicTransportConfig::default();
-        config.keep_alive_interval(Duration::from_secs(1));
-        config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()));
-        let opts = ConnectOptions::new().with_transport_config(config);
+        let cfg = QuicTransportConfig::builder()
+            .keep_alive_interval(Duration::from_secs(1))
+            .max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()))
+            .build();
+        let opts = ConnectOptions::new().with_transport_config(cfg);
 
         let res = ep2
             .connect_with_opts(ep1.id(), TEST_ALPN, opts)
@@ -823,9 +824,9 @@ mod test_dns_pkarr {
     use iroh_relay::{RelayMap, endpoint_info::UserData};
     use n0_error::{AnyError as Error, Result, StackResultExt};
     use n0_future::time::Duration;
+    use n0_tracing_test::traced_test;
     use rand::{CryptoRng, SeedableRng};
     use tokio_util::task::AbortOnDropHandle;
-    use tracing_test::traced_test;
 
     use crate::{
         Endpoint, RelayMode,

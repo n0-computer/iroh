@@ -42,8 +42,8 @@ postcard = { version = "1", default-features = false, features = [
     "use-std",
     "experimental-derive",
 ] }
-quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "main-iroh", default-features = false, features = ["rustls-ring"] }
-quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/n0-computer/quinn", branch = "main-iroh" }
+quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "main", default-features = false, features = ["rustls-ring"] }
+quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/n0-computer/quinn", branch = "main" }
 rand = "0.9.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
@@ -78,14 +78,14 @@ ahash = { version = "0.8.11", optional = true } # minimal version fix
 rcgen = { version = "0.14", optional = true }
 reloadable-state = { version = "0.1", optional = true }
 rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
-rustls-cert-file-reader = { version = "0.4.1", optional = true }
-rustls-pemfile = { version = "2.1", optional = true }
+rustls-cert-file-reader = { version = "0.4.2", optional = true }
 time = { version = "0.3.37", optional = true }
-tokio-rustls-acme = { version = "0.8", optional = true }
+tokio-rustls-acme = { version = "0.9", optional = true }
 tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
 sha1 = { version = "0.11.0-rc.2", optional = true }
 toml = { version = "0.9", optional = true }
+serde_json = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
@@ -129,10 +129,11 @@ tokio = { version = "1", features = [
 ] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = "1"
-tracing-test = "0.2.5"
+n0-tracing-test = "0.3"
 
 [build-dependencies]
-cfg_aliases = { version = "0.2.1" }
+cfg_aliases = "0.2.1"
+vergen-gitcl = "1.0.8"
 
 [features]
 default = ["metrics"]
@@ -145,13 +146,13 @@ server = [
     "dep:reloadable-state",
     "dep:rustls-cert-file-reader",
     "dep:rustls-cert-reloadable-resolver",
-    "dep:rustls-pemfile",
     "dep:time",
     "dep:tokio-rustls-acme",
     "dep:tokio-websockets",
     "dep:simdutf8",
     "dep:sha1",
     "dep:toml",
+    "dep:serde_json",
     "dep:tracing-subscriber",
     "quinn/platform-verifier",
     "quinn/runtime-tokio",

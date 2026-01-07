@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap;
 use tokio::sync::oneshot;
 use tracing::trace;
 
-use super::Source;
+use super::{Source, TransportAddrInfo, TransportAddrUsage};
 use crate::{discovery::DiscoveryError, magicsock::transports, metrics::MagicsockMetrics};
 
 /// Maximum number of IP paths we keep around per endpoint.
@@ -62,6 +62,25 @@ impl RemotePathState {
             metrics,
         }
     }
+
+    pub(super) fn to_remote_addrs(&self) -> Vec<TransportAddrInfo> {
+        self.paths
+            .iter()
+            .flat_map(|(addr, state)| {
+                let usage = match state.status {
+                    PathStatus::Open => TransportAddrUsage::Active,
+                    PathStatus::Inactive(_) | PathStatus::Unusable | PathStatus::Unknown => {
+                        TransportAddrUsage::Inactive
+                    }
+                };
+                Some(TransportAddrInfo {
+                    addr: addr.clone().into(),
+                    usage,
+                })
+            })
+            .collect()
+    }
+
     /// Insert a new address of an open path into our list of paths.
     ///
     /// This will emit pending resolve requests and trigger pruning paths.

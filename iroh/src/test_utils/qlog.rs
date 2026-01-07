@@ -72,16 +72,16 @@ impl QlogFileGroup {
         }
         #[cfg(feature = "qlog")]
         {
-            let mut config = QuicTransportConfig::default();
+            let mut builder = QuicTransportConfig::builder();
 
             if std::env::var("IROH_TEST_QLOG").is_ok() {
                 let prefix = format!("{}.{}", self.title, name.to_string());
                 let factory = QlogFileFactory::new(self.directory.clone())
                     .with_prefix(prefix)
                     .with_start_instant(self.start.into());
-                config.qlog_factory(Arc::new(factory));
+                builder = builder.qlog_factory(Arc::new(factory));
             }
-            Ok(config)
+            Ok(builder.build())
         }
     }
 }

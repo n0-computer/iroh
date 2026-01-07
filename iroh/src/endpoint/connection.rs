@@ -32,16 +32,19 @@ use n0_error::{e, stack_error};
 use n0_future::{TryFutureExt, future::Boxed as BoxFuture, time::Duration};
 use n0_watcher::Watcher;
 use pin_project::pin_project;
-use quinn::{
-    AcceptBi, AcceptUni, ConnectionError, ConnectionStats, OpenBi, OpenUni, ReadDatagram,
-    RetryError, SendDatagramError, ServerConfig, Side, VarInt, WeakConnectionHandle,
-};
-use quinn_proto::PathId;
+use quinn::WeakConnectionHandle;
 use tracing::warn;
 
 use crate::{
     Endpoint,
-    endpoint::AfterHandshakeOutcome,
+    endpoint::{
+        AfterHandshakeOutcome,
+        quic::{
+            AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
+            ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
+            SendDatagramError, ServerConfig, Side, VarInt,
+        },
+    },
     magicsock::{
         RemoteStateActorStoppedError,
         remote_map::{PathInfoList, PathsWatcher},
@@ -100,15 +103,21 @@ impl Incoming {
 
     /// Accepts this incoming connection using a custom configuration.
     ///
+    /// Use the [`Endpoint::create_server_config_builder`] method to create a [`ServerConfigBuilder`]
+    /// to customize a [`ServerConfig`].
+    ///
     /// See [`accept()`] for more details.
     ///
     /// [`accept()`]: Incoming::accept
+    /// [`Endpoint::create_server_config_builder`]: crate::Endpoint::create_server_config_builder
+    /// [`ServerConfigBuilder`]: crate::endpoint::ServerConfigBuilder
+    /// [`ServerConfig`]: crate::endpoint::ServerConfig
     pub fn accept_with(
         self,
         server_config: Arc<ServerConfig>,
     ) -> Result<Accepting, ConnectionError> {
         self.inner
-            .accept_with(server_config)
+            .accept_with(server_config.to_inner_arc())
             .map(|conn| Accepting::new(conn, self.ep))
     }
 
@@ -124,7 +133,9 @@ impl Incoming {
     /// Errors if `remote_address_validated()` is true.
     #[allow(clippy::result_large_err)]
     pub fn retry(self) -> Result<(), RetryError> {
-        self.inner.retry()
+        self.inner
+            .retry()
+            .map_err(|err| e!(RetryError { err, ep: self.ep }))
     }
 
     /// Ignores this incoming connection attempt, not sending any packet in response.
@@ -162,6 +173,24 @@ impl IntoFuture for Incoming {
             let conn = conn_from_quinn_conn(quinn_conn, &self.ep)?.await?;
             Ok(conn)
         }))
+    }
+}
+
+/// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
+#[stack_error(derive, add_meta, from_sources)]
+#[error("retry() with validated Incoming")]
+pub struct RetryError {
+    err: quinn::RetryError,
+    ep: Endpoint,
+}
+
+impl RetryError {
+    /// Get the [`Incoming`]
+    pub fn into_incoming(self) -> Incoming {
+        Incoming {
+            inner: self.err.into_incoming(),
+            ep: self.ep,
+        }
     }
 }
 
@@ -522,7 +551,7 @@ impl Accepting {
     ///
     /// See also documentation for [`Connecting::into_0rtt`].
     ///
-    /// [`RecvStream::is_0rtt`]: quinn::RecvStream::is_0rtt
+    /// [`RecvStream::is_0rtt`]: crate::endpoint::RecvStream::is_0rtt
     pub fn into_0rtt(self) -> IncomingZeroRttConnection {
         let (quinn_conn, zrtt_accepted) = self
             .inner
@@ -726,8 +755,8 @@ impl<T: ConnectionState> Connection<T> {
     /// without writing anything to [`SendStream`] will never succeed.
     ///
     /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
+    /// [`SendStream`]: crate::endpoint::SendStream
+    /// [`RecvStream`]: crate::endpoint::RecvStream
     #[inline]
     pub fn open_bi(&self) -> OpenBi<'_> {
         self.inner.open_bi()
@@ -747,8 +776,8 @@ impl<T: ConnectionState> Connection<T> {
     /// writing anything to the connected [`SendStream`] will never succeed.
     ///
     /// [`open_bi`]: Connection::open_bi
-    /// [`SendStream`]: quinn::SendStream
-    /// [`RecvStream`]: quinn::RecvStream
+    /// [`SendStream`]: crate::endpoint::SendStream
+    /// [`RecvStream`]: crate::endpoint::RecvStream
     #[inline]
     pub fn accept_bi(&self) -> AcceptBi<'_> {
         self.inner.accept_bi()
@@ -822,20 +851,18 @@ impl<T: ConnectionState> Connection<T> {
         self.inner.send_datagram(data)
     }
 
-    // TODO: It seems `SendDatagram` is not yet exposed by quinn.  This has been fixed
-    //       upstream and will be in the next release.
-    // /// Transmits `data` as an unreliable, unordered application datagram
-    // ///
-    // /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
-    // /// conditions, which effectively prioritizes old datagrams over new datagrams.
-    // ///
-    // /// See [`send_datagram()`] for details.
-    // ///
-    // /// [`send_datagram()`]: Connection::send_datagram
-    // #[inline]
-    // pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
-    //     self.inner.send_datagram_wait(data)
-    // }
+    /// Transmits `data` as an unreliable, unordered application datagram
+    ///
+    /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
+    /// conditions, which effectively prioritizes old datagrams over new datagrams.
+    ///
+    /// See [`send_datagram()`] for details.
+    ///
+    /// [`send_datagram()`]: Connection::send_datagram
+    #[inline]
+    pub fn send_datagram_wait(&self, data: bytes::Bytes) -> SendDatagram<'_> {
+        self.inner.send_datagram_wait(data)
+    }
 
     /// Computes the maximum size of datagrams that may be passed to [`send_datagram`].
     ///
@@ -879,10 +906,7 @@ impl<T: ConnectionState> Connection<T> {
 
     /// Current state of the congestion control algorithm, for debugging purposes.
     #[inline]
-    pub fn congestion_state(
-        &self,
-        path_id: PathId,
-    ) -> Option<Box<dyn quinn_proto::congestion::Controller>> {
+    pub fn congestion_state(&self, path_id: PathId) -> Option<Box<dyn Controller>> {
         self.inner.congestion_state(path_id)
     }
 
@@ -934,7 +958,7 @@ impl<T: ConnectionState> Connection<T> {
         output: &mut [u8],
         label: &[u8],
         context: &[u8],
-    ) -> Result<(), quinn_proto::crypto::ExportKeyingMaterialError> {
+    ) -> Result<(), ExportKeyingMaterialError> {
         self.inner.export_keying_material(output, label, context)
     }
 
@@ -1139,10 +1163,10 @@ mod tests {
     use iroh_base::{EndpointAddr, SecretKey};
     use n0_error::{Result, StackResultExt, StdResultExt};
     use n0_future::StreamExt;
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use rand::SeedableRng;
     use tracing::{Instrument, error_span, info, info_span, trace_span};
-    use tracing_test::traced_test;
 
     use super::Endpoint;
     use crate::{

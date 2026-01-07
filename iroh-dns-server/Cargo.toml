@@ -12,7 +12,7 @@ readme = "README.md"
 [dependencies]
 async-trait = "0.1.77"
 axum = { version = "0.8", features = ["macros"] }
-axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 base64-url = "3.0"
 bytes = "1.7"
 clap = { version = "4.5.1", features = ["derive"] }
@@ -36,8 +36,8 @@ rcgen = "0.14"
 redb = "3.1.0"
 regex = "1.10.3"
 rustls = { version = "0.23.33", default-features = false, features = ["ring"] }
-rustls-pemfile = { version = "2.1" }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 struct_iterable = "0.1.1"
 n0-error = "0.1.0"
 strum = { version = "0.27", features = ["derive"] }
@@ -46,7 +46,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
     "ring",
 ] }
-tokio-rustls-acme = { version = "0.8", features = ["axum"] }
+tokio-rustls-acme = { version = "0.9", features = ["axum"] }
 tokio-stream = "0.1.14"
 tokio-util = "0.7"
 toml = "0.9.2"
@@ -63,13 +63,21 @@ criterion = "0.7.0"
 data-encoding = "2.3.3"
 hickory-resolver = "0.25.0"
 iroh = { path = "../iroh" }
+n0-tracing-test = "0.3"
 rand = "0.9.2"
 rand_chacha = "0.9"
-tracing-test = "0.2.5"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls", "http2"
+] }
+serde_json = "1.0.145"
+tempfile = "3.23.0"
 
 [[bench]]
 name = "write"
 harness = false
+
+[build-dependencies]
+vergen-gitcl = "1.0.8"
 
 [package.metadata.docs.rs]
 all-features = true

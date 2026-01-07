@@ -15,15 +15,17 @@ use n0_future::{
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
-use quinn::{PathStats, WeakConnectionHandle};
+use quinn::WeakConnectionHandle;
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
+use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
 use self::{
     guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
     path_state::RemotePathState,
@@ -31,7 +33,7 @@ use self::{
 use super::Source;
 use crate::{
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
-    endpoint::DirectAddr,
+    endpoint::{DirectAddr, quic::PathStats},
     magicsock::{
         MagicsockMetrics,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
@@ -47,8 +49,12 @@ use crate::{
 /// attempted more frequently than at this interval.
 const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
+/// How often are we checking if we still have a good connection.
+const CHECK_CONNECTIONS_INTERVAL: Duration = Duration::from_secs(5);
+
 mod guarded_channel;
 mod path_state;
+mod remote_info;
 
 // TODO: use this
 // /// The latency at or under which we don't try to upgrade to a better path.
@@ -161,6 +167,7 @@ pub(super) struct RemoteStateActor {
     paths: RemotePathState,
     /// Information about the last holepunching attempt.
     last_holepunch: Option<HolepunchAttempt>,
+
     /// The path we currently consider the preferred path to the remote endpoint.
     ///
     /// **We expect this path to work.** If we become aware this path is broken then it is
@@ -216,7 +223,7 @@ impl RemoteStateActor {
         }
     }
 
-    pub(super) fn start(self) -> RemoteStateHandle {
+    pub(super) fn start(self, shutdown_token: CancellationToken) -> RemoteStateHandle {
         let (tx, rx) = guarded_channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
@@ -226,7 +233,7 @@ impl RemoteStateActor {
         // we don't explicitly set a span we get the spans from whatever call happens to
         // first create the actor, which is often very confusing as it then keeps those
         // spans for all logging of the actor.
-        let task = task::spawn(self.run(rx).instrument(info_span!(
+        let task = task::spawn(self.run(rx, shutdown_token).instrument(info_span!(
             parent: None,
             "RemoteStateActor",
             me = %me.fmt_short(),
@@ -243,10 +250,18 @@ impl RemoteStateActor {
     /// Note that the actor uses async handlers for tasks from the main loop.  The actor is
     /// not processing items from the inbox while waiting on any async calls.  So some
     /// discipline is needed to not turn pending for a long time.
-    async fn run(mut self, mut inbox: GuardedReceiver<RemoteStateMessage>) {
+    async fn run(
+        mut self,
+        mut inbox: GuardedReceiver<RemoteStateMessage>,
+        shutdown_token: CancellationToken,
+    ) {
         trace!("actor started");
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
+
+        let check_connections = time::interval(CHECK_CONNECTIONS_INTERVAL);
+        n0_future::pin!(check_connections);
+
         loop {
             let scheduled_path_open = match self.scheduled_open_path {
                 Some(when) => MaybeFuture::Some(time::sleep_until(when)),
@@ -263,8 +278,14 @@ impl RemoteStateActor {
                     .as_mut()
                     .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
             }
+
             tokio::select! {
                 biased;
+
+                _ = shutdown_token.cancelled() => {
+                    trace!("actor cancelled");
+                    break;
+                }
                 msg = inbox.recv() => {
                     match msg {
                         Some(msg) => self.handle_message(msg).await,
@@ -276,7 +297,7 @@ impl RemoteStateActor {
                 }
                 Some((id, evt)) = self.addr_events.next() => {
                     trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
-                    self.trigger_holepunching().await;
+                    self.trigger_holepunching();
                 }
                 Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
                     self.handle_connection_close(conn_id);
@@ -288,7 +309,7 @@ impl RemoteStateActor {
                     }
                     self.local_addrs_updated();
                     trace!("local addrs updated, triggering holepunching");
-                    self.trigger_holepunching().await;
+                    self.trigger_holepunching();
                 }
                 _ = &mut scheduled_path_open => {
                     trace!("triggering scheduled path_open");
@@ -301,10 +322,13 @@ impl RemoteStateActor {
                 _ = &mut scheduled_hp => {
                     trace!("triggering scheduled holepunching");
                     self.scheduled_holepunch = None;
-                    self.trigger_holepunching().await;
+                    self.trigger_holepunching();
                 }
                 item = self.discovery_stream.next() => {
                     self.handle_discovery_item(item);
+                }
+                _ = check_connections.tick() => {
+                    self.check_connections();
                 }
                 _ = &mut idle_timeout => {
                     if self.connections.is_empty() && inbox.close_if_idle() {
@@ -331,11 +355,35 @@ impl RemoteStateActor {
                 self.handle_msg_send_datagram(sender, transmit).await;
             }
             RemoteStateMessage::AddConnection(handle, tx) => {
-                self.handle_msg_add_connection(handle, tx).await;
+                self.handle_msg_add_connection(handle, tx);
             }
             RemoteStateMessage::ResolveRemote(addrs, tx) => {
                 self.handle_msg_resolve_remote(addrs, tx);
             }
+            RemoteStateMessage::RemoteInfo(tx) => {
+                let addrs = self.paths.to_remote_addrs();
+                let info = RemoteInfo {
+                    endpoint_id: self.endpoint_id,
+                    addrs,
+                };
+                tx.send(info).ok();
+            }
+        }
+    }
+
+    /// Handles regularly checking if any paths need hole punching currently
+    fn check_connections(&mut self) {
+        let mut is_goodenough = true;
+        for conn in self.connections.values() {
+            // If we have at least 1 non relay path, we consider the connection good enough for now
+            // TODO: evaluate other criteria, like current RTT etc
+            let is_conn_goodenough = conn.open_paths.iter().any(|(_, addr)| !addr.is_relay());
+            is_goodenough &= is_conn_goodenough;
+        }
+
+        if !is_goodenough {
+            debug!("connections are not good enough, triggering holepunching");
+            self.trigger_holepunching();
         }
     }
 
@@ -392,7 +440,7 @@ impl RemoteStateActor {
     /// Handles [`RemoteStateMessage::AddConnection`].
     ///
     /// Error returns are fatal and kill the actor.
-    async fn handle_msg_add_connection(
+    fn handle_msg_add_connection(
         &mut self,
         handle: WeakConnectionHandle,
         tx: oneshot::Sender<PathsWatcher>,
@@ -467,7 +515,7 @@ impl RemoteStateActor {
                     }
                 }
             }
-            self.trigger_holepunching().await;
+            self.trigger_holepunching();
         }
         tx.send(PathsWatcher::new(
             pub_open_paths.watch(),
@@ -587,7 +635,7 @@ impl RemoteStateActor {
     /// - If there are no changes in local or remote candidate addresses since the
     ///   last attempt **and** there was a recent attempt, a trigger_holepunching call
     ///   will be scheduled instead.
-    async fn trigger_holepunching(&mut self) {
+    fn trigger_holepunching(&mut self) {
         if self.connections.is_empty() {
             trace!("not holepunching: no connections");
             return;
@@ -645,12 +693,12 @@ impl RemoteStateActor {
             }
         }
 
-        self.do_holepunching(conn).await;
+        self.do_holepunching(conn);
     }
 
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
-    async fn do_holepunching(&mut self, conn: quinn::Connection) {
+    fn do_holepunching(&mut self, conn: quinn::Connection) {
         self.metrics.holepunch_attempts.inc();
         let local_candidates = self
             .local_direct_addrs
@@ -658,6 +706,7 @@ impl RemoteStateActor {
             .iter()
             .map(|daddr| daddr.addr)
             .collect::<BTreeSet<_>>();
+
         match conn.initiate_nat_traversal_round() {
             Ok(remote_candidates) => {
                 let remote_candidates = remote_candidates
@@ -678,7 +727,23 @@ impl RemoteStateActor {
                 });
             }
             Err(err) => {
-                warn!("failed to initiate NAT traversal: {err:#}");
+                debug!("failed to initiate NAT traversal: {err:#}");
+                use quinn_proto::iroh_hp::Error;
+                match err {
+                    Error::Closed
+                    | Error::TooManyAddresses
+                    | Error::WrongConnectionSide
+                    | Error::ExtensionNotNegotiated => {
+                        // Fatal, no need to retry for now
+                    }
+                    Error::Multipath(_) | Error::NotEnoughAddresses => {
+                        // Retry in a bit
+                        let now = Instant::now();
+                        let next_hp = now + Duration::from_millis(100);
+                        trace!(scheduled_in = ?(next_hp - now), "holepunching retry");
+                        self.scheduled_holepunch = Some(next_hp);
+                    }
+                }
             }
         }
     }
@@ -716,6 +781,15 @@ impl RemoteStateActor {
                 Some(path_id) => {
                     trace!(?conn_id, ?path_id, "opening new path");
                     conn_state.add_path(open_addr.clone(), path_id);
+                    // We still need to ensure that the path status is set correctly,
+                    // in case the path was opened by QNT, which opens all IP paths
+                    // using PATH_STATUS_BACKUP. We need to switch the selected path
+                    // to use PATH_STATUS_AVAILABLE though!
+                    if let Some(path) = conn.path(path_id) {
+                        if let Err(e) = path.set_status(path_status) {
+                            warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
+                        }
+                    }
                 }
                 None => {
                     let ret = now_or_never(fut);
@@ -908,7 +982,14 @@ impl RemoteStateActor {
         if let Some((addr, rtt)) = selected_path {
             let prev = self.selected_path.set(Some(addr.clone()));
             if prev.is_ok() {
-                debug!(?addr, ?rtt, ?prev, "selected new path");
+                event!(
+                    target: "iroh::_events::path::selected",
+                    Level::DEBUG,
+                    remote = %self.endpoint_id.fmt_short(),
+                    path_remote = ?addr,
+                    ?rtt,
+                    prev_remote = ?prev,
+                );
             }
             self.open_path(&addr);
             self.close_redundant_paths(&addr);
@@ -1090,6 +1171,10 @@ pub(crate) enum RemoteStateMessage {
         BTreeSet<TransportAddr>,
         oneshot::Sender<Result<(), DiscoveryError>>,
     ),
+    /// Returns information about the remote.
+    ///
+    /// This currently only includes a list of all known transport addresses for the remote.
+    RemoteInfo(oneshot::Sender<RemoteInfo>),
 }
 
 /// A handle to a [`RemoteStateActor`].
