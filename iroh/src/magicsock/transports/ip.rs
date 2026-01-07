@@ -77,32 +77,64 @@ impl Config {
         matches!(self, Self::V4Default { .. } | Self::V6Default { .. })
     }
 
-    /// Does this configuration match to send to the given `dst` address.
-    pub(crate) fn is_valid_send_addr(&self, dst: SocketAddr) -> bool {
-        match self {
-            Self::V4Default { .. } => matches!(dst, SocketAddr::V4(_)),
-            Self::V6Default { .. } => matches!(dst, SocketAddr::V6(_)),
-            Self::V4 { ip_addr, .. } => match dst {
-                SocketAddr::V4(dst_v4) => ip_addr.contains(dst_v4.ip()),
-                SocketAddr::V6(_) => false,
-            },
-            Self::V6 {
-                ip_addr, scope_id, ..
-            } => match dst {
-                SocketAddr::V6(dst_v6) => {
-                    if ip_addr.contains(dst_v6.ip()) {
-                        return true;
+    /// Does this configuration match to send to the given `src` and `dst` address.
+    pub(crate) fn is_valid_send_addr(&self, src: Option<IpAddr>, dst: SocketAddr) -> bool {
+        if let Some(src) = src {
+            match self {
+                Self::V4Default { ip_addr, .. } => {
+                    if let IpAddr::V4(src) = src {
+                        return ip_addr.is_unspecified() || *ip_addr == src;
                     }
-                    if dst_v6.ip().is_unicast_link_local() {
-                        // If we have a link local interface, use the scope id
-                        if *scope_id == dst_v6.scope_id() {
+                    return false;
+                }
+                Self::V6Default { ip_addr, .. } => {
+                    if let IpAddr::V6(src) = src {
+                        return ip_addr.is_unspecified() || *ip_addr == src;
+                    }
+                    return false;
+                }
+                Self::V4 { ip_addr, .. } => {
+                    if let IpAddr::V4(src) = src {
+                        return ip_addr.addr().is_unspecified() || ip_addr.addr() == src;
+                    }
+                    return false;
+                }
+                Self::V6 {
+                    ip_addr, scope_id, ..
+                } => {
+                    // TODO: do we need to check scope_id?
+                    if let IpAddr::V6(src) = src {
+                        return ip_addr.addr().is_unspecified() || ip_addr.addr() == src;
+                    }
+                    return false;
+                }
+            }
+        } else {
+            match self {
+                Self::V4Default { .. } => matches!(dst, SocketAddr::V4(_)),
+                Self::V6Default { .. } => matches!(dst, SocketAddr::V6(_)),
+                Self::V4 { ip_addr, .. } => match dst {
+                    SocketAddr::V4(dst_v4) => ip_addr.contains(dst_v4.ip()),
+                    SocketAddr::V6(_) => false,
+                },
+                Self::V6 {
+                    ip_addr, scope_id, ..
+                } => match dst {
+                    SocketAddr::V6(dst_v6) => {
+                        if ip_addr.contains(dst_v6.ip()) {
                             return true;
                         }
+                        if dst_v6.ip().is_unicast_link_local() {
+                            // If we have a link local interface, use the scope id
+                            if *scope_id == dst_v6.scope_id() {
+                                return true;
+                            }
+                        }
+                        false
                     }
-                    false
-                }
-                SocketAddr::V4(_) => false,
-            },
+                    SocketAddr::V4(_) => false,
+                },
+            }
         }
     }
 }
@@ -274,8 +306,8 @@ pub(super) struct IpSender {
 }
 
 impl IpSender {
-    pub(super) fn is_valid_send_addr(&self, dst: &SocketAddr) -> bool {
-        self.config.is_valid_send_addr(*dst)
+    pub(super) fn is_valid_send_addr(&self, src: Option<IpAddr>, dst: &SocketAddr) -> bool {
+        self.config.is_valid_send_addr(src, *dst)
     }
 
     /// Creates a canonical socket address.

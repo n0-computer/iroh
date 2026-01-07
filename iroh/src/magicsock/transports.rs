@@ -486,11 +486,15 @@ impl TransportsSender {
                 return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
             }
             #[cfg(not(wasm_browser))]
-            Addr::Ip(addr) => match addr {
+            Addr::Ip(dst_addr) => match dst_addr {
                 SocketAddr::V4(_) => {
-                    for sender in self.ip.v4_iter_mut().filter(|s| s.is_valid_send_addr(addr)) {
+                    for sender in self
+                        .ip
+                        .v4_iter_mut()
+                        .filter(|s| s.is_valid_send_addr(src, dst_addr))
+                    {
                         has_valid_sender = true;
-                        match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
+                        match Pin::new(sender).poll_send(cx, *dst_addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
                                 match &res {
@@ -503,9 +507,13 @@ impl TransportsSender {
                     }
                 }
                 SocketAddr::V6(_) => {
-                    for sender in self.ip.v6_iter_mut().filter(|s| s.is_valid_send_addr(addr)) {
+                    for sender in self
+                        .ip
+                        .v6_iter_mut()
+                        .filter(|s| s.is_valid_send_addr(src, dst_addr))
+                    {
                         has_valid_sender = true;
-                        match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
+                        match Pin::new(sender).poll_send(cx, *dst_addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => {
                                 match &res {
