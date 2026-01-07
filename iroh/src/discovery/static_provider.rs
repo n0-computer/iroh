@@ -8,7 +8,7 @@
 //! This is where the [`StaticProvider`] is useful: it allows applications to add and
 //! retract endpoint addressing information that is otherwise out-of-band to iroh.
 //!
-//! [`EndpointTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.EndpointTicket
+//! [`EndpointTicket`]: https://docs.rs/iroh-tickets/latest/iroh_tickets/endpoint/struct.EndpointTicket.html
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -64,7 +64,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// # }
 /// ```
 ///
-/// [`EndpointTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.EndpointTicket
+/// [`EndpointTicket`]: https://docs.rs/iroh-tickets/latest/iroh_tickets/endpoint/struct.EndpointTicket.html
 #[derive(Debug, Clone)]
 pub struct StaticProvider {
     endpoints: Arc<RwLock<BTreeMap<EndpointId, StoredEndpointInfo>>>,
