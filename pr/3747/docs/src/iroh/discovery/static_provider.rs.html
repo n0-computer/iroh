@@ -8,7 +8,7 @@
 <a href=#8 id=8 data-nosnippet>8</a>//! This is where the [`StaticProvider`] is useful: it allows applications to add and
 <a href=#9 id=9 data-nosnippet>9</a>//! retract endpoint addressing information that is otherwise out-of-band to iroh.
 <a href=#10 id=10 data-nosnippet>10</a>//!
-<a href=#11 id=11 data-nosnippet>11</a>//! [`EndpointTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.EndpointTicket
+<a href=#11 id=11 data-nosnippet>11</a>//! [`EndpointTicket`]: https://docs.rs/iroh-tickets/latest/iroh_tickets/endpoint/struct.EndpointTicket.html
 <a href=#12 id=12 data-nosnippet>12</a>
 <a href=#13 id=13 data-nosnippet>13</a></span><span class="kw">use </span>std::{
 <a href=#14 id=14 data-nosnippet>14</a>    collections::{BTreeMap, btree_map::Entry},
@@ -64,7 +64,7 @@
 <a href=#64 id=64 data-nosnippet>64</a>/// # }
 <a href=#65 id=65 data-nosnippet>65</a>/// ```
 <a href=#66 id=66 data-nosnippet>66</a>///
-<a href=#67 id=67 data-nosnippet>67</a>/// [`EndpointTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.EndpointTicket
+<a href=#67 id=67 data-nosnippet>67</a>/// [`EndpointTicket`]: https://docs.rs/iroh-tickets/latest/iroh_tickets/endpoint/struct.EndpointTicket.html
 <a href=#68 id=68 data-nosnippet>68</a></span><span class="attr">#[derive(Debug, Clone)]
 <a href=#69 id=69 data-nosnippet>69</a></span><span class="kw">pub struct </span>StaticProvider {
 <a href=#70 id=70 data-nosnippet>70</a>    endpoints: Arc&lt;RwLock&lt;BTreeMap&lt;EndpointId, StoredEndpointInfo&gt;&gt;&gt;,

@@ -7,7 +7,7 @@
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>iroh_base::RelayUrl;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>serde::{Deserialize, Serialize};
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>tracing::warn;
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>tracing::{trace, warn};
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use super</span>::{ProbeReport, probes::Probe};
 <a href=#13 id=13 data-nosnippet>13</a>
@@ -82,19 +82,19 @@
 <a href=#82 id=82 data-nosnippet>82</a>
 <a href=#83 id=83 data-nosnippet>83</a>                <span class="self">self</span>.udp_v4 = <span class="bool-val">true</span>;
 <a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a>                <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span><span class="self">self</span>.global_v4, <span class="question-mark">?</span><span class="self">self</span>.mapping_varies_by_dest_ipv4, %ipp,<span class="string">"got"</span>);
-<a href=#86 id=86 data-nosnippet>86</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(global) = <span class="self">self</span>.global_v4 {
-<a href=#87 id=87 data-nosnippet>87</a>                    <span class="kw">if </span>global == ipp {
-<a href=#88 id=88 data-nosnippet>88</a>                        <span class="kw">if </span><span class="self">self</span>.mapping_varies_by_dest_ipv4.is_none() {
-<a href=#89 id=89 data-nosnippet>89</a>                            <span class="self">self</span>.mapping_varies_by_dest_ipv4 = <span class="prelude-val">Some</span>(<span class="bool-val">false</span>);
-<a href=#90 id=90 data-nosnippet>90</a>                        }
-<a href=#91 id=91 data-nosnippet>91</a>                    } <span class="kw">else </span>{
-<a href=#92 id=92 data-nosnippet>92</a>                        <span class="self">self</span>.mapping_varies_by_dest_ipv4 = <span class="prelude-val">Some</span>(<span class="bool-val">true</span>);
-<a href=#93 id=93 data-nosnippet>93</a>                        <span class="macro">warn!</span>(<span class="string">"IPv4 address detected by QAD varies by destination"</span>);
-<a href=#94 id=94 data-nosnippet>94</a>                    }
-<a href=#95 id=95 data-nosnippet>95</a>                } <span class="kw">else </span>{
-<a href=#96 id=96 data-nosnippet>96</a>                    <span class="self">self</span>.global_v4 = <span class="prelude-val">Some</span>(ipp);
-<a href=#97 id=97 data-nosnippet>97</a>                }
+<a href=#85 id=85 data-nosnippet>85</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(global) = <span class="self">self</span>.global_v4 {
+<a href=#86 id=86 data-nosnippet>86</a>                    <span class="kw">if </span>global == ipp {
+<a href=#87 id=87 data-nosnippet>87</a>                        <span class="kw">if </span><span class="self">self</span>.mapping_varies_by_dest_ipv4.is_none() {
+<a href=#88 id=88 data-nosnippet>88</a>                            <span class="self">self</span>.mapping_varies_by_dest_ipv4 = <span class="prelude-val">Some</span>(<span class="bool-val">false</span>);
+<a href=#89 id=89 data-nosnippet>89</a>                        }
+<a href=#90 id=90 data-nosnippet>90</a>                    } <span class="kw">else </span>{
+<a href=#91 id=91 data-nosnippet>91</a>                        <span class="self">self</span>.mapping_varies_by_dest_ipv4 = <span class="prelude-val">Some</span>(<span class="bool-val">true</span>);
+<a href=#92 id=92 data-nosnippet>92</a>                        <span class="macro">warn!</span>(<span class="string">"IPv4 address detected by QAD varies by destination"</span>);
+<a href=#93 id=93 data-nosnippet>93</a>                    }
+<a href=#94 id=94 data-nosnippet>94</a>                } <span class="kw">else </span>{
+<a href=#95 id=95 data-nosnippet>95</a>                    <span class="self">self</span>.global_v4 = <span class="prelude-val">Some</span>(ipp);
+<a href=#96 id=96 data-nosnippet>96</a>                }
+<a href=#97 id=97 data-nosnippet>97</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span><span class="self">self</span>.global_v4, <span class="question-mark">?</span><span class="self">self</span>.mapping_varies_by_dest_ipv4, %ipp, <span class="string">"stored report"</span>);
 <a href=#98 id=98 data-nosnippet>98</a>            }
 <a href=#99 id=99 data-nosnippet>99</a>            <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#100 id=100 data-nosnippet>100</a>            </span>ProbeReport::QadIpv6(report) =&gt; {
@@ -109,19 +109,19 @@
 <a href=#109 id=109 data-nosnippet>109</a>                };
 <a href=#110 id=110 data-nosnippet>110</a>
 <a href=#111 id=111 data-nosnippet>111</a>                <span class="self">self</span>.udp_v6 = <span class="bool-val">true</span>;
-<a href=#112 id=112 data-nosnippet>112</a>                <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span><span class="self">self</span>.global_v6, <span class="question-mark">?</span><span class="self">self</span>.mapping_varies_by_dest_ipv6, %ipp,<span class="string">"got"</span>);
-<a href=#113 id=113 data-nosnippet>113</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(global) = <span class="self">self</span>.global_v6 {
-<a href=#114 id=114 data-nosnippet>114</a>                    <span class="kw">if </span>global == ipp {
-<a href=#115 id=115 data-nosnippet>115</a>                        <span class="kw">if </span><span class="self">self</span>.mapping_varies_by_dest_ipv6.is_none() {
-<a href=#116 id=116 data-nosnippet>116</a>                            <span class="self">self</span>.mapping_varies_by_dest_ipv6 = <span class="prelude-val">Some</span>(<span class="bool-val">false</span>);
-<a href=#117 id=117 data-nosnippet>117</a>                        }
-<a href=#118 id=118 data-nosnippet>118</a>                    } <span class="kw">else </span>{
-<a href=#119 id=119 data-nosnippet>119</a>                        <span class="self">self</span>.mapping_varies_by_dest_ipv6 = <span class="prelude-val">Some</span>(<span class="bool-val">true</span>);
-<a href=#120 id=120 data-nosnippet>120</a>                        <span class="macro">warn!</span>(<span class="string">"IPv6 address detected by QAD varies by destination"</span>);
-<a href=#121 id=121 data-nosnippet>121</a>                    }
-<a href=#122 id=122 data-nosnippet>122</a>                } <span class="kw">else </span>{
-<a href=#123 id=123 data-nosnippet>123</a>                    <span class="self">self</span>.global_v6 = <span class="prelude-val">Some</span>(ipp);
-<a href=#124 id=124 data-nosnippet>124</a>                }
+<a href=#112 id=112 data-nosnippet>112</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(global) = <span class="self">self</span>.global_v6 {
+<a href=#113 id=113 data-nosnippet>113</a>                    <span class="kw">if </span>global == ipp {
+<a href=#114 id=114 data-nosnippet>114</a>                        <span class="kw">if </span><span class="self">self</span>.mapping_varies_by_dest_ipv6.is_none() {
+<a href=#115 id=115 data-nosnippet>115</a>                            <span class="self">self</span>.mapping_varies_by_dest_ipv6 = <span class="prelude-val">Some</span>(<span class="bool-val">false</span>);
+<a href=#116 id=116 data-nosnippet>116</a>                        }
+<a href=#117 id=117 data-nosnippet>117</a>                    } <span class="kw">else </span>{
+<a href=#118 id=118 data-nosnippet>118</a>                        <span class="self">self</span>.mapping_varies_by_dest_ipv6 = <span class="prelude-val">Some</span>(<span class="bool-val">true</span>);
+<a href=#119 id=119 data-nosnippet>119</a>                        <span class="macro">warn!</span>(<span class="string">"IPv6 address detected by QAD varies by destination"</span>);
+<a href=#120 id=120 data-nosnippet>120</a>                    }
+<a href=#121 id=121 data-nosnippet>121</a>                } <span class="kw">else </span>{
+<a href=#122 id=122 data-nosnippet>122</a>                    <span class="self">self</span>.global_v6 = <span class="prelude-val">Some</span>(ipp);
+<a href=#123 id=123 data-nosnippet>123</a>                }
+<a href=#124 id=124 data-nosnippet>124</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span><span class="self">self</span>.global_v6, <span class="question-mark">?</span><span class="self">self</span>.mapping_varies_by_dest_ipv6, %ipp, <span class="string">"stored report"</span>);
 <a href=#125 id=125 data-nosnippet>125</a>            }
 <a href=#126 id=126 data-nosnippet>126</a>        }
 <a href=#127 id=127 data-nosnippet>127</a>    }
