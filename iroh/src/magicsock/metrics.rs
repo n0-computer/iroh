@@ -30,10 +30,24 @@ pub struct Metrics {
     /*
      * Holepunching metrics
      */
-    /// The number of remote endpoints for which of NAT traversal was initiated.
-    pub remote_holepunch_attempts: Counter,
-    /// The number of remote endpoints for which of NAT traversal was initiated and successful.
-    pub remote_holepunch_success: Counter,
+    /// The number of times holepunching is initiated on a connection.
+    ///
+    /// This can be incremented multiple times for a single connection. Note that only the
+    /// client-side of a connection will increment this counter.
+    pub holepunch_attempts: Counter,
+    /// The number of network paths to peers that are direct.
+    ///
+    /// This can be incremented multiple times for a single connection.
+    pub paths_direct: Counter,
+    /// The number of network paths to peers that are relayed.
+    ///
+    /// This would typically only be incremented once for a single connection.
+    pub paths_relay: Counter,
+    /// The number of connections that have been direct connections.
+    ///
+    /// This is only incremented once for each opened connection. See `num_conns_opened` for
+    /// the number of opened connections.
+    pub num_conns_direct: Counter,
 
     /*
      * Connection Metrics
