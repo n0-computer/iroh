@@ -186,7 +186,7 @@
 <a href=#186 id=186 data-nosnippet>186</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= std::net::AddrParseError;
 <a href=#187 id=187 data-nosnippet>187</a>
 <a href=#188 id=188 data-nosnippet>188</a>    <span class="kw">fn </span>to_socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr, <span class="self">Self</span>::Err&gt; {
-<a href=#189 id=189 data-nosnippet>189</a>        (<span class="kw-2">&amp;**</span><span class="self">self</span>).to_socket_addr()
+<a href=#189 id=189 data-nosnippet>189</a>        (<span class="kw-2">**</span><span class="self">self</span>).to_socket_addr()
 <a href=#190 id=190 data-nosnippet>190</a>    }
 <a href=#191 id=191 data-nosnippet>191</a>}
 <a href=#192 id=192 data-nosnippet>192</a>
