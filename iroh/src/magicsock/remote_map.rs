@@ -10,7 +10,7 @@ use iroh_base::{EndpointId, RelayUrl};
 use n0_future::task::JoinSet;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc::{self, error::TrySendError};
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
@@ -44,8 +44,6 @@ pub(crate) struct RemoteMap {
     //
     // State we keep about remote endpoints.
     //
-    /// The actors tracking each remote endpoint.
-    actor_senders: Mutex<FxHashMap<EndpointId, mpsc::Sender<RemoteStateMessage>>>,
     /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
     pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
@@ -61,23 +59,27 @@ pub(crate) struct RemoteMap {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     discovery: ConcurrentDiscovery,
     shutdown_token: CancellationToken,
+
     /// The state kept for spawning new tasks for remote state actors and cleaning them up.
-    ///
-    /// The lock for this needs to be acquired *after* the lock for the `actor_senders` is acquired.
-    actor_tasks: Mutex<Tasks>,
+    state: Mutex<ActorState>,
 }
 
-/// Stores the join set into which `RemoteStateActor`s are spawned.
+/// Stores the state required for managing the `RemoteStateActor`s.
 ///
-/// We also host a waker in here, since this struct will be wrapped in a mutex and we'll
-/// always need to lock/unlock both at the same time.
-///
-/// The waker is there to allow `poll_cleanup` to be notified when the join set is populated
-/// with another spawned task.
+/// All of these are stored in the same mutex, as we have invariants about e.g. the
+/// `senders` getting an entry for each task that's spawned, or the waker being woken each time
+/// we add a task.
 #[derive(Debug, Default)]
-struct Tasks {
+struct ActorState {
+    /// All the `RemoteStateActor` tasks, stored inside a `JoinSet`.
+    ///
+    /// These tasks return their endpoint ID and the list of messages they didn't get to handle
+    /// when they shut down.
     tasks: JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
+    /// The waker that notifies `poll_cleanup` when the join set is populated with another task.
     poll_cleanup_waker: Option<Waker>,
+    /// The senders for the inbox of each `RemoteStateActor` that runs.
+    senders: FxHashMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
 }
 
 impl RemoteMap {
@@ -90,7 +92,6 @@ impl RemoteMap {
         shutdown_token: CancellationToken,
     ) -> Self {
         Self {
-            actor_senders: Mutex::new(FxHashMap::default()),
             endpoint_mapped_addrs: Default::default(),
             relay_mapped_addrs: Default::default(),
             local_endpoint_id,
@@ -98,7 +99,7 @@ impl RemoteMap {
             local_direct_addrs,
             discovery,
             shutdown_token,
-            actor_tasks: Default::default(),
+            state: Default::default(),
         }
     }
 
@@ -115,10 +116,13 @@ impl RemoteMap {
     ///
     /// Only one task is allowed to poll this function concurrently.
     pub(super) fn poll_cleanup(&self, cx: &mut Context<'_>) -> Poll<EndpointId> {
-        // always lock senders before tasks to avoid deadlocks.
-        let mut senders = self.actor_senders.lock().expect("poisoned");
-        let mut tasks = self.actor_tasks.lock().expect("poisoned");
-        while let Some(result) = ready!(tasks.tasks.poll_join_next(cx)) {
+        let mut guard = self.state.lock().expect("poisoned");
+        let ActorState {
+            ref mut tasks,
+            ref mut poll_cleanup_waker,
+            ref mut senders,
+        } = *guard;
+        while let Some(result) = ready!(tasks.poll_join_next(cx)) {
             match result {
                 Ok((eid, leftover_msgs)) => {
                     let entry = senders.entry(eid);
@@ -135,7 +139,12 @@ impl RemoteMap {
 
                     // The remote actor got messages while it was closing, so we're restarting
                     debug!(%eid, "restarting terminated remote state actor: messages received during shutdown");
-                    let sender = self.start_remote_state_actor(eid, leftover_msgs, &mut tasks);
+                    let sender = self.start_remote_state_actor(
+                        eid,
+                        leftover_msgs,
+                        tasks,
+                        poll_cleanup_waker,
+                    );
                     entry.insert_entry(sender);
                 }
                 Err(err) => {
@@ -150,7 +159,7 @@ impl RemoteMap {
         // Let's get woken when there's another task.
         // If we're called after that, then we'll fall into `poll_join_next` and
         // properly wait for a task to finish.
-        tasks.poll_cleanup_waker.replace(cx.waker().clone());
+        guard.poll_cleanup_waker.replace(cx.waker().clone());
         Poll::Pending
     }
 
@@ -160,15 +169,19 @@ impl RemoteMap {
     ///
     /// [`RemoteStateActor`]: remote_state::RemoteStateActor
     pub(super) fn remote_state_actor(&self, eid: EndpointId) -> mpsc::Sender<RemoteStateMessage> {
-        // always lock the sender first
-        let mut senders = self.actor_senders.lock().expect("poisoned");
-        let mut actor_tasks = self.actor_tasks.lock().expect("poisoned");
+        let mut guard = self.state.lock().expect("poisoned");
+        let ActorState {
+            ref mut tasks,
+            ref mut poll_cleanup_waker,
+            ref mut senders,
+        } = *guard;
         match senders.entry(eid) {
             hash_map::Entry::Occupied(mut entry) => {
                 let sender = entry.get();
                 if sender.is_closed() {
                     // The actor is dead: Start a new actor.
-                    let sender = self.start_remote_state_actor(eid, vec![], &mut actor_tasks);
+                    let sender =
+                        self.start_remote_state_actor(eid, vec![], tasks, poll_cleanup_waker);
                     entry.insert(sender.clone());
                     sender
                 } else {
@@ -176,36 +189,21 @@ impl RemoteMap {
                 }
             }
             hash_map::Entry::Vacant(entry) => {
-                let sender = self.start_remote_state_actor(eid, vec![], &mut actor_tasks);
+                let sender = self.start_remote_state_actor(eid, vec![], tasks, poll_cleanup_waker);
                 entry.insert(sender.clone());
                 sender
             }
         }
     }
 
-    /// Try to send a message to the remote state actor, if it exists.
-    ///
-    /// Errors out with a `TrySendError`, if no remote state actor for given endpoint ID
-    /// is currently running, or if the receiver is already closed for it.
-    pub(super) fn try_send(
-        &self,
-        eid: EndpointId,
-        msg: RemoteStateMessage,
-    ) -> Result<(), TrySendError<RemoteStateMessage>> {
-        let senders = self.actor_senders.lock().expect("poisoned");
-        let Some(sender) = senders.get(&eid) else {
-            return Err(TrySendError::Closed(msg));
-        };
-        sender.try_send(msg)
-    }
-
     pub(super) fn remote_state_actor_if_exists(
         &self,
         eid: EndpointId,
     ) -> Option<mpsc::Sender<RemoteStateMessage>> {
-        self.actor_senders
+        self.state
             .lock()
             .expect("poisoned")
+            .senders
             .get(&eid)
             .cloned()
     }
@@ -217,7 +215,8 @@ impl RemoteMap {
         &self,
         eid: EndpointId,
         initial_msgs: Vec<RemoteStateMessage>,
-        tasks: &mut Tasks,
+        tasks: &mut JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
+        poll_cleanup_waker: &mut Option<Waker>,
     ) -> mpsc::Sender<RemoteStateMessage> {
         // Ensure there is a RemoteMappedAddr for this EndpointId.
         self.endpoint_mapped_addrs.get(&eid);
@@ -229,8 +228,8 @@ impl RemoteMap {
             self.metrics.clone(),
             self.discovery.clone(),
         )
-        .start(initial_msgs, &mut tasks.tasks, self.shutdown_token.clone());
-        if let Some(waker) = tasks.poll_cleanup_waker.take() {
+        .start(initial_msgs, tasks, self.shutdown_token.clone());
+        if let Some(waker) = poll_cleanup_waker.take() {
             // Notify something waiting for changes to tasks when there's a new task.
             waker.wake();
         }

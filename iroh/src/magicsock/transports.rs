@@ -678,7 +678,7 @@ impl quinn::UdpSender for MagicSender {
 
         let transport_addr = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
-                let Some(node_id) = self
+                let Some(endpoint_id) = self
                     .msock
                     .remote_map
                     .endpoint_mapped_addrs
@@ -692,17 +692,18 @@ impl quinn::UdpSender for MagicSender {
                 // Initial packet we are sending, so we do not yet have an src address we
                 // need to respond from.
                 if let Some(src_ip) = quinn_transmit.src_ip {
-                    warn!(dst = ?mapped_addr, ?src_ip, dst_node = %node_id.fmt_short(),
+                    warn!(dst = ?mapped_addr, ?src_ip, dst_node = %endpoint_id.fmt_short(),
                         "oops, flub didn't think this would happen");
                 }
 
+                let sender = self.msock.remote_map.remote_state_actor(endpoint_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
-                match self.msock.remote_map.try_send(
-                    node_id,
-                    RemoteStateMessage::SendDatagram(self.sender.clone(), transmit),
-                ) {
+                match sender.try_send(RemoteStateMessage::SendDatagram(
+                    self.sender.clone(),
+                    transmit,
+                )) {
                     Ok(()) => {
-                        trace!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(), "sent transmit");
+                        trace!(dst = ?mapped_addr, dst_node = %endpoint_id.fmt_short(), "sent transmit");
                         return Poll::Ready(Ok(()));
                     }
                     Err(err) => {
@@ -710,7 +711,7 @@ impl quinn::UdpSender for MagicSender {
                         // different transport.  Instead we let Quinn handle this as
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
-                        debug!(dst = ?mapped_addr, dst_node = %node_id.fmt_short(),
+                        debug!(dst = ?mapped_addr, dst_node = %endpoint_id.fmt_short(),
                             "RemoteStateActor inbox {err:#}, dropped transmit");
                         return Poll::Ready(Ok(()));
                     }
