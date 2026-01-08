@@ -53,7 +53,7 @@ use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
     Endpoint,
-    endpoint::{Accepting, Connection, RemoteEndpointIdError},
+    endpoint::{Accepting, Connection, RemoteEndpointIdError, quic},
 };
 
 /// The built router.
@@ -123,10 +123,19 @@ pub enum AcceptError {
 
 impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
+    // TODO(Frando): Rename to `from_std`
     #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
         e!(AcceptError::User {
             source: AnyError::from_std(value)
+        })
+    }
+
+    /// Creates a new user error from an arbitrary boxed error.
+    #[track_caller]
+    pub fn from_boxed(value: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        e!(AcceptError::User {
+            source: AnyError::from_std_box(value)
         })
     }
 }
@@ -137,8 +146,8 @@ impl From<std::io::Error> for AcceptError {
     }
 }
 
-impl From<quinn::ClosedStream> for AcceptError {
-    fn from(err: quinn::ClosedStream) -> Self {
+impl From<quic::ClosedStream> for AcceptError {
+    fn from(err: quic::ClosedStream) -> Self {
         Self::from_err(err)
     }
 }
@@ -407,6 +416,7 @@ impl RouterBuilder {
     }
 
     /// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
+    #[must_use = "Router aborts when dropped, use Router::shutdown to shut the router down cleanly"]
     pub fn spawn(self) -> Router {
         // Update the endpoint with our alpns.
         let alpns = self
@@ -597,10 +607,15 @@ mod tests {
     use std::{sync::Mutex, time::Duration};
 
     use n0_error::{Result, StdResultExt};
-    use quinn::ApplicationClose;
 
     use super::*;
-    use crate::{RelayMode, endpoint::ConnectionError};
+    use crate::{
+        RelayMode,
+        endpoint::{
+            ApplicationClose, BeforeConnectOutcome, ConnectError, ConnectWithOptsError,
+            ConnectionError, EndpointHooks,
+        },
+    };
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
@@ -640,7 +655,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_limiter() -> Result {
+    async fn test_limiter_router() -> Result {
         // tracing_subscriber::fmt::try_init().ok();
         let e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
         // deny all access
@@ -657,6 +672,52 @@ mod tests {
         let (_send, mut recv) = conn.open_bi().await.anyerr()?;
         let response = recv.read_to_end(1000).await.unwrap_err();
         assert!(format!("{response:#?}").contains("not allowed"));
+
+        r1.shutdown().await.anyerr()?;
+        e2.close().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_limiter_hook() -> Result {
+        // tracing_subscriber::fmt::try_init().ok();
+        #[derive(Debug, Default)]
+        struct LimitHook;
+        impl EndpointHooks for LimitHook {
+            async fn before_connect<'a>(
+                &'a self,
+                _remote_addr: &'a iroh_base::EndpointAddr,
+                alpn: &'a [u8],
+            ) -> BeforeConnectOutcome {
+                assert_eq!(alpn, ECHO_ALPN);
+
+                // deny all access
+                BeforeConnectOutcome::Reject
+            }
+        }
+
+        let e1 = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+
+        let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, Echo).spawn();
+
+        let addr1 = r1.endpoint().addr();
+        dbg!(&addr1);
+        let e2 = Endpoint::empty_builder(RelayMode::Disabled)
+            .hooks(LimitHook)
+            .bind()
+            .await?;
+
+        println!("connecting");
+        let conn_err = e2.connect(addr1, ECHO_ALPN).await.unwrap_err();
+
+        assert!(matches!(
+            conn_err,
+            ConnectError::Connect {
+                source: ConnectWithOptsError::LocallyRejected { .. },
+                ..
+            }
+        ));
 
         r1.shutdown().await.anyerr()?;
         e2.close().await;

@@ -334,7 +334,7 @@ mod tests {
 
     use iroh_base::RelayUrl;
     use n0_error::{Result, StdResultExt};
-    use tracing_test::traced_test;
+    use n0_tracing_test::traced_test;
 
     use super::*;
 

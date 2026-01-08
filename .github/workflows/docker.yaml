@@ -46,7 +46,7 @@ jobs:
       runs-on: [self-hosted, linux, X64]
       steps:
         - name: Checkout
-          uses: actions/checkout@v5
+          uses: actions/checkout@v6
 
         - name: Set up Docker Buildx
           uses: docker/setup-buildx-action@v3
@@ -62,11 +62,22 @@ jobs:
             mkdir -p bins/linux/amd64
             mkdir -p bins/linux/arm64
 
-        - name: Setup awscli on linux
+        - name: Cache AWS CLI
+          id: cache-awscli
+          uses: actions/cache@v5
+          with:
+            path: ~/awscli
+            key: awscli-${{ runner.os }}-${{ runner.arch }}-v2
+
+        - name: Download awscli
+          if: steps.cache-awscli.outputs.cache-hit != 'true'
           run: |
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-            unzip awscliv2.zip
-            sudo ./aws/install --update
+            mkdir -p ~/awscli
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o ~/awscli/awscliv2.zip
+            cd ~/awscli && unzip -oq awscliv2.zip
+
+        - name: Install awscli
+          run: sudo ~/awscli/aws/install --update
     
         - name: Set aws credentials
           run: |

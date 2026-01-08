@@ -25,6 +25,7 @@ env:
   SCCACHE_CACHE_SIZE: "10G"
   CRATES_LIST: "iroh,iroh-bench,iroh-dns-server,iroh-relay"
   IROH_FORCE_STAGING_RELAYS: "1"
+  NEXTEST_VERSION: "0.9.80"
 
 jobs:
   build_and_test_nix:
@@ -54,7 +55,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.git-ref }}
 
@@ -66,7 +67,7 @@ jobs:
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
-          tool: nextest@0.9.80
+          tool: nextest@${{ env.NEXTEST_VERSION }}
 
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
@@ -118,7 +119,7 @@ jobs:
 
       - name: upload results
         if: ${{ failure() && inputs.flaky }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
           path: output
@@ -168,7 +169,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.git-ref }}
 
@@ -179,11 +180,19 @@ jobs:
           rustup target add ${{ matrix.target }}
           rustup set default-host ${{ matrix.target }}
 
+      - name: Cache cargo-nextest
+        id: cache-nextest
+        uses: actions/cache@v5
+        with:
+          path: ~/.cargo/bin/cargo-nextest.exe
+          key: nextest-windows-${{ env.NEXTEST_VERSION }}
+
       - name: Install cargo-nextest
+        if: steps.cache-nextest.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
-          Invoke-WebRequest -OutFile $tmp https://get.nexte.st/latest/windows
+          Invoke-WebRequest -OutFile $tmp https://get.nexte.st/${{ env.NEXTEST_VERSION }}/windows
           $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
           $tmp | Expand-Archive -DestinationPath $outputDir -Force
           $tmp | Remove-Item
@@ -230,7 +239,7 @@ jobs:
 
       - name: upload results
         if: ${{ failure() && inputs.flaky }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: libtest_run_${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
           path: output
@@ -255,7 +264,7 @@ jobs:
             release-arch: aarch64
             runner: [self-hosted, macOS, ARM64]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
       - name: cargo check
         run: |
@@ -283,7 +292,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.git-ref }}
 

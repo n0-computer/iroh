@@ -74,6 +74,8 @@ pub struct Opt {
     #[cfg(feature = "local-relay")]
     #[clap(long, default_value_t = false)]
     pub only_relay: bool,
+    #[clap(long, default_value_t = false)]
+    pub use_ipv6: bool,
 }
 
 pub enum EndpointSelector {
@@ -91,6 +93,7 @@ impl EndpointSelector {
             #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
             EndpointSelector::Quinn(endpoint) => {
                 endpoint.close(0u32.into(), b"");
+                endpoint.wait_idle().await;
             }
         }
     }

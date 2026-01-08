@@ -8,7 +8,7 @@
 //! This is where the [`StaticProvider`] is useful: it allows applications to add and
 //! retract endpoint addressing information that is otherwise out-of-band to iroh.
 //!
-//! [`EndpointTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.EndpointTicket
+//! [`EndpointTicket`]: https://docs.rs/iroh-tickets/latest/iroh_tickets/endpoint/struct.EndpointTicket.html
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -64,7 +64,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// # }
 /// ```
 ///
-/// [`EndpointTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.EndpointTicket
+/// [`EndpointTicket`]: https://docs.rs/iroh-tickets/latest/iroh_tickets/endpoint/struct.EndpointTicket.html
 #[derive(Debug, Clone)]
 pub struct StaticProvider {
     endpoints: Arc<RwLock<BTreeMap<EndpointId, StoredEndpointInfo>>>,
@@ -248,12 +248,10 @@ mod tests {
             .await?;
 
         let key = SecretKey::from_bytes(&[0u8; 32]);
-        let addr = EndpointAddr {
-            id: key.public(),
-            addrs: [TransportAddr::Relay("https://example.com".parse()?)]
-                .into_iter()
-                .collect(),
-        };
+        let addr = EndpointAddr::from_parts(
+            key.public(),
+            [TransportAddr::Relay("https://example.com".parse()?)],
+        );
         let user_data = Some("foobar".parse().unwrap());
         let endpoint_info = EndpointInfo::from(addr.clone()).with_user_data(user_data.clone());
         discovery.add_endpoint_info(endpoint_info.clone());
@@ -280,12 +278,10 @@ mod tests {
     async fn test_provenance() -> Result {
         let discovery = StaticProvider::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
-        let addr = EndpointAddr {
-            id: key.public(),
-            addrs: [TransportAddr::Relay("https://example.com".parse()?)]
-                .into_iter()
-                .collect(),
-        };
+        let addr = EndpointAddr::from_parts(
+            key.public(),
+            [TransportAddr::Relay("https://example.com".parse()?)],
+        );
         discovery.add_endpoint_info(addr);
         let mut stream = discovery.resolve(key.public()).unwrap();
         let item = stream.next().await.unwrap()?;

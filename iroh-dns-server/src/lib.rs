@@ -26,9 +26,9 @@ mod tests {
         endpoint_info::EndpointInfo,
     };
     use n0_error::{Result, StdResultExt};
+    use n0_tracing_test::traced_test;
     use pkarr::{SignedPacket, Timestamp};
     use rand::{CryptoRng, SeedableRng};
-    use tracing_test::traced_test;
 
     use crate::{
         ZoneStore,
@@ -43,9 +43,10 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result {
-        let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
+        let dir = tempfile::tempdir()?;
+        let server = Server::spawn_for_tests(dir.path()).await?;
         let pkarr_relay_url = {
-            let mut url = http_url.clone();
+            let mut url = server.http_url().expect("http is bound");
             url.set_path("/pkarr");
             url
         };
@@ -113,7 +114,7 @@ mod tests {
 
         use hickory_server::proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
-        let resolver = test_resolver(nameserver);
+        let resolver = test_resolver(server.dns_addr());
 
         // resolve root record
         let name = Name::from_utf8(format!("{pubkey}.")).anyerr()?;
@@ -158,10 +159,11 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn integration_smoke() -> Result {
-        let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
+        let dir = tempfile::tempdir()?;
+        let server = Server::spawn_for_tests(dir.path()).await?;
 
         let pkarr_relay = {
-            let mut url = http_url.clone();
+            let mut url = server.http_url().expect("http is bound");
             url.set_path("/pkarr");
             url
         };
@@ -179,7 +181,7 @@ mod tests {
 
         pkarr.publish(&signed_packet).await?;
 
-        let resolver = test_resolver(nameserver);
+        let resolver = test_resolver(server.dns_addr());
         let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
 
         assert_eq!(res.endpoint_id, endpoint_id);
@@ -225,6 +227,7 @@ mod tests {
     #[traced_test]
     #[ignore = "flaky"]
     async fn integration_mainline() -> Result {
+        let dir = tempfile::tempdir()?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         // run a mainline testnet
@@ -232,9 +235,13 @@ mod tests {
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
-        let (server, nameserver, _http_url) =
-            Server::spawn_for_tests_with_options(Some(BootstrapOption::Custom(bootstrap)), None)
-                .await?;
+        let server = Server::spawn_for_tests_with_options(
+            dir.path(),
+            Some(BootstrapOption::Custom(bootstrap)),
+            None,
+            None,
+        )
+        .await?;
 
         let origin = "irohdns.example.";
 
@@ -254,7 +261,7 @@ mod tests {
         pkarr.publish(&signed_packet, None).await.anyerr()?;
 
         // resolve via DNS from our server, which will lookup from our DHT
-        let resolver = test_resolver(nameserver);
+        let resolver = test_resolver(server.dns_addr());
         let res = resolver.lookup_endpoint_by_id(&endpoint_id, origin).await?;
 
         assert_eq!(res.endpoint_id, endpoint_id);

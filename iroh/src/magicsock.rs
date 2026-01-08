@@ -16,100 +16,106 @@
 //! however, read any packets that come off the UDP sockets.
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt::Display,
+    future::poll_fn,
     io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    pin::Pin,
+    net::{IpAddr, SocketAddr},
     sync::{
         Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
-    task::{Context, Poll},
 };
 
-use bytes::Bytes;
-use data_encoding::HEXLOWER;
 use iroh_base::{EndpointAddr, EndpointId, PublicKey, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
-use n0_error::{e, stack_error};
+use n0_error::{bail, e, stack_error};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
 use n0_watcher::{self, Watchable, Watcher};
-use netwatch::netmon;
 #[cfg(not(wasm_browser))]
-use netwatch::{UdpSocket, ip::LocalAddresses};
-use quinn::{AsyncUdpSocket, ServerConfig};
+use netwatch::ip::LocalAddresses;
+use netwatch::netmon;
+use quinn::WeakConnectionHandle;
 use rand::Rng;
-use smallvec::SmallVec;
-use tokio::sync::{Mutex as AsyncMutex, mpsc};
+use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{
-    Instrument, Level, debug, error, event, info, info_span, instrument, trace, trace_span, warn,
-};
-use transports::LocalAddrsWatch;
+use tracing::{Instrument, Level, debug, event, info_span, instrument, trace, warn};
+use transports::{LocalAddrsWatch, MagicTransport, TransportConfig};
 use url::Url;
 
-#[cfg(not(wasm_browser))]
-use self::transports::IpTransport;
 use self::{
-    endpoint_map::{EndpointMap, PingAction, PingRole, SendPing},
     metrics::Metrics as MagicsockMetrics,
-    transports::{RelayActorConfig, RelayTransport, Transports, UdpSender},
+    remote_map::{RemoteMap, RemoteStateMessage},
+    transports::{RelayActorConfig, Transports},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-#[cfg(any(test, feature = "test-utils"))]
-use crate::endpoint::PathSelection;
 #[cfg(not(wasm_browser))]
-use crate::net_report::{IpMappedAddr, QuicConfig};
+use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
-    disco::{self, SendAddr, TransactionId},
-    discovery::{ConcurrentDiscovery, Discovery, EndpointData, UserData},
-    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
-    magicsock::endpoint_map::RemoteInfo,
+    discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
+    endpoint::hooks::EndpointHooksList,
+    magicsock::remote_map::{PathsWatcher, RemoteInfo},
     metrics::EndpointMetrics,
-    net_report::{self, IfStateDetails, IpMappedAddresses, Report},
+    net_report::{self, IfStateDetails, Report},
 };
 
-mod endpoint_map;
 mod metrics;
 
+pub(crate) mod mapped_addrs;
+pub(crate) mod remote_map;
 pub(crate) mod transports;
 
-pub use endpoint_map::Source;
+use self::mapped_addrs::{EndpointIdMappedAddr, MappedAddr};
+pub use self::{metrics::Metrics, remote_map::PathInfo};
 
-pub use self::{
-    endpoint_map::{ConnectionType, ControlMsg, DirectAddrInfo},
-    metrics::Metrics,
-};
+// TODO: Use this
+// /// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
+// /// expire at 30 seconds, so this is a few seconds shy of that.
+// const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
-/// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
-/// expire at 30 seconds, so this is a few seconds shy of that.
-const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
+/// The duration in which we send keep-alives.
+///
+/// If a path is idle for this long, a PING frame will be sent to keep the connection
+/// alive.
+pub(crate) const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+/// The maximum time a path can stay idle before being closed.
+///
+/// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
+/// some retries.
+pub(crate) const PATH_MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
+
+/// Maximum number of concurrent QUIC multipath paths per connection.
+///
+/// Pretty arbitrary and high right now.
+pub(crate) const MAX_MULTIPATH_PATHS: u32 = 12;
+
+/// Error returned when the endpoint state actor stopped while waiting for a reply.
+#[stack_error(add_meta, derive)]
+#[error("endpoint state actor stopped")]
+#[derive(Clone)]
+pub(crate) struct RemoteStateActorStoppedError;
+
+impl From<mpsc::error::SendError<RemoteStateMessage>> for RemoteStateActorStoppedError {
+    #[track_caller]
+    fn from(_value: mpsc::error::SendError<RemoteStateMessage>) -> Self {
+        Self::new()
+    }
+}
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
 pub(crate) struct Options {
-    /// The IPv4 address to listen on.
-    ///
-    /// If set to `None` it will choose a random port and listen on `0.0.0.0:0`.
-    pub(crate) addr_v4: Option<SocketAddrV4>,
-    /// The IPv6 address to listen on.
-    ///
-    /// If set to `None` it will choose a random port and listen on `[::]:0`.
-    pub(crate) addr_v6: Option<SocketAddrV6>,
+    /// The configuration for the different transports.
+    pub(crate) transports: Vec<TransportConfig>,
 
     /// Secret key for this endpoint.
     pub(crate) secret_key: SecretKey,
-
-    /// The [`RelayMap`] to use, leave empty to not use a relay server.
-    pub(crate) relay_map: RelayMap,
 
     /// Optional user-defined discovery data.
     pub(crate) discovery_user_data: Option<UserData>,
@@ -125,19 +131,15 @@ pub(crate) struct Options {
     pub(crate) proxy_url: Option<Url>,
 
     /// ServerConfig for the internal QUIC endpoint
-    pub(crate) server_config: ServerConfig,
+    pub(crate) server_config: quinn_proto::ServerConfig,
 
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
     pub(crate) insecure_skip_relay_cert_verify: bool,
-
-    /// Configuration for what path selection to use
-    #[cfg(any(test, feature = "test-utils"))]
-    pub(crate) path_selection: PathSelection,
-
     pub(crate) metrics: EndpointMetrics,
+    pub(crate) hooks: EndpointHooksList,
 }
 
 /// Handle for [`MagicSock`].
@@ -149,10 +151,35 @@ pub(crate) struct Handle {
     msock: Arc<MagicSock>,
     // empty when shutdown
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
-    /// Token to cancel the actor task and shutdown the relay transport.
-    shutdown_token: CancellationToken,
     // quinn endpoint
     endpoint: quinn::Endpoint,
+}
+
+#[derive(Debug)]
+struct ShutdownState {
+    at_close_start: CancellationToken,
+    at_endpoint_closed: CancellationToken,
+    closed: AtomicBool,
+}
+
+impl Default for ShutdownState {
+    fn default() -> Self {
+        Self {
+            at_close_start: CancellationToken::new(),
+            at_endpoint_closed: CancellationToken::new(),
+            closed: AtomicBool::new(false),
+        }
+    }
+}
+
+impl ShutdownState {
+    fn is_closing(&self) -> bool {
+        self.at_close_start.is_cancelled()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Relaxed)
+    }
 }
 
 /// Iroh connectivity layer.
@@ -172,11 +199,8 @@ pub(crate) struct MagicSock {
     /// EndpointId of this endpoint.
     public_key: PublicKey,
 
-    // - State Management
-    /// Close is in progress (or done)
-    closing: AtomicBool,
-    /// Close was called.
-    closed: AtomicBool,
+    // - Shutdown Management
+    shutdown: ShutdownState,
 
     // - Networking Info
     /// Our discovered direct addresses.
@@ -186,9 +210,8 @@ pub(crate) struct MagicSock {
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
-    endpoint_map: EndpointMap,
-    /// Tracks the mapped IP addresses
-    ip_mapped_addrs: IpMappedAddresses,
+    pub(crate) remote_map: RemoteMap,
+
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
     /// Currently bound IP addresses of all sockets
@@ -199,9 +222,6 @@ pub(crate) struct MagicSock {
     dns_resolver: DnsResolver,
     relay_map: RelayMap,
 
-    /// Disco
-    disco: DiscoState,
-
     // - Discovery
     /// Optional discovery service
     discovery: ConcurrentDiscovery,
@@ -210,22 +230,11 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
-}
-
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-pub enum AddEndpointAddrError {
-    #[error("Empty addressing info")]
-    Empty,
-    #[error("Empty addressing info, {pruned} direct address have been pruned")]
-    EmptyPruned { pruned: usize },
-    #[error("Adding our own address is not supported")]
-    OwnAddress,
+    pub(crate) hooks: EndpointHooksList,
 }
 
 impl MagicSock {
-    /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
+    /// Creates a magic [`MagicSock`] listening.
     pub(crate) async fn spawn(opts: Options) -> Result<Handle, CreateHandleError> {
         Handle::new(opts).await
     }
@@ -243,17 +252,41 @@ impl MagicSock {
         })
     }
 
-    fn is_closing(&self) -> bool {
-        self.closing.load(Ordering::Relaxed)
+    pub(crate) fn is_closed(&self) -> bool {
+        self.shutdown.is_closed()
     }
 
-    pub(crate) fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::SeqCst)
+    fn is_closing(&self) -> bool {
+        self.shutdown.is_closing()
     }
 
     /// Get the cached version of addresses.
     pub(crate) fn local_addr(&self) -> Vec<transports::Addr> {
         self.local_addrs_watch.clone().get()
+    }
+
+    /// Registers the connection in the `RemoteStateActor`.
+    ///
+    /// The actor is responsible for holepunching and opening additional paths to this
+    /// connection.
+    ///
+    /// Returns a future that resolves to [`PathsWatcher`].
+    ///
+    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
+    pub(crate) fn register_connection(
+        &self,
+        remote: EndpointId,
+        conn: WeakConnectionHandle,
+    ) -> impl Future<Output = Result<PathsWatcher, RemoteStateActorStoppedError>> + Send + 'static
+    {
+        let (tx, rx) = oneshot::channel();
+        let sender = self.remote_map.remote_state_actor(remote);
+        async move {
+            sender
+                .send(RemoteStateMessage::AddConnection(conn, tx))
+                .await?;
+            rx.await.map_err(|_| RemoteStateActorStoppedError::new())
+        }
     }
 
     #[cfg(not(wasm_browser))]
@@ -267,22 +300,47 @@ impl MagicSock {
             .filter_map(|addr| addr.into_socket_addr())
     }
 
-    /// Returns `true` if we have at least one candidate address where we can send packets to.
-    pub(crate) fn has_send_address(&self, endpoint_key: PublicKey) -> bool {
-        self.remote_info(endpoint_key)
-            .map(|info| info.has_send_address())
-            .unwrap_or(false)
+    /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
+    ///
+    /// This starts a `RemoteStateActor` for the remote if not running already, and then checks
+    /// if the actor has any known paths to the remote. If not, it starts discovery and waits for
+    /// at least one result to arrive.
+    ///
+    /// Returns `Ok(Ok(EndpointIdMappedAddr))` if there is a known path or discovery produced
+    /// at least one result. This does not mean there is a working path, only that we have at least
+    /// one transport address we can try to connect to.
+    ///
+    /// Returns `Ok(Err(discovery_error))` if there are no known paths to the remote and discovery
+    /// failed or produced no results. This means that we don't have any transport address for
+    /// the remote, thus there is no point in trying to connect over the quinn endpoint.
+    ///
+    /// Returns `Err(RemoteStateActorStoppedError)` if the `RemoteStateActor` for the remote has stopped,
+    /// which may never happen and thus is a bug if it does.
+    pub(crate) async fn resolve_remote(
+        &self,
+        addr: EndpointAddr,
+    ) -> Result<Result<EndpointIdMappedAddr, DiscoveryError>, RemoteStateActorStoppedError> {
+        let EndpointAddr { id, addrs } = addr;
+        let actor = self.remote_map.remote_state_actor(id);
+        let (tx, rx) = oneshot::channel();
+        actor
+            .send(RemoteStateMessage::ResolveRemote(addrs, tx))
+            .await?;
+        match rx.await {
+            Ok(Ok(())) => Ok(Ok(self.remote_map.endpoint_mapped_addr(id))),
+            Ok(Err(err)) => Ok(Err(err)),
+            Err(_) => Err(RemoteStateActorStoppedError::new()),
+        }
     }
 
-    /// Return the [`RemoteInfo`]s of all endpoints in the endpoint map.
-    #[cfg(test)]
-    pub(crate) fn list_remote_infos(&self) -> Vec<RemoteInfo> {
-        self.endpoint_map.list_remote_infos(Instant::now())
-    }
-
-    /// Return the [`RemoteInfo`] for a single endpoint in the endpoint map.
-    pub(crate) fn remote_info(&self, endpoint_id: EndpointId) -> Option<RemoteInfo> {
-        self.endpoint_map.remote_info(endpoint_id)
+    /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
+    ///
+    /// Returns `None` if no actor is running for the remote.
+    pub(crate) async fn remote_info(&self, id: EndpointId) -> Option<RemoteInfo> {
+        let actor = self.remote_map.remote_state_actor_if_exists(id)?;
+        let (tx, rx) = oneshot::channel();
+        actor.send(RemoteStateMessage::RemoteInfo(tx)).await.ok()?;
+        rx.await.ok()
     }
 
     pub(crate) async fn insert_relay(
@@ -363,59 +421,6 @@ impl MagicSock {
         })
     }
 
-    /// Returns a [`n0_watcher::Direct`] that reports the [`ConnectionType`] we have to the
-    /// given `endpoint_id`.
-    ///
-    /// This gets us a copy of the [`n0_watcher::Direct`] for the [`Watchable`] with a [`ConnectionType`]
-    /// that the `EndpointMap` stores for each `endpoint_id`'s endpoint.
-    ///
-    /// # Errors
-    ///
-    /// Will return `None` if there is no address information known about the
-    /// given `endpoint_id`.
-    pub(crate) fn conn_type(
-        &self,
-        endpoint_id: EndpointId,
-    ) -> Option<n0_watcher::Direct<ConnectionType>> {
-        self.endpoint_map.conn_type(endpoint_id)
-    }
-
-    pub(crate) fn latency(&self, endpoint_id: EndpointId) -> Option<Duration> {
-        self.endpoint_map.latency(endpoint_id)
-    }
-
-    /// Returns the socket address which can be used by the QUIC layer to dial this endpoint.
-    pub(crate) fn get_mapping_addr(&self, endpoint_id: EndpointId) -> Option<EndpointIdMappedAddr> {
-        self.endpoint_map
-            .get_quic_mapped_addr_for_endpoint_key(endpoint_id)
-    }
-
-    /// Add addresses for an endpoint to the magic socket's addresbook.
-    #[instrument(skip_all)]
-    pub(crate) fn add_endpoint_addr(
-        &self,
-        mut addr: EndpointAddr,
-        source: endpoint_map::Source,
-    ) -> Result<(), AddEndpointAddrError> {
-        let mut pruned: usize = 0;
-        for my_addr in self.direct_addrs.sockaddrs() {
-            if addr.addrs.remove(&TransportAddr::Ip(my_addr)) {
-                warn!( endpoint_id=%addr.id.fmt_short(), %my_addr, %source, "not adding our addr for endpoint");
-                pruned += 1;
-            }
-        }
-        if !addr.is_empty() {
-            let have_ipv6 = self.ipv6_reported.load(Ordering::Relaxed);
-            self.endpoint_map
-                .add_endpoint_addr(addr, source, have_ipv6, &self.metrics.magicsock);
-            Ok(())
-        } else if pruned != 0 {
-            Err(e!(AddEndpointAddrError::EmptyPruned { pruned }))
-        } else {
-            Err(e!(AddEndpointAddrError::Empty))
-        }
-    }
-
     /// Stores a new set of direct addresses.
     ///
     /// If the direct addresses have changed from the previous set, they are published to
@@ -423,8 +428,6 @@ impl MagicSock {
     pub(super) fn store_direct_addresses(&self, addrs: BTreeSet<DirectAddr>) {
         let updated = self.direct_addrs.update(addrs);
         if updated {
-            self.endpoint_map
-                .on_direct_addr_discovered(self.direct_addrs.sockaddrs().collect());
             self.publish_my_addr();
         }
     }
@@ -466,119 +469,14 @@ impl MagicSock {
             .ok();
     }
 
-    #[cfg_attr(windows, allow(dead_code))]
-    fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs = self.local_addrs_watch.clone().get();
-
-        let mut ipv4_addr = None;
-        for addr in addrs {
-            let Some(addr) = addr.into_socket_addr() else {
-                continue;
-            };
-            if addr.is_ipv6() {
-                return Ok(addr);
-            }
-            if addr.is_ipv4() && ipv4_addr.is_none() {
-                ipv4_addr.replace(addr);
-            }
-        }
-        match ipv4_addr {
-            Some(addr) => Ok(addr),
-            None => Err(io::Error::other("no valid socket available")),
-        }
-    }
-
-    /// Searches the `endpoint_map` to determine the current transports to be used.
-    #[instrument(skip_all)]
-    fn prepare_send(
-        &self,
-        udp_sender: &UdpSender,
-        transmit: &quinn_udp::Transmit,
-    ) -> io::Result<SmallVec<[transports::Addr; 3]>> {
-        self.metrics
-            .magicsock
-            .send_data
-            .inc_by(transmit.contents.len() as _);
-
-        if self.is_closed() {
-            self.metrics
-                .magicsock
-                .send_data_network_down
-                .inc_by(transmit.contents.len() as _);
-            return Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            ));
-        }
-
-        let mut active_paths = SmallVec::<[_; 3]>::new();
-
-        match MappedAddr::from(transmit.destination) {
-            MappedAddr::None(dest) => {
-                error!(%dest, "Cannot convert to a mapped address.");
-            }
-            MappedAddr::EndpointId(dest) => {
-                trace!(
-                    dst = %dest,
-                    src = ?transmit.src_ip,
-                    len = %transmit.contents.len(),
-                    "sending",
-                );
-
-                // Get the endpoint's relay address and best direct address, as well
-                // as any pings that need to be sent for hole-punching purposes.
-                match self.endpoint_map.get_send_addrs(
-                    dest,
-                    self.ipv6_reported.load(Ordering::Relaxed),
-                    &self.metrics.magicsock,
-                ) {
-                    Some((endpoint_id, udp_addr, relay_url, ping_actions)) => {
-                        if !ping_actions.is_empty() {
-                            self.try_send_ping_actions(udp_sender, ping_actions).ok();
-                        }
-                        if let Some(addr) = udp_addr {
-                            active_paths.push(transports::Addr::from(addr));
-                        }
-                        if let Some(url) = relay_url {
-                            active_paths.push(transports::Addr::Relay(url, endpoint_id));
-                        }
-                    }
-                    None => {
-                        error!(%dest, "no EndpointState for mapped address");
-                    }
-                }
-            }
-            #[cfg(not(wasm_browser))]
-            MappedAddr::Ip(dest) => {
-                trace!(
-                    dst = %dest,
-                    src = ?transmit.src_ip,
-                    len = %transmit.contents.len(),
-                    "sending",
-                );
-
-                // Check if this is a known IpMappedAddr, and if so, send over UDP
-                // Get the socket addr
-                match self.ip_mapped_addrs.get_ip_addr(&dest) {
-                    Some(addr) => {
-                        active_paths.push(transports::Addr::from(addr));
-                    }
-                    None => {
-                        error!(%dest, "unknown mapped address");
-                    }
-                }
-            }
-        }
-
-        Ok(active_paths)
-    }
-
-    /// Process datagrams received from UDP sockets.
+    /// Process datagrams received from all the transports.
     ///
     /// All the `bufs` and `metas` should have initialized packets in them.
     ///
-    /// This fixes up the datagrams to use the correct [`EndpointIdMappedAddr`] and extracts DISCO
-    /// packets, processing them inside the magic socket.
+    /// This fixes up the datagrams to use the correct [`MultipathMappedAddr`] and extracts
+    /// DISCO packets, processing them inside the magic socket.
+    ///
+    /// [`MultipathMappedAddr`]: mapped_addrs::MultipathMappedAddr
     fn process_datagrams(
         &self,
         bufs: &mut [io::IoSliceMut<'_>],
@@ -592,551 +490,54 @@ impl MagicSock {
             "non matching bufs & source_addrs"
         );
 
-        // Adding the IP address we received something on results in Quinn using this
-        // address on the send path to send from.  However we let Quinn use a
-        // EndpointIdMappedAddress, not a real address.  So we used to substitute our bind address
-        // here so that Quinn would send on the right address.  But that would sometimes
-        // result in the wrong address family and Windows trips up on that.
-        //
-        // What should be done is that this dst_ip from the RecvMeta is stored in the
-        // EndpointState/PathState.  Then on the send path it should be retrieved from the
-        // EndpointState/PathSate together with the send address and substituted at send time.
-        // This is relevant for IPv6 link-local addresses where the OS otherwise does not
-        // know which interface to send from.
-        #[cfg(not(windows))]
-        let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
-        // Reasoning for this here:
-        // https://github.com/n0-computer/iroh/pull/2595#issuecomment-2290947319
-        #[cfg(windows)]
-        let dst_ip = None;
+        // zip is slow :(
+        for i in 0..metas.len() {
+            let quinn_meta = &mut metas[i];
+            let source_addr = &source_addrs[i];
 
-        let mut quic_packets_total = 0;
-
-        for ((quinn_meta, buf), source_addr) in metas
-            .iter_mut()
-            .zip(bufs.iter_mut())
-            .zip(source_addrs.iter())
-        {
-            let mut buf_contains_quic_datagrams = false;
-            let mut quic_datagram_count = 0;
-            if quinn_meta.len > quinn_meta.stride {
-                trace!(%quinn_meta.len, %quinn_meta.stride, "GRO datagram received");
-                self.metrics.magicsock.recv_gro_datagrams.inc();
-            }
-
-            // Chunk through the datagrams in this GRO payload to find disco
-            // packets and forward them to the actor
-            for datagram in buf[..quinn_meta.len].chunks_mut(quinn_meta.stride) {
-                if datagram.len() < quinn_meta.stride {
-                    trace!(
-                        len = %datagram.len(),
-                        %quinn_meta.stride,
-                        "Last GRO datagram smaller than stride",
-                    );
-                }
-
-                // Detect DISCO datagrams and process them.  Overwrite the first
-                // byte of those packets with zero to make Quinn ignore the packet.  This
-                // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
-                // which we do in Endpoint::bind.
-                if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
-                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: disco packet");
-                    self.handle_disco_message(sender, sealed_box, source_addr);
-                    datagram[0] = 0u8;
-                } else {
-                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: quic packet");
-                    match source_addr {
-                        transports::Addr::Ip(SocketAddr::V4(..)) => {
-                            self.metrics
-                                .magicsock
-                                .recv_data_ipv4
-                                .inc_by(datagram.len() as _);
-                        }
-                        transports::Addr::Ip(SocketAddr::V6(..)) => {
-                            self.metrics
-                                .magicsock
-                                .recv_data_ipv6
-                                .inc_by(datagram.len() as _);
-                        }
-                        transports::Addr::Relay(..) => {
-                            self.metrics
-                                .magicsock
-                                .recv_data_relay
-                                .inc_by(datagram.len() as _);
-                        }
-                    }
-
-                    quic_datagram_count += 1;
-                    buf_contains_quic_datagrams = true;
-                }
-            }
-
-            if buf_contains_quic_datagrams {
-                match source_addr {
-                    #[cfg(wasm_browser)]
-                    transports::Addr::Ip(_addr) => {
-                        panic!("cannot use IP based addressing in the browser");
-                    }
-                    #[cfg(not(wasm_browser))]
-                    transports::Addr::Ip(addr) => {
-                        // UDP
-
-                        // Update the EndpointMap and remap RecvMeta to the EndpointIdMappedAddr.
-                        match self.endpoint_map.receive_udp(*addr) {
-                            None => {
-                                // Check if this address is mapped to an IpMappedAddr
-                                if let Some(ip_mapped_addr) =
-                                    self.ip_mapped_addrs.get_mapped_addr(addr)
-                                {
-                                    trace!(
-                                        src = %addr,
-                                        count = %quic_datagram_count,
-                                        len = quinn_meta.len,
-                                        "UDP recv QUIC address discovery packets",
-                                    );
-                                    quic_packets_total += quic_datagram_count;
-                                    quinn_meta.addr = ip_mapped_addr.private_socket_addr();
-                                } else {
-                                    warn!(
-                                        src = %addr,
-                                        count = %quic_datagram_count,
-                                        len = quinn_meta.len,
-                                        "UDP recv quic packets: no endpoint state found, skipping",
-                                    );
-                                    // If we have no endpoint state for the from addr, set len to 0 to make
-                                    // quinn skip the buf completely.
-                                    quinn_meta.len = 0;
-                                }
-                            }
-                            Some((endpoint_id, quic_mapped_addr)) => {
-                                trace!(
-                                    src = %addr,
-                                    endpoint = %endpoint_id.fmt_short(),
-                                    count = %quic_datagram_count,
-                                    len = quinn_meta.len,
-                                    "UDP recv quic packets",
-                                );
-                                quic_packets_total += quic_datagram_count;
-                                quinn_meta.addr = quic_mapped_addr.private_socket_addr();
-                            }
-                        }
-                    }
-                    transports::Addr::Relay(src_url, src_endpoint) => {
-                        // Relay
-                        let quic_mapped_addr =
-                            self.endpoint_map.receive_relay(src_url, *src_endpoint);
-                        quinn_meta.addr = quic_mapped_addr.private_socket_addr();
-                    }
-                }
-            } else {
-                // If all datagrams in this buf are DISCO, set len to zero to make
-                // Quinn skip the buf completely.
-                quinn_meta.len = 0;
-            }
-            // Normalize local_ip
-            quinn_meta.dst_ip = dst_ip;
-        }
-
-        if quic_packets_total > 0 {
+            let datagram_count = quinn_meta.len.div_ceil(quinn_meta.stride);
             self.metrics
                 .magicsock
                 .recv_datagrams
-                .inc_by(quic_packets_total as _);
-            trace!("UDP recv: {} packets", quic_packets_total);
-        }
-    }
-
-    /// Handles a discovery message.
-    #[instrument("disco_in", skip_all, fields(endpoint = %sender.fmt_short(), ?src))]
-    fn handle_disco_message(&self, sender: PublicKey, sealed_box: &[u8], src: &transports::Addr) {
-        trace!("handle_disco_message start");
-        if self.is_closed() {
-            return;
-        }
-
-        if let transports::Addr::Relay(_, endpoint_id) = src {
-            if endpoint_id != &sender {
-                // TODO: return here?
-                warn!(
-                    "Received relay disco message from connection for {}, but with message from {}",
-                    endpoint_id.fmt_short(),
-                    sender.fmt_short()
+                .inc_by(datagram_count as _);
+            if quinn_meta.len > quinn_meta.stride {
+                trace!(
+                    src = ?source_addr,
+                    len = quinn_meta.len,
+                    stride = %quinn_meta.stride,
+                    datagram_count = quinn_meta.len.div_ceil(quinn_meta.stride),
+                    "GRO datagram received",
                 );
+                self.metrics.magicsock.recv_gro_datagrams.inc();
+            } else {
+                trace!(src = ?source_addr, len = quinn_meta.len, "datagram received");
             }
-        }
-
-        // We're now reasonably sure we're expecting communication from
-        // this endpoint, do the heavy crypto lifting to see what they want.
-        let dm = match self.disco.unseal_and_decode(sender, sealed_box) {
-            Ok(dm) => dm,
-            Err(DiscoBoxError::Open { source, .. }) => {
-                warn!(?source, "failed to open disco box");
-                self.metrics.magicsock.recv_disco_bad_key.inc();
-                return;
-            }
-            Err(DiscoBoxError::Parse { source, .. }) => {
-                // Couldn't parse it, but it was inside a correctly
-                // signed box, so just ignore it, assuming it's from a
-                // newer version of Tailscale that we don't
-                // understand. Not even worth logging about, lest it
-                // be too spammy for old clients.
-
-                self.metrics.magicsock.recv_disco_bad_parse.inc();
-                debug!(?source, "failed to parse disco message");
-                return;
-            }
-        };
-
-        if src.is_relay() {
-            self.metrics.magicsock.recv_disco_relay.inc();
-        } else {
-            self.metrics.magicsock.recv_disco_udp.inc();
-        }
-
-        let span = trace_span!("handle_disco", ?dm);
-        let _guard = span.enter();
-        trace!("receive disco message");
-        match dm {
-            disco::Message::Ping(ping) => {
-                self.metrics.magicsock.recv_disco_ping.inc();
-                self.handle_ping(ping, sender, src);
-            }
-            disco::Message::Pong(pong) => {
-                self.metrics.magicsock.recv_disco_pong.inc();
-                self.endpoint_map
-                    .handle_pong(sender, src, pong, &self.metrics.magicsock);
-            }
-            disco::Message::CallMeMaybe(cm) => {
-                self.metrics.magicsock.recv_disco_call_me_maybe.inc();
-                match src {
-                    transports::Addr::Relay(url, _) => {
-                        event!(
-                            target: "iroh::_events::call-me-maybe::recv",
-                            Level::DEBUG,
-                            remote_endpoint = %sender.fmt_short(),
-                            via = ?url,
-                            their_addrs = ?cm.my_numbers,
-                        );
-                    }
-                    _ => {
-                        warn!("call-me-maybe packets should only come via relay");
-                        return;
-                    }
+            match source_addr {
+                transports::Addr::Ip(SocketAddr::V4(..)) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_ipv4
+                        .inc_by(quinn_meta.len as _);
                 }
-                let ping_actions =
-                    self.endpoint_map
-                        .handle_call_me_maybe(sender, cm, &self.metrics.magicsock);
-                for action in ping_actions {
-                    match action {
-                        PingAction::SendCallMeMaybe { .. } => {
-                            warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");
-                        }
-                        PingAction::SendPing(ping) => {
-                            self.send_ping_queued(ping);
-                        }
-                    }
+                transports::Addr::Ip(SocketAddr::V6(..)) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_ipv6
+                        .inc_by(quinn_meta.len as _);
                 }
-            }
-        }
-        trace!("disco message handled");
-    }
+                transports::Addr::Relay(src_url, src_node) => {
+                    self.metrics
+                        .magicsock
+                        .recv_data_relay
+                        .inc_by(quinn_meta.len as _);
 
-    /// Handle a ping message.
-    fn handle_ping(&self, dm: disco::Ping, sender: EndpointId, src: &transports::Addr) {
-        // Insert the ping into the endpoint map, and return whether a ping with this tx_id was already
-        // received.
-        let addr: SendAddr = src.clone().into();
-        let handled = self
-            .endpoint_map
-            .handle_ping(sender, addr.clone(), dm.tx_id);
-        match handled.role {
-            PingRole::Duplicate => {
-                debug!(?src, tx = %HEXLOWER.encode(&dm.tx_id), "received ping: path already confirmed, skip");
-                return;
-            }
-            PingRole::LikelyHeartbeat => {}
-            PingRole::NewPath => {
-                debug!(?src, tx = %HEXLOWER.encode(&dm.tx_id), "received ping: new path");
-            }
-            PingRole::Activate => {
-                debug!(?src, tx = %HEXLOWER.encode(&dm.tx_id), "received ping: path active");
-            }
-        }
-
-        // Send a pong.
-        debug!(tx = %HEXLOWER.encode(&dm.tx_id), %addr, dstkey = %sender.fmt_short(),
-               "sending pong");
-        let pong = disco::Message::Pong(disco::Pong {
-            tx_id: dm.tx_id,
-            ping_observed_addr: addr.clone(),
-        });
-        event!(
-            target: "iroh::_events::pong::sent",
-            Level::DEBUG,
-            remote_endpoint = %sender.fmt_short(),
-            dst = ?addr,
-            txn = ?dm.tx_id,
-        );
-
-        if !self.disco.try_send(addr.clone(), sender, pong) {
-            warn!(%addr, "failed to queue pong");
-        }
-
-        if let Some(ping) = handled.needs_ping_back {
-            debug!(
-                %addr,
-                dstkey = %sender.fmt_short(),
-                "sending direct ping back",
-            );
-            self.send_ping_queued(ping);
-        }
-    }
-
-    fn send_ping_queued(&self, ping: SendPing) {
-        let SendPing {
-            id,
-            dst,
-            dst_endpoint,
-            tx_id,
-            purpose,
-        } = ping;
-        let msg = disco::Message::Ping(disco::Ping {
-            tx_id,
-            endpoint_key: self.public_key,
-        });
-        let sent = self.disco.try_send(dst.clone(), dst_endpoint, msg);
-        if sent {
-            let msg_sender = self.actor_sender.clone();
-            trace!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (queued)");
-            self.endpoint_map
-                .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
-        } else {
-            warn!(dst = ?dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "failed to send ping: queues full");
-        }
-    }
-
-    /// Send the given ping actions out.
-    async fn send_ping_actions(&self, sender: &UdpSender, msgs: Vec<PingAction>) -> io::Result<()> {
-        for msg in msgs {
-            // Abort sending as soon as we know we are shutting down.
-            if self.is_closing() || self.is_closed() {
-                return Ok(());
-            }
-            match msg {
-                PingAction::SendCallMeMaybe {
-                    relay_url,
-                    dst_endpoint,
-                } => {
-                    // Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
-                    //
-                    // To send the call-me-maybe message, we need to know our current direct addresses.  If
-                    // this information is too stale, the call-me-maybe is queued while a net_report run is
-                    // scheduled.  Once this run finishes, the call-me-maybe will be sent.
-                    match self.direct_addrs.fresh_enough() {
-                        Ok(()) => {
-                            let msg = disco::Message::CallMeMaybe(
-                                self.direct_addrs.to_call_me_maybe_message(),
-                            );
-                            if !self.disco.try_send(
-                                SendAddr::Relay(relay_url.clone()),
-                                dst_endpoint,
-                                msg.clone(),
-                            ) {
-                                warn!(dstkey = %dst_endpoint.fmt_short(), %relay_url, "relay channel full, dropping call-me-maybe");
-                            } else {
-                                debug!(dstkey = %dst_endpoint.fmt_short(), %relay_url, "call-me-maybe sent");
-                            }
-                        }
-                        Err(last_refresh_ago) => {
-                            debug!(
-                                ?last_refresh_ago,
-                                "want call-me-maybe but direct addrs stale; queuing after restun",
-                            );
-                            self.actor_sender
-                                .try_send(ActorMessage::ScheduleDirectAddrUpdate(
-                                    UpdateReason::RefreshForPeering,
-                                    Some((dst_endpoint, relay_url)),
-                                ))
-                                .ok();
-                        }
-                    }
+                    // Fill in the correct mapped address
+                    let mapped_addr = self
+                        .remote_map
+                        .relay_mapped_addrs
+                        .get(&(src_url.clone(), *src_node));
+                    quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
-                PingAction::SendPing(SendPing {
-                    id,
-                    dst,
-                    dst_endpoint,
-                    tx_id,
-                    purpose,
-                }) => {
-                    let msg = disco::Message::Ping(disco::Ping {
-                        tx_id,
-                        endpoint_key: self.public_key,
-                    });
-
-                    self.send_disco_message(sender, dst.clone(), dst_endpoint, msg)
-                        .await?;
-                    debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent");
-                    let msg_sender = self.actor_sender.clone();
-                    self.endpoint_map
-                        .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Sends out a disco message.
-    async fn send_disco_message(
-        &self,
-        sender: &UdpSender,
-        dst: SendAddr,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -> io::Result<()> {
-        let dst = match dst {
-            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
-            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
-        };
-
-        trace!(?dst, %msg, "send disco message (UDP)");
-        if self.is_closed() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            ));
-        }
-
-        let pkt = self.disco.encode_and_seal(self.public_key, dst_key, &msg);
-
-        let transmit = transports::Transmit {
-            contents: &pkt,
-            ecn: None,
-            segment_size: None,
-        };
-
-        let dst2 = dst.clone();
-        match sender.send(&dst2, None, &transmit).await {
-            Ok(()) => {
-                trace!(?dst, %msg, "sent disco message");
-                self.metrics.magicsock.sent_disco_udp.inc();
-                disco_message_sent(&msg, &self.metrics.magicsock);
-                Ok(())
-            }
-            Err(err) => {
-                warn!(?dst, ?msg, ?err, "failed to send disco message");
-                Err(err)
-            }
-        }
-    }
-    /// Tries to send out the given ping actions out.
-    fn try_send_ping_actions(&self, sender: &UdpSender, msgs: Vec<PingAction>) -> io::Result<()> {
-        for msg in msgs {
-            // Abort sending as soon as we know we are shutting down.
-            if self.is_closing() || self.is_closed() {
-                return Ok(());
-            }
-            match msg {
-                PingAction::SendCallMeMaybe {
-                    relay_url,
-                    dst_endpoint,
-                } => {
-                    // Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
-                    //
-                    // To send the call-me-maybe message, we need to know our current direct addresses.  If
-                    // this information is too stale, the call-me-maybe is queued while a net_report run is
-                    // scheduled.  Once this run finishes, the call-me-maybe will be sent.
-                    match self.direct_addrs.fresh_enough() {
-                        Ok(()) => {
-                            let msg = disco::Message::CallMeMaybe(
-                                self.direct_addrs.to_call_me_maybe_message(),
-                            );
-                            if !self.disco.try_send(
-                                SendAddr::Relay(relay_url.clone()),
-                                dst_endpoint,
-                                msg.clone(),
-                            ) {
-                                warn!(dstkey = %dst_endpoint.fmt_short(), %relay_url, "relay channel full, dropping call-me-maybe");
-                            } else {
-                                debug!(dstkey = %dst_endpoint.fmt_short(), %relay_url, "call-me-maybe sent");
-                            }
-                        }
-                        Err(last_refresh_ago) => {
-                            debug!(
-                                ?last_refresh_ago,
-                                "want call-me-maybe but direct addrs stale; queuing after restun",
-                            );
-                            self.actor_sender
-                                .try_send(ActorMessage::ScheduleDirectAddrUpdate(
-                                    UpdateReason::RefreshForPeering,
-                                    Some((dst_endpoint, relay_url)),
-                                ))
-                                .ok();
-                        }
-                    }
-                }
-                PingAction::SendPing(SendPing {
-                    id,
-                    dst,
-                    dst_endpoint,
-                    tx_id,
-                    purpose,
-                }) => {
-                    let msg = disco::Message::Ping(disco::Ping {
-                        tx_id,
-                        endpoint_key: self.public_key,
-                    });
-
-                    self.try_send_disco_message(sender, dst.clone(), dst_endpoint, msg)?;
-                    debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent");
-                    let msg_sender = self.actor_sender.clone();
-                    self.endpoint_map
-                        .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Tries to send out a disco message.
-    fn try_send_disco_message(
-        &self,
-        sender: &UdpSender,
-        dst: SendAddr,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -> io::Result<()> {
-        let dst = match dst {
-            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
-            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
-        };
-
-        trace!(?dst, %msg, "send disco message (UDP)");
-        if self.is_closed() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            ));
-        }
-
-        let pkt = self.disco.encode_and_seal(self.public_key, dst_key, &msg);
-
-        let transmit = transports::Transmit {
-            contents: &pkt,
-            ecn: None,
-            segment_size: None,
-        };
-
-        let dst2 = dst.clone();
-        match sender.inner_try_send(&dst2, None, &transmit) {
-            Ok(()) => {
-                trace!(?dst, %msg, "sent disco message");
-                self.metrics.magicsock.sent_disco_udp.inc();
-                disco_message_sent(&msg, &self.metrics.magicsock);
-                Ok(())
-            }
-            Err(err) => {
-                warn!(?dst, ?msg, ?err, "failed to send disco message");
-                Err(err)
             }
         }
     }
@@ -1170,32 +571,6 @@ impl MagicSock {
     }
 }
 
-#[derive(Clone, Debug)]
-enum MappedAddr {
-    EndpointId(EndpointIdMappedAddr),
-    #[cfg(not(wasm_browser))]
-    Ip(IpMappedAddr),
-    None(SocketAddr),
-}
-
-impl From<SocketAddr> for MappedAddr {
-    fn from(value: SocketAddr) -> Self {
-        match value.ip() {
-            IpAddr::V4(_) => MappedAddr::None(value),
-            IpAddr::V6(addr) => {
-                if let Ok(endpoint_id_mapped_addr) = EndpointIdMappedAddr::try_from(addr) {
-                    return MappedAddr::EndpointId(endpoint_id_mapped_addr);
-                }
-                #[cfg(not(wasm_browser))]
-                if let Ok(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
-                    return MappedAddr::Ip(ip_mapped_addr);
-                }
-                MappedAddr::None(value)
-            }
-        }
-    }
-}
-
 /// Manages currently running direct addr discovery, aka net_report runs.
 ///
 /// Invariants:
@@ -1213,6 +588,7 @@ struct DirectAddrUpdateState {
     net_reporter: Arc<AsyncMutex<net_report::Client>>,
     relay_map: RelayMap,
     run_done: mpsc::Sender<()>,
+    shutdown_token: CancellationToken,
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
@@ -1220,7 +596,6 @@ enum UpdateReason {
     /// Initial state
     #[default]
     None,
-    RefreshForPeering,
     Periodic,
     PortmapUpdated,
     LinkChangeMajor,
@@ -1241,6 +616,7 @@ impl DirectAddrUpdateState {
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
+        shutdown_token: CancellationToken,
     ) -> Self {
         DirectAddrUpdateState {
             want_update: Default::default(),
@@ -1250,6 +626,7 @@ impl DirectAddrUpdateState {
             msock,
             relay_map,
             run_done,
+            shutdown_token,
         }
     }
 
@@ -1288,12 +665,13 @@ impl DirectAddrUpdateState {
         mut net_reporter: tokio::sync::OwnedMutexGuard<net_report::Client>,
     ) {
         debug!("starting direct addr update ({:?})", why);
-        #[cfg(not(wasm_browser))]
-        self.port_mapper.procure_mapping();
         // Don't start a net report probe if we know
         // we are shutting down
-        if self.msock.is_closing() || self.msock.is_closed() {
+        if self.shutdown_token.is_cancelled() {
             debug!("skipping net_report, socket is shutting down");
+            // deactivate portmapper
+            #[cfg(not(wasm_browser))]
+            self.port_mapper.deactivate();
             return;
         }
         if self.relay_map.is_empty() {
@@ -1302,22 +680,33 @@ impl DirectAddrUpdateState {
             return;
         }
 
+        #[cfg(not(wasm_browser))]
+        self.port_mapper.procure_mapping();
+
         debug!("requesting net_report report");
         let msock = self.msock.clone();
 
         let run_done = self.run_done.clone();
+
+        // Ensure that reports are cancelled when we shutdown
+        let token = self.shutdown_token.child_token();
+        let inner_token = token.child_token();
         task::spawn(
             async move {
-                let fut = time::timeout(
+                let fut = token.run_until_cancelled(time::timeout(
                     NET_REPORT_TIMEOUT,
-                    net_reporter.get_report(if_state, why.is_major()),
-                );
+                    net_reporter.get_report(if_state, why.is_major(), inner_token),
+                ));
+
                 match fut.await {
-                    Ok(report) => {
+                    Some(Ok(report)) => {
                         msock.net_report.set((Some(report), why)).ok();
                     }
-                    Err(time::Elapsed { .. }) => {
+                    Some(Err(time::Elapsed { .. })) => {
                         warn!("net_report report timed out");
+                    }
+                    None => {
+                        trace!("net_report cancelled");
                     }
                 }
 
@@ -1344,16 +733,16 @@ pub enum CreateHandleError {
     CreateNetmonMonitor { source: netmon::Error },
     #[error("Failed to subscribe netmon monitor")]
     SubscribeNetmonMonitor { source: netmon::Error },
+    #[error("Invalid transport configuration")]
+    InvalidTransportConfig,
 }
 
 impl Handle {
-    /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
+    /// Creates a magic [`MagicSock`].
     async fn new(opts: Options) -> Result<Self, CreateHandleError> {
         let Options {
-            addr_v4,
-            addr_v6,
             secret_key,
-            relay_map,
+            transports: transport_configs,
             discovery_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -1361,79 +750,112 @@ impl Handle {
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection,
             metrics,
+            hooks,
         } = opts;
 
         let discovery = ConcurrentDiscovery::default();
+        #[cfg(not(wasm_browser))]
+        let port_mapper =
+            portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
 
-        let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+        let relay_transport_configs: Vec<_> = transport_configs
+            .iter()
+            .filter(|t| matches!(t, TransportConfig::Relay { .. }))
+            .collect();
+
+        // Currently we only support a single relay transport
+        if relay_transport_configs.len() > 1 {
+            bail!(CreateHandleError::InvalidTransportConfig);
+        }
+        let relay_map = relay_transport_configs
+            .iter()
+            .filter_map(|t| {
+                #[allow(irrefutable_let_patterns)]
+                if let TransportConfig::Relay { relay_map, .. } = t {
+                    Some(relay_map.clone())
+                } else {
+                    None
+                }
+            })
+            .next()
+            .unwrap_or_else(RelayMap::empty);
+
+        let my_relay = Watchable::new(None);
+        let ipv6_reported = Arc::new(AtomicBool::new(false));
+
+        let relay_actor_config = RelayActorConfig {
+            my_relay: my_relay.clone(),
+            secret_key: secret_key.clone(),
+            #[cfg(not(wasm_browser))]
+            dns_resolver: dns_resolver.clone(),
+            proxy_url: proxy_url.clone(),
+            ipv6_reported: ipv6_reported.clone(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
+            metrics: metrics.magicsock.clone(),
+        };
+
+        let shutdown_state = ShutdownState::default();
+        let shutdown_token = shutdown_state.at_endpoint_closed.child_token();
+
+        let transports = Transports::bind(
+            &transport_configs,
+            relay_actor_config,
+            &metrics,
+            shutdown_token.child_token(),
+        )
+        .map_err(|err| e!(CreateHandleError::BindSockets, err))?;
 
         #[cfg(not(wasm_browser))]
-        let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, &metrics)
-            .map_err(|err| e!(CreateHandleError::BindSockets, err))?;
-
-        let ip_mapped_addrs = IpMappedAddresses::default();
+        {
+            if let Some(v4_port) = transports.local_addrs().into_iter().find_map(|t| {
+                if let transports::Addr::Ip(SocketAddr::V4(addr)) = t {
+                    Some(addr.port())
+                } else {
+                    None
+                }
+            }) {
+                // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
+                match v4_port.try_into() {
+                    Ok(non_zero_port) => {
+                        port_mapper.update_local_port(non_zero_port);
+                    }
+                    Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
+                }
+            }
+        }
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
-        let ipv6_reported = false;
-
-        // load the endpoint data
-        let endpoint_map = EndpointMap::load_from_vec(
-            Vec::new(),
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection,
-            ipv6_reported,
-            &metrics.magicsock,
-        );
-
-        let my_relay = Watchable::new(None);
-        let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
-
-        let shutdown_token = CancellationToken::new();
-
-        let relay_transport = RelayTransport::new(
-            RelayActorConfig {
-                my_relay: my_relay.clone(),
-                secret_key: secret_key.clone(),
-                #[cfg(not(wasm_browser))]
-                dns_resolver: dns_resolver.clone(),
-                proxy_url: proxy_url.clone(),
-                ipv6_reported: ipv6_reported.clone(),
-                #[cfg(any(test, feature = "test-utils"))]
-                insecure_skip_relay_cert_verify,
-                metrics: metrics.magicsock.clone(),
-            },
-            shutdown_token.child_token(),
-        );
-        let relay_transports = vec![relay_transport];
-
-        let secret_encryption_key = secret_ed_box(&secret_key);
         #[cfg(not(wasm_browser))]
-        let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
+        let ipv6 = transports
+            .ip_bind_addrs()
+            .into_iter()
+            .any(|addr| addr.is_ipv6());
 
-        #[cfg(not(wasm_browser))]
-        let transports = Transports::new(ip_transports, relay_transports);
-        #[cfg(wasm_browser)]
-        let transports = Transports::new(relay_transports);
+        let direct_addrs = DiscoveredDirectAddrs::default();
 
-        let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
+        let remote_map = {
+            RemoteMap::new(
+                secret_key.public(),
+                metrics.magicsock.clone(),
+                direct_addrs.addrs.watch(),
+                discovery.clone(),
+                shutdown_token.child_token(),
+            )
+        };
 
         let msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
-            closing: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
-            disco,
             actor_sender: actor_sender.clone(),
+            shutdown: shutdown_state,
             ipv6_reported,
-            endpoint_map,
-            ip_mapped_addrs: ip_mapped_addrs.clone(),
+            remote_map,
             discovery,
             relay_map: relay_map.clone(),
             discovery_user_data: RwLock::new(discovery_user_data),
-            direct_addrs: DiscoveredDirectAddrs::default(),
+            direct_addrs,
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
             dns_resolver: dns_resolver.clone(),
@@ -1441,6 +863,7 @@ impl Handle {
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
+            hooks,
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -1451,17 +874,13 @@ impl Handle {
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
-        let sender = transports.create_sender(msock.clone());
         let local_addrs_watch = transports.local_addrs_watch();
         let network_change_sender = transports.create_network_change_sender();
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
-            Box::new(MagicUdpSocket {
-                socket: msock.clone(),
-                transports,
-            }),
+            Box::new(MagicTransport::new(msock.clone(), transports)),
             #[cfg(not(wasm_browser))]
             Arc::new(quinn::TokioRuntime),
             #[cfg(wasm_browser)]
@@ -1500,8 +919,6 @@ impl Handle {
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
             dns_resolver,
-            #[cfg(not(wasm_browser))]
-            Some(ip_mapped_addrs),
             relay_map.clone(),
             net_report_config,
             metrics.net_report.clone(),
@@ -1515,6 +932,7 @@ impl Handle {
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
             direct_addr_done_tx,
+            msock.shutdown.at_close_start.child_token(),
         );
 
         let netmon_watcher = network_monitor.interface_state();
@@ -1529,8 +947,6 @@ impl Handle {
             direct_addr_update_state,
             network_change_sender,
             direct_addr_done_rx,
-            pending_call_me_maybes: Default::default(),
-            disco_receiver,
         };
         // Initialize addresses
         #[cfg(not(wasm_browser))]
@@ -1538,7 +954,7 @@ impl Handle {
 
         let actor_task = task::spawn(
             actor
-                .run(shutdown_token.child_token(), local_addrs_watch, sender)
+                .run(shutdown_token.child_token(), local_addrs_watch)
                 .instrument(info_span!("actor")),
         );
 
@@ -1548,7 +964,6 @@ impl Handle {
             msock,
             actor_task,
             endpoint,
-            shutdown_token,
         })
     }
 
@@ -1559,12 +974,21 @@ impl Handle {
 
     /// Closes the connection.
     ///
-    /// Only the first close does anything. Any later closes return nil.
-    /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
-    /// indefinitely after this call.
+    /// Only the first close does anything. Any later closes return nil.  Polling the socket
+    /// ([`quinn::AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`] indefinitely
+    /// after this call.
+    ///
+    /// [`Poll::Pending`]: std::task::Poll::Pending
     #[instrument(skip_all)]
     pub(crate) async fn close(&self) {
+        if self.msock.is_closed() || self.msock.is_closing() {
+            return;
+        }
         trace!(me = ?self.public_key, "magicsock closing...");
+
+        // Cancel at_close_start token, which cancels running netreports.
+        self.msock.shutdown.at_close_start.cancel();
+
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
 
@@ -1583,13 +1007,12 @@ impl Handle {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+        trace!("wait_idle start");
         self.endpoint.wait_idle().await;
+        trace!("wait_idle done");
 
-        if self.msock.is_closed() {
-            return;
-        }
-        self.msock.closing.store(true, Ordering::Relaxed);
-        self.shutdown_token.cancel();
+        // Start cancellation of all actors
+        self.msock.shutdown.at_endpoint_closed.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
@@ -1610,7 +1033,7 @@ impl Handle {
             }
         }
 
-        self.msock.closed.store(true, Ordering::SeqCst);
+        self.msock.shutdown.closed.store(true, Ordering::SeqCst);
 
         trace!("magicsock closed");
     }
@@ -1630,146 +1053,9 @@ fn default_quic_client_config() -> rustls::ClientConfig {
 }
 
 #[derive(Debug)]
-struct DiscoState {
-    /// Encryption key for this endpoint.
-    secret_encryption_key: crypto_box::SecretKey,
-    /// The state for an active DiscoKey.
-    secrets: Mutex<HashMap<PublicKey, SharedSecret>>,
-    /// Disco (ping) queue
-    sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
-}
-
-impl DiscoState {
-    fn new(
-        secret_encryption_key: crypto_box::SecretKey,
-    ) -> (Self, mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>) {
-        let (disco_sender, disco_receiver) = mpsc::channel(256);
-
-        (
-            Self {
-                secret_encryption_key,
-                secrets: Default::default(),
-                sender: disco_sender,
-            },
-            disco_receiver,
-        )
-    }
-
-    fn try_send(&self, dst: SendAddr, endpoint_id: PublicKey, msg: disco::Message) -> bool {
-        self.sender.try_send((dst, endpoint_id, msg)).is_ok()
-    }
-
-    fn encode_and_seal(
-        &self,
-        this_endpoint_id: EndpointId,
-        other_endpoint_id: EndpointId,
-        msg: &disco::Message,
-    ) -> Bytes {
-        let mut seal = msg.as_bytes();
-        self.get_secret(other_endpoint_id, |secret| secret.seal(&mut seal));
-        disco::encode_message(&this_endpoint_id, seal).into()
-    }
-
-    fn unseal_and_decode(
-        &self,
-        endpoint_id: PublicKey,
-        sealed_box: &[u8],
-    ) -> Result<disco::Message, DiscoBoxError> {
-        let mut sealed_box = sealed_box.to_vec();
-        self.get_secret(endpoint_id, |secret| secret.open(&mut sealed_box))
-            .map_err(|source| e!(DiscoBoxError::Open { source }))?;
-        disco::Message::from_bytes(&sealed_box)
-            .map_err(|source| e!(DiscoBoxError::Parse { source }))
-    }
-
-    fn get_secret<F, T>(&self, endpoint_id: PublicKey, cb: F) -> T
-    where
-        F: FnOnce(&mut SharedSecret) -> T,
-    {
-        let mut inner = self.secrets.lock().expect("poisoned");
-        let x = inner.entry(endpoint_id).or_insert_with(|| {
-            let public_key = public_ed_box(&endpoint_id);
-            SharedSecret::new(&self.secret_encryption_key, &public_key)
-        });
-        cb(x)
-    }
-}
-
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta)]
-#[non_exhaustive]
-enum DiscoBoxError {
-    #[error("Failed to open crypto box")]
-    Open { source: DecryptionError },
-    #[error("Failed to parse disco message")]
-    Parse { source: disco::ParseError },
-}
-
-#[derive(Debug)]
-struct MagicUdpSocket {
-    socket: Arc<MagicSock>,
-    transports: Transports,
-}
-
-impl AsyncUdpSocket for MagicUdpSocket {
-    fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
-        Box::pin(self.transports.create_sender(self.socket.clone()))
-    }
-
-    /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
-    fn poll_recv(
-        &mut self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        self.transports.poll_recv(cx, bufs, metas, &self.socket)
-    }
-
-    #[cfg(not(wasm_browser))]
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs: Vec<_> = self
-            .transports
-            .local_addrs()
-            .into_iter()
-            .filter_map(|addr| {
-                let addr: SocketAddr = addr.into_socket_addr()?;
-                Some(addr)
-            })
-            .collect();
-
-        if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
-            return Ok(*addr);
-        }
-        if let Some(SocketAddr::V4(addr)) = addrs.first() {
-            // Pretend to be IPv6, because our `MappedAddr`s need to be IPv6.
-            let ip = addr.ip().to_ipv6_mapped().into();
-            return Ok(SocketAddr::new(ip, addr.port()));
-        }
-
-        Err(io::Error::other("no valid address available"))
-    }
-
-    #[cfg(wasm_browser)]
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        // Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
-        Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
-    }
-
-    fn max_receive_segments(&self) -> usize {
-        self.transports.max_receive_segments()
-    }
-
-    fn may_fragment(&self) -> bool {
-        self.transports.may_fragment()
-    }
-}
-
-#[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 enum ActorMessage {
-    EndpointPingExpired(usize, TransactionId),
     NetworkChange,
-    ScheduleDirectAddrUpdate(UpdateReason, Option<(EndpointId, RelayUrl)>),
     RelayMapChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -1787,61 +1073,6 @@ struct Actor {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
-
-    /// List of CallMeMaybe disco messages that should be sent out after
-    /// the next endpoint update completes
-    pending_call_me_maybes: HashMap<PublicKey, RelayUrl>,
-    disco_receiver: mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>,
-}
-
-#[cfg(not(wasm_browser))]
-fn bind_ip(
-    addr_v4: SocketAddrV4,
-    addr_v6: Option<SocketAddrV6>,
-    metrics: &EndpointMetrics,
-) -> io::Result<(Vec<IpTransport>, portmapper::Client)> {
-    let port_mapper =
-        portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
-
-    let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4))?);
-    let ip4_port = v4.local_addr()?.port();
-    let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
-
-    let addr_v6 =
-        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
-
-    let v6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
-        Ok(sock) => Some(Arc::new(sock)),
-        Err(err) => {
-            info!("bind ignoring IPv6 bind failure: {:?}", err);
-            None
-        }
-    };
-
-    let port = v4.local_addr().map_or(0, |p| p.port());
-
-    let mut ip = vec![IpTransport::new(
-        addr_v4.into(),
-        v4,
-        metrics.magicsock.clone(),
-    )];
-    if let Some(v6) = v6 {
-        ip.push(IpTransport::new(
-            addr_v6.into(),
-            v6,
-            metrics.magicsock.clone(),
-        ))
-    }
-
-    // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
-    match port.try_into() {
-        Ok(non_zero_port) => {
-            port_mapper.update_local_port(non_zero_port);
-        }
-        Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
-    }
-
-    Ok((ip, port_mapper))
 }
 
 impl Actor {
@@ -1849,13 +1080,9 @@ impl Actor {
         mut self,
         shutdown_token: CancellationToken,
         mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
-        sender: UdpSender,
     ) {
         // Setup network monitoring
         let mut current_netmon_state = self.netmon_watcher.get();
-
-        #[cfg(not(wasm_browser))]
-        let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
 
         #[cfg(not(wasm_browser))]
         let mut portmap_watcher = self
@@ -1872,21 +1099,16 @@ impl Actor {
         // ensure we are doing an initial publish of our addresses
         self.msock.publish_my_addr();
 
-        loop {
+        while !shutdown_token.is_cancelled() {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
             let portmap_watcher_changed = portmap_watcher.changed();
             #[cfg(wasm_browser)]
             let portmap_watcher_changed = n0_future::future::pending();
 
-            #[cfg(not(wasm_browser))]
-            let direct_addr_heartbeat_timer_tick = direct_addr_heartbeat_timer.tick();
-            #[cfg(wasm_browser)]
-            let direct_addr_heartbeat_timer_tick = n0_future::future::pending();
-
             tokio::select! {
                 _ = shutdown_token.cancelled() => {
-                    debug!("shutting down");
+                    debug!("tick: shutting down");
                     return;
                 }
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
@@ -1966,22 +1188,6 @@ impl Actor {
                     #[cfg(wasm_browser)]
                     let _unused_in_browsers = change;
                 },
-                _ = direct_addr_heartbeat_timer_tick => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!(
-                            "tick: direct addr heartbeat {} direct addrs",
-                            self.msock.endpoint_map.endpoint_count(),
-                        );
-                        self.msock.metrics.magicsock.actor_tick_direct_addr_heartbeat.inc();
-                        // TODO: this might trigger too many packets at once, pace this
-
-                        self.msock.endpoint_map.prune_inactive();
-                        let have_v6 = self.netmon_watcher.clone().get().have_v6;
-                        let msgs = self.msock.endpoint_map.endpoints_stayin_alive(have_v6);
-                        self.handle_ping_actions(&sender, msgs).await;
-                    }
-                }
                 state = self.netmon_watcher.updated() => {
                     let Ok(state) = state else {
                         trace!("tick: link change receiver closed");
@@ -1999,10 +1205,11 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
-                    if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
-                        warn!(%dst, endpoint = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
-                    }
+                eid = poll_fn(|cx| self.msock.remote_map.poll_cleanup(cx)) => {
+                    trace!(%eid, "cleaned up RemoteStateActor");
+                }
+                else => {
+                    trace!("tick: else");
                 }
             }
         }
@@ -2019,10 +1226,11 @@ impl Actor {
             #[cfg(not(wasm_browser))]
             self.msock.dns_resolver.reset().await;
             self.re_stun(UpdateReason::LinkChangeMajor);
-            self.reset_endpoint_states();
         } else {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
+
+        self.msock.remote_map.on_network_change(is_major);
     }
 
     fn handle_relay_map_change(&mut self) {
@@ -2035,35 +1243,13 @@ impl Actor {
             .schedule_run(why, state.into());
     }
 
-    #[instrument(skip_all)]
-    async fn handle_ping_actions(&mut self, sender: &UdpSender, msgs: Vec<PingAction>) {
-        if let Err(err) = self.msock.send_ping_actions(sender, msgs).await {
-            warn!("Failed to send ping actions: {err:#}");
-        }
-    }
-
     /// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
     async fn handle_actor_message(&mut self, msg: ActorMessage) {
         match msg {
-            ActorMessage::EndpointPingExpired(id, txid) => {
-                self.msock.endpoint_map.notify_ping_timeout(
-                    id,
-                    txid,
-                    &self.msock.metrics.magicsock,
-                );
-            }
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
-            }
-            ActorMessage::ScheduleDirectAddrUpdate(why, data) => {
-                if let Some((endpoint, url)) = data {
-                    self.pending_call_me_maybes.insert(endpoint, url);
-                }
-                let state = self.netmon_watcher.get();
-                self.direct_addr_update_state
-                    .schedule_run(why, state.into());
             }
             ActorMessage::RelayMapChange => {
                 self.handle_relay_map_change();
@@ -2151,7 +1337,6 @@ impl Actor {
                 })
                 .collect(),
         );
-        self.send_queued_call_me_maybes();
     }
 
     #[cfg(not(wasm_browser))]
@@ -2218,22 +1403,6 @@ impl Actor {
         }
     }
 
-    fn send_queued_call_me_maybes(&mut self) {
-        let msg = self.msock.direct_addrs.to_call_me_maybe_message();
-        let msg = disco::Message::CallMeMaybe(msg);
-        // allocate, to minimize locking duration
-
-        for (public_key, url) in self.pending_call_me_maybes.drain() {
-            if !self
-                .msock
-                .disco
-                .try_send(SendAddr::Relay(url), public_key, msg.clone())
-            {
-                warn!(endpoint = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
-            }
-        }
-    }
-
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
         if let Some(ref mut r) = report {
             self.msock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
@@ -2249,15 +1418,6 @@ impl Actor {
 
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report.as_ref());
-    }
-
-    /// Resets the preferred address for all endpoints.
-    /// This is called when connectivity changes enough that we no longer trust the old routes.
-    #[instrument(skip_all)]
-    fn reset_endpoint_states(&mut self) {
-        self.msock
-            .endpoint_map
-            .reset_endpoint_states(&self.msock.metrics.magicsock)
     }
 }
 
@@ -2276,31 +1436,6 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
         );
         time::interval(d)
     }
-}
-
-#[cfg(not(wasm_browser))]
-fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<UdpSocket> {
-    debug!(%addr, "binding");
-
-    // First try binding a preferred port, if specified
-    match UdpSocket::bind_full(addr) {
-        Ok(socket) => {
-            let local_addr = socket.local_addr()?;
-            debug!(%addr, %local_addr, "successfully bound");
-            return Ok(socket);
-        }
-        Err(err) => {
-            debug!(%addr, "failed to bind: {err:#}");
-            // If that was already the fallback port, then error out
-            if addr.port() == 0 {
-                return Err(err);
-            }
-        }
-    }
-
-    // Otherwise, try binding with port 0
-    addr.set_port(0);
-    UdpSocket::bind_full(addr)
 }
 
 /// The discovered direct addresses of this [`MagicSock`].
@@ -2337,130 +1472,6 @@ impl DiscoveredDirectAddrs {
     fn sockaddrs(&self) -> impl Iterator<Item = SocketAddr> {
         self.addrs.get().into_iter().map(|da| da.addr)
     }
-
-    /// Whether the direct addr information is considered "fresh".
-    ///
-    /// If not fresh you should probably update the direct addresses before using this info.
-    ///
-    /// Returns `Ok(())` if fresh enough and `Err(elapsed)` if not fresh enough.
-    /// `elapsed` is the time elapsed since the direct addresses were last updated.
-    ///
-    /// If there is no direct address information `Err(Duration::ZERO)` is returned.
-    fn fresh_enough(&self) -> Result<(), Duration> {
-        match *self.updated_at.read().expect("poisoned") {
-            None => Err(Duration::ZERO),
-            Some(time) => {
-                let elapsed = time.elapsed();
-                if elapsed <= ENDPOINTS_FRESH_ENOUGH_DURATION {
-                    Ok(())
-                } else {
-                    Err(elapsed)
-                }
-            }
-        }
-    }
-
-    fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
-        let my_numbers = self.addrs.get().into_iter().map(|da| da.addr).collect();
-        disco::CallMeMaybe { my_numbers }
-    }
-}
-
-/// The fake address used by the QUIC layer to address an endpoint.
-///
-/// You can consider this as nothing more than a lookup key for an endpoint the [`MagicSock`] knows
-/// about.
-///
-/// [`MagicSock`] can reach an endpoint by several real socket addresses, or maybe even via the relay
-/// endpoint.  The QUIC layer however needs to address an endpoint by a stable [`SocketAddr`] so
-/// that normal socket APIs can function.  Thus when a new endpoint is introduced to a [`MagicSock`]
-/// it is given a new fake address.  This is the type of that address.
-///
-/// It is but a newtype.  And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
-/// comes in as the inner [`Ipv6Addr`], in those interfaces we have to be careful to do
-/// the conversion to this type.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct EndpointIdMappedAddr(Ipv6Addr);
-
-/// Can occur when converting a [`SocketAddr`] to an [`EndpointIdMappedAddr`]
-#[stack_error(derive, add_meta)]
-#[error("Failed to convert")]
-pub struct EndpointIdMappedAddrError;
-
-/// Counter to always generate unique addresses for [`EndpointIdMappedAddr`].
-static ENDPOINT_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-impl EndpointIdMappedAddr {
-    /// The Prefix/L of our Unique Local Addresses.
-    const ADDR_PREFIXL: u8 = 0xfd;
-    /// The Global ID used in our Unique Local Addresses.
-    const ADDR_GLOBAL_ID: [u8; 5] = [21, 7, 10, 81, 11];
-    /// The Subnet ID used in our Unique Local Addresses.
-    const ADDR_SUBNET: [u8; 2] = [0; 2];
-
-    /// The dummy port used for all [`EndpointIdMappedAddr`]s.
-    const ENDPOINT_ID_MAPPED_PORT: u16 = 12345;
-
-    /// Generates a globally unique fake UDP address.
-    ///
-    /// This generates and IPv6 Unique Local Address according to RFC 4193.
-    pub(crate) fn generate() -> Self {
-        let mut addr = [0u8; 16];
-        addr[0] = Self::ADDR_PREFIXL;
-        addr[1..6].copy_from_slice(&Self::ADDR_GLOBAL_ID);
-        addr[6..8].copy_from_slice(&Self::ADDR_SUBNET);
-
-        let counter = ENDPOINT_ID_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        addr[8..16].copy_from_slice(&counter.to_be_bytes());
-
-        Self(Ipv6Addr::from(addr))
-    }
-
-    /// Returns a consistent [`SocketAddr`] for the [`EndpointIdMappedAddr`].
-    ///
-    /// This socket address does not have a routable IP address.
-    ///
-    /// This uses a made-up port number, since the port does not play a role in looking up
-    /// the endpoint in the [`EndpointMap`].  This socket address is only to be used to pass into
-    /// Quinn.
-    pub(crate) fn private_socket_addr(&self) -> SocketAddr {
-        SocketAddr::new(IpAddr::from(self.0), Self::ENDPOINT_ID_MAPPED_PORT)
-    }
-}
-
-impl TryFrom<Ipv6Addr> for EndpointIdMappedAddr {
-    type Error = EndpointIdMappedAddrError;
-
-    fn try_from(value: Ipv6Addr) -> Result<Self, Self::Error> {
-        let octets = value.octets();
-        if octets[0] == Self::ADDR_PREFIXL
-            && octets[1..6] == Self::ADDR_GLOBAL_ID
-            && octets[6..8] == Self::ADDR_SUBNET
-        {
-            return Ok(Self(value));
-        }
-        Err(e!(EndpointIdMappedAddrError))
-    }
-}
-
-impl std::fmt::Display for EndpointIdMappedAddr {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "EndpointIdMappedAddr({})", self.0)
-    }
-}
-
-fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
-    match msg {
-        disco::Message::Ping(_) => {
-            metrics.sent_disco_ping.inc();
-        }
-        disco::Message::Pong(_) => {
-            metrics.sent_disco_pong.inc();
-        }
-        disco::Message::CallMeMaybe(_) => {
-            metrics.sent_disco_call_me_maybe.inc();
-        }
-    }
 }
 
 /// A *direct address* on which an iroh-endpoint might be contactable.
@@ -2468,6 +1479,9 @@ fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
 /// Direct addresses are UDP socket addresses on which an iroh endpoint could potentially be
 /// contacted.  These can come from various sources depending on the network topology of the
 /// iroh endpoint, see [`DirectAddrType`] for the several kinds of sources.
+///
+/// This is essentially a combination of our local addresses combined with any reflexive
+/// transport addresses we discovered using QAD.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DirectAddr {
     /// The address.
@@ -2519,26 +1533,28 @@ impl Display for DirectAddrType {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, net::SocketAddr, sync::Arc, time::Duration};
+    use std::{net::SocketAddrV4, sync::Arc, time::Duration};
 
     use data_encoding::HEXLOWER;
-    use iroh_base::{EndpointAddr, EndpointId, PublicKey, TransportAddr};
+    use iroh_base::{EndpointAddr, EndpointId, TransportAddr};
     use n0_error::{Result, StackResultExt, StdResultExt};
-    use n0_future::{StreamExt, time};
+    use n0_future::{MergeBounded, StreamExt, time};
+    use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
-    use quinn::ServerConfig;
     use rand::{CryptoRng, Rng, RngCore, SeedableRng};
-    use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{Instrument, error, info, info_span, instrument};
-    use tracing_test::traced_test;
 
-    use super::{EndpointIdMappedAddr, Options};
+    use super::Options;
     use crate::{
-        Endpoint, RelayMap, RelayMode, SecretKey,
+        Endpoint, RelayMode, SecretKey,
+        discovery::static_provider::StaticProvider,
         dns::DnsResolver,
-        endpoint::{PathSelection, Source},
-        magicsock::{Handle, MagicSock, endpoint_map},
+        endpoint::QuicTransportConfig,
+        magicsock::{
+            Handle, MagicSock, TransportConfig,
+            mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
+        },
         tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
 
@@ -2548,163 +1564,38 @@ mod tests {
         let secret_key = SecretKey::generate(rng);
         let server_config = make_default_server_config(&secret_key);
         Options {
-            addr_v4: None,
-            addr_v6: None,
+            transports: vec![
+                TransportConfig::default_ipv4(),
+                TransportConfig::default_ipv6(),
+            ],
             secret_key,
-            relay_map: RelayMap::empty(),
             proxy_url: None,
             dns_resolver: DnsResolver::new(),
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             #[cfg(any(test, feature = "test-utils"))]
-            path_selection: PathSelection::default(),
             discovery_user_data: None,
             metrics: Default::default(),
+            hooks: Default::default(),
         }
     }
 
     /// Generate a server config with no ALPNS and a default transport configuration
-    fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
+    fn make_default_server_config(secret_key: &SecretKey) -> quinn::ServerConfig {
         let quic_server_config =
             crate::tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
                 .make_server_config(vec![], false);
-        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-        server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
+        let transport = QuicTransportConfig::default();
+        server_config.transport_config(transport.to_inner_arc());
         server_config
     }
 
-    impl MagicSock {
-        #[track_caller]
-        pub fn add_test_addr(&self, endpoint_addr: EndpointAddr) {
-            self.add_endpoint_addr(
-                endpoint_addr,
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
-            .unwrap()
-        }
-    }
-
-    /// Magicsock plus wrappers for sending packets
-    #[derive(Clone)]
-    struct MagicStack {
-        secret_key: SecretKey,
-        endpoint: Endpoint,
-    }
-
-    impl MagicStack {
-        async fn new<R: CryptoRng + ?Sized>(rng: &mut R, relay_mode: RelayMode) -> Self {
-            let secret_key = SecretKey::generate(rng);
-
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-
-            let endpoint = Endpoint::empty_builder(relay_mode)
-                .secret_key(secret_key.clone())
-                .transport_config(transport_config)
-                .alpns(vec![ALPN.to_vec()])
-                .bind()
-                .await
-                .unwrap();
-
-            Self {
-                secret_key,
-                endpoint,
-            }
-        }
-
-        fn tracked_endpoints(&self) -> Vec<PublicKey> {
-            self.endpoint
-                .magic_sock()
-                .list_remote_infos()
-                .into_iter()
-                .map(|ep| ep.endpoint_id)
-                .collect()
-        }
-
-        fn public(&self) -> PublicKey {
-            self.secret_key.public()
-        }
-    }
-
-    /// Monitors endpoint changes and plumbs things together.
-    ///
-    /// This is a way of connecting endpoints without a relay server.  Whenever the local
-    /// endpoints of a magic endpoint change this address is added to the other magic
-    /// sockets.  This function will await until the endpoints are connected the first time
-    /// before returning.
-    ///
-    /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
-    #[instrument(skip_all)]
-    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<JoinSet<()>> {
-        /// Registers endpoint addresses of an endpoint to all other endpoints.
-        fn update_direct_addrs(
-            stacks: &[MagicStack],
-            my_idx: usize,
-            new_addrs: BTreeSet<SocketAddr>,
-        ) {
-            let me = &stacks[my_idx];
-            for (i, m) in stacks.iter().enumerate() {
-                if i == my_idx {
-                    continue;
-                }
-
-                let addr = EndpointAddr {
-                    id: me.public(),
-                    addrs: new_addrs.iter().copied().map(TransportAddr::Ip).collect(),
-                };
-                m.endpoint.magic_sock().add_test_addr(addr);
-            }
-        }
-
-        // For each endpoint, start a task which monitors its local endpoints and registers them
-        // with the other endpoints as local endpoints become known.
-        let mut tasks = JoinSet::new();
-        for (my_idx, m) in stacks.iter().enumerate() {
-            let m = m.clone();
-            let stacks = stacks.clone();
-            tasks.spawn(async move {
-                let me = m.endpoint.id().fmt_short();
-                let mut stream = m.endpoint.watch_addr().stream();
-                while let Some(addr) = stream.next().await {
-                    info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, addr.ip_addrs().collect::<Vec<_>>());
-                    update_direct_addrs(&stacks, my_idx, addr.ip_addrs().copied().collect());
-                }
-            });
-        }
-
-        // Wait for all endpoints to be registered with each other.
-        time::timeout(Duration::from_secs(10), async move {
-            let all_endpoint_ids: Vec<_> = stacks.iter().map(|ms| ms.endpoint.id()).collect();
-            loop {
-                let mut ready = Vec::with_capacity(stacks.len());
-                for ms in stacks.iter() {
-                    let endpoints = ms.tracked_endpoints();
-                    let my_endpoint_id = ms.endpoint.id();
-                    let all_endpoints_meshed = all_endpoint_ids
-                        .iter()
-                        .filter(|endpoint_id| **endpoint_id != my_endpoint_id)
-                        .all(|endpoint_id| endpoints.contains(endpoint_id));
-                    ready.push(all_endpoints_meshed);
-                }
-                if ready.iter().all(|meshed| *meshed) {
-                    break;
-                }
-                time::sleep(Duration::from_millis(200)).await;
-            }
-        })
-        .await
-        .std_context("timeout")?;
-        info!("all endpoints meshed");
-        Ok(tasks)
-    }
-
-    #[instrument(skip_all, fields(me = %ep.endpoint.id().fmt_short()))]
-    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> Result {
+    #[instrument(skip_all, fields(me = %ep.id().fmt_short()))]
+    async fn echo_receiver(ep: Endpoint, loss: ExpectedLoss) -> Result {
         info!("accepting conn");
-        let conn = ep.endpoint.accept().await.expect("no conn");
+        let conn = ep.accept().await.expect("no conn");
 
         info!("accepting");
         let conn = conn.await.context("accepting")?;
@@ -2728,32 +1619,34 @@ mod tests {
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
-        // TODO: ensure panics in this function are reported ok
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            assert!(
-                stats.path.lost_packets < 10,
-                "[receiver] should not loose many packets",
-            );
+            for info in conn.paths().get().iter() {
+                assert!(
+                    info.stats().lost_packets < 10,
+                    "[receiver] path {:?} should not loose many packets",
+                    info.remote_addr()
+                );
+            }
         }
 
-        info!("close");
-        conn.close(0u32.into(), b"done");
-        info!("wait idle");
-        ep.endpoint.endpoint().wait_idle().await;
+        conn.closed().await;
+        info!("closed");
+        ep.endpoint().wait_idle().await;
+        info!("idle");
 
         Ok(())
     }
 
-    #[instrument(skip_all, fields(me = %ep.endpoint.id().fmt_short()))]
+    #[instrument(skip_all, fields(me = %ep.id().fmt_short()))]
     async fn echo_sender(
-        ep: MagicStack,
-        dest_id: PublicKey,
+        ep: Endpoint,
+        dest_id: EndpointId,
         msg: &[u8],
         loss: ExpectedLoss,
     ) -> Result {
         info!("connecting to {}", dest_id.fmt_short());
         let dest = EndpointAddr::new(dest_id);
-        let conn = ep.endpoint.connect(dest, ALPN).await?;
+        let conn = ep.connect(dest, ALPN).await?;
 
         info!("opening bi");
         let (mut send_bi, mut recv_bi) = conn.open_bi().await.std_context("open bi")?;
@@ -2781,16 +1674,19 @@ mod tests {
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            assert!(
-                stats.path.lost_packets < 10,
-                "[sender] should not loose many packets",
-            );
+            for info in conn.paths().get() {
+                assert!(
+                    info.stats().lost_packets < 10,
+                    "[sender] path {:?} should not loose many packets",
+                    info.remote_addr()
+                );
+            }
         }
 
-        info!("close");
         conn.close(0u32.into(), b"done");
-        info!("wait idle");
-        ep.endpoint.endpoint().wait_idle().await;
+        info!("closed");
+        ep.endpoint().wait_idle().await;
+        info!("idle");
         Ok(())
     }
 
@@ -2802,76 +1698,114 @@ mod tests {
 
     /// Runs a roundtrip between the [`echo_sender`] and [`echo_receiver`].
     async fn run_roundtrip(
-        sender: MagicStack,
-        receiver: MagicStack,
+        sender: Endpoint,
+        receiver: Endpoint,
         payload: &[u8],
         loss: ExpectedLoss,
-    ) {
-        let send_endpoint_id = sender.endpoint.id();
-        let recv_endpoint_id = receiver.endpoint.id();
-        info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
+    ) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(4), async move {
+            let send_endpoint_id = sender.id();
+            let recv_endpoint_id = receiver.id();
+            info!("\nroundtrip: {send_endpoint_id:#} -> {recv_endpoint_id:#}");
 
-        let receiver_task = tokio::spawn(echo_receiver(receiver, loss));
-        let sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).await;
-        let sender_is_err = match sender_res {
-            Ok(()) => false,
-            Err(err) => {
-                eprintln!("[sender] Error:\n{err:#?}");
-                true
-            }
-        };
-        let receiver_is_err = match receiver_task.await {
-            Ok(Ok(())) => false,
-            Ok(Err(err)) => {
-                eprintln!("[receiver] Error:\n{err:#?}");
-                true
-            }
-            Err(joinerr) => {
-                if joinerr.is_panic() {
-                    std::panic::resume_unwind(joinerr.into_panic());
-                } else {
-                    eprintln!("[receiver] Error:\n{joinerr:#?}");
+            let receiver_task = AbortOnDropHandle::new(tokio::spawn(echo_receiver(receiver, loss)));
+            let sender_res = echo_sender(sender, recv_endpoint_id, payload, loss).await;
+            let sender_is_err = match sender_res {
+                Ok(()) => false,
+                Err(err) => {
+                    error!("[sender] Error:\n{err:#?}");
+                    true
                 }
-                true
+            };
+            let receiver_is_err = match receiver_task.await {
+                Ok(Ok(())) => false,
+                Ok(Err(err)) => {
+                    error!("[receiver] Error:\n{err:#?}");
+                    true
+                }
+                Err(joinerr) => {
+                    if joinerr.is_panic() {
+                        std::panic::resume_unwind(joinerr.into_panic());
+                    } else {
+                        error!("[receiver] Error:\n{joinerr:#?}");
+                    }
+                    true
+                }
+            };
+            if sender_is_err || receiver_is_err {
+                panic!("Sender or receiver errored");
             }
-        };
-        if sender_is_err || receiver_is_err {
-            panic!("Sender or receiver errored");
-        }
+        })
+        .await
+        .std_context("timeout")?;
+        Ok(())
+    }
+
+    /// Returns a pair of endpoints with a shared [`StaticDiscovery`].
+    ///
+    /// The endpoints do not use a relay server but can connect to each other via local
+    /// addresses.  Dialing by [`EndpointId`] is possible, and the addresses get updated even if
+    /// the endpoints rebind.
+    async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
+        let discovery = StaticProvider::new();
+        let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
+            .alpns(vec![ALPN.to_vec()])
+            .discovery(discovery.clone())
+            .bind()
+            .await
+            .unwrap();
+        let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
+            .alpns(vec![ALPN.to_vec()])
+            .discovery(discovery.clone())
+            .bind()
+            .await
+            .unwrap();
+        discovery.add_endpoint_info(ep1.addr());
+        discovery.add_endpoint_info(ep2.addr());
+
+        let ep1_addr_stream = ep1.watch_addr().stream();
+        let ep2_addr_stream = ep2.watch_addr().stream();
+        let mut addr_stream = MergeBounded::from_iter([ep1_addr_stream, ep2_addr_stream]);
+        let task = tokio::spawn(async move {
+            while let Some(addr) = addr_stream.next().await {
+                discovery.add_endpoint_info(addr);
+            }
+        });
+
+        (AbortOnDropHandle::new(task), ep1, ep2)
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_magic() -> Result {
+    async fn test_two_devices_roundtrip_quinn_magic_small() -> Result {
+        let (_guard, m1, m2) = endpoint_pair().await;
+
+        run_roundtrip(
+            m1.clone(),
+            m2.clone(),
+            b"hello m1",
+            ExpectedLoss::AlmostNone,
+        )
+        .await?;
+        run_roundtrip(
+            m2.clone(),
+            m1.clone(),
+            b"hello m2",
+            ExpectedLoss::AlmostNone,
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_quinn_magic_large() -> Result {
+        let (_guard, m1, m2) = endpoint_pair().await;
+        let mut data = vec![0u8; 10 * 1024];
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-        let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
-
-        for i in 0..5 {
-            info!("\n-- round {i}");
-            run_roundtrip(
-                m1.clone(),
-                m2.clone(),
-                b"hello m1",
-                ExpectedLoss::AlmostNone,
-            )
-            .await;
-            run_roundtrip(
-                m2.clone(),
-                m1.clone(),
-                b"hello m2",
-                ExpectedLoss::AlmostNone,
-            )
-            .await;
-
-            info!("\n-- larger data");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await;
-        }
+        rng.fill_bytes(&mut data);
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::AlmostNone).await?;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::AlmostNone).await?;
 
         Ok(())
     }
@@ -2879,18 +1813,14 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_regression_network_change_rebind_wakes_connection_driver() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-        let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
+        let (_guard, m1, m2) = endpoint_pair().await;
 
         println!("Net change");
-        m1.endpoint.magic_sock().force_network_change(true).await;
+        m1.magic_sock().force_network_change(true).await;
         tokio::time::sleep(Duration::from_secs(1)).await; // wait for socket rebinding
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
-
         let _handle = AbortOnDropHandle::new(tokio::spawn({
-            let endpoint = m2.endpoint.clone();
+            let endpoint = m2.clone();
             async move {
                 while let Some(incoming) = endpoint.accept().await {
                     println!("Incoming first conn!");
@@ -2903,7 +1833,7 @@ mod tests {
         }));
 
         println!("first conn!");
-        let conn = m1.endpoint.connect(m2.endpoint.addr(), ALPN).await?;
+        let conn = m1.connect(m2.addr(), ALPN).await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
         conn.closed().await;
@@ -2912,136 +1842,83 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    #[traced_test]
-    async fn test_two_devices_roundtrip_network_change() -> Result {
-        time::timeout(
-            Duration::from_secs(90),
-            test_two_devices_roundtrip_network_change_impl(),
-        )
-        .await
-        .std_context("timeout")?
+    fn offset(rng: &mut rand_chacha::ChaCha8Rng) -> Duration {
+        let delay = rng.random_range(1..=5);
+        Duration::from_millis(delay * 50)
     }
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    async fn test_two_devices_roundtrip_network_change_impl() -> Result {
+    /// Regular network changes to m1 only.
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_network_change_only_a() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-        let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
+        let (_guard, m1, m2) = endpoint_pair().await;
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
-
-        let offset = |rng: &mut rand_chacha::ChaCha8Rng| {
-            let delay = rng.random_range(10..=500);
-            Duration::from_millis(delay)
-        };
-        let rounds = 5;
-
-        // Regular network changes to m1 only.
-        let m1_network_change_guard = {
+        let _network_change_guard = {
             let m1 = m1.clone();
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
                 loop {
-                    println!("[m1] network change");
-                    m1.endpoint.magic_sock().force_network_change(true).await;
+                    info!("[m1] network change");
+                    m1.magic_sock().force_network_change(true).await;
                     time::sleep(offset(&mut rng)).await;
                 }
             });
             AbortOnDropHandle::new(task)
         };
 
-        for i in 0..rounds {
-            println!("-- [m1 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
+        let mut data = vec![0u8; 10 * 1024];
+        rng.fill_bytes(&mut data);
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await?;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await?;
 
-            println!("-- [m1 changes] larger data");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
-        }
+        Ok(())
+    }
 
-        std::mem::drop(m1_network_change_guard);
+    /// Regular network changes to both m1 and m2.
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_two_devices_roundtrip_network_change_a_and_b() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let (_guard, m1, m2) = endpoint_pair().await;
 
-        // Regular network changes to m2 only.
-        let m2_network_change_guard = {
-            let m2 = m2.clone();
-            let mut rng = rng.clone();
-            let task = tokio::spawn(async move {
-                loop {
-                    println!("[m2] network change");
-                    m2.endpoint.magic_sock().force_network_change(true).await;
-                    time::sleep(offset(&mut rng)).await;
-                }
-            });
-            AbortOnDropHandle::new(task)
-        };
-
-        for i in 0..rounds {
-            println!("-- [m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
-
-            println!("-- [m2 changes] larger data");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
-        }
-
-        std::mem::drop(m2_network_change_guard);
-
-        // Regular network changes to both m1 and m2 only.
-        let m1_m2_network_change_guard = {
+        let _network_change_guard = {
             let m1 = m1.clone();
             let m2 = m2.clone();
             let mut rng = rng.clone();
             let task = tokio::spawn(async move {
-                println!("-- [m1] network change");
-                m1.endpoint.magic_sock().force_network_change(true).await;
-                println!("-- [m2] network change");
-                m2.endpoint.magic_sock().force_network_change(true).await;
+                info!("-- [m1] network change");
+                m1.magic_sock().force_network_change(true).await;
+                info!("-- [m2] network change");
+                m2.magic_sock().force_network_change(true).await;
                 time::sleep(offset(&mut rng)).await;
             });
             AbortOnDropHandle::new(task)
         };
 
-        for i in 0..rounds {
-            println!("-- [m1 & m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), b"hello m1", ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), b"hello m2", ExpectedLoss::YeahSure).await;
+        let mut data = vec![0u8; 10 * 1024];
+        rng.fill_bytes(&mut data);
+        run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await?;
+        run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await?;
 
-            println!("-- [m1 & m2 changes] larger data");
-            let mut data = vec![0u8; 10 * 1024];
-            rng.fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), &data, ExpectedLoss::YeahSure).await;
-            run_roundtrip(m2.clone(), m1.clone(), &data, ExpectedLoss::YeahSure).await;
-        }
-
-        std::mem::drop(m1_m2_network_change_guard);
         Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
     async fn test_two_devices_setup_teardown() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
         for i in 0..10 {
-            println!("-- round {i}");
-            println!("setting up magic stack");
-            let m1 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
-            let m2 = MagicStack::new(&mut rng, RelayMode::Disabled).await;
+            info!("-- round {i}");
+            info!("setting up magic stack");
+            let (_guard, m1, m2) = endpoint_pair().await;
 
-            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
-
-            println!("closing endpoints");
-            let msock1 = m1.endpoint.magic_sock();
-            let msock2 = m2.endpoint.magic_sock();
-            m1.endpoint.close().await;
-            m2.endpoint.close().await;
+            info!("closing endpoints");
+            let msock1 = m1.magic_sock();
+            let msock2 = m2.magic_sock();
+            m1.close().await;
+            m2.close().await;
 
             assert!(msock1.msock.is_closed());
             assert!(msock2.msock.is_closed());
@@ -3057,12 +1934,12 @@ mod tests {
 
         // See if we can get endpoints.
         let eps0 = ms.ip_addrs().get();
-        println!("{eps0:?}");
+        info!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
         let eps1 = ms.ip_addrs().get();
-        println!("{eps1:?}");
+        info!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
 
@@ -3076,22 +1953,23 @@ mod tests {
     async fn magicsock_ep(secret_key: SecretKey) -> Result<Handle> {
         let quic_server_config = tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
             .make_server_config(vec![ALPN.to_vec()], true);
-        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
         let dns_resolver = DnsResolver::new();
         let opts = Options {
-            addr_v4: None,
-            addr_v6: None,
+            transports: vec![
+                TransportConfig::default_ipv4(),
+                TransportConfig::default_ipv6(),
+            ],
             secret_key: secret_key.clone(),
-            relay_map: RelayMap::empty(),
             discovery_user_data: None,
             dns_resolver,
             proxy_url: None,
             server_config,
             insecure_skip_relay_cert_verify: false,
-            path_selection: PathSelection::default(),
             metrics: Default::default(),
+            hooks: Default::default(),
         };
         let msock = MagicSock::spawn(opts).await?;
         Ok(msock)
@@ -3165,7 +2043,7 @@ mod tests {
 
         let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
 
-        // Generate an address not present in the EndpointMap.
+        // Generate an address not present in the RemoteMap.
         let bad_addr = EndpointIdMappedAddr::generate();
 
         // 500ms is rather fast here.  Running this locally it should always be the correct
@@ -3216,21 +2094,13 @@ mod tests {
             .ip_addrs()
             .get()
             .into_iter()
-            .map(|x| TransportAddr::Ip(x.addr))
-            .collect();
-        let endpoint_addr_2 = EndpointAddr {
-            id: endpoint_id_2,
-            addrs,
-        };
-        msock_1
-            .add_endpoint_addr(
-                endpoint_addr_2,
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
+            .map(|x| TransportAddr::Ip(x.addr));
+        let endpoint_addr_2 = EndpointAddr::from_parts(endpoint_id_2, addrs);
+        let addr = msock_1
+            .resolve_remote(endpoint_addr_2)
+            .await
+            .unwrap()
             .unwrap();
-        let addr = msock_1.get_mapping_addr(endpoint_id_2).unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
             magicsock_connect(
@@ -3290,19 +2160,15 @@ mod tests {
         });
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
-        // Add an empty entry in the EndpointMap of ep_1
-        msock_1.endpoint_map.add_endpoint_addr(
-            EndpointAddr {
-                id: endpoint_id_2,
-                addrs: Default::default(),
-            },
-            Source::NamedApp {
-                name: "test".into(),
-            },
-            true,
-            &msock_1.metrics.magicsock,
+        // Add an entry in the RemoteMap of ep_1 with an invalid socket address
+        let empty_addr_2 = EndpointAddr::from_parts(
+            endpoint_id_2,
+            [TransportAddr::Ip(
+                // Reserved IP range for documentation (unreachable)
+                SocketAddrV4::new([192, 0, 2, 1].into(), 12345).into(),
+            )],
         );
-        let addr_2 = msock_1.get_mapping_addr(endpoint_id_2).unwrap();
+        let addr_2 = msock_1.resolve_remote(empty_addr_2).await.unwrap().unwrap();
 
         // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
         // not take forever.  You need to check the log output to verify this is really
@@ -3328,23 +2194,20 @@ mod tests {
         info!("first connect timed out as expected");
 
         // Provide correct addressing information
-        let addrs = msock_2
-            .ip_addrs()
-            .get()
-            .into_iter()
-            .map(|x| TransportAddr::Ip(x.addr))
-            .collect();
-        msock_1.endpoint_map.add_endpoint_addr(
-            EndpointAddr {
-                id: endpoint_id_2,
-                addrs,
-            },
-            Source::NamedApp {
-                name: "test".into(),
-            },
-            true,
-            &msock_1.metrics.magicsock,
+        let correct_addr_2 = EndpointAddr::from_parts(
+            endpoint_id_2,
+            msock_2
+                .ip_addrs()
+                .get()
+                .into_iter()
+                .map(|x| TransportAddr::Ip(x.addr)),
         );
+        let addr_2a = msock_1
+            .resolve_remote(correct_addr_2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(addr_2, addr_2a);
 
         // We can now connect
         tokio::time::timeout(Duration::from_secs(10), async move {
@@ -3368,72 +2231,6 @@ mod tests {
         .expect("connection timed out");
 
         // TODO: could remove the addresses again, send, add it back and see it recover.
-        // But we don't have that much private access to the EndpointMap.  This will do for now.
-    }
-
-    #[tokio::test]
-    async fn test_add_endpoint_addr() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let stack = MagicStack::new(&mut rng, RelayMode::Default).await;
-
-        assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 0);
-
-        // Empty
-        let empty_addr = EndpointAddr::new(SecretKey::generate(&mut rng).public());
-
-        let err = stack
-            .endpoint
-            .magic_sock()
-            .add_endpoint_addr(empty_addr, endpoint_map::Source::App)
-            .unwrap_err();
-        assert!(
-            err.to_string()
-                .to_lowercase()
-                .contains("empty addressing info")
-        );
-
-        // relay url only
-        let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
-            addrs: [TransportAddr::Relay("http://my-relay.com".parse().unwrap())]
-                .into_iter()
-                .collect(),
-        };
-        stack
-            .endpoint
-            .magic_sock()
-            .add_endpoint_addr(addr, endpoint_map::Source::App)?;
-        assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 1);
-
-        // addrs only
-        let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
-            addrs: [TransportAddr::Ip("127.0.0.1:1234".parse().unwrap())]
-                .into_iter()
-                .collect(),
-        };
-        stack
-            .endpoint
-            .magic_sock()
-            .add_endpoint_addr(addr, endpoint_map::Source::App)?;
-        assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 2);
-
-        // both
-        let addr = EndpointAddr {
-            id: SecretKey::generate(&mut rng).public(),
-            addrs: [
-                TransportAddr::Relay("http://my-relay.com".parse().unwrap()),
-                TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
-            ]
-            .into_iter()
-            .collect(),
-        };
-        stack
-            .endpoint
-            .magic_sock()
-            .add_endpoint_addr(addr, endpoint_map::Source::App)?;
-        assert_eq!(stack.endpoint.magic_sock().endpoint_map.endpoint_count(), 3);
-
-        Ok(())
+        // But we don't have that much private access to the RemoteMap.  This will do for now.
     }
 }
