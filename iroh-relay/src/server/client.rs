@@ -4,7 +4,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use iroh_base::EndpointId;
 use n0_error::{e, stack_error};
-use n0_future::{SinkExt, StreamExt};
+use n0_future::{Sink, SinkExt, Stream, StreamExt};
 use rand::Rng;
 use time::{Date, OffsetDateTime};
 use tokio::{
@@ -38,9 +38,9 @@ pub(super) struct Packet {
 
 /// Configuration for a [`Client`].
 #[derive(Debug)]
-pub(super) struct Config {
+pub(super) struct Config<S> {
     pub(super) endpoint_id: EndpointId,
-    pub(super) stream: RelayedStream,
+    pub(super) stream: RelayedStream<S>,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
 }
@@ -71,12 +71,15 @@ impl Client {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
-    pub(super) fn new(
-        config: Config,
+    pub(super) fn new<S>(
+        config: Config<S>,
         connection_id: u64,
         clients: &Clients,
         metrics: Arc<Metrics>,
-    ) -> Client {
+    ) -> Client
+    where
+        S: Stream<Item = Result<bytes::Bytes, crate::protos::streams::StreamError>> + Sink<bytes::Bytes, Error = crate::protos::streams::StreamError> + Unpin + Send + 'static,
+    {
         let Config {
             endpoint_id,
             stream,
@@ -251,9 +254,9 @@ pub enum RunError {
 ///     - receive a ping and write a pong back
 ///     to speak to the endpoint ID associated with that client.
 #[derive(Debug)]
-struct Actor {
+struct Actor<S> {
     /// IO Stream to talk to the client
-    stream: RelayedStream,
+    stream: RelayedStream<S>,
     /// Maximum time we wait to complete a write to the client
     timeout: Duration,
     /// Packets queued to send to the client
@@ -274,7 +277,10 @@ struct Actor {
     metrics: Arc<Metrics>,
 }
 
-impl Actor {
+impl<S> Actor<S>
+where
+    S: Stream<Item = Result<bytes::Bytes, crate::protos::streams::StreamError>> + Sink<bytes::Bytes, Error = crate::protos::streams::StreamError> + Unpin,
+{
     async fn run(mut self, done: CancellationToken) {
         // Note the accept and disconnects metrics must be in a pair.  Technically the
         // connection is accepted long before this in the HTTP server, but it is clearer to

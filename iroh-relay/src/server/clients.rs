@@ -11,6 +11,7 @@ use std::{
 
 use dashmap::DashMap;
 use iroh_base::EndpointId;
+use n0_future::{Sink, Stream};
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
@@ -48,7 +49,10 @@ impl Clients {
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
-    pub async fn register(&self, client_config: Config, metrics: Arc<Metrics>) {
+    pub async fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
+    where
+        S: Stream<Item = Result<bytes::Bytes, crate::protos::streams::StreamError>> + Sink<bytes::Bytes, Error = crate::protos::streams::StreamError> + Unpin + Send + 'static,
+    {
         let endpoint_id = client_config.endpoint_id;
         let connection_id = self.get_connection_id();
         trace!(remote_endpoint = %endpoint_id.fmt_short(), "registering client");

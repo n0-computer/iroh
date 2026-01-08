@@ -23,14 +23,14 @@ use axum::{
     http::HeaderMap,
 };
 use bytes::Bytes;
-use futures_util::{Stream, Sink, stream::StreamExt as _, sink::SinkExt as _};
+use n0_future::{Stream, Sink};
 use std::{pin::Pin, task::{Context, Poll}, sync::Arc};
 use tracing::{debug, trace, warn};
 
-use super::{AccessConfig, ClientRateLimit, Metrics, streams::RateLimited, client::Config};
+use super::{AccessConfig, ClientRateLimit, Metrics, client::Config};
 use crate::{
-    KeyCache,
-    protos::{streams::WsBytesFramed, relay::{MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH}, handshake},
+    KeyCache, ExportKeyingMaterial,
+    protos::{relay::PER_CLIENT_SEND_QUEUE_DEPTH, handshake, streams::StreamError},
     server::streams::RelayedStream,
 };
 
@@ -61,7 +61,7 @@ impl RelayState {
     ) -> Self {
         Self {
             rate_limit,
-            key_cache,
+            key_cache: key_cache.clone(),
             access,
             metrics: metrics.clone(),
             write_timeout: crate::defaults::timeouts::SERVER_WRITE_TIMEOUT,
@@ -102,9 +102,10 @@ impl AxumWebSocketAdapter {
 }
 
 impl Stream for AxumWebSocketAdapter {
-    type Item = Result<Bytes, std::io::Error>;
+    type Item = Result<Bytes, StreamError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        use n0_future::StreamExt;
         // Poll the underlying axum WebSocket
         match Pin::new(&mut self.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(msg))) => {
@@ -113,13 +114,13 @@ impl Stream for AxumWebSocketAdapter {
                     AxumMessage::Close(_) => Poll::Ready(None),
                     _ => {
                         // Skip non-binary messages and poll again
-                        // In practice, we should handle Text/Ping/Pong appropriately
                         cx.waker().wake_by_ref();
                         Poll::Pending
                     }
                 }
             }
             Poll::Ready(Some(Err(e))) => {
+                // Convert axum error to StreamError (which is std::io::Error)
                 Poll::Ready(Some(Err(std::io::Error::new(std::io::ErrorKind::Other, e))))
             }
             Poll::Ready(None) => Poll::Ready(None),
@@ -129,32 +130,50 @@ impl Stream for AxumWebSocketAdapter {
 }
 
 impl Sink<Bytes> for AxumWebSocketAdapter {
-    type Error = std::io::Error;
+    type Error = StreamError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        use n0_future::SinkExt;
         Pin::new(&mut self.inner)
             .poll_ready(cx)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
+        use n0_future::SinkExt;
         Pin::new(&mut self.inner)
             .start_send(AxumMessage::Binary(item.to_vec()))
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        use n0_future::SinkExt;
         Pin::new(&mut self.inner)
             .poll_flush(cx)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        use n0_future::SinkExt;
         Pin::new(&mut self.inner)
             .poll_close(cx)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     }
 }
+
+// Axum WebSocket doesn't support TLS key export, so we return None
+impl ExportKeyingMaterial for AxumWebSocketAdapter {
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        _output: T,
+        _label: &[u8],
+        _context: Option<&[u8]>,
+    ) -> Option<T> {
+        None
+    }
+}
+
+impl Unpin for AxumWebSocketAdapter {}
 
 /// Handle the relay protocol over an axum WebSocket
 async fn handle_relay_websocket(
@@ -165,13 +184,34 @@ async fn handle_relay_websocket(
     trace!("Relay WebSocket connection established");
 
     // Wrap the axum WebSocket to implement Stream/Sink
-    let adapter = AxumWebSocketAdapter::new(socket);
+    let mut adapter = AxumWebSocketAdapter::new(socket);
 
-    // TODO: The relay expects tokio_websockets::WebSocketStream, but we have an adapter
-    // We need to refactor the relay's internal code to be generic over the WebSocket type
-    // For now, this is a stub showing the architecture
+    // Perform the relay protocol handshake
+    let authentication = handshake::serverside(&mut adapter, client_auth_header).await?;
 
-    trace!("Relay connection established, closing for now (full implementation pending)");
+    trace!(?authentication.mechanism, "accept: verified authentication");
+
+    let is_authorized = state.access.is_allowed(authentication.client_key).await;
+    let client_key = authentication.authorize_if(is_authorized, &mut adapter).await?;
+
+    trace!("accept: verified authorization");
+
+    // Wrap in RelayedStream for encryption
+    let io = RelayedStream {
+        inner: adapter,
+        key_cache: state.key_cache.clone(),
+    };
+
+    trace!("accept: build client conn");
+    let client_conn_builder = Config {
+        endpoint_id: client_key,
+        stream: io,
+        write_timeout: state.write_timeout,
+        channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
+    };
+
+    // Register the client with the relay server
+    state.clients.register(client_conn_builder, state.metrics.clone()).await;
 
     Ok(())
 }

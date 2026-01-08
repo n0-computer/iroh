@@ -25,14 +25,19 @@ use crate::{
 /// This implements
 /// - a [`Stream`] of [`ClientToRelayMsg`]s that are received from the client,
 /// - a [`Sink`] of [`RelayToClientMsg`]s that can be sent to the client.
+///
+/// Generic over the inner stream type to support different WebSocket implementations.
 #[derive(Debug)]
-pub(crate) struct RelayedStream {
-    pub(crate) inner: WsBytesFramed<RateLimited<MaybeTlsStream>>,
+pub(crate) struct RelayedStream<S> {
+    pub(crate) inner: S,
     pub(crate) key_cache: KeyCache,
 }
 
+/// Type alias for the standard server-side relay stream
+pub(crate) type ServerRelayedStream = RelayedStream<WsBytesFramed<RateLimited<MaybeTlsStream>>>;
+
 #[cfg(test)]
-impl RelayedStream {
+impl ServerRelayedStream {
     pub(crate) fn test(stream: tokio::io::DuplexStream) -> Self {
         let stream = MaybeTlsStream::Test(stream);
         let stream = RateLimited::unlimited(stream, Arc::new(Metrics::default()));
@@ -89,7 +94,10 @@ pub enum SendError {
     EmptyPacket {},
 }
 
-impl Sink<RelayToClientMsg> for RelayedStream {
+impl<S> Sink<RelayToClientMsg> for RelayedStream<S>
+where
+    S: Sink<bytes::Bytes, Error = StreamError> + Unpin,
+{
     type Error = SendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -133,7 +141,10 @@ pub enum RecvError {
     },
 }
 
-impl Stream for RelayedStream {
+impl<S> Stream for RelayedStream<S>
+where
+    S: Stream<Item = Result<bytes::Bytes, StreamError>> + Unpin,
+{
     type Item = Result<ClientToRelayMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
