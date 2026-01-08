@@ -227,21 +227,46 @@ impl Builder {
 
     // # The very common methods everyone basically needs.
 
-    /// Adds a default IP transport, binding to the provided address.
+    /// Binds an IP socket at the provided socket address.
     ///
-    /// Setting the port to `0` will use a random port.
-    /// If the port specified is already in use, it will fallback to choosing a random port.
+    /// This is an advanced API to tightly control the sockets used by the endpoint. Most
+    /// uses do not need to explicitly bind sockets.
     ///
-    /// Only a single interface can be the default, per IP family, so this errors out if one is already set.
+    /// # Warning
     ///
-    /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    /// - The builder always comes pre-configured with an IPv4 socket to be bound on the
+    ///   *unspecified* address: `0.0.0.0`. This is the equivalent of using `INADDR_ANY`
+    ///   special bind address and results in a socket listening on *all* interfaces
+    ///   available.
+    ///
+    /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
+    ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
+    ///
+    /// - Most likely when using this API those existing binds need to be removed explicitly
+    ///   using [`Self::clear_ip_transports`].
+    ///
+    /// - This should be called at most once for each address family: once for IPv4 and/or
+    ///   once for IPv6. Calling it multiple times for the same address family will result
+    ///   in undefined routing behaviour. To bind multiple sockets of the same address
+    ///   family, use [`Self::bind_addr_with_opts`].
+    ///
+    /// # Description
+    ///
+    /// Requests a socket to be bound on a specific address, with an implied netmask of
+    /// `/0`. This allows restricting binding to only one network interface for a given
+    /// address family.
+    ///
+    /// If the port specified is already in use, a random free port will be chosen. Using
+    /// port `0` in the socket address assigns a random free port.
     ///
     /// # Example
+    ///
     /// ```
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
     /// # use iroh::Endpoint;
     /// let endpoint = Endpoint::builder()
+    ///     .clear_ip_transports()
     ///     .bind_addr("127.0.0.1:1234")?
     ///     .bind_addr("[::1]:1235")?
     ///     .bind()
@@ -257,9 +282,56 @@ impl Builder {
         self.bind_addr_with_opts(addr, BindOpts::default())
     }
 
-    /// Binds an IP socket
+    /// Binds an IP socket at the provided socket address.
     ///
-    /// This is always in addition to any prior bindings, so if you want to remove other transports, make sure to call `clear_ip` first.
+    /// This is an advanced API to tightly control the sockets used by the endpoint. Most
+    /// uses do not need to explicitly bind sockets.
+    ///
+    /// # Warning
+    ///
+    /// - The builder always comes pre-configured with an IPv4 socket to be bound on the
+    ///   *unspecified* address: `0.0.0.0`. This is the equivalent of using `INADDR_ANY`
+    ///   special bind address and results in a socket listening on *all* interfaces
+    ///   available.
+    ///
+    /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
+    ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
+    ///
+    /// - Most likely when using this API those existing binds need to be removed explicitly
+    ///   using [`Self::clear_ip_transports`].
+    ///
+    /// # Description
+    ///
+    /// Requests a socket to be bound on a specific address. This allows restricting binding
+    /// to only one network interface for a given address family.
+    ///
+    /// [`BindOpts::set_prefix_len`] **should** be used to configure the netmask of the
+    /// network interface. This allows outgoing datagrams that start a new network flow to
+    /// be sent over the socket which is attached to the subnet of the destination
+    /// address. If multiple sockets are bound the standard routing-table semantics are
+    /// used: the socket attached to the subnet with the longest prefix matching the
+    /// destination is used. Practically this means the smallest subnets are at the top of
+    /// the routing table, and the first subnet containing the destination address is
+    /// chosen.
+    ///
+    /// If no socket is bound to a subnet that contains the destination address, the notion
+    /// of "default route" is used. At most one socket per address family may be marked as
+    /// the default route using [`BindOpts::set_is_default_route`], and this will be used
+    /// for destinations not contained by the subnets of the bound sockets. This network is
+    /// expected to have a default gateway configured.
+    ///
+    /// Be aware that using a subnet with a prefix length of `/0` will always contain all
+    /// destination addresses. It is valid to configure this, but no more than one such
+    /// socket should be bound or the routing will be non-deterministic. Prefer using
+    /// [`BindOpts::set_is_default_route`] on one of the sockets instead.
+    ///
+    /// Finally note that most outgoing datagrams are part of an existing network flow. That
+    /// is, they are in response to an incoming datagram. In this case the outgoing datagram
+    /// will be sent over the same socket as the incoming datagram was received on, and the
+    /// routing with the prefix length and default route as described above does not apply.
+    ///
+    /// If the port specified is already in use, a random free port will be chosen. Using
+    /// port `0` in the socket address assigns a random free port.
     ///
     /// # Example
     /// ```
@@ -267,6 +339,7 @@ impl Builder {
     /// # async fn main() -> n0_error::Result<()> {
     /// # use iroh::{Endpoint, endpoint::BindOpts};
     /// let endpoint = Endpoint::builder()
+    ///     .clear_ip_transports()
     ///     .bind_addr_with_opts("127.0.0.1:1234", BindOpts::default().set_prefix_len(24))?
     ///     .bind_addr_with_opts("[::1]:1235", BindOpts::default().set_prefix_len(48))?
     ///     .bind()
@@ -328,7 +401,7 @@ impl Builder {
         Ok(self)
     }
 
-    /// Removes all IP based transports
+    /// Removes all IP based transports.
     #[cfg(not(wasm_browser))]
     pub fn clear_ip_transports(mut self) -> Self {
         self.transports
@@ -336,7 +409,7 @@ impl Builder {
         self
     }
 
-    /// Removes all relay based transports
+    /// Removes all relay based transports.
     pub fn clear_relay_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
