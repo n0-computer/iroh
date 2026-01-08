@@ -137,20 +137,11 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
 
 #[cfg(wasm_browser)]
 fn setup_logging() {
-    use std::str::FromStr;
+    use tracing::Level;
 
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_str("trace").expect("hardcoded"))
-        .with_max_level(tracing::level_filters::LevelFilter::DEBUG)
-        .with_writer(
-            // To avoide trace events in the browser from showing their JS backtrace
-            tracing_subscriber_wasm::MakeConsoleWriter::default()
-                .map_trace_level_to(tracing::Level::DEBUG),
-        )
-        // If we don't do this in the browser, we get a runtime error.
-        .without_time()
-        .with_ansi(false)
-        .init();
+    let mut config = wasm_tracing::WasmLayerConfig::new();
+    config.set_max_level(Level::TRACE);
+    wasm_tracing::set_as_global_default_with_config(config).unwrap();
 }
 
 #[cfg(not(wasm_browser))]
