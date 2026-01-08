@@ -249,52 +249,12 @@ impl Builder {
     /// # Ok(()) }
     /// ```
     #[cfg(not(wasm_browser))]
-    pub fn bind_addr<A>(mut self, addr: A) -> Result<Self, InvalidSocketAddr>
+    pub fn bind_addr<A>(self, addr: A) -> Result<Self, InvalidSocketAddr>
     where
         A: ToSocketAddr,
         <A as ToSocketAddr>::Err: Into<InvalidSocketAddr>,
     {
-        let addr = addr.to_socket_addr().map_err(Into::into)?;
-        match addr {
-            SocketAddr::V4(addr) => {
-                if self
-                    .transports
-                    .iter()
-                    .any(|t| t.is_ipv4_default() && t.is_user_defined())
-                {
-                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
-                }
-
-                self.transports.push(TransportConfig::Ip {
-                    config: IpConfig::V4Default {
-                        ip_addr: *addr.ip(),
-                        port: addr.port(),
-                        is_required: true,
-                    },
-                    is_user_defined: true,
-                });
-            }
-            SocketAddr::V6(addr) => {
-                if self
-                    .transports
-                    .iter()
-                    .any(|t| t.is_ipv6_default() && t.is_user_defined())
-                {
-                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
-                }
-
-                self.transports.push(TransportConfig::Ip {
-                    config: IpConfig::V6Default {
-                        ip_addr: *addr.ip(),
-                        scope_id: addr.scope_id(),
-                        port: addr.port(),
-                        is_required: false,
-                    },
-                    is_user_defined: true,
-                });
-            }
-        }
-        Ok(self)
+        self.bind_addr_with_opts(addr, BindOpts::default())
     }
 
     /// Binds an IP socket
@@ -324,25 +284,42 @@ impl Builder {
         <A as ToSocketAddr>::Err: Into<InvalidSocketAddr>,
     {
         let addr = addr.to_socket_addr().map_err(Into::into)?;
-
         match addr {
             SocketAddr::V4(addr) => {
+                if self
+                    .transports
+                    .iter()
+                    .any(|t| t.is_ipv4_default() && t.is_user_defined())
+                {
+                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
+                }
+
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V4 {
-                        ip_addr: Ipv4Net::new(*addr.ip(), opts.prefix_len())?,
+                        ip_net: Ipv4Net::new(*addr.ip(), opts.prefix_len())?,
                         port: addr.port(),
                         is_required: opts.is_required(),
+                        is_default: opts.is_default(),
                     },
                     is_user_defined: true,
                 });
             }
             SocketAddr::V6(addr) => {
+                if self
+                    .transports
+                    .iter()
+                    .any(|t| t.is_ipv6_default() && t.is_user_defined())
+                {
+                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
+                }
+
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V6 {
-                        ip_addr: Ipv6Net::new(*addr.ip(), opts.prefix_len())?,
+                        ip_net: Ipv6Net::new(*addr.ip(), opts.prefix_len())?,
                         scope_id: addr.scope_id(),
                         port: addr.port(),
                         is_required: opts.is_required(),
+                        is_default: opts.is_default(),
                     },
                     is_user_defined: true,
                 });

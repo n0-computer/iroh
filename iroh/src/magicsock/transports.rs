@@ -89,11 +89,14 @@ impl TransportConfig {
     pub(crate) fn default_ipv4() -> Self {
         use std::net::Ipv4Addr;
 
+        use netdev::ipnet::Ipv4Net;
+
         Self::Ip {
-            config: ip::Config::V4Default {
-                ip_addr: Ipv4Addr::UNSPECIFIED,
+            config: ip::Config::V4 {
+                ip_net: Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).expect("checked"),
                 port: 0,
                 is_required: true,
+                is_default: false,
             },
             is_user_defined: false,
         }
@@ -102,12 +105,15 @@ impl TransportConfig {
     /// Configures a default IPv6 transport, listening on `[::]:0`.
     #[cfg(not(wasm_browser))]
     pub(crate) fn default_ipv6() -> Self {
+        use netdev::ipnet::Ipv6Net;
+
         Self::Ip {
-            config: ip::Config::V6Default {
-                ip_addr: Ipv6Addr::UNSPECIFIED,
+            config: ip::Config::V6 {
+                ip_net: Ipv6Net::new(Ipv6Addr::UNSPECIFIED, 0).expect("checked"),
                 scope_id: 0,
                 port: 0,
                 is_required: false,
+                is_default: false,
             },
             is_user_defined: false,
         }
@@ -116,7 +122,7 @@ impl TransportConfig {
     /// Is this a default IPv4 configuration
     pub(crate) fn is_ipv4_default(&self) -> bool {
         match self {
-            Self::Ip { config, .. } => matches!(config, IpConfig::V4Default { .. }),
+            Self::Ip { config, .. } => config.is_default() && config.is_ipv4(),
             _ => false,
         }
     }
@@ -124,7 +130,7 @@ impl TransportConfig {
     /// Is this a default IPv6 configuration
     pub(crate) fn is_ipv6_default(&self) -> bool {
         match self {
-            Self::Ip { config, .. } => matches!(config, IpConfig::V6Default { .. }),
+            Self::Ip { config, .. } => config.is_default() && config.is_ipv6(),
             _ => false,
         }
     }
@@ -567,6 +573,21 @@ impl TransportsSender {
                             }
                         }
                     }
+                    if let Some(sender) = self.ip.v4_default_mut() {
+                        if sender.is_valid_default_addr(src, dst_addr) {
+                            has_valid_sender = true;
+                            match Pin::new(sender).poll_send(cx, *dst_addr, src, transmit) {
+                                Poll::Pending => {}
+                                Poll::Ready(res) => {
+                                    match &res {
+                                        Ok(()) => trace!("sent"),
+                                        Err(err) => trace!("send failed: {err:#}"),
+                                    }
+                                    return Poll::Ready(res);
+                                }
+                            }
+                        }
+                    }
                 }
                 SocketAddr::V6(_) => {
                     for sender in self
@@ -583,6 +604,21 @@ impl TransportsSender {
                                     Err(err) => trace!("send failed: {err:#}"),
                                 }
                                 return Poll::Ready(res);
+                            }
+                        }
+                    }
+                    if let Some(sender) = self.ip.v6_default_mut() {
+                        if sender.is_valid_default_addr(src, dst_addr) {
+                            has_valid_sender = true;
+                            match Pin::new(sender).poll_send(cx, *dst_addr, src, transmit) {
+                                Poll::Pending => {}
+                                Poll::Ready(res) => {
+                                    match &res {
+                                        Ok(()) => trace!("sent"),
+                                        Err(err) => trace!("send failed: {err:#}"),
+                                    }
+                                    return Poll::Ready(res);
+                                }
                             }
                         }
                     }

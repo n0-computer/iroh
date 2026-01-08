@@ -19,6 +19,7 @@ pub struct BindOpts {
     ///
     /// Defaults to `true`.
     is_required: bool,
+    is_default: bool,
 }
 
 impl Default for BindOpts {
@@ -26,6 +27,7 @@ impl Default for BindOpts {
         Self {
             prefix_len: 0,
             is_required: true,
+            is_default: false,
         }
     }
 }
@@ -58,6 +60,19 @@ impl BindOpts {
     /// Returns the value for `is_required`.
     pub fn is_required(&self) -> bool {
         self.is_required
+    }
+
+    /// Set if this is a default route.
+    ///
+    /// Defaults to `false`.
+    pub fn set_is_default(mut self, is_default: bool) -> Self {
+        self.is_default = is_default;
+        self
+    }
+
+    /// Returns the value for `is_default`.
+    pub fn is_default(&self) -> bool {
+        self.is_default
     }
 }
 
