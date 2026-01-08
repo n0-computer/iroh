@@ -163,168 +163,177 @@
 <a href=#163 id=163 data-nosnippet>163</a>        Poll::Pending
 <a href=#164 id=164 data-nosnippet>164</a>    }
 <a href=#165 id=165 data-nosnippet>165</a>
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="doccomment">/// Returns the sender for the [`RemoteStateActor`].
-<a href=#167 id=167 data-nosnippet>167</a>    ///
-<a href=#168 id=168 data-nosnippet>168</a>    /// If needed a new actor is started on demand.
-<a href=#169 id=169 data-nosnippet>169</a>    ///
-<a href=#170 id=170 data-nosnippet>170</a>    /// [`RemoteStateActor`]: remote_state::RemoteStateActor
-<a href=#171 id=171 data-nosnippet>171</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>remote_state_actor(<span class="kw-2">&amp;</span><span class="self">self</span>, eid: EndpointId) -&gt; mpsc::Sender&lt;RemoteStateMessage&gt; {
-<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.state.lock().expect(<span class="string">"poisoned"</span>);
-<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">let </span>ActorState {
-<a href=#174 id=174 data-nosnippet>174</a>            <span class="kw-2">ref mut </span>tasks,
-<a href=#175 id=175 data-nosnippet>175</a>            <span class="kw-2">ref mut </span>poll_cleanup_waker,
-<a href=#176 id=176 data-nosnippet>176</a>            <span class="kw-2">ref mut </span>senders,
-<a href=#177 id=177 data-nosnippet>177</a>        } = <span class="kw-2">*</span>guard;
-<a href=#178 id=178 data-nosnippet>178</a>        <span class="kw">match </span>senders.entry(eid) {
-<a href=#179 id=179 data-nosnippet>179</a>            hash_map::Entry::Occupied(<span class="kw-2">mut </span>entry) =&gt; {
-<a href=#180 id=180 data-nosnippet>180</a>                <span class="kw">let </span>sender = entry.get();
-<a href=#181 id=181 data-nosnippet>181</a>                <span class="kw">if </span>sender.is_closed() {
-<a href=#182 id=182 data-nosnippet>182</a>                    <span class="comment">// The actor is dead: Start a new actor.
-<a href=#183 id=183 data-nosnippet>183</a>                    </span><span class="kw">let </span>sender =
-<a href=#184 id=184 data-nosnippet>184</a>                        <span class="self">self</span>.start_remote_state_actor(eid, <span class="macro">vec!</span>[], tasks, poll_cleanup_waker);
-<a href=#185 id=185 data-nosnippet>185</a>                    entry.insert(sender.clone());
-<a href=#186 id=186 data-nosnippet>186</a>                    sender
-<a href=#187 id=187 data-nosnippet>187</a>                } <span class="kw">else </span>{
-<a href=#188 id=188 data-nosnippet>188</a>                    sender.clone()
-<a href=#189 id=189 data-nosnippet>189</a>                }
-<a href=#190 id=190 data-nosnippet>190</a>            }
-<a href=#191 id=191 data-nosnippet>191</a>            hash_map::Entry::Vacant(entry) =&gt; {
-<a href=#192 id=192 data-nosnippet>192</a>                <span class="kw">let </span>sender = <span class="self">self</span>.start_remote_state_actor(eid, <span class="macro">vec!</span>[], tasks, poll_cleanup_waker);
-<a href=#193 id=193 data-nosnippet>193</a>                entry.insert(sender.clone());
-<a href=#194 id=194 data-nosnippet>194</a>                sender
-<a href=#195 id=195 data-nosnippet>195</a>            }
-<a href=#196 id=196 data-nosnippet>196</a>        }
-<a href=#197 id=197 data-nosnippet>197</a>    }
-<a href=#198 id=198 data-nosnippet>198</a>
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>remote_state_actor_if_exists(
-<a href=#200 id=200 data-nosnippet>200</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#201 id=201 data-nosnippet>201</a>        eid: EndpointId,
-<a href=#202 id=202 data-nosnippet>202</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;RemoteStateMessage&gt;&gt; {
-<a href=#203 id=203 data-nosnippet>203</a>        <span class="self">self</span>.state
-<a href=#204 id=204 data-nosnippet>204</a>            .lock()
-<a href=#205 id=205 data-nosnippet>205</a>            .expect(<span class="string">"poisoned"</span>)
-<a href=#206 id=206 data-nosnippet>206</a>            .senders
-<a href=#207 id=207 data-nosnippet>207</a>            .get(<span class="kw-2">&amp;</span>eid)
-<a href=#208 id=208 data-nosnippet>208</a>            .cloned()
-<a href=#209 id=209 data-nosnippet>209</a>    }
-<a href=#210 id=210 data-nosnippet>210</a>
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="doccomment">/// Starts a new remote state actor and returns a handle and a sender.
-<a href=#212 id=212 data-nosnippet>212</a>    ///
-<a href=#213 id=213 data-nosnippet>213</a>    /// The handle is not inserted into the endpoint map, this must be done by the caller of this function.
-<a href=#214 id=214 data-nosnippet>214</a>    </span><span class="kw">fn </span>start_remote_state_actor(
-<a href=#215 id=215 data-nosnippet>215</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#216 id=216 data-nosnippet>216</a>        eid: EndpointId,
-<a href=#217 id=217 data-nosnippet>217</a>        initial_msgs: Vec&lt;RemoteStateMessage&gt;,
-<a href=#218 id=218 data-nosnippet>218</a>        tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;(EndpointId, Vec&lt;RemoteStateMessage&gt;)&gt;,
-<a href=#219 id=219 data-nosnippet>219</a>        poll_cleanup_waker: <span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;Waker&gt;,
-<a href=#220 id=220 data-nosnippet>220</a>    ) -&gt; mpsc::Sender&lt;RemoteStateMessage&gt; {
-<a href=#221 id=221 data-nosnippet>221</a>        <span class="comment">// Ensure there is a RemoteMappedAddr for this EndpointId.
-<a href=#222 id=222 data-nosnippet>222</a>        </span><span class="self">self</span>.endpoint_mapped_addrs.get(<span class="kw-2">&amp;</span>eid);
-<a href=#223 id=223 data-nosnippet>223</a>        <span class="kw">let </span>sender = RemoteStateActor::new(
-<a href=#224 id=224 data-nosnippet>224</a>            eid,
-<a href=#225 id=225 data-nosnippet>225</a>            <span class="self">self</span>.local_endpoint_id,
-<a href=#226 id=226 data-nosnippet>226</a>            <span class="self">self</span>.local_direct_addrs.clone(),
-<a href=#227 id=227 data-nosnippet>227</a>            <span class="self">self</span>.relay_mapped_addrs.clone(),
-<a href=#228 id=228 data-nosnippet>228</a>            <span class="self">self</span>.metrics.clone(),
-<a href=#229 id=229 data-nosnippet>229</a>            <span class="self">self</span>.discovery.clone(),
-<a href=#230 id=230 data-nosnippet>230</a>        )
-<a href=#231 id=231 data-nosnippet>231</a>        .start(initial_msgs, tasks, <span class="self">self</span>.shutdown_token.clone());
-<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = poll_cleanup_waker.take() {
-<a href=#233 id=233 data-nosnippet>233</a>            <span class="comment">// Notify something waiting for changes to tasks when there's a new task.
-<a href=#234 id=234 data-nosnippet>234</a>            </span>waker.wake();
-<a href=#235 id=235 data-nosnippet>235</a>        }
-<a href=#236 id=236 data-nosnippet>236</a>        sender
-<a href=#237 id=237 data-nosnippet>237</a>    }
-<a href=#238 id=238 data-nosnippet>238</a>}
-<a href=#239 id=239 data-nosnippet>239</a>
-<a href=#240 id=240 data-nosnippet>240</a><span class="doccomment">/// The origin or *source* through which an address associated with a remote endpoint
-<a href=#241 id=241 data-nosnippet>241</a>/// was discovered.
-<a href=#242 id=242 data-nosnippet>242</a>///
-<a href=#243 id=243 data-nosnippet>243</a>/// An aggregate of the [`Source`]s of all the addresses of an endpoint describe the
-<a href=#244 id=244 data-nosnippet>244</a>/// [`Source`]s of the endpoint itself.
-<a href=#245 id=245 data-nosnippet>245</a>///
-<a href=#246 id=246 data-nosnippet>246</a>/// A [`Source`] helps track how and where an address was learned. Multiple
-<a href=#247 id=247 data-nosnippet>247</a>/// sources can be associated with a single address, if we have discovered this
-<a href=#248 id=248 data-nosnippet>248</a>/// address through multiple means.
-<a href=#249 id=249 data-nosnippet>249</a></span><span class="attr">#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
-<a href=#250 id=250 data-nosnippet>250</a>#[strum(serialize_all = <span class="string">"kebab-case"</span>)]
-<a href=#251 id=251 data-nosnippet>251</a>#[allow(private_interfaces)]
-<a href=#252 id=252 data-nosnippet>252</a></span><span class="kw">pub enum </span>Source {
-<a href=#253 id=253 data-nosnippet>253</a>    <span class="doccomment">/// An endpoint communicated with us first via UDP.
-<a href=#254 id=254 data-nosnippet>254</a>    </span>Udp,
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="doccomment">/// An endpoint communicated with us first via relay.
-<a href=#256 id=256 data-nosnippet>256</a>    </span>Relay,
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="doccomment">/// Application layer added the address directly.
-<a href=#258 id=258 data-nosnippet>258</a>    </span>App,
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="doccomment">/// The address was discovered by a discovery service.
-<a href=#260 id=260 data-nosnippet>260</a>    </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
-<a href=#261 id=261 data-nosnippet>261</a>    </span>Discovery {
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="doccomment">/// The name of the discovery service that discovered the address.
-<a href=#263 id=263 data-nosnippet>263</a>        </span>name: String,
-<a href=#264 id=264 data-nosnippet>264</a>    },
-<a href=#265 id=265 data-nosnippet>265</a>    <span class="doccomment">/// Application layer with a specific name added the endpoint directly.
-<a href=#266 id=266 data-nosnippet>266</a>    </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
-<a href=#267 id=267 data-nosnippet>267</a>    </span>NamedApp {
-<a href=#268 id=268 data-nosnippet>268</a>        <span class="doccomment">/// The name of the application that added the endpoint
-<a href=#269 id=269 data-nosnippet>269</a>        </span>name: String,
-<a href=#270 id=270 data-nosnippet>270</a>    },
-<a href=#271 id=271 data-nosnippet>271</a>    <span class="doccomment">/// The address was advertised by a call-me-maybe DISCO message.
-<a href=#272 id=272 data-nosnippet>272</a>    </span><span class="attr">#[strum(serialize = <span class="string">"CallMeMaybe"</span>)]
-<a href=#273 id=273 data-nosnippet>273</a>    </span>CallMeMaybe {
-<a href=#274 id=274 data-nosnippet>274</a>        <span class="doccomment">/// private marker
-<a href=#275 id=275 data-nosnippet>275</a>        </span>_0: Private,
-<a href=#276 id=276 data-nosnippet>276</a>    },
-<a href=#277 id=277 data-nosnippet>277</a>    <span class="doccomment">/// We received a ping on the path.
-<a href=#278 id=278 data-nosnippet>278</a>    </span><span class="attr">#[strum(serialize = <span class="string">"Ping"</span>)]
-<a href=#279 id=279 data-nosnippet>279</a>    </span>Ping {
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="doccomment">/// private marker
-<a href=#281 id=281 data-nosnippet>281</a>        </span>_0: Private,
-<a href=#282 id=282 data-nosnippet>282</a>    },
-<a href=#283 id=283 data-nosnippet>283</a>    <span class="doccomment">/// We established a connection on this address.
-<a href=#284 id=284 data-nosnippet>284</a>    </span><span class="attr">#[strum(serialize = <span class="string">"Connection"</span>)]
-<a href=#285 id=285 data-nosnippet>285</a>    </span>Connection {
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="doccomment">/// private marker
-<a href=#287 id=287 data-nosnippet>287</a>        </span>_0: Private,
-<a href=#288 id=288 data-nosnippet>288</a>    },
-<a href=#289 id=289 data-nosnippet>289</a>}
-<a href=#290 id=290 data-nosnippet>290</a>
-<a href=#291 id=291 data-nosnippet>291</a><span class="doccomment">/// Helper to ensure certain `Source` variants can not be constructed externally.
-<a href=#292 id=292 data-nosnippet>292</a></span><span class="attr">#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
-<a href=#293 id=293 data-nosnippet>293</a></span><span class="kw">struct </span>Private;
-<a href=#294 id=294 data-nosnippet>294</a>
-<a href=#295 id=295 data-nosnippet>295</a><span class="doccomment">/// An (Ip, Port) pair.
-<a href=#296 id=296 data-nosnippet>296</a>///
-<a href=#297 id=297 data-nosnippet>297</a>/// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
-<a href=#298 id=298 data-nosnippet>298</a>/// addresses include fields that can't be assumed consistent even within a single connection.
-<a href=#299 id=299 data-nosnippet>299</a></span><span class="attr">#[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-<a href=#300 id=300 data-nosnippet>300</a>#[display(<span class="string">"{}"</span>, SocketAddr::from(<span class="kw-2">*</span><span class="self">self</span>))]
-<a href=#301 id=301 data-nosnippet>301</a></span><span class="kw">pub struct </span>IpPort {
-<a href=#302 id=302 data-nosnippet>302</a>    ip: IpAddr,
-<a href=#303 id=303 data-nosnippet>303</a>    port: u16,
-<a href=#304 id=304 data-nosnippet>304</a>}
-<a href=#305 id=305 data-nosnippet>305</a>
-<a href=#306 id=306 data-nosnippet>306</a><span class="kw">impl </span>From&lt;SocketAddr&gt; <span class="kw">for </span>IpPort {
-<a href=#307 id=307 data-nosnippet>307</a>    <span class="kw">fn </span>from(socket_addr: SocketAddr) -&gt; <span class="self">Self </span>{
-<a href=#308 id=308 data-nosnippet>308</a>        <span class="self">Self </span>{
-<a href=#309 id=309 data-nosnippet>309</a>            ip: socket_addr.ip(),
-<a href=#310 id=310 data-nosnippet>310</a>            port: socket_addr.port(),
-<a href=#311 id=311 data-nosnippet>311</a>        }
-<a href=#312 id=312 data-nosnippet>312</a>    }
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, is_major: bool) {
+<a href=#167 id=167 data-nosnippet>167</a>        <span class="kw">let </span>guard = <span class="self">self</span>.state.lock().expect(<span class="string">"poisoned"</span>);
+<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw">for </span>sender <span class="kw">in </span>guard.senders.values() {
+<a href=#169 id=169 data-nosnippet>169</a>            sender
+<a href=#170 id=170 data-nosnippet>170</a>                .try_send(RemoteStateMessage::NetworkChange { is_major })
+<a href=#171 id=171 data-nosnippet>171</a>                .ok();
+<a href=#172 id=172 data-nosnippet>172</a>        }
+<a href=#173 id=173 data-nosnippet>173</a>    }
+<a href=#174 id=174 data-nosnippet>174</a>
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Returns the sender for the [`RemoteStateActor`].
+<a href=#176 id=176 data-nosnippet>176</a>    ///
+<a href=#177 id=177 data-nosnippet>177</a>    /// If needed a new actor is started on demand.
+<a href=#178 id=178 data-nosnippet>178</a>    ///
+<a href=#179 id=179 data-nosnippet>179</a>    /// [`RemoteStateActor`]: remote_state::RemoteStateActor
+<a href=#180 id=180 data-nosnippet>180</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>remote_state_actor(<span class="kw-2">&amp;</span><span class="self">self</span>, eid: EndpointId) -&gt; mpsc::Sender&lt;RemoteStateMessage&gt; {
+<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw">let </span><span class="kw-2">mut </span>guard = <span class="self">self</span>.state.lock().expect(<span class="string">"poisoned"</span>);
+<a href=#182 id=182 data-nosnippet>182</a>        <span class="kw">let </span>ActorState {
+<a href=#183 id=183 data-nosnippet>183</a>            <span class="kw-2">ref mut </span>tasks,
+<a href=#184 id=184 data-nosnippet>184</a>            <span class="kw-2">ref mut </span>poll_cleanup_waker,
+<a href=#185 id=185 data-nosnippet>185</a>            <span class="kw-2">ref mut </span>senders,
+<a href=#186 id=186 data-nosnippet>186</a>        } = <span class="kw-2">*</span>guard;
+<a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">match </span>senders.entry(eid) {
+<a href=#188 id=188 data-nosnippet>188</a>            hash_map::Entry::Occupied(<span class="kw-2">mut </span>entry) =&gt; {
+<a href=#189 id=189 data-nosnippet>189</a>                <span class="kw">let </span>sender = entry.get();
+<a href=#190 id=190 data-nosnippet>190</a>                <span class="kw">if </span>sender.is_closed() {
+<a href=#191 id=191 data-nosnippet>191</a>                    <span class="comment">// The actor is dead: Start a new actor.
+<a href=#192 id=192 data-nosnippet>192</a>                    </span><span class="kw">let </span>sender =
+<a href=#193 id=193 data-nosnippet>193</a>                        <span class="self">self</span>.start_remote_state_actor(eid, <span class="macro">vec!</span>[], tasks, poll_cleanup_waker);
+<a href=#194 id=194 data-nosnippet>194</a>                    entry.insert(sender.clone());
+<a href=#195 id=195 data-nosnippet>195</a>                    sender
+<a href=#196 id=196 data-nosnippet>196</a>                } <span class="kw">else </span>{
+<a href=#197 id=197 data-nosnippet>197</a>                    sender.clone()
+<a href=#198 id=198 data-nosnippet>198</a>                }
+<a href=#199 id=199 data-nosnippet>199</a>            }
+<a href=#200 id=200 data-nosnippet>200</a>            hash_map::Entry::Vacant(entry) =&gt; {
+<a href=#201 id=201 data-nosnippet>201</a>                <span class="kw">let </span>sender = <span class="self">self</span>.start_remote_state_actor(eid, <span class="macro">vec!</span>[], tasks, poll_cleanup_waker);
+<a href=#202 id=202 data-nosnippet>202</a>                entry.insert(sender.clone());
+<a href=#203 id=203 data-nosnippet>203</a>                sender
+<a href=#204 id=204 data-nosnippet>204</a>            }
+<a href=#205 id=205 data-nosnippet>205</a>        }
+<a href=#206 id=206 data-nosnippet>206</a>    }
+<a href=#207 id=207 data-nosnippet>207</a>
+<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>remote_state_actor_if_exists(
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#210 id=210 data-nosnippet>210</a>        eid: EndpointId,
+<a href=#211 id=211 data-nosnippet>211</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;mpsc::Sender&lt;RemoteStateMessage&gt;&gt; {
+<a href=#212 id=212 data-nosnippet>212</a>        <span class="self">self</span>.state
+<a href=#213 id=213 data-nosnippet>213</a>            .lock()
+<a href=#214 id=214 data-nosnippet>214</a>            .expect(<span class="string">"poisoned"</span>)
+<a href=#215 id=215 data-nosnippet>215</a>            .senders
+<a href=#216 id=216 data-nosnippet>216</a>            .get(<span class="kw-2">&amp;</span>eid)
+<a href=#217 id=217 data-nosnippet>217</a>            .cloned()
+<a href=#218 id=218 data-nosnippet>218</a>    }
+<a href=#219 id=219 data-nosnippet>219</a>
+<a href=#220 id=220 data-nosnippet>220</a>    <span class="doccomment">/// Starts a new remote state actor and returns a handle and a sender.
+<a href=#221 id=221 data-nosnippet>221</a>    ///
+<a href=#222 id=222 data-nosnippet>222</a>    /// The handle is not inserted into the endpoint map, this must be done by the caller of this function.
+<a href=#223 id=223 data-nosnippet>223</a>    </span><span class="kw">fn </span>start_remote_state_actor(
+<a href=#224 id=224 data-nosnippet>224</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#225 id=225 data-nosnippet>225</a>        eid: EndpointId,
+<a href=#226 id=226 data-nosnippet>226</a>        initial_msgs: Vec&lt;RemoteStateMessage&gt;,
+<a href=#227 id=227 data-nosnippet>227</a>        tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;(EndpointId, Vec&lt;RemoteStateMessage&gt;)&gt;,
+<a href=#228 id=228 data-nosnippet>228</a>        poll_cleanup_waker: <span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;Waker&gt;,
+<a href=#229 id=229 data-nosnippet>229</a>    ) -&gt; mpsc::Sender&lt;RemoteStateMessage&gt; {
+<a href=#230 id=230 data-nosnippet>230</a>        <span class="comment">// Ensure there is a RemoteMappedAddr for this EndpointId.
+<a href=#231 id=231 data-nosnippet>231</a>        </span><span class="self">self</span>.endpoint_mapped_addrs.get(<span class="kw-2">&amp;</span>eid);
+<a href=#232 id=232 data-nosnippet>232</a>        <span class="kw">let </span>sender = RemoteStateActor::new(
+<a href=#233 id=233 data-nosnippet>233</a>            eid,
+<a href=#234 id=234 data-nosnippet>234</a>            <span class="self">self</span>.local_endpoint_id,
+<a href=#235 id=235 data-nosnippet>235</a>            <span class="self">self</span>.local_direct_addrs.clone(),
+<a href=#236 id=236 data-nosnippet>236</a>            <span class="self">self</span>.relay_mapped_addrs.clone(),
+<a href=#237 id=237 data-nosnippet>237</a>            <span class="self">self</span>.metrics.clone(),
+<a href=#238 id=238 data-nosnippet>238</a>            <span class="self">self</span>.discovery.clone(),
+<a href=#239 id=239 data-nosnippet>239</a>        )
+<a href=#240 id=240 data-nosnippet>240</a>        .start(initial_msgs, tasks, <span class="self">self</span>.shutdown_token.clone());
+<a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = poll_cleanup_waker.take() {
+<a href=#242 id=242 data-nosnippet>242</a>            <span class="comment">// Notify something waiting for changes to tasks when there's a new task.
+<a href=#243 id=243 data-nosnippet>243</a>            </span>waker.wake();
+<a href=#244 id=244 data-nosnippet>244</a>        }
+<a href=#245 id=245 data-nosnippet>245</a>        sender
+<a href=#246 id=246 data-nosnippet>246</a>    }
+<a href=#247 id=247 data-nosnippet>247</a>}
+<a href=#248 id=248 data-nosnippet>248</a>
+<a href=#249 id=249 data-nosnippet>249</a><span class="doccomment">/// The origin or *source* through which an address associated with a remote endpoint
+<a href=#250 id=250 data-nosnippet>250</a>/// was discovered.
+<a href=#251 id=251 data-nosnippet>251</a>///
+<a href=#252 id=252 data-nosnippet>252</a>/// An aggregate of the [`Source`]s of all the addresses of an endpoint describe the
+<a href=#253 id=253 data-nosnippet>253</a>/// [`Source`]s of the endpoint itself.
+<a href=#254 id=254 data-nosnippet>254</a>///
+<a href=#255 id=255 data-nosnippet>255</a>/// A [`Source`] helps track how and where an address was learned. Multiple
+<a href=#256 id=256 data-nosnippet>256</a>/// sources can be associated with a single address, if we have discovered this
+<a href=#257 id=257 data-nosnippet>257</a>/// address through multiple means.
+<a href=#258 id=258 data-nosnippet>258</a></span><span class="attr">#[derive(Serialize, Deserialize, strum::Display, Debug, Clone, Eq, PartialEq, Hash)]
+<a href=#259 id=259 data-nosnippet>259</a>#[strum(serialize_all = <span class="string">"kebab-case"</span>)]
+<a href=#260 id=260 data-nosnippet>260</a>#[allow(private_interfaces)]
+<a href=#261 id=261 data-nosnippet>261</a></span><span class="kw">pub enum </span>Source {
+<a href=#262 id=262 data-nosnippet>262</a>    <span class="doccomment">/// An endpoint communicated with us first via UDP.
+<a href=#263 id=263 data-nosnippet>263</a>    </span>Udp,
+<a href=#264 id=264 data-nosnippet>264</a>    <span class="doccomment">/// An endpoint communicated with us first via relay.
+<a href=#265 id=265 data-nosnippet>265</a>    </span>Relay,
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// Application layer added the address directly.
+<a href=#267 id=267 data-nosnippet>267</a>    </span>App,
+<a href=#268 id=268 data-nosnippet>268</a>    <span class="doccomment">/// The address was discovered by a discovery service.
+<a href=#269 id=269 data-nosnippet>269</a>    </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
+<a href=#270 id=270 data-nosnippet>270</a>    </span>Discovery {
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="doccomment">/// The name of the discovery service that discovered the address.
+<a href=#272 id=272 data-nosnippet>272</a>        </span>name: String,
+<a href=#273 id=273 data-nosnippet>273</a>    },
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="doccomment">/// Application layer with a specific name added the endpoint directly.
+<a href=#275 id=275 data-nosnippet>275</a>    </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
+<a href=#276 id=276 data-nosnippet>276</a>    </span>NamedApp {
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="doccomment">/// The name of the application that added the endpoint
+<a href=#278 id=278 data-nosnippet>278</a>        </span>name: String,
+<a href=#279 id=279 data-nosnippet>279</a>    },
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="doccomment">/// The address was advertised by a call-me-maybe DISCO message.
+<a href=#281 id=281 data-nosnippet>281</a>    </span><span class="attr">#[strum(serialize = <span class="string">"CallMeMaybe"</span>)]
+<a href=#282 id=282 data-nosnippet>282</a>    </span>CallMeMaybe {
+<a href=#283 id=283 data-nosnippet>283</a>        <span class="doccomment">/// private marker
+<a href=#284 id=284 data-nosnippet>284</a>        </span>_0: Private,
+<a href=#285 id=285 data-nosnippet>285</a>    },
+<a href=#286 id=286 data-nosnippet>286</a>    <span class="doccomment">/// We received a ping on the path.
+<a href=#287 id=287 data-nosnippet>287</a>    </span><span class="attr">#[strum(serialize = <span class="string">"Ping"</span>)]
+<a href=#288 id=288 data-nosnippet>288</a>    </span>Ping {
+<a href=#289 id=289 data-nosnippet>289</a>        <span class="doccomment">/// private marker
+<a href=#290 id=290 data-nosnippet>290</a>        </span>_0: Private,
+<a href=#291 id=291 data-nosnippet>291</a>    },
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="doccomment">/// We established a connection on this address.
+<a href=#293 id=293 data-nosnippet>293</a>    </span><span class="attr">#[strum(serialize = <span class="string">"Connection"</span>)]
+<a href=#294 id=294 data-nosnippet>294</a>    </span>Connection {
+<a href=#295 id=295 data-nosnippet>295</a>        <span class="doccomment">/// private marker
+<a href=#296 id=296 data-nosnippet>296</a>        </span>_0: Private,
+<a href=#297 id=297 data-nosnippet>297</a>    },
+<a href=#298 id=298 data-nosnippet>298</a>}
+<a href=#299 id=299 data-nosnippet>299</a>
+<a href=#300 id=300 data-nosnippet>300</a><span class="doccomment">/// Helper to ensure certain `Source` variants can not be constructed externally.
+<a href=#301 id=301 data-nosnippet>301</a></span><span class="attr">#[derive(Serialize, Deserialize, Debug, Clone, Copy, Eq, PartialEq, Hash)]
+<a href=#302 id=302 data-nosnippet>302</a></span><span class="kw">struct </span>Private;
+<a href=#303 id=303 data-nosnippet>303</a>
+<a href=#304 id=304 data-nosnippet>304</a><span class="doccomment">/// An (Ip, Port) pair.
+<a href=#305 id=305 data-nosnippet>305</a>///
+<a href=#306 id=306 data-nosnippet>306</a>/// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
+<a href=#307 id=307 data-nosnippet>307</a>/// addresses include fields that can't be assumed consistent even within a single connection.
+<a href=#308 id=308 data-nosnippet>308</a></span><span class="attr">#[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+<a href=#309 id=309 data-nosnippet>309</a>#[display(<span class="string">"{}"</span>, SocketAddr::from(<span class="kw-2">*</span><span class="self">self</span>))]
+<a href=#310 id=310 data-nosnippet>310</a></span><span class="kw">pub struct </span>IpPort {
+<a href=#311 id=311 data-nosnippet>311</a>    ip: IpAddr,
+<a href=#312 id=312 data-nosnippet>312</a>    port: u16,
 <a href=#313 id=313 data-nosnippet>313</a>}
 <a href=#314 id=314 data-nosnippet>314</a>
-<a href=#315 id=315 data-nosnippet>315</a><span class="kw">impl </span>From&lt;IpPort&gt; <span class="kw">for </span>SocketAddr {
-<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">fn </span>from(ip_port: IpPort) -&gt; <span class="self">Self </span>{
-<a href=#317 id=317 data-nosnippet>317</a>        <span class="kw">let </span>IpPort { ip, port } = ip_port;
-<a href=#318 id=318 data-nosnippet>318</a>        (ip, port).into()
-<a href=#319 id=319 data-nosnippet>319</a>    }
-<a href=#320 id=320 data-nosnippet>320</a>}
-<a href=#321 id=321 data-nosnippet>321</a>
-<a href=#322 id=322 data-nosnippet>322</a><span class="kw">impl </span>IpPort {
-<a href=#323 id=323 data-nosnippet>323</a>    <span class="kw">pub fn </span>ip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>IpAddr {
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.ip
-<a href=#325 id=325 data-nosnippet>325</a>    }
-<a href=#326 id=326 data-nosnippet>326</a>
-<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">pub fn </span>port(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16 {
-<a href=#328 id=328 data-nosnippet>328</a>        <span class="self">self</span>.port
-<a href=#329 id=329 data-nosnippet>329</a>    }
-<a href=#330 id=330 data-nosnippet>330</a>}</code></pre></div></section></main></body></html>
+<a href=#315 id=315 data-nosnippet>315</a><span class="kw">impl </span>From&lt;SocketAddr&gt; <span class="kw">for </span>IpPort {
+<a href=#316 id=316 data-nosnippet>316</a>    <span class="kw">fn </span>from(socket_addr: SocketAddr) -&gt; <span class="self">Self </span>{
+<a href=#317 id=317 data-nosnippet>317</a>        <span class="self">Self </span>{
+<a href=#318 id=318 data-nosnippet>318</a>            ip: socket_addr.ip(),
+<a href=#319 id=319 data-nosnippet>319</a>            port: socket_addr.port(),
+<a href=#320 id=320 data-nosnippet>320</a>        }
+<a href=#321 id=321 data-nosnippet>321</a>    }
+<a href=#322 id=322 data-nosnippet>322</a>}
+<a href=#323 id=323 data-nosnippet>323</a>
+<a href=#324 id=324 data-nosnippet>324</a><span class="kw">impl </span>From&lt;IpPort&gt; <span class="kw">for </span>SocketAddr {
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="kw">fn </span>from(ip_port: IpPort) -&gt; <span class="self">Self </span>{
+<a href=#326 id=326 data-nosnippet>326</a>        <span class="kw">let </span>IpPort { ip, port } = ip_port;
+<a href=#327 id=327 data-nosnippet>327</a>        (ip, port).into()
+<a href=#328 id=328 data-nosnippet>328</a>    }
+<a href=#329 id=329 data-nosnippet>329</a>}
+<a href=#330 id=330 data-nosnippet>330</a>
+<a href=#331 id=331 data-nosnippet>331</a><span class="kw">impl </span>IpPort {
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="kw">pub fn </span>ip(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>IpAddr {
+<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.ip
+<a href=#334 id=334 data-nosnippet>334</a>    }
+<a href=#335 id=335 data-nosnippet>335</a>
+<a href=#336 id=336 data-nosnippet>336</a>    <span class="kw">pub fn </span>port(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16 {
+<a href=#337 id=337 data-nosnippet>337</a>        <span class="self">self</span>.port
+<a href=#338 id=338 data-nosnippet>338</a>    }
+<a href=#339 id=339 data-nosnippet>339</a>}</code></pre></div></section></main></body></html>
