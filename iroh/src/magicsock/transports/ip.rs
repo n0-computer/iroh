@@ -528,6 +528,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_bind_sorting() -> n0_error::Result {
+        let has_ipv6 = tokio::net::UdpSocket::bind("[::1]:0").await.is_ok();
+        eprintln!("testing with ipv6? {has_ipv6}");
+
         let metrics = EndpointMetrics::default();
         let config = vec![
             Config::V4 {
@@ -552,21 +555,21 @@ mod tests {
                 ip_net: Ipv6Net::new("::1".parse().unwrap(), 4).unwrap(),
                 port: 2228,
                 scope_id: 0,
-                is_required: true,
+                is_required: has_ipv6,
                 is_default: false,
             },
             Config::V6 {
                 ip_net: Ipv6Net::new("::1".parse().unwrap(), 2).unwrap(),
                 port: 9998,
                 scope_id: 0,
-                is_required: true,
+                is_required: has_ipv6,
                 is_default: true,
             },
             Config::V6 {
                 ip_net: Ipv6Net::new("::1".parse().unwrap(), 32).unwrap(),
                 port: 1118,
                 scope_id: 0,
-                is_required: true,
+                is_required: has_ipv6,
                 is_default: false,
             },
         ];
@@ -578,11 +581,13 @@ mod tests {
 
         assert_eq!(transports.default_v4_index, Some(0));
 
-        assert_eq!(transports.v6[0].config.prefix_len(), 32);
-        assert_eq!(transports.v6[1].config.prefix_len(), 4);
-        assert_eq!(transports.v6[2].config.prefix_len(), 2);
+        if has_ipv6 {
+            assert_eq!(transports.v6[0].config.prefix_len(), 32);
+            assert_eq!(transports.v6[1].config.prefix_len(), 4);
+            assert_eq!(transports.v6[2].config.prefix_len(), 2);
 
-        assert_eq!(transports.default_v6_index, Some(2));
+            assert_eq!(transports.default_v6_index, Some(2));
+        }
         Ok(())
     }
 }
