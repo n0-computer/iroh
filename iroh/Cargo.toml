@@ -98,8 +98,6 @@ tokio = { version = "1", features = [
 # wasm-in-browser dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
 wasm-bindgen-futures = "0.4"
-# we don't use instant nor time directly, but need to enable it because backoff and x509_parser use these in browsers and we need to enable some feature flags for that to work
-instant = { version = "0.1", features = ["wasm-bindgen"] }
 time = { version = "0.3", features = ["wasm-bindgen"] }
 getrandom = { version = "0.3.2", features = ["wasm_js"] }
 
@@ -138,7 +136,7 @@ iroh-base = { version = "0.95.1", default-features = false, features = ["key", "
 
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
-tracing-subscriber-wasm = "0.1.0"
+wasm-tracing = "2.1.0"
 wasm-bindgen-test = "0.3"
 
 [build-dependencies]
