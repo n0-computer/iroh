@@ -120,8 +120,8 @@ on the internet.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.online" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#906-908">Source</a><h4 class="code-header">pub async fn <a href="#method.online" class="fn">online</a>(&amp;self)</h4></section></summary><div class="docblock"><p>A convenience method that waits for the endpoint to be considered “online”.</p>
 <p>This currently means at least one relay server was connected,
 and at least one local IP address is available.
-Event if no relays are configured, this will still wait for a relay connection.</p>
-<p>Once this has been resolved once, this will always immediately resolve.</p>
+Even if no relays are configured, this will still wait for a relay connection.</p>
+<p>Once this has been resolved the first time, this will always immediately resolve.</p>
 <p>This has no timeout, so if that is needed, you need to wrap it in a
 timeout. We recommend using a timeout close to
 <a href="../constant.NET_REPORT_TIMEOUT.html" title="constant iroh::NET_REPORT_TIMEOUT"><code>crate::NET_REPORT_TIMEOUT</code></a>s, so you can be sure that at least one
