@@ -763,7 +763,7 @@
 <a href=#763 id=763 data-nosnippet>763</a>    ///    [`Connecting::into_0rtt`].
 <a href=#764 id=764 data-nosnippet>764</a>    ///    **Note:** Please read the documentation for `into_0rtt` carefully to assess
 <a href=#765 id=765 data-nosnippet>765</a>    ///    security concerns.
-<a href=#766 id=766 data-nosnippet>766</a>    /// 2. The [`TransportConfig`] for the connection can be modified via the provided
+<a href=#766 id=766 data-nosnippet>766</a>    /// 2. The [`QuicTransportConfig`] for the connection can be modified via the provided
 <a href=#767 id=767 data-nosnippet>767</a>    ///    [`ConnectOptions`].
 <a href=#768 id=768 data-nosnippet>768</a>    ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
 <a href=#769 id=769 data-nosnippet>769</a>    ///    establishing and maintaining direct connections.  Carefully test settings you use and
@@ -1265,7 +1265,7 @@
 <a href=#1265 id=1265 data-nosnippet>1265</a>    <span class="doccomment">/// Initializes new connection options.
 <a href=#1266 id=1266 data-nosnippet>1266</a>    ///
 <a href=#1267 id=1267 data-nosnippet>1267</a>    /// By default, the connection will use the same options
-<a href=#1268 id=1268 data-nosnippet>1268</a>    /// as [`Endpoint::connect`], e.g. a default [`TransportConfig`].
+<a href=#1268 id=1268 data-nosnippet>1268</a>    /// as [`Endpoint::connect`], e.g. a default [`QuicTransportConfig`].
 <a href=#1269 id=1269 data-nosnippet>1269</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
 <a href=#1270 id=1270 data-nosnippet>1270</a>        <span class="self">Self</span>::default()
 <a href=#1271 id=1271 data-nosnippet>1271</a>    }
