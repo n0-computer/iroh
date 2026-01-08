@@ -531,6 +531,7 @@ impl RemoteStateActor {
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
+                    has_been_direct: false,
                 })
                 .into_mut();
 
@@ -541,18 +542,17 @@ impl RemoteStateActor {
                 && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
             {
                 trace!(?path_remote, "added new connection");
-                let path_remote_is_ip = path_remote.is_ip();
                 let status = match path_remote {
                     transports::Addr::Ip(_) => PathStatus::Available,
                     transports::Addr::Relay(_, _) => PathStatus::Backup,
                 };
                 path.set_status(status).ok();
-                conn_state.add_open_path(path_remote.clone(), PathId::ZERO);
+                conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 self.select_path();
 
-                if path_remote_is_ip {
+                if path_remote.is_ip() {
                     // We may have raced this with a relay address.  Try and add any
                     // relay addresses we have back.
                     let relays = self
@@ -750,7 +750,7 @@ impl RemoteStateActor {
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
     fn do_holepunching(&mut self, conn: quinn::Connection) {
-        self.metrics.nat_traversal.inc();
+        self.metrics.holepunch_attempts.inc();
         let local_candidates = self
             .local_direct_addrs
             .get()
@@ -897,7 +897,7 @@ impl RemoteStateActor {
                         ?conn_id,
                         ?path_id,
                     );
-                    conn_state.add_open_path(path_remote.clone(), path_id);
+                    conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 }
@@ -1275,6 +1275,10 @@ struct ConnectionState {
     open_paths: FxHashMap<PathId, transports::Addr>,
     /// Reverse map of [`Self::paths].
     path_ids: FxHashMap<transports::Addr, PathId>,
+    /// Whether this connection has ever had a direct path.
+    ///
+    /// Used for recording metrics.
+    has_been_direct: bool,
 }
 
 impl ConnectionState {
@@ -1285,7 +1289,20 @@ impl ConnectionState {
     }
 
     /// Tracks an open path for the connection.
-    fn add_open_path(&mut self, remote: transports::Addr, path_id: PathId) {
+    fn add_open_path(
+        &mut self,
+        remote: transports::Addr,
+        path_id: PathId,
+        metrics: &Arc<MagicsockMetrics>,
+    ) {
+        match remote {
+            transports::Addr::Ip(_) => metrics.paths_direct.inc(),
+            transports::Addr::Relay(_, _) => metrics.paths_relay.inc(),
+        };
+        if !self.has_been_direct && remote.is_ip() {
+            self.has_been_direct = true;
+            metrics.num_conns_direct.inc();
+        }
         self.paths.insert(path_id, remote.clone());
         self.open_paths.insert(path_id, remote.clone());
         self.path_ids.insert(remote, path_id);

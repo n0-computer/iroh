@@ -949,9 +949,9 @@ impl Endpoint {
     ///
     /// This currently means at least one relay server was connected,
     /// and at least one local IP address is available.
-    /// Event if no relays are configured, this will still wait for a relay connection.
+    /// Even if no relays are configured, this will still wait for a relay connection.
     ///
-    /// Once this has been resolved once, this will always immediately resolve.
+    /// Once this has been resolved the first time, this will always immediately resolve.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
@@ -961,6 +961,35 @@ impl Endpoint {
     /// To understand if the endpoint has gone back "offline",
     /// you must use the [`Endpoint::watch_addr`] method, to
     /// get information on the current relay and direct address information.
+    ///
+    /// In the common case where the endpoint's configured relay servers are
+    /// only accessible via a wide area network (WAN) connection, this method
+    /// will await indefinitely when the endpoint has no WAN connection. If you're
+    /// writing an app that's designed to work without a WAN connection, defer
+    /// any calls to `online` as long as possible, or avoid calling `online`
+    /// entirely.
+    ///
+    /// The online method does not interact with [`crate::discovery::Discovery`]
+    /// services, which means that any discovery service that relies on a WAN
+    /// connection is independent of the endpoint's online status.
+    ///
+    /// # Examples
+    ///
+    /// ```no run
+    /// use iroh::Endpoint;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    /// // After this await returns, the endpoint is bound to a local socket.
+    /// // It can be dialed, but almost certainly hasn't finished picking a
+    /// // relay.
+    /// let endpoint = Endpoint::bind().await;
+    ///
+    /// // After this await returns we have a connection to at least one relay
+    /// // and holepunching should work as expected.
+    /// endpoint.online().await;
+    /// }
+    /// ```
     pub async fn online(&self) {
         self.msock.home_relay().initialized().await;
     }
@@ -1822,8 +1851,13 @@ mod tests {
                 }
             }
             info!("Have direct connection");
+            // Validate holepunch metrics.
+            assert_eq!(ep.metrics().magicsock.num_conns_opened.get(), 1);
+            assert_eq!(ep.metrics().magicsock.num_conns_direct.get(), 1);
+
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
+
             Ok(conn.closed().await)
         }
 
