@@ -163,6 +163,15 @@ impl RemoteMap {
         Poll::Pending
     }
 
+    pub(super) fn on_network_change(&self, is_major: bool) {
+        let guard = self.state.lock().expect("poisoned");
+        for sender in guard.senders.values() {
+            sender
+                .try_send(RemoteStateMessage::NetworkChange { is_major })
+                .ok();
+        }
+    }
+
     /// Returns the sender for the [`RemoteStateActor`].
     ///
     /// If needed a new actor is started on demand.

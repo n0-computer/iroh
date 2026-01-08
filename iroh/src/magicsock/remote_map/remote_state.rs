@@ -40,21 +40,17 @@ use crate::{
     util::MaybeFuture,
 };
 
+mod path_state;
+mod remote_info;
+
 /// How often to attempt holepunching.
 ///
 /// If there have been no changes to the NAT address candidates, holepunching will not be
 /// attempted more frequently than at this interval.
 const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
-/// How often are we checking if we still have a good connection.
-const CHECK_CONNECTIONS_INTERVAL: Duration = Duration::from_secs(5);
-
-mod path_state;
-mod remote_info;
-
-// TODO: use this
-// /// The latency at or under which we don't try to upgrade to a better path.
-// const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
+/// The latency at or under which we don't try to upgrade to a better path.
+const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(10);
 
 // TODO: use this
 // /// How long since the last activity we try to keep an established endpoint peering alive.
@@ -62,11 +58,10 @@ mod remote_info;
 // /// It's also the idle time at which we stop doing QAD queries to keep NAT mappings alive.
 // pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
-// TODO: use this
-// /// How often we try to upgrade to a better path.
-// ///
-// /// Even if we have some non-relay route that works.
-// const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
+/// How often we try to upgrade to a better path.
+///
+/// Even if we have some non-relay route that works.
+const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The time after which an idle [`RemoteStateActor`] stops.
 ///
@@ -264,7 +259,7 @@ impl RemoteStateActor {
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
 
-        let check_connections = time::interval(CHECK_CONNECTIONS_INTERVAL);
+        let check_connections = time::interval(UPGRADE_INTERVAL);
         n0_future::pin!(check_connections);
 
         loop {
@@ -381,16 +376,59 @@ impl RemoteStateActor {
                 };
                 tx.send(info).ok();
             }
+            RemoteStateMessage::NetworkChange { is_major } => {
+                self.handle_network_change(is_major);
+            }
+        }
+    }
+
+    fn handle_network_change(&mut self, is_major: bool) {
+        for conn in self.connections.values() {
+            if let Some(quinn_conn) = conn.handle.upgrade() {
+                for (path_id, addr) in &conn.open_paths {
+                    if let Some(path) = quinn_conn.path(*path_id) {
+                        // Ping the current path
+                        if let Err(err) = path.ping() {
+                            warn!(%err, ?path_id, ?addr, "failed to ping path");
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_major {
+            self.trigger_holepunching();
         }
     }
 
     /// Handles regularly checking if any paths need hole punching currently
+    ///
+    /// Currently we need to have 1 IP path, with a good enough latency.
     fn check_connections(&mut self) {
         let mut is_goodenough = true;
-        for conn in self.connections.values() {
-            // If we have at least 1 non relay path, we consider the connection good enough for now
-            // TODO: evaluate other criteria, like current RTT etc
-            let is_conn_goodenough = conn.open_paths.iter().any(|(_, addr)| !addr.is_relay());
+        for conn_state in self.connections.values() {
+            let mut is_conn_goodenough = false;
+            if let Some(conn) = conn_state.handle.upgrade() {
+                let min_ip_rtt = conn_state
+                    .open_paths
+                    .iter()
+                    .filter_map(|(path_id, addr)| {
+                        if addr.is_ip() {
+                            conn.path_stats(*path_id).map(|stats| stats.rtt)
+                        } else {
+                            None
+                        }
+                    })
+                    .min();
+
+                if let Some(min_ip_rtt) = min_ip_rtt {
+                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
+                    is_conn_goodenough = is_latency_goodenough;
+                } else {
+                    // No IP transport found
+                    is_conn_goodenough = false;
+                }
+            }
             is_goodenough &= is_conn_goodenough;
         }
 
@@ -1188,6 +1226,8 @@ pub(crate) enum RemoteStateMessage {
     ///
     /// This currently only includes a list of all known transport addresses for the remote.
     RemoteInfo(oneshot::Sender<RemoteInfo>),
+    /// The network status has changed in some way
+    NetworkChange { is_major: bool },
 }
 
 /// Information about a holepunch attempt.
