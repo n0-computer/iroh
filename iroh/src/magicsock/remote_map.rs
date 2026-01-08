@@ -98,6 +98,17 @@ impl RemoteMap {
         handles.retain(|_eid, handle| !handle.sender.is_closed())
     }
 
+    pub(super) fn on_network_change(&self, is_major: bool) {
+        let handles = self.actor_handles.lock().expect("poisoned");
+        for entry in handles.values() {
+            if let Some(sender) = entry.sender.get() {
+                sender
+                    .try_send(RemoteStateMessage::NetworkChange { is_major })
+                    .ok();
+            }
+        }
+    }
+
     /// Returns the sender for the [`RemoteStateActor`].
     ///
     /// If needed a new actor is started on demand.
