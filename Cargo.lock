@@ -940,32 +940,11 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a9b99b9cbbe49445b21764dc0625032a89b145a2642e67603e1c936f5458d05"
-dependencies = [
- "derive_more-impl 1.0.0",
-]
-
-[[package]]
-name = "derive_more"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10b768e943bed7bf2cab53df09f4bc34bfd217cdb57d971e769874c9a6710618"
 dependencies = [
- "derive_more-impl 2.1.0",
-]
-
-[[package]]
-name = "derive_more-impl"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
- "unicode-xid",
+ "derive_more-impl",
 ]
 
 [[package]]
@@ -1981,7 +1960,7 @@ dependencies = [
  "clap",
  "console_error_panic_hook",
  "data-encoding",
- "derive_more 2.1.0",
+ "derive_more",
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.3.4",
@@ -2042,7 +2021,7 @@ version = "0.95.1"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
- "derive_more 2.1.0",
+ "derive_more",
  "ed25519-dalek",
  "n0-error",
  "postcard",
@@ -2090,7 +2069,7 @@ dependencies = [
  "clap",
  "criterion",
  "data-encoding",
- "derive_more 2.1.0",
+ "derive_more",
  "dirs-next",
  "governor",
  "hickory-resolver",
@@ -2191,7 +2170,7 @@ version = "0.13.0"
 source = "git+https://github.com/n0-computer/quinn?branch=main#7ce0396198789ff7b66b5d71bfc12fbd162589df"
 dependencies = [
  "bytes",
- "derive_more 2.1.0",
+ "derive_more",
  "enum-assoc",
  "fastbloom",
  "getrandom 0.3.4",
@@ -2235,7 +2214,7 @@ dependencies = [
  "clap",
  "dashmap",
  "data-encoding",
- "derive_more 2.1.0",
+ "derive_more",
  "getrandom 0.3.4",
  "hickory-resolver",
  "http",
@@ -2563,12 +2542,12 @@ dependencies = [
 
 [[package]]
 name = "n0-future"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c0709ac8235ce13b82bc4d180ee3c42364b90c1a8a628c3422d991d75a728b5"
+checksum = "e2ab99dfb861450e68853d34ae665243a88b8c493d01ba957321a1e9b2312bbe"
 dependencies = [
  "cfg_aliases",
- "derive_more 1.0.0",
+ "derive_more",
  "futures-buffered",
  "futures-lite",
  "futures-util",
@@ -2622,7 +2601,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba717c22ceec021ace0ff7674bf8fd60c9394605740a8201678fc1cb3a7398f6"
 dependencies = [
- "derive_more 2.1.0",
+ "derive_more",
  "n0-error",
  "n0-future",
 ]
@@ -2705,7 +2684,7 @@ dependencies = [
  "atomic-waker",
  "bytes",
  "cfg_aliases",
- "derive_more 2.1.0",
+ "derive_more",
  "iroh-quinn-udp",
  "js-sys",
  "libc",
@@ -3139,7 +3118,7 @@ checksum = "7b575f975dcf03e258b0c7ab3f81497d7124f508884c37da66a7314aa2a8d467"
 dependencies = [
  "base64",
  "bytes",
- "derive_more 2.1.0",
+ "derive_more",
  "futures-lite",
  "futures-util",
  "hyper-util",
@@ -5067,7 +5046,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
