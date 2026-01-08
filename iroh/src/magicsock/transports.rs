@@ -547,7 +547,6 @@ impl TransportsSender {
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        let mut has_valid_sender = false;
         match dst {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
@@ -556,75 +555,36 @@ impl TransportsSender {
             #[cfg(not(wasm_browser))]
             Addr::Ip(dst_addr) => match dst_addr {
                 SocketAddr::V4(_) => {
-                    for sender in self
+                    if let Some(sender) = self
                         .ip
                         .v4_iter_mut()
-                        .filter(|s| s.is_valid_send_addr(src, dst_addr))
+                        .find(|s| s.is_valid_send_addr(src, dst_addr))
                     {
-                        has_valid_sender = true;
-                        match Pin::new(sender).poll_send(cx, *dst_addr, src, transmit) {
-                            Poll::Pending => {}
-                            Poll::Ready(res) => {
-                                match &res {
-                                    Ok(()) => trace!("sent"),
-                                    Err(err) => trace!("send failed: {err:#}"),
-                                }
-                                return Poll::Ready(res);
-                            }
-                        }
+                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                     }
                     if let Some(sender) = self.ip.v4_default_mut() {
                         if sender.is_valid_default_addr(src, dst_addr) {
-                            has_valid_sender = true;
-                            match Pin::new(sender).poll_send(cx, *dst_addr, src, transmit) {
-                                Poll::Pending => {}
-                                Poll::Ready(res) => {
-                                    match &res {
-                                        Ok(()) => trace!("sent"),
-                                        Err(err) => trace!("send failed: {err:#}"),
-                                    }
-                                    return Poll::Ready(res);
-                                }
-                            }
+                            return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                         }
                     }
                 }
                 SocketAddr::V6(_) => {
-                    for sender in self
+                    if let Some(sender) = self
                         .ip
                         .v6_iter_mut()
-                        .filter(|s| s.is_valid_send_addr(src, dst_addr))
+                        .find(|s| s.is_valid_send_addr(src, dst_addr))
                     {
-                        has_valid_sender = true;
-                        match Pin::new(sender).poll_send(cx, *dst_addr, src, transmit) {
-                            Poll::Pending => {}
-                            Poll::Ready(res) => {
-                                match &res {
-                                    Ok(()) => trace!("sent"),
-                                    Err(err) => trace!("send failed: {err:#}"),
-                                }
-                                return Poll::Ready(res);
-                            }
-                        }
+                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                     }
                     if let Some(sender) = self.ip.v6_default_mut() {
                         if sender.is_valid_default_addr(src, dst_addr) {
-                            has_valid_sender = true;
-                            match Pin::new(sender).poll_send(cx, *dst_addr, src, transmit) {
-                                Poll::Pending => {}
-                                Poll::Ready(res) => {
-                                    match &res {
-                                        Ok(()) => trace!("sent"),
-                                        Err(err) => trace!("send failed: {err:#}"),
-                                    }
-                                    return Poll::Ready(res);
-                                }
-                            }
+                            return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                         }
                     }
                 }
             },
             Addr::Relay(url, endpoint_id) => {
+                let mut has_valid_sender = false;
                 for sender in self
                     .relay
                     .iter_mut()
@@ -633,26 +593,19 @@ impl TransportsSender {
                     has_valid_sender = true;
                     match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
                         Poll::Pending => {}
-                        Poll::Ready(res) => {
-                            match &res {
-                                Ok(()) => trace!("sent"),
-                                Err(err) => trace!("send failed: {err:#}"),
-                            }
-                            return Poll::Ready(res);
-                        }
+                        Poll::Ready(res) => return Poll::Ready(res),
                     }
+                }
+                if has_valid_sender {
+                    return Poll::Pending;
                 }
             }
         }
 
-        if has_valid_sender {
-            // We have valid senders, but they are not ready so we return pending.
-            Poll::Pending
-        } else {
-            // We "blackhole" data that we have not found any usable transport for on
-            // to make sure the QUIC stack picks up that currently this data does not arrive.
-            Poll::Ready(Ok(()))
-        }
+        // We "blackhole" data that we have not found any usable transport for on
+        // to make sure the QUIC stack picks up that currently this data does not arrive.
+        trace!(?src, ?dst, "no valid transport available");
+        Poll::Ready(Ok(()))
     }
 }
 
