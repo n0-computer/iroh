@@ -393,8 +393,10 @@ impl ServerBuilder {
 }
 
 /// The hyper Service that serves the actual relay endpoints.
+///
+/// This service can be used standalone or embedded into an existing HTTP server.
 #[derive(Clone, Debug)]
-struct RelayService(Arc<Inner>);
+pub struct RelayService(Arc<Inner>);
 
 #[derive(Debug)]
 struct Inner {
@@ -696,7 +698,10 @@ pub(super) enum TlsAcceptor {
 }
 
 impl RelayService {
-    fn new(
+    /// Creates a new RelayService.
+    ///
+    /// This allows embedding the relay service into an existing HTTP server.
+    pub fn new(
         handlers: Handlers,
         headers: HeaderMap,
         rate_limit: Option<ClientRateLimit>,
@@ -716,14 +721,15 @@ impl RelayService {
         }))
     }
 
-    async fn shutdown(&self) {
+    /// Shuts down the relay service, disconnecting all clients.
+    pub async fn shutdown(&self) {
         self.0.clients.shutdown().await;
     }
 
     /// Handle the incoming connection.
     ///
     /// If a `tls_config` is given, will serve the connection using HTTPS.
-    async fn handle_connection(self, stream: TcpStream, tls_config: Option<TlsConfig>) {
+    pub async fn handle_connection(self, stream: TcpStream, tls_config: Option<TlsConfig>) {
         let res = match tls_config {
             Some(tls_config) => {
                 debug!("HTTPS: serve connection");
@@ -816,8 +822,9 @@ impl RelayService {
     }
 }
 
+/// A collection of HTTP request handlers for custom endpoints.
 #[derive(Default)]
-struct Handlers(HashMap<(Method, &'static str), HyperHandler>);
+pub struct Handlers(HashMap<(Method, &'static str), HyperHandler>);
 
 impl std::fmt::Debug for Handlers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
