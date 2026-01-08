@@ -1099,6 +1099,9 @@ impl Actor {
         // ensure we are doing an initial publish of our addresses
         self.msock.publish_my_addr();
 
+        let remote_map_cleanup_fut = cleanup_remote_map(self.msock.clone());
+        tokio::pin!(remote_map_cleanup_fut);
+
         while !shutdown_token.is_cancelled() {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1205,8 +1208,9 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                eid = poll_fn(|cx| self.msock.remote_map.poll_cleanup(cx)) => {
+                eid = &mut remote_map_cleanup_fut => {
                     trace!(%eid, "cleaned up RemoteStateActor");
+                    remote_map_cleanup_fut.set(cleanup_remote_map(self.msock.clone()));
                 }
                 else => {
                     trace!("tick: else");
@@ -1417,6 +1421,13 @@ impl Actor {
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report.as_ref());
     }
+}
+
+/// Potentially removes terminated `RemoteStateActor`s from the remote map.
+///
+/// Takes msock by value not by reference so that this returns a static future.
+async fn cleanup_remote_map(msock: Arc<MagicSock>) -> EndpointId {
+    poll_fn(|cx| msock.remote_map.poll_cleanup(cx)).await
 }
 
 fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
