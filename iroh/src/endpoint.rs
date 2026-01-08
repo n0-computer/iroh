@@ -862,9 +862,9 @@ impl Endpoint {
     ///
     /// This currently means at least one relay server was connected,
     /// and at least one local IP address is available.
-    /// Event if no relays are configured, this will still wait for a relay connection.
+    /// Even if no relays are configured, this will still wait for a relay connection.
     ///
-    /// Once this has been resolved once, this will always immediately resolve.
+    /// Once this has been resolved the first time, this will always immediately resolve.
     ///
     /// This has no timeout, so if that is needed, you need to wrap it in a
     /// timeout. We recommend using a timeout close to
