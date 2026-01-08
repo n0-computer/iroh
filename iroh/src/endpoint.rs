@@ -299,7 +299,7 @@ impl Builder {
                         ip_net: Ipv4Net::new(*addr.ip(), opts.prefix_len())?,
                         port: addr.port(),
                         is_required: opts.is_required(),
-                        is_default: opts.is_default(),
+                        is_default: opts.is_default_route(),
                     },
                     is_user_defined: true,
                 });
@@ -319,7 +319,7 @@ impl Builder {
                         scope_id: addr.scope_id(),
                         port: addr.port(),
                         is_required: opts.is_required(),
-                        is_default: opts.is_default(),
+                        is_default: opts.is_default_route(),
                     },
                     is_user_defined: true,
                 });

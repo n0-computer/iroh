@@ -12,7 +12,7 @@ pub struct BindOpts {
     ///
     /// The prefix length is used in the routing table that is built to decide where datagrams without a specific source address are sent. If these number of leading bits in the destination IP address match the same number of leading bits in this bound socket address, then it matches the subnet and the datagram will be sent here. Otherwise the next bound sockets will be checked for a subnet match. Sockets are ordered from longest prefix to shortest prefix.
     ///
-    /// If no bound address has a matching subnet, the bind marked with [`Self::is_default`] will be used.
+    /// If no bound address has a matching subnet, the bind marked with [`Self::is_default_route`] will be used.
     ///
     /// Note that most datagrams belonging to a traffic flow are in response to an incoming datagram. Those are usually sent on the same bound socket as they were received and will not consult the routing table derived from these bound sockets to select the socket on which they will be sent.
     prefix_len: u8,
@@ -26,7 +26,7 @@ pub struct BindOpts {
     /// The default route is used for outgoing datagrams not belonging to an existing traffic flow, which does not fit in any subnet of the bound sockets. It is assumed this subnet has a gateway router to route such packets.
     ///
     /// See [`Self::prefix_len`] for details of how such routing works.
-    is_default: bool,
+    is_default_route: bool,
 }
 
 impl Default for BindOpts {
@@ -34,7 +34,7 @@ impl Default for BindOpts {
         Self {
             prefix_len: 0,
             is_required: true,
-            is_default: false,
+            is_default_route: false,
         }
     }
 }
@@ -43,7 +43,7 @@ impl BindOpts {
     /// Sets the network prefix length of the subnet this interface is in.
     ///
     ///
-    /// The subnets of bound sockets are used to route outgoing datagrams not belonging to an existing traffic flow to the socket they should be sent on. Subnets are ordered from longest prefix length to shortest prefix length and the first subnet which contains the destination IP address will be chosen. If no subnet matches but there is a bound socket marked with [`Self::set_is_default`] then this socket will be used. In this case it is assumed the attached subnet has a gateway router to forward the datagram.
+    /// The subnets of bound sockets are used to route outgoing datagrams not belonging to an existing traffic flow to the socket they should be sent on. Subnets are ordered from longest prefix length to shortest prefix length and the first subnet which contains the destination IP address will be chosen. If no subnet matches but there is a bound socket marked with [`Self::set_is_default_route`] then this socket will be used. In this case it is assumed the attached subnet has a gateway router to forward the datagram.
     ///
     /// Defaults to `0`, which means *all* IP addresses will belong to the subnet of this socket's address. If multiple sockets of the same address family (IPv4 or IPv6) are bound with such a `/0` prefix the socket which will be chosen is undefined.
     ///
@@ -80,14 +80,14 @@ impl BindOpts {
     /// See [`Self::set_prefix_len`] for details on how this routing works.
     ///
     /// Defaults to `false`.
-    pub fn set_is_default(mut self, is_default: bool) -> Self {
-        self.is_default = is_default;
+    pub fn set_is_default_route(mut self, is_default_route: bool) -> Self {
+        self.is_default_route = is_default_route;
         self
     }
 
-    /// Returns the current value set by [`Self::set_is_default`].
-    pub fn is_default(&self) -> bool {
-        self.is_default
+    /// Returns the current value set by [`Self::set_is_default_route`].
+    pub fn is_default_route(&self) -> bool {
+        self.is_default_route
     }
 }
 
