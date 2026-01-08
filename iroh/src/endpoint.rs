@@ -763,7 +763,7 @@ impl Endpoint {
     ///    [`Connecting::into_0rtt`].
     ///    **Note:** Please read the documentation for `into_0rtt` carefully to assess
     ///    security concerns.
-    /// 2. The [`TransportConfig`] for the connection can be modified via the provided
+    /// 2. The [`QuicTransportConfig`] for the connection can be modified via the provided
     ///    [`ConnectOptions`].
     ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
     ///    establishing and maintaining direct connections.  Carefully test settings you use and
@@ -1265,7 +1265,7 @@ impl ConnectOptions {
     /// Initializes new connection options.
     ///
     /// By default, the connection will use the same options
-    /// as [`Endpoint::connect`], e.g. a default [`TransportConfig`].
+    /// as [`Endpoint::connect`], e.g. a default [`QuicTransportConfig`].
     pub fn new() -> Self {
         Self::default()
     }
