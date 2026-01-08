@@ -628,6 +628,16 @@ dependencies = [
 
 [[package]]
 name = "core-foundation"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91e195e091a93c46f7102ec7818a2aa394e1e1771c3ab4825963fa03e45afb8f"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
+name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2a6cd9ae233e7f62ba4e9353e81a88df7fc8a5987b8d445b4d90c879bd156f6"
@@ -940,32 +950,11 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a9b99b9cbbe49445b21764dc0625032a89b145a2642e67603e1c936f5458d05"
-dependencies = [
- "derive_more-impl 1.0.0",
-]
-
-[[package]]
-name = "derive_more"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10b768e943bed7bf2cab53df09f4bc34bfd217cdb57d971e769874c9a6710618"
 dependencies = [
- "derive_more-impl 2.1.0",
-]
-
-[[package]]
-name = "derive_more-impl"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb7330aeadfbe296029522e6c40f315320aba36fc43a5b3632f3795348f3bd22"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
- "unicode-xid",
+ "derive_more-impl",
 ]
 
 [[package]]
@@ -1171,7 +1160,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1750,7 +1739,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -1981,7 +1970,7 @@ dependencies = [
  "clap",
  "console_error_panic_hook",
  "data-encoding",
- "derive_more 2.1.0",
+ "derive_more",
  "ed25519-dalek",
  "futures-util",
  "getrandom 0.3.4",
@@ -1999,7 +1988,7 @@ dependencies = [
  "n0-future",
  "n0-tracing-test",
  "n0-watcher",
- "netdev",
+ "netdev 0.40.0",
  "netwatch",
  "parse-size",
  "pin-project",
@@ -2042,7 +2031,7 @@ version = "0.95.1"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
- "derive_more 2.1.0",
+ "derive_more",
  "ed25519-dalek",
  "n0-error",
  "postcard",
@@ -2090,7 +2079,7 @@ dependencies = [
  "clap",
  "criterion",
  "data-encoding",
- "derive_more 2.1.0",
+ "derive_more",
  "dirs-next",
  "governor",
  "hickory-resolver",
@@ -2177,7 +2166,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2191,7 +2180,7 @@ version = "0.13.0"
 source = "git+https://github.com/n0-computer/quinn?branch=main#7ce0396198789ff7b66b5d71bfc12fbd162589df"
 dependencies = [
  "bytes",
- "derive_more 2.1.0",
+ "derive_more",
  "enum-assoc",
  "fastbloom",
  "getrandom 0.3.4",
@@ -2219,9 +2208,9 @@ source = "git+https://github.com/n0-computer/quinn?branch=main#7ce0396198789ff7b
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2235,7 +2224,7 @@ dependencies = [
  "clap",
  "dashmap",
  "data-encoding",
- "derive_more 2.1.0",
+ "derive_more",
  "getrandom 0.3.4",
  "hickory-resolver",
  "http",
@@ -2563,12 +2552,12 @@ dependencies = [
 
 [[package]]
 name = "n0-future"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c0709ac8235ce13b82bc4d180ee3c42364b90c1a8a628c3422d991d75a728b5"
+checksum = "e2ab99dfb861450e68853d34ae665243a88b8c493d01ba957321a1e9b2312bbe"
 dependencies = [
  "cfg_aliases",
- "derive_more 1.0.0",
+ "derive_more",
  "futures-buffered",
  "futures-lite",
  "futures-util",
@@ -2622,9 +2611,27 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba717c22ceec021ace0ff7674bf8fd60c9394605740a8201678fc1cb3a7398f6"
 dependencies = [
- "derive_more 2.1.0",
+ "derive_more",
  "n0-error",
  "n0-future",
+]
+
+[[package]]
+name = "netdev"
+version = "0.39.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35a703aa1a87cd885b9f674922445a42dbb0c0f4f1b28fef21b227ae32375d21"
+dependencies = [
+ "dlopen2",
+ "ipnet",
+ "libc",
+ "mac-addr",
+ "netlink-packet-core",
+ "netlink-packet-route",
+ "netlink-sys",
+ "once_cell",
+ "system-configuration",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2700,25 +2707,23 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.12.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#5906f20f80bf0eaa4681b1f2471e08256d76eb04"
+source = "git+https://github.com/n0-computer/net-tools?branch=main#03810108ec3aef00b5642e1b9de570e61ec4bfe5"
 dependencies = [
  "atomic-waker",
  "bytes",
  "cfg_aliases",
- "derive_more 2.1.0",
+ "derive_more",
  "iroh-quinn-udp",
  "js-sys",
  "libc",
  "n0-error",
  "n0-future",
  "n0-watcher",
- "netdev",
+ "netdev 0.39.0",
  "netlink-packet-core",
  "netlink-packet-route",
  "netlink-proto",
  "netlink-sys",
- "objc2-core-foundation",
- "objc2-system-configuration",
  "pin-project-lite",
  "serde",
  "socket2 0.6.1",
@@ -2775,7 +2780,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3139,7 +3144,7 @@ checksum = "7b575f975dcf03e258b0c7ab3f81497d7124f508884c37da66a7314aa2a8d467"
 dependencies = [
  "base64",
  "bytes",
- "derive_more 2.1.0",
+ "derive_more",
  "futures-lite",
  "futures-util",
  "hyper-util",
@@ -3310,7 +3315,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3347,9 +3352,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3619,7 +3624,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3699,7 +3704,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19787cda76408ec5404443dc8b31795c87cd8fec49762dc75fa727740d34acc1"
 dependencies = [
- "core-foundation",
+ "core-foundation 0.10.1",
  "core-foundation-sys",
  "jni",
  "log",
@@ -3720,7 +3725,7 @@ version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d99feebc72bae7ab76ba994bb5e121b8d83d910ca40b36e0921f53becc41784"
 dependencies = [
- "core-foundation",
+ "core-foundation 0.10.1",
  "core-foundation-sys",
  "jni",
  "log",
@@ -3732,7 +3737,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3813,7 +3818,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b3297343eaf830f66ede390ea39da1d462b6b0c1b000f420d0a83f898bbbe6ef"
 dependencies = [
  "bitflags",
- "core-foundation",
+ "core-foundation 0.10.1",
  "core-foundation-sys",
  "libc",
  "security-framework-sys",
@@ -4260,6 +4265,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-configuration"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c879d448e9d986b661742763247d3693ed13609438cf3d006f51f5368a5ba6b"
+dependencies = [
+ "bitflags",
+ "core-foundation 0.9.4",
+ "system-configuration-sys",
+]
+
+[[package]]
+name = "system-configuration-sys"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
+dependencies = [
+ "core-foundation-sys",
+ "libc",
+]
+
+[[package]]
 name = "tagptr"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4275,7 +4301,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
