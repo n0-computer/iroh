@@ -134,9 +134,11 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         use n0_future::SinkExt;
-        Pin::new(&mut self.inner)
-            .poll_ready(cx)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
+        match Pin::new(&mut self.inner).poll_ready(cx) {
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))),
+            Poll::Pending => Poll::Pending,
+        }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
@@ -148,16 +150,20 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         use n0_future::SinkExt;
-        Pin::new(&mut self.inner)
-            .poll_flush(cx)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
+        match Pin::new(&mut self.inner).poll_flush(cx) {
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))),
+            Poll::Pending => Poll::Pending,
+        }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         use n0_future::SinkExt;
-        Pin::new(&mut self.inner)
-            .poll_close(cx)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
+        match Pin::new(&mut self.inner).poll_close(cx) {
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
