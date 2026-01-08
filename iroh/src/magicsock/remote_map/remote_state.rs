@@ -11,7 +11,7 @@ use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
-    task::{self, AbortOnDropHandle},
+    task::JoinSet,
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
@@ -20,16 +20,13 @@ use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+use self::path_state::RemotePathState;
 pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
-use self::{
-    guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
-    path_state::RemotePathState,
-};
 use super::Source;
 use crate::{
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
@@ -43,22 +40,17 @@ use crate::{
     util::MaybeFuture,
 };
 
+mod path_state;
+mod remote_info;
+
 /// How often to attempt holepunching.
 ///
 /// If there have been no changes to the NAT address candidates, holepunching will not be
 /// attempted more frequently than at this interval.
 const HOLEPUNCH_ATTEMPTS_INTERVAL: Duration = Duration::from_secs(5);
 
-/// How often are we checking if we still have a good connection.
-const CHECK_CONNECTIONS_INTERVAL: Duration = Duration::from_secs(5);
-
-mod guarded_channel;
-mod path_state;
-mod remote_info;
-
-// TODO: use this
-// /// The latency at or under which we don't try to upgrade to a better path.
-// const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
+/// The latency at or under which we don't try to upgrade to a better path.
+const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(10);
 
 // TODO: use this
 // /// How long since the last activity we try to keep an established endpoint peering alive.
@@ -66,11 +58,10 @@ mod remote_info;
 // /// It's also the idle time at which we stop doing QAD queries to keep NAT mappings alive.
 // pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
-// TODO: use this
-// /// How often we try to upgrade to a better path.
-// ///
-// /// Even if we have some non-relay route that works.
-// const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
+/// How often we try to upgrade to a better path.
+///
+/// Even if we have some non-relay route that works.
+const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The time after which an idle [`RemoteStateActor`] stops.
 ///
@@ -223,8 +214,13 @@ impl RemoteStateActor {
         }
     }
 
-    pub(super) fn start(self, shutdown_token: CancellationToken) -> RemoteStateHandle {
-        let (tx, rx) = guarded_channel(16);
+    pub(super) fn start(
+        self,
+        initial_msgs: Vec<RemoteStateMessage>,
+        tasks: &mut JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
+        shutdown_token: CancellationToken,
+    ) -> mpsc::Sender<RemoteStateMessage> {
+        let (tx, rx) = mpsc::channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
 
@@ -233,16 +229,16 @@ impl RemoteStateActor {
         // we don't explicitly set a span we get the spans from whatever call happens to
         // first create the actor, which is often very confusing as it then keeps those
         // spans for all logging of the actor.
-        let task = task::spawn(self.run(rx, shutdown_token).instrument(info_span!(
-            parent: None,
-            "RemoteStateActor",
-            me = %me.fmt_short(),
-            remote = %endpoint_id.fmt_short(),
-        )));
-        RemoteStateHandle {
-            sender: tx,
-            _task: AbortOnDropHandle::new(task),
-        }
+        tasks.spawn(
+            self.run(initial_msgs, rx, shutdown_token)
+                .instrument(info_span!(
+                    parent: None,
+                    "RemoteStateActor",
+                    me = %me.fmt_short(),
+                    remote = %endpoint_id.fmt_short(),
+                )),
+        );
+        tx
     }
 
     /// Runs the main loop of the actor.
@@ -252,14 +248,18 @@ impl RemoteStateActor {
     /// discipline is needed to not turn pending for a long time.
     async fn run(
         mut self,
-        mut inbox: GuardedReceiver<RemoteStateMessage>,
+        initial_msgs: Vec<RemoteStateMessage>,
+        mut inbox: mpsc::Receiver<RemoteStateMessage>,
         shutdown_token: CancellationToken,
-    ) {
+    ) -> (EndpointId, Vec<RemoteStateMessage>) {
         trace!("actor started");
+        for msg in initial_msgs {
+            self.handle_message(msg).await;
+        }
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
 
-        let check_connections = time::interval(CHECK_CONNECTIONS_INTERVAL);
+        let check_connections = time::interval(UPGRADE_INTERVAL);
         n0_future::pin!(check_connections);
 
         loop {
@@ -273,7 +273,7 @@ impl RemoteStateActor {
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_hp);
-            if !inbox.is_idle() || !self.connections.is_empty() {
+            if !inbox.is_empty() || !self.connections.is_empty() {
                 idle_timeout
                     .as_mut()
                     .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
@@ -331,7 +331,7 @@ impl RemoteStateActor {
                     self.check_connections();
                 }
                 _ = &mut idle_timeout => {
-                    if self.connections.is_empty() && inbox.close_if_idle() {
+                    if self.connections.is_empty() && inbox.is_empty() {
                         trace!("idle timeout expired and still idle: terminate actor");
                         break;
                     } else {
@@ -341,7 +341,15 @@ impl RemoteStateActor {
                 }
             }
         }
+
+        inbox.close();
+        // There might be a race between checking `inbox.is_empty()` and `inbox.close()`,
+        // so we pull out all messages that are left over.
+        let mut leftover_msgs = Vec::with_capacity(inbox.len());
+        inbox.recv_many(&mut leftover_msgs, inbox.len()).await;
+
         trace!("actor terminating");
+        (self.endpoint_id, leftover_msgs)
     }
 
     /// Handles an actor message.
@@ -368,16 +376,59 @@ impl RemoteStateActor {
                 };
                 tx.send(info).ok();
             }
+            RemoteStateMessage::NetworkChange { is_major } => {
+                self.handle_network_change(is_major);
+            }
+        }
+    }
+
+    fn handle_network_change(&mut self, is_major: bool) {
+        for conn in self.connections.values() {
+            if let Some(quinn_conn) = conn.handle.upgrade() {
+                for (path_id, addr) in &conn.open_paths {
+                    if let Some(path) = quinn_conn.path(*path_id) {
+                        // Ping the current path
+                        if let Err(err) = path.ping() {
+                            warn!(%err, ?path_id, ?addr, "failed to ping path");
+                        }
+                    }
+                }
+            }
+        }
+
+        if is_major {
+            self.trigger_holepunching();
         }
     }
 
     /// Handles regularly checking if any paths need hole punching currently
+    ///
+    /// Currently we need to have 1 IP path, with a good enough latency.
     fn check_connections(&mut self) {
         let mut is_goodenough = true;
-        for conn in self.connections.values() {
-            // If we have at least 1 non relay path, we consider the connection good enough for now
-            // TODO: evaluate other criteria, like current RTT etc
-            let is_conn_goodenough = conn.open_paths.iter().any(|(_, addr)| !addr.is_relay());
+        for conn_state in self.connections.values() {
+            let mut is_conn_goodenough = false;
+            if let Some(conn) = conn_state.handle.upgrade() {
+                let min_ip_rtt = conn_state
+                    .open_paths
+                    .iter()
+                    .filter_map(|(path_id, addr)| {
+                        if addr.is_ip() {
+                            conn.path_stats(*path_id).map(|stats| stats.rtt)
+                        } else {
+                            None
+                        }
+                    })
+                    .min();
+
+                if let Some(min_ip_rtt) = min_ip_rtt {
+                    let is_latency_goodenough = min_ip_rtt <= GOOD_ENOUGH_LATENCY;
+                    is_conn_goodenough = is_latency_goodenough;
+                } else {
+                    // No IP transport found
+                    is_conn_goodenough = false;
+                }
+            }
             is_goodenough &= is_conn_goodenough;
         }
 
@@ -1175,21 +1226,8 @@ pub(crate) enum RemoteStateMessage {
     ///
     /// This currently only includes a list of all known transport addresses for the remote.
     RemoteInfo(oneshot::Sender<RemoteInfo>),
-}
-
-/// A handle to a [`RemoteStateActor`].
-///
-/// Dropping this will stop the actor. The actor will also stop after an idle timeout
-/// if it has no connections, an empty inbox, and no other senders than the one stored
-/// in the endpoint map exist.
-#[derive(Debug)]
-pub(super) struct RemoteStateHandle {
-    /// Sender for the channel into the [`RemoteStateActor`].
-    ///
-    /// This is a [`GuardedSender`], from which we can get a sender but only if the receiver
-    /// hasn't been closed.
-    pub(super) sender: GuardedSender<RemoteStateMessage>,
-    _task: AbortOnDropHandle<()>,
+    /// The network status has changed in some way
+    NetworkChange { is_major: bool },
 }
 
 /// Information about a holepunch attempt.
