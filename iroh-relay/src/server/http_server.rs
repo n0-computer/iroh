@@ -155,19 +155,31 @@ impl ServerHandle {
 ///
 /// # Example
 ///
-/// ```no_run
+/// ```
 /// use std::sync::Arc;
 /// use rustls::ServerConfig;
 /// use iroh_relay::server::http_server::TlsConfig;
+/// use webpki_types::{CertificateDer, PrivateKeyDer};
 ///
-/// // Create a rustls ServerConfig with your certificates
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Generate a self-signed certificate for testing
+/// let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
+/// let cert_der = cert.cert.der().to_vec();
+/// let private_key_der = cert.signing_key.serialize_der();
+///
+/// // Create rustls types
+/// let cert_chain = vec![CertificateDer::from(cert_der)];
+/// let private_key = PrivateKeyDer::try_from(private_key_der)?;
+///
+/// // Create a rustls ServerConfig
 /// let server_config = Arc::new(ServerConfig::builder()
 ///     .with_no_client_auth()
-///     .with_single_cert(certs, private_key)
-///     .expect("bad certificate/key"));
+///     .with_single_cert(cert_chain, private_key)?);
 ///
 /// // Create TlsConfig for use with RelayService
 /// let tls_config = TlsConfig::new(server_config);
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
@@ -185,17 +197,29 @@ impl TlsConfig {
     ///
     /// # Example
     ///
-    /// ```no_run
+    /// ```
     /// use std::sync::Arc;
     /// use rustls::ServerConfig;
     /// use iroh_relay::server::http_server::TlsConfig;
+    /// use webpki_types::{CertificateDer, PrivateKeyDer};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // Generate a self-signed certificate for testing
+    /// let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
+    /// let cert_der = cert.cert.der().to_vec();
+    /// let private_key_der = cert.signing_key.serialize_der();
+    ///
+    /// // Create rustls types
+    /// let cert_chain = vec![CertificateDer::from(cert_der)];
+    /// let private_key = PrivateKeyDer::try_from(private_key_der)?;
     ///
     /// let server_config = Arc::new(ServerConfig::builder()
     ///     .with_no_client_auth()
-    ///     .with_single_cert(certs, private_key)
-    ///     .expect("bad certificate/key"));
+    ///     .with_single_cert(cert_chain, private_key)?);
     ///
     /// let tls_config = TlsConfig::new(server_config);
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(config: Arc<rustls::ServerConfig>) -> Self {
         let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
@@ -792,18 +816,43 @@ impl RelayService {
     /// ```no_run
     /// # use std::sync::Arc;
     /// # use tokio::net::TcpStream;
-    /// # use iroh_relay::server::http_server::{RelayService, TlsConfig};
-    /// # async fn example(relay_service: RelayService, stream: TcpStream) {
+    /// # use http::HeaderMap;
+    /// # use iroh_relay::server::http_server::{Handlers, RelayService, TlsConfig};
+    /// # use iroh_relay::{KeyCache, server::{AccessConfig, Metrics}};
+    /// # use webpki_types::{CertificateDer, PrivateKeyDer};
+    /// # async fn example(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Create a relay service
+    /// let handlers = Handlers::default();
+    /// let headers = HeaderMap::new();
+    /// let key_cache = KeyCache::new(1024);
+    /// let metrics = Arc::new(Metrics::default());
+    /// let relay_service = RelayService::new(
+    ///     handlers,
+    ///     headers,
+    ///     None,  // No rate limiting
+    ///     key_cache,
+    ///     AccessConfig::Everyone,
+    ///     metrics,
+    /// );
+    ///
+    /// // Generate a self-signed certificate for HTTPS
+    /// let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
+    /// let cert_der = cert.cert.der().to_vec();
+    /// let private_key_der = cert.signing_key.serialize_der();
+    /// let cert_chain = vec![CertificateDer::from(cert_der)];
+    /// let private_key = PrivateKeyDer::try_from(private_key_der)?;
+    ///
     /// // Serve with HTTPS
     /// let server_config = Arc::new(rustls::ServerConfig::builder()
     ///     .with_no_client_auth()
-    ///     .with_single_cert(certs, private_key)
-    ///     .expect("bad certificate/key"));
+    ///     .with_single_cert(cert_chain, private_key)?);
     /// let tls_config = TlsConfig::new(server_config);
-    /// relay_service.handle_connection(stream, Some(tls_config)).await;
+    /// relay_service.clone().handle_connection(stream, Some(tls_config)).await;
     ///
     /// // Or serve with plain HTTP
+    /// # let stream = TcpStream::connect("127.0.0.1:0").await?;
     /// relay_service.handle_connection(stream, None).await;
+    /// # Ok(())
     /// # }
     /// ```
     pub async fn handle_connection(self, stream: TcpStream, tls_config: Option<TlsConfig>) {
