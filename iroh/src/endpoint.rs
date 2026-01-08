@@ -875,11 +875,16 @@ impl Endpoint {
     /// you must use the [`Endpoint::watch_addr`] method, to
     /// get information on the current relay and direct address information.
     ///
-    /// Keep in mind that in the common case where the endpoint's configured relay
-    /// servers are only accessible via a wide are connection, this method will
-    /// await indefinitely when the endpoint has no WAN connection. If you're writing
-    /// an app that's designed to work without a WAN connection, defer any calls to
-    /// `online` as long as possible, or avoid calling `online` entirely.
+    /// In the common case where the endpoint's configured relay servers are
+    /// only accessible via a wide area network (WAN) connection, this method
+    /// will await indefinitely when the endpoint has no WAN connection. If you're
+    /// writing an app that's designed to work without a WAN connection, defer
+    /// any calls to `online` as long as possible, or avoid calling `online`
+    /// entirely.
+    ///
+    /// The online method does not interact with [`crate::discovery::Discovery`]
+    /// services, which means that any discovery service that relies on a WAN
+    /// connection is independent of the endpoint's online status.
     ///
     /// # Examples
     ///
@@ -888,12 +893,12 @@ impl Endpoint {
     ///
     /// #[tokio::main]
     /// async fn main() {
-    /// // after this await returns, the endpoint is bound to a local socket
-    /// // and can be dialed, but almost certainly hasn't finished picking a
-    /// // relay
+    /// // After this await returns, the endpoint is bound to a local socket.
+    /// // It can be dialed, but almost certainly hasn't finished picking a
+    /// // relay.
     /// let endpoint = Endpoint::bind().await;
     ///
-    /// // after this await returns we have a connection to at least one relay
+    /// // After this await returns we have a connection to at least one relay
     /// // and holepunching should work as expected.
     /// endpoint.online().await;
     /// }
