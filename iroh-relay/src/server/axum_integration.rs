@@ -41,8 +41,8 @@ pub struct RelayState {
     pub rate_limit: Option<ClientRateLimit>,
     /// Key cache for the relay
     pub key_cache: KeyCache,
-    /// Access control configuration
-    pub access: AccessConfig,
+    /// Access control configuration (wrapped in Arc since AccessConfig can't be cloned)
+    pub access: Arc<AccessConfig>,
     /// Metrics for the relay server
     pub metrics: Arc<Metrics>,
     /// Write timeout for client connections
@@ -56,16 +56,16 @@ impl RelayState {
     pub fn new(
         rate_limit: Option<ClientRateLimit>,
         key_cache: KeyCache,
-        access: AccessConfig,
+        access: Arc<AccessConfig>,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self {
             rate_limit,
-            key_cache: key_cache.clone(),
+            key_cache,
             access,
-            metrics: metrics.clone(),
+            metrics,
             write_timeout: crate::defaults::timeouts::SERVER_WRITE_TIMEOUT,
-            clients: super::clients::Clients::new(metrics),
+            clients: super::clients::Clients::default(),
         }
     }
 }
@@ -121,7 +121,7 @@ impl Stream for AxumWebSocketAdapter {
             }
             Poll::Ready(Some(Err(e))) => {
                 // Convert axum error to StreamError (which is std::io::Error)
-                Poll::Ready(Some(Err(std::io::Error::new(std::io::ErrorKind::Other, e))))
+                Poll::Ready(Some(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))))
             }
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -136,28 +136,28 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
         use n0_future::SinkExt;
         Pin::new(&mut self.inner)
             .poll_ready(cx)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
         use n0_future::SinkExt;
         Pin::new(&mut self.inner)
-            .start_send(AxumMessage::Binary(item.to_vec()))
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .start_send(AxumMessage::Binary(item))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         use n0_future::SinkExt;
         Pin::new(&mut self.inner)
             .poll_flush(cx)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         use n0_future::SinkExt;
         Pin::new(&mut self.inner)
             .poll_close(cx)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
     }
 }
 
