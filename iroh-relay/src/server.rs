@@ -43,7 +43,7 @@ use crate::{
 
 mod client;
 mod clients;
-mod http_server;
+pub mod http_server;
 mod metrics;
 pub(crate) mod resolver;
 pub(crate) mod streams;

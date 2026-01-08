@@ -1,3 +1,11 @@
+//! Low-level HTTP server components for embedding the relay service.
+//!
+//! This module provides [`RelayService`] which can be used to embed relay functionality
+//! into an existing HTTP server. It handles individual connections and provides
+//! the core relay protocol implementation.
+//!
+//! For a complete relay server implementation, see the parent [`server`](super) module.
+
 use std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
@@ -141,12 +149,61 @@ impl ServerHandle {
 }
 
 /// Configuration to use for the TLS connection
+///
+/// This struct wraps a rustls server configuration and TLS acceptor for use with
+/// [`RelayService::handle_connection`].
+///
+/// # Example
+///
+/// ```no_run
+/// use std::sync::Arc;
+/// use rustls::ServerConfig;
+/// use iroh_relay::server::http_server::TlsConfig;
+///
+/// // Create a rustls ServerConfig with your certificates
+/// let server_config = Arc::new(ServerConfig::builder()
+///     .with_no_client_auth()
+///     .with_single_cert(certs, private_key)
+///     .expect("bad certificate/key"));
+///
+/// // Create TlsConfig for use with RelayService
+/// let tls_config = TlsConfig::new(server_config);
+/// ```
 #[derive(Debug, Clone)]
-pub(super) struct TlsConfig {
+pub struct TlsConfig {
     /// The server config
     pub(super) config: Arc<rustls::ServerConfig>,
     /// The kind
     pub(super) acceptor: TlsAcceptor,
+}
+
+impl TlsConfig {
+    /// Creates a new `TlsConfig` from a rustls `ServerConfig`.
+    ///
+    /// This creates a manual TLS acceptor using the provided server configuration.
+    /// The acceptor will handle TLS handshakes for incoming connections.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use std::sync::Arc;
+    /// use rustls::ServerConfig;
+    /// use iroh_relay::server::http_server::TlsConfig;
+    ///
+    /// let server_config = Arc::new(ServerConfig::builder()
+    ///     .with_no_client_auth()
+    ///     .with_single_cert(certs, private_key)
+    ///     .expect("bad certificate/key"));
+    ///
+    /// let tls_config = TlsConfig::new(server_config);
+    /// ```
+    pub fn new(config: Arc<rustls::ServerConfig>) -> Self {
+        let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
+        Self {
+            config,
+            acceptor: TlsAcceptor::Manual(acceptor),
+        }
+    }
 }
 
 /// Errors when attempting to upgrade and
@@ -728,7 +785,27 @@ impl RelayService {
 
     /// Handle the incoming connection.
     ///
-    /// If a `tls_config` is given, will serve the connection using HTTPS.
+    /// If a `tls_config` is given, will serve the connection using HTTPS, otherwise HTTP.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use std::sync::Arc;
+    /// # use tokio::net::TcpStream;
+    /// # use iroh_relay::server::http_server::{RelayService, TlsConfig};
+    /// # async fn example(relay_service: RelayService, stream: TcpStream) {
+    /// // Serve with HTTPS
+    /// let server_config = Arc::new(rustls::ServerConfig::builder()
+    ///     .with_no_client_auth()
+    ///     .with_single_cert(certs, private_key)
+    ///     .expect("bad certificate/key"));
+    /// let tls_config = TlsConfig::new(server_config);
+    /// relay_service.handle_connection(stream, Some(tls_config)).await;
+    ///
+    /// // Or serve with plain HTTP
+    /// relay_service.handle_connection(stream, None).await;
+    /// # }
+    /// ```
     pub async fn handle_connection(self, stream: TcpStream, tls_config: Option<TlsConfig>) {
         let res = match tls_config {
             Some(tls_config) => {
@@ -885,13 +962,7 @@ mod tests {
         .with_single_cert(vec![(rustls_certificate)], rustls_key.into())
         .expect("cert is right");
 
-        let config = Arc::new(config);
-        let acceptor = tokio_rustls::TlsAcceptor::from(config.clone());
-
-        TlsConfig {
-            config,
-            acceptor: TlsAcceptor::Manual(acceptor),
-        }
+        TlsConfig::new(Arc::new(config))
     }
 
     #[tokio::test]
