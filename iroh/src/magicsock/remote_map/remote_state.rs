@@ -11,7 +11,7 @@ use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
     boxed::BoxStream,
-    task::{self, AbortOnDropHandle},
+    task::JoinSet,
     time::{self, Duration, Instant},
 };
 use n0_watcher::{Watchable, Watcher};
@@ -20,16 +20,13 @@ use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, error, event, info_span, instrument, trace, warn};
 
+use self::path_state::RemotePathState;
 pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
-use self::{
-    guarded_channel::{GuardedReceiver, GuardedSender, guarded_channel},
-    path_state::RemotePathState,
-};
 use super::Source;
 use crate::{
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
@@ -43,7 +40,6 @@ use crate::{
     util::MaybeFuture,
 };
 
-mod guarded_channel;
 mod path_state;
 mod remote_info;
 
@@ -218,8 +214,13 @@ impl RemoteStateActor {
         }
     }
 
-    pub(super) fn start(self, shutdown_token: CancellationToken) -> RemoteStateHandle {
-        let (tx, rx) = guarded_channel(16);
+    pub(super) fn start(
+        self,
+        initial_msgs: Vec<RemoteStateMessage>,
+        tasks: &mut JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
+        shutdown_token: CancellationToken,
+    ) -> mpsc::Sender<RemoteStateMessage> {
+        let (tx, rx) = mpsc::channel(16);
         let me = self.local_endpoint_id;
         let endpoint_id = self.endpoint_id;
 
@@ -228,16 +229,16 @@ impl RemoteStateActor {
         // we don't explicitly set a span we get the spans from whatever call happens to
         // first create the actor, which is often very confusing as it then keeps those
         // spans for all logging of the actor.
-        let task = task::spawn(self.run(rx, shutdown_token).instrument(info_span!(
-            parent: None,
-            "RemoteStateActor",
-            me = %me.fmt_short(),
-            remote = %endpoint_id.fmt_short(),
-        )));
-        RemoteStateHandle {
-            sender: tx,
-            _task: AbortOnDropHandle::new(task),
-        }
+        tasks.spawn(
+            self.run(initial_msgs, rx, shutdown_token)
+                .instrument(info_span!(
+                    parent: None,
+                    "RemoteStateActor",
+                    me = %me.fmt_short(),
+                    remote = %endpoint_id.fmt_short(),
+                )),
+        );
+        tx
     }
 
     /// Runs the main loop of the actor.
@@ -247,10 +248,14 @@ impl RemoteStateActor {
     /// discipline is needed to not turn pending for a long time.
     async fn run(
         mut self,
-        mut inbox: GuardedReceiver<RemoteStateMessage>,
+        initial_msgs: Vec<RemoteStateMessage>,
+        mut inbox: mpsc::Receiver<RemoteStateMessage>,
         shutdown_token: CancellationToken,
-    ) {
+    ) -> (EndpointId, Vec<RemoteStateMessage>) {
         trace!("actor started");
+        for msg in initial_msgs {
+            self.handle_message(msg).await;
+        }
         let idle_timeout = time::sleep(ACTOR_MAX_IDLE_TIMEOUT);
         n0_future::pin!(idle_timeout);
 
@@ -268,7 +273,7 @@ impl RemoteStateActor {
                 None => MaybeFuture::None,
             };
             n0_future::pin!(scheduled_hp);
-            if !inbox.is_idle() || !self.connections.is_empty() {
+            if !inbox.is_empty() || !self.connections.is_empty() {
                 idle_timeout
                     .as_mut()
                     .reset(Instant::now() + ACTOR_MAX_IDLE_TIMEOUT);
@@ -326,7 +331,7 @@ impl RemoteStateActor {
                     self.check_connections();
                 }
                 _ = &mut idle_timeout => {
-                    if self.connections.is_empty() && inbox.close_if_idle() {
+                    if self.connections.is_empty() && inbox.is_empty() {
                         trace!("idle timeout expired and still idle: terminate actor");
                         break;
                     } else {
@@ -336,7 +341,15 @@ impl RemoteStateActor {
                 }
             }
         }
+
+        inbox.close();
+        // There might be a race between checking `inbox.is_empty()` and `inbox.close()`,
+        // so we pull out all messages that are left over.
+        let mut leftover_msgs = Vec::with_capacity(inbox.len());
+        inbox.recv_many(&mut leftover_msgs, inbox.len()).await;
+
         trace!("actor terminating");
+        (self.endpoint_id, leftover_msgs)
     }
 
     /// Handles an actor message.
@@ -1215,21 +1228,6 @@ pub(crate) enum RemoteStateMessage {
     RemoteInfo(oneshot::Sender<RemoteInfo>),
     /// The network status has changed in some way
     NetworkChange { is_major: bool },
-}
-
-/// A handle to a [`RemoteStateActor`].
-///
-/// Dropping this will stop the actor. The actor will also stop after an idle timeout
-/// if it has no connections, an empty inbox, and no other senders than the one stored
-/// in the endpoint map exist.
-#[derive(Debug)]
-pub(super) struct RemoteStateHandle {
-    /// Sender for the channel into the [`RemoteStateActor`].
-    ///
-    /// This is a [`GuardedSender`], from which we can get a sender but only if the receiver
-    /// hasn't been closed.
-    pub(super) sender: GuardedSender<RemoteStateMessage>,
-    _task: AbortOnDropHandle<()>,
 }
 
 /// Information about a holepunch attempt.

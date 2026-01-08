@@ -18,6 +18,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
+    future::poll_fn,
     io,
     net::{IpAddr, SocketAddr},
     sync::{
@@ -1098,9 +1099,6 @@ impl Actor {
         // ensure we are doing an initial publish of our addresses
         self.msock.publish_my_addr();
 
-        // Interval timer to remove closed `RemoteStateActor` handles from the endpoint map.
-        let mut remote_map_gc = time::interval(remote_map::REMOTE_MAP_GC_INTERVAL);
-
         while !shutdown_token.is_cancelled() {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1207,9 +1205,8 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                _ = remote_map_gc.tick() => {
-                    trace!("tick: gc map");
-                    self.msock.remote_map.remove_closed_remote_state_actors();
+                eid = poll_fn(|cx| self.msock.remote_map.poll_cleanup(cx)) => {
+                    trace!(%eid, "cleaned up RemoteStateActor");
                 }
                 else => {
                     trace!("tick: else");
