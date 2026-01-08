@@ -47,6 +47,8 @@ mod http_server;
 mod metrics;
 pub(crate) mod resolver;
 pub(crate) mod streams;
+#[cfg(feature = "axum")]
+pub mod axum_integration;
 #[cfg(feature = "test-utils")]
 pub mod testing;
 
