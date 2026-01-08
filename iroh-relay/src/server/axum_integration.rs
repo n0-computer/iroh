@@ -25,6 +25,7 @@ use axum::{
 use bytes::Bytes;
 use n0_future::{Stream, Sink};
 use std::{pin::Pin, task::{Context, Poll}, sync::Arc};
+use tokio_websockets::Error as WsError;
 use tracing::{debug, trace, warn};
 
 use super::{AccessConfig, ClientRateLimit, Metrics, client::Config};
@@ -120,8 +121,8 @@ impl Stream for AxumWebSocketAdapter {
                 }
             }
             Poll::Ready(Some(Err(e))) => {
-                // Convert axum error to StreamError (which is std::io::Error)
-                Poll::Ready(Some(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))))
+                // Convert axum error to WsError
+                Poll::Ready(Some(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))))
             }
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -136,7 +137,7 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
         use n0_future::SinkExt;
         match Pin::new(&mut self.inner).poll_ready(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -145,14 +146,14 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
         use n0_future::SinkExt;
         Pin::new(&mut self.inner)
             .start_send(AxumMessage::Binary(item))
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))
+            .map_err(|e| WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         use n0_future::SinkExt;
         match Pin::new(&mut self.inner).poll_flush(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -161,7 +162,7 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
         use n0_future::SinkExt;
         match Pin::new(&mut self.inner).poll_close(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e)))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))),
             Poll::Pending => Poll::Pending,
         }
     }
