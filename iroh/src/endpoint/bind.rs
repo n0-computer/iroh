@@ -12,7 +12,7 @@ pub struct BindOpts {
     ///
     /// Defaults to `0`.
     ///
-    /// Must not be larger than `32`
+    /// Must not be larger than `32` for IPv4 and `128` for IPv6.
     prefix_len: u8,
     /// If set, binding this interface is required and any errors will abort the
     /// initialization of the endpoint.

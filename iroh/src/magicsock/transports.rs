@@ -65,39 +65,80 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
 /// Available transport configurations.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum TransportConfig {
+pub(crate) enum TransportConfig {
     /// IP based transport
     #[cfg(not(wasm_browser))]
-    Ip(ip::Config),
+    Ip {
+        /// The actual IP Config
+        config: ip::Config,
+        /// Was this added explicitly by the user.
+        is_user_defined: bool,
+    },
     /// Relay transport
     Relay {
         /// The [`RelayMap`] used for this relay.
         relay_map: RelayMap,
+        /// Was this added explicitly by the user.
+        is_user_defined: bool,
     },
 }
 
 impl TransportConfig {
     /// Configures a default IPv4 transport, listening on `0.0.0.0:0`.
     #[cfg(not(wasm_browser))]
-    pub fn default_ipv4() -> Self {
+    pub(crate) fn default_ipv4() -> Self {
         use std::net::Ipv4Addr;
 
-        Self::Ip(ip::Config::V4Default {
-            ip_addr: Ipv4Addr::UNSPECIFIED,
-            port: 0,
-            is_required: true,
-        })
+        Self::Ip {
+            config: ip::Config::V4Default {
+                ip_addr: Ipv4Addr::UNSPECIFIED,
+                port: 0,
+                is_required: true,
+            },
+            is_user_defined: false,
+        }
     }
 
     /// Configures a default IPv6 transport, listening on `[::]:0`.
     #[cfg(not(wasm_browser))]
-    pub fn default_ipv6() -> Self {
-        Self::Ip(ip::Config::V6Default {
-            ip_addr: Ipv6Addr::UNSPECIFIED,
-            scope_id: 0,
-            port: 0,
-            is_required: false,
-        })
+    pub(crate) fn default_ipv6() -> Self {
+        Self::Ip {
+            config: ip::Config::V6Default {
+                ip_addr: Ipv6Addr::UNSPECIFIED,
+                scope_id: 0,
+                port: 0,
+                is_required: false,
+            },
+            is_user_defined: false,
+        }
+    }
+
+    /// Is this a default IPv4 configuration
+    pub(crate) fn is_ipv4_default(&self) -> bool {
+        match self {
+            Self::Ip { config, .. } => matches!(config, IpConfig::V4Default { .. }),
+            _ => false,
+        }
+    }
+
+    /// Is this a default IPv6 configuration
+    pub(crate) fn is_ipv6_default(&self) -> bool {
+        match self {
+            Self::Ip { config, .. } => matches!(config, IpConfig::V6Default { .. }),
+            _ => false,
+        }
+    }
+
+    /// Is this configuration set by the user.
+    pub(crate) fn is_user_defined(&self) -> bool {
+        match self {
+            Self::Ip {
+                is_user_defined, ..
+            } => *is_user_defined,
+            Self::Relay {
+                is_user_defined, ..
+            } => *is_user_defined,
+        }
     }
 }
 
@@ -110,16 +151,35 @@ impl Transports {
         shutdown_token: CancellationToken,
     ) -> io::Result<Self> {
         #[cfg(not(wasm_browser))]
-        let ip = IpTransports::bind(
-            configs.iter().filter_map(|c| {
-                if let TransportConfig::Ip(config) = c {
-                    Some(*config)
-                } else {
-                    None
+        let ip_configs = {
+            let mut ip_configs = Vec::new();
+
+            // user defined overrides defaults
+            let has_ipv4_default = configs
+                .iter()
+                .any(|t| t.is_ipv4_default() && t.is_user_defined());
+            let has_ipv6_default = configs
+                .iter()
+                .any(|t| t.is_ipv6_default() && t.is_user_defined());
+            for config in configs {
+                if let TransportConfig::Ip {
+                    config,
+                    is_user_defined,
+                } = config
+                {
+                    if !is_user_defined {
+                        if config.is_ipv4() && has_ipv4_default
+                            || config.is_ipv6() && has_ipv6_default
+                        {
+                            continue;
+                        }
+                        ip_configs.push(*config);
+                    }
                 }
-            }),
-            metrics,
-        )?;
+            }
+            ip_configs
+        };
+        let ip = IpTransports::bind(ip_configs.into_iter(), metrics)?;
 
         let relay = configs
             .iter()

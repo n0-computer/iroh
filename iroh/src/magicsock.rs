@@ -771,7 +771,7 @@ impl Handle {
             .iter()
             .filter_map(|t| {
                 #[allow(irrefutable_let_patterns)]
-                if let TransportConfig::Relay { relay_map } = t {
+                if let TransportConfig::Relay { relay_map, .. } = t {
                     Some(relay_map.clone())
                 } else {
                     None

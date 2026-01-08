@@ -79,8 +79,8 @@ pub use self::{
     },
 };
 #[cfg(not(wasm_browser))]
-pub use crate::magicsock::transports::IpConfig;
-pub use crate::magicsock::transports::TransportConfig;
+use crate::magicsock::transports::IpConfig;
+use crate::magicsock::transports::TransportConfig;
 
 /// Builder for [`Endpoint`].
 ///
@@ -112,11 +112,16 @@ impl From<RelayMode> for Option<TransportConfig> {
             RelayMode::Disabled => None,
             RelayMode::Default => Some(TransportConfig::Relay {
                 relay_map: mode.relay_map(),
+                is_user_defined: true,
             }),
             RelayMode::Staging => Some(TransportConfig::Relay {
                 relay_map: mode.relay_map(),
+                is_user_defined: true,
             }),
-            RelayMode::Custom(relay_map) => Some(TransportConfig::Relay { relay_map }),
+            RelayMode::Custom(relay_map) => Some(TransportConfig::Relay {
+                relay_map,
+                is_user_defined: true,
+            }),
         }
     }
 }
@@ -230,6 +235,19 @@ impl Builder {
     /// Only a single interface can be the default, per IP family, so this errors out if one is already set.
     ///
     /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    ///
+    /// # Example
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
+    /// # use iroh::Endpoint;
+    /// let endpoint = Endpoint::builder()
+    ///     .bind_addr("127.0.0.1:1234")?
+    ///     .bind_addr("[::1]:1235")?
+    ///     .bind()
+    ///     .await?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(not(wasm_browser))]
     pub fn bind_addr<A>(mut self, addr: A) -> Result<Self, InvalidSocketAddr>
     where
@@ -237,40 +255,43 @@ impl Builder {
         <A as ToSocketAddr>::Err: Into<InvalidSocketAddr>,
     {
         let addr = addr.to_socket_addr().map_err(Into::into)?;
-
         match addr {
             SocketAddr::V4(addr) => {
                 if self
                     .transports
                     .iter()
-                    .any(|t| matches!(t, TransportConfig::Ip(IpConfig::V4Default { .. })))
+                    .any(|t| t.is_ipv4_default() && t.is_user_defined())
                 {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
-                self.transports
-                    .push(TransportConfig::Ip(IpConfig::V4Default {
+                self.transports.push(TransportConfig::Ip {
+                    config: IpConfig::V4Default {
                         ip_addr: *addr.ip(),
                         port: addr.port(),
                         is_required: true,
-                    }));
+                    },
+                    is_user_defined: true,
+                });
             }
             SocketAddr::V6(addr) => {
                 if self
                     .transports
                     .iter()
-                    .any(|t| matches!(t, TransportConfig::Ip(IpConfig::V6Default { .. })))
+                    .any(|t| t.is_ipv6_default() && t.is_user_defined())
                 {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
-                self.transports
-                    .push(TransportConfig::Ip(IpConfig::V6Default {
+                self.transports.push(TransportConfig::Ip {
+                    config: IpConfig::V6Default {
                         ip_addr: *addr.ip(),
                         scope_id: addr.scope_id(),
                         port: addr.port(),
                         is_required: false,
-                    }));
+                    },
+                    is_user_defined: true,
+                });
             }
         }
         Ok(self)
@@ -279,6 +300,19 @@ impl Builder {
     /// Binds an IP socket
     ///
     /// This is always in addition to any prior bindings, so if you want to remove other transports, make sure to call `clear_ip` first.
+    ///
+    /// # Example
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
+    /// # use iroh::{Endpoint, endpoint::BindOpts};
+    /// let endpoint = Endpoint::builder()
+    ///     .bind_addr_with_opts("127.0.0.1:1234", BindOpts::default().set_prefix_len(24))?
+    ///     .bind_addr_with_opts("[::1]:1235", BindOpts::default().set_prefix_len(48))?
+    ///     .bind()
+    ///     .await?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(not(wasm_browser))]
     pub fn bind_addr_with_opts<A>(
         mut self,
@@ -293,19 +327,25 @@ impl Builder {
 
         match addr {
             SocketAddr::V4(addr) => {
-                self.transports.push(TransportConfig::Ip(IpConfig::V4 {
-                    ip_addr: Ipv4Net::new(*addr.ip(), opts.prefix_len())?,
-                    port: addr.port(),
-                    is_required: opts.is_required(),
-                }));
+                self.transports.push(TransportConfig::Ip {
+                    config: IpConfig::V4 {
+                        ip_addr: Ipv4Net::new(*addr.ip(), opts.prefix_len())?,
+                        port: addr.port(),
+                        is_required: opts.is_required(),
+                    },
+                    is_user_defined: true,
+                });
             }
             SocketAddr::V6(addr) => {
-                self.transports.push(TransportConfig::Ip(IpConfig::V6 {
-                    ip_addr: Ipv6Net::new(*addr.ip(), opts.prefix_len())?,
-                    scope_id: addr.scope_id(),
-                    port: addr.port(),
-                    is_required: opts.is_required(),
-                }));
+                self.transports.push(TransportConfig::Ip {
+                    config: IpConfig::V6 {
+                        ip_addr: Ipv6Net::new(*addr.ip(), opts.prefix_len())?,
+                        scope_id: addr.scope_id(),
+                        port: addr.port(),
+                        is_required: opts.is_required(),
+                    },
+                    is_user_defined: true,
+                });
             }
         }
         Ok(self)
