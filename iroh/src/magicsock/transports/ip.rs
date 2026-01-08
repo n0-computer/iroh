@@ -26,7 +26,7 @@ pub(crate) struct IpTransport {
 
 /// IP transport configuration
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Config {
+pub(crate) enum Config {
     /// General IPv4 binding
     V4 {
         /// The IP address to bind on
@@ -55,17 +55,17 @@ pub enum Config {
 
 impl Config {
     /// Is this a v4 config.
-    pub fn is_ipv4(&self) -> bool {
+    pub(crate) fn is_ipv4(&self) -> bool {
         matches!(self,  | Self::V4 { .. })
     }
 
     /// Is this a v6 config.
-    pub fn is_ipv6(&self) -> bool {
+    pub(crate) fn is_ipv6(&self) -> bool {
         matches!(self, | Self::V6 { .. })
     }
 
     /// Returns the prefix len for the address.
-    pub fn prefix_len(&self) -> u8 {
+    pub(crate) fn prefix_len(&self) -> u8 {
         match self {
             Self::V4 { ip_net, .. } => ip_net.prefix_len(),
             Self::V6 { ip_net, .. } => ip_net.prefix_len(),
@@ -73,7 +73,7 @@ impl Config {
     }
 
     /// Is this a default config?
-    pub fn is_default(&self) -> bool {
+    pub(crate) fn is_default(&self) -> bool {
         match self {
             Self::V4 { is_default, .. } => *is_default,
             Self::V6 { is_default, .. } => *is_default,
@@ -81,7 +81,7 @@ impl Config {
     }
 
     /// Is this required to bind.
-    pub fn is_required(&self) -> bool {
+    pub(crate) fn is_required(&self) -> bool {
         match self {
             Self::V4 { is_required, .. } => *is_required,
             Self::V6 { is_required, .. } => *is_required,
@@ -107,37 +107,26 @@ impl Config {
     pub(crate) fn is_valid_send_addr(&self, src: Option<IpAddr>, dst: SocketAddr) -> bool {
         match src {
             Some(src) => match (self, src) {
-                (
-                    Self::V4 {
-                        ip_net: ip_addr, ..
-                    },
-                    IpAddr::V4(src),
-                ) => ip_addr.addr().is_unspecified() || ip_addr.addr() == src,
-                (
-                    Self::V6 {
-                        ip_net: ip_addr, ..
-                    },
-                    IpAddr::V6(src),
-                ) => ip_addr.addr().is_unspecified() || ip_addr.addr() == src,
+                (Self::V4 { ip_net, .. }, IpAddr::V4(src)) => {
+                    ip_net.addr().is_unspecified() || ip_net.addr() == src
+                }
+                (Self::V6 { ip_net, .. }, IpAddr::V6(src)) => {
+                    ip_net.addr().is_unspecified() || ip_net.addr() == src
+                }
                 _ => false,
             },
             None => {
                 match (self, dst) {
-                    (
-                        Self::V4 {
-                            ip_net: ip_addr, ..
-                        },
-                        SocketAddr::V4(dst_v4),
-                    ) => ip_addr.contains(dst_v4.ip()),
+                    (Self::V4 { ip_net, .. }, SocketAddr::V4(dst_v4)) => {
+                        ip_net.contains(dst_v4.ip())
+                    }
                     (
                         Self::V6 {
-                            ip_net: ip_addr,
-                            scope_id,
-                            ..
+                            ip_net, scope_id, ..
                         },
                         SocketAddr::V6(dst_v6),
                     ) => {
-                        if ip_addr.contains(dst_v6.ip()) {
+                        if ip_net.contains(dst_v6.ip()) {
                             return true;
                         }
                         if dst_v6.ip().is_unicast_link_local() {

@@ -24,7 +24,7 @@ mod ip;
 mod relay;
 
 #[cfg(not(wasm_browser))]
-pub use self::ip::Config as IpConfig;
+pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
