@@ -69,7 +69,7 @@ rand_chacha = "0.9"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls", "http2"
 ] }
-serde_json = "1.0.145"
+serde_json = "1.0.149"
 tempfile = "3.23.0"
 
 [[bench]]
