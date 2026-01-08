@@ -373,13 +373,10 @@ mod tests {
             .await?;
 
         // Receive on B
-        let received = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            client_b.next()
-        )
-        .await
-        .expect("timeout waiting for message")
-        .expect("stream ended")?;
+        let received = tokio::time::timeout(std::time::Duration::from_secs(2), client_b.next())
+            .await
+            .expect("timeout waiting for message")
+            .expect("stream ended")?;
 
         match received {
             RelayToClientMsg::Datagrams {
@@ -404,13 +401,10 @@ mod tests {
             .await?;
 
         // Receive on A
-        let received = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            client_a.next()
-        )
-        .await
-        .expect("timeout waiting for message")
-        .expect("stream ended")?;
+        let received = tokio::time::timeout(std::time::Duration::from_secs(2), client_a.next())
+            .await
+            .expect("timeout waiting for message")
+            .expect("stream ended")?;
 
         match received {
             RelayToClientMsg::Datagrams {
