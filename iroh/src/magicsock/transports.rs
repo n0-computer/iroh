@@ -85,6 +85,7 @@ impl TransportConfig {
         Self::Ip(ip::Config::V4Default {
             ip_addr: Ipv4Addr::UNSPECIFIED,
             port: 0,
+            is_required: true,
         })
     }
 
@@ -95,6 +96,7 @@ impl TransportConfig {
             ip_addr: Ipv6Addr::UNSPECIFIED,
             scope_id: 0,
             port: 0,
+            is_required: false,
         })
     }
 }

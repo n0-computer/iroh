@@ -11,7 +11,7 @@ use n0_watcher::Watchable;
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use super::{Addr, Transmit};
 use crate::metrics::{EndpointMetrics, MagicsockMetrics};
@@ -33,6 +33,8 @@ pub enum Config {
         ip_addr: Ipv4Addr,
         /// The port to bind on
         port: u16,
+        /// Is binding mandatory?
+        is_required: bool,
     },
     /// Default IPv6 binding
     V6Default {
@@ -42,6 +44,8 @@ pub enum Config {
         scope_id: u32,
         /// The port to bind on
         port: u16,
+        /// Is binding mandatory?
+        is_required: bool,
     },
     /// General IPv4 binding
     V4 {
@@ -49,6 +53,8 @@ pub enum Config {
         ip_addr: Ipv4Net,
         /// The port to bind on
         port: u16,
+        /// Is binding mandatory?
+        is_required: bool,
     },
     /// General IPv6 binding
     V6 {
@@ -58,6 +64,8 @@ pub enum Config {
         scope_id: u32,
         /// The port to bind on
         port: u16,
+        /// Is binding mandatory?
+        is_required: bool,
     },
 }
 
@@ -75,6 +83,16 @@ impl Config {
     /// Is this a default config?
     pub fn is_default(&self) -> bool {
         matches!(self, Self::V4Default { .. } | Self::V6Default { .. })
+    }
+
+    /// Is this required to bind.
+    pub fn is_required(&self) -> bool {
+        match self {
+            Self::V4Default { is_required, .. } => *is_required,
+            Self::V4 { is_required, .. } => *is_required,
+            Self::V6Default { is_required, .. } => *is_required,
+            Self::V6 { is_required, .. } => *is_required,
+        }
     }
 
     /// Does this configuration match to send to the given `src` and `dst` address.
@@ -139,17 +157,23 @@ impl Config {
 impl From<Config> for SocketAddr {
     fn from(value: Config) -> Self {
         match value {
-            Config::V4Default { ip_addr, port } => SocketAddr::V4(SocketAddrV4::new(ip_addr, port)),
+            Config::V4Default { ip_addr, port, .. } => {
+                SocketAddr::V4(SocketAddrV4::new(ip_addr, port))
+            }
             Config::V6Default {
                 ip_addr,
                 scope_id,
                 port,
+                ..
             } => SocketAddr::V6(SocketAddrV6::new(ip_addr, port, 0, scope_id)),
-            Config::V4 { ip_addr, port } => SocketAddr::V4(SocketAddrV4::new(ip_addr.addr(), port)),
+            Config::V4 { ip_addr, port, .. } => {
+                SocketAddr::V4(SocketAddrV4::new(ip_addr.addr(), port))
+            }
             Config::V6 {
                 ip_addr,
                 scope_id,
                 port,
+                ..
             } => SocketAddr::V6(SocketAddrV6::new(ip_addr.addr(), port, 0, scope_id)),
         }
     }
@@ -442,11 +466,10 @@ impl IpTransports {
                     }
                 }
                 Err(err) => {
-                    if config.is_ipv6() {
-                        tracing::info!("bind ignoring IPv6 bind failure: {:?}", err);
-                    } else {
+                    if config.is_required() {
                         return Err(err);
                     }
+                    info!("ignoring non required bind failure: {:?}", err);
                 }
             }
         }

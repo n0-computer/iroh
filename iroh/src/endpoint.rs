@@ -12,12 +12,8 @@
 //! [module docs]: crate
 
 #[cfg(not(wasm_browser))]
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::{
-    convert::Infallible,
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
-    sync::Arc,
-};
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
@@ -46,11 +42,13 @@ use crate::{
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
+mod bind;
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
 pub(crate) mod quic;
 
+pub use bind::{BindOpts, InvalidSocketAddr, ToSocketAddr};
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 
 #[cfg(feature = "qlog")]
@@ -79,137 +77,6 @@ pub use self::{
 #[cfg(not(wasm_browser))]
 pub use crate::magicsock::transports::IpConfig;
 pub use crate::magicsock::transports::TransportConfig;
-
-// TODO: find a better home
-
-/// A simpler version of `ToSocketAddrs`, that does not do any DNS resolution.
-pub trait ToSocketAddr {
-    /// Error type on failed conversion.
-    type Err: std::error::Error;
-
-    /// Tries to convert this type to a [`SocketAddr`].
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err>;
-}
-
-impl ToSocketAddr for SocketAddr {
-    type Err = Infallible;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        Ok(*self)
-    }
-}
-
-impl ToSocketAddr for SocketAddrV4 {
-    type Err = Infallible;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        Ok(SocketAddr::V4(*self))
-    }
-}
-
-impl ToSocketAddr for SocketAddrV6 {
-    type Err = Infallible;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        Ok(SocketAddr::V6(*self))
-    }
-}
-
-impl ToSocketAddr for (IpAddr, u16) {
-    type Err = Infallible;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        let (ip, port) = *self;
-        match ip {
-            IpAddr::V4(ref a) => (*a, port).to_socket_addr(),
-            IpAddr::V6(ref a) => (*a, port).to_socket_addr(),
-        }
-    }
-}
-
-impl ToSocketAddr for (Ipv4Addr, u16) {
-    type Err = Infallible;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        let (ip, port) = *self;
-        SocketAddrV4::new(ip, port).to_socket_addr()
-    }
-}
-
-impl ToSocketAddr for (Ipv6Addr, u16) {
-    type Err = Infallible;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        let (ip, port) = *self;
-        SocketAddrV6::new(ip, port, 0, 0).to_socket_addr()
-    }
-}
-
-impl ToSocketAddr for (&str, u16) {
-    type Err = std::net::AddrParseError;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        let (host, port) = *self;
-
-        let addr = host.parse::<IpAddr>()?;
-        let addr = SocketAddr::new(addr, port);
-        Ok(addr)
-    }
-}
-
-impl ToSocketAddr for (String, u16) {
-    type Err = std::net::AddrParseError;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        (&*self.0, self.1).to_socket_addr()
-    }
-}
-
-impl ToSocketAddr for str {
-    type Err = std::net::AddrParseError;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        let addr = self.parse()?;
-        Ok(addr)
-    }
-}
-
-impl<T: ToSocketAddr + ?Sized> ToSocketAddr for &T {
-    type Err = T::Err;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        (**self).to_socket_addr()
-    }
-}
-
-impl ToSocketAddr for String {
-    type Err = std::net::AddrParseError;
-
-    fn to_socket_addr(&self) -> Result<SocketAddr, Self::Err> {
-        (**self).to_socket_addr()
-    }
-}
-
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta, from_sources)]
-#[non_exhaustive]
-pub enum InvalidSocketAddr {
-    #[error(transparent)]
-    AddrParse {
-        #[error(std_err)]
-        source: std::net::AddrParseError,
-    },
-    #[error(transparent)]
-    InvalidPrefix {
-        #[error(std_err)]
-        source: netdev::ipnet::PrefixLenError,
-    },
-    #[error(transparent)]
-    Infallible {
-        #[error(std_err)]
-        source: Infallible,
-    },
-}
 
 /// Builder for [`Endpoint`].
 ///
@@ -351,14 +218,14 @@ impl Builder {
 
     // # The very common methods everyone basically needs.
 
-    /// Adds an IP transport, binding to the provided IPv4 address.
+    /// Adds an IP transport, binding to the provided address.
     ///
     /// If you want to remove the default transports, make sure to call `clear_ip` first.
     ///
     /// Setting the port to `0` will use a random port.
     /// If the port specified is already in use, it will fallback to choosing a random port.
     ///
-    /// Only a single interface can be the default, so this will replace the existing default
+    /// Only a single interface can be the default, per IP family, so this will replace the existing default for the matching family.
     #[cfg(not(wasm_browser))]
     pub fn bind_addr<A>(mut self, addr: A) -> Result<Self, InvalidSocketAddr>
     where
@@ -376,6 +243,7 @@ impl Builder {
                     .push(TransportConfig::Ip(IpConfig::V4Default {
                         ip_addr: *addr.ip(),
                         port: addr.port(),
+                        is_required: true,
                     }));
             }
             SocketAddr::V6(addr) => {
@@ -387,6 +255,7 @@ impl Builder {
                         ip_addr: *addr.ip(),
                         scope_id: addr.scope_id(),
                         port: addr.port(),
+                        is_required: false,
                     }));
             }
         }
@@ -397,10 +266,10 @@ impl Builder {
     ///
     /// If you want to remove the default transports, make sure to call `clear_ip` first.
     #[cfg(not(wasm_browser))]
-    pub fn bind_addr_with_mask<A>(
+    pub fn bind_addr_with_opts<A>(
         mut self,
         addr: A,
-        prefix_len: u8,
+        opts: BindOpts,
     ) -> Result<Self, InvalidSocketAddr>
     where
         A: ToSocketAddr,
@@ -411,15 +280,17 @@ impl Builder {
         match addr {
             SocketAddr::V4(addr) => {
                 self.transports.push(TransportConfig::Ip(IpConfig::V4 {
-                    ip_addr: Ipv4Net::new(*addr.ip(), prefix_len)?,
+                    ip_addr: Ipv4Net::new(*addr.ip(), opts.prefix_len())?,
                     port: addr.port(),
+                    is_required: opts.is_required(),
                 }));
             }
             SocketAddr::V6(addr) => {
                 self.transports.push(TransportConfig::Ip(IpConfig::V6 {
-                    ip_addr: Ipv6Net::new(*addr.ip(), prefix_len)?,
+                    ip_addr: Ipv6Net::new(*addr.ip(), opts.prefix_len())?,
                     scope_id: addr.scope_id(),
                     port: addr.port(),
+                    is_required: opts.is_required(),
                 }));
             }
         }

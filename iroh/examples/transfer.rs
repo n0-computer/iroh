@@ -16,7 +16,7 @@ use iroh::{
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-    endpoint::{ConnectionError, PathInfoList},
+    endpoint::{BindOpts, ConnectionError, PathInfoList},
 };
 use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::task::AbortOnDropHandle;
@@ -297,7 +297,8 @@ impl EndpointArgs {
         for addr in self.bind_addr_v4_additional {
             let (addr, prefix_len) = parse_ipv4_net(&addr)
                 .with_context(|_| format!("invalid bind-addr-v4-additional: {addr}"))?;
-            builder = builder.bind_addr_with_mask(addr, prefix_len)?;
+            builder = builder
+                .bind_addr_with_opts(addr, BindOpts::default().set_prefix_len(prefix_len))?;
         }
 
         if let Some(addr) = self.bind_addr_v6 {
@@ -306,7 +307,8 @@ impl EndpointArgs {
         for addr in self.bind_addr_v6_additional {
             let (addr, prefix_len) = parse_ipv6_net(&addr)
                 .with_context(|_| format!("invalid bind-addr-v6-additional: {addr}"))?;
-            builder = builder.bind_addr_with_mask(addr, prefix_len)?;
+            builder = builder
+                .bind_addr_with_opts(addr, BindOpts::default().set_prefix_len(prefix_len))?;
         }
         #[cfg(feature = "qlog")]
         {
