@@ -8,8 +8,13 @@
 //! ```ignore
 //! use axum::{Router, routing::get};
 //! use iroh_relay::server::axum_integration::{relay_handler, RelayState};
+//! use std::sync::Arc;
 //!
-//! let state = RelayState::new(None, KeyCache::new(1024), AccessConfig::Everyone, metrics);
+//! let state = RelayState::new(
+//!     KeyCache::new(1024),
+//!     Arc::new(AccessConfig::Everyone),
+//!     metrics
+//! );
 //!
 //! let app = Router::new()
 //!     .route("/relay", get(relay_handler))
@@ -28,7 +33,7 @@ use std::{pin::Pin, task::{Context, Poll}, sync::Arc};
 use tokio_websockets::Error as WsError;
 use tracing::{debug, trace, warn};
 
-use super::{AccessConfig, ClientRateLimit, Metrics, client::Config};
+use super::{AccessConfig, Metrics, client::Config};
 use crate::{
     KeyCache, ExportKeyingMaterial,
     protos::{relay::PER_CLIENT_SEND_QUEUE_DEPTH, handshake, streams::StreamError},
@@ -36,10 +41,16 @@ use crate::{
 };
 
 /// State required for the relay handler
-#[derive(Clone)]
+///
+/// # Note on Rate Limiting
+///
+/// Unlike the native relay server which can apply rate limiting at the raw TCP/TLS stream level,
+/// the axum integration receives already-established WebSocket connections and does not have
+/// access to the underlying stream. Therefore, client-side rate limiting is not supported in
+/// this integration. If rate limiting is required, consider using axum middleware or the
+/// native relay server instead.
+#[derive(Clone, Debug)]
 pub struct RelayState {
-    /// Client rate limiting configuration (note: rate limiting not fully supported with axum integration yet)
-    pub rate_limit: Option<ClientRateLimit>,
     /// Key cache for the relay
     pub key_cache: KeyCache,
     /// Access control configuration (wrapped in Arc since AccessConfig can't be cloned)
@@ -55,13 +66,11 @@ pub struct RelayState {
 impl RelayState {
     /// Create a new RelayState with default write timeout
     pub fn new(
-        rate_limit: Option<ClientRateLimit>,
         key_cache: KeyCache,
         access: Arc<AccessConfig>,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self {
-            rate_limit,
             key_cache,
             access,
             metrics,
@@ -106,7 +115,6 @@ impl Stream for AxumWebSocketAdapter {
     type Item = Result<Bytes, StreamError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        use n0_future::StreamExt;
         // Poll the underlying axum WebSocket
         match Pin::new(&mut self.inner).poll_next(cx) {
             Poll::Ready(Some(Ok(msg))) => {
@@ -134,7 +142,6 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
     type Error = StreamError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        use n0_future::SinkExt;
         match Pin::new(&mut self.inner).poll_ready(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))),
@@ -143,14 +150,12 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
-        use n0_future::SinkExt;
         Pin::new(&mut self.inner)
             .start_send(AxumMessage::Binary(item))
             .map_err(|e| WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        use n0_future::SinkExt;
         match Pin::new(&mut self.inner).poll_flush(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))),
@@ -159,7 +164,6 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        use n0_future::SinkExt;
         match Pin::new(&mut self.inner).poll_close(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))),
