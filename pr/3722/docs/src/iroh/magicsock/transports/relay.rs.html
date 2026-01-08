@@ -14,7 +14,7 @@
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>n0_watcher::{Watchable, Watcher <span class="kw">as _</span>};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>tokio::sync::mpsc;
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>tokio_util::sync::{CancellationToken, PollSender};
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>tracing::{Instrument, error, info_span, trace, warn};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>tracing::{Instrument, error, info_span, warn};
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use super</span>::{Addr, Transmit};
 <a href=#20 id=20 data-nosnippet>20</a>
@@ -147,9 +147,9 @@
 <a href=#147 id=147 data-nosnippet>147</a>                .segment_size
 <a href=#148 id=148 data-nosnippet>148</a>                .map_or(dm.datagrams.contents.len(), |s| u16::from(s) <span class="kw">as </span>usize);
 <a href=#149 id=149 data-nosnippet>149</a>            meta_out.ecn = <span class="prelude-val">None</span>;
-<a href=#150 id=150 data-nosnippet>150</a>            meta_out.dst_ip = <span class="prelude-val">None</span>; <span class="comment">// TODO: insert the relay url for this relay
+<a href=#150 id=150 data-nosnippet>150</a>            meta_out.dst_ip = <span class="prelude-val">None</span>;
 <a href=#151 id=151 data-nosnippet>151</a>
-<a href=#152 id=152 data-nosnippet>152</a>            </span><span class="kw-2">*</span>addr = (dm.url, dm.src).into();
+<a href=#152 id=152 data-nosnippet>152</a>            <span class="kw-2">*</span>addr = (dm.url, dm.src).into();
 <a href=#153 id=153 data-nosnippet>153</a>            num_msgs += <span class="number">1</span>;
 <a href=#154 id=154 data-nosnippet>154</a>        }
 <a href=#155 id=155 data-nosnippet>155</a>
@@ -244,203 +244,110 @@
 <a href=#244 id=244 data-nosnippet>244</a>        <span class="bool-val">true
 <a href=#245 id=245 data-nosnippet>245</a>    </span>}
 <a href=#246 id=246 data-nosnippet>246</a>
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>send(
-<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#249 id=249 data-nosnippet>249</a>        dest_url: RelayUrl,
-<a href=#250 id=250 data-nosnippet>250</a>        dest_endpoint: EndpointId,
-<a href=#251 id=251 data-nosnippet>251</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#252 id=252 data-nosnippet>252</a>    ) -&gt; io::Result&lt;()&gt; {
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>contents = datagrams_from_transmit(transmit);
-<a href=#254 id=254 data-nosnippet>254</a>
-<a href=#255 id=255 data-nosnippet>255</a>        <span class="kw">let </span>item = RelaySendItem {
-<a href=#256 id=256 data-nosnippet>256</a>            remote_endpoint: dest_endpoint,
-<a href=#257 id=257 data-nosnippet>257</a>            url: dest_url.clone(),
-<a href=#258 id=258 data-nosnippet>258</a>            datagrams: contents,
-<a href=#259 id=259 data-nosnippet>259</a>        };
-<a href=#260 id=260 data-nosnippet>260</a>
-<a href=#261 id=261 data-nosnippet>261</a>        <span class="kw">let </span>dest_endpoint = item.remote_endpoint;
-<a href=#262 id=262 data-nosnippet>262</a>        <span class="kw">let </span>dest_url = item.url.clone();
-<a href=#263 id=263 data-nosnippet>263</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(sender) = <span class="self">self</span>.sender.get_ref() <span class="kw">else </span>{
-<a href=#264 id=264 data-nosnippet>264</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"channel closed"</span>));
-<a href=#265 id=265 data-nosnippet>265</a>        };
-<a href=#266 id=266 data-nosnippet>266</a>        <span class="kw">match </span>sender.send(item).<span class="kw">await </span>{
-<a href=#267 id=267 data-nosnippet>267</a>            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-<a href=#268 id=268 data-nosnippet>268</a>                <span class="macro">trace!</span>(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-<a href=#269 id=269 data-nosnippet>269</a>                        <span class="string">"send relay: message queued"</span>);
-<a href=#270 id=270 data-nosnippet>270</a>                <span class="prelude-val">Ok</span>(())
-<a href=#271 id=271 data-nosnippet>271</a>            }
-<a href=#272 id=272 data-nosnippet>272</a>            <span class="prelude-val">Err</span>(mpsc::error::SendError(<span class="kw">_</span>)) =&gt; {
-<a href=#273 id=273 data-nosnippet>273</a>                <span class="macro">error!</span>(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-<a href=#274 id=274 data-nosnippet>274</a>                        <span class="string">"send relay: message dropped, channel to actor is closed"</span>);
-<a href=#275 id=275 data-nosnippet>275</a>                <span class="prelude-val">Err</span>(io::Error::new(
-<a href=#276 id=276 data-nosnippet>276</a>                    io::ErrorKind::ConnectionReset,
-<a href=#277 id=277 data-nosnippet>277</a>                    <span class="string">"channel to actor is closed"</span>,
-<a href=#278 id=278 data-nosnippet>278</a>                ))
-<a href=#279 id=279 data-nosnippet>279</a>            }
-<a href=#280 id=280 data-nosnippet>280</a>        }
-<a href=#281 id=281 data-nosnippet>281</a>    }
-<a href=#282 id=282 data-nosnippet>282</a>
-<a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
-<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#285 id=285 data-nosnippet>285</a>        cx: <span class="kw-2">&amp;mut </span>Context,
-<a href=#286 id=286 data-nosnippet>286</a>        dest_url: RelayUrl,
-<a href=#287 id=287 data-nosnippet>287</a>        dest_endpoint: EndpointId,
-<a href=#288 id=288 data-nosnippet>288</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#289 id=289 data-nosnippet>289</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw">match </span><span class="macro">ready!</span>(<span class="self">self</span>.sender.poll_reserve(cx)) {
-<a href=#291 id=291 data-nosnippet>291</a>            <span class="prelude-val">Ok</span>(()) =&gt; {
-<a href=#292 id=292 data-nosnippet>292</a>                <span class="macro">trace!</span>(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-<a href=#293 id=293 data-nosnippet>293</a>                    <span class="string">"send relay: message queued"</span>);
-<a href=#294 id=294 data-nosnippet>294</a>
-<a href=#295 id=295 data-nosnippet>295</a>                <span class="kw">let </span>contents = datagrams_from_transmit(transmit);
-<a href=#296 id=296 data-nosnippet>296</a>                <span class="kw">let </span>item = RelaySendItem {
-<a href=#297 id=297 data-nosnippet>297</a>                    remote_endpoint: dest_endpoint,
-<a href=#298 id=298 data-nosnippet>298</a>                    url: dest_url.clone(),
-<a href=#299 id=299 data-nosnippet>299</a>                    datagrams: contents,
-<a href=#300 id=300 data-nosnippet>300</a>                };
-<a href=#301 id=301 data-nosnippet>301</a>                <span class="kw">let </span>dest_endpoint = item.remote_endpoint;
-<a href=#302 id=302 data-nosnippet>302</a>                <span class="kw">let </span>dest_url = item.url.clone();
-<a href=#303 id=303 data-nosnippet>303</a>
-<a href=#304 id=304 data-nosnippet>304</a>                <span class="kw">match </span><span class="self">self</span>.sender.send_item(item) {
-<a href=#305 id=305 data-nosnippet>305</a>                    <span class="prelude-val">Ok</span>(()) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
-<a href=#306 id=306 data-nosnippet>306</a>                    <span class="prelude-val">Err</span>(_err) =&gt; {
-<a href=#307 id=307 data-nosnippet>307</a>                        <span class="macro">error!</span>(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-<a href=#308 id=308 data-nosnippet>308</a>                      <span class="string">"send relay: message dropped, channel to actor is closed"</span>);
-<a href=#309 id=309 data-nosnippet>309</a>                        Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
-<a href=#310 id=310 data-nosnippet>310</a>                            io::ErrorKind::ConnectionReset,
-<a href=#311 id=311 data-nosnippet>311</a>                            <span class="string">"channel to actor is closed"</span>,
-<a href=#312 id=312 data-nosnippet>312</a>                        )))
-<a href=#313 id=313 data-nosnippet>313</a>                    }
-<a href=#314 id=314 data-nosnippet>314</a>                }
-<a href=#315 id=315 data-nosnippet>315</a>            }
-<a href=#316 id=316 data-nosnippet>316</a>            <span class="prelude-val">Err</span>(_err) =&gt; {
-<a href=#317 id=317 data-nosnippet>317</a>                <span class="macro">error!</span>(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-<a href=#318 id=318 data-nosnippet>318</a>                      <span class="string">"send relay: message dropped, channel to actor is closed"</span>);
-<a href=#319 id=319 data-nosnippet>319</a>                Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
-<a href=#320 id=320 data-nosnippet>320</a>                    io::ErrorKind::ConnectionReset,
-<a href=#321 id=321 data-nosnippet>321</a>                    <span class="string">"channel to actor is closed"</span>,
-<a href=#322 id=322 data-nosnippet>322</a>                )))
-<a href=#323 id=323 data-nosnippet>323</a>            }
-<a href=#324 id=324 data-nosnippet>324</a>        }
-<a href=#325 id=325 data-nosnippet>325</a>    }
-<a href=#326 id=326 data-nosnippet>326</a>
-<a href=#327 id=327 data-nosnippet>327</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_send(
-<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#329 id=329 data-nosnippet>329</a>        dest_url: RelayUrl,
-<a href=#330 id=330 data-nosnippet>330</a>        dest_endpoint: EndpointId,
-<a href=#331 id=331 data-nosnippet>331</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#332 id=332 data-nosnippet>332</a>    ) -&gt; io::Result&lt;()&gt; {
-<a href=#333 id=333 data-nosnippet>333</a>        <span class="kw">let </span>contents = datagrams_from_transmit(transmit);
-<a href=#334 id=334 data-nosnippet>334</a>
-<a href=#335 id=335 data-nosnippet>335</a>        <span class="kw">let </span>item = RelaySendItem {
-<a href=#336 id=336 data-nosnippet>336</a>            remote_endpoint: dest_endpoint,
-<a href=#337 id=337 data-nosnippet>337</a>            url: dest_url.clone(),
-<a href=#338 id=338 data-nosnippet>338</a>            datagrams: contents,
-<a href=#339 id=339 data-nosnippet>339</a>        };
-<a href=#340 id=340 data-nosnippet>340</a>
-<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">let </span>dest_endpoint = item.remote_endpoint;
-<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span>dest_url = item.url.clone();
-<a href=#343 id=343 data-nosnippet>343</a>
-<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw">let </span><span class="prelude-val">Some</span>(sender) = <span class="self">self</span>.sender.get_ref() <span class="kw">else </span>{
-<a href=#345 id=345 data-nosnippet>345</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"channel closed"</span>));
-<a href=#346 id=346 data-nosnippet>346</a>        };
-<a href=#347 id=347 data-nosnippet>347</a>
-<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">match </span>sender.try_send(item) {
-<a href=#349 id=349 data-nosnippet>349</a>            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-<a href=#350 id=350 data-nosnippet>350</a>                <span class="macro">trace!</span>(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-<a href=#351 id=351 data-nosnippet>351</a>                       <span class="string">"send relay: message queued"</span>);
-<a href=#352 id=352 data-nosnippet>352</a>                <span class="prelude-val">Ok</span>(())
-<a href=#353 id=353 data-nosnippet>353</a>            }
-<a href=#354 id=354 data-nosnippet>354</a>            <span class="prelude-val">Err</span>(mpsc::error::TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
-<a href=#355 id=355 data-nosnippet>355</a>                <span class="macro">error!</span>(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-<a href=#356 id=356 data-nosnippet>356</a>                    <span class="string">"send relay: message dropped, channel to actor is closed"</span>);
-<a href=#357 id=357 data-nosnippet>357</a>                <span class="prelude-val">Err</span>(io::Error::new(
-<a href=#358 id=358 data-nosnippet>358</a>                    io::ErrorKind::ConnectionReset,
-<a href=#359 id=359 data-nosnippet>359</a>                    <span class="string">"channel to actor is closed"</span>,
-<a href=#360 id=360 data-nosnippet>360</a>                ))
-<a href=#361 id=361 data-nosnippet>361</a>            }
-<a href=#362 id=362 data-nosnippet>362</a>            <span class="prelude-val">Err</span>(mpsc::error::TrySendError::Full(<span class="kw">_</span>)) =&gt; {
-<a href=#363 id=363 data-nosnippet>363</a>                <span class="macro">warn!</span>(endpoint = %dest_endpoint.fmt_short(), relay_url = %dest_url,
-<a href=#364 id=364 data-nosnippet>364</a>                      <span class="string">"send relay: message dropped, channel to actor is full"</span>);
-<a href=#365 id=365 data-nosnippet>365</a>                <span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"channel full"</span>))
-<a href=#366 id=366 data-nosnippet>366</a>            }
-<a href=#367 id=367 data-nosnippet>367</a>        }
-<a href=#368 id=368 data-nosnippet>368</a>    }
-<a href=#369 id=369 data-nosnippet>369</a>}
-<a href=#370 id=370 data-nosnippet>370</a>
-<a href=#371 id=371 data-nosnippet>371</a><span class="doccomment">/// Translate a UDP transmit to the `Datagrams` type for sending over the relay.
-<a href=#372 id=372 data-nosnippet>372</a></span><span class="kw">fn </span>datagrams_from_transmit(transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; Datagrams {
-<a href=#373 id=373 data-nosnippet>373</a>    Datagrams {
-<a href=#374 id=374 data-nosnippet>374</a>        ecn: transmit.ecn.map(|ecn| <span class="kw">match </span>ecn {
-<a href=#375 id=375 data-nosnippet>375</a>            quinn_udp::EcnCodepoint::Ect0 =&gt; quinn_proto::EcnCodepoint::Ect0,
-<a href=#376 id=376 data-nosnippet>376</a>            quinn_udp::EcnCodepoint::Ect1 =&gt; quinn_proto::EcnCodepoint::Ect1,
-<a href=#377 id=377 data-nosnippet>377</a>            quinn_udp::EcnCodepoint::Ce =&gt; quinn_proto::EcnCodepoint::Ce,
-<a href=#378 id=378 data-nosnippet>378</a>        }),
-<a href=#379 id=379 data-nosnippet>379</a>        segment_size: transmit
-<a href=#380 id=380 data-nosnippet>380</a>            .segment_size
-<a href=#381 id=381 data-nosnippet>381</a>            .map(|ss| ss <span class="kw">as </span>u16)
-<a href=#382 id=382 data-nosnippet>382</a>            .and_then(NonZeroU16::new),
-<a href=#383 id=383 data-nosnippet>383</a>        contents: Bytes::copy_from_slice(transmit.contents),
-<a href=#384 id=384 data-nosnippet>384</a>    }
-<a href=#385 id=385 data-nosnippet>385</a>}
-<a href=#386 id=386 data-nosnippet>386</a>
-<a href=#387 id=387 data-nosnippet>387</a><span class="attr">#[cfg(test)]
-<a href=#388 id=388 data-nosnippet>388</a></span><span class="kw">mod </span>tests {
-<a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">use </span>std::{collections::BTreeSet, time::Duration};
-<a href=#390 id=390 data-nosnippet>390</a>
-<a href=#391 id=391 data-nosnippet>391</a>    <span class="kw">use </span>iroh_base::EndpointId;
-<a href=#392 id=392 data-nosnippet>392</a>    <span class="kw">use </span>tokio::task::JoinSet;
-<a href=#393 id=393 data-nosnippet>393</a>    <span class="kw">use </span>tracing::debug;
-<a href=#394 id=394 data-nosnippet>394</a>
-<a href=#395 id=395 data-nosnippet>395</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#396 id=396 data-nosnippet>396</a>    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging;
-<a href=#397 id=397 data-nosnippet>397</a>
-<a href=#398 id=398 data-nosnippet>398</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
-<a href=#399 id=399 data-nosnippet>399</a>    </span><span class="kw">async fn </span>test_relay_datagram_queue() {
-<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">let </span>capacity = <span class="number">16</span>;
-<a href=#401 id=401 data-nosnippet>401</a>        <span class="kw">let </span>(sender, <span class="kw-2">mut </span>receiver) = mpsc::channel(capacity);
-<a href=#402 id=402 data-nosnippet>402</a>        <span class="kw">let </span>url = staging::default_na_east_relay().url;
-<a href=#403 id=403 data-nosnippet>403</a>
-<a href=#404 id=404 data-nosnippet>404</a>        <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
-<a href=#405 id=405 data-nosnippet>405</a>
-<a href=#406 id=406 data-nosnippet>406</a>        tasks.spawn({
-<a href=#407 id=407 data-nosnippet>407</a>            <span class="kw">async move </span>{
-<a href=#408 id=408 data-nosnippet>408</a>                <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs: BTreeSet&lt;usize&gt; = (<span class="number">0</span>..capacity).collect();
-<a href=#409 id=409 data-nosnippet>409</a>                <span class="kw">while </span>!expected_msgs.is_empty() {
-<a href=#410 id=410 data-nosnippet>410</a>                    <span class="kw">let </span>datagram: RelayRecvDatagram = receiver.recv().<span class="kw">await</span>.unwrap();
-<a href=#411 id=411 data-nosnippet>411</a>                    <span class="kw">let </span>msg_num = usize::from_le_bytes(datagram.datagrams.contents.as_ref().try_into().unwrap());
-<a href=#412 id=412 data-nosnippet>412</a>                    <span class="macro">debug!</span>(<span class="string">"Received {msg_num}"</span>);
-<a href=#413 id=413 data-nosnippet>413</a>
-<a href=#414 id=414 data-nosnippet>414</a>                    <span class="kw">if </span>!expected_msgs.remove(<span class="kw-2">&amp;</span>msg_num) {
-<a href=#415 id=415 data-nosnippet>415</a>                        <span class="macro">panic!</span>(<span class="string">"Received message number {msg_num} twice or more, but expected it only exactly once."</span>);
-<a href=#416 id=416 data-nosnippet>416</a>                    }
-<a href=#417 id=417 data-nosnippet>417</a>                }
-<a href=#418 id=418 data-nosnippet>418</a>            }
-<a href=#419 id=419 data-nosnippet>419</a>        });
-<a href=#420 id=420 data-nosnippet>420</a>
-<a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..capacity {
-<a href=#422 id=422 data-nosnippet>422</a>            tasks.spawn({
-<a href=#423 id=423 data-nosnippet>423</a>                <span class="kw">let </span>sender = sender.clone();
-<a href=#424 id=424 data-nosnippet>424</a>                <span class="kw">let </span>url = url.clone();
-<a href=#425 id=425 data-nosnippet>425</a>                <span class="kw">async move </span>{
-<a href=#426 id=426 data-nosnippet>426</a>                    <span class="macro">debug!</span>(<span class="string">"Sending {i}"</span>);
-<a href=#427 id=427 data-nosnippet>427</a>                    sender
-<a href=#428 id=428 data-nosnippet>428</a>                        .try_send(RelayRecvDatagram {
-<a href=#429 id=429 data-nosnippet>429</a>                            url,
-<a href=#430 id=430 data-nosnippet>430</a>                            src: EndpointId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap(),
-<a href=#431 id=431 data-nosnippet>431</a>                            datagrams: Datagrams::from(<span class="kw-2">&amp;</span>i.to_le_bytes()),
-<a href=#432 id=432 data-nosnippet>432</a>                        })
-<a href=#433 id=433 data-nosnippet>433</a>                        .unwrap();
-<a href=#434 id=434 data-nosnippet>434</a>                }
-<a href=#435 id=435 data-nosnippet>435</a>            });
-<a href=#436 id=436 data-nosnippet>436</a>        }
-<a href=#437 id=437 data-nosnippet>437</a>
-<a href=#438 id=438 data-nosnippet>438</a>        <span class="comment">// We expect all of this work to be done in 10 seconds max.
-<a href=#439 id=439 data-nosnippet>439</a>        </span><span class="kw">if </span>tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tasks.join_all())
-<a href=#440 id=440 data-nosnippet>440</a>            .<span class="kw">await
-<a href=#441 id=441 data-nosnippet>441</a>            </span>.is_err()
-<a href=#442 id=442 data-nosnippet>442</a>        {
-<a href=#443 id=443 data-nosnippet>443</a>            <span class="macro">panic!</span>(<span class="string">"Timeout - not all messages between 0 and {capacity} received."</span>);
-<a href=#444 id=444 data-nosnippet>444</a>        }
-<a href=#445 id=445 data-nosnippet>445</a>    }
-<a href=#446 id=446 data-nosnippet>446</a>}</code></pre></div></section></main></body></html>
+<a href=#247 id=247 data-nosnippet>247</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#249 id=249 data-nosnippet>249</a>        cx: <span class="kw-2">&amp;mut </span>Context,
+<a href=#250 id=250 data-nosnippet>250</a>        dest_url: RelayUrl,
+<a href=#251 id=251 data-nosnippet>251</a>        dest_endpoint: EndpointId,
+<a href=#252 id=252 data-nosnippet>252</a>        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#253 id=253 data-nosnippet>253</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">match </span><span class="macro">ready!</span>(<span class="self">self</span>.sender.poll_reserve(cx)) {
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="prelude-val">Ok</span>(()) =&gt; {
+<a href=#256 id=256 data-nosnippet>256</a>                <span class="kw">let </span>contents = datagrams_from_transmit(transmit);
+<a href=#257 id=257 data-nosnippet>257</a>                <span class="kw">let </span>item = RelaySendItem {
+<a href=#258 id=258 data-nosnippet>258</a>                    remote_endpoint: dest_endpoint,
+<a href=#259 id=259 data-nosnippet>259</a>                    url: dest_url.clone(),
+<a href=#260 id=260 data-nosnippet>260</a>                    datagrams: contents,
+<a href=#261 id=261 data-nosnippet>261</a>                };
+<a href=#262 id=262 data-nosnippet>262</a>                <span class="kw">match </span><span class="self">self</span>.sender.send_item(item) {
+<a href=#263 id=263 data-nosnippet>263</a>                    <span class="prelude-val">Ok</span>(()) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
+<a href=#264 id=264 data-nosnippet>264</a>                    <span class="prelude-val">Err</span>(_err) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
+<a href=#265 id=265 data-nosnippet>265</a>                        io::ErrorKind::ConnectionReset,
+<a href=#266 id=266 data-nosnippet>266</a>                        <span class="string">"channel to actor is closed"</span>,
+<a href=#267 id=267 data-nosnippet>267</a>                    ))),
+<a href=#268 id=268 data-nosnippet>268</a>                }
+<a href=#269 id=269 data-nosnippet>269</a>            }
+<a href=#270 id=270 data-nosnippet>270</a>            <span class="prelude-val">Err</span>(_err) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
+<a href=#271 id=271 data-nosnippet>271</a>                io::ErrorKind::ConnectionReset,
+<a href=#272 id=272 data-nosnippet>272</a>                <span class="string">"channel to actor is closed"</span>,
+<a href=#273 id=273 data-nosnippet>273</a>            ))),
+<a href=#274 id=274 data-nosnippet>274</a>        }
+<a href=#275 id=275 data-nosnippet>275</a>    }
+<a href=#276 id=276 data-nosnippet>276</a>}
+<a href=#277 id=277 data-nosnippet>277</a>
+<a href=#278 id=278 data-nosnippet>278</a><span class="doccomment">/// Translate a UDP transmit to the `Datagrams` type for sending over the relay.
+<a href=#279 id=279 data-nosnippet>279</a></span><span class="kw">fn </span>datagrams_from_transmit(transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; Datagrams {
+<a href=#280 id=280 data-nosnippet>280</a>    Datagrams {
+<a href=#281 id=281 data-nosnippet>281</a>        ecn: transmit.ecn.map(|ecn| <span class="kw">match </span>ecn {
+<a href=#282 id=282 data-nosnippet>282</a>            quinn_udp::EcnCodepoint::Ect0 =&gt; quinn_proto::EcnCodepoint::Ect0,
+<a href=#283 id=283 data-nosnippet>283</a>            quinn_udp::EcnCodepoint::Ect1 =&gt; quinn_proto::EcnCodepoint::Ect1,
+<a href=#284 id=284 data-nosnippet>284</a>            quinn_udp::EcnCodepoint::Ce =&gt; quinn_proto::EcnCodepoint::Ce,
+<a href=#285 id=285 data-nosnippet>285</a>        }),
+<a href=#286 id=286 data-nosnippet>286</a>        segment_size: transmit
+<a href=#287 id=287 data-nosnippet>287</a>            .segment_size
+<a href=#288 id=288 data-nosnippet>288</a>            .map(|ss| ss <span class="kw">as </span>u16)
+<a href=#289 id=289 data-nosnippet>289</a>            .and_then(NonZeroU16::new),
+<a href=#290 id=290 data-nosnippet>290</a>        contents: Bytes::copy_from_slice(transmit.contents),
+<a href=#291 id=291 data-nosnippet>291</a>    }
+<a href=#292 id=292 data-nosnippet>292</a>}
+<a href=#293 id=293 data-nosnippet>293</a>
+<a href=#294 id=294 data-nosnippet>294</a><span class="attr">#[cfg(test)]
+<a href=#295 id=295 data-nosnippet>295</a></span><span class="kw">mod </span>tests {
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">use </span>std::{collections::BTreeSet, time::Duration};
+<a href=#297 id=297 data-nosnippet>297</a>
+<a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">use </span>iroh_base::EndpointId;
+<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">use </span>tokio::task::JoinSet;
+<a href=#300 id=300 data-nosnippet>300</a>    <span class="kw">use </span>tracing::debug;
+<a href=#301 id=301 data-nosnippet>301</a>
+<a href=#302 id=302 data-nosnippet>302</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#303 id=303 data-nosnippet>303</a>    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging;
+<a href=#304 id=304 data-nosnippet>304</a>
+<a href=#305 id=305 data-nosnippet>305</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
+<a href=#306 id=306 data-nosnippet>306</a>    </span><span class="kw">async fn </span>test_relay_datagram_queue() {
+<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">let </span>capacity = <span class="number">16</span>;
+<a href=#308 id=308 data-nosnippet>308</a>        <span class="kw">let </span>(sender, <span class="kw-2">mut </span>receiver) = mpsc::channel(capacity);
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">let </span>url = staging::default_na_east_relay().url;
+<a href=#310 id=310 data-nosnippet>310</a>
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
+<a href=#312 id=312 data-nosnippet>312</a>
+<a href=#313 id=313 data-nosnippet>313</a>        tasks.spawn({
+<a href=#314 id=314 data-nosnippet>314</a>            <span class="kw">async move </span>{
+<a href=#315 id=315 data-nosnippet>315</a>                <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs: BTreeSet&lt;usize&gt; = (<span class="number">0</span>..capacity).collect();
+<a href=#316 id=316 data-nosnippet>316</a>                <span class="kw">while </span>!expected_msgs.is_empty() {
+<a href=#317 id=317 data-nosnippet>317</a>                    <span class="kw">let </span>datagram: RelayRecvDatagram = receiver.recv().<span class="kw">await</span>.unwrap();
+<a href=#318 id=318 data-nosnippet>318</a>                    <span class="kw">let </span>msg_num = usize::from_le_bytes(datagram.datagrams.contents.as_ref().try_into().unwrap());
+<a href=#319 id=319 data-nosnippet>319</a>                    <span class="macro">debug!</span>(<span class="string">"Received {msg_num}"</span>);
+<a href=#320 id=320 data-nosnippet>320</a>
+<a href=#321 id=321 data-nosnippet>321</a>                    <span class="kw">if </span>!expected_msgs.remove(<span class="kw-2">&amp;</span>msg_num) {
+<a href=#322 id=322 data-nosnippet>322</a>                        <span class="macro">panic!</span>(<span class="string">"Received message number {msg_num} twice or more, but expected it only exactly once."</span>);
+<a href=#323 id=323 data-nosnippet>323</a>                    }
+<a href=#324 id=324 data-nosnippet>324</a>                }
+<a href=#325 id=325 data-nosnippet>325</a>            }
+<a href=#326 id=326 data-nosnippet>326</a>        });
+<a href=#327 id=327 data-nosnippet>327</a>
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..capacity {
+<a href=#329 id=329 data-nosnippet>329</a>            tasks.spawn({
+<a href=#330 id=330 data-nosnippet>330</a>                <span class="kw">let </span>sender = sender.clone();
+<a href=#331 id=331 data-nosnippet>331</a>                <span class="kw">let </span>url = url.clone();
+<a href=#332 id=332 data-nosnippet>332</a>                <span class="kw">async move </span>{
+<a href=#333 id=333 data-nosnippet>333</a>                    <span class="macro">debug!</span>(<span class="string">"Sending {i}"</span>);
+<a href=#334 id=334 data-nosnippet>334</a>                    sender
+<a href=#335 id=335 data-nosnippet>335</a>                        .try_send(RelayRecvDatagram {
+<a href=#336 id=336 data-nosnippet>336</a>                            url,
+<a href=#337 id=337 data-nosnippet>337</a>                            src: EndpointId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap(),
+<a href=#338 id=338 data-nosnippet>338</a>                            datagrams: Datagrams::from(<span class="kw-2">&amp;</span>i.to_le_bytes()),
+<a href=#339 id=339 data-nosnippet>339</a>                        })
+<a href=#340 id=340 data-nosnippet>340</a>                        .unwrap();
+<a href=#341 id=341 data-nosnippet>341</a>                }
+<a href=#342 id=342 data-nosnippet>342</a>            });
+<a href=#343 id=343 data-nosnippet>343</a>        }
+<a href=#344 id=344 data-nosnippet>344</a>
+<a href=#345 id=345 data-nosnippet>345</a>        <span class="comment">// We expect all of this work to be done in 10 seconds max.
+<a href=#346 id=346 data-nosnippet>346</a>        </span><span class="kw">if </span>tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tasks.join_all())
+<a href=#347 id=347 data-nosnippet>347</a>            .<span class="kw">await
+<a href=#348 id=348 data-nosnippet>348</a>            </span>.is_err()
+<a href=#349 id=349 data-nosnippet>349</a>        {
+<a href=#350 id=350 data-nosnippet>350</a>            <span class="macro">panic!</span>(<span class="string">"Timeout - not all messages between 0 and {capacity} received."</span>);
+<a href=#351 id=351 data-nosnippet>351</a>        }
+<a href=#352 id=352 data-nosnippet>352</a>    }
+<a href=#353 id=353 data-nosnippet>353</a>}</code></pre></div></section></main></body></html>

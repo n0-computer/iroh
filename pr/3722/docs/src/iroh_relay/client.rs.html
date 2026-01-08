@@ -288,7 +288,7 @@
 <a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>conn = Conn::new(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#289 id=289 data-nosnippet>289</a>
 <a href=#290 id=290 data-nosnippet>290</a>        <span class="macro">event!</span>(
-<a href=#291 id=291 data-nosnippet>291</a>            target: <span class="string">"events.net.relay.connected"</span>,
+<a href=#291 id=291 data-nosnippet>291</a>            target: <span class="string">"iroh::_events::net::relay::connected"</span>,
 <a href=#292 id=292 data-nosnippet>292</a>            Level::DEBUG,
 <a href=#293 id=293 data-nosnippet>293</a>            url = %<span class="self">self</span>.url,
 <a href=#294 id=294 data-nosnippet>294</a>        );
@@ -343,7 +343,7 @@
 <a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">let </span>conn = Conn::new(ws_stream, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#344 id=344 data-nosnippet>344</a>
 <a href=#345 id=345 data-nosnippet>345</a>        <span class="macro">event!</span>(
-<a href=#346 id=346 data-nosnippet>346</a>            target: <span class="string">"events.net.relay.connected"</span>,
+<a href=#346 id=346 data-nosnippet>346</a>            target: <span class="string">"iroh::_events::net::relay::connected"</span>,
 <a href=#347 id=347 data-nosnippet>347</a>            Level::DEBUG,
 <a href=#348 id=348 data-nosnippet>348</a>            url = %<span class="self">self</span>.url,
 <a href=#349 id=349 data-nosnippet>349</a>        );
