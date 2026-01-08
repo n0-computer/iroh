@@ -24,17 +24,16 @@ mod ip;
 mod relay;
 
 #[cfg(not(wasm_browser))]
-pub(crate) use self::ip::IpTransport;
+pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
-use self::ip::{IpNetworkChangeSender, IpSender};
+use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 
-/// Manages the different underlying data transports that the magicsock
-/// can support.
+/// Manages the different underlying data transports that the magicsock can support.
 #[derive(Debug)]
 pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
-    ip: Vec<IpTransport>,
+    ip: IpTransports,
     relay: Vec<RelayTransport>,
 
     poll_recv_counter: usize,
@@ -66,60 +65,90 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
 /// Available transport configurations.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum TransportConfig {
+pub(crate) enum TransportConfig {
     /// IP based transport
     #[cfg(not(wasm_browser))]
     Ip {
-        /// The address this transport will bind on.
-        bind_addr: SocketAddr,
+        /// The actual IP Config
+        config: ip::Config,
+        /// Was this added explicitly by the user.
+        is_user_defined: bool,
     },
     /// Relay transport
     Relay {
         /// The [`RelayMap`] used for this relay.
         relay_map: RelayMap,
+        /// Was this added explicitly by the user.
+        is_user_defined: bool,
     },
 }
+
 impl TransportConfig {
     /// Configures a default IPv4 transport, listening on `0.0.0.0:0`.
     #[cfg(not(wasm_browser))]
-    pub fn default_ipv4() -> Self {
-        use std::net::{Ipv4Addr, SocketAddrV4};
+    pub(crate) fn default_ipv4() -> Self {
+        use std::net::Ipv4Addr;
+
+        use netdev::ipnet::Ipv4Net;
 
         Self::Ip {
-            bind_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+            config: ip::Config::V4 {
+                ip_net: Ipv4Net::new(Ipv4Addr::UNSPECIFIED, 0).expect("checked"),
+                port: 0,
+                is_required: true,
+                is_default: false,
+            },
+            is_user_defined: false,
         }
     }
 
     /// Configures a default IPv6 transport, listening on `[::]:0`.
     #[cfg(not(wasm_browser))]
-    pub fn default_ipv6() -> Self {
+    pub(crate) fn default_ipv6() -> Self {
+        use netdev::ipnet::Ipv6Net;
+
         Self::Ip {
-            bind_addr: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
-        }
-    }
-}
-
-#[cfg(not(wasm_browser))]
-fn bind_ip(configs: &[TransportConfig], metrics: &EndpointMetrics) -> io::Result<Vec<IpTransport>> {
-    let mut transports = Vec::new();
-    for config in configs {
-        if let TransportConfig::Ip { bind_addr } = config {
-            match IpTransport::bind(*bind_addr, metrics.magicsock.clone()) {
-                Ok(transport) => {
-                    transports.push(transport);
-                }
-                Err(err) => {
-                    if bind_addr.is_ipv6() {
-                        tracing::info!("bind ignoring IPv6 bind failure: {:?}", err);
-                    } else {
-                        return Err(err);
-                    }
-                }
-            }
+            config: ip::Config::V6 {
+                ip_net: Ipv6Net::new(Ipv6Addr::UNSPECIFIED, 0).expect("checked"),
+                scope_id: 0,
+                port: 0,
+                is_required: false,
+                is_default: false,
+            },
+            is_user_defined: false,
         }
     }
 
-    Ok(transports)
+    /// Is this a default IPv4 configuration
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn is_ipv4_default(&self) -> bool {
+        match self {
+            Self::Ip { config, .. } => config.is_default() && config.is_ipv4(),
+            _ => false,
+        }
+    }
+
+    /// Is this a default IPv6 configuration
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn is_ipv6_default(&self) -> bool {
+        match self {
+            Self::Ip { config, .. } => config.is_default() && config.is_ipv6(),
+            _ => false,
+        }
+    }
+
+    /// Is this configuration set by the user.
+    pub(crate) fn is_user_defined(&self) -> bool {
+        match self {
+            #[cfg(not(wasm_browser))]
+            Self::Ip {
+                is_user_defined, ..
+            } => *is_user_defined,
+            Self::Relay {
+                is_user_defined, ..
+            } => *is_user_defined,
+        }
+    }
 }
 
 impl Transports {
@@ -131,7 +160,36 @@ impl Transports {
         shutdown_token: CancellationToken,
     ) -> io::Result<Self> {
         #[cfg(not(wasm_browser))]
-        let ip = bind_ip(configs, metrics)?;
+        let ip_configs = {
+            let mut ip_configs = Vec::new();
+
+            // user defined overrides defaults
+            let has_ipv4_default = configs
+                .iter()
+                .any(|t| t.is_ipv4_default() && t.is_user_defined());
+            let has_ipv6_default = configs
+                .iter()
+                .any(|t| t.is_ipv6_default() && t.is_user_defined());
+            for config in configs {
+                if let TransportConfig::Ip {
+                    config,
+                    is_user_defined,
+                } = config
+                {
+                    if !is_user_defined {
+                        if config.is_ipv4() && has_ipv4_default
+                            || config.is_ipv6() && has_ipv6_default
+                        {
+                            continue;
+                        }
+                        ip_configs.push(*config);
+                    }
+                }
+            }
+            ip_configs
+        };
+        #[cfg(not(wasm_browser))]
+        let ip = IpTransports::bind(ip_configs.into_iter(), metrics)?;
 
         let relay = configs
             .iter()
@@ -196,9 +254,8 @@ impl Transports {
 
         if counter % 2 == 0 {
             #[cfg(not(wasm_browser))]
-            for transport in &mut self.ip {
-                poll_transport!(transport);
-            }
+            poll_transport!(&mut self.ip);
+
             for transport in &mut self.relay {
                 poll_transport!(transport);
             }
@@ -207,9 +264,7 @@ impl Transports {
                 poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
-            for transport in self.ip.iter_mut().rev() {
-                poll_transport!(transport);
-            }
+            poll_transport!(&mut self.ip);
         }
 
         Poll::Pending
@@ -296,7 +351,8 @@ impl Transports {
 
     pub(crate) fn create_sender(&self) -> TransportsSender {
         #[cfg(not(wasm_browser))]
-        let ip = self.ip.iter().map(|t| t.create_sender()).collect();
+        let ip = self.ip.create_sender();
+
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
         let max_transmit_segments = self.max_transmit_segments();
 
@@ -481,7 +537,7 @@ impl Addr {
 #[derive(Debug, Clone)]
 pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
-    ip: Vec<IpSender>,
+    ip: IpTransportsSender,
     relay: Vec<RelaySender>,
     max_transmit_segments: NonZeroUsize,
 }
@@ -495,57 +551,65 @@ impl TransportsSender {
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        let mut has_valid_sender = false;
         match dst {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
                 return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
             }
             #[cfg(not(wasm_browser))]
-            Addr::Ip(addr) => {
-                for sender in &mut self.ip {
-                    if sender.is_valid_send_addr(addr) {
-                        has_valid_sender = true;
-                        match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
-                            Poll::Pending => {}
-                            Poll::Ready(res) => {
-                                match &res {
-                                    Ok(()) => trace!("sent"),
-                                    Err(err) => trace!("send failed: {err:#}"),
-                                }
-                                return Poll::Ready(res);
-                            }
+            Addr::Ip(dst_addr) => match dst_addr {
+                SocketAddr::V4(_) => {
+                    if let Some(sender) = self
+                        .ip
+                        .v4_iter_mut()
+                        .find(|s| s.is_valid_send_addr(src, dst_addr))
+                    {
+                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                    }
+                    if let Some(sender) = self.ip.v4_default_mut() {
+                        if sender.is_valid_default_addr(src, dst_addr) {
+                            return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                         }
                     }
                 }
-            }
-            Addr::Relay(url, endpoint_id) => {
-                for sender in &mut self.relay {
-                    if sender.is_valid_send_addr(url, endpoint_id) {
-                        has_valid_sender = true;
-                        match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
-                            Poll::Pending => {}
-                            Poll::Ready(res) => {
-                                match &res {
-                                    Ok(()) => trace!("sent"),
-                                    Err(err) => trace!("send failed: {err:#}"),
-                                }
-                                return Poll::Ready(res);
-                            }
+                SocketAddr::V6(_) => {
+                    if let Some(sender) = self
+                        .ip
+                        .v6_iter_mut()
+                        .find(|s| s.is_valid_send_addr(src, dst_addr))
+                    {
+                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
+                    }
+                    if let Some(sender) = self.ip.v6_default_mut() {
+                        if sender.is_valid_default_addr(src, dst_addr) {
+                            return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                         }
                     }
+                }
+            },
+            Addr::Relay(url, endpoint_id) => {
+                let mut has_valid_sender = false;
+                for sender in self
+                    .relay
+                    .iter_mut()
+                    .filter(|s| s.is_valid_send_addr(url, endpoint_id))
+                {
+                    has_valid_sender = true;
+                    match sender.poll_send(cx, url.clone(), *endpoint_id, transmit) {
+                        Poll::Pending => {}
+                        Poll::Ready(res) => return Poll::Ready(res),
+                    }
+                }
+                if has_valid_sender {
+                    return Poll::Pending;
                 }
             }
         }
 
-        if has_valid_sender {
-            // We have valid senders, but they are not ready so we return pending.
-            Poll::Pending
-        } else {
-            // We "blackhole" data that we have not found any usable transport for on
-            // to make sure the QUIC stack picks up that currently this data does not arrive.
-            Poll::Ready(Ok(()))
-        }
+        // We "blackhole" data that we have not found any usable transport for on
+        // to make sure the QUIC stack picks up that currently this data does not arrive.
+        trace!(?src, ?dst, "no valid transport available");
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -699,7 +763,7 @@ impl quinn::UdpSender for MagicSender {
                 let sender = self.msock.remote_map.remote_state_actor(endpoint_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
                 match sender.try_send(RemoteStateMessage::SendDatagram(
-                    self.sender.clone(),
+                    Box::new(self.sender.clone()),
                     transmit,
                 )) {
                     Ok(()) => {
@@ -731,7 +795,12 @@ impl quinn::UdpSender for MagicSender {
                     }
                 }
             }
-            MultipathMappedAddr::Ip(socket_addr) => Addr::Ip(socket_addr),
+            MultipathMappedAddr::Ip(socket_addr) => {
+                // Ensure IPv6 mapped addresses are converted back
+                let socket_addr =
+                    SocketAddr::new(socket_addr.ip().to_canonical(), socket_addr.port());
+                Addr::Ip(socket_addr)
+            }
         };
 
         let transmit = Transmit {
@@ -747,7 +816,7 @@ impl quinn::UdpSender for MagicSender {
         {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(ref err)) => {
-                warn!("dropped transmit: {err:#}");
+                warn!(?transport_addr, "dropped transmit: {err:#}");
                 Poll::Ready(Ok(()))
             }
             Poll::Pending => {
@@ -755,7 +824,7 @@ impl quinn::UdpSender for MagicSender {
                 // different transport.  Instead we let Quinn handle this as a lost
                 // datagram.
                 // TODO: Revisit this: we might want to do something better.
-                trace!("transport pending, dropped transmit");
+                trace!(?transport_addr, "transport pending, dropped transmit");
                 Poll::Ready(Ok(()))
             }
         }

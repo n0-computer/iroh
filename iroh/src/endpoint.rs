@@ -11,15 +11,18 @@
 //!
 //! [module docs]: crate
 
-use std::{
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
-    sync::Arc,
-};
+#[cfg(not(wasm_browser))]
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
+#[cfg(not(wasm_browser))]
+use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
+#[cfg(not(wasm_browser))]
+use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -41,11 +44,15 @@ use crate::{
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
+#[cfg(not(wasm_browser))]
+mod bind;
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
 pub(crate) mod quic;
 
+#[cfg(not(wasm_browser))]
+pub use bind::{BindOpts, InvalidSocketAddr, ToSocketAddr};
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 
 #[cfg(feature = "qlog")]
@@ -71,7 +78,9 @@ pub use self::{
         VarIntBoundsExceeded, WriteError, Written,
     },
 };
-pub use crate::magicsock::transports::TransportConfig;
+#[cfg(not(wasm_browser))]
+use crate::magicsock::transports::IpConfig;
+use crate::magicsock::transports::TransportConfig;
 
 /// Builder for [`Endpoint`].
 ///
@@ -103,11 +112,16 @@ impl From<RelayMode> for Option<TransportConfig> {
             RelayMode::Disabled => None,
             RelayMode::Default => Some(TransportConfig::Relay {
                 relay_map: mode.relay_map(),
+                is_user_defined: true,
             }),
             RelayMode::Staging => Some(TransportConfig::Relay {
                 relay_map: mode.relay_map(),
+                is_user_defined: true,
             }),
-            RelayMode::Custom(relay_map) => Some(TransportConfig::Relay { relay_map }),
+            RelayMode::Custom(relay_map) => Some(TransportConfig::Relay {
+                relay_map,
+                is_user_defined: true,
+            }),
         }
     }
 }
@@ -213,35 +227,181 @@ impl Builder {
 
     // # The very common methods everyone basically needs.
 
-    /// Adds an IP transport, binding to the provided IPv4 address.
+    /// Binds an IP socket at the provided socket address.
     ///
-    /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    /// This is an advanced API to tightly control the sockets used by the endpoint. Most
+    /// uses do not need to explicitly bind sockets.
     ///
-    /// Setting the port to `0` will use a random port.
-    /// If the port specified is already in use, it will fallback to choosing a random port.
+    /// # Warning
+    ///
+    /// - The builder always comes pre-configured with an IPv4 socket to be bound on the
+    ///   *unspecified* address: `0.0.0.0`. This is the equivalent of using `INADDR_ANY`
+    ///   special bind address and results in a socket listening on *all* interfaces
+    ///   available.
+    ///
+    /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
+    ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
+    ///
+    /// - Most likely when using this API those existing binds need to be removed explicitly
+    ///   using [`Self::clear_ip_transports`].
+    ///
+    /// - This should be called at most once for each address family: once for IPv4 and/or
+    ///   once for IPv6. Calling it multiple times for the same address family will result
+    ///   in undefined routing behaviour. To bind multiple sockets of the same address
+    ///   family, use [`Self::bind_addr_with_opts`].
+    ///
+    /// # Description
+    ///
+    /// Requests a socket to be bound on a specific address, with an implied netmask of
+    /// `/0`. This allows restricting binding to only one network interface for a given
+    /// address family.
+    ///
+    /// If the port specified is already in use, a random free port will be chosen. Using
+    /// port `0` in the socket address assigns a random free port.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
+    /// # use iroh::Endpoint;
+    /// let endpoint = Endpoint::builder()
+    ///     .clear_ip_transports()
+    ///     .bind_addr("127.0.0.1:1234")?
+    ///     .bind_addr("[::1]:1235")?
+    ///     .bind()
+    ///     .await?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(not(wasm_browser))]
-    pub fn bind_addr_v4(mut self, bind_addr: SocketAddrV4) -> Self {
-        self.transports.push(TransportConfig::Ip {
-            bind_addr: bind_addr.into(),
-        });
-        self
+    pub fn bind_addr<A>(self, addr: A) -> Result<Self, InvalidSocketAddr>
+    where
+        A: ToSocketAddr,
+        <A as ToSocketAddr>::Err: Into<InvalidSocketAddr>,
+    {
+        self.bind_addr_with_opts(addr, BindOpts::default())
     }
 
-    /// Adds an IP transport, binding to the provided IPv6 address.
+    /// Binds an IP socket at the provided socket address.
     ///
-    /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    /// This is an advanced API to tightly control the sockets used by the endpoint. Most
+    /// uses do not need to explicitly bind sockets.
     ///
-    /// Setting the port to `0` will use a random port.
-    /// If the port specified is already in use, it will fallback to choosing a random port.
+    /// # Warning
+    ///
+    /// - The builder always comes pre-configured with an IPv4 socket to be bound on the
+    ///   *unspecified* address: `0.0.0.0`. This is the equivalent of using `INADDR_ANY`
+    ///   special bind address and results in a socket listening on *all* interfaces
+    ///   available.
+    ///
+    /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
+    ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
+    ///
+    /// - Most likely when using this API those existing binds need to be removed explicitly
+    ///   using [`Self::clear_ip_transports`].
+    ///
+    /// # Description
+    ///
+    /// Requests a socket to be bound on a specific address. This allows restricting binding
+    /// to only one network interface for a given address family.
+    ///
+    /// [`BindOpts::set_prefix_len`] **should** be used to configure the netmask of the
+    /// network interface. This allows outgoing datagrams that start a new network flow to
+    /// be sent over the socket which is attached to the subnet of the destination
+    /// address. If multiple sockets are bound the standard routing-table semantics are
+    /// used: the socket attached to the subnet with the longest prefix matching the
+    /// destination is used. Practically this means the smallest subnets are at the top of
+    /// the routing table, and the first subnet containing the destination address is
+    /// chosen.
+    ///
+    /// If no socket is bound to a subnet that contains the destination address, the notion
+    /// of "default route" is used. At most one socket per address family may be marked as
+    /// the default route using [`BindOpts::set_is_default_route`], and this will be used
+    /// for destinations not contained by the subnets of the bound sockets. This network is
+    /// expected to have a default gateway configured.
+    ///
+    /// Be aware that using a subnet with a prefix length of `/0` will always contain all
+    /// destination addresses. It is valid to configure this, but no more than one such
+    /// socket should be bound or the routing will be non-deterministic. Prefer using
+    /// [`BindOpts::set_is_default_route`] on one of the sockets instead.
+    ///
+    /// Finally note that most outgoing datagrams are part of an existing network flow. That
+    /// is, they are in response to an incoming datagram. In this case the outgoing datagram
+    /// will be sent over the same socket as the incoming datagram was received on, and the
+    /// routing with the prefix length and default route as described above does not apply.
+    ///
+    /// If the port specified is already in use, a random free port will be chosen. Using
+    /// port `0` in the socket address assigns a random free port.
+    ///
+    /// # Example
+    /// ```
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_error::Result<()> {
+    /// # use iroh::{Endpoint, endpoint::BindOpts};
+    /// let endpoint = Endpoint::builder()
+    ///     .clear_ip_transports()
+    ///     .bind_addr_with_opts("127.0.0.1:1234", BindOpts::default().set_prefix_len(24))?
+    ///     .bind_addr_with_opts("[::1]:1235", BindOpts::default().set_prefix_len(48))?
+    ///     .bind()
+    ///     .await?;
+    /// # Ok(()) }
+    /// ```
     #[cfg(not(wasm_browser))]
-    pub fn bind_addr_v6(mut self, bind_addr: SocketAddrV6) -> Self {
-        self.transports.push(TransportConfig::Ip {
-            bind_addr: bind_addr.into(),
-        });
-        self
+    pub fn bind_addr_with_opts<A>(
+        mut self,
+        addr: A,
+        opts: BindOpts,
+    ) -> Result<Self, InvalidSocketAddr>
+    where
+        A: ToSocketAddr,
+        <A as ToSocketAddr>::Err: Into<InvalidSocketAddr>,
+    {
+        let addr = addr.to_socket_addr().map_err(Into::into)?;
+        match addr {
+            SocketAddr::V4(addr) => {
+                if self
+                    .transports
+                    .iter()
+                    .any(|t| t.is_ipv4_default() && t.is_user_defined())
+                {
+                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
+                }
+
+                self.transports.push(TransportConfig::Ip {
+                    config: IpConfig::V4 {
+                        ip_net: Ipv4Net::new(*addr.ip(), opts.prefix_len())?,
+                        port: addr.port(),
+                        is_required: opts.is_required(),
+                        is_default: opts.is_default_route(),
+                    },
+                    is_user_defined: true,
+                });
+            }
+            SocketAddr::V6(addr) => {
+                if self
+                    .transports
+                    .iter()
+                    .any(|t| t.is_ipv6_default() && t.is_user_defined())
+                {
+                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
+                }
+
+                self.transports.push(TransportConfig::Ip {
+                    config: IpConfig::V6 {
+                        ip_net: Ipv6Net::new(*addr.ip(), opts.prefix_len())?,
+                        scope_id: addr.scope_id(),
+                        port: addr.port(),
+                        is_required: opts.is_required(),
+                        is_default: opts.is_default_route(),
+                    },
+                    is_user_defined: true,
+                });
+            }
+        }
+        Ok(self)
     }
 
-    /// Removes all IP based transports
+    /// Removes all IP based transports.
     #[cfg(not(wasm_browser))]
     pub fn clear_ip_transports(mut self) -> Self {
         self.transports
@@ -249,7 +409,7 @@ impl Builder {
         self
     }
 
-    /// Removes all relay based transports
+    /// Removes all relay based transports.
     pub fn clear_relay_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
@@ -676,7 +836,7 @@ impl Endpoint {
     ///    [`Connecting::into_0rtt`].
     ///    **Note:** Please read the documentation for `into_0rtt` carefully to assess
     ///    security concerns.
-    /// 2. The [`TransportConfig`] for the connection can be modified via the provided
+    /// 2. The [`QuicTransportConfig`] for the connection can be modified via the provided
     ///    [`ConnectOptions`].
     ///    **Note:** Please be aware that changing transport config settings may have adverse effects on
     ///    establishing and maintaining direct connections.  Carefully test settings you use and
@@ -944,6 +1104,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
+    #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> Vec<SocketAddr> {
         self.msock
             .local_addr()
@@ -1206,7 +1367,7 @@ impl ConnectOptions {
     /// Initializes new connection options.
     ///
     /// By default, the connection will use the same options
-    /// as [`Endpoint::connect`], e.g. a default [`TransportConfig`].
+    /// as [`Endpoint::connect`], e.g. a default [`QuicTransportConfig`].
     pub fn new() -> Self {
         Self::default()
     }

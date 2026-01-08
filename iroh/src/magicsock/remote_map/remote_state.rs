@@ -441,7 +441,7 @@ impl RemoteStateActor {
     /// Handles [`RemoteStateMessage::SendDatagram`].
     async fn handle_msg_send_datagram(
         &mut self,
-        mut sender: TransportsSender,
+        mut sender: Box<TransportsSender>,
         transmit: OwnedTransmit,
     ) {
         // Sending datagrams might fail, e.g. because we don't have the right transports set
@@ -1201,7 +1201,7 @@ pub(crate) enum RemoteStateMessage {
     /// operation with a bunch more copying.  So it should only be used for sending QUIC
     /// Initial packets.
     #[debug("SendDatagram(..)")]
-    SendDatagram(TransportsSender, OwnedTransmit),
+    SendDatagram(Box<TransportsSender>, OwnedTransmit),
     /// Adds an active connection to this remote endpoint.
     ///
     /// The connection will now be managed by this actor.  Holepunching will happen when
