@@ -97,45 +97,35 @@ impl Config {
 
     /// Does this configuration match to send to the given `src` and `dst` address.
     pub(crate) fn is_valid_send_addr(&self, src: Option<IpAddr>, dst: SocketAddr) -> bool {
-        if let Some(src) = src {
-            match self {
-                Self::V4Default { ip_addr, .. } => {
-                    if let IpAddr::V4(src) = src {
-                        return ip_addr.is_unspecified() || *ip_addr == src;
-                    }
-                    false
+        match src {
+            Some(src) => match (self, src) {
+                (Self::V4Default { ip_addr, .. }, IpAddr::V4(src)) => {
+                    ip_addr.is_unspecified() || *ip_addr == src
                 }
-                Self::V6Default { ip_addr, .. } => {
-                    if let IpAddr::V6(src) = src {
-                        return ip_addr.is_unspecified() || *ip_addr == src;
-                    }
-                    false
+                (Self::V6Default { ip_addr, .. }, IpAddr::V6(src)) => {
+                    ip_addr.is_unspecified() || *ip_addr == src
                 }
-                Self::V4 { ip_addr, .. } => {
-                    if let IpAddr::V4(src) = src {
-                        return ip_addr.addr().is_unspecified() || ip_addr.addr() == src;
-                    }
-                    false
+                (Self::V4 { ip_addr, .. }, IpAddr::V4(src)) => {
+                    ip_addr.addr().is_unspecified() || ip_addr.addr() == src
                 }
-                Self::V6 { ip_addr, .. } => {
-                    if let IpAddr::V6(src) = src {
-                        return ip_addr.addr().is_unspecified() || ip_addr.addr() == src;
-                    }
-                    false
+                (Self::V6 { ip_addr, .. }, IpAddr::V6(src)) => {
+                    ip_addr.addr().is_unspecified() || ip_addr.addr() == src
                 }
-            }
-        } else {
-            match self {
-                Self::V4Default { .. } => matches!(dst, SocketAddr::V4(_)),
-                Self::V6Default { .. } => matches!(dst, SocketAddr::V6(_)),
-                Self::V4 { ip_addr, .. } => match dst {
-                    SocketAddr::V4(dst_v4) => ip_addr.contains(dst_v4.ip()),
-                    SocketAddr::V6(_) => false,
-                },
-                Self::V6 {
-                    ip_addr, scope_id, ..
-                } => match dst {
-                    SocketAddr::V6(dst_v6) => {
+                _ => false,
+            },
+            None => {
+                match (self, dst) {
+                    (Self::V4Default { .. }, SocketAddr::V4(_)) => true,
+                    (Self::V6Default { .. }, SocketAddr::V6(_)) => true,
+                    (Self::V4 { ip_addr, .. }, SocketAddr::V4(dst_v4)) => {
+                        ip_addr.contains(dst_v4.ip())
+                    }
+                    (
+                        Self::V6 {
+                            ip_addr, scope_id, ..
+                        },
+                        SocketAddr::V6(dst_v6),
+                    ) => {
                         if ip_addr.contains(dst_v6.ip()) {
                             return true;
                         }
@@ -147,8 +137,8 @@ impl Config {
                         }
                         false
                     }
-                    SocketAddr::V4(_) => false,
-                },
+                    _ => false,
+                }
             }
         }
     }
