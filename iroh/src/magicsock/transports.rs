@@ -120,6 +120,7 @@ impl TransportConfig {
     }
 
     /// Is this a default IPv4 configuration
+    #[cfg(not(wasm_browser))]
     pub(crate) fn is_ipv4_default(&self) -> bool {
         match self {
             Self::Ip { config, .. } => config.is_default() && config.is_ipv4(),
@@ -128,6 +129,7 @@ impl TransportConfig {
     }
 
     /// Is this a default IPv6 configuration
+    #[cfg(not(wasm_browser))]
     pub(crate) fn is_ipv6_default(&self) -> bool {
         match self {
             Self::Ip { config, .. } => config.is_default() && config.is_ipv6(),
@@ -138,6 +140,7 @@ impl TransportConfig {
     /// Is this configuration set by the user.
     pub(crate) fn is_user_defined(&self) -> bool {
         match self {
+            #[cfg(not(wasm_browser))]
             Self::Ip {
                 is_user_defined, ..
             } => *is_user_defined,
@@ -185,6 +188,7 @@ impl Transports {
             }
             ip_configs
         };
+        #[cfg(not(wasm_browser))]
         let ip = IpTransports::bind(ip_configs.into_iter(), metrics)?;
 
         let relay = configs
