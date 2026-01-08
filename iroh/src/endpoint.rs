@@ -20,7 +20,7 @@ use iroh_relay::{RelayConfig, RelayMap};
 use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
 #[cfg(not(wasm_browser))]
-pub use netdev::ipnet::{Ipv4Net, Ipv6Net};
+use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -42,12 +42,14 @@ use crate::{
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
+#[cfg(not(wasm_browser))]
 mod bind;
 mod connection;
 pub(crate) mod hooks;
 pub mod presets;
 pub(crate) mod quic;
 
+#[cfg(not(wasm_browser))]
 pub use bind::{BindOpts, InvalidSocketAddr, ToSocketAddr};
 pub use hooks::{AfterHandshakeOutcome, BeforeConnectOutcome, EndpointHooks};
 
@@ -971,6 +973,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
+    #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> Vec<SocketAddr> {
         self.msock
             .local_addr()
