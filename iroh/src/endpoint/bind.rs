@@ -188,4 +188,6 @@ pub enum InvalidSocketAddr {
         #[error(std_err)]
         source: Infallible,
     },
+    #[error("Only a single default address can be set per IP family")]
+    DuplicateDefaultAddr,
 }

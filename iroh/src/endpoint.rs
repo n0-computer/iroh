@@ -17,6 +17,8 @@ use std::sync::Arc;
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
 use iroh_relay::{RelayConfig, RelayMap};
+#[cfg(not(wasm_browser))]
+use n0_error::bail;
 use n0_error::{e, ensure, stack_error};
 use n0_watcher::Watcher;
 #[cfg(not(wasm_browser))]
@@ -220,14 +222,14 @@ impl Builder {
 
     // # The very common methods everyone basically needs.
 
-    /// Adds an IP transport, binding to the provided address.
-    ///
-    /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    /// Adds a default IP transport, binding to the provided address.
     ///
     /// Setting the port to `0` will use a random port.
     /// If the port specified is already in use, it will fallback to choosing a random port.
     ///
-    /// Only a single interface can be the default, per IP family, so this will replace the existing default for the matching family.
+    /// Only a single interface can be the default, per IP family, so this errors out if one is already set.
+    ///
+    /// If you want to remove the default transports, make sure to call `clear_ip` first.
     #[cfg(not(wasm_browser))]
     pub fn bind_addr<A>(mut self, addr: A) -> Result<Self, InvalidSocketAddr>
     where
@@ -238,8 +240,13 @@ impl Builder {
 
         match addr {
             SocketAddr::V4(addr) => {
-                self.transports
-                    .retain(|t| !matches!(t, TransportConfig::Ip(IpConfig::V4Default { .. })));
+                if self
+                    .transports
+                    .iter()
+                    .any(|t| matches!(t, TransportConfig::Ip(IpConfig::V4Default { .. })))
+                {
+                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
+                }
 
                 self.transports
                     .push(TransportConfig::Ip(IpConfig::V4Default {
@@ -249,8 +256,13 @@ impl Builder {
                     }));
             }
             SocketAddr::V6(addr) => {
-                self.transports
-                    .retain(|t| !matches!(t, TransportConfig::Ip(IpConfig::V6Default { .. })));
+                if self
+                    .transports
+                    .iter()
+                    .any(|t| matches!(t, TransportConfig::Ip(IpConfig::V6Default { .. })))
+                {
+                    bail!(InvalidSocketAddr::DuplicateDefaultAddr);
+                }
 
                 self.transports
                     .push(TransportConfig::Ip(IpConfig::V6Default {
@@ -266,7 +278,7 @@ impl Builder {
 
     /// Binds an IP socket
     ///
-    /// If you want to remove the default transports, make sure to call `clear_ip` first.
+    /// This is always in addition to any prior bindings, so if you want to remove other transports, make sure to call `clear_ip` first.
     #[cfg(not(wasm_browser))]
     pub fn bind_addr_with_opts<A>(
         mut self,
