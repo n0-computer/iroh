@@ -1099,6 +1099,10 @@ impl Actor {
         // ensure we are doing an initial publish of our addresses
         self.msock.publish_my_addr();
 
+        /// Removes terminated `RemoteStateActor`s from the remote map.
+        async fn cleanup_remote_map(msock: Arc<MagicSock>) -> EndpointId {
+            poll_fn(|cx| msock.remote_map.poll_cleanup(cx)).await
+        }
         let remote_map_cleanup_fut = cleanup_remote_map(self.msock.clone());
         tokio::pin!(remote_map_cleanup_fut);
 
@@ -1421,13 +1425,6 @@ impl Actor {
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report.as_ref());
     }
-}
-
-/// Potentially removes terminated `RemoteStateActor`s from the remote map.
-///
-/// Takes msock by value not by reference so that this returns a static future.
-async fn cleanup_remote_map(msock: Arc<MagicSock>) -> EndpointId {
-    poll_fn(|cx| msock.remote_map.poll_cleanup(cx)).await
 }
 
 fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
