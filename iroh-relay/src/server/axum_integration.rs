@@ -119,27 +119,28 @@ impl Stream for AxumWebSocketAdapter {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         // Poll the underlying axum WebSocket
-        match Pin::new(&mut self.inner).poll_next(cx) {
-            Poll::Ready(Some(Ok(msg))) => {
-                match msg {
-                    AxumMessage::Binary(data) => Poll::Ready(Some(Ok(Bytes::from(data)))),
-                    AxumMessage::Close(_) => Poll::Ready(None),
-                    _ => {
-                        // Skip non-binary messages and poll again
-                        cx.waker().wake_by_ref();
-                        Poll::Pending
+        loop {
+            match Pin::new(&mut self.inner).poll_next(cx) {
+                Poll::Ready(Some(Ok(msg))) => {
+                    match msg {
+                        AxumMessage::Binary(data) => return Poll::Ready(Some(Ok(Bytes::from(data)))),
+                        AxumMessage::Close(_) => return Poll::Ready(None),
+                        _ => {
+                            // Skip non-binary messages and continue polling
+                            continue;
+                        }
                     }
                 }
+                Poll::Ready(Some(Err(e))) => {
+                    // Convert axum error to WsError
+                    return Poll::Ready(Some(Err(WsError::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("{:?}", e),
+                    )))))
+                }
+                Poll::Ready(None) => return Poll::Ready(None),
+                Poll::Pending => return Poll::Pending,
             }
-            Poll::Ready(Some(Err(e))) => {
-                // Convert axum error to WsError
-                Poll::Ready(Some(Err(WsError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{:?}", e),
-                )))))
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
         }
     }
 }
