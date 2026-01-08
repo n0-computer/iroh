@@ -41,14 +41,14 @@ use crate::{
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
 
+#[cfg(feature = "axum")]
+pub mod axum_integration;
 mod client;
 mod clients;
 pub mod http_server;
 mod metrics;
 pub(crate) mod resolver;
 pub(crate) mod streams;
-#[cfg(feature = "axum")]
-pub mod axum_integration;
 #[cfg(feature = "test-utils")]
 pub mod testing;
 

@@ -23,20 +23,27 @@
 //! ```
 
 use axum::{
-    extract::{ws::{WebSocket, WebSocketUpgrade, Message as AxumMessage}, State},
-    response::Response,
+    extract::{
+        State,
+        ws::{Message as AxumMessage, WebSocket, WebSocketUpgrade},
+    },
     http::HeaderMap,
+    response::Response,
 };
 use bytes::Bytes;
-use n0_future::{Stream, Sink};
-use std::{pin::Pin, task::{Context, Poll}, sync::Arc};
+use n0_future::{Sink, Stream};
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 use tokio_websockets::Error as WsError;
 use tracing::{debug, trace, warn};
 
 use super::{AccessConfig, Metrics, client::Config};
 use crate::{
-    KeyCache, ExportKeyingMaterial,
-    protos::{relay::PER_CLIENT_SEND_QUEUE_DEPTH, handshake, streams::StreamError},
+    ExportKeyingMaterial, KeyCache,
+    protos::{handshake, relay::PER_CLIENT_SEND_QUEUE_DEPTH, streams::StreamError},
     server::streams::RelayedStream,
 };
 
@@ -65,11 +72,7 @@ pub struct RelayState {
 
 impl RelayState {
     /// Create a new RelayState with default write timeout
-    pub fn new(
-        key_cache: KeyCache,
-        access: Arc<AccessConfig>,
-        metrics: Arc<Metrics>,
-    ) -> Self {
+    pub fn new(key_cache: KeyCache, access: Arc<AccessConfig>, metrics: Arc<Metrics>) -> Self {
         Self {
             key_cache,
             access,
@@ -130,7 +133,10 @@ impl Stream for AxumWebSocketAdapter {
             }
             Poll::Ready(Some(Err(e))) => {
                 // Convert axum error to WsError
-                Poll::Ready(Some(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))))
+                Poll::Ready(Some(Err(WsError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{:?}", e),
+                )))))
             }
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -144,7 +150,10 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match Pin::new(&mut self.inner).poll_ready(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{:?}", e),
+            )))),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -152,13 +161,21 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
     fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<(), Self::Error> {
         Pin::new(&mut self.inner)
             .start_send(AxumMessage::Binary(item))
-            .map_err(|e| WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))
+            .map_err(|e| {
+                WsError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{:?}", e),
+                ))
+            })
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match Pin::new(&mut self.inner).poll_flush(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{:?}", e),
+            )))),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -166,7 +183,10 @@ impl Sink<Bytes> for AxumWebSocketAdapter {
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match Pin::new(&mut self.inner).poll_close(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
-            Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", e))))),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(WsError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{:?}", e),
+            )))),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -203,7 +223,9 @@ async fn handle_relay_websocket(
     trace!(?authentication.mechanism, "accept: verified authentication");
 
     let is_authorized = state.access.is_allowed(authentication.client_key).await;
-    let client_key = authentication.authorize_if(is_authorized, &mut adapter).await?;
+    let client_key = authentication
+        .authorize_if(is_authorized, &mut adapter)
+        .await?;
 
     trace!("accept: verified authorization");
 
@@ -222,7 +244,10 @@ async fn handle_relay_websocket(
     };
 
     // Register the client with the relay server
-    state.clients.register(client_conn_builder, state.metrics.clone()).await;
+    state
+        .clients
+        .register(client_conn_builder, state.metrics.clone())
+        .await;
 
     Ok(())
 }
