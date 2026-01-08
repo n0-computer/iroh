@@ -209,8 +209,8 @@ mod tests {
     use super::*;
     use crate::{
         client::conn::Conn,
-        protos::{common::FrameType, relay::RelayToClientMsg},
-        server::streams::RelayedStream,
+        protos::{common::FrameType, relay::RelayToClientMsg, streams::WsBytesFramed},
+        server::streams::{MaybeTlsStream, RateLimited, ServerRelayedStream},
     };
 
     async fn recv_frame<
@@ -236,12 +236,14 @@ mod tests {
         }
     }
 
-    fn test_client_builder(key: EndpointId) -> (Config, Conn) {
+    fn test_client_builder(
+        key: EndpointId,
+    ) -> (Config<WsBytesFramed<RateLimited<MaybeTlsStream>>>, Conn) {
         let (server, client) = tokio::io::duplex(1024);
         (
             Config {
                 endpoint_id: key,
-                stream: RelayedStream::test(server),
+                stream: ServerRelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
             },
