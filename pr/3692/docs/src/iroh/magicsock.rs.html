@@ -771,7 +771,7 @@
 <a href=#771 id=771 data-nosnippet>771</a>            .iter()
 <a href=#772 id=772 data-nosnippet>772</a>            .filter_map(|t| {
 <a href=#773 id=773 data-nosnippet>773</a>                <span class="attr">#[allow(irrefutable_let_patterns)]
-<a href=#774 id=774 data-nosnippet>774</a>                </span><span class="kw">if let </span>TransportConfig::Relay { relay_map } = t {
+<a href=#774 id=774 data-nosnippet>774</a>                </span><span class="kw">if let </span>TransportConfig::Relay { relay_map, .. } = t {
 <a href=#775 id=775 data-nosnippet>775</a>                    <span class="prelude-val">Some</span>(relay_map.clone())
 <a href=#776 id=776 data-nosnippet>776</a>                } <span class="kw">else </span>{
 <a href=#777 id=777 data-nosnippet>777</a>                    <span class="prelude-val">None
