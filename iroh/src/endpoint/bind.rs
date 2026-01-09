@@ -101,7 +101,8 @@ impl BindOpts {
     ///
     /// See [`Self::set_prefix_len`] for details on how this routing works.
     ///
-    /// Defaults to `false`.
+    /// Defaults to `false`. If the prefix length is set to `0` (the default) then this
+    /// will be set to `true` implicitly.
     pub fn set_is_default_route(mut self, is_default_route: bool) -> Self {
         self.is_default_route = is_default_route;
         self
