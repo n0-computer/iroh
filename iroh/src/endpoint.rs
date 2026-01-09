@@ -28,7 +28,7 @@ use url::Url;
 
 use self::hooks::EndpointHooksList;
 pub use super::magicsock::{
-    DirectAddr, DirectAddrType, PathInfo,
+    BindError, DirectAddr, DirectAddrType, PathInfo,
     remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
 };
 #[cfg(wasm_browser)]
@@ -709,20 +709,6 @@ pub enum ConnectError {
     Connection {
         #[error(std_err)]
         source: ConnectionError,
-    },
-}
-
-#[allow(missing_docs)]
-#[stack_error(derive, add_meta, from_sources)]
-#[non_exhaustive]
-pub enum BindError {
-    #[error(transparent)]
-    MagicSpawn {
-        source: magicsock::CreateHandleError,
-    },
-    #[error(transparent)]
-    Discovery {
-        source: crate::discovery::IntoDiscoveryError,
     },
 }
 
