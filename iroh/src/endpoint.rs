@@ -256,7 +256,7 @@ impl Builder {
     /// `/0`. This allows restricting binding to only one network interface for a given
     /// address family.
     ///
-    /// If the port specified is already in use, a random free port will be chosen. Using
+    /// If the port specified is already in use, binding the endpoint will fail. Using
     /// port `0` in the socket address assigns a random free port.
     ///
     /// # Example
@@ -330,8 +330,10 @@ impl Builder {
     /// will be sent over the same socket as the incoming datagram was received on, and the
     /// routing with the prefix length and default route as described above does not apply.
     ///
-    /// If the port specified is already in use, a random free port will be chosen. Using
-    /// port `0` in the socket address assigns a random free port.
+    /// Using port `0` in the socket address assigns a random free port.
+    ///
+    /// If the port specified is already in use, binding the endpoint will fail, unless
+    /// [`BindOpts::set_is_required`] is set to `false`
     ///
     /// # Example
     /// ```
@@ -1513,6 +1515,7 @@ fn is_cgi() -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        io,
         net::{IpAddr, Ipv4Addr},
         str::FromStr,
         sync::Arc,
@@ -1532,7 +1535,9 @@ mod tests {
     use crate::{
         RelayMap, RelayMode,
         discovery::static_provider::StaticProvider,
-        endpoint::{ApplicationClose, BindOpts, ConnectOptions, Connection, ConnectionError},
+        endpoint::{
+            ApplicationClose, BindError, BindOpts, ConnectOptions, Connection, ConnectionError,
+        },
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
@@ -2784,6 +2789,89 @@ mod tests {
         ep.close().await;
         drop(ep);
 
+        Ok(())
+    }
+
+    /// Bind on an unusable port with the default opts.
+    ///
+    /// Binding the endpoint fails with an AddrInUse error.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_unusuable_port() -> Result {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = socket.local_addr()?.port();
+
+        let res = Endpoint::empty_builder(RelayMode::Disabled)
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::LOCALHOST, port))?
+            .bind()
+            .await;
+
+        assert!(matches!(
+            res,
+            Err(BindError::Sockets {
+                source: io_error,
+                ..
+            })
+            if io_error.kind() == io::ErrorKind::AddrInUse
+        ));
+        Ok(())
+    }
+
+    /// Bind on an unusable port, but set is_required = false.
+    ///
+    /// Binding the endpoint succeeds.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_unusuable_port_not_required() -> Result {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = socket.local_addr()?.port();
+
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, port),
+                BindOpts::default().set_is_required(false),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        // just the default wildcard binds
+        assert_eq!(bound_sockets.len(), 2);
+        // our requested bind addr is not included because it failed to bind
+        assert!(
+            !bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        Ok(())
+    }
+
+    /// Bind on an unusable port, with is_required = false, and no other transports.
+    ///
+    /// Binding the endpoint fails with "no valid address available".
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_unusable_port_not_required_no_other_transports() -> Result {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = socket.local_addr()?.port();
+
+        let res = Endpoint::empty_builder(RelayMode::Disabled)
+            .clear_ip_transports()
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, port),
+                BindOpts::default().set_is_required(false),
+            )?
+            .bind()
+            .await;
+
+        assert!(matches!(
+            res,
+            Err(BindError::CreateQuicEndpoint {
+                source: io_error,
+                ..
+            })
+            if io_error.kind() == io::ErrorKind::Other && io_error.to_string() == "no valid address available"
+        ));
         Ok(())
     }
 }
