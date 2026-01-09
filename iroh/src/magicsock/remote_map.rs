@@ -49,7 +49,7 @@ pub(crate) struct RemoteMap {
 
     /// The senders for the inbox of each `RemoteStateActor` that runs.
     ///
-    /// This is seperated out of `Tasks` to make keeping a mutable borrow if this possible
+    /// This is separated out of `Tasks` to make keeping a mutable borrow if this possible
     /// while we're spawning a task using another mutable borrow of `Tasks`.
     senders: FxHashMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
 
