@@ -257,9 +257,7 @@ impl Builder {
     /// address family.
     ///
     /// If the port specified is already in use, binding the endpoint will fail. Using
-    /// port `0` in the socket address assigns a random free port. Alternatively, with
-    /// [`Self::bind_addr_with_opts`] you can set a port and instruct iroh to fallback to
-    /// a random free port if the port is taken (see [`BindOpts::fallback_to_free_port`]).
+    /// port `0` in the socket address assigns a random free port.
     ///
     /// # Example
     ///
@@ -333,9 +331,7 @@ impl Builder {
     /// routing with the prefix length and default route as described above does not apply.
     ///
     /// If the port specified is already in use, binding the endpoint will fail. Using
-    /// port `0` in the socket address assigns a random free port. You can also set a
-    /// non-zero port and instruct iroh to fallback to a random free port if the port is taken
-    /// with [`BindOpts::fallback_to_free_port`].
+    /// port `0` in the socket address assigns a random free port.
     ///
     /// # Example
     /// ```
@@ -377,7 +373,6 @@ impl Builder {
                         port: addr.port(),
                         is_required: opts.is_required(),
                         is_default: opts.is_default_route(),
-                        fallback_to_free_port: opts.fallback_to_free_port(),
                     },
                     is_user_defined: true,
                 });
@@ -398,7 +393,6 @@ impl Builder {
                         port: addr.port(),
                         is_required: opts.is_required(),
                         is_default: opts.is_default_route(),
-                        fallback_to_free_port: opts.fallback_to_free_port(),
                     },
                     is_user_defined: true,
                 });
@@ -2802,7 +2796,7 @@ mod tests {
     /// Binding the endpoint fails with an AddrInUse error.
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_no_fallback() -> Result {
+    async fn test_bind_addr_unusuable_port() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
@@ -2831,7 +2825,7 @@ mod tests {
     /// Binding the endpoint succeeds.
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_no_fallback_not_required() -> Result {
+    async fn test_bind_addr_unusuable_port_not_required() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
@@ -2860,7 +2854,7 @@ mod tests {
     /// Binding the endpoint fails with "no valid address available".
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_no_fallback_not_required_no_other_transports() -> Result {
+    async fn test_bind_addr_unusable_port_not_required_no_other_transports() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
@@ -2884,30 +2878,6 @@ mod tests {
             })
             if io_error.kind() == io::ErrorKind::Other && io_error.to_string() == "no valid address available"
         ));
-        Ok(())
-    }
-
-    /// Bind on an unusable port, but set to fallback to a random free port.
-    #[tokio::test]
-    #[traced_test]
-    async fn test_bind_addr_fallback() -> Result {
-        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
-        let port = socket.local_addr()?.port();
-
-        let ep = Endpoint::empty_builder(RelayMode::Disabled)
-            .clear_ip_transports()
-            .bind_addr_with_opts(
-                (Ipv4Addr::LOCALHOST, port),
-                BindOpts::default().set_fallback_to_free_port(true),
-            )?
-            .bind()
-            .await?;
-
-        let bound_sockets = ep.bound_sockets();
-        assert_eq!(bound_sockets.len(), 1);
-        assert_eq!(bound_sockets[0].ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
-        assert!(bound_sockets[0].port() != port);
-
         Ok(())
     }
 }

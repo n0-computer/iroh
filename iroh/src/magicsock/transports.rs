@@ -97,7 +97,6 @@ impl TransportConfig {
                 port: 0,
                 is_required: true,
                 is_default: false,
-                fallback_to_free_port: true,
             },
             is_user_defined: false,
         }
@@ -115,7 +114,6 @@ impl TransportConfig {
                 port: 0,
                 is_required: false,
                 is_default: false,
-                fallback_to_free_port: true,
             },
             is_user_defined: false,
         }

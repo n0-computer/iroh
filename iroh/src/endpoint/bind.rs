@@ -38,12 +38,6 @@ pub struct BindOpts {
     ///
     /// See [`Self::prefix_len`] for details of how such routing works.
     is_default_route: bool,
-    /// Whether this socket should fall back to a free port if the desired port is taken.
-    ///
-    /// If set to `true`, iroh will attempt to bind to a free port if the specified port is taken.
-    ///
-    /// Defaults to `false`.
-    fallback_to_free_port: bool,
 }
 
 impl Default for BindOpts {
@@ -52,7 +46,6 @@ impl Default for BindOpts {
             prefix_len: 0,
             is_required: true,
             is_default_route: false,
-            fallback_to_free_port: false,
         }
     }
 }
@@ -117,21 +110,6 @@ impl BindOpts {
     /// Returns the current value set by [`Self::set_is_default_route`].
     pub fn is_default_route(&self) -> bool {
         self.is_default_route
-    }
-
-    /// Whether binding this socket should fall back to a free port if the desired port is taken.
-    ///
-    /// If set to `true`, iroh will attempt to bind to a free port if the specified port is taken.
-    ///
-    /// Defaults to `false`.
-    pub fn set_fallback_to_free_port(mut self, fallback_to_free_port: bool) -> Self {
-        self.fallback_to_free_port = fallback_to_free_port;
-        self
-    }
-
-    /// Returns the current value set by [`Self::set_fallback_to_free_port`].
-    pub fn fallback_to_free_port(&self) -> bool {
-        self.fallback_to_free_port
     }
 }
 
