@@ -2722,7 +2722,7 @@ mod tests {
     /// Testing bind_addr: Clear IP transports and add single IPv4 bind
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_no_clear() -> Result {
+    async fn test_bind_addr_clear() -> Result {
         let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .clear_ip_transports()
             .bind_addr((Ipv4Addr::LOCALHOST, 0))?
@@ -2741,7 +2741,7 @@ mod tests {
     /// manually-added IPv4 bind.
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_clear() -> Result {
+    async fn test_bind_addr_no_clear() -> Result {
         // test 2: do not clear ip transports and add single non-default IPv4 bind
         let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .bind_addr((Ipv4Addr::LOCALHOST, 0))?
