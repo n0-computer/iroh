@@ -38,7 +38,7 @@ use tracing::warn;
 use crate::{
     Endpoint,
     endpoint::{
-        AfterHandshakeOutcome,
+        AfterHandshakeOutcome, PathInfo,
         quic::{
             AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
             ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
@@ -1177,6 +1177,17 @@ impl ConnectionInfo {
     pub async fn closed(&self) -> Option<(ConnectionError, ConnectionStats)> {
         let fut = self.inner.upgrade()?.on_closed();
         Some(fut.await)
+    }
+
+    /// Returns the currently selected path.
+    ///
+    /// Returns `None` if the connection has been dropped already before this call or if no path is currently selected.
+    pub fn selected_path(&self) -> Option<PathInfo> {
+        if !self.is_alive() {
+            return None;
+        }
+        let paths = self.paths().get();
+        paths.into_iter().find(|paths| paths.is_selected())
     }
 }
 
