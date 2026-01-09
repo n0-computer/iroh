@@ -2722,7 +2722,7 @@
 <a href=#2722 id=2722 data-nosnippet>2722</a>    <span class="doccomment">/// Testing bind_addr: Clear IP transports and add single IPv4 bind
 <a href=#2723 id=2723 data-nosnippet>2723</a>    </span><span class="attr">#[tokio::test]
 <a href=#2724 id=2724 data-nosnippet>2724</a>    #[traced_test]
-<a href=#2725 id=2725 data-nosnippet>2725</a>    </span><span class="kw">async fn </span>test_bind_addr_no_clear() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2725 id=2725 data-nosnippet>2725</a>    </span><span class="kw">async fn </span>test_bind_addr_clear() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2726 id=2726 data-nosnippet>2726</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Disabled)
 <a href=#2727 id=2727 data-nosnippet>2727</a>            .clear_ip_transports()
 <a href=#2728 id=2728 data-nosnippet>2728</a>            .bind_addr((Ipv4Addr::LOCALHOST, <span class="number">0</span>))<span class="question-mark">?
@@ -2741,7 +2741,7 @@
 <a href=#2741 id=2741 data-nosnippet>2741</a>    /// manually-added IPv4 bind.
 <a href=#2742 id=2742 data-nosnippet>2742</a>    </span><span class="attr">#[tokio::test]
 <a href=#2743 id=2743 data-nosnippet>2743</a>    #[traced_test]
-<a href=#2744 id=2744 data-nosnippet>2744</a>    </span><span class="kw">async fn </span>test_bind_addr_clear() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2744 id=2744 data-nosnippet>2744</a>    </span><span class="kw">async fn </span>test_bind_addr_no_clear() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2745 id=2745 data-nosnippet>2745</a>        <span class="comment">// test 2: do not clear ip transports and add single non-default IPv4 bind
 <a href=#2746 id=2746 data-nosnippet>2746</a>        </span><span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Disabled)
 <a href=#2747 id=2747 data-nosnippet>2747</a>            .bind_addr((Ipv4Addr::LOCALHOST, <span class="number">0</span>))<span class="question-mark">?
