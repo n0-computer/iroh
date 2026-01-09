@@ -724,7 +724,7 @@ impl DirectAddrUpdateState {
 #[non_exhaustive]
 pub enum BindError {
     #[error("Failed to bind sockets")]
-    BindSockets { source: io::Error },
+    Sockets { source: io::Error },
     #[error("Failed to create internal QUIC endpoint")]
     CreateQuicEndpoint { source: io::Error },
     #[error("Failed to create netmon monitor")]
@@ -806,7 +806,7 @@ impl Handle {
             &metrics,
             shutdown_token.child_token(),
         )
-        .map_err(|err| e!(BindError::BindSockets, err))?;
+        .map_err(|err| e!(BindError::Sockets, err))?;
 
         #[cfg(not(wasm_browser))]
         {
