@@ -60,7 +60,11 @@ pub use self::{
 /// function.
 ///
 /// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
-pub(crate) trait ExportKeyingMaterial {
+/// Trait for extracting keying material from a TLS connection.
+///
+/// This is used during the relay handshake to establish a shared secret
+/// between the client and server for authentication purposes.
+pub trait ExportKeyingMaterial {
     /// If this type ends up wrapping a TLS stream, then this tries
     /// to export keying material by calling the underlying [`export_keying_material`]
     /// function.
