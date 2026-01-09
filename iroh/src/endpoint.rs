@@ -410,11 +410,6 @@ impl Builder {
     }
 
     /// Removes all relay based transports.
-    ///
-    /// This method only disables using relays to send data, and has no effect
-    /// on the endpoint using relays for connection establishment. To disable
-    /// both connection establishment and relays-as-transports, disable relays
-    /// entirely with [`RelayMode::Disabled`].
     pub fn clear_relay_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
