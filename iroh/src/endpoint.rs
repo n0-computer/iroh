@@ -1522,6 +1522,7 @@ fn is_cgi() -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        net::Ipv4Addr,
         str::FromStr,
         sync::Arc,
         time::{Duration, Instant},
@@ -1540,7 +1541,7 @@ mod tests {
     use crate::{
         RelayMap, RelayMode,
         discovery::static_provider::StaticProvider,
-        endpoint::{ApplicationClose, ConnectOptions, Connection, ConnectionError},
+        endpoint::{ApplicationClose, BindOpts, ConnectOptions, Connection, ConnectionError},
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
@@ -2714,6 +2715,73 @@ mod tests {
         let _ep = Endpoint::empty_builder(RelayMode::Custom(relays))
             .bind()
             .await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_bind_addr() -> Result {
+        // we use different port numbers for each test because it is not guaranteed that the sockets
+        // are free immediately after the endpoint is dropped.
+
+        // test 1: clear ip transports and add single IPv4 bind
+        let port: u16 = 12345;
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::UNSPECIFIED, port))?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 1);
+        assert!(bound_sockets[0].is_ipv4());
+        assert_eq!(bound_sockets[0].port(), port);
+        ep.close().await;
+        drop(ep);
+
+        // test 2: do not clear ip transports and add single non-default IPv4 bind
+        // this will bind three sockets: wildcard binds for IPv4 and IPv6, and our
+        // manually-added IPv4 bind.
+        let port: u16 = 12346;
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr((Ipv4Addr::UNSPECIFIED, port))?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 3);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        assert!(
+            bound_sockets
+                .iter()
+                .find(|x| x.is_ipv4() && x.port() == port)
+                .is_some()
+        );
+        ep.close().await;
+        drop(ep);
+
+        // test 3: do not clear ip transports and add single default IPv4 bind
+        // this replaces the default IPv4 bind added by the builder,
+        // but keeps the default wildcard IPv6 bind.
+        let port: u16 = 12347;
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr_with_opts(
+                (Ipv4Addr::UNSPECIFIED, port),
+                BindOpts::default().set_is_default_route(true),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 1);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        assert!(
+            bound_sockets
+                .iter()
+                .find(|x| x.is_ipv4() && x.port() == port)
+                .is_some()
+        );
+        ep.close().await;
+        drop(ep);
 
         Ok(())
     }

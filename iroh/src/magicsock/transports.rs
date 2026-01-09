@@ -182,8 +182,8 @@ impl Transports {
                         {
                             continue;
                         }
-                        ip_configs.push(*config);
                     }
+                    ip_configs.push(*config);
                 }
             }
             ip_configs
