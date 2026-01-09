@@ -1522,6 +1522,7 @@ fn is_cgi() -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        net::{IpAddr, Ipv4Addr},
         str::FromStr,
         sync::Arc,
         time::{Duration, Instant},
@@ -1540,7 +1541,7 @@ mod tests {
     use crate::{
         RelayMap, RelayMode,
         discovery::static_provider::StaticProvider,
-        endpoint::{ApplicationClose, ConnectOptions, Connection, ConnectionError},
+        endpoint::{ApplicationClose, BindOpts, ConnectOptions, Connection, ConnectionError},
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
@@ -2714,6 +2715,83 @@ mod tests {
         let _ep = Endpoint::empty_builder(RelayMode::Custom(relays))
             .bind()
             .await?;
+
+        Ok(())
+    }
+
+    /// Testing bind_addr: Clear IP transports and add single IPv4 bind
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_clear() -> Result {
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .clear_ip_transports()
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 1);
+        assert_eq!(bound_sockets[0].ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        ep.close().await;
+        Ok(())
+    }
+
+    /// Testing bind_addr: Do not clear IP transports and add single non-default IPv4 bind
+    ///
+    /// This will bind three sockets: wildcard binds for IPv4 and IPv6, and our
+    /// manually-added IPv4 bind.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_no_clear() -> Result {
+        // test 2: do not clear ip transports and add single non-default IPv4 bind
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 3);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        // Test that our manually added socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        // Test that the default wildcard socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+        );
+        ep.close().await;
+        Ok(())
+    }
+
+    // Testing bind_addr: Do not clear IP transports and add single default IPv4 bind.
+    //
+    // This replaces the default IPv4 bind added by the builder,
+    // but keeps the default wildcard IPv6 bind.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_default() -> Result {
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, 0),
+                BindOpts::default().set_is_default_route(true),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 1);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        ep.close().await;
+        drop(ep);
 
         Ok(())
     }
