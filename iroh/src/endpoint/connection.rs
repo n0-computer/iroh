@@ -38,7 +38,7 @@ use tracing::warn;
 use crate::{
     Endpoint,
     endpoint::{
-        AfterHandshakeOutcome,
+        AfterHandshakeOutcome, PathInfo,
         quic::{
             AcceptBi, AcceptUni, ConnectionError, ConnectionStats, Controller,
             ExportKeyingMaterialError, OpenBi, OpenUni, PathId, ReadDatagram, SendDatagram,
@@ -1061,6 +1061,18 @@ impl Connection<IncomingZeroRtt> {
     pub async fn handshake_completed(&self) -> Result<Connection, ConnectingError> {
         self.data.accepted.clone().await
     }
+
+    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    ///
+    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// included in the TLS certificate presented during the handshake when connecting.
+    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// connection.
+    ///
+    /// [`PublicKey`]: iroh_base::PublicKey
+    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
+        remote_id_from_quinn_conn(&self.inner)
+    }
 }
 
 impl Connection<OutgoingZeroRtt> {
@@ -1090,6 +1102,18 @@ impl Connection<OutgoingZeroRtt> {
     /// modified iroh endpoint or with a plain QUIC client.
     pub async fn handshake_completed(&self) -> Result<ZeroRttStatus, ConnectingError> {
         self.data.accepted.clone().await
+    }
+
+    /// Returns the [`EndpointId`] from the peer's TLS certificate.
+    ///
+    /// The [`PublicKey`] of an endpoint is also known as an [`EndpointId`].  This [`PublicKey`] is
+    /// included in the TLS certificate presented during the handshake when connecting.
+    /// This function allows you to get the [`EndpointId`] of the remote endpoint of this
+    /// connection.
+    ///
+    /// [`PublicKey`]: iroh_base::PublicKey
+    pub fn remote_id(&self) -> Result<EndpointId, RemoteEndpointIdError> {
+        remote_id_from_quinn_conn(&self.inner)
     }
 }
 
@@ -1153,6 +1177,17 @@ impl ConnectionInfo {
     pub async fn closed(&self) -> Option<(ConnectionError, ConnectionStats)> {
         let fut = self.inner.upgrade()?.on_closed();
         Some(fut.await)
+    }
+
+    /// Returns the currently selected path.
+    ///
+    /// Returns `None` if the connection has been dropped already before this call or if no path is currently selected.
+    pub fn selected_path(&self) -> Option<PathInfo> {
+        if !self.is_alive() {
+            return None;
+        }
+        let paths = self.paths().get();
+        paths.into_iter().find(|paths| paths.is_selected())
     }
 }
 
