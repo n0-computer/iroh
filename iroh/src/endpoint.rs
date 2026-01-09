@@ -267,8 +267,8 @@ impl Builder {
     /// # use iroh::Endpoint;
     /// let endpoint = Endpoint::builder()
     ///     .clear_ip_transports()
-    ///     .bind_addr("127.0.0.1:1234")?
-    ///     .bind_addr("[::1]:1235")?
+    ///     .bind_addr("127.0.0.1:0")?
+    ///     .bind_addr("[::1]:0")?
     ///     .bind()
     ///     .await?;
     /// # Ok(()) }
@@ -341,8 +341,8 @@ impl Builder {
     /// # use iroh::{Endpoint, endpoint::BindOpts};
     /// let endpoint = Endpoint::builder()
     ///     .clear_ip_transports()
-    ///     .bind_addr_with_opts("127.0.0.1:1234", BindOpts::default().set_prefix_len(24))?
-    ///     .bind_addr_with_opts("[::1]:1235", BindOpts::default().set_prefix_len(48))?
+    ///     .bind_addr_with_opts("127.0.0.1:0", BindOpts::default().set_prefix_len(24))?
+    ///     .bind_addr_with_opts("[::1]:0", BindOpts::default().set_prefix_len(48))?
     ///     .bind()
     ///     .await?;
     /// # Ok(()) }
