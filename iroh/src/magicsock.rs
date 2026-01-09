@@ -210,7 +210,7 @@ pub(crate) struct MagicSock {
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
-    pub(crate) remote_map: RemoteMap,
+    remote_map: RemoteMap,
 
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
