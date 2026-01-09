@@ -242,8 +242,8 @@ impl Builder {
     /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
     ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
     ///
-    /// - Most likely when using this API those existing binds need to be removed explicitly
-    ///   using [`Self::clear_ip_transports`].
+    /// - Adding a bind address removes the pre-configured unspecified bind address for this
+    ///   address family.
     ///
     /// - This should be called at most once for each address family: once for IPv4 and/or
     ///   once for IPv6. Calling it multiple times for the same address family will result
@@ -297,9 +297,6 @@ impl Builder {
     /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
     ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
     ///
-    /// - Most likely when using this API those existing binds need to be removed explicitly
-    ///   using [`Self::clear_ip_transports`].
-    ///
     /// # Description
     ///
     /// Requests a socket to be bound on a specific address. This allows restricting binding
@@ -318,12 +315,16 @@ impl Builder {
     /// of "default route" is used. At most one socket per address family may be marked as
     /// the default route using [`BindOpts::set_is_default_route`], and this will be used
     /// for destinations not contained by the subnets of the bound sockets. This network is
-    /// expected to have a default gateway configured.
+    /// expected to have a default gateway configured. A subnet with a prefix length of `/0`
+    /// will be set as a "default route" implicitly.
     ///
     /// Be aware that using a subnet with a prefix length of `/0` will always contain all
     /// destination addresses. It is valid to configure this, but no more than one such
-    /// socket should be bound or the routing will be non-deterministic. Prefer using
-    /// [`BindOpts::set_is_default_route`] on one of the sockets instead.
+    /// socket should be bound or the routing will be non-deterministic.
+    ///
+    /// To use a subnet with a non-zero prefix length as the default route, use
+    /// [`BindOpts::set_is_default_route]. Subnets with a prefix length of zero are always
+    /// marked as default routes.
     ///
     /// Finally note that most outgoing datagrams are part of an existing network flow. That
     /// is, they are in response to an incoming datagram. In this case the outgoing datagram
@@ -367,12 +368,14 @@ impl Builder {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
+                let ip_net = Ipv4Net::new(*addr.ip(), opts.prefix_len())?;
+                let is_default = opts.is_default_route() || ip_net.prefix_len() == 0;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V4 {
-                        ip_net: Ipv4Net::new(*addr.ip(), opts.prefix_len())?,
+                        ip_net,
                         port: addr.port(),
                         is_required: opts.is_required(),
-                        is_default: opts.is_default_route(),
+                        is_default,
                     },
                     is_user_defined: true,
                 });
@@ -386,13 +389,15 @@ impl Builder {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
+                let ip_net = Ipv6Net::new(*addr.ip(), opts.prefix_len())?;
+                let is_default = opts.is_default_route() || ip_net.prefix_len() == 0;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V6 {
-                        ip_net: Ipv6Net::new(*addr.ip(), opts.prefix_len())?,
+                        ip_net,
                         scope_id: addr.scope_id(),
                         port: addr.port(),
                         is_required: opts.is_required(),
-                        is_default: opts.is_default_route(),
+                        is_default,
                     },
                     is_user_defined: true,
                 });
@@ -2737,31 +2742,24 @@ mod tests {
 
     /// Testing bind_addr: Do not clear IP transports and add single non-default IPv4 bind
     ///
-    /// This will bind three sockets: wildcard binds for IPv4 and IPv6, and our
+    /// This will bind two sockets: default wildcard bind for IPv6, and our
     /// manually-added IPv4 bind.
     #[tokio::test]
     #[traced_test]
     async fn test_bind_addr_no_clear() -> Result {
-        // test 2: do not clear ip transports and add single non-default IPv4 bind
         let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
             .await?;
         let bound_sockets = ep.bound_sockets();
-        assert_eq!(bound_sockets.len(), 3);
-        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 2);
+        assert_eq!(bound_sockets.len(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 1);
         assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
         // Test that our manually added socket is there
         assert!(
             bound_sockets
                 .iter()
                 .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
-        );
-        // Test that the default wildcard socket is there
-        assert!(
-            bound_sockets
-                .iter()
-                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
         );
         ep.close().await;
         Ok(())
@@ -2793,6 +2791,40 @@ mod tests {
         ep.close().await;
         drop(ep);
 
+        Ok(())
+    }
+
+    /// Testing bind_addr: Do not clear IP transports and add single IPv4 bind with a non-zero prefix len
+    ///
+    /// This will bind three sockets: default wildcard bind for IPv4 and IPv6, and our
+    /// manually-added IPv4 bind.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_nonzero_prefix() -> Result {
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, 0),
+                BindOpts::default().set_prefix_len(32),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 3);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        // Test that the default wildcard socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+        );
+        // Test that our manually added socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        ep.close().await;
         Ok(())
     }
 }
