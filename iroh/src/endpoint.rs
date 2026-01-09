@@ -1538,7 +1538,6 @@ mod tests {
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectOptions, Connection, ConnectionError,
         },
-        magicsock::CreateHandleError,
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
@@ -2810,11 +2809,8 @@ mod tests {
 
         assert!(matches!(
             res,
-            Err(BindError::MagicSpawn {
-                source: CreateHandleError::BindSockets {
-                    source: io_error,
-                    ..
-                },
+            Err(BindError::Sockets {
+                source: io_error,
                 ..
             })
             if io_error.kind() == io::ErrorKind::AddrInUse
@@ -2844,7 +2840,8 @@ mod tests {
         // our requested bind addr is not included because it failed to bind
         assert!(
             !bound_sockets
-                .iter().any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
         );
         Ok(())
     }
@@ -2869,11 +2866,8 @@ mod tests {
 
         assert!(matches!(
             res,
-            Err(BindError::MagicSpawn {
-                source: CreateHandleError::CreateQuinnEndpoint {
-                    source: io_error,
-                    ..
-                },
+            Err(BindError::Sockets {
+                source: io_error,
                 ..
             })
             if io_error.kind() == io::ErrorKind::Other && io_error.to_string() == "no valid address available"
