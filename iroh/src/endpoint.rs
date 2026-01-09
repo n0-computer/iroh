@@ -2866,7 +2866,7 @@ mod tests {
 
         assert!(matches!(
             res,
-            Err(BindError::Sockets {
+            Err(BindError::CreateQuicEndpoint {
                 source: io_error,
                 ..
             })
