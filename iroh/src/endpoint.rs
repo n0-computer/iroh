@@ -2843,10 +2843,8 @@ mod tests {
         assert_eq!(bound_sockets.len(), 2);
         // our requested bind addr is not included because it failed to bind
         assert!(
-            bound_sockets
-                .iter()
-                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
-                .is_none()
+            !bound_sockets
+                .iter().any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
         );
         Ok(())
     }
