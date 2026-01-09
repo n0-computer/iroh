@@ -2811,7 +2811,18 @@ mod tests {
             .bind_addr((Ipv4Addr::LOCALHOST, port))?
             .bind()
             .await;
-        assert!(is_err_addr_in_use(&res));
+
+        assert!(matches!(
+            res,
+            Err(BindError::MagicSpawn {
+                source: CreateHandleError::BindSockets {
+                    source: io_error,
+                    ..
+                },
+                ..
+            })
+            if io_error.kind() == io::ErrorKind::AddrInUse
+        ));
         Ok(())
     }
 
@@ -2861,6 +2872,7 @@ mod tests {
             )?
             .bind()
             .await;
+
         assert!(matches!(
             res,
             Err(BindError::MagicSpawn {
@@ -2875,41 +2887,27 @@ mod tests {
         Ok(())
     }
 
+    /// Bind on an unusable port, but set to fallback to a random free port.
     #[tokio::test]
     #[traced_test]
     async fn test_bind_addr_fallback() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
-        let res = Endpoint::empty_builder(RelayMode::Disabled)
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .clear_ip_transports()
             .bind_addr_with_opts(
                 (Ipv4Addr::LOCALHOST, port),
                 BindOpts::default().set_fallback_to_free_port(true),
             )?
             .bind()
-            .await;
-        assert!(res.is_ok());
-        let ep = res?;
-        let sockets = ep.bound_sockets();
-        assert_eq!(sockets.len(), 1);
-        assert_eq!(sockets[0].ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
-        assert!(sockets[0].port() != port);
+            .await?;
+
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 1);
+        assert_eq!(bound_sockets[0].ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
+        assert!(bound_sockets[0].port() != port);
 
         Ok(())
-    }
-
-    fn is_err_addr_in_use(res: &Result<Endpoint, BindError>) -> bool {
-        matches!(
-            res,
-            Err(BindError::MagicSpawn {
-                source: CreateHandleError::BindSockets {
-                    source: io_error,
-                    ..
-                },
-                ..
-            })
-            if io_error.kind() == io::ErrorKind::AddrInUse
-        )
     }
 }
