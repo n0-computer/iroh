@@ -1522,7 +1522,7 @@ fn is_cgi() -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
-        net::Ipv4Addr,
+        net::{IpAddr, Ipv4Addr},
         str::FromStr,
         sync::Arc,
         time::{Duration, Instant},
@@ -2719,53 +2719,66 @@ mod tests {
         Ok(())
     }
 
+    /// Testing bind_addr: Clear IP transports and add single IPv4 bind
     #[tokio::test]
-    async fn test_bind_addr() -> Result {
-        // we use different port numbers for each test because it is not guaranteed that the sockets
-        // are free immediately after the endpoint is dropped.
-
-        // test 1: clear ip transports and add single IPv4 bind
-        let port: u16 = 12345;
+    #[traced_test]
+    async fn test_bind_addr_no_clear() -> Result {
         let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .clear_ip_transports()
-            .bind_addr((Ipv4Addr::UNSPECIFIED, port))?
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
             .await?;
         let bound_sockets = ep.bound_sockets();
         assert_eq!(bound_sockets.len(), 1);
-        assert!(bound_sockets[0].is_ipv4());
-        assert_eq!(bound_sockets[0].port(), port);
+        assert_eq!(bound_sockets[0].ip(), IpAddr::V4(Ipv4Addr::LOCALHOST));
         ep.close().await;
-        drop(ep);
+        Ok(())
+    }
 
+    /// Testing bind_addr: Do not clear IP transports and add single non-default IPv4 bind
+    ///
+    /// This will bind three sockets: wildcard binds for IPv4 and IPv6, and our
+    /// manually-added IPv4 bind.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_clear() -> Result {
         // test 2: do not clear ip transports and add single non-default IPv4 bind
-        // this will bind three sockets: wildcard binds for IPv4 and IPv6, and our
-        // manually-added IPv4 bind.
-        let port: u16 = 12346;
         let ep = Endpoint::empty_builder(RelayMode::Disabled)
-            .bind_addr((Ipv4Addr::UNSPECIFIED, port))?
+            .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
             .await?;
         let bound_sockets = ep.bound_sockets();
         assert_eq!(bound_sockets.len(), 3);
         assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 2);
         assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        // Test that our manually added socket is there
         assert!(
             bound_sockets
                 .iter()
-                .find(|x| x.is_ipv4() && x.port() == port)
+                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+                .is_some()
+        );
+        // Test that the default wildcard socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
                 .is_some()
         );
         ep.close().await;
-        drop(ep);
+        Ok(())
+    }
 
-        // test 3: do not clear ip transports and add single default IPv4 bind
-        // this replaces the default IPv4 bind added by the builder,
-        // but keeps the default wildcard IPv6 bind.
-        let port: u16 = 12347;
+    // Testing bind_addr: Do not clear IP transports and add single default IPv4 bind.
+    //
+    // This replaces the default IPv4 bind added by the builder,
+    // but keeps the default wildcard IPv6 bind.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_default() -> Result {
         let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .bind_addr_with_opts(
-                (Ipv4Addr::UNSPECIFIED, port),
+                (Ipv4Addr::LOCALHOST, 0),
                 BindOpts::default().set_is_default_route(true),
             )?
             .bind()
@@ -2777,7 +2790,7 @@ mod tests {
         assert!(
             bound_sockets
                 .iter()
-                .find(|x| x.is_ipv4() && x.port() == port)
+                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
                 .is_some()
         );
         ep.close().await;
