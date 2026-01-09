@@ -330,8 +330,10 @@ impl Builder {
     /// will be sent over the same socket as the incoming datagram was received on, and the
     /// routing with the prefix length and default route as described above does not apply.
     ///
-    /// If the port specified is already in use, binding the endpoint will fail. Using
-    /// port `0` in the socket address assigns a random free port.
+    /// Using port `0` in the socket address assigns a random free port.
+    ///
+    /// If the port specified is already in use, binding the endpoint will fail, unless
+    /// [`BindOpts::set_is_required`] is set to `false`
     ///
     /// # Example
     /// ```
