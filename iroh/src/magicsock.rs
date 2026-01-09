@@ -40,7 +40,11 @@ use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
 use quinn::WeakConnectionHandle;
 use rand::Rng;
-use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
+use tokio::sync::{
+    Mutex as AsyncMutex,
+    mpsc::{self},
+    oneshot,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, event, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, MagicTransport, TransportConfig};
@@ -59,7 +63,10 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
     endpoint::hooks::EndpointHooksList,
-    magicsock::remote_map::{PathsWatcher, RemoteInfo},
+    magicsock::{
+        remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
+        transports::{OwnedTransmit, TransportsSender},
+    },
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -209,8 +216,8 @@ pub(crate) struct MagicSock {
     net_report: Watchable<(Option<Report>, UpdateReason)>,
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
-    /// Tracks the networkmap endpoint entity for each endpoint discovery key.
-    remote_map: RemoteMap,
+    /// Maps for resolving mapped addrs to/from IP and relay addresses.
+    mapped_addrs: MappedAddrs,
 
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
@@ -280,11 +287,12 @@ impl MagicSock {
     ) -> impl Future<Output = Result<PathsWatcher, RemoteStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
-        let sender = self.remote_map.remote_state_actor(remote);
+        let sender = self.actor_sender.clone();
         async move {
             sender
-                .send(RemoteStateMessage::AddConnection(conn, tx))
-                .await?;
+                .send(ActorMessage::AddConnection(remote, conn, tx))
+                .await
+                .map_err(|_| RemoteStateActorStoppedError::new())?;
             rx.await.map_err(|_| RemoteStateActorStoppedError::new())
         }
     }
@@ -360,6 +368,17 @@ impl MagicSock {
             .await
             .ok();
         res
+    }
+
+    pub(crate) fn try_send_datagram(
+        &self,
+        endpoint_id: EndpointId,
+        sender: Box<TransportsSender>,
+        transmit: OwnedTransmit,
+    ) -> Option<()> {
+        self.actor_sender
+            .try_send(ActorMessage::SendDatagram(endpoint_id, sender, transmit))
+            .ok()
     }
 
     /// Returns a [`Watcher`] for this socket's direct addresses.
@@ -530,8 +549,8 @@ impl MagicSock {
 
                     // Fill in the correct mapped address
                     let mapped_addr = self
-                        .remote_map
-                        .relay_mapped_addrs
+                        .mapped_addrs
+                        .relay_addrs
                         .get(&(src_url.clone(), *src_node));
                     quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
@@ -848,7 +867,7 @@ impl Handle {
             actor_sender: actor_sender.clone(),
             shutdown: shutdown_state,
             ipv6_reported,
-            remote_map,
+            mapped_addrs: remote_map.mapped_addrs.clone(),
             discovery,
             relay_map: relay_map.clone(),
             discovery_user_data: RwLock::new(discovery_user_data),
@@ -938,6 +957,7 @@ impl Handle {
         let mut actor = Actor {
             msg_receiver: actor_receiver,
             msock: msock.clone(),
+            remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
             netmon_watcher,
@@ -1049,24 +1069,36 @@ fn default_quic_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 #[allow(clippy::enum_variant_names)]
 enum ActorMessage {
     NetworkChange,
     RelayMapChange,
+    #[debug("ResolveRemote(..)")]
     ResolveRemote(
         EndpointAddr,
         oneshot::Sender<
             Result<Result<EndpointIdMappedAddr, DiscoveryError>, RemoteStateActorStoppedError>,
         >,
     ),
+    #[debug("AddConnection(..)")]
+    AddConnection(
+        EndpointId,
+        WeakConnectionHandle,
+        oneshot::Sender<PathsWatcher>,
+    ),
+    #[debug("RemoteInfo(..)")]
     RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
+    #[debug("SendDatagram(..)")]
+    SendDatagram(EndpointId, Box<TransportsSender>, OwnedTransmit),
     #[cfg(test)]
     ForceNetworkChange(bool),
 }
 
 struct Actor {
     msock: Arc<MagicSock>,
+    /// Tracks the networkmap endpoint entity for each endpoint discovery key.
+    remote_map: RemoteMap,
     msg_receiver: mpsc::Receiver<ActorMessage>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
@@ -1209,7 +1241,7 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                eid = poll_fn(|cx| self.msock.remote_map.poll_cleanup(cx)) => {
+                eid = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
                     trace!(%eid, "cleaned up RemoteStateActor");
                 }
                 else => {
@@ -1234,7 +1266,7 @@ impl Actor {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
-        self.msock.remote_map.on_network_change(is_major);
+        self.remote_map.on_network_change(is_major);
     }
 
     fn handle_relay_map_change(&mut self) {
@@ -1260,7 +1292,7 @@ impl Actor {
             }
             ActorMessage::ResolveRemote(addr, tx) => {
                 let EndpointAddr { id, addrs } = addr;
-                let actor = self.msock.remote_map.remote_state_actor(id);
+                let actor = self.remote_map.remote_state_actor(id);
                 let (inner_tx, rx) = oneshot::channel();
                 if let Err(_) = actor
                     .send(RemoteStateMessage::ResolveRemote(addrs, inner_tx))
@@ -1269,7 +1301,7 @@ impl Actor {
                     tx.send(Err(RemoteStateActorStoppedError::new())).ok();
                 } else {
                     tx.send(match rx.await {
-                        Ok(Ok(())) => Ok(Ok(self.msock.remote_map.endpoint_mapped_addrs.get(&id))),
+                        Ok(Ok(())) => Ok(Ok(self.remote_map.mapped_addrs.endpoint_addrs.get(&id))),
                         Ok(Err(err)) => Ok(Err(err)),
                         Err(_) => Err(RemoteStateActorStoppedError::new()),
                     })
@@ -1277,7 +1309,7 @@ impl Actor {
                 }
             }
             ActorMessage::RemoteInfo(id, tx) => {
-                let Some(actor) = self.msock.remote_map.remote_state_actor_if_exists(id) else {
+                let Some(actor) = self.remote_map.remote_state_actor_if_exists(id) else {
                     return;
                 };
                 let (inner_tx, rx) = oneshot::channel();
@@ -1287,6 +1319,25 @@ impl Actor {
                 if let Ok(info) = rx.await {
                     tx.send(info).ok();
                 }
+            }
+            ActorMessage::AddConnection(remote, conn, tx) => {
+                let actor = self.remote_map.remote_state_actor(remote);
+                let (inner_tx, rx) = oneshot::channel();
+                if let Err(_) = actor
+                    .send(RemoteStateMessage::AddConnection(conn, inner_tx))
+                    .await
+                {
+                    return;
+                }
+                if let Ok(watcher) = rx.await {
+                    tx.send(watcher).ok();
+                }
+            }
+            ActorMessage::SendDatagram(endpoint_id, sender, transmit) => {
+                self.remote_map
+                    .remote_state_actor(endpoint_id)
+                    .try_send(RemoteStateMessage::SendDatagram(sender, transmit))
+                    .ok();
             }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {

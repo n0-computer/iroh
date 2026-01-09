@@ -41,15 +41,9 @@ mod remote_state;
 ///   addressing space that is used by Quinn.
 #[derive(Debug)]
 pub(crate) struct RemoteMap {
-    //
-    // State we keep about remote endpoints.
-    //
-    /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
-    pub(super) endpoint_mapped_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
-    /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
-    pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// Maps for converting between mapped and IP/relay addrs.
+    pub(crate) mapped_addrs: MappedAddrs,
 
-    //
     // State needed to start a new RemoteStateHandle.
     //
     /// The endpoint ID of the local endpoint.
@@ -62,6 +56,14 @@ pub(crate) struct RemoteMap {
 
     /// The state kept for spawning new tasks for remote state actors and cleaning them up.
     state: Mutex<ActorState>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MappedAddrs {
+    /// The mapping between [`EndpointId`]s and [`EndpointIdMappedAddr`]s.
+    pub(super) endpoint_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
+    /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
+    pub(super) relay_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
 }
 
 /// Stores the state required for managing the `RemoteStateActor`s.
@@ -92,8 +94,7 @@ impl RemoteMap {
         shutdown_token: CancellationToken,
     ) -> Self {
         Self {
-            endpoint_mapped_addrs: Default::default(),
-            relay_mapped_addrs: Default::default(),
+            mapped_addrs: Default::default(),
             local_endpoint_id,
             metrics,
             local_direct_addrs,
@@ -224,12 +225,12 @@ impl RemoteMap {
         poll_cleanup_waker: &mut Option<Waker>,
     ) -> mpsc::Sender<RemoteStateMessage> {
         // Ensure there is a RemoteMappedAddr for this EndpointId.
-        self.endpoint_mapped_addrs.get(&eid);
+        self.mapped_addrs.endpoint_addrs.get(&eid);
         let sender = RemoteStateActor::new(
             eid,
             self.local_endpoint_id,
             self.local_direct_addrs.clone(),
-            self.relay_mapped_addrs.clone(),
+            self.mapped_addrs.relay_addrs.clone(),
             self.metrics.clone(),
             self.discovery.clone(),
         )

@@ -16,7 +16,7 @@ use relay::{RelayNetworkChangeSender, RelaySender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
-use super::{MagicSock, mapped_addrs::MultipathMappedAddr, remote_map::RemoteStateMessage};
+use super::{MagicSock, mapped_addrs::MultipathMappedAddr};
 use crate::{metrics::EndpointMetrics, net_report::Report};
 
 #[cfg(not(wasm_browser))]
@@ -742,11 +742,7 @@ impl quinn::UdpSender for MagicSender {
 
         let transport_addr = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
-                let Some(endpoint_id) = self
-                    .msock
-                    .remote_map
-                    .endpoint_mapped_addrs
-                    .lookup(&mapped_addr)
+                let Some(endpoint_id) = self.msock.mapped_addrs.endpoint_addrs.lookup(&mapped_addr)
                 else {
                     error!(dst = ?mapped_addr, "unknown NodeIdMappedAddr, dropped transmit");
                     return Poll::Ready(Ok(()));
@@ -760,23 +756,23 @@ impl quinn::UdpSender for MagicSender {
                         "oops, flub didn't think this would happen");
                 }
 
-                let sender = self.msock.remote_map.remote_state_actor(endpoint_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
-                match sender.try_send(RemoteStateMessage::SendDatagram(
+                match self.msock.try_send_datagram(
+                    endpoint_id,
                     Box::new(self.sender.clone()),
                     transmit,
-                )) {
-                    Ok(()) => {
+                ) {
+                    Some(()) => {
                         trace!(dst = ?mapped_addr, dst_node = %endpoint_id.fmt_short(), "sent transmit");
                         return Poll::Ready(Ok(()));
                     }
-                    Err(err) => {
+                    None => {
                         // We do not want to block the next send which might be on a
                         // different transport.  Instead we let Quinn handle this as
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
                         debug!(dst = ?mapped_addr, dst_node = %endpoint_id.fmt_short(),
-                            "RemoteStateActor inbox {err:#}, dropped transmit");
+                            "MagicSock actor inbox dropped transmit");
                         return Poll::Ready(Ok(()));
                     }
                 };
@@ -784,8 +780,8 @@ impl quinn::UdpSender for MagicSender {
             MultipathMappedAddr::Relay(relay_mapped_addr) => {
                 match self
                     .msock
-                    .remote_map
-                    .relay_mapped_addrs
+                    .mapped_addrs
+                    .relay_addrs
                     .lookup(&relay_mapped_addr)
                 {
                     Some((relay_url, endpoint_id)) => Addr::Relay(relay_url, endpoint_id),
