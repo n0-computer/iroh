@@ -1291,45 +1291,15 @@ impl Actor {
                 self.handle_relay_map_change();
             }
             ActorMessage::ResolveRemote(addr, tx) => {
-                let EndpointAddr { id, addrs } = addr;
-                let actor = self.remote_map.remote_state_actor(id);
-                let (inner_tx, rx) = oneshot::channel();
-                if let Err(_) = actor
-                    .send(RemoteStateMessage::ResolveRemote(addrs, inner_tx))
-                    .await
-                {
-                    tx.send(Err(RemoteStateActorStoppedError::new())).ok();
-                } else {
-                    tx.send(match rx.await {
-                        Ok(Ok(())) => Ok(Ok(self.remote_map.mapped_addrs.endpoint_addrs.get(&id))),
-                        Ok(Err(err)) => Ok(Err(err)),
-                        Err(_) => Err(RemoteStateActorStoppedError::new()),
-                    })
-                    .ok();
-                }
+                tx.send(self.remote_map.resolve_remote(addr).await).ok();
             }
             ActorMessage::RemoteInfo(id, tx) => {
-                let Some(actor) = self.remote_map.remote_state_actor_if_exists(id) else {
-                    return;
-                };
-                let (inner_tx, rx) = oneshot::channel();
-                if let Err(_) = actor.send(RemoteStateMessage::RemoteInfo(inner_tx)).await {
-                    return;
-                }
-                if let Ok(info) = rx.await {
+                if let Some(info) = self.remote_map.remote_info(id).await {
                     tx.send(info).ok();
                 }
             }
             ActorMessage::AddConnection(remote, conn, tx) => {
-                let actor = self.remote_map.remote_state_actor(remote);
-                let (inner_tx, rx) = oneshot::channel();
-                if let Err(_) = actor
-                    .send(RemoteStateMessage::AddConnection(conn, inner_tx))
-                    .await
-                {
-                    return;
-                }
-                if let Ok(watcher) = rx.await {
+                if let Some(watcher) = self.remote_map.add_connection(remote, conn).await {
                     tx.send(watcher).ok();
                 }
             }
