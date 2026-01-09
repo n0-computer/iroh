@@ -176,14 +176,13 @@ impl Transports {
                     is_user_defined,
                 } = config
                 {
-                    if !is_user_defined {
-                        if config.is_ipv4() && has_ipv4_default
-                            || config.is_ipv6() && has_ipv6_default
-                        {
-                            continue;
-                        }
-                        ip_configs.push(*config);
+                    if !is_user_defined
+                        && (config.is_ipv4() && has_ipv4_default
+                            || config.is_ipv6() && has_ipv6_default)
+                    {
+                        continue;
                     }
+                    ip_configs.push(*config);
                 }
             }
             ip_configs

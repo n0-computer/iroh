@@ -160,32 +160,15 @@ impl From<Config> for SocketAddr {
     }
 }
 
-fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
-    debug!(?addr, "binding");
-    // First try binding a preferred port, if specified
-    match netwatch::UdpSocket::bind_full(addr) {
-        Ok(socket) => {
-            let local_addr = socket.local_addr()?;
-            debug!(%addr, %local_addr, "successfully bound");
-            return Ok(socket);
-        }
-        Err(err) => {
-            debug!(%addr, "failed to bind: {err:#}");
-            // If that was already the fallback port, then error out
-            if addr.port() == 0 {
-                return Err(err);
-            }
-        }
-    }
-
-    // Otherwise, try binding with port 0
-    addr.set_port(0);
-    netwatch::UdpSocket::bind_full(addr)
-}
-
 impl IpTransport {
     pub(crate) fn bind(config: Config, metrics: Arc<MagicsockMetrics>) -> io::Result<Self> {
-        let socket = bind_with_fallback(config.into())?;
+        let addr: SocketAddr = config.into();
+        debug!(?addr, "binding");
+        let socket = netwatch::UdpSocket::bind_full(addr).inspect_err(|err| {
+            debug!(%addr, "failed to bind: {err:#}");
+        })?;
+        let local_addr = socket.local_addr()?;
+        debug!(%addr, %local_addr, "successfully bound");
         Ok(Self::new(config, Arc::new(socket), metrics.clone()))
     }
 

@@ -242,7 +242,7 @@ pub(crate) struct MagicSock {
 
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening.
-    pub(crate) async fn spawn(opts: Options) -> Result<Handle, CreateHandleError> {
+    pub(crate) async fn spawn(opts: Options) -> Result<Handle, BindError> {
         Handle::new(opts).await
     }
 
@@ -743,24 +743,25 @@ impl DirectAddrUpdateState {
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
-pub enum CreateHandleError {
-    #[error("Failed to create bind sockets")]
-    BindSockets { source: io::Error },
-    #[error("Failed to create internal quinn endpoint")]
-    CreateQuinnEndpoint { source: io::Error },
-    #[error("Failed to create socket state")]
-    CreateSocketState { source: io::Error },
+pub enum BindError {
+    #[error("Failed to bind sockets")]
+    Sockets { source: io::Error },
+    #[error("Failed to create internal QUIC endpoint")]
+    CreateQuicEndpoint { source: io::Error },
     #[error("Failed to create netmon monitor")]
     CreateNetmonMonitor { source: netmon::Error },
-    #[error("Failed to subscribe netmon monitor")]
-    SubscribeNetmonMonitor { source: netmon::Error },
     #[error("Invalid transport configuration")]
     InvalidTransportConfig,
+    #[error("Failed to create a discovery service")]
+    Discovery {
+        #[error(from)]
+        source: crate::discovery::IntoDiscoveryError,
+    },
 }
 
 impl Handle {
     /// Creates a magic [`MagicSock`].
-    async fn new(opts: Options) -> Result<Self, CreateHandleError> {
+    async fn new(opts: Options) -> Result<Self, BindError> {
         let Options {
             secret_key,
             transports: transport_configs,
@@ -787,7 +788,7 @@ impl Handle {
 
         // Currently we only support a single relay transport
         if relay_transport_configs.len() > 1 {
-            bail!(CreateHandleError::InvalidTransportConfig);
+            bail!(BindError::InvalidTransportConfig);
         }
         let relay_map = relay_transport_configs
             .iter()
@@ -826,7 +827,7 @@ impl Handle {
             &metrics,
             shutdown_token.child_token(),
         )
-        .map_err(|err| e!(CreateHandleError::BindSockets, err))?;
+        .map_err(|err| e!(BindError::Sockets, err))?;
 
         #[cfg(not(wasm_browser))]
         {
@@ -907,11 +908,11 @@ impl Handle {
             #[cfg(wasm_browser)]
             Arc::new(crate::web_runtime::WebRuntime),
         )
-        .map_err(|err| e!(CreateHandleError::CreateQuinnEndpoint, err))?;
+        .map_err(|err| e!(BindError::CreateQuicEndpoint, err))?;
 
         let network_monitor = netmon::Monitor::new()
             .await
-            .map_err(|err| e!(CreateHandleError::CreateNetmonMonitor, err))?;
+            .map_err(|err| e!(BindError::CreateNetmonMonitor, err))?;
 
         let qad_endpoint = endpoint.clone();
 
