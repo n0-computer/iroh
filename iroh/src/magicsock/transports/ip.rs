@@ -37,6 +37,8 @@ pub(crate) enum Config {
         is_required: bool,
         /// Is this a default route?
         is_default: bool,
+        /// Should we bind to a free port if the desired port is taken?
+        fallback_to_free_port: bool,
     },
     /// General IPv6 binding
     V6 {
@@ -50,6 +52,8 @@ pub(crate) enum Config {
         is_required: bool,
         /// Is this a default route?
         is_default: bool,
+        /// Should we bind to a free port if the desired port is taken?
+        fallback_to_free_port: bool,
     },
 }
 
@@ -100,6 +104,20 @@ impl Config {
                 (Self::V6 { is_default, .. }, SocketAddr::V6(_)) => *is_default,
                 _ => false,
             },
+        }
+    }
+
+    /// Should we fallback to a free port when binding this socket?
+    pub(crate) fn fallback_to_free_port(&self) -> bool {
+        match self {
+            Self::V4 {
+                fallback_to_free_port,
+                ..
+            } => *fallback_to_free_port,
+            Self::V6 {
+                fallback_to_free_port,
+                ..
+            } => *fallback_to_free_port,
         }
     }
 
@@ -160,7 +178,10 @@ impl From<Config> for SocketAddr {
     }
 }
 
-fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
+fn bind_with_fallback(
+    mut addr: SocketAddr,
+    fallback_to_free_port: bool,
+) -> io::Result<netwatch::UdpSocket> {
     debug!(?addr, "binding");
     // First try binding a preferred port, if specified
     match netwatch::UdpSocket::bind_full(addr) {
@@ -171,8 +192,8 @@ fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
         }
         Err(err) => {
             debug!(%addr, "failed to bind: {err:#}");
-            // If that was already the fallback port, then error out
-            if addr.port() == 0 {
+            // If fallback is disabled or if that was already the fallback port, then error out
+            if !fallback_to_free_port || addr.port() == 0 {
                 return Err(err);
             }
         }
@@ -185,7 +206,8 @@ fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
 
 impl IpTransport {
     pub(crate) fn bind(config: Config, metrics: Arc<MagicsockMetrics>) -> io::Result<Self> {
-        let socket = bind_with_fallback(config.into())?;
+        let fallback_to_free_port = config.fallback_to_free_port();
+        let socket = bind_with_fallback(config.into(), fallback_to_free_port)?;
         Ok(Self::new(config, Arc::new(socket), metrics.clone()))
     }
 
@@ -527,18 +549,21 @@ mod tests {
                 port: 2222,
                 is_required: true,
                 is_default: false,
+                fallback_to_free_port: false,
             },
             Config::V4 {
                 ip_net: Ipv4Net::new("127.0.0.1".parse().unwrap(), 24).unwrap(),
                 port: 1111,
                 is_required: true,
                 is_default: true,
+                fallback_to_free_port: false,
             },
             Config::V4 {
                 ip_net: Ipv4Net::new("127.0.0.1".parse().unwrap(), 0).unwrap(),
                 port: 9999,
                 is_required: true,
                 is_default: false,
+                fallback_to_free_port: false,
             },
             Config::V6 {
                 ip_net: Ipv6Net::new("::1".parse().unwrap(), 4).unwrap(),
@@ -546,6 +571,7 @@ mod tests {
                 scope_id: 0,
                 is_required: has_ipv6,
                 is_default: false,
+                fallback_to_free_port: false,
             },
             Config::V6 {
                 ip_net: Ipv6Net::new("::1".parse().unwrap(), 2).unwrap(),
@@ -553,6 +579,7 @@ mod tests {
                 scope_id: 0,
                 is_required: has_ipv6,
                 is_default: true,
+                fallback_to_free_port: false,
             },
             Config::V6 {
                 ip_net: Ipv6Net::new("::1".parse().unwrap(), 32).unwrap(),
@@ -560,6 +587,7 @@ mod tests {
                 scope_id: 0,
                 is_required: has_ipv6,
                 is_default: false,
+                fallback_to_free_port: false,
             },
         ];
 

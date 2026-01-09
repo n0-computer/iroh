@@ -97,6 +97,7 @@ impl TransportConfig {
                 port: 0,
                 is_required: true,
                 is_default: false,
+                fallback_to_free_port: true,
             },
             is_user_defined: false,
         }
@@ -114,6 +115,7 @@ impl TransportConfig {
                 port: 0,
                 is_required: false,
                 is_default: false,
+                fallback_to_free_port: true,
             },
             is_user_defined: false,
         }
@@ -159,6 +161,7 @@ impl Transports {
         metrics: &EndpointMetrics,
         shutdown_token: CancellationToken,
     ) -> io::Result<Self> {
+        debug!("transport configs: {configs:#?}");
         #[cfg(not(wasm_browser))]
         let ip_configs = {
             let mut ip_configs = Vec::new();
@@ -187,6 +190,7 @@ impl Transports {
             }
             ip_configs
         };
+        debug!("ip config: {ip_configs:?}");
         #[cfg(not(wasm_browser))]
         let ip = IpTransports::bind(ip_configs.into_iter(), metrics)?;
 
