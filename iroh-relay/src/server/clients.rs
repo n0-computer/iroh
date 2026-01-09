@@ -26,7 +26,11 @@ use crate::{
 
 /// Manages the connections to all currently connected clients.
 #[derive(Debug, Default, Clone)]
-pub(super) struct Clients(Arc<Inner>);
+/// Registry of connected relay clients.
+///
+/// This type manages the collection of active client connections and
+/// handles routing messages between them.
+pub struct Clients(Arc<Inner>);
 
 #[derive(Debug, Default)]
 struct Inner {
@@ -39,6 +43,11 @@ struct Inner {
 }
 
 impl Clients {
+    /// Shuts down all connected clients.
+    ///
+    /// This method gracefully disconnects all active client connections managed by
+    /// this registry. It will wait for all clients to complete their shutdown before
+    /// returning.
     pub async fn shutdown(&self) {
         let keys: Vec<_> = self.0.clients.iter().map(|x| *x.key()).collect();
         trace!("shutting down {} clients", keys.len());

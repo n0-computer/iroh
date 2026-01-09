@@ -37,12 +37,18 @@ pub(super) struct Packet {
 }
 
 /// Configuration for a [`Client`].
+///
+/// Generic over the stream type to support different WebSocket implementations.
 #[derive(Debug)]
-pub(super) struct Config<S> {
-    pub(super) endpoint_id: EndpointId,
-    pub(super) stream: RelayedStream<S>,
-    pub(super) write_timeout: Duration,
-    pub(super) channel_capacity: usize,
+pub struct Config<S> {
+    /// The endpoint ID of the client
+    pub endpoint_id: EndpointId,
+    /// The relayed stream connection
+    pub stream: RelayedStream<S>,
+    /// Write timeout for the client connection
+    pub write_timeout: Duration,
+    /// Channel capacity for internal message queues
+    pub channel_capacity: usize,
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
@@ -504,6 +510,11 @@ pub(crate) enum SendError {
     Closed,
 }
 
+/// Error returned when forwarding a packet to a client fails.
+///
+/// This error occurs when the relay server cannot deliver a packet to its intended
+/// recipient, typically due to the client's send queue being full or the client
+/// disconnecting.
 #[stack_error(derive, add_meta)]
 #[error("failed to forward {scope:?} packet: {reason:?}")]
 pub struct ForwardPacketError {

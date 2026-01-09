@@ -28,9 +28,19 @@ use crate::{
 ///
 /// Generic over the inner stream type to support different WebSocket implementations.
 #[derive(Debug)]
-pub(crate) struct RelayedStream<S> {
+pub struct RelayedStream<S> {
     pub(crate) inner: S,
     pub(crate) key_cache: KeyCache,
+}
+
+impl<S> RelayedStream<S> {
+    /// Creates a new RelayedStream from an inner stream and key cache.
+    ///
+    /// This is the primary constructor for external integrations using custom
+    /// WebSocket implementations.
+    pub fn new(inner: S, key_cache: KeyCache) -> Self {
+        Self { inner, key_cache }
+    }
 }
 
 /// Type alias for the standard server-side relay stream
@@ -83,13 +93,20 @@ impl ServerRelayedStream {
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 pub enum SendError {
+    /// Error from the underlying WebSocket stream
     #[error(transparent)]
     StreamError {
         #[error(from, std_err)]
+        /// The underlying stream error
         source: StreamError,
     },
+    /// Packet size exceeds the maximum allowed size
     #[error("Packet exceeds max packet size")]
-    ExceedsMaxPacketSize { size: usize },
+    ExceedsMaxPacketSize {
+        /// The size of the packet that was too large
+        size: usize,
+    },
+    /// Attempted to send an empty packet
     #[error("Attempted to send empty packet")]
     EmptyPacket {},
 }
@@ -132,11 +149,17 @@ where
 #[stack_error(derive, add_meta, from_sources)]
 #[non_exhaustive]
 pub enum RecvError {
+    /// Error decoding the relay protocol message
     #[error(transparent)]
-    Proto { source: ProtoError },
+    Proto {
+        /// The protocol decoding error
+        source: ProtoError,
+    },
+    /// Error from the underlying WebSocket stream
     #[error(transparent)]
     StreamError {
         #[error(std_err)]
+        /// The underlying stream error
         source: StreamError,
     },
 }
