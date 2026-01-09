@@ -2755,15 +2755,13 @@ mod tests {
         assert!(
             bound_sockets
                 .iter()
-                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
-                .is_some()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
         );
         // Test that the default wildcard socket is there
         assert!(
             bound_sockets
                 .iter()
-                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
-                .is_some()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
         );
         ep.close().await;
         Ok(())
@@ -2790,8 +2788,7 @@ mod tests {
         assert!(
             bound_sockets
                 .iter()
-                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
-                .is_some()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
         );
         ep.close().await;
         drop(ep);
