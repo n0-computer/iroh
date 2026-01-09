@@ -103,10 +103,6 @@ impl RemoteMap {
         }
     }
 
-    pub(super) fn endpoint_mapped_addr(&self, eid: EndpointId) -> EndpointIdMappedAddr {
-        self.endpoint_mapped_addrs.get(&eid)
-    }
-
     /// Potentially removes terminated [`RemoteStateActor`]s from the remote map.
     ///
     /// Resolves to the endpoint ID that of the remote state actor that got cleaned up.

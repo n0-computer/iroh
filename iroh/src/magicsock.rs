@@ -320,26 +320,23 @@ impl MagicSock {
         &self,
         addr: EndpointAddr,
     ) -> Result<Result<EndpointIdMappedAddr, DiscoveryError>, RemoteStateActorStoppedError> {
-        let EndpointAddr { id, addrs } = addr;
-        let actor = self.remote_map.remote_state_actor(id);
         let (tx, rx) = oneshot::channel();
-        actor
-            .send(RemoteStateMessage::ResolveRemote(addrs, tx))
-            .await?;
-        match rx.await {
-            Ok(Ok(())) => Ok(Ok(self.remote_map.endpoint_mapped_addr(id))),
-            Ok(Err(err)) => Ok(Err(err)),
-            Err(_) => Err(RemoteStateActorStoppedError::new()),
-        }
+        self.actor_sender
+            .send(ActorMessage::ResolveRemote(addr, tx))
+            .await
+            .expect("TODO");
+        rx.await.expect("TODO")
     }
 
     /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
     ///
     /// Returns `None` if no actor is running for the remote.
     pub(crate) async fn remote_info(&self, id: EndpointId) -> Option<RemoteInfo> {
-        let actor = self.remote_map.remote_state_actor_if_exists(id)?;
         let (tx, rx) = oneshot::channel();
-        actor.send(RemoteStateMessage::RemoteInfo(tx)).await.ok()?;
+        self.actor_sender
+            .send(ActorMessage::RemoteInfo(id, tx))
+            .await
+            .ok()?;
         rx.await.ok()
     }
 
@@ -1057,6 +1054,13 @@ fn default_quic_client_config() -> rustls::ClientConfig {
 enum ActorMessage {
     NetworkChange,
     RelayMapChange,
+    ResolveRemote(
+        EndpointAddr,
+        oneshot::Sender<
+            Result<Result<EndpointIdMappedAddr, DiscoveryError>, RemoteStateActorStoppedError>,
+        >,
+    ),
+    RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
     #[cfg(test)]
     ForceNetworkChange(bool),
 }
@@ -1253,6 +1257,36 @@ impl Actor {
             }
             ActorMessage::RelayMapChange => {
                 self.handle_relay_map_change();
+            }
+            ActorMessage::ResolveRemote(addr, tx) => {
+                let EndpointAddr { id, addrs } = addr;
+                let actor = self.msock.remote_map.remote_state_actor(id);
+                let (inner_tx, rx) = oneshot::channel();
+                if let Err(_) = actor
+                    .send(RemoteStateMessage::ResolveRemote(addrs, inner_tx))
+                    .await
+                {
+                    tx.send(Err(RemoteStateActorStoppedError::new())).ok();
+                } else {
+                    tx.send(match rx.await {
+                        Ok(Ok(())) => Ok(Ok(self.msock.remote_map.endpoint_mapped_addrs.get(&id))),
+                        Ok(Err(err)) => Ok(Err(err)),
+                        Err(_) => Err(RemoteStateActorStoppedError::new()),
+                    })
+                    .ok();
+                }
+            }
+            ActorMessage::RemoteInfo(id, tx) => {
+                let Some(actor) = self.msock.remote_map.remote_state_actor_if_exists(id) else {
+                    return;
+                };
+                let (inner_tx, rx) = oneshot::channel();
+                if let Err(_) = actor.send(RemoteStateMessage::RemoteInfo(inner_tx)).await {
+                    return;
+                }
+                if let Ok(info) = rx.await {
+                    tx.send(info).ok();
+                }
             }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
