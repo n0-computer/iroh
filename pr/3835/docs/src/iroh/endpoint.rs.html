@@ -2755,47 +2755,44 @@
 <a href=#2755 id=2755 data-nosnippet>2755</a>        </span><span class="macro">assert!</span>(
 <a href=#2756 id=2756 data-nosnippet>2756</a>            bound_sockets
 <a href=#2757 id=2757 data-nosnippet>2757</a>                .iter()
-<a href=#2758 id=2758 data-nosnippet>2758</a>                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
-<a href=#2759 id=2759 data-nosnippet>2759</a>                .is_some()
-<a href=#2760 id=2760 data-nosnippet>2760</a>        );
-<a href=#2761 id=2761 data-nosnippet>2761</a>        <span class="comment">// Test that the default wildcard socket is there
-<a href=#2762 id=2762 data-nosnippet>2762</a>        </span><span class="macro">assert!</span>(
-<a href=#2763 id=2763 data-nosnippet>2763</a>            bound_sockets
-<a href=#2764 id=2764 data-nosnippet>2764</a>                .iter()
-<a href=#2765 id=2765 data-nosnippet>2765</a>                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
-<a href=#2766 id=2766 data-nosnippet>2766</a>                .is_some()
-<a href=#2767 id=2767 data-nosnippet>2767</a>        );
-<a href=#2768 id=2768 data-nosnippet>2768</a>        ep.close().<span class="kw">await</span>;
-<a href=#2769 id=2769 data-nosnippet>2769</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2770 id=2770 data-nosnippet>2770</a>    }
-<a href=#2771 id=2771 data-nosnippet>2771</a>
-<a href=#2772 id=2772 data-nosnippet>2772</a>    <span class="comment">// Testing bind_addr: Do not clear IP transports and add single default IPv4 bind.
-<a href=#2773 id=2773 data-nosnippet>2773</a>    //
-<a href=#2774 id=2774 data-nosnippet>2774</a>    // This replaces the default IPv4 bind added by the builder,
-<a href=#2775 id=2775 data-nosnippet>2775</a>    // but keeps the default wildcard IPv6 bind.
-<a href=#2776 id=2776 data-nosnippet>2776</a>    </span><span class="attr">#[tokio::test]
-<a href=#2777 id=2777 data-nosnippet>2777</a>    #[traced_test]
-<a href=#2778 id=2778 data-nosnippet>2778</a>    </span><span class="kw">async fn </span>test_bind_addr_default() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2779 id=2779 data-nosnippet>2779</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Disabled)
-<a href=#2780 id=2780 data-nosnippet>2780</a>            .bind_addr_with_opts(
-<a href=#2781 id=2781 data-nosnippet>2781</a>                (Ipv4Addr::LOCALHOST, <span class="number">0</span>),
-<a href=#2782 id=2782 data-nosnippet>2782</a>                BindOpts::default().set_is_default_route(<span class="bool-val">true</span>),
-<a href=#2783 id=2783 data-nosnippet>2783</a>            )<span class="question-mark">?
-<a href=#2784 id=2784 data-nosnippet>2784</a>            </span>.bind()
-<a href=#2785 id=2785 data-nosnippet>2785</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2786 id=2786 data-nosnippet>2786</a>        <span class="kw">let </span>bound_sockets = ep.bound_sockets();
-<a href=#2787 id=2787 data-nosnippet>2787</a>        <span class="macro">assert_eq!</span>(bound_sockets.len(), <span class="number">2</span>);
-<a href=#2788 id=2788 data-nosnippet>2788</a>        <span class="macro">assert_eq!</span>(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), <span class="number">1</span>);
-<a href=#2789 id=2789 data-nosnippet>2789</a>        <span class="macro">assert_eq!</span>(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), <span class="number">1</span>);
-<a href=#2790 id=2790 data-nosnippet>2790</a>        <span class="macro">assert!</span>(
-<a href=#2791 id=2791 data-nosnippet>2791</a>            bound_sockets
-<a href=#2792 id=2792 data-nosnippet>2792</a>                .iter()
-<a href=#2793 id=2793 data-nosnippet>2793</a>                .find(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
-<a href=#2794 id=2794 data-nosnippet>2794</a>                .is_some()
-<a href=#2795 id=2795 data-nosnippet>2795</a>        );
-<a href=#2796 id=2796 data-nosnippet>2796</a>        ep.close().<span class="kw">await</span>;
-<a href=#2797 id=2797 data-nosnippet>2797</a>        drop(ep);
-<a href=#2798 id=2798 data-nosnippet>2798</a>
-<a href=#2799 id=2799 data-nosnippet>2799</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2800 id=2800 data-nosnippet>2800</a>    }
-<a href=#2801 id=2801 data-nosnippet>2801</a>}</code></pre></div></section></main></body></html>
+<a href=#2758 id=2758 data-nosnippet>2758</a>                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+<a href=#2759 id=2759 data-nosnippet>2759</a>        );
+<a href=#2760 id=2760 data-nosnippet>2760</a>        <span class="comment">// Test that the default wildcard socket is there
+<a href=#2761 id=2761 data-nosnippet>2761</a>        </span><span class="macro">assert!</span>(
+<a href=#2762 id=2762 data-nosnippet>2762</a>            bound_sockets
+<a href=#2763 id=2763 data-nosnippet>2763</a>                .iter()
+<a href=#2764 id=2764 data-nosnippet>2764</a>                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+<a href=#2765 id=2765 data-nosnippet>2765</a>        );
+<a href=#2766 id=2766 data-nosnippet>2766</a>        ep.close().<span class="kw">await</span>;
+<a href=#2767 id=2767 data-nosnippet>2767</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2768 id=2768 data-nosnippet>2768</a>    }
+<a href=#2769 id=2769 data-nosnippet>2769</a>
+<a href=#2770 id=2770 data-nosnippet>2770</a>    <span class="comment">// Testing bind_addr: Do not clear IP transports and add single default IPv4 bind.
+<a href=#2771 id=2771 data-nosnippet>2771</a>    //
+<a href=#2772 id=2772 data-nosnippet>2772</a>    // This replaces the default IPv4 bind added by the builder,
+<a href=#2773 id=2773 data-nosnippet>2773</a>    // but keeps the default wildcard IPv6 bind.
+<a href=#2774 id=2774 data-nosnippet>2774</a>    </span><span class="attr">#[tokio::test]
+<a href=#2775 id=2775 data-nosnippet>2775</a>    #[traced_test]
+<a href=#2776 id=2776 data-nosnippet>2776</a>    </span><span class="kw">async fn </span>test_bind_addr_default() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2777 id=2777 data-nosnippet>2777</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#2778 id=2778 data-nosnippet>2778</a>            .bind_addr_with_opts(
+<a href=#2779 id=2779 data-nosnippet>2779</a>                (Ipv4Addr::LOCALHOST, <span class="number">0</span>),
+<a href=#2780 id=2780 data-nosnippet>2780</a>                BindOpts::default().set_is_default_route(<span class="bool-val">true</span>),
+<a href=#2781 id=2781 data-nosnippet>2781</a>            )<span class="question-mark">?
+<a href=#2782 id=2782 data-nosnippet>2782</a>            </span>.bind()
+<a href=#2783 id=2783 data-nosnippet>2783</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2784 id=2784 data-nosnippet>2784</a>        <span class="kw">let </span>bound_sockets = ep.bound_sockets();
+<a href=#2785 id=2785 data-nosnippet>2785</a>        <span class="macro">assert_eq!</span>(bound_sockets.len(), <span class="number">2</span>);
+<a href=#2786 id=2786 data-nosnippet>2786</a>        <span class="macro">assert_eq!</span>(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), <span class="number">1</span>);
+<a href=#2787 id=2787 data-nosnippet>2787</a>        <span class="macro">assert_eq!</span>(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), <span class="number">1</span>);
+<a href=#2788 id=2788 data-nosnippet>2788</a>        <span class="macro">assert!</span>(
+<a href=#2789 id=2789 data-nosnippet>2789</a>            bound_sockets
+<a href=#2790 id=2790 data-nosnippet>2790</a>                .iter()
+<a href=#2791 id=2791 data-nosnippet>2791</a>                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+<a href=#2792 id=2792 data-nosnippet>2792</a>        );
+<a href=#2793 id=2793 data-nosnippet>2793</a>        ep.close().<span class="kw">await</span>;
+<a href=#2794 id=2794 data-nosnippet>2794</a>        drop(ep);
+<a href=#2795 id=2795 data-nosnippet>2795</a>
+<a href=#2796 id=2796 data-nosnippet>2796</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2797 id=2797 data-nosnippet>2797</a>    }
+<a href=#2798 id=2798 data-nosnippet>2798</a>}</code></pre></div></section></main></body></html>
