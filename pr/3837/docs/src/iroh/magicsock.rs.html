@@ -724,7 +724,7 @@
 <a href=#724 id=724 data-nosnippet>724</a>#[non_exhaustive]
 <a href=#725 id=725 data-nosnippet>725</a></span><span class="kw">pub enum </span>BindError {
 <a href=#726 id=726 data-nosnippet>726</a>    <span class="attr">#[error(<span class="string">"Failed to bind sockets"</span>)]
-<a href=#727 id=727 data-nosnippet>727</a>    </span>BindSockets { source: io::Error },
+<a href=#727 id=727 data-nosnippet>727</a>    </span>Sockets { source: io::Error },
 <a href=#728 id=728 data-nosnippet>728</a>    <span class="attr">#[error(<span class="string">"Failed to create internal QUIC endpoint"</span>)]
 <a href=#729 id=729 data-nosnippet>729</a>    </span>CreateQuicEndpoint { source: io::Error },
 <a href=#730 id=730 data-nosnippet>730</a>    <span class="attr">#[error(<span class="string">"Failed to create netmon monitor"</span>)]
@@ -806,7 +806,7 @@
 <a href=#806 id=806 data-nosnippet>806</a>            <span class="kw-2">&amp;</span>metrics,
 <a href=#807 id=807 data-nosnippet>807</a>            shutdown_token.child_token(),
 <a href=#808 id=808 data-nosnippet>808</a>        )
-<a href=#809 id=809 data-nosnippet>809</a>        .map_err(|err| <span class="macro">e!</span>(BindError::BindSockets, err))<span class="question-mark">?</span>;
+<a href=#809 id=809 data-nosnippet>809</a>        .map_err(|err| <span class="macro">e!</span>(BindError::Sockets, err))<span class="question-mark">?</span>;
 <a href=#810 id=810 data-nosnippet>810</a>
 <a href=#811 id=811 data-nosnippet>811</a>        <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#812 id=812 data-nosnippet>812</a>        </span>{
