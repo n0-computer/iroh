@@ -267,8 +267,8 @@
 <a href=#267 id=267 data-nosnippet>267</a>    /// # use iroh::Endpoint;
 <a href=#268 id=268 data-nosnippet>268</a>    /// let endpoint = Endpoint::builder()
 <a href=#269 id=269 data-nosnippet>269</a>    ///     .clear_ip_transports()
-<a href=#270 id=270 data-nosnippet>270</a>    ///     .bind_addr("127.0.0.1:1234")?
-<a href=#271 id=271 data-nosnippet>271</a>    ///     .bind_addr("[::1]:1235")?
+<a href=#270 id=270 data-nosnippet>270</a>    ///     .bind_addr("127.0.0.1:0")?
+<a href=#271 id=271 data-nosnippet>271</a>    ///     .bind_addr("[::1]:0")?
 <a href=#272 id=272 data-nosnippet>272</a>    ///     .bind()
 <a href=#273 id=273 data-nosnippet>273</a>    ///     .await?;
 <a href=#274 id=274 data-nosnippet>274</a>    /// # Ok(()) }
@@ -341,8 +341,8 @@
 <a href=#341 id=341 data-nosnippet>341</a>    /// # use iroh::{Endpoint, endpoint::BindOpts};
 <a href=#342 id=342 data-nosnippet>342</a>    /// let endpoint = Endpoint::builder()
 <a href=#343 id=343 data-nosnippet>343</a>    ///     .clear_ip_transports()
-<a href=#344 id=344 data-nosnippet>344</a>    ///     .bind_addr_with_opts("127.0.0.1:1234", BindOpts::default().set_prefix_len(24))?
-<a href=#345 id=345 data-nosnippet>345</a>    ///     .bind_addr_with_opts("[::1]:1235", BindOpts::default().set_prefix_len(48))?
+<a href=#344 id=344 data-nosnippet>344</a>    ///     .bind_addr_with_opts("127.0.0.1:0", BindOpts::default().set_prefix_len(24))?
+<a href=#345 id=345 data-nosnippet>345</a>    ///     .bind_addr_with_opts("[::1]:0", BindOpts::default().set_prefix_len(48))?
 <a href=#346 id=346 data-nosnippet>346</a>    ///     .bind()
 <a href=#347 id=347 data-nosnippet>347</a>    ///     .await?;
 <a href=#348 id=348 data-nosnippet>348</a>    /// # Ok(()) }
