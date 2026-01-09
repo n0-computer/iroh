@@ -762,11 +762,11 @@ impl quinn::UdpSender for MagicSender {
                     Box::new(self.sender.clone()),
                     transmit,
                 ) {
-                    Some(()) => {
+                    Ok(()) => {
                         trace!(dst = ?mapped_addr, dst_node = %endpoint_id.fmt_short(), "sent transmit");
                         return Poll::Ready(Ok(()));
                     }
-                    None => {
+                    Err(_) => {
                         // We do not want to block the next send which might be on a
                         // different transport.  Instead we let Quinn handle this as
                         // a lost datagram.

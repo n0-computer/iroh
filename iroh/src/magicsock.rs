@@ -375,10 +375,15 @@ impl MagicSock {
         endpoint_id: EndpointId,
         sender: Box<TransportsSender>,
         transmit: OwnedTransmit,
-    ) -> Option<()> {
+    ) -> Result<(), OwnedTransmit> {
         self.actor_sender
             .try_send(ActorMessage::SendDatagram(endpoint_id, sender, transmit))
-            .ok()
+            .map_err(|err| {
+                let ActorMessage::SendDatagram(_, _, transmit) = err.into_inner() else {
+                    unreachable!("got a message we didn't send")
+                };
+                transmit
+            })
     }
 
     /// Returns a [`Watcher`] for this socket's direct addresses.
@@ -1304,10 +1309,14 @@ impl Actor {
                 }
             }
             ActorMessage::SendDatagram(endpoint_id, sender, transmit) => {
-                self.remote_map
+                if self
+                    .remote_map
                     .remote_state_actor(endpoint_id)
                     .try_send(RemoteStateMessage::SendDatagram(sender, transmit))
-                    .ok();
+                    .is_err()
+                {
+                    debug!(dst_node = %endpoint_id.fmt_short(), "RemoteStateActor inbox dropped transmit");
+                }
             }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
