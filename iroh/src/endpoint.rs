@@ -243,7 +243,8 @@ impl Builder {
     ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
     ///
     /// - Adding a bind address removes the pre-configured unspecified bind address for this
-    ///   address family.
+    ///   address family. Use [`Self::bind_addr_with_opts`] to bind additional addresses without
+    ///   replacing the default bind address.
     ///
     /// - This should be called at most once for each address family: once for IPv4 and/or
     ///   once for IPv6. Calling it multiple times for the same address family will result
@@ -315,8 +316,9 @@ impl Builder {
     /// of "default route" is used. At most one socket per address family may be marked as
     /// the default route using [`BindOpts::set_is_default_route`], and this will be used
     /// for destinations not contained by the subnets of the bound sockets. This network is
-    /// expected to have a default gateway configured. A subnet with a prefix length of `/0`
-    /// will be set as a "default route" implicitly.
+    /// expected to have a default gateway configured. A socket with a prefix length of `/0`
+    /// will be set as a "default route" implicitly, unless [`BindOpts::set_is_default_route`]
+    /// is set to `false` explicitly.
     ///
     /// Be aware that using a subnet with a prefix length of `/0` will always contain all
     /// destination addresses. It is valid to configure this, but no more than one such
@@ -371,13 +373,12 @@ impl Builder {
                 }
 
                 let ip_net = Ipv4Net::new(*addr.ip(), opts.prefix_len())?;
-                let is_default = opts.is_default_route() || ip_net.prefix_len() == 0;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V4 {
                         ip_net,
                         port: addr.port(),
                         is_required: opts.is_required(),
-                        is_default,
+                        is_default: opts.is_default_route(),
                     },
                     is_user_defined: true,
                 });
@@ -392,14 +393,13 @@ impl Builder {
                 }
 
                 let ip_net = Ipv6Net::new(*addr.ip(), opts.prefix_len())?;
-                let is_default = opts.is_default_route() || ip_net.prefix_len() == 0;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V6 {
                         ip_net,
                         scope_id: addr.scope_id(),
                         port: addr.port(),
                         is_required: opts.is_required(),
-                        is_default,
+                        is_default: opts.is_default_route(),
                     },
                     is_user_defined: true,
                 });
@@ -1521,7 +1521,7 @@ fn is_cgi() -> bool {
 mod tests {
     use std::{
         io,
-        net::{IpAddr, Ipv4Addr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
         str::FromStr,
         sync::Arc,
         time::{Duration, Instant},
@@ -2930,6 +2930,39 @@ mod tests {
             })
             if io_error.kind() == io::ErrorKind::Other && io_error.to_string() == "no valid address available"
         ));
+        Ok(())
+    }
+
+    /// Bind with prefix len 0 but set the route as non-default.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_prefix_len_0_not_default() -> Result {
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, 0),
+                BindOpts::default().set_is_default_route(false),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        // The two default wildcard binds plus our additional route (which does not replace the default route
+        // because we set is_default_route to false explicitly).
+        assert_eq!(bound_sockets.len(), 3);
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V6(Ipv6Addr::UNSPECIFIED))
+        );
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+        );
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
         Ok(())
     }
 }
