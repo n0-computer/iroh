@@ -7,7 +7,7 @@ new <a href="../type.EndpointId.html" title="type iroh::EndpointId"><code>Endpoi
 </div></details><details class="toggle method-toggle" open><summary><section id="method.preset" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#141-144">Source</a><h4 class="code-header">pub fn <a href="#method.preset" class="fn">preset</a>&lt;P: <a class="trait" href="presets/trait.Preset.html" title="trait iroh::endpoint::presets::Preset">Preset</a>&gt;(self, preset: P) -&gt; Self</h4></section></summary><div class="docblock"><p>Applies the given <a href="presets/trait.Preset.html" title="trait iroh::endpoint::presets::Preset"><code>Preset</code></a>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.empty" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#147-173">Source</a><h4 class="code-header">pub fn <a href="#method.empty" class="fn">empty</a>(relay_mode: <a class="enum" href="enum.RelayMode.html" title="enum iroh::endpoint::RelayMode">RelayMode</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Creates an empty builder with no discovery services.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.bind" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#178-226">Source</a><h4 class="code-header">pub async fn <a href="#method.bind" class="fn">bind</a>(self) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint">Endpoint</a>, <a class="enum" href="enum.BindError.html" title="enum iroh::endpoint::BindError">BindError</a>&gt;</h4></section></summary><div class="docblock"><p>Binds the magic endpoint.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#277-283">Source</a><h4 class="code-header">pub fn <a href="#method.bind_addr" class="fn">bind_addr</a>&lt;A&gt;(self, addr: A) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.InvalidSocketAddr.html" title="enum iroh::endpoint::InvalidSocketAddr">InvalidSocketAddr</a>&gt;<div class="where">where
+</div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#278-284">Source</a><h4 class="code-header">pub fn <a href="#method.bind_addr" class="fn">bind_addr</a>&lt;A&gt;(self, addr: A) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.InvalidSocketAddr.html" title="enum iroh::endpoint::InvalidSocketAddr">InvalidSocketAddr</a>&gt;<div class="where">where
     A: <a class="trait" href="trait.ToSocketAddr.html" title="trait iroh::endpoint::ToSocketAddr">ToSocketAddr</a>,
     &lt;A as <a class="trait" href="trait.ToSocketAddr.html" title="trait iroh::endpoint::ToSocketAddr">ToSocketAddr</a>&gt;::<a class="associatedtype" href="trait.ToSocketAddr.html#associatedtype.Err" title="type iroh::endpoint::ToSocketAddr::Err">Err</a>: <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="enum" href="enum.InvalidSocketAddr.html" title="enum iroh::endpoint::InvalidSocketAddr">InvalidSocketAddr</a>&gt;,</div></h4></section><span class="item-info"><div class="stab portability">Available on <strong>non-<code>wasm_browser</code></strong> only.</div></span></summary><div class="docblock"><p>Binds an IP socket at the provided socket address.</p>
 <p>This is an advanced API to tightly control the sockets used by the endpoint. Most
@@ -26,7 +26,8 @@ on the <em>unspecified</em> address: <code>[::]</code>. This bind is allowed to 
 </li>
 <li>
 <p>Adding a bind address removes the pre-configured unspecified bind address for this
-address family.</p>
+address family. Use <a href="struct.Builder.html#method.bind_addr_with_opts" title="method iroh::endpoint::Builder::bind_addr_with_opts"><code>Self::bind_addr_with_opts</code></a> to bind additional addresses without
+replacing the default bind address.</p>
 </li>
 <li>
 <p>This should be called at most once for each address family: once for IPv4 and/or
@@ -47,7 +48,7 @@ port <code>0</code> in the socket address assigns a random free port.</p>
     .bind_addr(<span class="string">"127.0.0.1:0"</span>)<span class="question-mark">?
     </span>.bind_addr(<span class="string">"[::1]:0"</span>)<span class="question-mark">?
     </span>.bind()
-    .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr_with_opts" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#353-409">Source</a><h4 class="code-header">pub fn <a href="#method.bind_addr_with_opts" class="fn">bind_addr_with_opts</a>&lt;A&gt;(
+    .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr_with_opts" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#355-409">Source</a><h4 class="code-header">pub fn <a href="#method.bind_addr_with_opts" class="fn">bind_addr_with_opts</a>&lt;A&gt;(
     self,
     addr: A,
     opts: <a class="struct" href="struct.BindOpts.html" title="struct iroh::endpoint::BindOpts">BindOpts</a>,
@@ -84,8 +85,9 @@ chosen.</p>
 of “default route” is used. At most one socket per address family may be marked as
 the default route using <a href="struct.BindOpts.html#method.set_is_default_route" title="method iroh::endpoint::BindOpts::set_is_default_route"><code>BindOpts::set_is_default_route</code></a>, and this will be used
 for destinations not contained by the subnets of the bound sockets. This network is
-expected to have a default gateway configured. A subnet with a prefix length of <code>/0</code>
-will be set as a “default route” implicitly.</p>
+expected to have a default gateway configured. A socket with a prefix length of <code>/0</code>
+will be set as a “default route” implicitly, unless <a href="struct.BindOpts.html#method.set_is_default_route" title="method iroh::endpoint::BindOpts::set_is_default_route"><code>BindOpts::set_is_default_route</code></a>
+is set to <code>false</code> explicitly.</p>
 <p>Be aware that using a subnet with a prefix length of <code>/0</code> will always contain all
 destination addresses. It is valid to configure this, but no more than one such
 socket should be bound or the routing will be non-deterministic.</p>
