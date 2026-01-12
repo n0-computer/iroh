@@ -2829,7 +2829,7 @@
 <a href=#2829 id=2829 data-nosnippet>2829</a>    /// Binding the endpoint fails with an AddrInUse error.
 <a href=#2830 id=2830 data-nosnippet>2830</a>    </span><span class="attr">#[tokio::test]
 <a href=#2831 id=2831 data-nosnippet>2831</a>    #[traced_test]
-<a href=#2832 id=2832 data-nosnippet>2832</a>    </span><span class="kw">async fn </span>test_bind_addr_unusuable_port() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2832 id=2832 data-nosnippet>2832</a>    </span><span class="kw">async fn </span>test_bind_addr_badport() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2833 id=2833 data-nosnippet>2833</a>        <span class="kw">let </span>socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>))<span class="question-mark">?</span>;
 <a href=#2834 id=2834 data-nosnippet>2834</a>        <span class="kw">let </span>port = socket.local_addr()<span class="question-mark">?</span>.port();
 <a href=#2835 id=2835 data-nosnippet>2835</a>
@@ -2850,60 +2850,86 @@
 <a href=#2850 id=2850 data-nosnippet>2850</a>        <span class="prelude-val">Ok</span>(())
 <a href=#2851 id=2851 data-nosnippet>2851</a>    }
 <a href=#2852 id=2852 data-nosnippet>2852</a>
-<a href=#2853 id=2853 data-nosnippet>2853</a>    <span class="doccomment">/// Bind on an unusable port, but set is_required = false.
+<a href=#2853 id=2853 data-nosnippet>2853</a>    <span class="doccomment">/// Bind a non-default route on an unusable port, but set is_required = false.
 <a href=#2854 id=2854 data-nosnippet>2854</a>    ///
 <a href=#2855 id=2855 data-nosnippet>2855</a>    /// Binding the endpoint succeeds.
 <a href=#2856 id=2856 data-nosnippet>2856</a>    </span><span class="attr">#[tokio::test]
 <a href=#2857 id=2857 data-nosnippet>2857</a>    #[traced_test]
-<a href=#2858 id=2858 data-nosnippet>2858</a>    </span><span class="kw">async fn </span>test_bind_addr_unusuable_port_not_required() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2858 id=2858 data-nosnippet>2858</a>    </span><span class="kw">async fn </span>test_bind_addr_badport_notrequired() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#2859 id=2859 data-nosnippet>2859</a>        <span class="kw">let </span>socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>))<span class="question-mark">?</span>;
 <a href=#2860 id=2860 data-nosnippet>2860</a>        <span class="kw">let </span>port = socket.local_addr()<span class="question-mark">?</span>.port();
 <a href=#2861 id=2861 data-nosnippet>2861</a>
 <a href=#2862 id=2862 data-nosnippet>2862</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Disabled)
 <a href=#2863 id=2863 data-nosnippet>2863</a>            .bind_addr_with_opts(
 <a href=#2864 id=2864 data-nosnippet>2864</a>                (Ipv4Addr::LOCALHOST, port),
-<a href=#2865 id=2865 data-nosnippet>2865</a>                BindOpts::default().set_is_required(<span class="bool-val">false</span>),
-<a href=#2866 id=2866 data-nosnippet>2866</a>            )<span class="question-mark">?
-<a href=#2867 id=2867 data-nosnippet>2867</a>            </span>.bind()
-<a href=#2868 id=2868 data-nosnippet>2868</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2869 id=2869 data-nosnippet>2869</a>        <span class="kw">let </span>bound_sockets = ep.bound_sockets();
-<a href=#2870 id=2870 data-nosnippet>2870</a>        <span class="comment">// just the default wildcard binds
-<a href=#2871 id=2871 data-nosnippet>2871</a>        </span><span class="macro">assert_eq!</span>(bound_sockets.len(), <span class="number">2</span>);
-<a href=#2872 id=2872 data-nosnippet>2872</a>        <span class="comment">// our requested bind addr is not included because it failed to bind
-<a href=#2873 id=2873 data-nosnippet>2873</a>        </span><span class="macro">assert!</span>(
-<a href=#2874 id=2874 data-nosnippet>2874</a>            !bound_sockets
-<a href=#2875 id=2875 data-nosnippet>2875</a>                .iter()
-<a href=#2876 id=2876 data-nosnippet>2876</a>                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
-<a href=#2877 id=2877 data-nosnippet>2877</a>        );
-<a href=#2878 id=2878 data-nosnippet>2878</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2879 id=2879 data-nosnippet>2879</a>    }
-<a href=#2880 id=2880 data-nosnippet>2880</a>
-<a href=#2881 id=2881 data-nosnippet>2881</a>    <span class="doccomment">/// Bind on an unusable port, with is_required = false, and no other transports.
-<a href=#2882 id=2882 data-nosnippet>2882</a>    ///
-<a href=#2883 id=2883 data-nosnippet>2883</a>    /// Binding the endpoint fails with "no valid address available".
-<a href=#2884 id=2884 data-nosnippet>2884</a>    </span><span class="attr">#[tokio::test]
-<a href=#2885 id=2885 data-nosnippet>2885</a>    #[traced_test]
-<a href=#2886 id=2886 data-nosnippet>2886</a>    </span><span class="kw">async fn </span>test_bind_addr_unusable_port_not_required_no_other_transports() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2887 id=2887 data-nosnippet>2887</a>        <span class="kw">let </span>socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>))<span class="question-mark">?</span>;
-<a href=#2888 id=2888 data-nosnippet>2888</a>        <span class="kw">let </span>port = socket.local_addr()<span class="question-mark">?</span>.port();
-<a href=#2889 id=2889 data-nosnippet>2889</a>
-<a href=#2890 id=2890 data-nosnippet>2890</a>        <span class="kw">let </span>res = Endpoint::empty_builder(RelayMode::Disabled)
-<a href=#2891 id=2891 data-nosnippet>2891</a>            .clear_ip_transports()
-<a href=#2892 id=2892 data-nosnippet>2892</a>            .bind_addr_with_opts(
-<a href=#2893 id=2893 data-nosnippet>2893</a>                (Ipv4Addr::LOCALHOST, port),
-<a href=#2894 id=2894 data-nosnippet>2894</a>                BindOpts::default().set_is_required(<span class="bool-val">false</span>),
-<a href=#2895 id=2895 data-nosnippet>2895</a>            )<span class="question-mark">?
-<a href=#2896 id=2896 data-nosnippet>2896</a>            </span>.bind()
-<a href=#2897 id=2897 data-nosnippet>2897</a>            .<span class="kw">await</span>;
-<a href=#2898 id=2898 data-nosnippet>2898</a>
-<a href=#2899 id=2899 data-nosnippet>2899</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
-<a href=#2900 id=2900 data-nosnippet>2900</a>            res,
-<a href=#2901 id=2901 data-nosnippet>2901</a>            <span class="prelude-val">Err</span>(BindError::CreateQuicEndpoint {
-<a href=#2902 id=2902 data-nosnippet>2902</a>                source: io_error,
-<a href=#2903 id=2903 data-nosnippet>2903</a>                ..
-<a href=#2904 id=2904 data-nosnippet>2904</a>            })
-<a href=#2905 id=2905 data-nosnippet>2905</a>            <span class="kw">if </span>io_error.kind() == io::ErrorKind::Other &amp;&amp; io_error.to_string() == <span class="string">"no valid address available"
-<a href=#2906 id=2906 data-nosnippet>2906</a>        </span>));
-<a href=#2907 id=2907 data-nosnippet>2907</a>        <span class="prelude-val">Ok</span>(())
-<a href=#2908 id=2908 data-nosnippet>2908</a>    }
-<a href=#2909 id=2909 data-nosnippet>2909</a>}</code></pre></div></section></main></body></html>
+<a href=#2865 id=2865 data-nosnippet>2865</a>                BindOpts::default()
+<a href=#2866 id=2866 data-nosnippet>2866</a>                    .set_prefix_len(<span class="number">32</span>)
+<a href=#2867 id=2867 data-nosnippet>2867</a>                    .set_is_required(<span class="bool-val">false</span>),
+<a href=#2868 id=2868 data-nosnippet>2868</a>            )<span class="question-mark">?
+<a href=#2869 id=2869 data-nosnippet>2869</a>            </span>.bind()
+<a href=#2870 id=2870 data-nosnippet>2870</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2871 id=2871 data-nosnippet>2871</a>        <span class="kw">let </span>bound_sockets = ep.bound_sockets();
+<a href=#2872 id=2872 data-nosnippet>2872</a>        <span class="comment">// just the default wildcard binds
+<a href=#2873 id=2873 data-nosnippet>2873</a>        </span><span class="macro">assert_eq!</span>(bound_sockets.len(), <span class="number">2</span>);
+<a href=#2874 id=2874 data-nosnippet>2874</a>        <span class="comment">// our requested bind addr is not included because it failed to bind
+<a href=#2875 id=2875 data-nosnippet>2875</a>        </span><span class="macro">assert!</span>(
+<a href=#2876 id=2876 data-nosnippet>2876</a>            !bound_sockets
+<a href=#2877 id=2877 data-nosnippet>2877</a>                .iter()
+<a href=#2878 id=2878 data-nosnippet>2878</a>                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+<a href=#2879 id=2879 data-nosnippet>2879</a>        );
+<a href=#2880 id=2880 data-nosnippet>2880</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2881 id=2881 data-nosnippet>2881</a>    }
+<a href=#2882 id=2882 data-nosnippet>2882</a>
+<a href=#2883 id=2883 data-nosnippet>2883</a>    <span class="doccomment">/// Bind on a default route on an unusable port, but set is_required = false.
+<a href=#2884 id=2884 data-nosnippet>2884</a>    ///
+<a href=#2885 id=2885 data-nosnippet>2885</a>    /// Binding the endpoint succeeds.
+<a href=#2886 id=2886 data-nosnippet>2886</a>    </span><span class="attr">#[tokio::test]
+<a href=#2887 id=2887 data-nosnippet>2887</a>    #[traced_test]
+<a href=#2888 id=2888 data-nosnippet>2888</a>    </span><span class="kw">async fn </span>test_bind_addr_badport_default_notrequired() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2889 id=2889 data-nosnippet>2889</a>        <span class="kw">let </span>socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>))<span class="question-mark">?</span>;
+<a href=#2890 id=2890 data-nosnippet>2890</a>        <span class="kw">let </span>port = socket.local_addr()<span class="question-mark">?</span>.port();
+<a href=#2891 id=2891 data-nosnippet>2891</a>
+<a href=#2892 id=2892 data-nosnippet>2892</a>        <span class="kw">let </span>ep = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#2893 id=2893 data-nosnippet>2893</a>            .bind_addr_with_opts(
+<a href=#2894 id=2894 data-nosnippet>2894</a>                (Ipv4Addr::LOCALHOST, port),
+<a href=#2895 id=2895 data-nosnippet>2895</a>                BindOpts::default().set_is_required(<span class="bool-val">false</span>),
+<a href=#2896 id=2896 data-nosnippet>2896</a>            )<span class="question-mark">?
+<a href=#2897 id=2897 data-nosnippet>2897</a>            </span>.bind()
+<a href=#2898 id=2898 data-nosnippet>2898</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2899 id=2899 data-nosnippet>2899</a>        <span class="kw">let </span>bound_sockets = ep.bound_sockets();
+<a href=#2900 id=2900 data-nosnippet>2900</a>        <span class="comment">// just the IPv6 default, but no IPv4 bind at all because we replaced the default
+<a href=#2901 id=2901 data-nosnippet>2901</a>        // with an unusuable bind and set it to not be required.
+<a href=#2902 id=2902 data-nosnippet>2902</a>        </span><span class="macro">assert_eq!</span>(bound_sockets.len(), <span class="number">1</span>);
+<a href=#2903 id=2903 data-nosnippet>2903</a>        <span class="macro">assert!</span>(bound_sockets[<span class="number">0</span>].is_ipv6());
+<a href=#2904 id=2904 data-nosnippet>2904</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2905 id=2905 data-nosnippet>2905</a>    }
+<a href=#2906 id=2906 data-nosnippet>2906</a>
+<a href=#2907 id=2907 data-nosnippet>2907</a>    <span class="doccomment">/// Bind on an unusable port, with is_required = false, and no other transports.
+<a href=#2908 id=2908 data-nosnippet>2908</a>    ///
+<a href=#2909 id=2909 data-nosnippet>2909</a>    /// Binding the endpoint fails with "no valid address available".
+<a href=#2910 id=2910 data-nosnippet>2910</a>    </span><span class="attr">#[tokio::test]
+<a href=#2911 id=2911 data-nosnippet>2911</a>    #[traced_test]
+<a href=#2912 id=2912 data-nosnippet>2912</a>    </span><span class="kw">async fn </span>test_bind_addr_badport_notrequired_no_other_transports() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2913 id=2913 data-nosnippet>2913</a>        <span class="kw">let </span>socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, <span class="number">0</span>))<span class="question-mark">?</span>;
+<a href=#2914 id=2914 data-nosnippet>2914</a>        <span class="kw">let </span>port = socket.local_addr()<span class="question-mark">?</span>.port();
+<a href=#2915 id=2915 data-nosnippet>2915</a>
+<a href=#2916 id=2916 data-nosnippet>2916</a>        <span class="kw">let </span>res = Endpoint::empty_builder(RelayMode::Disabled)
+<a href=#2917 id=2917 data-nosnippet>2917</a>            .clear_ip_transports()
+<a href=#2918 id=2918 data-nosnippet>2918</a>            .bind_addr_with_opts(
+<a href=#2919 id=2919 data-nosnippet>2919</a>                (Ipv4Addr::LOCALHOST, port),
+<a href=#2920 id=2920 data-nosnippet>2920</a>                BindOpts::default().set_is_required(<span class="bool-val">false</span>),
+<a href=#2921 id=2921 data-nosnippet>2921</a>            )<span class="question-mark">?
+<a href=#2922 id=2922 data-nosnippet>2922</a>            </span>.bind()
+<a href=#2923 id=2923 data-nosnippet>2923</a>            .<span class="kw">await</span>;
+<a href=#2924 id=2924 data-nosnippet>2924</a>
+<a href=#2925 id=2925 data-nosnippet>2925</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
+<a href=#2926 id=2926 data-nosnippet>2926</a>            res,
+<a href=#2927 id=2927 data-nosnippet>2927</a>            <span class="prelude-val">Err</span>(BindError::CreateQuicEndpoint {
+<a href=#2928 id=2928 data-nosnippet>2928</a>                source: io_error,
+<a href=#2929 id=2929 data-nosnippet>2929</a>                ..
+<a href=#2930 id=2930 data-nosnippet>2930</a>            })
+<a href=#2931 id=2931 data-nosnippet>2931</a>            <span class="kw">if </span>io_error.kind() == io::ErrorKind::Other &amp;&amp; io_error.to_string() == <span class="string">"no valid address available"
+<a href=#2932 id=2932 data-nosnippet>2932</a>        </span>));
+<a href=#2933 id=2933 data-nosnippet>2933</a>        <span class="prelude-val">Ok</span>(())
+<a href=#2934 id=2934 data-nosnippet>2934</a>    }
+<a href=#2935 id=2935 data-nosnippet>2935</a>}</code></pre></div></section></main></body></html>
