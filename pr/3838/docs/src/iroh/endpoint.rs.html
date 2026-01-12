@@ -2898,7 +2898,7 @@
 <a href=#2898 id=2898 data-nosnippet>2898</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2899 id=2899 data-nosnippet>2899</a>        <span class="kw">let </span>bound_sockets = ep.bound_sockets();
 <a href=#2900 id=2900 data-nosnippet>2900</a>        <span class="comment">// just the IPv6 default, but no IPv4 bind at all because we replaced the default
-<a href=#2901 id=2901 data-nosnippet>2901</a>        // with an unusuable bind and set it to not be required.
+<a href=#2901 id=2901 data-nosnippet>2901</a>        // with a bind with an unusable port and set it to not be required.
 <a href=#2902 id=2902 data-nosnippet>2902</a>        </span><span class="macro">assert_eq!</span>(bound_sockets.len(), <span class="number">1</span>);
 <a href=#2903 id=2903 data-nosnippet>2903</a>        <span class="macro">assert!</span>(bound_sockets[<span class="number">0</span>].is_ipv6());
 <a href=#2904 id=2904 data-nosnippet>2904</a>        <span class="prelude-val">Ok</span>(())
