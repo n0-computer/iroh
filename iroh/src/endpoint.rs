@@ -2898,7 +2898,7 @@ mod tests {
             .await?;
         let bound_sockets = ep.bound_sockets();
         // just the IPv6 default, but no IPv4 bind at all because we replaced the default
-        // with an unusuable bind and set it to not be required.
+        // with a bind with an unusable port and set it to not be required.
         assert_eq!(bound_sockets.len(), 1);
         assert!(bound_sockets[0].is_ipv6());
         Ok(())
