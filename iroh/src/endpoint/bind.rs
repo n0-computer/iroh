@@ -37,7 +37,7 @@ pub struct BindOpts {
     /// this subnet has a gateway router to route such packets.
     ///
     /// See [`Self::prefix_len`] for details of how such routing works.
-    is_default_route: bool,
+    is_default_route: Option<bool>,
 }
 
 impl Default for BindOpts {
@@ -45,7 +45,7 @@ impl Default for BindOpts {
         Self {
             prefix_len: 0,
             is_required: true,
-            is_default_route: false,
+            is_default_route: None,
         }
     }
 }
@@ -101,15 +101,23 @@ impl BindOpts {
     ///
     /// See [`Self::set_prefix_len`] for details on how this routing works.
     ///
-    /// Defaults to `false`.
+    /// If not set explicitly, then [`Self::is_default_route`] will return `true`
+    /// if the prefix length is set to `0` (the default) and `false` otherwise.
     pub fn set_is_default_route(mut self, is_default_route: bool) -> Self {
-        self.is_default_route = is_default_route;
+        self.is_default_route = Some(is_default_route);
         self
     }
 
-    /// Returns the current value set by [`Self::set_is_default_route`].
+    /// Returns whether this is a default route.
+    ///
+    /// If [`Self::set_is_default_route`] has been called then that value is returned.
+    /// Otherwise, returns `true` if the [`prefix_len`][`Self::prefix_len] is `0` and
+    /// `false` otherwise.
     pub fn is_default_route(&self) -> bool {
-        self.is_default_route
+        match self.is_default_route {
+            Some(is_default) => is_default,
+            None => self.prefix_len() == 0,
+        }
     }
 }
 
