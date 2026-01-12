@@ -322,9 +322,9 @@ impl Builder {
     /// destination addresses. It is valid to configure this, but no more than one such
     /// socket should be bound or the routing will be non-deterministic.
     ///
-    /// To use a subnet with a non-zero prefix length as the default route, use
-    /// [`BindOpts::set_is_default_route]. Subnets with a prefix length of zero are always
-    /// marked as default routes.
+    /// To use a subnet with a non-zero prefix length as the default route in addition to
+    /// being routed when its prefix matches, use [`BindOpts::set_is_default_route].
+    /// Subnets with a prefix length of zero are always marked as default routes.
     ///
     /// Finally note that most outgoing datagrams are part of an existing network flow. That
     /// is, they are in response to an incoming datagram. In this case the outgoing datagram
