@@ -104,6 +104,7 @@ pub struct Builder {
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
+    enable_portmapper: bool,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -169,6 +170,7 @@ impl Builder {
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
+            enable_portmapper: true,
         }
     }
 
@@ -205,6 +207,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
             hooks: self.hooks,
+            enable_portmapper: self.enable_portmapper,
         };
 
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
@@ -624,6 +627,14 @@ impl Builder {
     /// See [`EndpointHooks`] for details on the possible interception points in the connection lifecycle.
     pub fn hooks(mut self, hooks: impl EndpointHooks + 'static) -> Self {
         self.hooks.push(hooks);
+        self
+    }
+
+    /// Disables portmapping (Upnp, etc).
+    ///
+    /// This is enabled by default.
+    pub fn disable_portmapper(mut self) -> Self {
+        self.enable_portmapper = false;
         self
     }
 }
