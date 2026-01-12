@@ -2829,7 +2829,7 @@ mod tests {
     /// Binding the endpoint fails with an AddrInUse error.
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_unusuable_port() -> Result {
+    async fn test_bind_addr_badport() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
@@ -2850,19 +2850,21 @@ mod tests {
         Ok(())
     }
 
-    /// Bind on an unusable port, but set is_required = false.
+    /// Bind a non-default route on an unusable port, but set is_required = false.
     ///
     /// Binding the endpoint succeeds.
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_unusuable_port_not_required() -> Result {
+    async fn test_bind_addr_badport_notrequired() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
         let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .bind_addr_with_opts(
                 (Ipv4Addr::LOCALHOST, port),
-                BindOpts::default().set_is_required(false),
+                BindOpts::default()
+                    .set_prefix_len(32)
+                    .set_is_required(false),
             )?
             .bind()
             .await?;
@@ -2878,12 +2880,36 @@ mod tests {
         Ok(())
     }
 
+    /// Bind on a default route on an unusable port, but set is_required = false.
+    ///
+    /// Binding the endpoint succeeds.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_badport_default_notrequired() -> Result {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = socket.local_addr()?.port();
+
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, port),
+                BindOpts::default().set_is_required(false),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        // just the IPv6 default, but no IPv4 bind at all because we replaced the default
+        // with an unusuable bind and set it to not be required.
+        assert_eq!(bound_sockets.len(), 1);
+        assert!(bound_sockets[0].is_ipv6());
+        Ok(())
+    }
+
     /// Bind on an unusable port, with is_required = false, and no other transports.
     ///
     /// Binding the endpoint fails with "no valid address available".
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_unusable_port_not_required_no_other_transports() -> Result {
+    async fn test_bind_addr_badport_notrequired_no_other_transports() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
