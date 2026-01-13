@@ -22,12 +22,14 @@ use crate::{metrics::EndpointMetrics, net_report::Report};
 #[cfg(not(wasm_browser))]
 mod ip;
 mod relay;
+pub(crate) mod user;
 
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
+use self::user::UserTransportFactory;
 
 /// Manages the different underlying data transports that the magicsock can support.
 #[derive(Debug)]
@@ -81,6 +83,8 @@ pub(crate) enum TransportConfig {
         /// Was this added explicitly by the user.
         is_user_defined: bool,
     },
+    /// User defined transport factory.
+    User(Arc<dyn UserTransportFactory>),
 }
 
 impl TransportConfig {
@@ -147,6 +151,7 @@ impl TransportConfig {
             Self::Relay {
                 is_user_defined, ..
             } => *is_user_defined,
+            Self::User(_) => true,
         }
     }
 }
@@ -424,7 +429,7 @@ impl NetworkChangeSender {
 
 /// An outgoing packet
 #[derive(Debug, Clone)]
-pub(crate) struct Transmit<'a> {
+pub struct Transmit<'a> {
     pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
     pub(crate) contents: &'a [u8],
     pub(crate) segment_size: Option<usize>,
@@ -450,7 +455,7 @@ impl From<&quinn_udp::Transmit<'_>> for OwnedTransmit {
 
 /// Transports address.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum Addr {
+pub enum Addr {
     /// An IP address, should always be stored in its canonical form.
     Ip(SocketAddr),
     /// A relay address.

@@ -26,6 +26,14 @@ use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+/// Types for defining custom transports
+pub mod transports {
+    pub use super::magicsock::transports::{
+        Addr, Transmit,
+        user::{UserSender, UserTransport, UserTransportFactory},
+    };
+}
+
 use self::hooks::EndpointHooksList;
 pub use super::magicsock::{
     BindError, DirectAddr, DirectAddrType, PathInfo,
@@ -38,7 +46,7 @@ use crate::dns::DnsResolver;
 use crate::{
     NetReport,
     discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
-    endpoint::presets::Preset,
+    endpoint::{presets::Preset, transports::UserTransportFactory},
     magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -624,6 +632,13 @@ impl Builder {
     /// See [`EndpointHooks`] for details on the possible interception points in the connection lifecycle.
     pub fn hooks(mut self, hooks: impl EndpointHooks + 'static) -> Self {
         self.hooks.push(hooks);
+        self
+    }
+
+    /// Adds a custom user transport
+    pub fn add_user_transport(mut self, factory: Arc<dyn UserTransportFactory>) -> Self {
+        self.transports
+            .push(TransportConfig::User(factory));
         self
     }
 }
