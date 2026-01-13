@@ -9,7 +9,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{EndpointId, RelayUrl, TransportAddr, UserAddr};
 use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
@@ -431,8 +431,8 @@ impl NetworkChangeSender {
 #[derive(Debug, Clone)]
 pub struct Transmit<'a> {
     pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
-    pub(crate) contents: &'a [u8],
-    pub(crate) segment_size: Option<usize>,
+    pub contents: &'a [u8],
+    pub segment_size: Option<usize>,
 }
 
 /// An outgoing packet that can be sent across channels.
@@ -460,6 +460,8 @@ pub enum Addr {
     Ip(SocketAddr),
     /// A relay address.
     Relay(RelayUrl, EndpointId),
+    /// A user defined address.
+    User(UserAddr),
 }
 
 impl fmt::Debug for Addr {
@@ -467,6 +469,7 @@ impl fmt::Debug for Addr {
         match self {
             Addr::Ip(addr) => write!(f, "Ip({addr})"),
             Addr::Relay(url, node_id) => write!(f, "Relay({url}, {})", node_id.fmt_short()),
+            Addr::User(user_addr) => write!(f, "User({user_addr:?})"),
         }
     }
 }
@@ -504,6 +507,12 @@ impl From<&SocketAddr> for Addr {
     }
 }
 
+impl From<UserAddr> for Addr {
+    fn from(value: UserAddr) -> Self {
+        Self::User(value)
+    }
+}
+
 impl From<(RelayUrl, EndpointId)> for Addr {
     fn from(value: (RelayUrl, EndpointId)) -> Self {
         Self::Relay(value.0, value.1)
@@ -515,6 +524,7 @@ impl From<Addr> for TransportAddr {
         match value {
             Addr::Ip(addr) => TransportAddr::Ip(addr),
             Addr::Relay(url, _) => TransportAddr::Relay(url),
+            Addr::User(user_addr) => TransportAddr::User(user_addr),
         }
     }
 }
@@ -533,6 +543,7 @@ impl Addr {
         match self {
             Self::Ip(ip) => Some(ip),
             Self::Relay(..) => None,
+            Self::User(..) => None,
         }
     }
 }

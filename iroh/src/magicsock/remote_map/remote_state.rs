@@ -6,7 +6,7 @@ use std::{
     task::Poll,
 };
 
-use iroh_base::{EndpointId, RelayUrl, TransportAddr};
+use iroh_base::{EndpointId, RelayUrl, TransportAddr, UserAddr};
 use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
@@ -33,7 +33,7 @@ use crate::{
     endpoint::{DirectAddr, quic::PathStats},
     magicsock::{
         MagicsockMetrics,
-        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
+        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr, UserMappedAddr},
         remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -135,6 +135,8 @@ pub(super) struct RemoteStateActor {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    /// The mapping between user provided addresses and their [`UserMappedAddr`]s.
+    user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
     /// Discovery service, cloned from the magicsock.
     discovery: ConcurrentDiscovery,
 
@@ -190,6 +192,7 @@ impl RemoteStateActor {
         local_endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+        user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
         discovery: ConcurrentDiscovery,
     ) -> Self {
@@ -199,6 +202,7 @@ impl RemoteStateActor {
             metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
+            user_mapped_addrs,
             discovery,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
@@ -1298,6 +1302,7 @@ impl ConnectionState {
         match remote {
             transports::Addr::Ip(_) => metrics.paths_direct.inc(),
             transports::Addr::Relay(_, _) => metrics.paths_relay.inc(),
+            transports::Addr::User(_) => metrics.paths_user.inc(),
         };
         if !self.has_been_direct && remote.is_ip() {
             self.has_been_direct = true;

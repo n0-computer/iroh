@@ -637,8 +637,7 @@ impl Builder {
 
     /// Adds a custom user transport
     pub fn add_user_transport(mut self, factory: Arc<dyn UserTransportFactory>) -> Self {
-        self.transports
-            .push(TransportConfig::User(factory));
+        self.transports.push(TransportConfig::User(factory));
         self
     }
 }

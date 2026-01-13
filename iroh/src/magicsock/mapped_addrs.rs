@@ -30,6 +30,9 @@ const ADDR_GLOBAL_ID: [u8; 5] = [21, 7, 10, 81, 11];
 /// The Subnet ID for [`RelayMappedAddr].
 const RELAY_MAPPED_SUBNET: [u8; 2] = [0, 1];
 
+/// The Subnet ID for [`UserMappedAddr`].
+const USER_MAPPED_SUBNET: [u8; 2] = [0, 3];
+
 /// The Subnet ID for [`EndpointIdMappedAddr`].
 const ENDPOINT_ID_SUBNET: [u8; 2] = [0; 2];
 
@@ -62,6 +65,9 @@ static RELAY_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// Counter to always generate unique addresses for [`EndpointIdMappedAddr`].
 static ENDPOINT_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// Counter to always generate unique addresses for [`UserMappedAddr`].
+static USER_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 /// Generic mapped address.
 ///
 /// Allows implementing [`AddrMap`].
@@ -93,6 +99,8 @@ pub(crate) enum MultipathMappedAddr {
     Relay(RelayMappedAddr),
     /// An IP based transport address.
     Ip(SocketAddr),
+    /// Custom user version
+    User(UserMappedAddr),
 }
 
 impl From<SocketAddr> for MultipathMappedAddr {
@@ -242,6 +250,69 @@ pub(crate) struct RelayMappedAddrError;
 impl std::fmt::Display for RelayMappedAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "RelayMappedAddr({})", self.0)
+    }
+}
+
+/// An Ipv6 ULA address, identifying a relay path for a [`EndpointId`].
+///
+/// Since iroh endpoint are reachable via a relay server we have a network path indicated by
+/// the `(EndpointId, RelayUrl)`.  However Quinn can only handle socket addresses, so we use
+/// IPv6 addresses in a private IPv6 Unique Local Address range, which map to a unique
+/// `(EndointId, RelayUrl)` pair.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub(crate) struct UserMappedAddr(Ipv6Addr);
+
+impl MappedAddr for UserMappedAddr {
+    /// Generates a globally unique fake UDP address.
+    ///
+    /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
+    /// which is recognised by iroh as an IP mapped address.
+    fn generate() -> Self {
+        let mut addr = [0u8; 16];
+        addr[0] = ADDR_PREFIXL;
+        addr[1..6].copy_from_slice(&ADDR_GLOBAL_ID);
+        addr[6..8].copy_from_slice(&USER_MAPPED_SUBNET);
+
+        let counter = USER_ADDR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        addr[8..16].copy_from_slice(&counter.to_be_bytes());
+
+        Self(Ipv6Addr::from(addr))
+    }
+
+    /// Returns a consistent [`SocketAddr`] for the [`RelayMappedAddr`].
+    ///
+    /// This socket address does not have a routable IP address and port.
+    ///
+    /// This uses a made-up port number, since the port does not play a role in the
+    /// addressing.  This socket address is only to be used to pass into Quinn.
+    fn private_socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(IpAddr::from(self.0), MAPPED_PORT)
+    }
+}
+
+impl TryFrom<Ipv6Addr> for UserMappedAddr {
+    type Error = UserMappedAddrError;
+
+    fn try_from(value: Ipv6Addr) -> std::result::Result<Self, Self::Error> {
+        let octets = value.octets();
+        if octets[0] == ADDR_PREFIXL
+            && octets[1..6] == ADDR_GLOBAL_ID
+            && octets[6..8] == USER_MAPPED_SUBNET
+        {
+            return Ok(Self(value));
+        }
+        Err(e!(UserMappedAddrError))
+    }
+}
+
+/// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
+#[stack_error(derive, add_meta)]
+#[error("Failed to convert")]
+pub(crate) struct UserMappedAddrError;
+
+impl std::fmt::Display for UserMappedAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "UserMappedAddr({})", self.0)
     }
 }
 

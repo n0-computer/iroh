@@ -6,8 +6,9 @@
 //!
 //! The primary way of addressing an endpoint is by using the [`EndpointAddr`].
 
-use std::{collections::BTreeSet, net::SocketAddr};
+use std::{collections::BTreeSet, fmt, net::SocketAddr};
 
+use data_encoding::HEXLOWER;
 use serde::{Deserialize, Serialize};
 
 use crate::{EndpointId, PublicKey, RelayUrl};
@@ -52,6 +53,8 @@ pub enum TransportAddr {
     Relay(RelayUrl),
     /// IP based addresses
     Ip(SocketAddr),
+    /// User defined transport address
+    User(UserAddr),
 }
 
 impl TransportAddr {
@@ -133,6 +136,103 @@ impl EndpointAddr {
 impl From<EndpointId> for EndpointAddr {
     fn from(endpoint_id: EndpointId) -> Self {
         EndpointAddr::new(endpoint_id)
+    }
+}
+
+/// TODO
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UserAddr {
+    /// id
+    id: u64,
+    /// data
+    data: UserAddrBytes,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+enum UserAddrBytes {
+    Inline { size: u8, data: [u8; 30] },
+    Heap(Box<[u8]>),
+}
+
+impl fmt::Debug for UserAddrBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !f.alternate() {
+            write!(f, "[{}]", HEXLOWER.encode(self.as_bytes()))
+        } else {
+            let bytes = self.as_bytes();
+            match self {
+                Self::Inline { .. } => write!(f, "Inline[{}]", HEXLOWER.encode(bytes)),
+                Self::Heap(_) => write!(f, "Heap[{}]", HEXLOWER.encode(bytes)),
+            }
+        }
+    }
+}
+
+impl From<(u64, &[u8])> for UserAddr {
+    fn from((id, data): (u64, &[u8])) -> Self {
+        Self::from_parts(id, data)
+    }
+}
+
+impl UserAddrBytes {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Inline { size, .. } => *size as usize,
+            Self::Heap(data) => data.len(),
+        }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Inline { size, data } => &data[..*size as usize],
+            Self::Heap(data) => data,
+        }
+    }
+
+    pub fn copy_from_slice(data: &[u8]) -> Self {
+        if data.len() <= 30 {
+            let mut inline = [0u8; 30];
+            inline[..data.len()].copy_from_slice(data);
+            Self::Inline {
+                size: data.len() as u8,
+                data: inline,
+            }
+        } else {
+            Self::Heap(data.to_vec().into_boxed_slice())
+        }
+    }
+}
+
+impl UserAddr {
+    /// Creates a new [`UserAddr`] from its parts.
+    pub fn from_parts(id: u64, data: &[u8]) -> Self {
+        Self {
+            id,
+            data: UserAddrBytes::copy_from_slice(data),
+        }
+    }
+
+    /// Id to distinguish different user address types
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Data associated with this user address
+    pub fn data(&self) -> &[u8] {
+        self.data.as_bytes()
+    }
+
+    /// Convert to byte representation
+    pub fn as_vec(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 + self.data.len());
+        out[..8].copy_from_slice(&self.id().to_le_bytes());
+        out[8..].copy_from_slice(self.data());
+        out
+    }
+
+    /// Parse from bytes
+    pub fn from_bytes(_data: &[u8]) -> Result<Self, &'static str> {
+        todo!()
     }
 }
 

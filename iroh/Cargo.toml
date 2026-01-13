@@ -170,6 +170,10 @@ name = "connect"
 required-features = []
 
 [[example]]
+name = "custom-transport"
+required-features = []
+
+[[example]]
 name = "listen-unreliable"
 required-features = []
 
