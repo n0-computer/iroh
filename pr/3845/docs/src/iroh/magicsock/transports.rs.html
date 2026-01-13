@@ -67,7 +67,7 @@
 <a href=#67 id=67 data-nosnippet>67</a>
 <a href=#68 id=68 data-nosnippet>68</a><span class="doccomment">/// Type for watching relay and user transports only, no ip
 <a href=#69 id=69 data-nosnippet>69</a></span><span class="attr">#[cfg(wasm_browser)]
-<a href=#70 id=70 data-nosnippet>70</a></span><span class="kw">type </span>LocalAddrsWatch =
+<a href=#70 id=70 data-nosnippet>70</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>LocalAddrsWatch =
 <a href=#71 id=71 data-nosnippet>71</a>    n0_watcher::Map&lt;n0_watcher::Tuple&lt;UserTransportsWatcher, RelayTransportsWatcher&gt;, Vec&lt;Addr&gt;&gt;;
 <a href=#72 id=72 data-nosnippet>72</a>
 <a href=#73 id=73 data-nosnippet>73</a><span class="doccomment">/// Available transport configurations.
