@@ -55,8 +55,9 @@ type RelayTransportsWatcher = n0_watcher::Join<
     n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
 >;
 
+#[cfg(not(wasm_browser))]
 /// Combined watcher type for all transports, user, relay and ip
-type LocalAddrsWatchWithIp = n0_watcher::Map<
+pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     n0_watcher::Tuple<
         n0_watcher::Tuple<IpTransportsWatcher, UserTransportsWatcher>,
         RelayTransportsWatcher,
@@ -65,14 +66,9 @@ type LocalAddrsWatchWithIp = n0_watcher::Map<
 >;
 
 /// Type for watching relay and user transports only, no ip
-type LocalAddrsWatchNoIp =
-    n0_watcher::Map<n0_watcher::Tuple<UserTransportsWatcher, RelayTransportsWatcher>, Vec<Addr>>;
-
-#[cfg(not(wasm_browser))]
-pub(crate) type LocalAddrsWatch = LocalAddrsWatchWithIp;
-
 #[cfg(wasm_browser)]
-pub(crate) type LocalAddrsWatch = LocalAddrsWatchNoIp;
+pub(crate) type LocalAddrsWatch =
+    n0_watcher::Map<n0_watcher::Tuple<UserTransportsWatcher, RelayTransportsWatcher>, Vec<Addr>>;
 
 /// Available transport configurations.
 #[derive(Debug, Clone)]
@@ -311,20 +307,9 @@ impl Transports {
         self.local_addrs_watch().get()
     }
 
-    pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
-        #[cfg(not(wasm_browser))]
-        {
-            self.local_addrs_watch_with_ip()
-        }
-        #[cfg(wasm_browser)]
-        {
-            self.local_addrs_watch_no_ip()
-        }
-    }
-
+    #[cfg(not(wasm_browser))]
     /// Watch for all currently known local addresses, including IP based transports.
-    #[allow(dead_code)]
-    fn local_addrs_watch_with_ip(&self) -> LocalAddrsWatch {
+    pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
         let users = n0_watcher::Join::new(self.user.iter().map(|t| t.watch_local_addrs()));
@@ -340,9 +325,9 @@ impl Transports {
         })
     }
 
+    #[cfg(wasm_browser)]
     /// Watch for all currently known local addresses, excluding IP based transports.
-    #[allow(dead_code)]
-    fn local_addrs_watch_no_ip(&self) -> LocalAddrsWatchNoIp {
+    pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
         let users = n0_watcher::Join::new(self.user.iter().map(|t| t.watch_local_addrs()));
         users.or(relays).map(|(users, relays)| {
