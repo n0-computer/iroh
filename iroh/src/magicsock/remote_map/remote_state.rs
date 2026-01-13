@@ -1572,6 +1572,7 @@ fn to_transports_addr(
     addrs.into_iter().filter_map(move |addr| match addr {
         TransportAddr::Relay(relay_url) => Some(transports::Addr::from((relay_url, endpoint_id))),
         TransportAddr::Ip(sockaddr) => Some(transports::Addr::from(sockaddr)),
+        TransportAddr::User(user_addr) => Some(transports::Addr::from(user_addr)),
         _ => {
             warn!(?addr, "Unsupported TransportAddr");
             None

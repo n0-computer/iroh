@@ -729,6 +729,12 @@ impl quinn::AsyncUdpSocket for MagicTransport {
 
             return Ok(DEFAULT_FAKE_ADDR.into());
         }
+        if !self.transports.user.is_empty() {
+            // pretend we have an address to make sure things are not too sad during startup
+            use crate::magicsock::mapped_addrs::DEFAULT_FAKE_ADDR;
+
+            return Ok(DEFAULT_FAKE_ADDR.into());
+        }
         Err(io::Error::other("no valid address available"))
     }
 
