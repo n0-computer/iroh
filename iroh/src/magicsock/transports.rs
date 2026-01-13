@@ -24,12 +24,13 @@ mod ip;
 mod relay;
 pub(crate) mod user;
 
+use user::{UserSender, UserTransport, UserTransportFactory};
+
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
-use user::{UserTransportFactory, UserTransport, UserSender};
 
 /// Manages the different underlying data transports that the magicsock can support.
 #[derive(Debug)]
@@ -453,7 +454,9 @@ impl NetworkChangeSender {
 #[derive(Debug, Clone)]
 pub struct Transmit<'a> {
     pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
+    /// Packet contents
     pub contents: &'a [u8],
+    /// Optional segment size for GSO
     pub segment_size: Option<usize>,
 }
 

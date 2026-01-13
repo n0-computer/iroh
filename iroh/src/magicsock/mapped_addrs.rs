@@ -114,6 +114,9 @@ impl From<SocketAddr> for MultipathMappedAddr {
                 if let Ok(addr) = RelayMappedAddr::try_from(addr) {
                     return Self::Relay(addr);
                 }
+                if let Ok(addr) = UserMappedAddr::try_from(addr) {
+                    return Self::User(addr);
+                }
                 Self::Ip(value)
             }
         }
