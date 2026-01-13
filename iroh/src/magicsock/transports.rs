@@ -45,26 +45,34 @@ pub(crate) struct Transports {
     source_addrs: [Addr; quinn_udp::BATCH_SIZE],
 }
 
-#[cfg(not(wasm_browser))]
-pub(crate) type LocalAddrsWatch = n0_watcher::Map<
+/// Combined watcher type for all ip transports
+type IpTransportsWatcher = n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>;
+/// Combined watcher type for all user transports
+type UserTransportsWatcher = n0_watcher::Join<Vec<UserAddr>, n0_watcher::Direct<Vec<UserAddr>>>;
+/// Combined watcher type for all relay transports
+type RelayTransportsWatcher = n0_watcher::Join<
+    Option<(RelayUrl, EndpointId)>,
+    n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
+>;
+
+/// Combined watcher type for all transports, user, relay and ip
+type LocalAddrsWatchWithIp = n0_watcher::Map<
     n0_watcher::Tuple<
-        n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
-        n0_watcher::Join<
-            Option<(RelayUrl, EndpointId)>,
-            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
-        >,
+        n0_watcher::Tuple<IpTransportsWatcher, UserTransportsWatcher>,
+        RelayTransportsWatcher,
     >,
     Vec<Addr>,
 >;
 
+/// Type for watching relay and user transports only, no ip
+type LocalAddrsWatchNoIp =
+    n0_watcher::Map<n0_watcher::Tuple<UserTransportsWatcher, RelayTransportsWatcher>, Vec<Addr>>;
+
+#[cfg(not(wasm_browser))]
+pub(crate) type LocalAddrsWatch = LocalAddrsWatchWithIp;
+
 #[cfg(wasm_browser)]
-pub(crate) type LocalAddrsWatch = n0_watcher::Map<
-    n0_watcher::Join<
-        Option<(RelayUrl, EndpointId)>,
-        n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, EndpointId)>>,
-    >,
-    Vec<Addr>,
->;
+pub(crate) type LocalAddrsWatch = LocalAddrsWatchNoIp;
 
 /// Available transport configurations.
 #[derive(Debug, Clone)]
@@ -303,30 +311,48 @@ impl Transports {
         self.local_addrs_watch().get()
     }
 
-    /// Watch for all currently known local addresses.
-    #[cfg(not(wasm_browser))]
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
+        #[cfg(not(wasm_browser))]
+        {
+            self.local_addrs_watch_with_ip()
+        }
+        #[cfg(wasm_browser)]
+        {
+            self.local_addrs_watch_no_ip()
+        }
+    }
+
+    /// Watch for all currently known local addresses, including IP based transports.
+    #[allow(dead_code)]
+    fn local_addrs_watch_with_ip(&self) -> LocalAddrsWatch {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
+        let users = n0_watcher::Join::new(self.user.iter().map(|t| t.watch_local_addrs()));
 
-        ips.or(relays).map(|(ips, relays)| {
-            ips.into_iter()
-                .map(Addr::from)
-                .chain(
-                    relays
-                        .into_iter()
-                        .flatten()
-                        .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id)),
-                )
-                .collect()
+        ips.or(users).or(relays).map(|((ips, users), relays)| {
+            let ips = ips.into_iter().map(Addr::from);
+            let users = users.into_iter().flatten().map(Addr::from);
+            let relays = relays
+                .into_iter()
+                .flatten()
+                .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id));
+            ips.chain(users).chain(relays).collect()
         })
     }
 
-    #[cfg(wasm_browser)]
-    pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
-        let relays = self.relay.iter().map(|t| t.local_addr_watch());
-        n0_watcher::Join::new(relays)
-            .map(|relays| relays.into_iter().flatten().map(Addr::from).collect())
+    /// Watch for all currently known local addresses, excluding IP based transports.
+    #[allow(dead_code)]
+    fn local_addrs_watch_no_ip(&self) -> LocalAddrsWatchNoIp {
+        let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
+        let users = n0_watcher::Join::new(self.user.iter().map(|t| t.watch_local_addrs()));
+        users.or(relays).map(|(users, relays)| {
+            let users = users.into_iter().flatten().map(Addr::from);
+            let relays = relays
+                .into_iter()
+                .flatten()
+                .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id));
+            users.chain(relays).collect()
+        })
     }
 
     /// Returns the bound addresses for IP based transports
