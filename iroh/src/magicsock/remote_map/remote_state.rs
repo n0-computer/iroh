@@ -549,6 +549,7 @@ impl RemoteStateActor {
                 let status = match path_remote {
                     transports::Addr::Ip(_) => PathStatus::Available,
                     transports::Addr::Relay(_, _) => PathStatus::Backup,
+                    transports::Addr::User(_) => PathStatus::Backup,
                 };
                 path.set_status(status).ok();
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
@@ -812,6 +813,7 @@ impl RemoteStateActor {
         let path_status = match open_addr {
             transports::Addr::Ip(_) => PathStatus::Available,
             transports::Addr::Relay(_, _) => PathStatus::Backup,
+            transports::Addr::User(_) => PathStatus::Backup,
         };
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
@@ -819,6 +821,7 @@ impl RemoteStateActor {
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))
                 .private_socket_addr(),
+            transports::Addr::User(addr) => self.user_mapped_addrs.get(addr).private_socket_addr(),
         };
 
         for (conn_id, conn_state) in self.connections.iter_mut() {
@@ -1155,6 +1158,10 @@ fn select_best_path(
                     None
                 }
             }
+        }
+        Some((transports::Addr::User(_), _)) => {
+            // todo: when should we select an user path?
+            None
         }
     }
 }

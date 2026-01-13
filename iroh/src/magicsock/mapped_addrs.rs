@@ -409,6 +409,14 @@ impl AddrMap<(RelayUrl, EndpointId), RelayMappedAddr> {
                     }
                 }
             }
+            MultipathMappedAddr::User(_user_mapped_addr) => {
+                // TODO: is this really an error?
+                //
+                // it seems the only thing that can ever resolve here is a MultipathMappedAddr::Relay,
+                // so why is returning None not ok?
+                error!("Failed to convert addr to transport addr: Unknown relay mapped addr");
+                None
+            }
             MultipathMappedAddr::Ip(addr) => Some(transports::Addr::from(addr)),
         }
     }

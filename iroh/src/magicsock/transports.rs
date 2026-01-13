@@ -29,7 +29,7 @@ pub(crate) use self::ip::Config as IpConfig;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
-use self::user::UserTransportFactory;
+use user::{UserTransportFactory, UserTransport, UserSender};
 
 /// Manages the different underlying data transports that the magicsock can support.
 #[derive(Debug)]
@@ -37,6 +37,7 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: IpTransports,
     relay: Vec<RelayTransport>,
+    user: Vec<Box<dyn UserTransport>>,
 
     poll_recv_counter: usize,
     /// Cache for source addrs, to speed up access
@@ -201,10 +202,23 @@ impl Transports {
             .map(|_c| RelayTransport::new(relay_actor_config.clone(), shutdown_token.child_token()))
             .collect();
 
+        let mut user = Vec::new();
+        for config in configs.iter().filter_map(|t| {
+            if let TransportConfig::User(config) = t {
+                Some(config)
+            } else {
+                None
+            }
+        }) {
+            let transport = config.bind()?;
+            user.push(transport);
+        }
+
         Ok(Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            user,
             poll_recv_counter: Default::default(),
             source_addrs: Default::default(),
         })
@@ -260,10 +274,16 @@ impl Transports {
             #[cfg(not(wasm_browser))]
             poll_transport!(&mut self.ip);
 
-            for transport in &mut self.relay {
+            for transport in self.relay.iter_mut() {
+                poll_transport!(transport);
+            }
+            for transport in self.user.iter_mut() {
                 poll_transport!(transport);
             }
         } else {
+            for transport in self.user.iter_mut().rev() {
+                poll_transport!(transport);
+            }
             for transport in self.relay.iter_mut().rev() {
                 poll_transport!(transport);
             }
@@ -358,12 +378,14 @@ impl Transports {
         let ip = self.ip.create_sender();
 
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
+        let user = self.user.iter().map(|t| t.create_sender()).collect();
         let max_transmit_segments = self.max_transmit_segments();
 
         TransportsSender {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            user,
             max_transmit_segments,
         }
     }
@@ -554,6 +576,7 @@ pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: IpTransportsSender,
     relay: Vec<RelaySender>,
+    user: Vec<Arc<dyn UserSender>>,
     max_transmit_segments: NonZeroUsize,
 }
 
@@ -619,6 +642,16 @@ impl TransportsSender {
                     return Poll::Pending;
                 }
             }
+            Addr::User(addr) => {
+                for sender in &mut self.user {
+                    if sender.is_valid_send_addr(addr) {
+                        match sender.poll_send(cx, addr.clone(), transmit) {
+                            Poll::Pending => {}
+                            Poll::Ready(res) => return Poll::Ready(res),
+                        }
+                    }
+                }
+            }
         }
 
         // We "blackhole" data that we have not found any usable transport for on
@@ -673,6 +706,7 @@ impl quinn::AsyncUdpSocket for MagicTransport {
                 match addr {
                     Addr::Ip(addr) => addr,
                     Addr::Relay(..) => DEFAULT_FAKE_ADDR.into(),
+                    Addr::User(_) => DEFAULT_FAKE_ADDR.into(),
                 }
             })
             .collect();
@@ -806,6 +840,20 @@ impl quinn::UdpSender for MagicSender {
                     Some((relay_url, endpoint_id)) => Addr::Relay(relay_url, endpoint_id),
                     None => {
                         error!("unknown RelayMappedAddr, dropped transmit");
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+            }
+            MultipathMappedAddr::User(user_mapped_addr) => {
+                match self
+                    .msock
+                    .remote_map
+                    .user_mapped_addrs
+                    .lookup(&user_mapped_addr)
+                {
+                    Some(addr) => Addr::User(addr),
+                    None => {
+                        error!("unknown UserMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));
                     }
                 }
