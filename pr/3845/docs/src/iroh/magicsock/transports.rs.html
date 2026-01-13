@@ -327,7 +327,7 @@
 <a href=#327 id=327 data-nosnippet>327</a>
 <a href=#328 id=328 data-nosnippet>328</a>    <span class="attr">#[cfg(wasm_browser)]
 <a href=#329 id=329 data-nosnippet>329</a>    </span><span class="doccomment">/// Watch for all currently known local addresses, excluding IP based transports.
-<a href=#330 id=330 data-nosnippet>330</a>    </span><span class="kw">fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LocalAddrsWatch {
+<a href=#330 id=330 data-nosnippet>330</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LocalAddrsWatch {
 <a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>relays = n0_watcher::Join::new(<span class="self">self</span>.relay.iter().map(|t| t.local_addr_watch()));
 <a href=#332 id=332 data-nosnippet>332</a>        <span class="kw">let </span>users = n0_watcher::Join::new(<span class="self">self</span>.user.iter().map(|t| t.watch_local_addrs()));
 <a href=#333 id=333 data-nosnippet>333</a>        users.or(relays).map(|(users, relays)| {
