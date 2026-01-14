@@ -4,8 +4,8 @@ use clap::Parser;
 use data_encoding::HEXLOWER;
 use iroh::{
     EndpointId, SecretKey,
-    discovery::Discovery,
     endpoint::{RecvStream, SendStream, ZeroRttStatus},
+    endpoint_id_resolution::EndpointIdResolution,
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::StreamExt;
@@ -71,11 +71,11 @@ async fn connect(args: Args) -> Result<()> {
         .await?;
     // ensure we have resolved the remote_id before connecting
     // so we get a more accurate connection timing
-    let mut discovery_stream = endpoint
-        .discovery()
+    let mut eir_stream = endpoint
+        .endpoint_id_resolution()
         .resolve(remote_id)
-        .expect("discovery to be enabled");
-    let _ = discovery_stream.next().await;
+        .expect("endpoint_id_resolution to be enabled");
+    let _ = eir_stream.next().await;
 
     let t0 = Instant::now();
     for i in 0..args.rounds {

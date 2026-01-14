@@ -22,7 +22,7 @@ mod tests {
     };
 
     use iroh::{
-        RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
+        RelayUrl, SecretKey, dns::DnsResolver, endpoint_id_resolution::pkarr::PkarrRelayClient,
         endpoint_info::EndpointInfo,
     };
     use n0_error::{Result, StdResultExt};

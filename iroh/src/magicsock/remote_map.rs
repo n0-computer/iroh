@@ -24,7 +24,7 @@ use super::{
     DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
 };
-use crate::discovery::ConcurrentDiscovery;
+use crate::endpoint_id_resolution::ConcurrentEndpointIdResolution;
 
 mod remote_state;
 
@@ -57,7 +57,7 @@ pub(crate) struct RemoteMap {
     metrics: Arc<MagicsockMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    discovery: ConcurrentDiscovery,
+    eir: ConcurrentEndpointIdResolution,
     shutdown_token: CancellationToken,
 
     /// The state kept for spawning new tasks for remote state actors and cleaning them up.
@@ -88,7 +88,7 @@ impl RemoteMap {
         local_endpoint_id: EndpointId,
         metrics: Arc<MagicsockMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        discovery: ConcurrentDiscovery,
+        endpoint_id_resolution: ConcurrentEndpointIdResolution,
         shutdown_token: CancellationToken,
     ) -> Self {
         Self {
@@ -97,7 +97,7 @@ impl RemoteMap {
             local_endpoint_id,
             metrics,
             local_direct_addrs,
-            discovery,
+            eir: endpoint_id_resolution,
             shutdown_token,
             state: Default::default(),
         }
@@ -235,7 +235,7 @@ impl RemoteMap {
             self.local_direct_addrs.clone(),
             self.relay_mapped_addrs.clone(),
             self.metrics.clone(),
-            self.discovery.clone(),
+            self.eir.clone(),
         )
         .start(initial_msgs, tasks, self.shutdown_token.clone());
         if let Some(waker) = poll_cleanup_waker.take() {
@@ -265,10 +265,10 @@ pub enum Source {
     Relay,
     /// Application layer added the address directly.
     App,
-    /// The address was discovered by a discovery service.
+    /// The address was discovered by a endpoint ID resolution service.
     #[strum(serialize = "{name}")]
-    Discovery {
-        /// The name of the discovery service that discovered the address.
+    EndpointIdResolution {
+        /// The name of the EIR service that discovered the address.
         name: String,
     },
     /// Application layer with a specific name added the endpoint directly.

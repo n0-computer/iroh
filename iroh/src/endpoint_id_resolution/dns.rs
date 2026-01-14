@@ -5,11 +5,11 @@ use iroh_relay::dns::DnsResolver;
 pub use iroh_relay::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
 
-use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use super::{EndpointIdResolutionError, IntoEndpointIdResolution, IntoEndpointIdResolutionError};
 use crate::{
     Endpoint,
-    discovery::{Discovery, DiscoveryItem},
     endpoint::force_staging_infra,
+    endpoint_id_resolution::{EndpointIdResolution, EndpointIdResolutionItem},
 };
 
 pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
@@ -23,7 +23,7 @@ pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 ///
 /// * `_iroh`: is the record name
 /// * `<z32-endpoint-id>` is the [`EndpointId`] encoded in [`z-base-32`] format
-/// * `<origin-domain>` is the endpoint origin domain as set in [`DnsDiscovery::builder`].
+/// * `<origin-domain>` is the endpoint origin domain as set in [`DnsEndpointIdResolution::builder`].
 ///
 /// Each TXT record returned from the query is expected to contain a string in the format `<name>=<value>`.
 /// If a TXT record contains multiple character strings, they are concatenated first.
@@ -36,40 +36,40 @@ pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 /// [`z-base-32`]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 /// [`Endpoint`]: crate::Endpoint
 #[derive(Debug)]
-pub struct DnsDiscovery {
+pub struct DnsEndpointIdResolution {
     origin_domain: String,
     dns_resolver: DnsResolver,
 }
 
-/// Builder for [`DnsDiscovery`].
+/// Builder for [`DnsEndpointIdResolution`].
 ///
-/// See [`DnsDiscovery::builder`].
+/// See [`DnsEndpointIdResolution::builder`].
 #[derive(Debug)]
-pub struct DnsDiscoveryBuilder {
+pub struct DnsEndpointIdResolutionBuilder {
     origin_domain: String,
     dns_resolver: Option<DnsResolver>,
 }
 
-impl DnsDiscoveryBuilder {
+impl DnsEndpointIdResolutionBuilder {
     /// Sets the DNS resolver to use.
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);
         self
     }
 
-    /// Builds a [`DnsDiscovery`] with the passed [`DnsResolver`].
-    pub fn build(self) -> DnsDiscovery {
-        DnsDiscovery {
+    /// Builds a [`DnsEndpointIdResolution`] with the passed [`DnsResolver`].
+    pub fn build(self) -> DnsEndpointIdResolution {
+        DnsEndpointIdResolution {
             dns_resolver: self.dns_resolver.unwrap_or_default(),
             origin_domain: self.origin_domain,
         }
     }
 }
 
-impl DnsDiscovery {
-    /// Creates a [`DnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
-    pub fn builder(origin_domain: String) -> DnsDiscoveryBuilder {
-        DnsDiscoveryBuilder {
+impl DnsEndpointIdResolution {
+    /// Creates a [`DnsEndpointIdResolutionBuilder`] that implements [`IntoEndpointIdResolution`].
+    pub fn builder(origin_domain: String) -> DnsEndpointIdResolutionBuilder {
+        DnsEndpointIdResolutionBuilder {
             origin_domain,
             dns_resolver: None,
         }
@@ -82,9 +82,9 @@ impl DnsDiscovery {
     /// # Usage during tests
     ///
     /// For testing it is possible to use the [`N0_DNS_ENDPOINT_ORIGIN_STAGING`] domain
-    /// with [`DnsDiscovery::builder`].  This would then use a hosted staging discovery
+    /// with [`DnsEndpointIdResolution::builder`].  This would then use a hosted staging discovery
     /// service for testing purposes.
-    pub fn n0_dns() -> DnsDiscoveryBuilder {
+    pub fn n0_dns() -> DnsEndpointIdResolutionBuilder {
         if force_staging_infra() {
             Self::builder(N0_DNS_ENDPOINT_ORIGIN_STAGING.to_string())
         } else {
@@ -93,8 +93,11 @@ impl DnsDiscovery {
     }
 }
 
-impl IntoDiscovery for DnsDiscoveryBuilder {
-    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+impl IntoEndpointIdResolution for DnsEndpointIdResolutionBuilder {
+    fn into_endpoint_id_resolution(
+        mut self,
+        endpoint: &Endpoint,
+    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError> {
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver().clone());
         }
@@ -102,19 +105,19 @@ impl IntoDiscovery for DnsDiscoveryBuilder {
     }
 }
 
-impl Discovery for DnsDiscovery {
+impl EndpointIdResolution for DnsEndpointIdResolution {
     fn resolve(
         &self,
         endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
         let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let endpoint_info = resolver
                 .lookup_endpoint_by_id_staggered(&endpoint_id, &origin_domain, DNS_STAGGERING_MS)
                 .await
-                .map_err(|e| DiscoveryError::from_err_any("dns", e))?;
-            Ok(DiscoveryItem::new(endpoint_info, "dns", None))
+                .map_err(|e| EndpointIdResolutionError::from_err_any("dns", e))?;
+            Ok(EndpointIdResolutionItem::new(endpoint_info, "dns", None))
         };
         let stream = n0_future::stream::once_future(fut);
         Some(Box::pin(stream))

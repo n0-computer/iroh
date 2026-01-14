@@ -11,12 +11,12 @@ use indicatif::HumanBytes;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     Watcher,
-    discovery::{
-        dns::DnsDiscovery,
-        pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
-    },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{BindOpts, ConnectionError, PathInfoList},
+    endpoint_id_resolution::{
+        dns::DnsEndpointIdResolution,
+        pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
+    },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::task::AbortOnDropHandle;
@@ -43,7 +43,7 @@ const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 ///
 /// --dev needs the `test-utils` feature
 ///
-/// --mdns needs the `discovery-local-network` feature
+/// --mdns needs the `mdns` feature
 ///
 /// To emit qlog files, enable the `qlog` feature and set the QLOGDIR
 /// environment variable to the path where qlog files should be written to.
@@ -116,9 +116,9 @@ struct EndpointArgs {
     /// Disable relays completely.
     #[clap(long, conflicts_with = "relay_url")]
     no_relay: bool,
-    /// Disable discovery completely.
+    /// Disable EIR completely.
     #[clap(long, conflicts_with_all = ["pkarr_relay_url", "no_pkarr_publish", "dns_origin_domain", "no_dns_resolve"])]
-    no_discovery: bool,
+    no_eir: bool,
     /// If set no direct connections will be established.
     #[clap(long)]
     relay_only: bool,
@@ -138,7 +138,7 @@ struct EndpointArgs {
     #[clap(long)]
     no_dns_resolve: bool,
     #[clap(long)]
-    /// Enable mDNS discovery.
+    /// Enable mDNS EIR.
     mdns: bool,
     /// Set the default IPv4 bind address.
     #[clap(long)]
@@ -259,19 +259,19 @@ impl EndpointArgs {
             }
         }
 
-        if !self.no_discovery {
+        if !self.no_eir {
             if !self.no_pkarr_publish {
                 let url = self
                     .pkarr_relay_url
                     .unwrap_or_else(|| self.env.pkarr_relay_url());
-                builder = builder.discovery(PkarrPublisher::builder(url));
+                builder = builder.endpoint_id_resolution(PkarrPublisher::builder(url));
             }
 
             if !self.no_dns_resolve {
                 let domain = self
                     .dns_origin_domain
                     .unwrap_or_else(|| self.env.dns_origin_domain());
-                builder = builder.discovery(DnsDiscovery::builder(domain));
+                builder = builder.endpoint_id_resolution(DnsEndpointIdResolution::builder(domain));
             }
         }
 
@@ -321,19 +321,17 @@ impl EndpointArgs {
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
         if self.mdns {
-            #[cfg(feature = "discovery-local-network")]
+            #[cfg(feature = "mdns")]
             {
-                use iroh::discovery::mdns::MdnsDiscovery;
+                use iroh::endpoint_id_resolution::mdns::MdnsEndpointIdResolution;
 
                 endpoint
-                    .discovery()
-                    .add(MdnsDiscovery::builder().build(endpoint.id())?);
+                    .endpoint_id_resolution()
+                    .add(MdnsEndpointIdResolution::builder().build(endpoint.id())?);
             }
-            #[cfg(not(feature = "discovery-local-network"))]
+            #[cfg(not(feature = "mdns"))]
             {
-                n0_error::bail_any!(
-                    "Must have the `discovery-local-network` enabled when using the `--mdns` flag"
-                );
+                n0_error::bail_any!("Must have the `mdns` enabled when using the `--mdns` flag");
             }
         }
 

@@ -31,14 +31,17 @@ pub use super::magicsock::{
     BindError, DirectAddr, DirectAddrType, PathInfo,
     remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
 };
-#[cfg(wasm_browser)]
-use crate::discovery::pkarr::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
+#[cfg(wasm_browser)]
+use crate::endpoint_id_resolution::pkarr::PkarrResolver;
 use crate::{
     NetReport,
-    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
     endpoint::presets::Preset,
+    endpoint_id_resolution::{
+        ConcurrentEndpointIdResolution, DynIntoEndpointIdResolution, EndpointIdResolutionError,
+        IntoEndpointIdResolution, UserData,
+    },
     magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -94,8 +97,8 @@ pub struct Builder {
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: QuicTransportConfig,
     keylog: bool,
-    discovery: Vec<Box<dyn DynIntoDiscovery>>,
-    discovery_user_data: Option<UserData>,
+    endpoint_id_resolution: Vec<Box<dyn DynIntoEndpointIdResolution>>,
+    endpoint_id_resolution_user_data: Option<UserData>,
     proxy_url: Option<Url>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
@@ -143,7 +146,7 @@ impl Builder {
         self
     }
 
-    /// Creates an empty builder with no discovery services.
+    /// Creates an empty builder with no endpointID resolution  services.
     pub fn empty(relay_mode: RelayMode) -> Self {
         let mut transports = vec![
             #[cfg(not(wasm_browser))]
@@ -159,8 +162,8 @@ impl Builder {
             alpn_protocols: Default::default(),
             transport_config: QuicTransportConfig::default(),
             keylog: Default::default(),
-            discovery: Default::default(),
-            discovery_user_data: Default::default(),
+            endpoint_id_resolution: Default::default(),
+            endpoint_id_resolution_user_data: Default::default(),
             proxy_url: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
@@ -196,7 +199,7 @@ impl Builder {
         let msock_opts = magicsock::Options {
             transports: self.transports,
             secret_key,
-            discovery_user_data: self.discovery_user_data,
+            endpoint_id_resolution_user_data: self.endpoint_id_resolution_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -216,10 +219,10 @@ impl Builder {
             static_config: Arc::new(static_config),
         };
 
-        // Add discovery mechanisms
-        for create_service in self.discovery {
-            let service = create_service.into_discovery(&ep)?;
-            ep.discovery().add_boxed(service);
+        // Add EIR mechanisms
+        for create_service in self.endpoint_id_resolution {
+            let service = create_service.into_eir_service(&ep)?;
+            ep.endpoint_id_resolution().add_boxed(service);
         }
 
         Ok(ep)
@@ -486,47 +489,51 @@ impl Builder {
         self
     }
 
-    /// Removes all discovery services from the builder.
+    /// Removes all EIR services from the builder.
     ///
-    /// If no discovery service is set, connecting to an endpoint without providing its
+    /// If no EIR service is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
-    /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn clear_discovery(mut self) -> Self {
-        self.discovery.clear();
+    /// See the documentation of the [`crate::endpoint_id_resolution::EndpointIdResolution`] trait for details.
+    pub fn clear_endpoint_id_resolution(mut self) -> Self {
+        self.endpoint_id_resolution.clear();
         self
     }
 
-    /// Adds an additional discovery mechanism for this endpoint.
+    /// Adds an additional EIR mechanism for this endpoint.
     ///
-    /// Once the endpoint is created the provided [`IntoDiscovery::into_discovery`] will be
-    /// called. This allows discovery services to finalize their configuration by e.g. using
+    /// Once the endpoint is created the provided [`IntoEndpointIdResolution::into_endpoint_id_resolution`] will be
+    /// called. This allows EIR services to finalize their configuration by e.g. using
     /// the secret key from the endpoint which can be needed to sign published information.
     ///
-    /// This method can be called multiple times and all the discovery services passed in
+    /// This method can be called multiple times and all the EIR services passed in
     /// will be combined using an internal instance of the
-    /// [`crate::discovery::ConcurrentDiscovery`]. To clear all discovery services, use
-    /// [`Self::clear_discovery`].
+    /// [`crate::endpoint_id_resolution::ConcurrentEndpointIdResolution`]. To clear all EIR services, use
+    /// [`Self::clear_endpoint_id_resolution`].
     ///
-    /// If no discovery service is set, connecting to an endpoint without providing its
+    /// If no EIR service is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
-    /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
-        self.discovery.push(Box::new(discovery));
+    /// See the documentation of the [`crate::endpoint_id_resolution::EndpointIdResolution`] trait for details.
+    pub fn endpoint_id_resolution(
+        mut self,
+        endpoint_id_resolution: impl IntoEndpointIdResolution,
+    ) -> Self {
+        self.endpoint_id_resolution
+            .push(Box::new(endpoint_id_resolution));
         self
     }
 
-    /// Sets the initial user-defined data to be published in discovery services for this node.
+    /// Sets the initial user-defined data to be published in EIR services for this node.
     ///
-    /// When using discovery services, this string of [`UserData`] will be published together
+    /// When using EIR services, this string of [`UserData`] will be published together
     /// with the endpoint's addresses and relay URL. When other endpoints discover this endpoint,
     /// they retrieve the [`UserData`] in addition to the addressing info.
     ///
     /// Iroh itself does not interpret the user-defined data in any way, it is purely left
     /// for applications to parse and use.
-    pub fn user_data_for_discovery(mut self, user_data: UserData) -> Self {
-        self.discovery_user_data = Some(user_data);
+    pub fn user_data_for_endpoint_id_resolution(mut self, user_data: UserData) -> Self {
+        self.endpoint_id_resolution_user_data = Some(user_data);
         self
     }
 
@@ -551,7 +558,7 @@ impl Builder {
     /// Optionally sets a custom DNS resolver to use for this endpoint.
     ///
     /// The DNS resolver is used to resolve relay hostnames, and endpoint addresses if
-    /// [`crate::discovery::dns::DnsDiscovery`] is configured.
+    /// [`crate::endpoint_id_resolution::dns::DnsEndpointIdResolution`] is configured.
     ///
     /// By default, a new DNS resolver is created which is configured to use the
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
@@ -689,7 +696,7 @@ pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: DiscoveryError },
+    NoAddress { source: EndpointIdResolutionError },
     #[error("Unable to connect to remote")]
     Quinn {
         #[error(std_err)]
@@ -787,7 +794,7 @@ impl Endpoint {
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`EndpointAddr`] it
     /// may still be possible a connection can be established.  This depends on which, if any,
-    /// [`crate::discovery::Discovery`] services were configured using [`Builder::discovery`].  The discovery
+    /// [`crate::endpoint_id_resolution::EndpointIdResolution`] services were configured using [`Builder::endpoint_id_resolution`].  The EIR
     /// service will also be used if the remote endpoint is not reachable on the provided direct
     /// addresses and there is no [`RelayUrl`].
     ///
@@ -1035,8 +1042,8 @@ impl Endpoint {
     /// any calls to `online` as long as possible, or avoid calling `online`
     /// entirely.
     ///
-    /// The online method does not interact with [`crate::discovery::Discovery`]
-    /// services, which means that any discovery service that relies on a WAN
+    /// The online method does not interact with [`crate::endpoint_id_resolution::EndpointIdResolution`]
+    /// services, which means that any EIR service that relies on a WAN
     /// connection is independent of the endpoint's online status.
     ///
     /// # Examples
@@ -1118,11 +1125,11 @@ impl Endpoint {
         self.msock.dns_resolver()
     }
 
-    /// Returns the discovery mechanism, if configured.
+    /// Returns the EIR mechanism, if configured.
     ///
-    /// See [`Builder::discovery`].
-    pub fn discovery(&self) -> &ConcurrentDiscovery {
-        self.msock.discovery()
+    /// See [`Builder::endpoint_id_resolution`].
+    pub fn endpoint_id_resolution(&self) -> &ConcurrentEndpointIdResolution {
+        self.msock.endpoint_id_resolution()
     }
 
     /// Returns metrics collected for this endpoint.
@@ -1274,15 +1281,16 @@ impl Endpoint {
 
     // # Methods to update internal state.
 
-    /// Sets the initial user-defined data to be published in discovery services for this endpoint.
+    /// Sets the initial user-defined data to be published in EIR services for this endpoint.
     ///
     /// If the user-defined data passed to this function is different to the previous one,
-    /// the endpoint will republish its endpoint info to the configured discovery services.
+    /// the endpoint will republish its endpoint info to the configured EIR services.
     ///
-    /// See also [`Builder::user_data_for_discovery`] for setting an initial value when
+    /// See also [`Builder::user_data_for_endpoint_id_resolution`] for setting an initial value when
     /// building the endpoint.
-    pub fn set_user_data_for_discovery(&self, user_data: Option<UserData>) {
-        self.msock.set_user_data_for_discovery(user_data);
+    pub fn set_user_data_for_endpoint_id_resolution(&self, user_data: Option<UserData>) {
+        self.msock
+            .set_user_data_for_endpoint_id_resolution(user_data);
     }
 
     // # Methods for terminating the endpoint.
@@ -1534,10 +1542,10 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMap, RelayMode,
-        discovery::static_provider::StaticProvider,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectOptions, Connection, ConnectionError,
         },
+        endpoint_id_resolution::static_provider::StaticProvider,
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
@@ -1823,7 +1831,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_direct_only() -> Result {
         // Connect two endpoints on the same network, without a relay server, without
-        // discovery.
+        // EIR.
         let ep1 = {
             let span = info_span!("server");
             let _guard = span.enter();
@@ -1884,7 +1892,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_relay_only_becomes_direct() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
-        // discovery.  Wait until there is a direct connection.
+        // EIR.  Wait until there is a direct connection.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
         let qlog = Arc::new(QlogFileGroup::from_env("two_relay_only_becomes_direct"));
@@ -1985,7 +1993,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_relay_only_no_ip() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
-        // discovery.
+        // EIR.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
 
@@ -2082,7 +2090,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_direct_add_relay() -> Result {
         // Connect two endpoints on the same network, without relay server and without
-        // discovery.  Add a relay connection later.
+        // EIR.  Add a relay connection later.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
 
@@ -2307,13 +2315,13 @@ mod tests {
     async fn endpoint_bidi_send_recv() -> Result {
         let disco = StaticProvider::new();
         let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(disco.clone())
+            .endpoint_id_resolution(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
 
         let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(disco.clone())
+            .endpoint_id_resolution(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2669,9 +2677,9 @@ mod tests {
             .map(|(_, addr)| addr.clone())
             .collect::<Vec<_>>();
         let ids = addrs.iter().map(|addr| addr.id).collect::<Vec<_>>();
-        let discovery = StaticProvider::from_endpoint_info(addrs);
+        let eir = StaticProvider::from_endpoint_info(addrs);
         let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(discovery)
+            .endpoint_id_resolution(eir)
             .bind()
             .await
             .anyerr()?;

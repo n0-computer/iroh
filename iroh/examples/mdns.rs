@@ -1,13 +1,13 @@
-//! A small example showing how to get a list of endpoints that were discovered via [`iroh::discovery::MdnsDiscovery`]. MdnsDiscovery uses [`swarm-discovery`](https://crates.io/crates/swarm-discovery), an opinionated implementation of mDNS to discover other endpoints in the local network.
+//! A small example showing how to get a list of endpoints that were discovered via [`iroh::endpoint_id_resolution::mdns::MdnsEndpointIdResolution`]. MdnsEndpointIdResolution uses [`swarm-discovery`](https://crates.io/crates/swarm-discovery), an opinionated implementation of mDNS to discover other endpoints in the local network.
 //!
 //! This example creates an iroh endpoint, a few additional iroh endpoints to discover, waits a few seconds, and reports all of the iroh EndpointIds (also called `[iroh::key::PublicKey]`s) it has discovered.
 //!
-//! This is an async, non-determinate process, so the number of EndpointIDs discovered each time may be different. If you have other iroh endpoints or iroh endpoints with [`MdnsDiscovery`] enabled, it may discover those endpoints as well.
+//! This is an async, non-determinate process, so the number of EndpointIDs discovered each time may be different. If you have other iroh endpoints or iroh endpoints with [`MdnsEndpointIdResolution`] enabled, it may discover those endpoints as well.
 use std::time::Duration;
 
 use iroh::{
     Endpoint, EndpointId,
-    discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
+    endpoint_id_resolution::mdns::{DiscoveryEvent, MdnsEndpointIdResolution},
     endpoint_info::UserData,
 };
 use n0_error::Result;
@@ -22,18 +22,18 @@ async fn main() -> Result<()> {
     let ep = Endpoint::bind().await?;
     let endpoint_id = ep.id();
 
-    let mdns = MdnsDiscovery::builder().build(endpoint_id)?;
-    ep.discovery().add(mdns.clone());
+    let mdns = MdnsEndpointIdResolution::builder().build(endpoint_id)?;
+    ep.endpoint_id_resolution().add(mdns.clone());
 
     println!("Created endpoint {}", endpoint_id.fmt_short());
 
     let user_data = UserData::try_from(String::from("local-endpoints-example"))?;
 
     let ud = user_data.clone();
-    let discovery_stream_task = tokio::spawn(async move {
-        let mut discovery_stream = mdns.subscribe().await;
+    let eir_stream_task = tokio::spawn(async move {
+        let mut eir_stream = mdns.subscribe().await;
         let mut discovered_endpoints: Vec<EndpointId> = vec![];
-        while let Some(event) = discovery_stream.next().await {
+        while let Some(event) = eir_stream.next().await {
             match event {
                 DiscoveryEvent::Discovered { endpoint_info, .. } => {
                     // if there is no user data, or the user data
@@ -69,8 +69,9 @@ async fn main() -> Result<()> {
         let ud = user_data.clone();
         set.spawn(async move {
             let ep = Endpoint::bind().await?;
-            ep.discovery().add(MdnsDiscovery::builder().build(ep.id())?);
-            ep.set_user_data_for_discovery(Some(ud));
+            ep.endpoint_id_resolution()
+                .add(MdnsEndpointIdResolution::builder().build(ep.id())?);
+            ep.set_user_data_for_endpoint_id_resolution(Some(ud));
             tokio::time::sleep(Duration::from_secs(3)).await;
             ep.close().await;
             n0_error::Ok(())
@@ -83,6 +84,6 @@ async fn main() -> Result<()> {
         }
     });
     ep.close().await;
-    discovery_stream_task.abort();
+    eir_stream_task.abort();
     Ok(())
 }

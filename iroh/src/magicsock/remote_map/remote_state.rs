@@ -29,8 +29,11 @@ use self::path_state::RemotePathState;
 pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
 use super::Source;
 use crate::{
-    discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
     endpoint::{DirectAddr, quic::PathStats},
+    endpoint_id_resolution::{
+        ConcurrentEndpointIdResolution, EndpointIdResolution, EndpointIdResolutionError,
+        EndpointIdResolutionItem,
+    },
     magicsock::{
         MagicsockMetrics,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
@@ -100,16 +103,16 @@ type AddrEvents = MergeUnbounded<
     >,
 >;
 
-/// Either a stream of incoming results from [`ConcurrentDiscovery::resolve`] or infinitely pending.
+/// Either a stream of incoming results from [`ConcurrentEndpointIdResolution::resolve`] or infinitely pending.
 ///
-/// Set to [`Either::Left`] with an always-pending stream while discovery is not running, and to
-/// [`Either::Right`] while discovery is running.
+/// Set to [`Either::Left`] with an always-pending stream while endpoint ID resolution is not running, and to
+/// [`Either::Right`] while EIR is running.
 ///
-/// The stream returned from [`ConcurrentDiscovery::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
+/// The stream returned from [`ConcurrentEndpointIdResolution::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
 /// wrapper to make it `Sync` so that the [`RemoteStateActor::run`] future stays `Send`.
-type DiscoveryStream = Either<
-    n0_future::stream::Pending<Result<DiscoveryItem, DiscoveryError>>,
-    SyncStream<BoxStream<Result<DiscoveryItem, DiscoveryError>>>,
+type EndpointIdResolutionStream = Either<
+    n0_future::stream::Pending<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>,
+    SyncStream<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>>,
 >;
 
 /// List of addrs and path ids for open paths in a connection.
@@ -135,8 +138,8 @@ pub(super) struct RemoteStateActor {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    /// Discovery service, cloned from the magicsock.
-    discovery: ConcurrentDiscovery,
+    /// Endpoint ID resolution service, cloned from the magicsock.
+    eir: ConcurrentEndpointIdResolution,
 
     // Internal state - Quinn Connections we are managing.
     //
@@ -153,7 +156,7 @@ pub(super) struct RemoteStateActor {
     //
     /// All possible paths we are aware of.
     ///
-    /// These paths might be entirely impossible to use, since they are added by discovery
+    /// These paths might be entirely impossible to use, since they are added by EIR
     /// mechanisms.  The are only potentially usable.
     paths: RemotePathState,
     /// Information about the last holepunching attempt.
@@ -177,10 +180,10 @@ pub(super) struct RemoteStateActor {
     /// They failed to open because we did not have enough CIDs issued by the remote.
     pending_open_paths: VecDeque<transports::Addr>,
 
-    // Internal state - Discovery
+    // Internal state - endpoint ID resolution
     //
-    /// Stream of discovery results, or always pending if discovery is not running.
-    discovery_stream: DiscoveryStream,
+    /// Stream of EIR results, or always pending if EIR is not running.
+    eir_stream: EndpointIdResolutionStream,
 }
 
 impl RemoteStateActor {
@@ -191,7 +194,7 @@ impl RemoteStateActor {
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
-        discovery: ConcurrentDiscovery,
+        endpoint_id_resolution: ConcurrentEndpointIdResolution,
     ) -> Self {
         Self {
             endpoint_id,
@@ -199,7 +202,7 @@ impl RemoteStateActor {
             metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
-            discovery,
+            eir: endpoint_id_resolution,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
             path_events: Default::default(),
@@ -210,7 +213,7 @@ impl RemoteStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            discovery_stream: Either::Left(n0_future::stream::pending()),
+            eir_stream: Either::Left(n0_future::stream::pending()),
         }
     }
 
@@ -324,8 +327,8 @@ impl RemoteStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching();
                 }
-                item = self.discovery_stream.next() => {
-                    self.handle_discovery_item(item);
+                item = self.eir_stream.next() => {
+                    self.handle_endpoint_id_resolution_item(item);
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -580,13 +583,13 @@ impl RemoteStateActor {
     fn handle_msg_resolve_remote(
         &mut self,
         addrs: BTreeSet<TransportAddr>,
-        tx: oneshot::Sender<Result<(), DiscoveryError>>,
+        tx: oneshot::Sender<Result<(), EndpointIdResolutionError>>,
     ) {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
         self.paths.resolve_remote(tx);
-        // Start discovery if we have no selected path.
-        self.trigger_discovery();
+        // Start EIR if we have no selected path.
+        self.trigger_endpoint_id_resolution();
     }
 
     fn handle_connection_close(&mut self, conn_id: ConnId) {
@@ -599,22 +602,28 @@ impl RemoteStateActor {
         }
     }
 
-    fn handle_discovery_item(&mut self, item: Option<Result<DiscoveryItem, DiscoveryError>>) {
+    fn handle_endpoint_id_resolution_item(
+        &mut self,
+        item: Option<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>,
+    ) {
         match item {
             None => {
-                self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.paths.discovery_finished(Ok(()));
+                self.eir_stream = Either::Left(n0_future::stream::pending());
+                self.paths.endpoint_id_resolution_finished(Ok(()));
             }
             Some(Err(err)) => {
-                warn!("Discovery failed: {err:#}");
-                self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.paths.discovery_finished(Err(err));
+                warn!("Endpoint ID Resolution failed: {err:#}");
+                self.eir_stream = Either::Left(n0_future::stream::pending());
+                self.paths.endpoint_id_resolution_finished(Err(err));
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
-                    warn!(?item, "Discovery emitted item for wrong remote endpoint");
+                    warn!(
+                        ?item,
+                        "Endpoint ID resolution emitted item for wrong remote endpoint"
+                    );
                 } else {
-                    let source = Source::Discovery {
+                    let source = Source::EndpointIdResolution {
                         name: item.provenance().to_string(),
                     };
                     let addrs =
@@ -625,16 +634,16 @@ impl RemoteStateActor {
         }
     }
 
-    /// Triggers discovery for the remote endpoint, if needed.
+    /// Triggers EIR for the remote endpoint, if needed.
     ///
-    /// Does not start discovery if we have a selected path or if discovery is currently running.
-    fn trigger_discovery(&mut self) {
-        if self.selected_path.get().is_some() || matches!(self.discovery_stream, Either::Right(_)) {
+    /// Does not start EIR if we have a selected path or if EIR is currently running.
+    fn trigger_endpoint_id_resolution(&mut self) {
+        if self.selected_path.get().is_some() || matches!(self.eir_stream, Either::Right(_)) {
             return;
         }
-        match self.discovery.resolve(self.endpoint_id) {
-            Some(stream) => self.discovery_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.discovery_finished(Ok(())),
+        match self.eir.resolve(self.endpoint_id) {
+            Some(stream) => self.eir_stream = Either::Right(SyncStream::new(stream)),
+            None => self.paths.endpoint_id_resolution_finished(Ok(())),
         }
     }
 
@@ -1212,15 +1221,15 @@ pub(crate) enum RemoteStateMessage {
     /// Asks if there is any possible path that could be used.
     ///
     /// This adds the provided transport addresses to the list of potential paths for this remote
-    /// and starts discovery if needed.
+    /// and starts EIR if needed.
     ///
     /// Returns `Ok` immediately if the provided address list is non-empy or we have are other known paths.
-    /// Otherwise returns `Ok` once discovery produces a result, or the discovery error if discovery fails
+    /// Otherwise returns `Ok` once EIR produces a result, or the EIR error if EIR fails
     /// or produces no results,
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,
-        oneshot::Sender<Result<(), DiscoveryError>>,
+        oneshot::Sender<Result<(), EndpointIdResolutionError>>,
     ),
     /// Returns information about the remote.
     ///

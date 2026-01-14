@@ -304,7 +304,7 @@ mod tests {
     use hickory_server::proto::rr::RecordType;
     use iroh::{
         RelayUrl, SecretKey,
-        discovery::{EndpointInfo, pkarr::PkarrRelayClient},
+        endpoint_id_resolution::{EndpointInfo, pkarr::PkarrRelayClient},
         endpoint_info::EndpointIdExt,
     };
     use n0_error::StdResultExt;

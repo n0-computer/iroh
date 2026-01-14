@@ -56,7 +56,7 @@ use super::{
     probes::{Probe, ProbePlan},
 };
 #[cfg(not(wasm_browser))]
-use crate::discovery::dns::DNS_STAGGERING_MS;
+use crate::endpoint_id_resolution::dns::DNS_STAGGERING_MS;
 use crate::{
     net_report::defaults::timeouts::{
         CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,

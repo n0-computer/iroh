@@ -1,4 +1,4 @@
-//! A discovery service which publishes and resolves endpoint information using a [pkarr] relay.
+//! An endpoint ID resolution service which publishes and resolves endpoint information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -19,20 +19,20 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! For endpoint discovery in iroh the pkarr Resource Records contain the addressing information,
+//! For endpoint ID resolution in iroh the pkarr Resource Records contain the addressing information,
 //! providing endpoints which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh endpoint.
 //!
-//! There are several endpoint discovery services built on top of pkarr, which can be composed
+//! There are several EIR services built on top of pkarr, which can be composed
 //! to the application's needs:
 //!
 //! - [`PkarrPublisher`], which publishes to a pkarr relay server using HTTP.
 //!
 //! - [`PkarrResolver`], which resolves from a pkarr relay server using HTTP.
 //!
-//! - [`DnsDiscovery`], which resolves from a DNS server.
+//! - [`DnsEndpointIdResolution`], which resolves from a DNS server.
 //!
-//! - [`DhtDiscovery`], which resolves and publishes from both pkarr relay servers and well
+//! - [`DhtEndpointIdResolution`], which resolves and publishes from both pkarr relay servers and well
 //!   as the Mainline DHT.
 //!
 //! [pkarr]: https://pkarr.org
@@ -41,8 +41,8 @@
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
 //! [`EndpointId`]: crate::EndpointId
-//! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
-//! [`DhtDiscovery`]: dht::DhtDiscovery
+//! [`DnsEndpointIdResolution`]: crate::endpoint_id_resolution::dns::DnsEndpointIdResolution
+//! [`DhtEndpointIdResolution`]: dht::DhtEndpointIdResolution
 
 use std::sync::Arc;
 
@@ -62,17 +62,17 @@ use pkarr::{
 use tracing::{Instrument, debug, error_span, warn};
 use url::Url;
 
-use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use super::{EndpointIdResolutionError, IntoEndpointIdResolution, IntoEndpointIdResolutionError};
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
     Endpoint,
-    discovery::{Discovery, DiscoveryItem, EndpointData},
     endpoint::force_staging_infra,
+    endpoint_id_resolution::{EndpointData, EndpointIdResolution, EndpointIdResolutionItem},
     util::reqwest_client_builder,
 };
 
-#[cfg(feature = "discovery-pkarr-dht")]
+#[cfg(feature = "eir-pkarr-dht")]
 pub mod dht;
 
 #[allow(missing_docs)]
@@ -107,9 +107,9 @@ pub enum PkarrError {
     Encoding { source: EncodingError },
 }
 
-impl From<PkarrError> for DiscoveryError {
+impl From<PkarrError> for EndpointIdResolutionError {
     fn from(err: PkarrError) -> Self {
-        DiscoveryError::from_err_any("pkarr", err)
+        EndpointIdResolutionError::from_err_any("pkarr", err)
     }
 }
 
@@ -117,10 +117,10 @@ impl From<PkarrError> for DiscoveryError {
 ///
 /// This server is both a pkarr relay server as well as a DNS resolver, see the [module
 /// documentation].  However it does not interact with the Mainline DHT, so is a more
-/// central service.  It is a reliable service to use for endpoint discovery.
+/// central service.  It is a reliable service to use for endpoint ID resolution.
 ///
 /// [number 0]: https://n0.computer
-/// [module documentation]: crate::discovery::pkarr
+/// [module documentation]: crate::endpoint_id_resolution::pkarr
 pub const N0_DNS_PKARR_RELAY_PROD: &str = "https://dns.iroh.link/pkarr";
 /// The testing pkarr relay run by [number 0].
 ///
@@ -215,8 +215,11 @@ impl PkarrPublisherBuilder {
     }
 }
 
-impl IntoDiscovery for PkarrPublisherBuilder {
-    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+impl IntoEndpointIdResolution for PkarrPublisherBuilder {
+    fn into_endpoint_id_resolution(
+        mut self,
+        endpoint: &Endpoint,
+    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver().clone());
@@ -226,21 +229,21 @@ impl IntoDiscovery for PkarrPublisherBuilder {
     }
 }
 
-/// Publisher of endpoint discovery information to a [pkarr] relay.
+/// Publisher of endpoint ID resolution information to a [pkarr] relay.
 ///
-/// This publisher uses HTTP to publish endpoint discovery information to a pkarr relay
+/// This publisher uses HTTP to publish endpoint ID resolution information to a pkarr relay
 /// server, see the [module docs] for details.
 ///
-/// This implements the [`Discovery`] trait to be used as an endpoint discovery service.  Note
-/// that it only publishes endpoint discovery information, for the corresponding resolver use
-/// the [`PkarrResolver`] together with [`ConcurrentDiscovery`].
+/// This implements the [`EndpointIdResolution`] trait to be used as an endpoint ID resolution service.  Note
+/// that it only publishes endpoint ID resolution information, for the corresponding resolver use
+/// the [`PkarrResolver`] together with [`ConcurrentEndpointIdResolution`].
 ///
 /// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
 ///
 /// [pkarr]: https://pkarr.org
-/// [module docs]: crate::discovery::pkarr
+/// [module docs]: crate::endpoint_id_resolution::pkarr
 /// [`RelayUrl`]: crate::RelayUrl
-/// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
+/// [`ConcurrentEndpointIdResolution`]: super::ConcurrentEndpointIdResolution
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
@@ -252,13 +255,13 @@ impl PkarrPublisher {
     /// Returns a [`PkarrPublisherBuilder`] that publishes endpoint info to a [pkarr] relay at `pkarr_relay`.
     ///
     /// If no further options are set, the pkarr publisher  will use [`DEFAULT_PKARR_TTL`] as the
-    /// time-to-live value for the published packets, and it will republish discovery information
+    /// time-to-live value for the published packets, and it will republish EIR information
     /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
     ///
-    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`discovery`].
+    /// [`PkarrPublisherBuilder`] implements [`IntoEndpointIdResolution`], so it can be passed to [`endpoint_id_resolution`].
     /// It will then use the endpoint's secret key to sign published packets.
     ///
-    /// [`discovery`]:  crate::endpoint::Builder::discovery
+    /// [`endpoint_id_resolution`]:  crate::endpoint::Builder::endpoint_id_resolution
     /// [pkarr]: https://pkarr.org
     pub fn builder(pkarr_relay: Url) -> PkarrPublisherBuilder {
         PkarrPublisherBuilder::new(pkarr_relay)
@@ -336,7 +339,7 @@ impl PkarrPublisher {
     }
 }
 
-impl Discovery for PkarrPublisher {
+impl EndpointIdResolution for PkarrPublisher {
     fn publish(&self, data: &EndpointData) {
         self.update_endpoint_data(data);
     }
@@ -446,8 +449,11 @@ impl PkarrResolverBuilder {
     }
 }
 
-impl IntoDiscovery for PkarrResolverBuilder {
-    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+impl IntoEndpointIdResolution for PkarrResolverBuilder {
+    fn into_endpoint_id_resolution(
+        mut self,
+        endpoint: &Endpoint,
+    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver().clone());
@@ -457,18 +463,18 @@ impl IntoDiscovery for PkarrResolverBuilder {
     }
 }
 
-/// Resolver of endpoint discovery information from a [pkarr] relay.
+/// Resolver of endpoint ID resolution information from a [pkarr] relay.
 ///
-/// The resolver uses HTTP to query endpoint discovery information from a pkarr relay server,
+/// The resolver uses HTTP to query endpoint ID resolution information from a pkarr relay server,
 /// see the [module docs] for details.
 ///
-/// This implements the [`Discovery`] trait to be used as an endpoint discovery service.  Note
-/// that it only resolves endpoint discovery information, for the corresponding publisher use
-/// the [`PkarrPublisher`] together with [`ConcurrentDiscovery`].
+/// This implements the [`EndpointIdResolution`] trait to be used as an endpoint ID resolution service.  Note
+/// that it only resolves endpoint ID resolution information, for the corresponding publisher use
+/// the [`PkarrPublisher`] together with [`ConcurrentEndpointIdResolution`].
 ///
 /// [pkarr]: https://pkarr.org
-/// [module docs]: crate::discovery::pkarr
-/// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
+/// [module docs]: crate::endpoint_id_resolution::pkarr
+/// [`ConcurrentEndpointIdResolution`]: super::ConcurrentEndpointIdResolution
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrResolver {
     pkarr_client: PkarrRelayClient,
@@ -477,7 +483,7 @@ pub struct PkarrResolver {
 impl PkarrResolver {
     /// Creates a new resolver builder using the pkarr relay server at the URL.
     ///
-    /// The builder implements [`IntoDiscovery`].
+    /// The builder implements [`IntoEndpointIdResolution`].
     pub fn builder(pkarr_relay: Url) -> PkarrResolverBuilder {
         PkarrResolverBuilder {
             pkarr_relay,
@@ -507,17 +513,17 @@ impl PkarrResolver {
     }
 }
 
-impl Discovery for PkarrResolver {
+impl EndpointIdResolution for PkarrResolver {
     fn resolve(
         &self,
         endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(endpoint_id).await?;
             let info = EndpointInfo::from_pkarr_signed_packet(&signed_packet)
-                .map_err(|err| DiscoveryError::from_err_any("pkarr", err))?;
-            let item = DiscoveryItem::new(info, "pkarr", None);
+                .map_err(|err| EndpointIdResolutionError::from_err_any("pkarr", err))?;
+            let item = EndpointIdResolutionItem::new(info, "pkarr", None);
             Ok(item)
         };
         let stream = n0_future::stream::once_future(fut);
@@ -559,7 +565,10 @@ impl PkarrRelayClient {
     }
 
     /// Resolves a [`SignedPacket`] for the given [`EndpointId`].
-    pub async fn resolve(&self, endpoint_id: EndpointId) -> Result<SignedPacket, DiscoveryError> {
+    pub async fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Result<SignedPacket, EndpointIdResolutionError> {
         // We map the error to string, as in browsers the error is !Send
         let public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
             .map_err(|err| e!(PkarrError::PublicKey, err))?;

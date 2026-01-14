@@ -68,7 +68,7 @@ rustls-platform-verifier = "0.5.3"
 # metrics
 iroh-metrics = { version = "0.38", default-features = false }
 
-# local-swarm-discovery
+# mdns
 swarm-discovery = { version = "0.4", optional = true }
 futures-util = "0.3"
 
@@ -147,8 +147,8 @@ cfg_aliases = { version = "0.2.1" }
 default = ["metrics", "fast-apple-datapath"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
-discovery-local-network = ["dep:swarm-discovery"]
-discovery-pkarr-dht = ["pkarr/dht"]
+mdns = ["dep:swarm-discovery"]
+eir-pkarr-dht = ["pkarr/dht"]
 qlog = ["quinn/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["quinn/fast-apple-datapath"]
@@ -178,12 +178,12 @@ name = "connect-unreliable"
 required-features = []
 
 [[example]]
-name = "dht_discovery"
-required-features = ["discovery-pkarr-dht"]
+name = "dht_eir"
+required-features = ["eir-pkarr-dht"]
 
 [[example]]
-name = "locally-discovered-nodes"
-required-features = ["discovery-local-network"]
+name = "mdns"
+required-features = ["mdns"]
 
 [[example]]
 name = "search"

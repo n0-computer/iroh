@@ -1,4 +1,4 @@
-//! Endpoint address discovery.
+//! Endpoint ID to address resolution .
 //!
 //! To connect to an iroh endpoint a [`EndpointAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`EndpointId`].
@@ -9,23 +9,23 @@
 //! For this to work however, the endpoint has to get the addressing  information by
 //! other means.
 //!
-//! Endpoint discovery is an automated system for an [`Endpoint`] to retrieve this addressing
+//! Endpoint ID resolution is an automated system for an [`Endpoint`] to retrieve this addressing
 //! information.  Each iroh endpoint will automatically publish their own addressing
 //! information.  Usually this means publishing which [`RelayUrl`] to use for their
 //! [`EndpointId`], but they could also publish their direct addresses.
 //!
-//! The [`Discovery`] trait is used to define endpoint discovery.  This allows multiple
+//! The [`EndpointIdResolution`] trait is used to define endpoint ID resolution.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
-//! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
-//! The [`Builder::discovery`] method is used to add a discovery mechanism to an
+//! Each [`Endpoint`] can use the endpoint ID resolution mechanisms most suitable to the application.
+//! The [`Builder::endpoint_id_resolution`] method is used to add an endpoint ID resolution mechanism to an
 //! [`Endpoint`].
 //!
-//! Some generally useful discovery implementations are provided:
+//! Some generally useful EIR implementations are provided:
 //!
 //! - [`StaticProvider`] which allows application to add and remove out-of-band addressing
 //!   information.
 //!
-//! - The [`DnsDiscovery`] which performs lookups via the standard DNS systems.  To publish
+//! - The [`DnsEndpointIdResolution`] which performs lookups via the standard DNS systems.  To publish
 //!   to this DNS server a [`PkarrPublisher`] is needed.  [Number 0] runs a public instance
 //!   of a [`PkarrPublisher`] with attached DNS server which is globally available and a
 //!   reliable default choice.
@@ -33,64 +33,64 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`MdnsDiscovery`]: mdns::MdnsDiscovery which uses the crate `swarm-discovery`, an
+//! - [`MdnsEndpointIdResolution`]: mdns::MdnsEndpointIdResolution which uses the crate `swarm-discovery`, an
 //!   opinionated mDNS implementation, to discover endpoints on the local network.
 //!
-//! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
+//! - The [`DhtEndpointIdResolution`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
 //!
-//! To use multiple discovery systems simultaneously you can call [`Builder::discovery`].
-//! This will use [`ConcurrentDiscovery`] under the hood, which performs lookups to all
-//! discovery systems at the same time.
+//! To use multiple EIR systems simultaneously you can call [`Builder::endpoint_id_resolution`].
+//! This will use [`ConcurrentEndpointIdResolution`] under the hood, which performs lookups to all
+//! EIR systems at the same time.
 //!
-//! [`Builder::discovery`] takes any type that implements [`IntoDiscovery`]. You can
-//! implement that trait on a builder struct if your discovery service needs information
-//! from the endpoint it is mounted on. After endpoint construction, your discovery service
-//! is built by calling [`IntoDiscovery::into_discovery`], passing the finished [`Endpoint`] to your
+//! [`Builder::endpoint_id_resolution`] takes any type that implements [`IntoEndpointIdResolution`]. You can
+//! implement that trait on a builder struct if your EIR service needs information
+//! from the endpoint it is mounted on. After endpoint construction, your EIR service
+//! is built by calling [`IntoEndpointIdResolution::into_endpoint_id_resolution`], passing the finished [`Endpoint`] to your
 //! builder.
 //!
-//! If your discovery service does not need any information from its endpoint, you can
-//! pass the discovery service directly to [`Builder::discovery`]: All types that
-//! implement [`Discovery`] also have a blanket implementation of [`IntoDiscovery`].
+//! If your EIR service does not need any information from its endpoint, you can
+//! pass the EIR service directly to [`Builder::endpoint_id_resolution`]: All types that
+//! implement [`EndpointIdResolution`] also have a blanket implementation of [`IntoEndpointIdResolution`].
 //!
 //! # Examples
 //!
-//! A very common setup is to enable DNS discovery, which needs to be done in two parts as a
-//! [`PkarrPublisher`] and [`DnsDiscovery`]:
+//! A very common setup is to enable DNS EIR, which needs to be done in two parts as a
+//! [`PkarrPublisher`] and [`DnsEndpointIdResolution`]:
 //!
 //! ```no_run
 //! use iroh::{
 //!     Endpoint, SecretKey,
-//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
 //!     endpoint::RelayMode,
+//!     endpoint_id_resolution::{dns::DnsEndpointIdResolution, pkarr::PkarrPublisher},
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
-//!     .discovery(PkarrPublisher::n0_dns())
-//!     .discovery(DnsDiscovery::n0_dns())
+//!     .endpoint_id_resolution(PkarrPublisher::n0_dns())
+//!     .endpoint_id_resolution(DnsEndpointIdResolution::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! To also enable [`MdnsDiscovery`] it can be added as another service.
+//! To also enable [`MdnsEndpointIdResolution`] it can be added as another service.
 //!
 //! ```no_run
-//! #[cfg(feature = "discovery-local-network")]
+//! #[cfg(feature = "mdns")]
 //! # {
 //! # use iroh::{
-//! #    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, mdns::MdnsDiscovery},
+//! #    endpoint_id_resolution::{dns::DnsEndpointIdResolution, pkarr::PkarrPublisher, mdns::MdnsEndpointIdResolution},
 //! #    endpoint::RelayMode,
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
-//!     .discovery(PkarrPublisher::n0_dns())
-//!     .discovery(DnsDiscovery::n0_dns())
-//!     .discovery(MdnsDiscovery::builder())
+//!     .endpoint_id_resolution(PkarrPublisher::n0_dns())
+//!     .endpoint_id_resolution(DnsEndpointIdResolution::n0_dns())
+//!     .endpoint_id_resolution(MdnsEndpointIdResolution::builder())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -100,14 +100,14 @@
 //!
 //! [`EndpointAddr`]: iroh_base::EndpointAddr
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`Builder::discovery`]: crate::endpoint::Builder::discovery
-//! [`DnsDiscovery`]: dns::DnsDiscovery
+//! [`Builder::endpoint_id_resolution`]: crate::endpoint::Builder::endpoint_id_resolution
+//! [`DnsEndpointIdResolution`]: dns::DnsEndpointIdResolution
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
-//! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
+//! [`DhtEndpointIdResolution`]: pkarr::dht::DhtEndpointIdResolution
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`MdnsDiscovery`]: mdns::MdnsDiscovery
+//! [`MdnsEndpointIdResolution`]: mdns::MdnsEndpointIdResolution
 //! [`StaticProvider`]: static_provider::StaticProvider
 
 use std::sync::{Arc, RwLock};
@@ -121,61 +121,71 @@ pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData}
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
-#[cfg(feature = "discovery-local-network")]
+#[cfg(feature = "mdns")]
 pub mod mdns;
 pub mod pkarr;
 pub mod static_provider;
 
-/// Trait for structs that can be converted into [`Discovery`].
+/// Trait for structs that can be converted into [`EndpointIdResolution`] systems.
 ///
-/// This trait is implemented on builders for discovery services. Any type that implements this
-/// trait can be added as a discovery service in [`Builder::discovery`].
+/// This trait is implemented on builders for EIR services. Any type that implements this
+/// trait can be added as a EIR service in [`Builder::endpoint_id_resolution`].
 ///
-/// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
+/// Any type that implements [`EndpointIdResolution`] also implements [`IntoEndpointIdResolution`].
 ///
-/// Iroh uses this trait to allow configuring the set of discovery services on the endpoint
-/// builder, while providing the discovery services access to information about the endpoint
-/// to [`IntoDiscovery::into_discovery`].
+/// Iroh uses this trait to allow configuring the set of EIR services on the endpoint
+/// builder, while providing the EIR services access to information about the endpoint
+/// to [`IntoEndpointIdResolution::into_endpoint_id_resolution`].
 ///
-/// [`Builder::discovery`]: crate::endpoint::Builder::discovery
-pub trait IntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
-    /// Turns this discovery builder into a ready-to-use discovery service.
+/// [`Builder::endpoint_id_resolution`]: crate::endpoint::Builder::endpoint_id_resolution
+pub trait IntoEndpointIdResolution: Send + Sync + std::fmt::Debug + 'static {
+    /// Turns this endpoint ID resolution builder into a ready-to-use EIR service.
     ///
     /// If an error is returned, building the endpoint will fail with this error.
-    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError>;
+    fn into_endpoint_id_resolution(
+        self,
+        endpoint: &Endpoint,
+    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError>;
 }
 
-/// Blanket no-op impl of `IntoDiscovery` for `T: Discovery`.
-impl<T: Discovery> IntoDiscovery for T {
-    fn into_discovery(self, _endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+/// Blanket no-op impl of `IntoEndpointIdResolution` for `T: EndpointIdResolution`.
+impl<T: EndpointIdResolution> IntoEndpointIdResolution for T {
+    fn into_endpoint_id_resolution(
+        self,
+        _endpoint: &Endpoint,
+    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError> {
         Ok(self)
     }
 }
 
-/// Non-public dyn-compatible version of [`IntoDiscovery`], used in [`crate::endpoint::Builder`].
-pub(crate) trait DynIntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
-    /// See [`IntoDiscovery::into_discovery`]
-    fn into_discovery(
+/// Non-public dyn-compatible version of [`IntoEndpointIdResolution`], used in [`crate::endpoint::Builder`].
+pub(crate) trait DynIntoEndpointIdResolution:
+    Send + Sync + std::fmt::Debug + 'static
+{
+    /// See [`IntoEndpointIdResolution::into_endpoint_id_resolution`]
+    fn into_eir_service(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn Discovery>, IntoDiscoveryError>;
+    ) -> Result<Box<dyn EndpointIdResolution>, IntoEndpointIdResolutionError>;
 }
 
-impl<T: IntoDiscovery> DynIntoDiscovery for T {
-    fn into_discovery(
+impl<T: IntoEndpointIdResolution> DynIntoEndpointIdResolution for T {
+    fn into_eir_service(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn Discovery>, IntoDiscoveryError> {
-        let disco: Box<dyn Discovery> = Box::new(IntoDiscovery::into_discovery(*self, endpoint)?);
+    ) -> Result<Box<dyn EndpointIdResolution>, IntoEndpointIdResolutionError> {
+        let disco: Box<dyn EndpointIdResolution> = Box::new(
+            IntoEndpointIdResolution::into_endpoint_id_resolution(*self, endpoint)?,
+        );
         Ok(disco)
     }
 }
 
-/// IntoDiscovery errors
+/// IntoEndpointIdResolution errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
-pub enum IntoDiscoveryError {
+pub enum IntoEndpointIdResolutionError {
     #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
@@ -183,13 +193,13 @@ pub enum IntoDiscoveryError {
     },
 }
 
-impl IntoDiscoveryError {
+impl IntoEndpointIdResolutionError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
         provenance: &'static str,
         source: T,
     ) -> Self {
-        e!(IntoDiscoveryError::User {
+        e!(IntoEndpointIdResolutionError::User {
             provenance,
             source: AnyError::from_std(source)
         })
@@ -200,22 +210,22 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        e!(IntoDiscoveryError::User {
+        e!(IntoEndpointIdResolutionError::User {
             provenance,
             source: AnyError::from_std_box(source)
         })
     }
 }
 
-/// Discovery errors
+/// EndpointIdResolution errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 #[derive(Clone)]
-pub enum DiscoveryError {
-    #[error("No discovery service configured")]
+pub enum EndpointIdResolutionError {
+    #[error("No endpoint ID resolution service configured")]
     NoServiceConfigured,
-    #[error("Discovery produced no results")]
+    #[error("Endpoint ID resolution produced no results")]
     NoResults,
     #[error("Service '{provenance}' error")]
     User {
@@ -224,7 +234,7 @@ pub enum DiscoveryError {
     },
 }
 
-impl DiscoveryError {
+impl EndpointIdResolutionError {
     /// Creates a new user error from an arbitrary error type.
     #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
@@ -246,31 +256,31 @@ impl DiscoveryError {
     /// Creates a new user error from an arbitrary error type that can be converted into [`AnyError`].
     #[track_caller]
     pub fn from_err_any(provenance: &'static str, source: impl Into<AnyError>) -> Self {
-        e!(DiscoveryError::User {
+        e!(EndpointIdResolutionError::User {
             provenance,
             source: Arc::new(source.into())
         })
     }
 }
 
-/// Endpoint discovery for [`super::Endpoint`].
+/// Endpoint ID resolution for [`super::Endpoint`].
 ///
 /// This trait defines publishing and resolving addressing information for a [`EndpointId`].
 /// This enables connecting to other endpoints with only knowing the [`EndpointId`], by using this
-/// [`Discovery`] system to look up the actual addressing information.  It is common for
+/// [`EndpointIdResolution`] system to look up the actual addressing information.  It is common for
 /// implementations to require each endpoint to publish their own information before it can be
 /// looked up by other endpoints.
 ///
 /// The published addressing information can include both a [`RelayUrl`] and/or direct
 /// addresses. See [`EndpointData`] for details.
 ///
-/// To allow for discovery, the [`super::Endpoint`] will call `publish` whenever
-/// discovery information changes. If a discovery mechanism requires a periodic
+/// To allow for EIR, the [`super::Endpoint`] will call `publish` whenever
+/// EIR information changes. If an EIR mechanism requires a periodic
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::RelayUrl
-pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
-    /// Publishes the given [`EndpointData`] to the discovery mechanism.
+pub trait EndpointIdResolution: std::fmt::Debug + Send + Sync + 'static {
+    /// Publishes the given [`EndpointData`] to the EIR mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
     /// publishing. If publishing is async, the implementation should start it's own task.
@@ -279,19 +289,19 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
     fn publish(&self, _data: &EndpointData) {}
 
-    /// Resolves the [`DiscoveryItem`] for the given [`EndpointId`].
+    /// Resolves the [`EndpointIdResolutionItem`] for the given [`EndpointId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
     fn resolve(
         &self,
         _endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
         None
     }
 }
 
-impl<T: Discovery> Discovery for Arc<T> {
+impl<T: EndpointIdResolution> EndpointIdResolution for Arc<T> {
     fn publish(&self, data: &EndpointData) {
         self.as_ref().publish(data);
     }
@@ -299,36 +309,36 @@ impl<T: Discovery> Discovery for Arc<T> {
     fn resolve(
         &self,
         endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
         self.as_ref().resolve(endpoint_id)
     }
 }
 
-/// Endpoint discovery results from [`Discovery`] services.
+/// Endpoint ID resolution results from [`EndpointIdResolution`] services.
 ///
-/// This is the item in the streams returned from [`Discovery::resolve`].
-/// It contains the [`EndpointData`] about the discovered endpoint,
-/// and some additional metadata about the discovery.
+/// This is the item in the streams returned from [`EndpointIdResolution::resolve`].
+/// It contains the [`EndpointData`] about the resolved endpoint addresses,
+/// and some additional metadata about the endpoint ID resolution system.
 ///
 /// This struct derefs to [`EndpointData`], so you can access the methods from [`EndpointData`]
-/// directly from [`DiscoveryItem`].
+/// directly from [`EndpointIdResolutionItem`].
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DiscoveryItem {
-    /// The endpoint info for the endpoint, as discovered by the the discovery service.
+pub struct EndpointIdResolutionItem {
+    /// The endpoint info for the endpoint, as discovered by the the EIR service.
     endpoint_info: EndpointInfo,
-    /// A static string to identify the discovery source.
+    /// A static string to identify the EIR source.
     ///
-    /// Should be uniform per discovery service.
+    /// Should be uniform per EIR service.
     provenance: &'static str,
     /// Optional timestamp when this endpoint address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
-    // TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each endpoint to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
+    // TODO(ramfox): this is currently unused. As we develop more `EndpointIdResolutionService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each endpoint to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     last_updated: Option<u64>,
 }
 
-impl DiscoveryItem {
-    /// Creates a new [`DiscoveryItem`] from a [`EndpointInfo`].
+impl EndpointIdResolutionItem {
+    /// Creates a new [`EndpointIdResolutionItem`] from a [`EndpointInfo`].
     pub fn new(
         endpoint_info: EndpointInfo,
         provenance: &'static str,
@@ -351,10 +361,10 @@ impl DiscoveryItem {
         &self.endpoint_info
     }
 
-    /// Returns the provenance of this discovery item.
+    /// Returns the provenance of this EIR item.
     ///
-    /// The provenance is a static string which identifies the discovery service that produced
-    /// this discovery item.
+    /// The provenance is a static string which identifies the EIR service that produced
+    /// this EIR item.
     pub fn provenance(&self) -> &'static str {
         self.provenance
     }
@@ -382,54 +392,54 @@ impl DiscoveryItem {
     }
 }
 
-impl std::ops::Deref for DiscoveryItem {
+impl std::ops::Deref for EndpointIdResolutionItem {
     type Target = EndpointData;
     fn deref(&self) -> &Self::Target {
         &self.endpoint_info.data
     }
 }
 
-impl From<DiscoveryItem> for EndpointInfo {
-    fn from(item: DiscoveryItem) -> Self {
+impl From<EndpointIdResolutionItem> for EndpointInfo {
+    fn from(item: EndpointIdResolutionItem) -> Self {
         item.endpoint_info
     }
 }
 
-/// A discovery service that combines multiple discovery sources.
+/// An endpoint ID resolution service that combines multiple EIR sources.
 ///
-/// The discovery services will resolve concurrently.
+/// The EIR services will resolve concurrently.
 #[derive(Debug, Default, Clone)]
-pub struct ConcurrentDiscovery {
-    services: Arc<RwLock<Vec<Box<dyn Discovery>>>>,
+pub struct ConcurrentEndpointIdResolution {
+    services: Arc<RwLock<Vec<Box<dyn EndpointIdResolution>>>>,
     /// The data last published, used to publish when adding a new service.
     last_data: Arc<RwLock<Option<EndpointData>>>,
 }
 
-impl ConcurrentDiscovery {
-    /// Creates an empty [`ConcurrentDiscovery`].
+impl ConcurrentEndpointIdResolution {
+    /// Creates an empty [`ConcurrentEndpointIdResolution`].
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// Creates a new [`ConcurrentDiscovery`].
-    pub fn from_services(services: Vec<Box<dyn Discovery>>) -> Self {
+    /// Creates a new [`ConcurrentEndpointIdResolution`].
+    pub fn from_services(services: Vec<Box<dyn EndpointIdResolution>>) -> Self {
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
         }
     }
 
-    /// Adds a [`Discovery`] service.
+    /// Adds an [`EndpointIdResolution`] service.
     ///
-    /// If there is historical discovery data, it will be published immediately on this service.
-    pub fn add(&self, service: impl Discovery + 'static) {
+    /// If there is historical EIR data, it will be published immediately on this service.
+    pub fn add(&self, service: impl EndpointIdResolution + 'static) {
         self.add_boxed(Box::new(service))
     }
 
-    /// Adds an already `Box`ed [`Discovery`] service.
+    /// Adds an already `Box`ed [`EndpointIdResolution`] service.
     ///
-    /// If there is historical discovery data, it will be published immediately on this service.
-    pub fn add_boxed(&self, service: Box<dyn Discovery>) {
+    /// If there is historical EIR data, it will be published immediately on this service.
+    pub fn add_boxed(&self, service: Box<dyn EndpointIdResolution>) {
         {
             let data = self.last_data.read().expect("poisoned");
             if let Some(data) = &*data {
@@ -450,9 +460,9 @@ impl ConcurrentDiscovery {
     }
 }
 
-impl<T> From<T> for ConcurrentDiscovery
+impl<T> From<T> for ConcurrentEndpointIdResolution
 where
-    T: IntoIterator<Item = Box<dyn Discovery>>,
+    T: IntoIterator<Item = Box<dyn EndpointIdResolution>>,
 {
     fn from(iter: T) -> Self {
         let services = iter.into_iter().collect::<Vec<_>>();
@@ -463,7 +473,7 @@ where
     }
 }
 
-impl Discovery for ConcurrentDiscovery {
+impl EndpointIdResolution for ConcurrentEndpointIdResolution {
     fn publish(&self, data: &EndpointData) {
         let services = self.services.read().expect("poisoned");
         for service in &*services {
@@ -479,7 +489,7 @@ impl Discovery for ConcurrentDiscovery {
     fn resolve(
         &self,
         endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
         let services = self.services.read().expect("poisoned");
         let streams = services
             .iter()
@@ -515,13 +525,16 @@ mod tests {
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
 
     #[derive(Debug, Clone, Default)]
-    struct TestDiscoveryShared {
+    struct TestEndpointIdResolutionShared {
         endpoints: Arc<Mutex<InfoStore>>,
     }
 
-    impl TestDiscoveryShared {
-        pub fn create_discovery(&self, endpoint_id: EndpointId) -> TestDiscovery {
-            TestDiscovery {
+    impl TestEndpointIdResolutionShared {
+        pub fn create_endpoint_id_resolution(
+            &self,
+            endpoint_id: EndpointId,
+        ) -> TestEndpointIdResolution {
+            TestEndpointIdResolution {
                 endpoint_id,
                 shared: self.clone(),
                 publish: true,
@@ -530,8 +543,11 @@ mod tests {
             }
         }
 
-        pub fn create_lying_discovery(&self, endpoint_id: EndpointId) -> TestDiscovery {
-            TestDiscovery {
+        pub fn create_lying_endpoint_id_resolution(
+            &self,
+            endpoint_id: EndpointId,
+        ) -> TestEndpointIdResolution {
+            TestEndpointIdResolution {
                 endpoint_id,
                 shared: self.clone(),
                 publish: false,
@@ -542,15 +558,15 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct TestDiscovery {
+    struct TestEndpointIdResolution {
         endpoint_id: EndpointId,
-        shared: TestDiscoveryShared,
+        shared: TestEndpointIdResolutionShared,
         publish: bool,
         resolve_wrong: bool,
         delay: Duration,
     }
 
-    impl Discovery for TestDiscovery {
+    impl EndpointIdResolution for TestEndpointIdResolution {
         fn publish(&self, data: &EndpointData) {
             if !self.publish {
                 return;
@@ -566,7 +582,8 @@ mod tests {
         fn resolve(
             &self,
             endpoint_id: EndpointId,
-        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>>
+        {
             let addr_info = if self.resolve_wrong {
                 let ts = system_time_now() - 100_000;
                 let port: u16 = rand::rng().random_range(10_000..20_000);
@@ -584,7 +601,7 @@ mod tests {
             };
             let stream = match addr_info {
                 Some((data, ts)) => {
-                    let item = DiscoveryItem::new(
+                    let item = EndpointIdResolutionItem::new(
                         EndpointInfo::from_parts(endpoint_id, data),
                         "test-disco",
                         Some(ts),
@@ -604,52 +621,36 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
-    struct EmptyDiscovery;
+    struct EmptyEndpointIdResolution;
 
-    impl Discovery for EmptyDiscovery {
+    impl EndpointIdResolution for EmptyEndpointIdResolution {
         fn publish(&self, _data: &EndpointData) {}
 
         fn resolve(
             &self,
             _endpoint_id: EndpointId,
-        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>>
+        {
             Some(n0_future::stream::empty().boxed())
         }
     }
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
-    /// This is a smoke test for our discovery mechanism.
+    /// This is a smoke test for our EIR mechanism.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_simple_shared() -> Result {
+    async fn endpoint_endpoint_id_resolution_simple_shared() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
-
-        let (ep2, _guard2) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
-        let ep1_addr = EndpointAddr::new(ep1.id());
-        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
-        Ok(())
-    }
-
-    /// This is a smoke test to ensure a discovery service can be
-    /// `Arc`-d, and discovery will still work
-    #[tokio::test]
-    #[traced_test]
-    async fn endpoint_discovery_simple_shared_with_arc() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let disco_shared = TestDiscoveryShared::default();
+        let eir_shared = TestEndpointIdResolutionShared::default();
         let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
-            Arc::new(disco_shared.create_discovery(ep.id()))
+            eir_shared.create_endpoint_id_resolution(ep.id())
         })
         .await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            Arc::new(disco_shared.create_discovery(ep.id()))
+            eir_shared.create_endpoint_id_resolution(ep.id())
         })
         .await;
         let ep1_addr = EndpointAddr::new(ep1.id());
@@ -657,25 +658,48 @@ mod tests {
         Ok(())
     }
 
-    /// This test adds an empty discovery which provides no addresses.
+    /// This is a smoke test to ensure a EIR service can be
+    /// `Arc`-d, and EIR will still work
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty_and_right() -> Result {
+    async fn endpoint_endpoint_id_resolution_simple_shared_with_arc() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let eir_shared = TestEndpointIdResolutionShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            Arc::new(eir_shared.create_endpoint_id_resolution(ep.id()))
+        })
+        .await;
+
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
+            Arc::new(eir_shared.create_endpoint_id_resolution(ep.id()))
+        })
+        .await;
+        let ep1_addr = EndpointAddr::new(ep1.id());
+        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
+        Ok(())
+    }
+
+    /// This test adds an empty EIR which provides no addresses.
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_endpoint_id_resolution_combined_with_empty_and_right() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let eir_shared = TestEndpointIdResolutionShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            eir_shared.create_endpoint_id_resolution(ep.id())
+        })
+        .await;
         let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
-            let disco1 = EmptyDiscovery;
-            let disco2 = disco_shared.create_discovery(ep.id());
-            ep.discovery().add(disco1);
-            ep.discovery().add(disco2);
+            let disco1 = EmptyEndpointIdResolution;
+            let disco2 = eir_shared.create_endpoint_id_resolution(ep.id());
+            ep.endpoint_id_resolution().add(disco1);
+            ep.endpoint_id_resolution().add(disco2);
         })
         .await;
 
         let ep1_addr = EndpointAddr::new(ep1.id());
 
-        assert_eq!(ep2.discovery().len(), 2);
+        assert_eq!(ep2.endpoint_id_resolution().len(), 2);
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -683,22 +707,24 @@ mod tests {
         Ok(())
     }
 
-    /// This test adds a "lying" discovery which provides a wrong address.
-    /// This is to make sure that as long as one of the discoveries returns a working address, we
+    /// This test adds a "lying" eir service which provides a wrong address.
+    /// This is to make sure that as long as one of the services returns a working address, we
     /// will connect successfully.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty_and_wrong() -> Result {
+    async fn endpoint_id_resolution_combined_with_empty_and_wrong() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let disco_shared = TestEndpointIdResolutionShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            disco_shared.create_endpoint_id_resolution(ep.id())
+        })
+        .await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            let disco1 = EmptyDiscovery;
-            let disco2 = disco_shared.create_lying_discovery(ep.id());
-            let disco3 = disco_shared.create_discovery(ep.id());
-            let disco = ConcurrentDiscovery::empty();
+            let disco1 = EmptyEndpointIdResolution;
+            let disco2 = disco_shared.create_lying_endpoint_id_resolution(ep.id());
+            let disco3 = disco_shared.create_endpoint_id_resolution(ep.id());
+            let disco = ConcurrentEndpointIdResolution::empty();
             disco.add(disco1);
             disco.add(disco2);
             disco.add(disco3);
@@ -710,19 +736,21 @@ mod tests {
         Ok(())
     }
 
-    /// This test only has the "lying" discovery. It is here to make sure that this actually fails.
+    /// This test only has the "lying" endpointID resolution service. It is here to make sure that this actually fails.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_wrong_only() -> Result {
+    async fn endpoint_endpoint_id_resolution_combined_wrong_only() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let disco_shared = TestEndpointIdResolutionShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            disco_shared.create_endpoint_id_resolution(ep.id())
+        })
+        .await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            let disco1 = disco_shared.create_lying_discovery(ep.id());
-            ConcurrentDiscovery::from_services(vec![Box::new(disco1)])
+            let disco1 = disco_shared.create_lying_endpoint_id_resolution(ep.id());
+            ConcurrentEndpointIdResolution::from_services(vec![Box::new(disco1)])
         })
         .await;
 
@@ -742,17 +770,21 @@ mod tests {
     }
 
     /// This test first adds a wrong address manually (e.g. from an outdated&endpoint_id ticket).
-    /// Connect should still succeed because the discovery service will be invoked (after a delay).
+    /// Connect should still succeed because the endpointID resolution service service will be invoked (after a delay).
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_with_wrong_existing_addr() -> Result {
+    async fn endpoint_endpoint_id_resolution_with_wrong_existing_addr() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
-        let (ep2, _guard2) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let disco_shared = TestEndpointIdResolutionShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            disco_shared.create_endpoint_id_resolution(ep.id())
+        })
+        .await;
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
+            disco_shared.create_endpoint_id_resolution(ep.id())
+        })
+        .await;
 
         let ep1_wrong_addr = EndpointAddr::from_parts(
             ep1.id(),
@@ -762,13 +794,17 @@ mod tests {
         Ok(())
     }
 
-    async fn new_endpoint<R: CryptoRng, D: Discovery + 'static, F: FnOnce(&Endpoint) -> D>(
+    async fn new_endpoint<
+        R: CryptoRng,
+        D: EndpointIdResolution + 'static,
+        F: FnOnce(&Endpoint) -> D,
+    >(
         rng: &mut R,
         create_disco: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         new_endpoint_add(rng, |ep| {
             let disco = create_disco(ep);
-            ep.discovery().add(disco);
+            ep.endpoint_id_resolution().add(disco);
         })
         .await
     }
@@ -814,7 +850,7 @@ mod tests {
     }
 }
 
-/// This module contains end-to-end tests for DNS endpoint discovery.
+/// This module contains end-to-end tests for DNS endpoint id resolution service.
 ///
 /// The tests run a minimal test DNS server to resolve against, and a minimal pkarr relay to
 /// publish to. The DNS and pkarr servers share their state.
@@ -830,8 +866,8 @@ mod test_dns_pkarr {
 
     use crate::{
         Endpoint, RelayMode,
-        discovery::{EndpointData, pkarr::PkarrPublisher},
         dns::DnsResolver,
+        endpoint_id_resolution::{EndpointData, pkarr::PkarrPublisher},
         endpoint_info::EndpointInfo,
         test_utils::{
             DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
@@ -919,8 +955,10 @@ mod test_dns_pkarr {
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let (ep1, _guard1) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
-        let (ep2, _guard2) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep1, _guard1) =
+            ep_with_endpoint_id_resolution(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep2, _guard2) =
+            ep_with_endpoint_id_resolution(&mut rng, &relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
@@ -933,7 +971,7 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_discovery<R: CryptoRng + ?Sized>(
+    async fn ep_with_endpoint_id_resolution<R: CryptoRng + ?Sized>(
         rng: &mut R,
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
@@ -944,7 +982,7 @@ mod test_dns_pkarr {
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
-            .discovery(dns_pkarr_server.discovery(secret_key))
+            .endpoint_id_resolution(dns_pkarr_server.endpoint_id_resolution(secret_key))
             .bind()
             .await?;
 

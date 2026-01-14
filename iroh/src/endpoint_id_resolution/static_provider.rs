@@ -1,4 +1,4 @@
-//! A static endpoint discovery to manually add endpoint addressing information.
+//! A static endpoint id resolution system to manually add endpoint addressing information.
 //!
 //! Often an application might get endpoint addressing information out-of-band in an
 //! application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
@@ -22,9 +22,12 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo};
+use super::{
+    EndpointData, EndpointIdResolution, EndpointIdResolutionError, EndpointIdResolutionItem,
+    EndpointInfo,
+};
 
-/// A static endpoint discovery to manually add endpoint addressing information.
+/// A static endpoint ID resolution system to manually add endpoint addressing information.
 ///
 /// Often an application might get endpoint addressing information out-of-band in an
 /// application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
@@ -37,23 +40,26 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 /// # Examples
 ///
 /// ```rust
-/// use iroh::{Endpoint, EndpointAddr, TransportAddr, discovery::static_provider::StaticProvider};
+/// use iroh::{
+///     Endpoint, EndpointAddr, TransportAddr,
+///     endpoint_id_resolution::static_provider::StaticProvider,
+/// };
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
 /// # async fn main() -> n0_error::Result<()> {
-/// // Create the discovery service and endpoint.
-/// let discovery = StaticProvider::new();
+/// // Create the EIR service and endpoint.
+/// let eir = StaticProvider::new();
 ///
 /// let _ep = Endpoint::builder()
-///     .discovery(discovery.clone())
+///     .endpoint_id_resolution(eir.clone())
 ///     .bind()
 ///     .await?;
 ///
 /// // Sometime later add a RelayUrl for our endpoint.
 /// let id = SecretKey::generate(&mut rand::rng()).public();
 /// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
-/// discovery.add_endpoint_info(EndpointAddr {
+/// eir.add_endpoint_info(EndpointAddr {
 ///     id,
 ///     addrs: [TransportAddr::Relay("https://example.com".parse()?)]
 ///         .into_iter()
@@ -87,22 +93,22 @@ struct StoredEndpointInfo {
 }
 
 impl StaticProvider {
-    /// The provenance string for this discovery implementation.
+    /// The provenance string for this EIR implementation.
     ///
     /// This is mostly used for debugging information and allows understanding the origin of
     /// addressing information used by an iroh [`Endpoint`].
     ///
     /// [`Endpoint`]: crate::Endpoint
-    pub const PROVENANCE: &'static str = "static_discovery";
+    pub const PROVENANCE: &'static str = "static_eir";
 
-    /// Creates a new static discovery instance.
+    /// Creates a new static EIR instance.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Creates a new static discovery instance with the provided `provenance`.
+    /// Creates a new static EIR instance with the provided `provenance`.
     ///
-    /// The provenance is part of [`DiscoveryItem`]s returned from [`Self::resolve`].
+    /// The provenance is part of [`EndpointIdResolutionItem`]s returned from [`Self::resolve`].
     /// It is mostly used for debugging information and allows understanding the origin of
     /// addressing information used by an iroh [`Endpoint`].
     ///
@@ -114,14 +120,14 @@ impl StaticProvider {
         }
     }
 
-    /// Creates a static discovery instance from endpoint addresses.
+    /// Creates a static EIR instance from endpoint addresses.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use std::{net::SocketAddr, str::FromStr};
     ///
-    /// use iroh::{Endpoint, EndpointAddr, discovery::static_provider::StaticProvider};
+    /// use iroh::{Endpoint, EndpointAddr, endpoint_id_resolution::static_provider::StaticProvider};
     ///
     /// # fn get_addrs() -> Vec<EndpointAddr> {
     /// #     Vec::new()
@@ -132,9 +138,12 @@ impl StaticProvider {
     /// let addrs = get_addrs();
     ///
     /// // create a StaticProvider from the list of addrs.
-    /// let discovery = StaticProvider::from_endpoint_info(addrs);
-    /// // create an endpoint with the discovery
-    /// let endpoint = Endpoint::builder().discovery(discovery).bind().await?;
+    /// let eir = StaticProvider::from_endpoint_info(addrs);
+    /// // create an endpoint with the eir system
+    /// let endpoint = Endpoint::builder()
+    ///     .endpoint_id_resolution(eir)
+    ///     .bind()
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -202,13 +211,13 @@ impl StaticProvider {
     }
 }
 
-impl Discovery for StaticProvider {
+impl EndpointIdResolution for StaticProvider {
     fn publish(&self, _data: &EndpointData) {}
 
     fn resolve(
         &self,
         endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<super::EndpointIdResolutionItem, EndpointIdResolutionError>>> {
         let guard = self.endpoints.read().expect("poisoned");
         let info = guard.get(&endpoint_id);
         match info {
@@ -218,7 +227,7 @@ impl Discovery for StaticProvider {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .expect("time drift")
                     .as_micros() as u64;
-                let item = DiscoveryItem::new(
+                let item = EndpointIdResolutionItem::new(
                     EndpointInfo::from_parts(endpoint_id, endpoint_info.data.clone()),
                     self.provenance,
                     Some(last_updated),
@@ -240,10 +249,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic() -> Result {
-        let discovery = StaticProvider::new();
+        let eir = StaticProvider::new();
 
         let _ep = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(discovery.clone())
+            .endpoint_id_resolution(eir.clone())
             .bind()
             .await?;
 
@@ -254,21 +263,19 @@ mod tests {
         );
         let user_data = Some("foobar".parse().unwrap());
         let endpoint_info = EndpointInfo::from(addr.clone()).with_user_data(user_data.clone());
-        discovery.add_endpoint_info(endpoint_info.clone());
+        eir.add_endpoint_info(endpoint_info.clone());
 
-        let back = discovery
-            .get_endpoint_info(key.public())
-            .context("no addr")?;
+        let back = eir.get_endpoint_info(key.public()).context("no addr")?;
 
         assert_eq!(back, endpoint_info);
         assert_eq!(back.user_data(), user_data.as_ref());
         assert_eq!(back.into_endpoint_addr(), addr);
 
-        let removed = discovery
+        let removed = eir
             .remove_endpoint_info(key.public())
             .context("nothing removed")?;
         assert_eq!(removed, endpoint_info);
-        let res = discovery.get_endpoint_info(key.public());
+        let res = eir.get_endpoint_info(key.public());
         assert!(res.is_none());
 
         Ok(())
@@ -276,14 +283,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_provenance() -> Result {
-        let discovery = StaticProvider::with_provenance("foo");
+        let eir = StaticProvider::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr::from_parts(
             key.public(),
             [TransportAddr::Relay("https://example.com".parse()?)],
         );
-        discovery.add_endpoint_info(addr);
-        let mut stream = discovery.resolve(key.public()).unwrap();
+        eir.add_endpoint_info(addr);
+        let mut stream = eir.resolve(key.public()).unwrap();
         let item = stream.next().await.unwrap()?;
         assert_eq!(item.provenance(), "foo");
         assert_eq!(
