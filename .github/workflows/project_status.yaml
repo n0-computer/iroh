@@ -40,7 +40,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.item_number }}
           REPO: ${{ github.repository }}
         run: |
-          echo "Setting status to 'Ready' for issue #$ISSUE_NUMBER"
+          echo "Setting status to '👍 Ready' for issue #$ISSUE_NUMBER"
 
           # Get the project ID
           PROJECT_ID=$(gh api graphql -f query='
@@ -124,7 +124,7 @@ jobs:
             }' -f projectId=$PROJECT_ID --jq '.data.node.fields.nodes[] | select(.name == "Status")')
 
           FIELD_ID=$(echo "$STATUS_FIELD" | jq -r '.id')
-          READY_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r '.options[] | select(.name == "Ready") | .id')
+          READY_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r '.options[] | select(.name == "👍 Ready") | .id')
 
           echo "Field ID: $FIELD_ID"
           echo "Ready Option ID: $READY_OPTION_ID"
@@ -146,7 +146,7 @@ jobs:
               }
             }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -f optionId=$READY_OPTION_ID
 
-          echo "Status set to 'Ready'"
+          echo "Status set to '👍 Ready'"
 
       - name: Set status for pull request
         if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.item_type == 'pr')
@@ -157,7 +157,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.item_number }}
           REPO: ${{ github.repository }}
         run: |
-          echo "Setting status to 'In Progress' for PR #$PR_NUMBER"
+          echo "Setting status to '🏗 In progress' for PR #$PR_NUMBER"
 
           # Get the project ID
           PROJECT_ID=$(gh api graphql -f query='
@@ -241,7 +241,7 @@ jobs:
             }' -f projectId=$PROJECT_ID --jq '.data.node.fields.nodes[] | select(.name == "Status")')
 
           FIELD_ID=$(echo "$STATUS_FIELD" | jq -r '.id')
-          IN_PROGRESS_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r '.options[] | select(.name == "In Progress") | .id')
+          IN_PROGRESS_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r '.options[] | select(.name == "🏗 In progress") | .id')
 
           echo "Field ID: $FIELD_ID"
           echo "In Progress Option ID: $IN_PROGRESS_OPTION_ID"
@@ -263,4 +263,4 @@ jobs:
               }
             }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -f optionId=$IN_PROGRESS_OPTION_ID
 
-          echo "Status set to 'In Progress'"
+          echo "Status set to '🏗 In progress'"
