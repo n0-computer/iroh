@@ -1,0 +1,266 @@
+name: Set Project Status
+
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request:
+    types: [opened, reopened]
+  workflow_dispatch:
+    inputs:
+      item_type:
+        description: 'Type of item (issue or pr)'
+        required: true
+        type: choice
+        options:
+          - issue
+          - pr
+      item_number:
+        description: 'Issue or PR number'
+        required: true
+        type: string
+
+jobs:
+  set-status:
+    name: Set project status
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.N0_BOT_APP_ID }}
+          private-key: ${{ secrets.PROJECT_BOARD_PKEY }}
+          owner: n0-computer
+
+      - name: Set status for issue
+        if: github.event_name == 'issues' || (github.event_name == 'workflow_dispatch' && inputs.item_type == 'issue')
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORGANIZATION: n0-computer
+          PROJECT_NUMBER: 1
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.item_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Setting status to 'Ready' for issue #$ISSUE_NUMBER"
+
+          # Get the project ID
+          PROJECT_ID=$(gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) {
+                  id
+                }
+              }
+            }' -f org=$ORGANIZATION -F number=$PROJECT_NUMBER --jq '.data.organization.projectV2.id')
+
+          echo "Project ID: $PROJECT_ID"
+
+          # Get the issue node ID
+          ISSUE_ID=$(gh api repos/$REPO/issues/$ISSUE_NUMBER --jq '.node_id')
+          echo "Issue ID: $ISSUE_ID"
+
+          # Get the project item ID for this issue
+          ITEM_ID=$(gh api graphql -f query='
+            query($issueId: ID!) {
+              node(id: $issueId) {
+                ... on Issue {
+                  projectItems(first: 10) {
+                    nodes {
+                      id
+                      project {
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f issueId=$ISSUE_ID --jq ".data.node.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
+
+          if [ -z "$ITEM_ID" ]; then
+            echo "Issue is not in the project yet, waiting a moment..."
+            sleep 5
+            ITEM_ID=$(gh api graphql -f query='
+              query($issueId: ID!) {
+                node(id: $issueId) {
+                  ... on Issue {
+                    projectItems(first: 10) {
+                      nodes {
+                        id
+                        project {
+                          id
+                        }
+                      }
+                    }
+                  }
+                }
+              }' -f issueId=$ISSUE_ID --jq ".data.node.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
+          fi
+
+          if [ -z "$ITEM_ID" ]; then
+            echo "Issue is not in the project, skipping status update"
+            exit 0
+          fi
+
+          echo "Item ID: $ITEM_ID"
+
+          # Get the Status field ID and "Ready" option ID
+          STATUS_FIELD=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        name
+                        options {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f projectId=$PROJECT_ID --jq '.data.node.fields.nodes[] | select(.name == "Status")')
+
+          FIELD_ID=$(echo "$STATUS_FIELD" | jq -r '.id')
+          READY_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r '.options[] | select(.name == "Ready") | .id')
+
+          echo "Field ID: $FIELD_ID"
+          echo "Ready Option ID: $READY_OPTION_ID"
+
+          # Update the status
+          gh api graphql -f query='
+            mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+              updateProjectV2ItemFieldValue(
+                input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }
+              ) {
+                projectV2Item {
+                  id
+                }
+              }
+            }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -f optionId=$READY_OPTION_ID
+
+          echo "Status set to 'Ready'"
+
+      - name: Set status for pull request
+        if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.item_type == 'pr')
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ORGANIZATION: n0-computer
+          PROJECT_NUMBER: 1
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.item_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Setting status to 'In Progress' for PR #$PR_NUMBER"
+
+          # Get the project ID
+          PROJECT_ID=$(gh api graphql -f query='
+            query($org: String!, $number: Int!) {
+              organization(login: $org) {
+                projectV2(number: $number) {
+                  id
+                }
+              }
+            }' -f org=$ORGANIZATION -F number=$PROJECT_NUMBER --jq '.data.organization.projectV2.id')
+
+          echo "Project ID: $PROJECT_ID"
+
+          # Get the PR node ID
+          PR_ID=$(gh api repos/$REPO/pulls/$PR_NUMBER --jq '.node_id')
+          echo "PR ID: $PR_ID"
+
+          # Get the project item ID for this PR
+          ITEM_ID=$(gh api graphql -f query='
+            query($prId: ID!) {
+              node(id: $prId) {
+                ... on PullRequest {
+                  projectItems(first: 10) {
+                    nodes {
+                      id
+                      project {
+                        id
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f prId=$PR_ID --jq ".data.node.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
+
+          if [ -z "$ITEM_ID" ]; then
+            echo "PR is not in the project yet, waiting a moment..."
+            sleep 5
+            ITEM_ID=$(gh api graphql -f query='
+              query($prId: ID!) {
+                node(id: $prId) {
+                  ... on PullRequest {
+                    projectItems(first: 10) {
+                      nodes {
+                        id
+                        project {
+                          id
+                        }
+                      }
+                    }
+                  }
+                }
+              }' -f prId=$PR_ID --jq ".data.node.projectItems.nodes[] | select(.project.id == \"$PROJECT_ID\") | .id")
+          fi
+
+          if [ -z "$ITEM_ID" ]; then
+            echo "PR is not in the project, skipping status update"
+            exit 0
+          fi
+
+          echo "Item ID: $ITEM_ID"
+
+          # Get the Status field ID and "In Progress" option ID
+          STATUS_FIELD=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  fields(first: 20) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        name
+                        options {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f projectId=$PROJECT_ID --jq '.data.node.fields.nodes[] | select(.name == "Status")')
+
+          FIELD_ID=$(echo "$STATUS_FIELD" | jq -r '.id')
+          IN_PROGRESS_OPTION_ID=$(echo "$STATUS_FIELD" | jq -r '.options[] | select(.name == "In Progress") | .id')
+
+          echo "Field ID: $FIELD_ID"
+          echo "In Progress Option ID: $IN_PROGRESS_OPTION_ID"
+
+          # Update the status
+          gh api graphql -f query='
+            mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+              updateProjectV2ItemFieldValue(
+                input: {
+                  projectId: $projectId
+                  itemId: $itemId
+                  fieldId: $fieldId
+                  value: { singleSelectOptionId: $optionId }
+                }
+              ) {
+                projectV2Item {
+                  id
+                }
+              }
+            }' -f projectId=$PROJECT_ID -f itemId=$ITEM_ID -f fieldId=$FIELD_ID -f optionId=$IN_PROGRESS_OPTION_ID
+
+          echo "Status set to 'In Progress'"
