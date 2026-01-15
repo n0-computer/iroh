@@ -1515,7 +1515,9 @@ impl PathInfo {
         self.stats().rtt
     }
 
-    /// asdf
+    /// The path ID the underlying network library uses to identify this path.
+    ///
+    /// This is a QUIC multipath path ID. It uniquely identifies this path on both sides of the connection.
     pub fn path_id(&self) -> PathId {
         self.path_id
     }
