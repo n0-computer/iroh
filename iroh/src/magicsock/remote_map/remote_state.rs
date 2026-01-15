@@ -1514,6 +1514,11 @@ impl PathInfo {
     pub fn rtt(&self) -> Duration {
         self.stats().rtt
     }
+
+    /// asdf
+    pub fn path_id(&self) -> PathId {
+        self.path_id
+    }
 }
 
 /// Poll a future once, like n0_future::future::poll_once but sync.
