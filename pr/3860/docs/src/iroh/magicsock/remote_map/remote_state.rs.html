@@ -1515,88 +1515,90 @@
 <a href=#1515 id=1515 data-nosnippet>1515</a>        <span class="self">self</span>.stats().rtt
 <a href=#1516 id=1516 data-nosnippet>1516</a>    }
 <a href=#1517 id=1517 data-nosnippet>1517</a>
-<a href=#1518 id=1518 data-nosnippet>1518</a>    <span class="doccomment">/// asdf
-<a href=#1519 id=1519 data-nosnippet>1519</a>    </span><span class="kw">pub fn </span>path_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathId {
-<a href=#1520 id=1520 data-nosnippet>1520</a>        <span class="self">self</span>.path_id
-<a href=#1521 id=1521 data-nosnippet>1521</a>    }
-<a href=#1522 id=1522 data-nosnippet>1522</a>}
-<a href=#1523 id=1523 data-nosnippet>1523</a>
-<a href=#1524 id=1524 data-nosnippet>1524</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
-<a href=#1525 id=1525 data-nosnippet>1525</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
-<a href=#1526 id=1526 data-nosnippet>1526</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
-<a href=#1527 id=1527 data-nosnippet>1527</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
-<a href=#1528 id=1528 data-nosnippet>1528</a>        Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
-<a href=#1529 id=1529 data-nosnippet>1529</a>        Poll::Pending =&gt; <span class="prelude-val">None</span>,
-<a href=#1530 id=1530 data-nosnippet>1530</a>    }
-<a href=#1531 id=1531 data-nosnippet>1531</a>}
-<a href=#1532 id=1532 data-nosnippet>1532</a>
-<a href=#1533 id=1533 data-nosnippet>1533</a><span class="doccomment">/// Future that resolves to the `conn_id` once a connection is closed.
-<a href=#1534 id=1534 data-nosnippet>1534</a>///
-<a href=#1535 id=1535 data-nosnippet>1535</a>/// This uses [`quinn::Connection::on_closed`], which does not keep the connection alive
-<a href=#1536 id=1536 data-nosnippet>1536</a>/// while awaiting the future.
-<a href=#1537 id=1537 data-nosnippet>1537</a></span><span class="kw">struct </span>OnClosed {
-<a href=#1538 id=1538 data-nosnippet>1538</a>    conn_id: ConnId,
-<a href=#1539 id=1539 data-nosnippet>1539</a>    inner: quinn::OnClosed,
-<a href=#1540 id=1540 data-nosnippet>1540</a>}
-<a href=#1541 id=1541 data-nosnippet>1541</a>
-<a href=#1542 id=1542 data-nosnippet>1542</a><span class="kw">impl </span>OnClosed {
-<a href=#1543 id=1543 data-nosnippet>1543</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>quinn::Connection) -&gt; <span class="self">Self </span>{
-<a href=#1544 id=1544 data-nosnippet>1544</a>        <span class="self">Self </span>{
-<a href=#1545 id=1545 data-nosnippet>1545</a>            conn_id: ConnId(conn.stable_id()),
-<a href=#1546 id=1546 data-nosnippet>1546</a>            inner: conn.on_closed(),
-<a href=#1547 id=1547 data-nosnippet>1547</a>        }
-<a href=#1548 id=1548 data-nosnippet>1548</a>    }
-<a href=#1549 id=1549 data-nosnippet>1549</a>}
-<a href=#1550 id=1550 data-nosnippet>1550</a>
-<a href=#1551 id=1551 data-nosnippet>1551</a><span class="kw">impl </span>Future <span class="kw">for </span>OnClosed {
-<a href=#1552 id=1552 data-nosnippet>1552</a>    <span class="kw">type </span>Output = ConnId;
-<a href=#1553 id=1553 data-nosnippet>1553</a>
-<a href=#1554 id=1554 data-nosnippet>1554</a>    <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-<a href=#1555 id=1555 data-nosnippet>1555</a>        <span class="kw">let </span>(_close_reason, _stats) = <span class="macro">std::task::ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx));
-<a href=#1556 id=1556 data-nosnippet>1556</a>        Poll::Ready(<span class="self">self</span>.conn_id)
-<a href=#1557 id=1557 data-nosnippet>1557</a>    }
-<a href=#1558 id=1558 data-nosnippet>1558</a>}
-<a href=#1559 id=1559 data-nosnippet>1559</a>
-<a href=#1560 id=1560 data-nosnippet>1560</a><span class="doccomment">/// Converts an iterator of [`TransportAddr'] into an iterator of [`transports::Addr`].
-<a href=#1561 id=1561 data-nosnippet>1561</a></span><span class="kw">fn </span>to_transports_addr(
-<a href=#1562 id=1562 data-nosnippet>1562</a>    endpoint_id: EndpointId,
-<a href=#1563 id=1563 data-nosnippet>1563</a>    addrs: <span class="kw">impl </span>IntoIterator&lt;Item = TransportAddr&gt;,
-<a href=#1564 id=1564 data-nosnippet>1564</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = transports::Addr&gt; {
-<a href=#1565 id=1565 data-nosnippet>1565</a>    addrs.into_iter().filter_map(<span class="kw">move </span>|addr| <span class="kw">match </span>addr {
-<a href=#1566 id=1566 data-nosnippet>1566</a>        TransportAddr::Relay(relay_url) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from((relay_url, endpoint_id))),
-<a href=#1567 id=1567 data-nosnippet>1567</a>        TransportAddr::Ip(sockaddr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(sockaddr)),
-<a href=#1568 id=1568 data-nosnippet>1568</a>        <span class="kw">_ </span>=&gt; {
-<a href=#1569 id=1569 data-nosnippet>1569</a>            <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"Unsupported TransportAddr"</span>);
-<a href=#1570 id=1570 data-nosnippet>1570</a>            <span class="prelude-val">None
-<a href=#1571 id=1571 data-nosnippet>1571</a>        </span>}
-<a href=#1572 id=1572 data-nosnippet>1572</a>    })
-<a href=#1573 id=1573 data-nosnippet>1573</a>}
-<a href=#1574 id=1574 data-nosnippet>1574</a>
-<a href=#1575 id=1575 data-nosnippet>1575</a><span class="attr">#[cfg(test)]
-<a href=#1576 id=1576 data-nosnippet>1576</a></span><span class="kw">mod </span>tests {
-<a href=#1577 id=1577 data-nosnippet>1577</a>    <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
-<a href=#1578 id=1578 data-nosnippet>1578</a>
-<a href=#1579 id=1579 data-nosnippet>1579</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#1518 id=1518 data-nosnippet>1518</a>    <span class="doccomment">/// The path ID the underlying network library uses to identify this path.
+<a href=#1519 id=1519 data-nosnippet>1519</a>    ///
+<a href=#1520 id=1520 data-nosnippet>1520</a>    /// This is a QUIC multipath path ID. It uniquely identifies this path on both sides of the connection.
+<a href=#1521 id=1521 data-nosnippet>1521</a>    </span><span class="kw">pub fn </span>path_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PathId {
+<a href=#1522 id=1522 data-nosnippet>1522</a>        <span class="self">self</span>.path_id
+<a href=#1523 id=1523 data-nosnippet>1523</a>    }
+<a href=#1524 id=1524 data-nosnippet>1524</a>}
+<a href=#1525 id=1525 data-nosnippet>1525</a>
+<a href=#1526 id=1526 data-nosnippet>1526</a><span class="doccomment">/// Poll a future once, like n0_future::future::poll_once but sync.
+<a href=#1527 id=1527 data-nosnippet>1527</a></span><span class="kw">fn </span>now_or_never&lt;T, F: Future&lt;Output = T&gt;&gt;(fut: F) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+<a href=#1528 id=1528 data-nosnippet>1528</a>    <span class="kw">let </span>fut = <span class="macro">std::pin::pin!</span>(fut);
+<a href=#1529 id=1529 data-nosnippet>1529</a>    <span class="kw">match </span>fut.poll(<span class="kw-2">&amp;mut </span>std::task::Context::from_waker(std::task::Waker::noop())) {
+<a href=#1530 id=1530 data-nosnippet>1530</a>        Poll::Ready(res) =&gt; <span class="prelude-val">Some</span>(res),
+<a href=#1531 id=1531 data-nosnippet>1531</a>        Poll::Pending =&gt; <span class="prelude-val">None</span>,
+<a href=#1532 id=1532 data-nosnippet>1532</a>    }
+<a href=#1533 id=1533 data-nosnippet>1533</a>}
+<a href=#1534 id=1534 data-nosnippet>1534</a>
+<a href=#1535 id=1535 data-nosnippet>1535</a><span class="doccomment">/// Future that resolves to the `conn_id` once a connection is closed.
+<a href=#1536 id=1536 data-nosnippet>1536</a>///
+<a href=#1537 id=1537 data-nosnippet>1537</a>/// This uses [`quinn::Connection::on_closed`], which does not keep the connection alive
+<a href=#1538 id=1538 data-nosnippet>1538</a>/// while awaiting the future.
+<a href=#1539 id=1539 data-nosnippet>1539</a></span><span class="kw">struct </span>OnClosed {
+<a href=#1540 id=1540 data-nosnippet>1540</a>    conn_id: ConnId,
+<a href=#1541 id=1541 data-nosnippet>1541</a>    inner: quinn::OnClosed,
+<a href=#1542 id=1542 data-nosnippet>1542</a>}
+<a href=#1543 id=1543 data-nosnippet>1543</a>
+<a href=#1544 id=1544 data-nosnippet>1544</a><span class="kw">impl </span>OnClosed {
+<a href=#1545 id=1545 data-nosnippet>1545</a>    <span class="kw">fn </span>new(conn: <span class="kw-2">&amp;</span>quinn::Connection) -&gt; <span class="self">Self </span>{
+<a href=#1546 id=1546 data-nosnippet>1546</a>        <span class="self">Self </span>{
+<a href=#1547 id=1547 data-nosnippet>1547</a>            conn_id: ConnId(conn.stable_id()),
+<a href=#1548 id=1548 data-nosnippet>1548</a>            inner: conn.on_closed(),
+<a href=#1549 id=1549 data-nosnippet>1549</a>        }
+<a href=#1550 id=1550 data-nosnippet>1550</a>    }
+<a href=#1551 id=1551 data-nosnippet>1551</a>}
+<a href=#1552 id=1552 data-nosnippet>1552</a>
+<a href=#1553 id=1553 data-nosnippet>1553</a><span class="kw">impl </span>Future <span class="kw">for </span>OnClosed {
+<a href=#1554 id=1554 data-nosnippet>1554</a>    <span class="kw">type </span>Output = ConnId;
+<a href=#1555 id=1555 data-nosnippet>1555</a>
+<a href=#1556 id=1556 data-nosnippet>1556</a>    <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
+<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="kw">let </span>(_close_reason, _stats) = <span class="macro">std::task::ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner).poll(cx));
+<a href=#1558 id=1558 data-nosnippet>1558</a>        Poll::Ready(<span class="self">self</span>.conn_id)
+<a href=#1559 id=1559 data-nosnippet>1559</a>    }
+<a href=#1560 id=1560 data-nosnippet>1560</a>}
+<a href=#1561 id=1561 data-nosnippet>1561</a>
+<a href=#1562 id=1562 data-nosnippet>1562</a><span class="doccomment">/// Converts an iterator of [`TransportAddr'] into an iterator of [`transports::Addr`].
+<a href=#1563 id=1563 data-nosnippet>1563</a></span><span class="kw">fn </span>to_transports_addr(
+<a href=#1564 id=1564 data-nosnippet>1564</a>    endpoint_id: EndpointId,
+<a href=#1565 id=1565 data-nosnippet>1565</a>    addrs: <span class="kw">impl </span>IntoIterator&lt;Item = TransportAddr&gt;,
+<a href=#1566 id=1566 data-nosnippet>1566</a>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = transports::Addr&gt; {
+<a href=#1567 id=1567 data-nosnippet>1567</a>    addrs.into_iter().filter_map(<span class="kw">move </span>|addr| <span class="kw">match </span>addr {
+<a href=#1568 id=1568 data-nosnippet>1568</a>        TransportAddr::Relay(relay_url) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from((relay_url, endpoint_id))),
+<a href=#1569 id=1569 data-nosnippet>1569</a>        TransportAddr::Ip(sockaddr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(sockaddr)),
+<a href=#1570 id=1570 data-nosnippet>1570</a>        <span class="kw">_ </span>=&gt; {
+<a href=#1571 id=1571 data-nosnippet>1571</a>            <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"Unsupported TransportAddr"</span>);
+<a href=#1572 id=1572 data-nosnippet>1572</a>            <span class="prelude-val">None
+<a href=#1573 id=1573 data-nosnippet>1573</a>        </span>}
+<a href=#1574 id=1574 data-nosnippet>1574</a>    })
+<a href=#1575 id=1575 data-nosnippet>1575</a>}
+<a href=#1576 id=1576 data-nosnippet>1576</a>
+<a href=#1577 id=1577 data-nosnippet>1577</a><span class="attr">#[cfg(test)]
+<a href=#1578 id=1578 data-nosnippet>1578</a></span><span class="kw">mod </span>tests {
+<a href=#1579 id=1579 data-nosnippet>1579</a>    <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
 <a href=#1580 id=1580 data-nosnippet>1580</a>
-<a href=#1581 id=1581 data-nosnippet>1581</a>    <span class="attr">#[test]
-<a href=#1582 id=1582 data-nosnippet>1582</a>    </span><span class="kw">fn </span>test_select_v4_v6_addr() {
-<a href=#1583 id=1583 data-nosnippet>1583</a>        <span class="kw">let </span>v4 = SocketAddrV4::new(Ipv4Addr::LOCALHOST, <span class="number">1</span>);
-<a href=#1584 id=1584 data-nosnippet>1584</a>        <span class="kw">let </span>v6 = SocketAddrV6::new(Ipv6Addr::LOCALHOST, <span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>);
-<a href=#1585 id=1585 data-nosnippet>1585</a>
-<a href=#1586 id=1586 data-nosnippet>1586</a>        <span class="comment">// Same RTT, prefer v6
-<a href=#1587 id=1587 data-nosnippet>1587</a>        </span><span class="kw">let </span>(addr, rtt) =
-<a href=#1588 id=1588 data-nosnippet>1588</a>            select_v4_v6(v4, Duration::from_millis(<span class="number">10</span>), v6, Duration::from_millis(<span class="number">10</span>));
-<a href=#1589 id=1589 data-nosnippet>1589</a>        <span class="macro">assert_eq!</span>(addr, v6.into());
-<a href=#1590 id=1590 data-nosnippet>1590</a>        <span class="macro">assert_eq!</span>(rtt, Duration::from_millis(<span class="number">10</span>));
-<a href=#1591 id=1591 data-nosnippet>1591</a>
-<a href=#1592 id=1592 data-nosnippet>1592</a>        <span class="comment">// v4 better
-<a href=#1593 id=1593 data-nosnippet>1593</a>        </span><span class="kw">let </span>(addr, rtt) = select_v4_v6(v4, Duration::from_millis(<span class="number">1</span>), v6, Duration::from_millis(<span class="number">10</span>));
-<a href=#1594 id=1594 data-nosnippet>1594</a>        <span class="macro">assert_eq!</span>(addr, v4.into());
-<a href=#1595 id=1595 data-nosnippet>1595</a>        <span class="macro">assert_eq!</span>(rtt, Duration::from_millis(<span class="number">1</span>));
-<a href=#1596 id=1596 data-nosnippet>1596</a>
-<a href=#1597 id=1597 data-nosnippet>1597</a>        <span class="comment">// v6 better
-<a href=#1598 id=1598 data-nosnippet>1598</a>        </span><span class="kw">let </span>(addr, rtt) = select_v4_v6(v4, Duration::from_millis(<span class="number">10</span>), v6, Duration::from_millis(<span class="number">1</span>));
-<a href=#1599 id=1599 data-nosnippet>1599</a>        <span class="macro">assert_eq!</span>(addr, v6.into());
-<a href=#1600 id=1600 data-nosnippet>1600</a>        <span class="macro">assert_eq!</span>(rtt, Duration::from_millis(<span class="number">1</span>));
-<a href=#1601 id=1601 data-nosnippet>1601</a>    }
-<a href=#1602 id=1602 data-nosnippet>1602</a>}</code></pre></div></section></main></body></html>
+<a href=#1581 id=1581 data-nosnippet>1581</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#1582 id=1582 data-nosnippet>1582</a>
+<a href=#1583 id=1583 data-nosnippet>1583</a>    <span class="attr">#[test]
+<a href=#1584 id=1584 data-nosnippet>1584</a>    </span><span class="kw">fn </span>test_select_v4_v6_addr() {
+<a href=#1585 id=1585 data-nosnippet>1585</a>        <span class="kw">let </span>v4 = SocketAddrV4::new(Ipv4Addr::LOCALHOST, <span class="number">1</span>);
+<a href=#1586 id=1586 data-nosnippet>1586</a>        <span class="kw">let </span>v6 = SocketAddrV6::new(Ipv6Addr::LOCALHOST, <span class="number">1</span>, <span class="number">0</span>, <span class="number">0</span>);
+<a href=#1587 id=1587 data-nosnippet>1587</a>
+<a href=#1588 id=1588 data-nosnippet>1588</a>        <span class="comment">// Same RTT, prefer v6
+<a href=#1589 id=1589 data-nosnippet>1589</a>        </span><span class="kw">let </span>(addr, rtt) =
+<a href=#1590 id=1590 data-nosnippet>1590</a>            select_v4_v6(v4, Duration::from_millis(<span class="number">10</span>), v6, Duration::from_millis(<span class="number">10</span>));
+<a href=#1591 id=1591 data-nosnippet>1591</a>        <span class="macro">assert_eq!</span>(addr, v6.into());
+<a href=#1592 id=1592 data-nosnippet>1592</a>        <span class="macro">assert_eq!</span>(rtt, Duration::from_millis(<span class="number">10</span>));
+<a href=#1593 id=1593 data-nosnippet>1593</a>
+<a href=#1594 id=1594 data-nosnippet>1594</a>        <span class="comment">// v4 better
+<a href=#1595 id=1595 data-nosnippet>1595</a>        </span><span class="kw">let </span>(addr, rtt) = select_v4_v6(v4, Duration::from_millis(<span class="number">1</span>), v6, Duration::from_millis(<span class="number">10</span>));
+<a href=#1596 id=1596 data-nosnippet>1596</a>        <span class="macro">assert_eq!</span>(addr, v4.into());
+<a href=#1597 id=1597 data-nosnippet>1597</a>        <span class="macro">assert_eq!</span>(rtt, Duration::from_millis(<span class="number">1</span>));
+<a href=#1598 id=1598 data-nosnippet>1598</a>
+<a href=#1599 id=1599 data-nosnippet>1599</a>        <span class="comment">// v6 better
+<a href=#1600 id=1600 data-nosnippet>1600</a>        </span><span class="kw">let </span>(addr, rtt) = select_v4_v6(v4, Duration::from_millis(<span class="number">10</span>), v6, Duration::from_millis(<span class="number">1</span>));
+<a href=#1601 id=1601 data-nosnippet>1601</a>        <span class="macro">assert_eq!</span>(addr, v6.into());
+<a href=#1602 id=1602 data-nosnippet>1602</a>        <span class="macro">assert_eq!</span>(rtt, Duration::from_millis(<span class="number">1</span>));
+<a href=#1603 id=1603 data-nosnippet>1603</a>    }
+<a href=#1604 id=1604 data-nosnippet>1604</a>}</code></pre></div></section></main></body></html>
