@@ -1893,33 +1893,29 @@ mod tests {
 
         let transfer_size = 1_000_000;
 
-        async fn watch_paths(conn: Connection) -> Result<()> {
+        async fn watch_paths(label: &str, conn: Connection) -> Result<()> {
             let mut paths = conn.paths();
-            let mut stats = BTreeMap::new();
+            let mut iroh_paths = BTreeMap::new();
             while conn.close_reason().is_none() {
                 tokio::select! {
                     _ = conn.closed() => break,
                     _ = paths.updated() => {},
                 }
                 for path in paths.get() {
-                    stats.insert(path.id(), (path.remote_addr().clone(), path.stats()));
+                    iroh_paths.insert(path.id(), path);
                 }
             }
-            let mut stats_by_remote = BTreeMap::<TransportAddr, PathStats>::new();
-            for (_, (remote_addr, stats)) in stats {
-                let value = stats_by_remote.entry(remote_addr).or_default();
-                value.rtt += stats.rtt;
-                value.sent_packets += stats.sent_packets;
-            }
-            println!("Path stats:");
-            for (remote, stats) in stats_by_remote {
+            println!("[{label}] Path stats in iroh:");
+            for (path_id, path) in iroh_paths {
+                let stats = path.stats();
+                let remote = path.remote_addr();
                 println!(
-                    "  {remote:?}: RTT {:?}, {} packets sent",
+                    "  [{path_id}] RTT {:?}, {} packets sent | {remote:?}",
                     stats.rtt, stats.sent_packets
                 );
             }
 
-            println!("Path stats in conn:");
+            println!("[{label}] Path stats in quinn:");
             for i in 0..10 {
                 let path_id = PathId(i);
                 if let Some(stats) = conn.inner.path_stats(path_id) {
@@ -1954,7 +1950,7 @@ mod tests {
 
             info!(me = %ep.id().fmt_short(), "client connecting");
             let conn = ep.connect(dst, TEST_ALPN).await?;
-            tokio::spawn(watch_paths(conn.clone()));
+            tokio::spawn(watch_paths("client", conn.clone()));
             let mut send = conn.open_uni().await.anyerr()?;
             send.write_all(&vec![42u8; transfer_size]).await.anyerr()?;
             let mut paths = conn.paths().stream();
@@ -2000,7 +1996,7 @@ mod tests {
 
             info!(me = %ep.id().fmt_short(), "server starting");
             let conn = ep.accept().await.anyerr()?.await.anyerr()?;
-            tokio::spawn(watch_paths(conn.clone()));
+            tokio::spawn(watch_paths("server", conn.clone()));
             let mut recv = conn.accept_uni().await.anyerr()?;
             let mut msg = vec![0u8; transfer_size];
             recv.read_exact(&mut msg).await.anyerr()?;
