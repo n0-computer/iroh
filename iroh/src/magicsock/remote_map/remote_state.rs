@@ -1315,7 +1315,7 @@ impl ConnectionState {
         if let Some(ref addr) = addr {
             self.path_ids.remove(addr);
         }
-        self.open_paths.remove(path_id);
+        self.remove_open_path(path_id);
         addr
     }
 
@@ -1338,6 +1338,12 @@ impl ConnectionState {
                 (remote, *path_id)
             })
             .collect::<PathAddrList>();
+
+        println!("Updating pub_path_info:");
+        for (addr, id) in new.iter() {
+            println!("  {addr:?}: path_id={id}");
+        }
+        println!("");
 
         self.pub_open_paths.set(new).ok();
     }
@@ -1507,12 +1513,21 @@ impl PathInfo {
         self.handle
             .upgrade()
             .and_then(|conn| conn.path_stats(self.path_id))
-            .unwrap_or(self.stats)
+            .unwrap_or_else(|| {
+                println!("WARN: we don't have up-to-date pathstats right now");
+                self.stats
+            })
     }
 
     /// Current best estimate of this paths's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
         self.stats().rtt
+    }
+
+    /// Returns the path's ID that the underlying QUIC implementation uses to identify
+    /// this path.
+    pub fn id(&self) -> PathId {
+        self.path_id
     }
 }
 

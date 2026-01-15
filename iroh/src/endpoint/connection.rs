@@ -663,7 +663,7 @@ pub type IncomingZeroRttConnection = Connection<IncomingZeroRtt>;
 /// May be cloned to obtain another handle to the same connection.
 #[derive(Debug, Clone)]
 pub struct Connection<State: ConnectionState = HandshakeCompleted> {
-    inner: quinn::Connection,
+    pub(crate) inner: quinn::Connection,
     /// State-specific information
     data: State::Data,
 }

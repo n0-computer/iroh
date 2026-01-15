@@ -908,6 +908,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive-ex"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bba95f299f6b9cd47f68a847eca2ae9060a2713af532dc35c342065544845407"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "structmeta",
+ "syn",
+]
+
+[[package]]
 name = "derive_builder"
 version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2147,8 +2159,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77337b8686bf5d32aea4bb7e68cc5b73308fe3b9abdc972a26636ab3d3323437"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2168,8 +2178,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52a21324d427c0a9c992cc72753fc4512f36db62cacb4dbe7c3c98bc1fcd9ea2"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2179,6 +2187,7 @@ dependencies = [
  "identity-hash",
  "lru-slab",
  "n0-qlog",
+ "proptest",
  "rand",
  "ring",
  "rustc-hash",
@@ -2187,6 +2196,7 @@ dependencies = [
  "rustls-platform-verifier 0.6.2",
  "slab",
  "sorted-index-buffer",
+ "test-strategy",
  "thiserror 2.0.17",
  "tinyvec",
  "tracing",
@@ -2196,8 +2206,6 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a91fe9ec3db6615d7ab1b303717f3b98fc40b96955a4ea25b113b1b879f7481f"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -4182,6 +4190,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9426b2a0c03e6cc2ea8dbc0168dbbf943f88755e409fb91bcb8f6a268305f4a"
 
 [[package]]
+name = "structmeta"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e1575d8d40908d70f6fd05537266b90ae71b15dbbe7a8b7dffa2b759306d329"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "structmeta-derive",
+ "syn",
+]
+
+[[package]]
+name = "structmeta-derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "152a0b65a590ff6c3da95cabe2353ee04e6167c896b28e3b14478c2636c922fc"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "strum"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4271,6 +4302,19 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "test-strategy"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43b12f9683de37f9980e485167ee624bfaa0b6b04da661e98e25ef9c2669bc1b"
+dependencies = [
+ "derive-ex",
+ "proc-macro2",
+ "quote",
+ "structmeta",
+ "syn",
 ]
 
 [[package]]

@@ -40,3 +40,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+iroh-quinn = { path = "../quinn/quinn" }
+iroh-quinn-udp = { path = "../quinn/quinn-udp" }
+iroh-quinn-proto = { path = "../quinn/quinn-proto" }

@@ -1515,6 +1515,7 @@ fn is_cgi() -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         io,
         net::{IpAddr, Ipv4Addr},
         str::FromStr,
@@ -1527,6 +1528,7 @@ mod tests {
     use n0_future::{BufferedStreamExt, StreamExt, stream, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
+    use quinn::{PathId, PathStats};
     use rand::SeedableRng;
     use tokio::sync::oneshot;
     use tracing::{Instrument, debug_span, info, info_span, instrument};
@@ -1880,8 +1882,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    #[traced_test]
+    #[tokio::test(flavor = "current_thread")]
+    // #[traced_test]
     async fn endpoint_two_relay_only_becomes_direct() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
         // discovery.  Wait until there is a direct connection.
@@ -1889,11 +1891,53 @@ mod tests {
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
         let qlog = Arc::new(QlogFileGroup::from_env("two_relay_only_becomes_direct"));
 
+        let transfer_size = 1_000_000;
+
+        async fn watch_paths(conn: Connection) -> Result<()> {
+            let mut paths = conn.paths();
+            let mut stats = BTreeMap::new();
+            while conn.close_reason().is_none() {
+                tokio::select! {
+                    _ = conn.closed() => break,
+                    _ = paths.updated() => {},
+                }
+                for path in paths.get() {
+                    stats.insert(path.id(), (path.remote_addr().clone(), path.stats()));
+                }
+            }
+            let mut stats_by_remote = BTreeMap::<TransportAddr, PathStats>::new();
+            for (_, (remote_addr, stats)) in stats {
+                let value = stats_by_remote.entry(remote_addr).or_default();
+                value.rtt += stats.rtt;
+                value.sent_packets += stats.sent_packets;
+            }
+            println!("Path stats:");
+            for (remote, stats) in stats_by_remote {
+                println!(
+                    "  {remote:?}: RTT {:?}, {} packets sent",
+                    stats.rtt, stats.sent_packets
+                );
+            }
+
+            println!("Path stats in conn:");
+            for i in 0..10 {
+                let path_id = PathId(i);
+                if let Some(stats) = conn.inner.path_stats(path_id) {
+                    println!(
+                        "  [{path_id}]: RTT {:?}, {} packets sent",
+                        stats.rtt, stats.sent_packets
+                    );
+                }
+            }
+            Ok(())
+        }
+
         #[instrument(name = "client", skip_all)]
         async fn connect(
             relay_map: RelayMap,
             node_addr_rx: oneshot::Receiver<EndpointAddr>,
             qlog: Arc<QlogFileGroup>,
+            transfer_size: usize,
         ) -> Result<ConnectionError> {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
             let secret = SecretKey::generate(&mut rng);
@@ -1910,8 +1954,9 @@ mod tests {
 
             info!(me = %ep.id().fmt_short(), "client connecting");
             let conn = ep.connect(dst, TEST_ALPN).await?;
+            tokio::spawn(watch_paths(conn.clone()));
             let mut send = conn.open_uni().await.anyerr()?;
-            send.write_all(b"hello").await.anyerr()?;
+            send.write_all(&vec![42u8; transfer_size]).await.anyerr()?;
             let mut paths = conn.paths().stream();
             info!("Waiting for direct connection");
             while let Some(infos) = paths.next().await {
@@ -1936,6 +1981,7 @@ mod tests {
             relay_map: RelayMap,
             node_addr_tx: oneshot::Sender<EndpointAddr>,
             qlog: Arc<QlogFileGroup>,
+            transfer_size: usize,
         ) -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(1u64);
             let secret = SecretKey::generate(&mut rng);
@@ -1954,25 +2000,28 @@ mod tests {
 
             info!(me = %ep.id().fmt_short(), "server starting");
             let conn = ep.accept().await.anyerr()?.await.anyerr()?;
-            // let node_id = conn.remote_node_id()?;
-            // assert_eq!(node_id, src);
+            tokio::spawn(watch_paths(conn.clone()));
             let mut recv = conn.accept_uni().await.anyerr()?;
-            let mut msg = [0u8; 5];
+            let mut msg = vec![0u8; transfer_size];
             recv.read_exact(&mut msg).await.anyerr()?;
-            assert_eq!(&msg, b"hello");
-            info!("received hello");
             let msg = recv.read_to_end(100).await.anyerr()?;
             assert_eq!(msg, b"close please");
             info!("received 'close please'");
-            // Dropping the connection closes it just fine.
+
+            conn.close(0u32.into(), &[]);
             Ok(())
         }
 
-        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx, qlog.clone()));
-        let client_task = tokio::spawn(connect(relay_map, node_addr_rx, qlog));
+        let server_task = tokio::spawn(accept(
+            relay_map.clone(),
+            node_addr_tx,
+            qlog.clone(),
+            transfer_size,
+        ));
+        let client_task = tokio::spawn(connect(relay_map, node_addr_rx, qlog, transfer_size));
 
         server_task.await.anyerr()??;
-        let conn_closed = dbg!(client_task.await.anyerr()??);
+        let conn_closed = client_task.await.anyerr()??;
         assert!(matches!(
             conn_closed,
             ConnectionError::ApplicationClosed(ApplicationClose { .. })
