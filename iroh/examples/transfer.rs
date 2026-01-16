@@ -441,10 +441,11 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             for path in conn.paths().get() {
                 let stats = path.stats();
                 println!(
-                    "  {:?}: RTT {:?}, {} packets sent",
+                    "  {:?}: RTT {:?}, tx={}, rx={}",
                     path.remote_addr(),
                     stats.rtt,
-                    stats.udp_tx.datagrams
+                    stats.udp_tx.bytes,
+                    stats.udp_rx.bytes,
                 );
             }
             n0_error::Ok(())
@@ -504,10 +505,11 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     for path in conn.paths().get() {
         let stats = path.stats();
         println!(
-            "  {:?}: RTT {:?}, {} packets sent",
+            "  {:?}: RTT {:?}, tx={}, rx={}",
             path.remote_addr(),
             stats.rtt,
-            stats.udp_tx.datagrams
+            stats.udp_tx.bytes,
+            stats.udp_rx.bytes,
         );
     }
     Ok(())

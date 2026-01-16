@@ -3023,14 +3023,24 @@ mod tests {
             .values()
             .max_by_key(|p| p.stats().udp_tx.datagrams)
             .expect("no paths in stats");
+        let client_most_recv_path = client_stats
+            .values()
+            .max_by_key(|p| p.stats().udp_rx.datagrams)
+            .expect("no paths in stats");
 
         let server_most_sent_path = server_stats
             .values()
             .max_by_key(|p| p.stats().udp_tx.datagrams)
             .expect("no paths in stats");
+        let server_most_recv_path = server_stats
+            .values()
+            .max_by_key(|p| p.stats().udp_rx.datagrams)
+            .expect("no paths in stats");
 
         assert!(client_most_sent_path.is_ip());
+        assert!(client_most_recv_path.is_ip());
         assert!(server_most_sent_path.is_ip());
+        assert!(server_most_recv_path.is_ip());
 
         Ok(())
     }
