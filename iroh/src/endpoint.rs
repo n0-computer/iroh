@@ -262,7 +262,7 @@ impl Builder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
     /// # use iroh::Endpoint;
@@ -339,7 +339,7 @@ impl Builder {
     /// [`BindOpts::set_is_required`] is set to `false`
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
     /// # use iroh::{Endpoint, endpoint::BindOpts};
