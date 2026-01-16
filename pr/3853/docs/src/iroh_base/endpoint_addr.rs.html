@@ -20,7 +20,7 @@
 <a href=#20 id=20 data-nosnippet>20</a>/// To establish a network connection to an endpoint both the [`EndpointId`] and one or more network
 <a href=#21 id=21 data-nosnippet>21</a>/// paths are needed.  The network paths can come from various sources, current sources can come from
 <a href=#22 id=22 data-nosnippet>22</a>///
-<a href=#23 id=23 data-nosnippet>23</a>/// - A [endpoint_id_resolution] service which can provide routing information for a given [`EndpointId`].
+<a href=#23 id=23 data-nosnippet>23</a>/// - An [ERS] service which can provide routing information for a given [`EndpointId`].
 <a href=#24 id=24 data-nosnippet>24</a>///
 <a href=#25 id=25 data-nosnippet>25</a>/// - A [`RelayUrl`] of the endpoint's [home relay], this allows establishing the connection via
 <a href=#26 id=26 data-nosnippet>26</a>///   the Relay server and is very reliable.
@@ -33,7 +33,7 @@
 <a href=#33 id=33 data-nosnippet>33</a>/// number of other addressing information.  It is a generic addressing type used whenever a connection
 <a href=#34 id=34 data-nosnippet>34</a>/// to other endpoints needs to be established.
 <a href=#35 id=35 data-nosnippet>35</a>///
-<a href=#36 id=36 data-nosnippet>36</a>/// [endpoint_id_resolution]: https://docs.rs/iroh/*/iroh/index.html#endpoint-id-resolution
+<a href=#36 id=36 data-nosnippet>36</a>/// [ERS]: https://docs.rs/iroh/*/iroh/index.html#endpoint-id-resolution
 <a href=#37 id=37 data-nosnippet>37</a>/// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
 <a href=#38 id=38 data-nosnippet>38</a>/// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
 <a href=#39 id=39 data-nosnippet>39</a></span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]

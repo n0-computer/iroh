@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["EndpointIdResolutionError","IntoEndpointIdResolutionError","ParseError"],"mod":["dns","mdns","pkarr","static_provider"],"struct":["ConcurrentEndpointIdResolution","EndpointData","EndpointIdResolutionItem","EndpointInfo","UserData"],"trait":["EndpointIdResolution","IntoEndpointIdResolution"]};

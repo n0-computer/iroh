@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["NAME"],"enum":["DiscoveryEvent"],"struct":["MdnsEndpointIdResolution","MdnsEndpointIdResolutionBuilder"]};
