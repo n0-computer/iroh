@@ -13,8 +13,8 @@ use iroh::{
     Watcher,
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{BindOpts, ConnectionError, PathInfoList},
-    endpoint_id_resolution::{
-        dns::DnsEndpointIdResolution,
+    ers::{
+        dns::Dns,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
 };
@@ -116,9 +116,9 @@ struct EndpointArgs {
     /// Disable relays completely.
     #[clap(long, conflicts_with = "relay_url")]
     no_relay: bool,
-    /// Disable EIR completely.
+    /// Disable ERS completely.
     #[clap(long, conflicts_with_all = ["pkarr_relay_url", "no_pkarr_publish", "dns_origin_domain", "no_dns_resolve"])]
-    no_eir: bool,
+    no_ers: bool,
     /// If set no direct connections will be established.
     #[clap(long)]
     relay_only: bool,
@@ -138,7 +138,7 @@ struct EndpointArgs {
     #[clap(long)]
     no_dns_resolve: bool,
     #[clap(long)]
-    /// Enable mDNS EIR.
+    /// Enable mDNS ERS.
     mdns: bool,
     /// Set the default IPv4 bind address.
     #[clap(long)]
@@ -259,19 +259,19 @@ impl EndpointArgs {
             }
         }
 
-        if !self.no_eir {
+        if !self.no_ers {
             if !self.no_pkarr_publish {
                 let url = self
                     .pkarr_relay_url
                     .unwrap_or_else(|| self.env.pkarr_relay_url());
-                builder = builder.endpoint_id_resolution(PkarrPublisher::builder(url));
+                builder = builder.ers(PkarrPublisher::builder(url));
             }
 
             if !self.no_dns_resolve {
                 let domain = self
                     .dns_origin_domain
                     .unwrap_or_else(|| self.env.dns_origin_domain());
-                builder = builder.endpoint_id_resolution(DnsEndpointIdResolution::builder(domain));
+                builder = builder.ers(Dns::builder(domain));
             }
         }
 
@@ -323,11 +323,9 @@ impl EndpointArgs {
         if self.mdns {
             #[cfg(feature = "mdns")]
             {
-                use iroh::endpoint_id_resolution::mdns::MdnsEndpointIdResolution;
+                use iroh::ers::Mdns;
 
-                endpoint
-                    .endpoint_id_resolution()
-                    .add(MdnsEndpointIdResolution::builder().build(endpoint.id())?);
+                endpoint.ers().add(Mdns::builder().build(endpoint.id())?);
             }
             #[cfg(not(feature = "mdns"))]
             {

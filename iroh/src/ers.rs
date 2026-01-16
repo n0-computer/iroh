@@ -1,4 +1,4 @@
-//! Endpoint ID to address resolution .
+//! Endpoint ID to address resolution.
 //!
 //! To connect to an iroh endpoint a [`EndpointAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`EndpointId`].
@@ -14,18 +14,18 @@
 //! information.  Usually this means publishing which [`RelayUrl`] to use for their
 //! [`EndpointId`], but they could also publish their direct addresses.
 //!
-//! The [`EndpointIdResolution`] trait is used to define endpoint ID resolution.  This allows multiple
+//! The [`EndpointIdResolutionSystem`] trait is used to define an endpoint ID resolution system.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
 //! Each [`Endpoint`] can use the endpoint ID resolution mechanisms most suitable to the application.
-//! The [`Builder::endpoint_id_resolution`] method is used to add an endpoint ID resolution mechanism to an
+//! The [`Builder::ers`] method is used to add an endpoint ID resolution mechanism to an
 //! [`Endpoint`].
 //!
-//! Some generally useful EIR implementations are provided:
+//! Some generally useful ERS implementations are provided:
 //!
 //! - [`StaticProvider`] which allows application to add and remove out-of-band addressing
 //!   information.
 //!
-//! - The [`DnsEndpointIdResolution`] which performs lookups via the standard DNS systems.  To publish
+//! - The [`ers::Dns`] which performs lookups via the standard DNS systems.  To publish
 //!   to this DNS server a [`PkarrPublisher`] is needed.  [Number 0] runs a public instance
 //!   of a [`PkarrPublisher`] with attached DNS server which is globally available and a
 //!   reliable default choice.
@@ -33,64 +33,64 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`MdnsEndpointIdResolution`]: mdns::MdnsEndpointIdResolution which uses the crate `swarm-discovery`, an
+//! - [`ers::Mdns`]: mdns::MdnsEndpointIdResolution which uses the crate `swarm-discovery`, an
 //!   opinionated mDNS implementation, to discover endpoints on the local network.
 //!
-//! - The [`DhtEndpointIdResolution`] also uses the [`pkarr`] system but can also publish and lookup
-//!   records to/from the Mainline DHT.
+//! - The [`ers::Dht`] also uses the [`pkarr`] system but can also publish and lookup
+//!   records to/from the Mainline DHT. It requires enabling the `ers-pkarr-dht` feature.
 //!
-//! To use multiple EIR systems simultaneously you can call [`Builder::endpoint_id_resolution`].
-//! This will use [`ConcurrentEndpointIdResolution`] under the hood, which performs lookups to all
-//! EIR systems at the same time.
+//! To use multiple ERS's simultaneously you can call [`Builder::ers`].
+//! This will use [`ConcurrentErs`] under the hood, which performs lookups to all
+//! ERS systems at the same time.
 //!
-//! [`Builder::endpoint_id_resolution`] takes any type that implements [`IntoEndpointIdResolution`]. You can
-//! implement that trait on a builder struct if your EIR service needs information
-//! from the endpoint it is mounted on. After endpoint construction, your EIR service
-//! is built by calling [`IntoEndpointIdResolution::into_endpoint_id_resolution`], passing the finished [`Endpoint`] to your
+//! [`Builder::ers`] takes any type that implements [`IntoErs`]. You can
+//! implement that trait on a builder struct if your ERS  needs information
+//! from the endpoint it is mounted on. After endpoint construction, your ERS
+//! is built by calling [`IntoErs::into_ers`], passing the finished [`Endpoint`] to your
 //! builder.
 //!
-//! If your EIR service does not need any information from its endpoint, you can
-//! pass the EIR service directly to [`Builder::endpoint_id_resolution`]: All types that
-//! implement [`EndpointIdResolution`] also have a blanket implementation of [`IntoEndpointIdResolution`].
+//! If your ERS does not need any information from its endpoint, you can
+//! pass the ERS service directly to [`Builder::ers`]: All types that
+//! implement [`EndpointIdResolutionSystem`] also have a blanket implementation of [`IntoErs`].
 //!
 //! # Examples
 //!
-//! A very common setup is to enable DNS EIR, which needs to be done in two parts as a
-//! [`PkarrPublisher`] and [`DnsEndpointIdResolution`]:
+//! A very common setup is to enable DNS ERS, which needs to be done in two parts as a
+//! [`PkarrPublisher`] and [`ers::Dns`]:
 //!
 //! ```no_run
 //! use iroh::{
 //!     Endpoint, SecretKey,
 //!     endpoint::RelayMode,
-//!     endpoint_id_resolution::{dns::DnsEndpointIdResolution, pkarr::PkarrPublisher},
+//!     ers::{self, PkarrPublisher},
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
-//!     .endpoint_id_resolution(PkarrPublisher::n0_dns())
-//!     .endpoint_id_resolution(DnsEndpointIdResolution::n0_dns())
+//!     .ers(PkarrPublisher::n0_dns())
+//!     .ers(ers::Dns::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! To also enable [`MdnsEndpointIdResolution`] it can be added as another service.
+//! To also enable [`ers::Mdns`] it can be added as another service.
 //!
 //! ```no_run
 //! #[cfg(feature = "mdns")]
 //! # {
 //! # use iroh::{
-//! #    endpoint_id_resolution::{dns::DnsEndpointIdResolution, pkarr::PkarrPublisher, mdns::MdnsEndpointIdResolution},
+//! #    ers::{self, PkarrPublisher},
 //! #    endpoint::RelayMode,
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
-//!     .endpoint_id_resolution(PkarrPublisher::n0_dns())
-//!     .endpoint_id_resolution(DnsEndpointIdResolution::n0_dns())
-//!     .endpoint_id_resolution(MdnsEndpointIdResolution::builder())
+//!     .ers(PkarrPublisher::n0_dns())
+//!     .ers(ers::Dns::n0_dns())
+//!     .ers(ers::Mdns::builder())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -100,14 +100,14 @@
 //!
 //! [`EndpointAddr`]: iroh_base::EndpointAddr
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`Builder::endpoint_id_resolution`]: crate::endpoint::Builder::endpoint_id_resolution
-//! [`DnsEndpointIdResolution`]: dns::DnsEndpointIdResolution
+//! [`Builder::ers`]: crate::endpoint::Builder::ers
+//! [`ers::Dns`]: crate::ers::Dns
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
-//! [`DhtEndpointIdResolution`]: pkarr::dht::DhtEndpointIdResolution
+//! [`ers::Dht`]: crate::ers::Dht
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`MdnsEndpointIdResolution`]: mdns::MdnsEndpointIdResolution
+//! [`ers::Mdns`]: crate::ers::Mdns
 //! [`StaticProvider`]: static_provider::StaticProvider
 
 use std::sync::{Arc, RwLock};
@@ -126,66 +126,69 @@ pub mod mdns;
 pub mod pkarr;
 pub mod static_provider;
 
-/// Trait for structs that can be converted into [`EndpointIdResolution`] systems.
+#[cfg(not(wasm_browser))]
+pub use dns::*;
+#[cfg(feature = "mdns")]
+pub use mdns::*;
+#[cfg(feature = "ers-pkarr-dht")]
+pub use pkarr::dht::*;
+pub use pkarr::*;
+pub use static_provider::*;
+/// Trait for structs that can be converted into [`EndpointIdResolutionSystem`]s.
 ///
-/// This trait is implemented on builders for EIR services. Any type that implements this
-/// trait can be added as a EIR service in [`Builder::endpoint_id_resolution`].
+/// This trait is implemented on builders for ERS's. Any type that implements this
+/// trait can be added as a ERS in [`Builder::ers`].
 ///
-/// Any type that implements [`EndpointIdResolution`] also implements [`IntoEndpointIdResolution`].
+/// Any type that implements [`EndpointIdResolutionSystem`] also implements [`IntoErs`].
 ///
-/// Iroh uses this trait to allow configuring the set of EIR services on the endpoint
+/// Iroh uses this trait to allow configuring the set of ERS's on the endpoint
 /// builder, while providing the EIR services access to information about the endpoint
-/// to [`IntoEndpointIdResolution::into_endpoint_id_resolution`].
+/// to [`IntoErs::into_ers`].
 ///
-/// [`Builder::endpoint_id_resolution`]: crate::endpoint::Builder::endpoint_id_resolution
-pub trait IntoEndpointIdResolution: Send + Sync + std::fmt::Debug + 'static {
-    /// Turns this endpoint ID resolution builder into a ready-to-use EIR service.
+/// [`Builder::ers`]: crate::endpoint::Builder::ers
+pub trait IntoErs: Send + Sync + std::fmt::Debug + 'static {
+    /// Turns this endpoint ID resolution builder into a ready-to-use ERS.
     ///
     /// If an error is returned, building the endpoint will fail with this error.
-    fn into_endpoint_id_resolution(
-        self,
-        endpoint: &Endpoint,
-    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError>;
+    fn into_ers(self, endpoint: &Endpoint)
+    -> Result<impl EndpointIdResolutionSystem, IntoErsError>;
 }
 
-/// Blanket no-op impl of `IntoEndpointIdResolution` for `T: EndpointIdResolution`.
-impl<T: EndpointIdResolution> IntoEndpointIdResolution for T {
-    fn into_endpoint_id_resolution(
+/// Blanket no-op impl of `IntoErs` for `T: EndpointIdResolution`.
+impl<T: EndpointIdResolutionSystem> IntoErs for T {
+    fn into_ers(
         self,
         _endpoint: &Endpoint,
-    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError> {
+    ) -> Result<impl EndpointIdResolutionSystem, IntoErsError> {
         Ok(self)
     }
 }
 
-/// Non-public dyn-compatible version of [`IntoEndpointIdResolution`], used in [`crate::endpoint::Builder`].
-pub(crate) trait DynIntoEndpointIdResolution:
-    Send + Sync + std::fmt::Debug + 'static
-{
-    /// See [`IntoEndpointIdResolution::into_endpoint_id_resolution`]
-    fn into_eir_service(
+/// Non-public dyn-compatible version of [`IntoErs`], used in [`crate::endpoint::Builder`].
+pub(crate) trait DynIntoErs: Send + Sync + std::fmt::Debug + 'static {
+    /// See [`IntoErs::into_ers`]
+    fn into_ers(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn EndpointIdResolution>, IntoEndpointIdResolutionError>;
+    ) -> Result<Box<dyn EndpointIdResolutionSystem>, IntoErsError>;
 }
 
-impl<T: IntoEndpointIdResolution> DynIntoEndpointIdResolution for T {
-    fn into_eir_service(
+impl<T: IntoErs> DynIntoErs for T {
+    fn into_ers(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn EndpointIdResolution>, IntoEndpointIdResolutionError> {
-        let disco: Box<dyn EndpointIdResolution> = Box::new(
-            IntoEndpointIdResolution::into_endpoint_id_resolution(*self, endpoint)?,
-        );
+    ) -> Result<Box<dyn EndpointIdResolutionSystem>, IntoErsError> {
+        let disco: Box<dyn EndpointIdResolutionSystem> =
+            Box::new(IntoErs::into_ers(*self, endpoint)?);
         Ok(disco)
     }
 }
 
-/// IntoEndpointIdResolution errors
+/// IntoErs errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
-pub enum IntoEndpointIdResolutionError {
+pub enum IntoErsError {
     #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
@@ -193,13 +196,13 @@ pub enum IntoEndpointIdResolutionError {
     },
 }
 
-impl IntoEndpointIdResolutionError {
+impl IntoErsError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
         provenance: &'static str,
         source: T,
     ) -> Self {
-        e!(IntoEndpointIdResolutionError::User {
+        e!(IntoErsError::User {
             provenance,
             source: AnyError::from_std(source)
         })
@@ -210,19 +213,19 @@ impl IntoEndpointIdResolutionError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        e!(IntoEndpointIdResolutionError::User {
+        e!(IntoErsError::User {
             provenance,
             source: AnyError::from_std_box(source)
         })
     }
 }
 
-/// EndpointIdResolution errors
+/// EndpointIdResolutionSystem errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 #[derive(Clone)]
-pub enum EndpointIdResolutionError {
+pub enum Error {
     #[error("No endpoint ID resolution service configured")]
     NoServiceConfigured,
     #[error("Endpoint ID resolution produced no results")]
@@ -234,7 +237,7 @@ pub enum EndpointIdResolutionError {
     },
 }
 
-impl EndpointIdResolutionError {
+impl Error {
     /// Creates a new user error from an arbitrary error type.
     #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
@@ -256,18 +259,18 @@ impl EndpointIdResolutionError {
     /// Creates a new user error from an arbitrary error type that can be converted into [`AnyError`].
     #[track_caller]
     pub fn from_err_any(provenance: &'static str, source: impl Into<AnyError>) -> Self {
-        e!(EndpointIdResolutionError::User {
+        e!(Error::User {
             provenance,
             source: Arc::new(source.into())
         })
     }
 }
 
-/// Endpoint ID resolution for [`super::Endpoint`].
+/// Endpoint ID resolution system for [`super::Endpoint`].
 ///
 /// This trait defines publishing and resolving addressing information for a [`EndpointId`].
 /// This enables connecting to other endpoints with only knowing the [`EndpointId`], by using this
-/// [`EndpointIdResolution`] system to look up the actual addressing information.  It is common for
+/// [`EndpointIdResolutionSystem`] system to look up the actual addressing information.  It is common for
 /// implementations to require each endpoint to publish their own information before it can be
 /// looked up by other endpoints.
 ///
@@ -279,7 +282,7 @@ impl EndpointIdResolutionError {
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::RelayUrl
-pub trait EndpointIdResolution: std::fmt::Debug + Send + Sync + 'static {
+pub trait EndpointIdResolutionSystem: std::fmt::Debug + Send + Sync + 'static {
     /// Publishes the given [`EndpointData`] to the EIR mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
@@ -289,56 +292,50 @@ pub trait EndpointIdResolution: std::fmt::Debug + Send + Sync + 'static {
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
     fn publish(&self, _data: &EndpointData) {}
 
-    /// Resolves the [`EndpointIdResolutionItem`] for the given [`EndpointId`].
+    /// Resolves the [`Item`] for the given [`EndpointId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
-    fn resolve(
-        &self,
-        _endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
+    fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
         None
     }
 }
 
-impl<T: EndpointIdResolution> EndpointIdResolution for Arc<T> {
+impl<T: EndpointIdResolutionSystem> EndpointIdResolutionSystem for Arc<T> {
     fn publish(&self, data: &EndpointData) {
         self.as_ref().publish(data);
     }
 
-    fn resolve(
-        &self,
-        endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
+    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
         self.as_ref().resolve(endpoint_id)
     }
 }
 
-/// Endpoint ID resolution results from [`EndpointIdResolution`] services.
+/// Endpoint ID resolution results from [`EndpointIdResolutionSystem`]s.
 ///
-/// This is the item in the streams returned from [`EndpointIdResolution::resolve`].
+/// This is the item in the streams returned from [`EndpointIdResolutionSystem::resolve`].
 /// It contains the [`EndpointData`] about the resolved endpoint addresses,
 /// and some additional metadata about the endpoint ID resolution system.
 ///
 /// This struct derefs to [`EndpointData`], so you can access the methods from [`EndpointData`]
-/// directly from [`EndpointIdResolutionItem`].
+/// directly from [`Item`].
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct EndpointIdResolutionItem {
-    /// The endpoint info for the endpoint, as discovered by the the EIR service.
+pub struct Item {
+    /// The endpoint info for the endpoint, as discovered by the the ERS.
     endpoint_info: EndpointInfo,
-    /// A static string to identify the EIR source.
+    /// A static string to identify the ERS source.
     ///
-    /// Should be uniform per EIR service.
+    /// Should be uniform per ERS.
     provenance: &'static str,
     /// Optional timestamp when this endpoint address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
-    // TODO(ramfox): this is currently unused. As we develop more `EndpointIdResolutionService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each endpoint to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
+    // TODO(ramfox): this is currently unused. As we develop more `EndpointIdResolutionSystem`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each endpoint to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     last_updated: Option<u64>,
 }
 
-impl EndpointIdResolutionItem {
-    /// Creates a new [`EndpointIdResolutionItem`] from a [`EndpointInfo`].
+impl Item {
+    /// Creates a new [`Item`] from a [`EndpointInfo`].
     pub fn new(
         endpoint_info: EndpointInfo,
         provenance: &'static str,
@@ -392,54 +389,54 @@ impl EndpointIdResolutionItem {
     }
 }
 
-impl std::ops::Deref for EndpointIdResolutionItem {
+impl std::ops::Deref for Item {
     type Target = EndpointData;
     fn deref(&self) -> &Self::Target {
         &self.endpoint_info.data
     }
 }
 
-impl From<EndpointIdResolutionItem> for EndpointInfo {
-    fn from(item: EndpointIdResolutionItem) -> Self {
+impl From<Item> for EndpointInfo {
+    fn from(item: Item) -> Self {
         item.endpoint_info
     }
 }
 
-/// An endpoint ID resolution service that combines multiple EIR sources.
+/// An endpoint ID resolution system that combines multiple ERS sources.
 ///
-/// The EIR services will resolve concurrently.
+/// The ERS will resolve concurrently.
 #[derive(Debug, Default, Clone)]
-pub struct ConcurrentEndpointIdResolution {
-    services: Arc<RwLock<Vec<Box<dyn EndpointIdResolution>>>>,
+pub struct ConcurrentErs {
+    services: Arc<RwLock<Vec<Box<dyn EndpointIdResolutionSystem>>>>,
     /// The data last published, used to publish when adding a new service.
     last_data: Arc<RwLock<Option<EndpointData>>>,
 }
 
-impl ConcurrentEndpointIdResolution {
-    /// Creates an empty [`ConcurrentEndpointIdResolution`].
+impl ConcurrentErs {
+    /// Creates an empty [`ConcurrentErs`].
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// Creates a new [`ConcurrentEndpointIdResolution`].
-    pub fn from_services(services: Vec<Box<dyn EndpointIdResolution>>) -> Self {
+    /// Creates a new [`ConcurrentErs`].
+    pub fn from_services(services: Vec<Box<dyn EndpointIdResolutionSystem>>) -> Self {
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
         }
     }
 
-    /// Adds an [`EndpointIdResolution`] service.
+    /// Adds an [`EndpointIdResolutionSystem`] service.
     ///
-    /// If there is historical EIR data, it will be published immediately on this service.
-    pub fn add(&self, service: impl EndpointIdResolution + 'static) {
+    /// If there is historical ERS data, it will be published immediately on this service.
+    pub fn add(&self, service: impl EndpointIdResolutionSystem + 'static) {
         self.add_boxed(Box::new(service))
     }
 
-    /// Adds an already `Box`ed [`EndpointIdResolution`] service.
+    /// Adds an already `Box`ed [`EndpointIdResolutionSystem`] service.
     ///
-    /// If there is historical EIR data, it will be published immediately on this service.
-    pub fn add_boxed(&self, service: Box<dyn EndpointIdResolution>) {
+    /// If there is historical ERS data, it will be published immediately on this service.
+    pub fn add_boxed(&self, service: Box<dyn EndpointIdResolutionSystem>) {
         {
             let data = self.last_data.read().expect("poisoned");
             if let Some(data) = &*data {
@@ -460,9 +457,9 @@ impl ConcurrentEndpointIdResolution {
     }
 }
 
-impl<T> From<T> for ConcurrentEndpointIdResolution
+impl<T> From<T> for ConcurrentErs
 where
-    T: IntoIterator<Item = Box<dyn EndpointIdResolution>>,
+    T: IntoIterator<Item = Box<dyn EndpointIdResolutionSystem>>,
 {
     fn from(iter: T) -> Self {
         let services = iter.into_iter().collect::<Vec<_>>();
@@ -473,7 +470,7 @@ where
     }
 }
 
-impl EndpointIdResolution for ConcurrentEndpointIdResolution {
+impl EndpointIdResolutionSystem for ConcurrentErs {
     fn publish(&self, data: &EndpointData) {
         let services = self.services.read().expect("poisoned");
         for service in &*services {
@@ -486,10 +483,7 @@ impl EndpointIdResolution for ConcurrentEndpointIdResolution {
             .replace(data.clone());
     }
 
-    fn resolve(
-        &self,
-        endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
+    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
         let services = self.services.read().expect("poisoned");
         let streams = services
             .iter()
@@ -510,7 +504,7 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use n0_error::{AnyError as Error, Result, StackResultExt};
+    use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::{StreamExt, time};
     use n0_tracing_test::traced_test;
     use rand::{CryptoRng, Rng, SeedableRng};
@@ -525,16 +519,13 @@ mod tests {
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
 
     #[derive(Debug, Clone, Default)]
-    struct TestEndpointIdResolutionShared {
+    struct TestErsShared {
         endpoints: Arc<Mutex<InfoStore>>,
     }
 
-    impl TestEndpointIdResolutionShared {
-        pub fn create_endpoint_id_resolution(
-            &self,
-            endpoint_id: EndpointId,
-        ) -> TestEndpointIdResolution {
-            TestEndpointIdResolution {
+    impl TestErsShared {
+        pub fn create_ers(&self, endpoint_id: EndpointId) -> TestErs {
+            TestErs {
                 endpoint_id,
                 shared: self.clone(),
                 publish: true,
@@ -543,11 +534,8 @@ mod tests {
             }
         }
 
-        pub fn create_lying_endpoint_id_resolution(
-            &self,
-            endpoint_id: EndpointId,
-        ) -> TestEndpointIdResolution {
-            TestEndpointIdResolution {
+        pub fn create_lying_ers(&self, endpoint_id: EndpointId) -> TestErs {
+            TestErs {
                 endpoint_id,
                 shared: self.clone(),
                 publish: false,
@@ -558,15 +546,15 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct TestEndpointIdResolution {
+    struct TestErs {
         endpoint_id: EndpointId,
-        shared: TestEndpointIdResolutionShared,
+        shared: TestErsShared,
         publish: bool,
         resolve_wrong: bool,
         delay: Duration,
     }
 
-    impl EndpointIdResolution for TestEndpointIdResolution {
+    impl EndpointIdResolutionSystem for TestErs {
         fn publish(&self, data: &EndpointData) {
             if !self.publish {
                 return;
@@ -579,11 +567,7 @@ mod tests {
                 .insert(self.endpoint_id, (data.clone(), now));
         }
 
-        fn resolve(
-            &self,
-            endpoint_id: EndpointId,
-        ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>>
-        {
+        fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
             let addr_info = if self.resolve_wrong {
                 let ts = system_time_now() - 100_000;
                 let port: u16 = rand::rng().random_range(10_000..20_000);
@@ -601,7 +585,7 @@ mod tests {
             };
             let stream = match addr_info {
                 Some((data, ts)) => {
-                    let item = EndpointIdResolutionItem::new(
+                    let item = Item::new(
                         EndpointInfo::from_parts(endpoint_id, data),
                         "test-disco",
                         Some(ts),
@@ -621,85 +605,68 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
-    struct EmptyEndpointIdResolution;
+    struct EmptyErs;
 
-    impl EndpointIdResolution for EmptyEndpointIdResolution {
+    impl EndpointIdResolutionSystem for EmptyErs {
         fn publish(&self, _data: &EndpointData) {}
 
-        fn resolve(
-            &self,
-            _endpoint_id: EndpointId,
-        ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>>
-        {
+        fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
             Some(n0_future::stream::empty().boxed())
         }
     }
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
-    /// This is a smoke test for our EIR mechanism.
+    /// This is a smoke test for our ERS mechanism.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_endpoint_id_resolution_simple_shared() -> Result {
+    async fn ers_simple_shared() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let eir_shared = TestEndpointIdResolutionShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
-            eir_shared.create_endpoint_id_resolution(ep.id())
-        })
-        .await;
+        let eir_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| eir_shared.create_ers(ep.id())).await;
 
-        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            eir_shared.create_endpoint_id_resolution(ep.id())
-        })
-        .await;
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| eir_shared.create_ers(ep.id())).await;
         let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
 
-    /// This is a smoke test to ensure a EIR service can be
-    /// `Arc`-d, and EIR will still work
+    /// This is a smoke test to ensure a ERS can be
+    /// `Arc`-d, and ERS will still work
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_endpoint_id_resolution_simple_shared_with_arc() -> Result {
+    async fn ers_simple_shared_with_arc() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let eir_shared = TestEndpointIdResolutionShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
-            Arc::new(eir_shared.create_endpoint_id_resolution(ep.id()))
-        })
-        .await;
+        let ers_shared = TestErsShared::default();
+        let (ep1, _guard1) =
+            new_endpoint(&mut rng, |ep| Arc::new(ers_shared.create_ers(ep.id()))).await;
 
-        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            Arc::new(eir_shared.create_endpoint_id_resolution(ep.id()))
-        })
-        .await;
+        let (ep2, _guard2) =
+            new_endpoint(&mut rng, |ep| Arc::new(ers_shared.create_ers(ep.id()))).await;
         let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
 
-    /// This test adds an empty EIR which provides no addresses.
+    /// This test adds an empty ERS which provides no addresses.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_endpoint_id_resolution_combined_with_empty_and_right() -> Result {
+    async fn ers_combined_with_empty_and_right() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let eir_shared = TestEndpointIdResolutionShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
-            eir_shared.create_endpoint_id_resolution(ep.id())
-        })
-        .await;
+        let ers_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
         let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
-            let disco1 = EmptyEndpointIdResolution;
-            let disco2 = eir_shared.create_endpoint_id_resolution(ep.id());
-            ep.endpoint_id_resolution().add(disco1);
-            ep.endpoint_id_resolution().add(disco2);
+            let disco1 = EmptyErs;
+            let disco2 = ers_shared.create_ers(ep.id());
+            ep.ers().add(disco1);
+            ep.ers().add(disco2);
         })
         .await;
 
         let ep1_addr = EndpointAddr::new(ep1.id());
 
-        assert_eq!(ep2.endpoint_id_resolution().len(), 2);
+        assert_eq!(ep2.ers().len(), 2);
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -707,28 +674,25 @@ mod tests {
         Ok(())
     }
 
-    /// This test adds a "lying" eir service which provides a wrong address.
+    /// This test adds a "lying" ers service which provides a wrong address.
     /// This is to make sure that as long as one of the services returns a working address, we
     /// will connect successfully.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_id_resolution_combined_with_empty_and_wrong() -> Result {
+    async fn ers_combined_with_empty_and_wrong() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let disco_shared = TestEndpointIdResolutionShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
-            disco_shared.create_endpoint_id_resolution(ep.id())
-        })
-        .await;
+        let ers_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            let disco1 = EmptyEndpointIdResolution;
-            let disco2 = disco_shared.create_lying_endpoint_id_resolution(ep.id());
-            let disco3 = disco_shared.create_endpoint_id_resolution(ep.id());
-            let disco = ConcurrentEndpointIdResolution::empty();
-            disco.add(disco1);
-            disco.add(disco2);
-            disco.add(disco3);
-            disco
+            let ers1 = EmptyErs;
+            let ers2 = ers_shared.create_lying_ers(ep.id());
+            let ers3 = ers_shared.create_ers(ep.id());
+            let ers = ConcurrentErs::empty();
+            ers.add(ers1);
+            ers.add(ers2);
+            ers.add(ers3);
+            ers
         })
         .await;
 
@@ -736,21 +700,18 @@ mod tests {
         Ok(())
     }
 
-    /// This test only has the "lying" endpointID resolution service. It is here to make sure that this actually fails.
+    /// This test only has the "lying" endpointID resolution system. It is here to make sure that this actually fails.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_endpoint_id_resolution_combined_wrong_only() -> Result {
+    async fn ers_combined_wrong_only() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let disco_shared = TestEndpointIdResolutionShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
-            disco_shared.create_endpoint_id_resolution(ep.id())
-        })
-        .await;
+        let ers_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            let disco1 = disco_shared.create_lying_endpoint_id_resolution(ep.id());
-            ConcurrentEndpointIdResolution::from_services(vec![Box::new(disco1)])
+            let ers1 = ers_shared.create_lying_ers(ep.id());
+            ConcurrentErs::from_services(vec![Box::new(ers1)])
         })
         .await;
 
@@ -773,18 +734,12 @@ mod tests {
     /// Connect should still succeed because the endpointID resolution service service will be invoked (after a delay).
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_endpoint_id_resolution_with_wrong_existing_addr() -> Result {
+    async fn ers_with_wrong_existing_addr() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let disco_shared = TestEndpointIdResolutionShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
-            disco_shared.create_endpoint_id_resolution(ep.id())
-        })
-        .await;
-        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            disco_shared.create_endpoint_id_resolution(ep.id())
-        })
-        .await;
+        let ers_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
 
         let ep1_wrong_addr = EndpointAddr::from_parts(
             ep1.id(),
@@ -796,7 +751,7 @@ mod tests {
 
     async fn new_endpoint<
         R: CryptoRng,
-        D: EndpointIdResolution + 'static,
+        D: EndpointIdResolutionSystem + 'static,
         F: FnOnce(&Endpoint) -> D,
     >(
         rng: &mut R,
@@ -804,14 +759,14 @@ mod tests {
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         new_endpoint_add(rng, |ep| {
             let disco = create_disco(ep);
-            ep.endpoint_id_resolution().add(disco);
+            ep.ers().add(disco);
         })
         .await
     }
 
     async fn new_endpoint_add<R: CryptoRng, F: FnOnce(&Endpoint)>(
         rng: &mut R,
-        add_disco: F,
+        add_ers: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let secret = SecretKey::generate(rng);
 
@@ -821,7 +776,7 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        add_disco(&ep);
+        add_ers(&ep);
 
         let handle = tokio::spawn({
             let ep = ep.clone();
@@ -835,7 +790,7 @@ mod tests {
                     connections.push(conn);
                 }
 
-                Ok::<_, Error>(())
+                Ok::<_, AnyError>(())
             }
         });
 
@@ -858,7 +813,7 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
-    use n0_error::{AnyError as Error, Result, StackResultExt};
+    use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
     use rand::{CryptoRng, SeedableRng};
@@ -867,8 +822,8 @@ mod test_dns_pkarr {
     use crate::{
         Endpoint, RelayMode,
         dns::DnsResolver,
-        endpoint_id_resolution::{EndpointData, pkarr::PkarrPublisher},
         endpoint_info::EndpointInfo,
+        ers::{EndpointData, PkarrPublisher},
         test_utils::{
             DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
         },
@@ -955,10 +910,8 @@ mod test_dns_pkarr {
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let (ep1, _guard1) =
-            ep_with_endpoint_id_resolution(&mut rng, &relay_map, &dns_pkarr_server).await?;
-        let (ep2, _guard2) =
-            ep_with_endpoint_id_resolution(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep1, _guard1) = ep_with_ers(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep2, _guard2) = ep_with_ers(&mut rng, &relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
@@ -971,7 +924,7 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_endpoint_id_resolution<R: CryptoRng + ?Sized>(
+    async fn ep_with_ers<R: CryptoRng + ?Sized>(
         rng: &mut R,
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
@@ -982,7 +935,7 @@ mod test_dns_pkarr {
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
-            .endpoint_id_resolution(dns_pkarr_server.endpoint_id_resolution(secret_key))
+            .ers(dns_pkarr_server.ers(secret_key))
             .bind()
             .await?;
 
@@ -995,7 +948,7 @@ mod test_dns_pkarr {
                     // Just accept incoming connections, but don't do anything with them.
                 }
 
-                Ok::<_, Error>(())
+                Ok::<_, AnyError>(())
             }
         });
 

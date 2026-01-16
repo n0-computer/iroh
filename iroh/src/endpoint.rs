@@ -34,14 +34,11 @@ pub use super::magicsock::{
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 #[cfg(wasm_browser)]
-use crate::endpoint_id_resolution::pkarr::PkarrResolver;
+use crate::ers::PkarrResolver;
 use crate::{
     NetReport,
     endpoint::presets::Preset,
-    endpoint_id_resolution::{
-        ConcurrentEndpointIdResolution, DynIntoEndpointIdResolution, EndpointIdResolutionError,
-        IntoEndpointIdResolution, UserData,
-    },
+    ers::{ConcurrentErs, DynIntoErs, Error as ErsError, IntoErs, UserData},
     magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -97,8 +94,8 @@ pub struct Builder {
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: QuicTransportConfig,
     keylog: bool,
-    endpoint_id_resolution: Vec<Box<dyn DynIntoEndpointIdResolution>>,
-    endpoint_id_resolution_user_data: Option<UserData>,
+    ers: Vec<Box<dyn DynIntoErs>>,
+    ers_user_data: Option<UserData>,
     proxy_url: Option<Url>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
@@ -162,8 +159,8 @@ impl Builder {
             alpn_protocols: Default::default(),
             transport_config: QuicTransportConfig::default(),
             keylog: Default::default(),
-            endpoint_id_resolution: Default::default(),
-            endpoint_id_resolution_user_data: Default::default(),
+            ers: Default::default(),
+            ers_user_data: Default::default(),
             proxy_url: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
@@ -199,7 +196,7 @@ impl Builder {
         let msock_opts = magicsock::Options {
             transports: self.transports,
             secret_key,
-            endpoint_id_resolution_user_data: self.endpoint_id_resolution_user_data,
+            ers_user_data: self.ers_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -219,10 +216,10 @@ impl Builder {
             static_config: Arc::new(static_config),
         };
 
-        // Add EIR mechanisms
-        for create_service in self.endpoint_id_resolution {
-            let service = create_service.into_eir_service(&ep)?;
-            ep.endpoint_id_resolution().add_boxed(service);
+        // Add ERS mechanisms
+        for create_service in self.ers {
+            let service = create_service.into_ers(&ep)?;
+            ep.ers().add_boxed(service);
         }
 
         Ok(ep)
@@ -489,51 +486,47 @@ impl Builder {
         self
     }
 
-    /// Removes all EIR services from the builder.
+    /// Removes all Endpoint ID Resolution Systems from the builder.
     ///
-    /// If no EIR service is set, connecting to an endpoint without providing its
+    /// If no ERS is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
-    /// See the documentation of the [`crate::endpoint_id_resolution::EndpointIdResolution`] trait for details.
-    pub fn clear_endpoint_id_resolution(mut self) -> Self {
-        self.endpoint_id_resolution.clear();
+    /// See the documentation of the [`crate::ers::EndpointIdResolutionSystem`] trait for details.
+    pub fn clear_ers(mut self) -> Self {
+        self.ers.clear();
         self
     }
 
-    /// Adds an additional EIR mechanism for this endpoint.
+    /// Adds an additional ERS for this endpoint.
     ///
-    /// Once the endpoint is created the provided [`IntoEndpointIdResolution::into_endpoint_id_resolution`] will be
-    /// called. This allows EIR services to finalize their configuration by e.g. using
+    /// Once the endpoint is created the provided [`IntoErs::into_ers`] will be
+    /// called. This allows ERS's to finalize their configuration by e.g. using
     /// the secret key from the endpoint which can be needed to sign published information.
     ///
-    /// This method can be called multiple times and all the EIR services passed in
+    /// This method can be called multiple times and all the ERS's passed in
     /// will be combined using an internal instance of the
-    /// [`crate::endpoint_id_resolution::ConcurrentEndpointIdResolution`]. To clear all EIR services, use
-    /// [`Self::clear_endpoint_id_resolution`].
+    /// [`crate::ers::ConcurrentErs`]. To clear all ERS's, use
+    /// [`Self::clear_ers`].
     ///
-    /// If no EIR service is set, connecting to an endpoint without providing its
+    /// If no ERS is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
-    /// See the documentation of the [`crate::endpoint_id_resolution::EndpointIdResolution`] trait for details.
-    pub fn endpoint_id_resolution(
-        mut self,
-        endpoint_id_resolution: impl IntoEndpointIdResolution,
-    ) -> Self {
-        self.endpoint_id_resolution
-            .push(Box::new(endpoint_id_resolution));
+    /// See the documentation of the [`crate::ers::EndpointIdResolutionSystem`] trait for details.
+    pub fn ers(mut self, ers: impl IntoErs) -> Self {
+        self.ers.push(Box::new(ers));
         self
     }
 
-    /// Sets the initial user-defined data to be published in EIR services for this node.
+    /// Sets the initial user-defined data to be published in ERS's for this node.
     ///
-    /// When using EIR services, this string of [`UserData`] will be published together
+    /// When using ERS's, this string of [`UserData`] will be published together
     /// with the endpoint's addresses and relay URL. When other endpoints discover this endpoint,
     /// they retrieve the [`UserData`] in addition to the addressing info.
     ///
     /// Iroh itself does not interpret the user-defined data in any way, it is purely left
     /// for applications to parse and use.
-    pub fn user_data_for_endpoint_id_resolution(mut self, user_data: UserData) -> Self {
-        self.endpoint_id_resolution_user_data = Some(user_data);
+    pub fn user_data_for_ers(mut self, user_data: UserData) -> Self {
+        self.ers_user_data = Some(user_data);
         self
     }
 
@@ -558,7 +551,7 @@ impl Builder {
     /// Optionally sets a custom DNS resolver to use for this endpoint.
     ///
     /// The DNS resolver is used to resolve relay hostnames, and endpoint addresses if
-    /// [`crate::endpoint_id_resolution::dns::DnsEndpointIdResolution`] is configured.
+    /// [`crate::ers::Dns`] is configured.
     ///
     /// By default, a new DNS resolver is created which is configured to use the
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
@@ -696,7 +689,7 @@ pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: EndpointIdResolutionError },
+    NoAddress { source: ErsError },
     #[error("Unable to connect to remote")]
     Quinn {
         #[error(std_err)]
@@ -794,7 +787,7 @@ impl Endpoint {
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`EndpointAddr`] it
     /// may still be possible a connection can be established.  This depends on which, if any,
-    /// [`crate::endpoint_id_resolution::EndpointIdResolution`] services were configured using [`Builder::endpoint_id_resolution`].  The EIR
+    /// [`crate::ers::EndpointIdResolutionSystem`]s were configured using [`Builder::ers`].  The ERS
     /// service will also be used if the remote endpoint is not reachable on the provided direct
     /// addresses and there is no [`RelayUrl`].
     ///
@@ -1042,8 +1035,8 @@ impl Endpoint {
     /// any calls to `online` as long as possible, or avoid calling `online`
     /// entirely.
     ///
-    /// The online method does not interact with [`crate::endpoint_id_resolution::EndpointIdResolution`]
-    /// services, which means that any EIR service that relies on a WAN
+    /// The online method does not interact with [`crate::ers::EndpointIdResolutionSystem`]
+    /// services, which means that any ERS that relies on a WAN
     /// connection is independent of the endpoint's online status.
     ///
     /// # Examples
@@ -1125,11 +1118,11 @@ impl Endpoint {
         self.msock.dns_resolver()
     }
 
-    /// Returns the EIR mechanism, if configured.
+    /// Returns the ERS, if configured.
     ///
-    /// See [`Builder::endpoint_id_resolution`].
-    pub fn endpoint_id_resolution(&self) -> &ConcurrentEndpointIdResolution {
-        self.msock.endpoint_id_resolution()
+    /// See [`Builder::ers`].
+    pub fn ers(&self) -> &ConcurrentErs {
+        self.msock.ers()
     }
 
     /// Returns metrics collected for this endpoint.
@@ -1281,16 +1274,15 @@ impl Endpoint {
 
     // # Methods to update internal state.
 
-    /// Sets the initial user-defined data to be published in EIR services for this endpoint.
+    /// Sets the initial user-defined data to be published in ERS's for this endpoint.
     ///
     /// If the user-defined data passed to this function is different to the previous one,
-    /// the endpoint will republish its endpoint info to the configured EIR services.
+    /// the endpoint will republish its endpoint info to the configured ERS's.
     ///
-    /// See also [`Builder::user_data_for_endpoint_id_resolution`] for setting an initial value when
+    /// See also [`Builder::user_data_for_ers`] for setting an initial value when
     /// building the endpoint.
-    pub fn set_user_data_for_endpoint_id_resolution(&self, user_data: Option<UserData>) {
-        self.msock
-            .set_user_data_for_endpoint_id_resolution(user_data);
+    pub fn set_user_data_for_ers(&self, user_data: Option<UserData>) {
+        self.msock.set_user_data_for_ers(user_data);
     }
 
     // # Methods for terminating the endpoint.
@@ -1545,7 +1537,7 @@ mod tests {
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectOptions, Connection, ConnectionError,
         },
-        endpoint_id_resolution::static_provider::StaticProvider,
+        ers::static_provider::StaticProvider,
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
     };
@@ -1831,7 +1823,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_direct_only() -> Result {
         // Connect two endpoints on the same network, without a relay server, without
-        // EIR.
+        // ERS.
         let ep1 = {
             let span = info_span!("server");
             let _guard = span.enter();
@@ -1892,7 +1884,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_relay_only_becomes_direct() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
-        // EIR.  Wait until there is a direct connection.
+        // ERS.  Wait until there is a direct connection.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
         let qlog = Arc::new(QlogFileGroup::from_env("two_relay_only_becomes_direct"));
@@ -1993,7 +1985,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_relay_only_no_ip() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
-        // EIR.
+        // ERS.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
 
@@ -2090,7 +2082,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_direct_add_relay() -> Result {
         // Connect two endpoints on the same network, without relay server and without
-        // EIR.  Add a relay connection later.
+        // ERS.  Add a relay connection later.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
 
@@ -2315,13 +2307,13 @@ mod tests {
     async fn endpoint_bidi_send_recv() -> Result {
         let disco = StaticProvider::new();
         let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
-            .endpoint_id_resolution(disco.clone())
+            .ers(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
 
         let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
-            .endpoint_id_resolution(disco.clone())
+            .ers(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2677,9 +2669,9 @@ mod tests {
             .map(|(_, addr)| addr.clone())
             .collect::<Vec<_>>();
         let ids = addrs.iter().map(|addr| addr.id).collect::<Vec<_>>();
-        let eir = StaticProvider::from_endpoint_info(addrs);
+        let ers = StaticProvider::from_endpoint_info(addrs);
         let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-            .endpoint_id_resolution(eir)
+            .ers(ers)
             .bind()
             .await
             .anyerr()?;

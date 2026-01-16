@@ -19,12 +19,12 @@ use url::Url;
 
 use crate::{
     Endpoint,
-    endpoint_id_resolution::{
-        EndpointData, EndpointIdResolution, EndpointIdResolutionError, EndpointIdResolutionItem,
-        IntoEndpointIdResolution, IntoEndpointIdResolutionError,
+    endpoint_info::EndpointInfo,
+    ers::{
+        EndpointData, EndpointIdResolutionSystem, Error as ErsError, IntoErs, IntoErsError,
+        Item as ErsItem,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
-    endpoint_info::EndpointInfo,
 };
 
 /// Republish delay for the DHT.
@@ -38,15 +38,15 @@ const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 /// It stores endpoint addresses in DNS records, signed by the endpoint's private key, and publishes
 /// them to the BitTorrent Mainline DHT.  See the [pkarr module] for more details.
 ///
-/// This implements the [`EndpointIdResolution`] trait to be used as an endpoint ID resolution service which can
-/// be used as both a publisher and resolver.  Calling [`DhtEndpointIdResolution::publish`] will start
+/// This implements the [`EndpointIdResolutionSystem`] trait to be used as an endpoint ID resolution service which can
+/// be used as both a publisher and resolver.  Calling [`Dht::publish`] will start
 /// a background task that periodically publishes the endpoint address.
 ///
 /// [pkarr module]: super
 #[derive(Debug, Clone)]
-pub struct DhtEndpointIdResolution(Arc<Inner>);
+pub struct Dht(Arc<Inner>);
 
-impl Default for DhtEndpointIdResolution {
+impl Default for Dht {
     fn default() -> Self {
         Self::builder().build().expect("valid builder")
     }
@@ -58,7 +58,7 @@ struct Inner {
     pkarr: PkarrClient,
     /// The background task that periodically publishes the endpoint address.
     ///
-    /// Due to [`AbortOnDropHandle`], this will be aborted when the EIR is dropped.
+    /// Due to [`AbortOnDropHandle`], this will be aborted when the ERS is dropped.
     task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Optional keypair for signing the DNS packets.
     ///
@@ -75,10 +75,7 @@ struct Inner {
 }
 
 impl Inner {
-    async fn resolve_pkarr(
-        &self,
-        key: pkarr::PublicKey,
-    ) -> Option<Result<EndpointIdResolutionItem, EndpointIdResolutionError>> {
+    async fn resolve_pkarr(&self, key: pkarr::PublicKey) -> Option<Result<ErsItem, ErsError>> {
         tracing::info!(
             "resolving {} from relay and DHT {:?}",
             key.to_z32(),
@@ -90,11 +87,7 @@ impl Inner {
             Some(signed_packet) => match EndpointInfo::from_pkarr_signed_packet(&signed_packet) {
                 Ok(endpoint_info) => {
                     tracing::info!("discovered endpoint info {:?}", endpoint_info);
-                    Some(Ok(EndpointIdResolutionItem::new(
-                        endpoint_info,
-                        "pkarr",
-                        None,
-                    )))
+                    Some(Ok(ErsItem::new(endpoint_info, "pkarr", None)))
                 }
                 Err(_err) => {
                     tracing::debug!("failed to parse signed packet as endpoint info");
@@ -109,7 +102,7 @@ impl Inner {
     }
 }
 
-/// Builder for [`DhtEndpointIdResolution`].
+/// Builder for [`Dht`].
 ///
 /// By default, publishing to the DHT is enabled, and relay publishing is disabled.
 #[derive(Debug)]
@@ -204,9 +197,9 @@ impl Builder {
     }
 
     /// Builds the endpoint ID resolution mechanism.
-    pub fn build(self) -> Result<DhtEndpointIdResolution, IntoEndpointIdResolutionError> {
+    pub fn build(self) -> Result<Dht, IntoErsError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
-            return Err(IntoEndpointIdResolutionError::from_err(
+            return Err(IntoErsError::from_err(
                 "pkarr",
                 std::io::Error::other("at least one of DHT or relay must be enabled"),
             ));
@@ -222,18 +215,18 @@ impl Builder {
                 if let Some(url) = &self.pkarr_relay {
                     builder
                         .relays(std::slice::from_ref(url))
-                        .map_err(|e| IntoEndpointIdResolutionError::from_err("pkarr", e))?;
+                        .map_err(|e| IntoErsError::from_err("pkarr", e))?;
                 }
                 builder
                     .build()
-                    .map_err(|e| IntoEndpointIdResolutionError::from_err("pkarr", e))?
+                    .map_err(|e| IntoErsError::from_err("pkarr", e))?
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         let include_direct_addresses = self.include_direct_addresses;
         let secret_key = self.secret_key.filter(|_| self.enable_publish);
 
-        Ok(DhtEndpointIdResolution(Arc::new(Inner {
+        Ok(Dht(Arc::new(Inner {
             pkarr,
             ttl,
             relay_url: self.pkarr_relay,
@@ -245,17 +238,17 @@ impl Builder {
     }
 }
 
-impl IntoEndpointIdResolution for Builder {
-    fn into_endpoint_id_resolution(
+impl IntoErs for Builder {
+    fn into_ers(
         self,
         endpoint: &Endpoint,
-    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError> {
+    ) -> Result<impl EndpointIdResolutionSystem, IntoErsError> {
         self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 
-impl DhtEndpointIdResolution {
-    /// Creates a new builder for [`DhtEndpointIdResolution`].
+impl Dht {
+    /// Creates a new builder for [`Dht`].
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -294,7 +287,7 @@ impl DhtEndpointIdResolution {
     }
 }
 
-impl EndpointIdResolution for DhtEndpointIdResolution {
+impl EndpointIdResolutionSystem for Dht {
     fn publish(&self, data: &EndpointData) {
         let Some(keypair) = &self.0.secret_key else {
             tracing::debug!("no keypair set, not publishing");
@@ -319,17 +312,14 @@ impl EndpointIdResolution for DhtEndpointIdResolution {
         *task = Some(AbortOnDropHandle::new(curr));
     }
 
-    fn resolve(
-        &self,
-        endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
+    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<ErsItem, ErsError>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(endpoint_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", endpoint_id, pkarr_public_key.to_z32());
-        let eir = self.0.clone();
+        let ers = self.0.clone();
         let stream =
             n0_future::stream::once_future(
-                async move { eir.resolve_pkarr(pkarr_public_key).await },
+                async move { ers.resolve_pkarr(pkarr_public_key).await },
             )
             .filter_map(|x| x)
             .boxed();
@@ -350,14 +340,14 @@ mod tests {
     #[tokio::test]
     #[ignore = "flaky"]
     #[traced_test]
-    async fn dht_endpoint_id_resolution_smoke() -> Result {
+    async fn dht_ers_smoke() -> Result {
         let secret = SecretKey::generate(&mut rand::rng());
         let testnet = pkarr::mainline::Testnet::new_async(3).await.anyerr()?;
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()
             .anyerr()?;
-        let eir = DhtEndpointIdResolution::builder()
+        let ers = Dht::builder()
             .secret_key(secret.clone())
             .client(client)
             .build()?;
@@ -365,14 +355,14 @@ mod tests {
         let relay_url: RelayUrl = Url::parse("https://example.com").anyerr()?.into();
 
         let data = EndpointData::default().with_relay_url(Some(relay_url.clone()));
-        eir.publish(&data);
+        ers.publish(&data);
 
         // publish is fire and forget, so we have no way to wait until it is done.
         tokio::time::timeout(Duration::from_secs(30), async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 let mut found_relay_urls = BTreeSet::new();
-                let items = eir
+                let items = ers
                     .resolve(secret.public())
                     .unwrap()
                     .collect::<Vec<_>>()

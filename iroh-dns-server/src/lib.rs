@@ -22,8 +22,7 @@ mod tests {
     };
 
     use iroh::{
-        RelayUrl, SecretKey, dns::DnsResolver, endpoint_id_resolution::pkarr::PkarrRelayClient,
-        endpoint_info::EndpointInfo,
+        RelayUrl, SecretKey, dns::DnsResolver, endpoint_info::EndpointInfo, ers::PkarrRelayClient,
     };
     use n0_error::{Result, StdResultExt};
     use n0_tracing_test::traced_test;

@@ -11,7 +11,7 @@
 //! we won't hit these with only this integration test.
 use iroh::{
     Endpoint, RelayMode,
-    endpoint_id_resolution::{EndpointIdResolution, pkarr::PkarrResolver},
+    ers::{EndpointIdResolutionSystem, pkarr::PkarrResolver},
 };
 use n0_error::{Result, StdResultExt};
 use n0_future::{

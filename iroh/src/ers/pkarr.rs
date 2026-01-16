@@ -23,16 +23,16 @@
 //! providing endpoints which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh endpoint.
 //!
-//! There are several EIR services built on top of pkarr, which can be composed
+//! There are several ERS's built on top of pkarr, which can be composed
 //! to the application's needs:
 //!
 //! - [`PkarrPublisher`], which publishes to a pkarr relay server using HTTP.
 //!
 //! - [`PkarrResolver`], which resolves from a pkarr relay server using HTTP.
 //!
-//! - [`DnsEndpointIdResolution`], which resolves from a DNS server.
+//! - [`ers::Dns`], which resolves from a DNS server.
 //!
-//! - [`DhtEndpointIdResolution`], which resolves and publishes from both pkarr relay servers and well
+//! - [`ers::Dht`], which resolves and publishes from both pkarr relay servers and well
 //!   as the Mainline DHT.
 //!
 //! [pkarr]: https://pkarr.org
@@ -41,8 +41,8 @@
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
 //! [`EndpointId`]: crate::EndpointId
-//! [`DnsEndpointIdResolution`]: crate::endpoint_id_resolution::dns::DnsEndpointIdResolution
-//! [`DhtEndpointIdResolution`]: dht::DhtEndpointIdResolution
+//! [`ers::Dns`]: crate::ers::Dns
+//! [`ers::Dht`]: crate::ers::Dht
 
 use std::sync::Arc;
 
@@ -62,17 +62,19 @@ use pkarr::{
 use tracing::{Instrument, debug, error_span, warn};
 use url::Url;
 
-use super::{EndpointIdResolutionError, IntoEndpointIdResolution, IntoEndpointIdResolutionError};
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
     Endpoint,
     endpoint::force_staging_infra,
-    endpoint_id_resolution::{EndpointData, EndpointIdResolution, EndpointIdResolutionItem},
+    ers::{
+        EndpointData, EndpointIdResolutionSystem, Error as ErsError, IntoErs, IntoErsError,
+        Item as ErsItem,
+    },
     util::reqwest_client_builder,
 };
 
-#[cfg(feature = "eir-pkarr-dht")]
+#[cfg(feature = "ers-pkarr-dht")]
 pub mod dht;
 
 #[allow(missing_docs)]
@@ -107,9 +109,9 @@ pub enum PkarrError {
     Encoding { source: EncodingError },
 }
 
-impl From<PkarrError> for EndpointIdResolutionError {
+impl From<PkarrError> for ErsError {
     fn from(err: PkarrError) -> Self {
-        EndpointIdResolutionError::from_err_any("pkarr", err)
+        ErsError::from_err_any("pkarr", err)
     }
 }
 
@@ -120,7 +122,7 @@ impl From<PkarrError> for EndpointIdResolutionError {
 /// central service.  It is a reliable service to use for endpoint ID resolution.
 ///
 /// [number 0]: https://n0.computer
-/// [module documentation]: crate::endpoint_id_resolution::pkarr
+/// [module documentation]: crate::ers::pkarr
 pub const N0_DNS_PKARR_RELAY_PROD: &str = "https://dns.iroh.link/pkarr";
 /// The testing pkarr relay run by [number 0].
 ///
@@ -215,11 +217,11 @@ impl PkarrPublisherBuilder {
     }
 }
 
-impl IntoEndpointIdResolution for PkarrPublisherBuilder {
-    fn into_endpoint_id_resolution(
+impl IntoErs for PkarrPublisherBuilder {
+    fn into_ers(
         mut self,
         endpoint: &Endpoint,
-    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError> {
+    ) -> Result<impl EndpointIdResolutionSystem, IntoErsError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver().clone());
@@ -234,16 +236,16 @@ impl IntoEndpointIdResolution for PkarrPublisherBuilder {
 /// This publisher uses HTTP to publish endpoint ID resolution information to a pkarr relay
 /// server, see the [module docs] for details.
 ///
-/// This implements the [`EndpointIdResolution`] trait to be used as an endpoint ID resolution service.  Note
+/// This implements the [`EndpointIdResolutionSystem`] trait to be used as an endpoint ID resolution service.  Note
 /// that it only publishes endpoint ID resolution information, for the corresponding resolver use
-/// the [`PkarrResolver`] together with [`ConcurrentEndpointIdResolution`].
+/// the [`PkarrResolver`] together with [`ConcurrentErs`].
 ///
 /// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
 ///
 /// [pkarr]: https://pkarr.org
-/// [module docs]: crate::endpoint_id_resolution::pkarr
+/// [module docs]: crate::ers::pkarr
 /// [`RelayUrl`]: crate::RelayUrl
-/// [`ConcurrentEndpointIdResolution`]: super::ConcurrentEndpointIdResolution
+/// [`ConcurrentErs`]: super::ConcurrentErs
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
@@ -255,13 +257,13 @@ impl PkarrPublisher {
     /// Returns a [`PkarrPublisherBuilder`] that publishes endpoint info to a [pkarr] relay at `pkarr_relay`.
     ///
     /// If no further options are set, the pkarr publisher  will use [`DEFAULT_PKARR_TTL`] as the
-    /// time-to-live value for the published packets, and it will republish EIR information
+    /// time-to-live value for the published packets, and it will republish ERS information
     /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
     ///
-    /// [`PkarrPublisherBuilder`] implements [`IntoEndpointIdResolution`], so it can be passed to [`endpoint_id_resolution`].
+    /// [`PkarrPublisherBuilder`] implements [`IntoErs`], so it can be passed to [`ers`].
     /// It will then use the endpoint's secret key to sign published packets.
     ///
-    /// [`endpoint_id_resolution`]:  crate::endpoint::Builder::endpoint_id_resolution
+    /// [`ers`]:  crate::endpoint::Builder::ers
     /// [pkarr]: https://pkarr.org
     pub fn builder(pkarr_relay: Url) -> PkarrPublisherBuilder {
         PkarrPublisherBuilder::new(pkarr_relay)
@@ -339,7 +341,7 @@ impl PkarrPublisher {
     }
 }
 
-impl EndpointIdResolution for PkarrPublisher {
+impl EndpointIdResolutionSystem for PkarrPublisher {
     fn publish(&self, data: &EndpointData) {
         self.update_endpoint_data(data);
     }
@@ -449,11 +451,11 @@ impl PkarrResolverBuilder {
     }
 }
 
-impl IntoEndpointIdResolution for PkarrResolverBuilder {
-    fn into_endpoint_id_resolution(
+impl IntoErs for PkarrResolverBuilder {
+    fn into_ers(
         mut self,
         endpoint: &Endpoint,
-    ) -> Result<impl EndpointIdResolution, IntoEndpointIdResolutionError> {
+    ) -> Result<impl EndpointIdResolutionSystem, IntoErsError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver().clone());
@@ -468,13 +470,13 @@ impl IntoEndpointIdResolution for PkarrResolverBuilder {
 /// The resolver uses HTTP to query endpoint ID resolution information from a pkarr relay server,
 /// see the [module docs] for details.
 ///
-/// This implements the [`EndpointIdResolution`] trait to be used as an endpoint ID resolution service.  Note
+/// This implements the [`EndpointIdResolutionSystem`] trait to be used as an endpoint ID resolution service.  Note
 /// that it only resolves endpoint ID resolution information, for the corresponding publisher use
-/// the [`PkarrPublisher`] together with [`ConcurrentEndpointIdResolution`].
+/// the [`PkarrPublisher`] together with [`ConcurrentErs`].
 ///
 /// [pkarr]: https://pkarr.org
-/// [module docs]: crate::endpoint_id_resolution::pkarr
-/// [`ConcurrentEndpointIdResolution`]: super::ConcurrentEndpointIdResolution
+/// [module docs]: crate::ers::pkarr
+/// [`ConcurrentErs`]: super::ConcurrentErs
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrResolver {
     pkarr_client: PkarrRelayClient,
@@ -483,7 +485,7 @@ pub struct PkarrResolver {
 impl PkarrResolver {
     /// Creates a new resolver builder using the pkarr relay server at the URL.
     ///
-    /// The builder implements [`IntoEndpointIdResolution`].
+    /// The builder implements [`IntoErs`].
     pub fn builder(pkarr_relay: Url) -> PkarrResolverBuilder {
         PkarrResolverBuilder {
             pkarr_relay,
@@ -513,17 +515,14 @@ impl PkarrResolver {
     }
 }
 
-impl EndpointIdResolution for PkarrResolver {
-    fn resolve(
-        &self,
-        endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>> {
+impl EndpointIdResolutionSystem for PkarrResolver {
+    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<ErsItem, ErsError>>> {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(endpoint_id).await?;
             let info = EndpointInfo::from_pkarr_signed_packet(&signed_packet)
-                .map_err(|err| EndpointIdResolutionError::from_err_any("pkarr", err))?;
-            let item = EndpointIdResolutionItem::new(info, "pkarr", None);
+                .map_err(|err| ErsError::from_err_any("pkarr", err))?;
+            let item = ErsItem::new(info, "pkarr", None);
             Ok(item)
         };
         let stream = n0_future::stream::once_future(fut);
@@ -565,10 +564,7 @@ impl PkarrRelayClient {
     }
 
     /// Resolves a [`SignedPacket`] for the given [`EndpointId`].
-    pub async fn resolve(
-        &self,
-        endpoint_id: EndpointId,
-    ) -> Result<SignedPacket, EndpointIdResolutionError> {
+    pub async fn resolve(&self, endpoint_id: EndpointId) -> Result<SignedPacket, ErsError> {
         // We map the error to string, as in browsers the error is !Send
         let public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
             .map_err(|err| e!(PkarrError::PublicKey, err))?;

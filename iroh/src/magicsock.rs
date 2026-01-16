@@ -58,10 +58,7 @@ use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::hooks::EndpointHooksList,
-    endpoint_id_resolution::{
-        ConcurrentEndpointIdResolution, EndpointData, EndpointIdResolution,
-        EndpointIdResolutionError, UserData,
-    },
+    ers::{self, EndpointData, EndpointIdResolutionSystem, Error as ErsError, UserData},
     magicsock::remote_map::{PathsWatcher, RemoteInfo},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
@@ -120,8 +117,8 @@ pub(crate) struct Options {
     /// Secret key for this endpoint.
     pub(crate) secret_key: SecretKey,
 
-    /// Optional user-defined EIR data.
-    pub(crate) endpoint_id_resolution_user_data: Option<UserData>,
+    /// Optional user-defined ERS data.
+    pub(crate) ers_user_data: Option<UserData>,
 
     /// A DNS resolver to use for resolving relay URLs.
     ///
@@ -226,10 +223,10 @@ pub(crate) struct MagicSock {
     relay_map: RelayMap,
 
     // - Endpoint ID Resolution
-    /// Optional EIR service
-    endpoint_id_resolution: ConcurrentEndpointIdResolution,
+    /// Optional ERS
+    ers: ers::ConcurrentErs,
     /// Optional user-defined discover data.
-    endpoint_id_resolution_user_data: RwLock<Option<UserData>>,
+    ers_user_data: RwLock<Option<UserData>>,
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
@@ -309,11 +306,11 @@ impl MagicSock {
     /// if the actor has any known paths to the remote. If not, it starts endpoint ID resolution and waits for
     /// at least one result to arrive.
     ///
-    /// Returns `Ok(Ok(EndpointIdMappedAddr))` if there is a known path or EIR produced
+    /// Returns `Ok(Ok(EndpointIdMappedAddr))` if there is a known path or ERS produced
     /// at least one result. This does not mean there is a working path, only that we have at least
     /// one transport address we can try to connect to.
     ///
-    /// Returns `Ok(Err(endpoint_id_resolution_error))` if there are no known paths to the remote and EIR
+    /// Returns `Ok(Err(ers_error))` if there are no known paths to the remote and ERS
     /// failed or produced no results. This means that we don't have any transport address for
     /// the remote, thus there is no point in trying to connect over the quinn endpoint.
     ///
@@ -322,8 +319,7 @@ impl MagicSock {
     pub(crate) async fn resolve_remote(
         &self,
         addr: EndpointAddr,
-    ) -> Result<Result<EndpointIdMappedAddr, EndpointIdResolutionError>, RemoteStateActorStoppedError>
-    {
+    ) -> Result<Result<EndpointIdMappedAddr, ErsError>, RemoteStateActorStoppedError> {
         let EndpointAddr { id, addrs } = addr;
         let actor = self.remote_map.remote_state_actor(id);
         let (tx, rx) = oneshot::channel();
@@ -442,17 +438,14 @@ impl MagicSock {
         &self.dns_resolver
     }
 
-    /// Reference to the internal EIR service
-    pub(crate) fn endpoint_id_resolution(&self) -> &ConcurrentEndpointIdResolution {
-        &self.endpoint_id_resolution
+    /// Reference to the internal ERS
+    pub(crate) fn ers(&self) -> &ers::ConcurrentErs {
+        &self.ers
     }
 
-    /// Updates the user-defined EIR data for this endpoint.
-    pub(crate) fn set_user_data_for_endpoint_id_resolution(&self, user_data: Option<UserData>) {
-        let mut guard = self
-            .endpoint_id_resolution_user_data
-            .write()
-            .expect("lock poisened");
+    /// Updates the user-defined ERS data for this endpoint.
+    pub(crate) fn set_user_data_for_ers(&self, user_data: Option<UserData>) {
+        let mut guard = self.ers_user_data.write().expect("lock poisened");
         if *guard != user_data {
             *guard = user_data;
             drop(guard);
@@ -560,11 +553,7 @@ impl MagicSock {
             .map(TransportAddr::Ip)
             .collect();
 
-        let user_data = self
-            .endpoint_id_resolution_user_data
-            .read()
-            .expect("lock poisened")
-            .clone();
+        let user_data = self.ers_user_data.read().expect("lock poisened").clone();
         if relay_url.is_none() && addrs.is_empty() && user_data.is_none() {
             // do not bother publishing if we don't have any information
             return;
@@ -574,7 +563,7 @@ impl MagicSock {
         }
 
         let data = EndpointData::new(addrs).with_user_data(user_data);
-        self.endpoint_id_resolution.publish(&data);
+        self.ers.publish(&data);
     }
 }
 
@@ -741,7 +730,7 @@ pub enum BindError {
     #[error("Failed to create an endpoint ID resolution service")]
     EndpointIdResolution {
         #[error(from)]
-        source: crate::endpoint_id_resolution::IntoEndpointIdResolutionError,
+        source: crate::ers::IntoErsError,
     },
 }
 
@@ -751,7 +740,7 @@ impl Handle {
         let Options {
             secret_key,
             transports: transport_configs,
-            endpoint_id_resolution_user_data,
+            ers_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
             proxy_url,
@@ -762,7 +751,7 @@ impl Handle {
             hooks,
         } = opts;
 
-        let eir = ConcurrentEndpointIdResolution::default();
+        let ers = ers::ConcurrentErs::default();
         #[cfg(not(wasm_browser))]
         let port_mapper =
             portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
@@ -849,7 +838,7 @@ impl Handle {
                 secret_key.public(),
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
-                eir.clone(),
+                ers.clone(),
                 shutdown_token.child_token(),
             )
         };
@@ -860,9 +849,9 @@ impl Handle {
             shutdown: shutdown_state,
             ipv6_reported,
             remote_map,
-            endpoint_id_resolution: eir,
+            ers,
             relay_map: relay_map.clone(),
-            endpoint_id_resolution_user_data: RwLock::new(endpoint_id_resolution_user_data),
+            ers_user_data: RwLock::new(ers_user_data),
             direct_addrs,
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
@@ -1558,7 +1547,7 @@ mod tests {
         Endpoint, RelayMode, SecretKey,
         dns::DnsResolver,
         endpoint::QuicTransportConfig,
-        endpoint_id_resolution::static_provider::StaticProvider,
+        ers::static_provider::StaticProvider,
         magicsock::{
             Handle, MagicSock, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
@@ -1583,7 +1572,7 @@ mod tests {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             #[cfg(any(test, feature = "test-utils"))]
-            endpoint_id_resolution_user_data: None,
+            ers_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
         }
@@ -1755,28 +1744,28 @@ mod tests {
     /// addresses.  Dialing by [`EndpointId`] is possible, and the addresses get updated even if
     /// the endpoints rebind.
     async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
-        let eir = StaticProvider::new();
+        let ers = StaticProvider::new();
         let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
-            .endpoint_id_resolution(eir.clone())
+            .ers(ers.clone())
             .bind()
             .await
             .unwrap();
         let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
-            .endpoint_id_resolution(eir.clone())
+            .ers(ers.clone())
             .bind()
             .await
             .unwrap();
-        eir.add_endpoint_info(ep1.addr());
-        eir.add_endpoint_info(ep2.addr());
+        ers.add_endpoint_info(ep1.addr());
+        ers.add_endpoint_info(ep2.addr());
 
         let ep1_addr_stream = ep1.watch_addr().stream();
         let ep2_addr_stream = ep2.watch_addr().stream();
         let mut addr_stream = MergeBounded::from_iter([ep1_addr_stream, ep2_addr_stream]);
         let task = tokio::spawn(async move {
             while let Some(addr) = addr_stream.next().await {
-                eir.add_endpoint_info(addr);
+                ers.add_endpoint_info(addr);
             }
         });
 
@@ -1971,7 +1960,7 @@ mod tests {
                 TransportConfig::default_ipv6(),
             ],
             secret_key: secret_key.clone(),
-            endpoint_id_resolution_user_data: None,
+            ers_user_data: None,
             dns_resolver,
             proxy_url: None,
             server_config,

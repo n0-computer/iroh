@@ -5,7 +5,7 @@ use data_encoding::HEXLOWER;
 use iroh::{
     EndpointId, SecretKey,
     endpoint::{RecvStream, SendStream, ZeroRttStatus},
-    endpoint_id_resolution::EndpointIdResolution,
+    ers::EndpointIdResolutionSystem,
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::StreamExt;
@@ -71,11 +71,11 @@ async fn connect(args: Args) -> Result<()> {
         .await?;
     // ensure we have resolved the remote_id before connecting
     // so we get a more accurate connection timing
-    let mut eir_stream = endpoint
-        .endpoint_id_resolution()
+    let mut ers_stream = endpoint
+        .ers()
         .resolve(remote_id)
-        .expect("endpoint_id_resolution to be enabled");
-    let _ = eir_stream.next().await;
+        .expect("ERS to be enabled");
+    let _ = ers_stream.next().await;
 
     let t0 = Instant::now();
     for i in 0..args.rounds {

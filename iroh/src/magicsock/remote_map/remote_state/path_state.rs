@@ -12,10 +12,7 @@ use tokio::sync::oneshot;
 use tracing::trace;
 
 use super::{Source, TransportAddrInfo, TransportAddrUsage};
-use crate::{
-    endpoint_id_resolution::EndpointIdResolutionError, magicsock::transports,
-    metrics::MagicsockMetrics,
-};
+use crate::{ers::Error as ErsError, magicsock::transports, metrics::MagicsockMetrics};
 
 /// Maximum number of IP paths we keep around per endpoint.
 pub(super) const MAX_IP_PATHS: usize = 30;
@@ -28,16 +25,16 @@ pub(super) const MAX_INACTIVE_IP_PATHS: usize = 10;
 /// Map of all paths that we are aware of for a remote endpoint.
 ///
 /// Also stores a list of resolve requests which are triggered once at least one path is known,
-/// or once this struct is notified of a failed EIR run.
+/// or once this struct is notified of a failed ERS run.
 #[derive(Debug)]
 pub(super) struct RemotePathState {
     /// All possible paths we are aware of.
     ///
-    /// These paths might be entirely impossible to use, since they are added by EIR
+    /// These paths might be entirely impossible to use, since they are added by ERS
     /// mechanisms. The are only potentially usable.
     paths: FxHashMap<transports::Addr, PathState>,
     /// Pending resolve requests from [`Self::resolve_remote`].
-    pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), EndpointIdResolutionError>>>,
+    pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), ErsError>>>,
     metrics: Arc<MagicsockMetrics>,
 }
 
@@ -147,15 +144,12 @@ impl RemotePathState {
 
     /// Triggers `tx` immediately if there are any known paths, or store in the list of pending requests.
     ///
-    /// The pending requests will be resolved once a path becomes known, or once EIR
+    /// The pending requests will be resolved once a path becomes known, or once ERS
     /// concludes without results, whichever comes first.
     ///
-    /// Sends `Ok(())` over `tx` if there are any known paths, and a [`EndpointIdResolutionError`] if there are
-    /// no known paths by the time a EIR run finished with an error or without results.
-    pub(super) fn resolve_remote(
-        &mut self,
-        tx: oneshot::Sender<Result<(), EndpointIdResolutionError>>,
-    ) {
+    /// Sends `Ok(())` over `tx` if there are any known paths, and an [`ErsError`] if there are
+    /// no known paths by the time a ERS run finished with an error or without results.
+    pub(super) fn resolve_remote(&mut self, tx: oneshot::Sender<Result<(), ErsError>>) {
         if !self.paths.is_empty() {
             tx.send(Ok(())).ok();
         } else {
@@ -163,13 +157,10 @@ impl RemotePathState {
         }
     }
 
-    /// Notifies that a EIR run has finished.
+    /// Notifies that a ERS run has finished.
     ///
     /// This will emit pending resolve requests.
-    pub(super) fn endpoint_id_resolution_finished(
-        &mut self,
-        result: Result<(), EndpointIdResolutionError>,
-    ) {
+    pub(super) fn ers_finished(&mut self, result: Result<(), ErsError>) {
         self.emit_pending_resolve_requests(result.err());
     }
 
@@ -186,18 +177,15 @@ impl RemotePathState {
     /// Replies to all pending resolve requests.
     ///
     /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
-    /// otherwise with the provided `endpoint_id_resolution_error` or with [`EndpointIdResolutionError::NoResults`].
-    fn emit_pending_resolve_requests(
-        &mut self,
-        endpoint_id_resolution_error: Option<EndpointIdResolutionError>,
-    ) {
+    /// otherwise with the provided `ers_error` or with [`ErsError::NoResults`].
+    fn emit_pending_resolve_requests(&mut self, ers_error: Option<ErsError>) {
         if self.pending_resolve_requests.is_empty() {
             return;
         }
-        let result = match (self.paths.is_empty(), endpoint_id_resolution_error) {
+        let result = match (self.paths.is_empty(), ers_error) {
             (false, _) => Ok(()),
             (true, Some(err)) => Err(err),
-            (true, None) => Err(e!(EndpointIdResolutionError::NoResults)),
+            (true, None) => Err(e!(ErsError::NoResults)),
         };
         for tx in self.pending_resolve_requests.drain(..) {
             tx.send(result.clone()).ok();

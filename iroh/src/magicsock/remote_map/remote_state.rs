@@ -30,10 +30,7 @@ pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
 use super::Source;
 use crate::{
     endpoint::{DirectAddr, quic::PathStats},
-    endpoint_id_resolution::{
-        ConcurrentEndpointIdResolution, EndpointIdResolution, EndpointIdResolutionError,
-        EndpointIdResolutionItem,
-    },
+    ers::{ConcurrentErs, EndpointIdResolutionSystem, Error as ErsError, Item as ErsItem},
     magicsock::{
         MagicsockMetrics,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
@@ -103,16 +100,16 @@ type AddrEvents = MergeUnbounded<
     >,
 >;
 
-/// Either a stream of incoming results from [`ConcurrentEndpointIdResolution::resolve`] or infinitely pending.
+/// Either a stream of incoming results from [`ConcurrentErs::resolve`] or infinitely pending.
 ///
 /// Set to [`Either::Left`] with an always-pending stream while endpoint ID resolution is not running, and to
-/// [`Either::Right`] while EIR is running.
+/// [`Either::Right`] while ERS is running.
 ///
-/// The stream returned from [`ConcurrentEndpointIdResolution::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
+/// The stream returned from [`ConcurrentErs::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
 /// wrapper to make it `Sync` so that the [`RemoteStateActor::run`] future stays `Send`.
-type EndpointIdResolutionStream = Either<
-    n0_future::stream::Pending<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>,
-    SyncStream<BoxStream<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>>,
+type ErsStream = Either<
+    n0_future::stream::Pending<Result<ErsItem, ErsError>>,
+    SyncStream<BoxStream<Result<ErsItem, ErsError>>>,
 >;
 
 /// List of addrs and path ids for open paths in a connection.
@@ -139,7 +136,7 @@ pub(super) struct RemoteStateActor {
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     /// Endpoint ID resolution service, cloned from the magicsock.
-    eir: ConcurrentEndpointIdResolution,
+    ers: ConcurrentErs,
 
     // Internal state - Quinn Connections we are managing.
     //
@@ -156,7 +153,7 @@ pub(super) struct RemoteStateActor {
     //
     /// All possible paths we are aware of.
     ///
-    /// These paths might be entirely impossible to use, since they are added by EIR
+    /// These paths might be entirely impossible to use, since they are added by ERS
     /// mechanisms.  The are only potentially usable.
     paths: RemotePathState,
     /// Information about the last holepunching attempt.
@@ -182,8 +179,8 @@ pub(super) struct RemoteStateActor {
 
     // Internal state - endpoint ID resolution
     //
-    /// Stream of EIR results, or always pending if EIR is not running.
-    eir_stream: EndpointIdResolutionStream,
+    /// Stream of ERS results, or always pending if ERS is not running.
+    ers_stream: ErsStream,
 }
 
 impl RemoteStateActor {
@@ -194,7 +191,7 @@ impl RemoteStateActor {
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
-        endpoint_id_resolution: ConcurrentEndpointIdResolution,
+        ers: ConcurrentErs,
     ) -> Self {
         Self {
             endpoint_id,
@@ -202,7 +199,7 @@ impl RemoteStateActor {
             metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
-            eir: endpoint_id_resolution,
+            ers,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
             path_events: Default::default(),
@@ -213,7 +210,7 @@ impl RemoteStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            eir_stream: Either::Left(n0_future::stream::pending()),
+            ers_stream: Either::Left(n0_future::stream::pending()),
         }
     }
 
@@ -327,8 +324,8 @@ impl RemoteStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching();
                 }
-                item = self.eir_stream.next() => {
-                    self.handle_endpoint_id_resolution_item(item);
+                item = self.ers_stream.next() => {
+                    self.handle_ers_item(item);
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -583,13 +580,13 @@ impl RemoteStateActor {
     fn handle_msg_resolve_remote(
         &mut self,
         addrs: BTreeSet<TransportAddr>,
-        tx: oneshot::Sender<Result<(), EndpointIdResolutionError>>,
+        tx: oneshot::Sender<Result<(), ErsError>>,
     ) {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
         self.paths.resolve_remote(tx);
-        // Start EIR if we have no selected path.
-        self.trigger_endpoint_id_resolution();
+        // Start ERS if we have no selected path.
+        self.trigger_ers();
     }
 
     fn handle_connection_close(&mut self, conn_id: ConnId) {
@@ -602,19 +599,16 @@ impl RemoteStateActor {
         }
     }
 
-    fn handle_endpoint_id_resolution_item(
-        &mut self,
-        item: Option<Result<EndpointIdResolutionItem, EndpointIdResolutionError>>,
-    ) {
+    fn handle_ers_item(&mut self, item: Option<Result<ErsItem, ErsError>>) {
         match item {
             None => {
-                self.eir_stream = Either::Left(n0_future::stream::pending());
-                self.paths.endpoint_id_resolution_finished(Ok(()));
+                self.ers_stream = Either::Left(n0_future::stream::pending());
+                self.paths.ers_finished(Ok(()));
             }
             Some(Err(err)) => {
                 warn!("Endpoint ID Resolution failed: {err:#}");
-                self.eir_stream = Either::Left(n0_future::stream::pending());
-                self.paths.endpoint_id_resolution_finished(Err(err));
+                self.ers_stream = Either::Left(n0_future::stream::pending());
+                self.paths.ers_finished(Err(err));
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
@@ -623,7 +617,7 @@ impl RemoteStateActor {
                         "Endpoint ID resolution emitted item for wrong remote endpoint"
                     );
                 } else {
-                    let source = Source::EndpointIdResolution {
+                    let source = Source::Ers {
                         name: item.provenance().to_string(),
                     };
                     let addrs =
@@ -634,16 +628,16 @@ impl RemoteStateActor {
         }
     }
 
-    /// Triggers EIR for the remote endpoint, if needed.
+    /// Triggers ERS for the remote endpoint, if needed.
     ///
-    /// Does not start EIR if we have a selected path or if EIR is currently running.
-    fn trigger_endpoint_id_resolution(&mut self) {
-        if self.selected_path.get().is_some() || matches!(self.eir_stream, Either::Right(_)) {
+    /// Does not start ERS if we have a selected path or if ERS is currently running.
+    fn trigger_ers(&mut self) {
+        if self.selected_path.get().is_some() || matches!(self.ers_stream, Either::Right(_)) {
             return;
         }
-        match self.eir.resolve(self.endpoint_id) {
-            Some(stream) => self.eir_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.endpoint_id_resolution_finished(Ok(())),
+        match self.ers.resolve(self.endpoint_id) {
+            Some(stream) => self.ers_stream = Either::Right(SyncStream::new(stream)),
+            None => self.paths.ers_finished(Ok(())),
         }
     }
 
@@ -1221,15 +1215,15 @@ pub(crate) enum RemoteStateMessage {
     /// Asks if there is any possible path that could be used.
     ///
     /// This adds the provided transport addresses to the list of potential paths for this remote
-    /// and starts EIR if needed.
+    /// and starts ERS if needed.
     ///
     /// Returns `Ok` immediately if the provided address list is non-empy or we have are other known paths.
-    /// Otherwise returns `Ok` once EIR produces a result, or the EIR error if EIR fails
+    /// Otherwise returns `Ok` once ERS produces a result, or the ERS error if ERS fails
     /// or produces no results,
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,
-        oneshot::Sender<Result<(), EndpointIdResolutionError>>,
+        oneshot::Sender<Result<(), ErsError>>,
     ),
     /// Returns information about the remote.
     ///

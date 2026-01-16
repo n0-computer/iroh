@@ -2,7 +2,7 @@ use clap::{Parser, ValueEnum};
 use iroh::{
     EndpointId,
     dns::DnsResolver,
-    endpoint_id_resolution::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
+    ers::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 

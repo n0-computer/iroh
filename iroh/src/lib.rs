@@ -155,14 +155,14 @@
 //!
 //! The need to know the [`RelayUrl`] *or* some direct addresses in addition to the
 //! [`EndpointId`] to connect to an iroh endpoint can be an obstacle.  To address this, the
-//! [`endpoint::Builder`] allows you to configure an [`endpoint_id_resolution`] service.
+//! [`endpoint::Builder`] allows you to configure an [`ers`] service.
 //!
-//! The [`DnsEndpointIdResolution`] service is an endpoint ID resolution service which will publish the [`RelayUrl`]
+//! The [`ers::Dns`] service is an endpoint ID resolution service which will publish the [`RelayUrl`]
 //! and direct addresses to a service publishing those as DNS records.  To connect it looks
 //! up the [`EndpointId`] in the DNS system to find the addressing details.  This enables
 //! connecting using only the [`EndpointId`] which is often more convenient and resilient.
 //!
-//! See [the endpoint_id_resolution module] for more details.
+//! See [the ers module] for more details.
 //!
 //!
 //! # Examples
@@ -239,11 +239,11 @@
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`endpoint_id_resolution`]: crate::endpoint::Builder::endpoint_id_resolution
-//! [`DnsEndpointIdResolution`]: crate::endpoint_id_resolution::dns::DnsEndpointIdResolution
+//! [`ers`]: crate::endpoint::Builder::ers
+//! [`ers::Dns`]: crate::ers::Dns
 //! [number 0]: https://n0.computer
 //! [`RelayMode::Default`]: crate::RelayMode::Default
-//! [the endpoint_id_resolution module]: crate::endpoint_id_resolution
+//! [the ers module]: crate::ers
 //! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
 //! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
 
@@ -264,7 +264,7 @@ pub mod defaults;
 #[cfg(not(wasm_browser))]
 pub mod dns;
 pub mod endpoint;
-pub mod endpoint_id_resolution;
+pub mod ers;
 pub mod metrics;
 mod net_report;
 pub mod protocol;

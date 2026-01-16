@@ -7,7 +7,7 @@
 //!
 //! You can look at the published pkarr DNS record using <https://app.pkarr.org/>.
 //!
-//! To see what is going on, run with `RUST_LOG=iroh_pkarr_eir=debug`.
+//! To see what is going on, run with `RUST_LOG=iroh_pkarr_ers=debug`.
 use std::str::FromStr;
 
 use clap::Parser;
@@ -16,13 +16,13 @@ use n0_error::{Result, StdResultExt};
 use tracing::warn;
 use url::Url;
 
-const CHAT_ALPN: &[u8] = b"pkarr-eir-demo-chat";
+const CHAT_ALPN: &[u8] = b"pkarr-ers-demo-chat";
 
 #[derive(Parser)]
 struct Args {
     /// The endpoint id to connect to. If not set, the program will start a server.
     endpoint_id: Option<EndpointId>,
-    /// Disable using the mainline DHT for EIR and publishing.
+    /// Disable using the mainline DHT for ERS and publishing.
     #[clap(long)]
     disable_dht: bool,
     /// Pkarr relay to use.
@@ -52,9 +52,8 @@ impl FromStr for PkarrRelay {
     }
 }
 
-fn build_eir(args: Args) -> iroh::endpoint_id_resolution::pkarr::dht::Builder {
-    let builder = iroh::endpoint_id_resolution::pkarr::dht::DhtEndpointIdResolution::builder()
-        .dht(!args.disable_dht);
+fn build_ers(args: Args) -> iroh::ers::pkarr::dht::Builder {
+    let builder = iroh::ers::Dht::builder().dht(!args.disable_dht);
     match args.pkarr_relay {
         PkarrRelay::Disabled => builder,
         PkarrRelay::Iroh => builder.n0_dns_pkarr_relay(),
@@ -65,11 +64,11 @@ fn build_eir(args: Args) -> iroh::endpoint_id_resolution::pkarr::dht::Builder {
 async fn chat_server(args: Args) -> Result<()> {
     let secret_key = iroh::SecretKey::generate(&mut rand::rng());
     let endpoint_id = secret_key.public();
-    let eir = build_eir(args);
+    let ers = build_ers(args);
     let endpoint = Endpoint::builder()
         .alpns(vec![CHAT_ALPN.to_vec()])
         .secret_key(secret_key)
-        .endpoint_id_resolution(eir)
+        .ers(ers)
         .bind()
         .await?;
     let zid = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
@@ -112,11 +111,11 @@ async fn chat_client(args: Args) -> Result<()> {
     let secret_key = iroh::SecretKey::generate(&mut rand::rng());
     let endpoint_id = secret_key.public();
     // note: we don't pass a secret key here, because we don't need to publish our address, don't spam the DHT
-    let eir = build_eir(args).no_publish();
+    let ers = build_ers(args).no_publish();
     // we do not need to specify the alpn here, because we are not going to accept connections
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
-        .endpoint_id_resolution(eir)
+        .ers(ers)
         .bind()
         .await?;
     println!("We are {endpoint_id} and connecting to {remote_endpoint_id}");

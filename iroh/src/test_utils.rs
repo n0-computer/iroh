@@ -92,9 +92,7 @@ pub(crate) mod dns_and_pkarr_servers {
     use super::CleanupDropGuard;
     use crate::{
         dns::DnsResolver,
-        endpoint_id_resolution::{
-            ConcurrentEndpointIdResolution, dns::DnsEndpointIdResolution, pkarr::PkarrPublisher,
-        },
+        ers::{self, ConcurrentErs, PkarrPublisher},
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
         },
@@ -138,16 +136,13 @@ pub(crate) mod dns_and_pkarr_servers {
             })
         }
 
-        /// Create a [`ConcurrentEndpointIdResolution`] with [`DnsEndpointIdResolution`] and [`PkarrPublisher`]
+        /// Create a [`ConcurrentErs`] with [`crate::ers::Dns`] and [`PkarrPublisher`]
         /// configured to use the test servers.
-        pub fn endpoint_id_resolution(
-            &self,
-            secret_key: SecretKey,
-        ) -> ConcurrentEndpointIdResolution {
-            ConcurrentEndpointIdResolution::from_services(vec![
-                // Enable DNS EIR by default
+        pub fn ers(&self, secret_key: SecretKey) -> ConcurrentErs {
+            ConcurrentErs::from_services(vec![
+                // Enable DNS ERS by default
                 Box::new(
-                    DnsEndpointIdResolution::builder(self.endpoint_origin.clone())
+                    ers::Dns::builder(self.endpoint_origin.clone())
                         .dns_resolver(self.dns_resolver())
                         .build(),
                 ),
