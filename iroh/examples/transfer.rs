@@ -444,7 +444,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
                     "  {:?}: RTT {:?}, {} packets sent",
                     path.remote_addr(),
                     stats.rtt,
-                    stats.sent_packets
+                    stats.udp_tx.datagrams
                 );
             }
             n0_error::Ok(())
@@ -507,7 +507,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
             "  {:?}: RTT {:?}, {} packets sent",
             path.remote_addr(),
             stats.rtt,
-            stats.sent_packets
+            stats.udp_tx.datagrams
         );
     }
     Ok(())
