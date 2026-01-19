@@ -1537,7 +1537,7 @@
 <a href=#1537 id=1537 data-nosnippet>1537</a>    }
 <a href=#1538 id=1538 data-nosnippet>1538</a>
 <a href=#1539 id=1539 data-nosnippet>1539</a>    <span class="kw">fn </span>relay(port: u16) -&gt; transports::Addr {
-<a href=#1540 id=1540 data-nosnippet>1540</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"https://relay{port}.example.com"</span>)
+<a href=#1540 id=1540 data-nosnippet>1540</a>        <span class="kw">let </span>url = <span class="macro">format!</span>(<span class="string">"https://relay{port}.iroh.computer"</span>)
 <a href=#1541 id=1541 data-nosnippet>1541</a>            .parse::&lt;RelayUrl&gt;()
 <a href=#1542 id=1542 data-nosnippet>1542</a>            .unwrap();
 <a href=#1543 id=1543 data-nosnippet>1543</a>        transports::Addr::Relay(url, EndpointId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap())
