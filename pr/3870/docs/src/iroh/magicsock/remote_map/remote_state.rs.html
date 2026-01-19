@@ -966,11 +966,11 @@
 <a href=#966 id=966 data-nosnippet>966</a>            transports::Addr::Relay(<span class="kw">_</span>, <span class="kw">_</span>) =&gt; PathStatus::Backup,
 <a href=#967 id=967 data-nosnippet>967</a>        };
 <a href=#968 id=968 data-nosnippet>968</a>        <span class="kw">let </span>biased_rtt = <span class="kw">match </span>addr {
-<a href=#969 id=969 data-nosnippet>969</a>            transports::Addr::Ip(SocketAddr::V4(<span class="kw">_</span>)) =&gt; rtt.as_nanos(),
+<a href=#969 id=969 data-nosnippet>969</a>            transports::Addr::Ip(SocketAddr::V4(<span class="kw">_</span>)) =&gt; rtt.as_nanos() <span class="kw">as </span>i128,
 <a href=#970 id=970 data-nosnippet>970</a>            transports::Addr::Ip(SocketAddr::V6(<span class="kw">_</span>)) =&gt; {
-<a href=#971 id=971 data-nosnippet>971</a>                rtt.as_nanos() - IPV6_RTT_ADVANTAGE.as_nanos()
+<a href=#971 id=971 data-nosnippet>971</a>                rtt.as_nanos() <span class="kw">as </span>i128 - IPV6_RTT_ADVANTAGE.as_nanos() <span class="kw">as </span>i128
 <a href=#972 id=972 data-nosnippet>972</a>            }
-<a href=#973 id=973 data-nosnippet>973</a>            transports::Addr::Relay(<span class="kw">_</span>, <span class="kw">_</span>) =&gt; rtt.as_nanos(),
+<a href=#973 id=973 data-nosnippet>973</a>            transports::Addr::Relay(<span class="kw">_</span>, <span class="kw">_</span>) =&gt; rtt.as_nanos() <span class="kw">as </span>i128,
 <a href=#974 id=974 data-nosnippet>974</a>        };
 <a href=#975 id=975 data-nosnippet>975</a>        (
 <a href=#976 id=976 data-nosnippet>976</a>            addr,
@@ -1086,11 +1086,11 @@
 <a href=#1086 id=1086 data-nosnippet>1086</a></span><span class="kw">struct </span>PathSelectionData {
 <a href=#1087 id=1087 data-nosnippet>1087</a>    status: PathStatus,
 <a href=#1088 id=1088 data-nosnippet>1088</a>    rtt: Duration,
-<a href=#1089 id=1089 data-nosnippet>1089</a>    biased_rtt: u128,
+<a href=#1089 id=1089 data-nosnippet>1089</a>    biased_rtt: i128,
 <a href=#1090 id=1090 data-nosnippet>1090</a>}
 <a href=#1091 id=1091 data-nosnippet>1091</a>
 <a href=#1092 id=1092 data-nosnippet>1092</a><span class="kw">impl </span>PathSelectionData {
-<a href=#1093 id=1093 data-nosnippet>1093</a>    <span class="kw">fn </span>sort_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (u8, u128) {
+<a href=#1093 id=1093 data-nosnippet>1093</a>    <span class="kw">fn </span>sort_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (u8, i128) {
 <a href=#1094 id=1094 data-nosnippet>1094</a>        (<span class="self">self</span>.status <span class="kw">as </span>u8, <span class="self">self</span>.biased_rtt)
 <a href=#1095 id=1095 data-nosnippet>1095</a>    }
 <a href=#1096 id=1096 data-nosnippet>1096</a>}
@@ -1545,7 +1545,7 @@
 <a href=#1545 id=1545 data-nosnippet>1545</a>
 <a href=#1546 id=1546 data-nosnippet>1546</a>    <span class="kw">fn </span>psd(status: PathStatus, rtt_ms: u64) -&gt; PathSelectionData {
 <a href=#1547 id=1547 data-nosnippet>1547</a>        <span class="kw">let </span>rtt = Duration::from_millis(rtt_ms);
-<a href=#1548 id=1548 data-nosnippet>1548</a>        <span class="kw">let </span>biased_rtt = rtt.as_nanos();
+<a href=#1548 id=1548 data-nosnippet>1548</a>        <span class="kw">let </span>biased_rtt = rtt.as_nanos() <span class="kw">as </span>i128;
 <a href=#1549 id=1549 data-nosnippet>1549</a>        PathSelectionData {
 <a href=#1550 id=1550 data-nosnippet>1550</a>            status,
 <a href=#1551 id=1551 data-nosnippet>1551</a>            rtt,
@@ -1556,7 +1556,7 @@
 <a href=#1556 id=1556 data-nosnippet>1556</a>    <span class="kw">fn </span>psd_v6(status: PathStatus, rtt_ms: u64) -&gt; PathSelectionData {
 <a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="kw">let </span>rtt = Duration::from_millis(rtt_ms);
 <a href=#1558 id=1558 data-nosnippet>1558</a>        <span class="comment">// IPv6 gets a bias advantage
-<a href=#1559 id=1559 data-nosnippet>1559</a>        </span><span class="kw">let </span>biased_rtt = rtt.as_nanos() - IPV6_RTT_ADVANTAGE.as_nanos();
+<a href=#1559 id=1559 data-nosnippet>1559</a>        </span><span class="kw">let </span>biased_rtt = rtt.as_nanos() <span class="kw">as </span>i128 - IPV6_RTT_ADVANTAGE.as_nanos() <span class="kw">as </span>i128;
 <a href=#1560 id=1560 data-nosnippet>1560</a>        PathSelectionData {
 <a href=#1561 id=1561 data-nosnippet>1561</a>            status,
 <a href=#1562 id=1562 data-nosnippet>1562</a>            rtt,
