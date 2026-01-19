@@ -481,17 +481,27 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     conn.close(0u32.into(), b"done");
 
     let transfer_time = start.elapsed();
-    let start = Instant::now();
 
-    let shutdown_time = start.elapsed();
+    // We received the last message: close all connections and allow for the close
+    // message to be sent.
+    let shutdown_start = Instant::now();
+    let shutdown = if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
+        error!(timeout = ?SHUTDOWN_TIME, "Endpoint closing timed out");
+        "Shutdown timed out".to_string()
+    } else {
+        format!(
+            "Shutdown took {:.4}s",
+            shutdown_start.elapsed().as_secs_f32()
+        )
+    };
+    drop(endpoint);
     println!(
-        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks) (Shutdown took {:.4}s)",
+        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks) ({shutdown})",
         HumanBytes(len as u64),
         transfer_time.as_secs_f64(),
         HumanBytes((len as f64 / transfer_time.as_secs_f64()) as u64),
         time_to_first_byte.as_secs_f64(),
         chnk,
-        shutdown_time.as_secs_f64(),
     );
     println!("Path stats:");
     for path in conn.paths().get() {
@@ -504,14 +514,6 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
         );
     }
 
-    // We received the last message: close all connections and allow for the close
-    // message to be sent.
-    if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
-        error!(
-            timeout = ?SHUTDOWN_TIME,
-            "Endpoint closing timed out"
-        );
-    }
     Ok(())
 }
 
