@@ -1101,7 +1101,7 @@
 <a href=#1101 id=1101 data-nosnippet>1101</a>    all_paths: FxHashMap&lt;transports::Addr, PathSelectionData&gt;,
 <a href=#1102 id=1102 data-nosnippet>1102</a>    current_path: <span class="kw-2">&amp;</span><span class="prelude-ty">Option</span>&lt;transports::Addr&gt;,
 <a href=#1103 id=1103 data-nosnippet>1103</a>) -&gt; <span class="prelude-ty">Option</span>&lt;(transports::Addr, Duration)&gt; {
-<a href=#1104 id=1104 data-nosnippet>1104</a>    <span class="comment">// Determine the best new path accoring to sort_key.
+<a href=#1104 id=1104 data-nosnippet>1104</a>    <span class="comment">// Determine the best new path according to sort_key.
 <a href=#1105 id=1105 data-nosnippet>1105</a>    // If there is no path, return None.
 <a href=#1106 id=1106 data-nosnippet>1106</a>    </span><span class="kw">let </span>(best_addr, best_data) = all_paths.iter().min_by_key(|(<span class="kw">_</span>, psd)| psd.sort_key())<span class="question-mark">?</span>;
 <a href=#1107 id=1107 data-nosnippet>1107</a>    <span class="comment">// If there is no current path, always switch to the new path.
@@ -1109,10 +1109,10 @@
 <a href=#1109 id=1109 data-nosnippet>1109</a>        <span class="kw">return </span><span class="prelude-val">Some</span>((best_addr.clone(), best_data.rtt));
 <a href=#1110 id=1110 data-nosnippet>1110</a>    };
 <a href=#1111 id=1111 data-nosnippet>1111</a>    <span class="comment">// Get current data. If we don't have data for the current path, don't switch.
-<a href=#1112 id=1112 data-nosnippet>1112</a>    </span><span class="kw">let </span>current_data = all_paths.get(<span class="kw-2">&amp;</span>addr)<span class="question-mark">?</span>;
+<a href=#1112 id=1112 data-nosnippet>1112</a>    </span><span class="kw">let </span>current_data = all_paths.get(addr)<span class="question-mark">?</span>;
 <a href=#1113 id=1113 data-nosnippet>1113</a>    <span class="kw">if </span>current_data.status != best_data.status {
 <a href=#1114 id=1114 data-nosnippet>1114</a>        <span class="comment">// Always switch if the status is different (better).
-<a href=#1115 id=1115 data-nosnippet>1115</a>        </span><span class="kw">return </span><span class="prelude-val">Some</span>((best_addr.clone(), best_data.rtt));
+<a href=#1115 id=1115 data-nosnippet>1115</a>        </span><span class="prelude-val">Some</span>((best_addr.clone(), best_data.rtt))
 <a href=#1116 id=1116 data-nosnippet>1116</a>    } <span class="kw">else if </span>best_data.rtt + RTT_SWITCHING_MIN_IP &lt;= current_data.rtt {
 <a href=#1117 id=1117 data-nosnippet>1117</a>        <span class="comment">// For the same status, only switch if the RTT is significantly better.
 <a href=#1118 id=1118 data-nosnippet>1118</a>        </span><span class="prelude-val">Some</span>((best_addr.clone(), best_data.rtt))
