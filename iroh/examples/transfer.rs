@@ -18,7 +18,7 @@ use iroh::{
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{BindOpts, ConnectionError, PathInfoList},
 };
-use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
+use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tokio_stream::StreamExt;
@@ -483,13 +483,6 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     let transfer_time = start.elapsed();
     let start = Instant::now();
 
-    // We received the last message: close all connections and allow for the close
-    // message to be sent.
-    if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
-        error!("Endpoint closing timed out");
-        bail_any!("Failed to shutdown endpoint in time");
-    }
-
     let shutdown_time = start.elapsed();
     println!(
         "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks) (Shutdown took {:.4}s)",
@@ -508,6 +501,15 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
             path.remote_addr(),
             stats.rtt,
             stats.sent_packets
+        );
+    }
+
+    // We received the last message: close all connections and allow for the close
+    // message to be sent.
+    if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
+        error!(
+            timeout = ?SHUTDOWN_TIME,
+            "Endpoint closing timed out"
         );
     }
     Ok(())
