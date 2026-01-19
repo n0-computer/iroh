@@ -1082,14 +1082,24 @@ impl RemoteStateActor {
     }
 }
 
+/// Data used during path selection.
 #[derive(Debug)]
 struct PathSelectionData {
+    /// Status of the path.
     status: PathStatus,
+    /// Measured RTT for path selection.
     rtt: Duration,
+    /// Biased RTT for path selection.
+    ///
+    /// This is an i128 so we can subtract an advantage for e.g. IPv6 without underflowing.
     biased_rtt: i128,
 }
 
 impl PathSelectionData {
+    /// Key for sorting paths. Lower is better.
+    ///
+    /// First part is the status, 0 for Available, 1 for Backup.
+    /// Second part is the biased RTT.
     fn sort_key(&self) -> (u8, i128) {
         (self.status as u8, self.biased_rtt)
     }
