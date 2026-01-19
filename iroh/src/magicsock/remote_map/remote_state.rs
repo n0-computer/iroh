@@ -966,11 +966,11 @@ impl RemoteStateActor {
             transports::Addr::Relay(_, _) => PathStatus::Backup,
         };
         let biased_rtt = match addr {
-            transports::Addr::Ip(SocketAddr::V4(_)) => rtt.as_nanos(),
+            transports::Addr::Ip(SocketAddr::V4(_)) => rtt.as_nanos() as i128,
             transports::Addr::Ip(SocketAddr::V6(_)) => {
-                rtt.as_nanos() - IPV6_RTT_ADVANTAGE.as_nanos()
+                rtt.as_nanos() as i128 - IPV6_RTT_ADVANTAGE.as_nanos() as i128
             }
-            transports::Addr::Relay(_, _) => rtt.as_nanos(),
+            transports::Addr::Relay(_, _) => rtt.as_nanos() as i128,
         };
         (
             addr,
@@ -1086,11 +1086,11 @@ impl RemoteStateActor {
 struct PathSelectionData {
     status: PathStatus,
     rtt: Duration,
-    biased_rtt: u128,
+    biased_rtt: i128,
 }
 
 impl PathSelectionData {
-    fn sort_key(&self) -> (u8, u128) {
+    fn sort_key(&self) -> (u8, i128) {
         (self.status as u8, self.biased_rtt)
     }
 }
@@ -1101,7 +1101,7 @@ fn select_best_path(
     all_paths: FxHashMap<transports::Addr, PathSelectionData>,
     current_path: &Option<transports::Addr>,
 ) -> Option<(transports::Addr, Duration)> {
-    // Determine the best new path accoring to sort_key.
+    // Determine the best new path according to sort_key.
     // If there is no path, return None.
     let (best_addr, best_data) = all_paths.iter().min_by_key(|(_, psd)| psd.sort_key())?;
     // If there is no current path, always switch to the new path.
@@ -1109,10 +1109,10 @@ fn select_best_path(
         return Some((best_addr.clone(), best_data.rtt));
     };
     // Get current data. If we don't have data for the current path, don't switch.
-    let current_data = all_paths.get(&addr)?;
+    let current_data = all_paths.get(addr)?;
     if current_data.status != best_data.status {
         // Always switch if the status is different (better).
-        return Some((best_addr.clone(), best_data.rtt));
+        Some((best_addr.clone(), best_data.rtt))
     } else if best_data.rtt + RTT_SWITCHING_MIN_IP <= current_data.rtt {
         // For the same status, only switch if the RTT is significantly better.
         Some((best_addr.clone(), best_data.rtt))
@@ -1537,7 +1537,7 @@ mod tests {
     }
 
     fn relay(port: u16) -> transports::Addr {
-        let url = format!("https://relay{port}.example.com")
+        let url = format!("https://relay{port}.iroh.computer")
             .parse::<RelayUrl>()
             .unwrap();
         transports::Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap())
@@ -1545,7 +1545,7 @@ mod tests {
 
     fn psd(status: PathStatus, rtt_ms: u64) -> PathSelectionData {
         let rtt = Duration::from_millis(rtt_ms);
-        let biased_rtt = rtt.as_nanos();
+        let biased_rtt = rtt.as_nanos() as i128;
         PathSelectionData {
             status,
             rtt,
@@ -1556,7 +1556,7 @@ mod tests {
     fn psd_v6(status: PathStatus, rtt_ms: u64) -> PathSelectionData {
         let rtt = Duration::from_millis(rtt_ms);
         // IPv6 gets a bias advantage
-        let biased_rtt = rtt.as_nanos() - IPV6_RTT_ADVANTAGE.as_nanos();
+        let biased_rtt = rtt.as_nanos() as i128 - IPV6_RTT_ADVANTAGE.as_nanos() as i128;
         PathSelectionData {
             status,
             rtt,
