@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     str::FromStr,
     time::{Duration, Instant},
@@ -16,11 +17,12 @@ use iroh::{
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-    endpoint::{BindOpts, ConnectionError, PathInfoList},
+    endpoint::{BindOpts, ConnectionError, PathInfo, PathInfoList},
 };
 use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::task::AbortOnDropHandle;
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
+use quinn::{PathId, PathStats};
 use tokio_stream::StreamExt;
 use tracing::{error, info, warn};
 use url::Url;
@@ -402,6 +404,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
 
             // Spawn a background task that prints connection type changes. Will be aborted on drop.
             let _guard = watch_conn_type(conn.remote_id(), conn.paths());
+            let stats_task = watch_path_stats(conn.clone());
 
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
@@ -437,11 +440,13 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             } else {
                 println!("[{remote}] Disconnected");
             }
+            let stats = stats_task
+                .await
+                .std_context("fetching stats task panicked")?;
             println!("[{remote}] Path stats:");
-            for path in conn.paths().get() {
-                let stats = path.stats();
+            for (path_id, (path, stats)) in stats {
                 println!(
-                    "  {:?}: RTT {:?}, tx={}, rx={}",
+                    "  [path_id={path_id}] {:?}: RTT {:?}, tx={}, rx={}",
                     path.remote_addr(),
                     stats.rtt,
                     stats.udp_tx.bytes,
@@ -467,6 +472,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     println!("Connected to {}", remote_id);
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
     let _guard = watch_conn_type(conn.remote_id(), conn.paths());
+    let stats_task = watch_path_stats(conn.clone());
 
     // Use the Quinn API to send and recv content.
     let (mut send, recv) = conn.open_bi().await.anyerr()?;
@@ -501,11 +507,13 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
         chnk,
         shutdown_time.as_secs_f64(),
     );
+    let stats = stats_task
+        .await
+        .std_context("fetching stats task panicked")?;
     println!("Path stats:");
-    for path in conn.paths().get() {
-        let stats = path.stats();
+    for (path_id, (path, stats)) in stats {
         println!(
-            "  {:?}: RTT {:?}, tx={}, rx={}",
+            "  [path_id={path_id}] {:?}: RTT {:?}, tx={}, rx={}",
             path.remote_addr(),
             stats.rtt,
             stats.udp_tx.bytes,
@@ -633,6 +641,37 @@ fn watch_conn_type(
                 previous = None;
             }
         }
+    });
+    AbortOnDropHandle::new(task)
+}
+
+fn watch_path_stats(
+    conn: iroh::endpoint::Connection,
+) -> AbortOnDropHandle<BTreeMap<PathId, (PathInfo, PathStats)>> {
+    let task = tokio::spawn(async move {
+        let mut watcher = conn.paths();
+        let mut latest_stats_by_path = BTreeMap::new();
+        while conn.close_reason().is_none() {
+            n0_future::future::race(
+                async {
+                    conn.closed().await;
+                },
+                async {
+                    let _ = watcher.updated().await;
+                },
+            )
+            .await;
+            // Insert what could possibly be new path stats.
+            for path in watcher.get() {
+                let stats = path.stats();
+                latest_stats_by_path.insert(path.path_id(), (path, stats));
+            }
+            // Update all stat values, even for paths that are removed by now.
+            for (path, stats) in latest_stats_by_path.values_mut() {
+                *stats = path.stats();
+            }
+        }
+        latest_stats_by_path
     });
     AbortOnDropHandle::new(task)
 }
