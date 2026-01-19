@@ -2152,8 +2152,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77337b8686bf5d32aea4bb7e68cc5b73308fe3b9abdc972a26636ab3d3323437"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23%2Ffix-iroh-unit-tests#5537710b7a236bff4375316cc85c6160895ebc02"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2173,8 +2172,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52a21324d427c0a9c992cc72753fc4512f36db62cacb4dbe7c3c98bc1fcd9ea2"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23%2Ffix-iroh-unit-tests#5537710b7a236bff4375316cc85c6160895ebc02"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2201,8 +2199,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a91fe9ec3db6615d7ab1b303717f3b98fc40b96955a4ea25b113b1b879f7481f"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23%2Ffix-iroh-unit-tests#5537710b7a236bff4375316cc85c6160895ebc02"
 dependencies = [
  "cfg_aliases",
  "libc",
