@@ -22,7 +22,7 @@ use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tokio_stream::StreamExt;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use url::Url;
 
 // Transfer ALPN that we are using to communicate over the `Endpoint`
@@ -486,7 +486,7 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     // message to be sent.
     let shutdown_start = Instant::now();
     let shutdown = if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
-        error!(timeout = ?SHUTDOWN_TIME, "Endpoint closing timed out");
+        warn!(timeout = ?SHUTDOWN_TIME, "Endpoint closing timed out");
         "Shutdown timed out".to_string()
     } else {
         format!(
