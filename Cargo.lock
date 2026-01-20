@@ -1963,6 +1963,7 @@ dependencies = [
  "bytes",
  "cfg_aliases",
  "clap",
+ "console",
  "console_error_panic_hook",
  "data-encoding",
  "derive_more",
