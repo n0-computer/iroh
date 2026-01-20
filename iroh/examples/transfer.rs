@@ -25,7 +25,9 @@ use iroh::{
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-    endpoint::{BindOpts, Connection, ConnectionError, PathInfoList, RecvStream, SendStream},
+    endpoint::{
+        BindOpts, Connection, ConnectionError, PathInfoList, RecvStream, SendStream, VarInt,
+    },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::{IterExt, stream::StreamExt, task::AbortOnDropHandle};
@@ -43,6 +45,8 @@ const DEV_RELAY_URL: &str = "http://localhost:3340";
 const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";
 const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";
 const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
+
+const GRACEFUL_CLOSE: VarInt = VarInt::from_u32(1);
 
 /// Transfer data between iroh endpoints.
 ///
@@ -442,21 +446,13 @@ impl EndpointArgs {
 }
 
 async fn provide(endpoint: Endpoint) -> Result<()> {
-    // Spawn a task that closes the endpoint upon Ctrl-C.
-    // Closing the endpoint will also stop the accept loop and close all open connections,
-    // thus terminating all other tasks we spawn.
-    tokio::task::spawn({
-        let endpoint = endpoint.clone();
-        async move {
-            tokio::signal::ctrl_c().await.ok();
-            println!("Shutting down..");
-            endpoint.close().await;
-            println!("Endpoint closed");
-        }
-    });
-
-    // Accept incoming connections and spawn a task fo reach.
-    while let Some(incoming) = endpoint.accept().await {
+    loop {
+        // Accept incoming connections until Ctrl-C is pressed.
+        let incoming = tokio::select! {
+            Some(incoming) = endpoint.accept() => incoming,
+            _ = tokio::signal::ctrl_c() => break,
+            else => break
+        };
         let accepting = match incoming.accept() {
             Ok(accepting) => accepting,
             Err(err) => {
@@ -473,7 +469,10 @@ async fn provide(endpoint: Endpoint) -> Result<()> {
             }
         });
     }
-    println!("Accept loop finished");
+
+    println!("Shutting down..");
+    endpoint.close().await;
+    println!("Endpoint closed");
 
     Ok(())
 }
@@ -528,14 +527,18 @@ async fn handle_request(
     mut recv: RecvStream,
 ) -> Result<()> {
     let remote = conn.remote_id().fmt_short();
-    let request = Request::read(&mut recv).await?;
+    let request = Request::read(&mut recv)
+        .await
+        .context("failed to read request")?;
     println!("[{remote}] Handling {request:?} request",);
     match request {
         Request::Download(length) => {
+            info!("Handle download request: send data for {length:?}");
             let stats = send_data(&mut send, length).await?;
             println!("[{remote}] {stats}");
         }
         Request::Upload => {
+            info!("Handle upload request: drain stream");
             let stats = drain_stream(recv, None).await?;
             send.finish().anyerr()?;
             println!("[{remote}] {stats}");
@@ -563,21 +566,30 @@ async fn fetch(
     let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
     // Perform requests depending on the request mode.
-    match mode {
-        Mode::Upload => perform_request(&conn, RequestKind::Upload, length, start).await?,
-        Mode::Download => perform_request(&conn, RequestKind::Download, length, start).await?,
-        Mode::Bidi => {
-            [
-                perform_request(&conn, RequestKind::Download, length, start),
-                perform_request(&conn, RequestKind::Upload, length, start),
-            ]
-            .try_join_all()
-            .await?;
+    let request_fut = async {
+        match mode {
+            Mode::Upload => perform_request(&conn, RequestKind::Upload, length, start).await?,
+            Mode::Download => perform_request(&conn, RequestKind::Download, length, start).await?,
+            Mode::Bidi => {
+                [
+                    perform_request(&conn, RequestKind::Download, length, start),
+                    perform_request(&conn, RequestKind::Upload, length, start),
+                ]
+                .try_join_all()
+                .await?;
+            }
         }
+        // We finished our requests. Close the connection with our graceful error code.
+        conn.close(GRACEFUL_CLOSE, b"done");
+        n0_error::Ok(())
     };
 
-    // We finished our requests. Close the connection.
-    conn.close(1u32.into(), b"done");
+    // Wait for the request to complete, or for the user to interrupt it with Ctrl-C
+    let res = tokio::select! {
+        res = request_fut => res,
+        _ = tokio::signal::ctrl_c() => Err(n0_error::anyerr!("Cancelled"))
+    };
+
     // Also close the endpoint, with a timeout.
     let shutdown_start = Instant::now();
     if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
@@ -602,7 +614,7 @@ async fn fetch(
         );
     }
 
-    Ok(())
+    res
 }
 
 async fn perform_request(
@@ -621,6 +633,7 @@ async fn perform_request(
     match request_kind {
         RequestKind::Download => {
             info!("downloading {length:?}");
+            send.finish().anyerr()?;
             let stats = drain_stream(recv, Some(conn_start)).await?;
             println!("{stats}");
         }
@@ -758,7 +771,7 @@ async fn send_data(stream: &mut iroh::endpoint::SendStream, length: Length) -> R
 
 fn is_graceful(err: &ConnectionError) -> bool {
     match err {
-        ConnectionError::ApplicationClosed(frame) if frame.error_code == 1u32.into() => true,
+        ConnectionError::ApplicationClosed(frame) if frame.error_code == GRACEFUL_CLOSE => true,
         _ => false,
     }
 }
