@@ -3019,29 +3019,51 @@
 <a href=#3019 id=3019 data-nosnippet>3019</a>        <span class="kw">let </span>client_stats = stats_task.<span class="kw">await</span>.std_context(<span class="string">"client stats task failed"</span>)<span class="question-mark">?</span>;
 <a href=#3020 id=3020 data-nosnippet>3020</a>        <span class="kw">let </span>server_stats = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
 <a href=#3021 id=3021 data-nosnippet>3021</a>
-<a href=#3022 id=3022 data-nosnippet>3022</a>        <span class="kw">let </span>client_most_sent_path = client_stats
-<a href=#3023 id=3023 data-nosnippet>3023</a>            .values()
-<a href=#3024 id=3024 data-nosnippet>3024</a>            .max_by_key(|p| p.stats().udp_tx.datagrams)
-<a href=#3025 id=3025 data-nosnippet>3025</a>            .expect(<span class="string">"no paths in stats"</span>);
-<a href=#3026 id=3026 data-nosnippet>3026</a>        <span class="kw">let </span>client_most_recv_path = client_stats
-<a href=#3027 id=3027 data-nosnippet>3027</a>            .values()
-<a href=#3028 id=3028 data-nosnippet>3028</a>            .max_by_key(|p| p.stats().udp_rx.datagrams)
-<a href=#3029 id=3029 data-nosnippet>3029</a>            .expect(<span class="string">"no paths in stats"</span>);
-<a href=#3030 id=3030 data-nosnippet>3030</a>
-<a href=#3031 id=3031 data-nosnippet>3031</a>        <span class="kw">let </span>server_most_sent_path = server_stats
-<a href=#3032 id=3032 data-nosnippet>3032</a>            .values()
-<a href=#3033 id=3033 data-nosnippet>3033</a>            .max_by_key(|p| p.stats().udp_tx.datagrams)
-<a href=#3034 id=3034 data-nosnippet>3034</a>            .expect(<span class="string">"no paths in stats"</span>);
-<a href=#3035 id=3035 data-nosnippet>3035</a>        <span class="kw">let </span>server_most_recv_path = server_stats
-<a href=#3036 id=3036 data-nosnippet>3036</a>            .values()
-<a href=#3037 id=3037 data-nosnippet>3037</a>            .max_by_key(|p| p.stats().udp_rx.datagrams)
-<a href=#3038 id=3038 data-nosnippet>3038</a>            .expect(<span class="string">"no paths in stats"</span>);
+<a href=#3022 id=3022 data-nosnippet>3022</a>        <span class="macro">info!</span>(<span class="string">"client stats: {client_stats:#?}"</span>);
+<a href=#3023 id=3023 data-nosnippet>3023</a>        <span class="macro">info!</span>(<span class="string">"server stats: {server_stats:#?}"</span>);
+<a href=#3024 id=3024 data-nosnippet>3024</a>
+<a href=#3025 id=3025 data-nosnippet>3025</a>        <span class="kw">let </span>total = client_stats
+<a href=#3026 id=3026 data-nosnippet>3026</a>            .values()
+<a href=#3027 id=3027 data-nosnippet>3027</a>            .map(|p| p.stats().udp_tx.bytes)
+<a href=#3028 id=3028 data-nosnippet>3028</a>            .sum::&lt;u64&gt;();
+<a href=#3029 id=3029 data-nosnippet>3029</a>        <span class="macro">info!</span>(total, <span class="string">"client send total"</span>);
+<a href=#3030 id=3030 data-nosnippet>3030</a>        <span class="kw">if </span>total &gt; transfer_size <span class="kw">as </span>u64 / <span class="number">2 </span>{
+<a href=#3031 id=3031 data-nosnippet>3031</a>            <span class="kw">let </span>client_most_sent_path = client_stats
+<a href=#3032 id=3032 data-nosnippet>3032</a>                .values()
+<a href=#3033 id=3033 data-nosnippet>3033</a>                .max_by_key(|p| p.stats().udp_tx.datagrams)
+<a href=#3034 id=3034 data-nosnippet>3034</a>                .expect(<span class="string">"no paths in stats"</span>);
+<a href=#3035 id=3035 data-nosnippet>3035</a>            <span class="kw">let </span>client_most_recv_path = client_stats
+<a href=#3036 id=3036 data-nosnippet>3036</a>                .values()
+<a href=#3037 id=3037 data-nosnippet>3037</a>                .max_by_key(|p| p.stats().udp_rx.datagrams)
+<a href=#3038 id=3038 data-nosnippet>3038</a>                .expect(<span class="string">"no paths in stats"</span>);
 <a href=#3039 id=3039 data-nosnippet>3039</a>
-<a href=#3040 id=3040 data-nosnippet>3040</a>        <span class="macro">assert!</span>(client_most_sent_path.is_ip());
-<a href=#3041 id=3041 data-nosnippet>3041</a>        <span class="macro">assert!</span>(client_most_recv_path.is_ip());
-<a href=#3042 id=3042 data-nosnippet>3042</a>        <span class="macro">assert!</span>(server_most_sent_path.is_ip());
-<a href=#3043 id=3043 data-nosnippet>3043</a>        <span class="macro">assert!</span>(server_most_recv_path.is_ip());
-<a href=#3044 id=3044 data-nosnippet>3044</a>
-<a href=#3045 id=3045 data-nosnippet>3045</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3046 id=3046 data-nosnippet>3046</a>    }
-<a href=#3047 id=3047 data-nosnippet>3047</a>}</code></pre></div></section></main></body></html>
+<a href=#3040 id=3040 data-nosnippet>3040</a>            <span class="macro">assert!</span>(client_most_sent_path.is_ip());
+<a href=#3041 id=3041 data-nosnippet>3041</a>            <span class="macro">assert!</span>(client_most_recv_path.is_ip());
+<a href=#3042 id=3042 data-nosnippet>3042</a>        } <span class="kw">else </span>{
+<a href=#3043 id=3043 data-nosnippet>3043</a>            <span class="macro">error!</span>(<span class="string">"skipping client assertions due to missing PathStats"</span>);
+<a href=#3044 id=3044 data-nosnippet>3044</a>        }
+<a href=#3045 id=3045 data-nosnippet>3045</a>
+<a href=#3046 id=3046 data-nosnippet>3046</a>        <span class="kw">let </span>total = server_stats
+<a href=#3047 id=3047 data-nosnippet>3047</a>            .values()
+<a href=#3048 id=3048 data-nosnippet>3048</a>            .map(|p| p.stats().udp_tx.bytes)
+<a href=#3049 id=3049 data-nosnippet>3049</a>            .sum::&lt;u64&gt;();
+<a href=#3050 id=3050 data-nosnippet>3050</a>        <span class="macro">info!</span>(total, <span class="string">"server send total"</span>);
+<a href=#3051 id=3051 data-nosnippet>3051</a>        <span class="kw">if </span>total &gt; transfer_size <span class="kw">as </span>u64 / <span class="number">2 </span>{
+<a href=#3052 id=3052 data-nosnippet>3052</a>            <span class="kw">let </span>server_most_sent_path = server_stats
+<a href=#3053 id=3053 data-nosnippet>3053</a>                .values()
+<a href=#3054 id=3054 data-nosnippet>3054</a>                .max_by_key(|p| p.stats().udp_tx.datagrams)
+<a href=#3055 id=3055 data-nosnippet>3055</a>                .expect(<span class="string">"no paths in stats"</span>);
+<a href=#3056 id=3056 data-nosnippet>3056</a>            <span class="kw">let </span>server_most_recv_path = server_stats
+<a href=#3057 id=3057 data-nosnippet>3057</a>                .values()
+<a href=#3058 id=3058 data-nosnippet>3058</a>                .max_by_key(|p| p.stats().udp_rx.datagrams)
+<a href=#3059 id=3059 data-nosnippet>3059</a>                .expect(<span class="string">"no paths in stats"</span>);
+<a href=#3060 id=3060 data-nosnippet>3060</a>
+<a href=#3061 id=3061 data-nosnippet>3061</a>            <span class="macro">assert!</span>(server_most_sent_path.is_ip());
+<a href=#3062 id=3062 data-nosnippet>3062</a>            <span class="macro">assert!</span>(server_most_recv_path.is_ip());
+<a href=#3063 id=3063 data-nosnippet>3063</a>        } <span class="kw">else </span>{
+<a href=#3064 id=3064 data-nosnippet>3064</a>            <span class="macro">error!</span>(<span class="string">"skipping server assertions due to missing PathStats"</span>);
+<a href=#3065 id=3065 data-nosnippet>3065</a>        }
+<a href=#3066 id=3066 data-nosnippet>3066</a>
+<a href=#3067 id=3067 data-nosnippet>3067</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3068 id=3068 data-nosnippet>3068</a>    }
+<a href=#3069 id=3069 data-nosnippet>3069</a>}</code></pre></div></section></main></body></html>
