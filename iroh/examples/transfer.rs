@@ -771,10 +771,6 @@ async fn send_data(stream: &mut iroh::endpoint::SendStream, length: Length) -> R
     })
 }
 
-fn is_graceful(err: &ConnectionError) -> bool {
-    matches!(err, ConnectionError::ApplicationClosed(frame) if frame.error_code == GRACEFUL_CLOSE)
-}
-
 fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
     let cfg = parse_size::Config::new().with_binary();
     cfg.parse_size(s)
