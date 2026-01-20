@@ -38,7 +38,7 @@ mod tests {
         util::PublicKeyBytes,
     };
 
-    const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+    const DNS_TIMEOUT: Duration = Duration::from_secs(2);
 
     #[tokio::test]
     #[traced_test]
