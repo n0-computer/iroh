@@ -462,6 +462,7 @@ async fn provide(endpoint: Endpoint) -> Result<()> {
                 continue;
             }
         };
+        // Spawn a task for each connetion.
         tokio::spawn(async move {
             match accepting.await {
                 Ok(conn) => handle_connection(conn).await,
@@ -502,7 +503,8 @@ async fn handle_connection(conn: Connection) {
         });
     };
 
-    if !is_graceful(&close_reason) {
+    if !matches!(&close_reason, ConnectionError::ApplicationClosed(frame) if frame.error_code == GRACEFUL_CLOSE)
+    {
         println!("[{remote}] Remote closed with error: {close_reason:#}");
     } else {
         println!("[{remote}] Disconnected");
@@ -770,10 +772,7 @@ async fn send_data(stream: &mut iroh::endpoint::SendStream, length: Length) -> R
 }
 
 fn is_graceful(err: &ConnectionError) -> bool {
-    match err {
-        ConnectionError::ApplicationClosed(frame) if frame.error_code == GRACEFUL_CLOSE => true,
-        _ => false,
-    }
+    matches!(err, ConnectionError::ApplicationClosed(frame) if frame.error_code == GRACEFUL_CLOSE)
 }
 
 fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
