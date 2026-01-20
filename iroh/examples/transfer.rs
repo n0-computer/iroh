@@ -471,15 +471,14 @@ async fn provide(endpoint: Endpoint, output: OutputMode) -> Result<()> {
         });
     }
 
-    println!("Shutting down..");
-    endpoint.close().await;
-    println!("Endpoint closed");
+    close_endpoint_with_timeout(&endpoint, output).await;
 
     Ok(())
 }
 
 #[tracing::instrument("conn", skip_all, fields(remote=%conn.remote_id().fmt_short()))]
 async fn handle_connection(conn: Connection, output: OutputMode) {
+    let start = Instant::now();
     let remote_id = conn.remote_id();
     output.emit_with_remote(remote_id, ConnectionAccepted {});
     let _guard = watch_conn_type(conn.paths(), Some(remote_id), output);
@@ -498,12 +497,18 @@ async fn handle_connection(conn: Connection, output: OutputMode) {
         });
     };
 
-    let close_is_graceful = matches!(
+    let is_graceful = matches!(
         &close_reason,
-        ConnectionError::ApplicationClosed(frame) if frame.error_code == GRACEFUL_CLOSE
+        ConnectionError::ApplicationClosed(f) if f.error_code == GRACEFUL_CLOSE
     );
-    let error = (!close_is_graceful).then(|| format!("{close_reason:#}"));
-    output.emit_with_remote(remote_id, Disconnected { error });
+    let error = (!is_graceful).then(|| format!("{close_reason:#}"));
+    output.emit_with_remote(
+        remote_id,
+        ConnectionClosed {
+            error,
+            duration: start.elapsed(),
+        },
+    );
     output.emit_with_remote(remote_id, PathStats::from_conn(&conn));
 }
 
@@ -578,7 +583,23 @@ async fn fetch(
         _ = tokio::signal::ctrl_c() => Err(anyerr!("Cancelled"))
     };
 
-    // Close the endpoint, with a timeout.
+    let error = conn
+        .close_reason()
+        .filter(|reason| !matches!(reason, ConnectionError::LocallyClosed))
+        .map(|reason| format!("{reason:#}"));
+    output.emit(ConnectionClosed {
+        error,
+        duration: start.elapsed(),
+    });
+
+    close_endpoint_with_timeout(&endpoint, output).await;
+    output.emit(PathStats::from_conn(&conn));
+
+    res
+}
+
+/// Close the endpoint, with a timeout, and emit emit once done.
+async fn close_endpoint_with_timeout(endpoint: &Endpoint, output: OutputMode) {
     let shutdown_start = Instant::now();
     let timed_out = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close())
         .await
@@ -588,9 +609,6 @@ async fn fetch(
         duration: shutdown_start.elapsed(),
         timed_out,
     });
-    output.emit(PathStats::from_conn(&conn));
-
-    res
 }
 
 async fn perform_request(
@@ -984,15 +1002,17 @@ struct HandleRequest<'a> {
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "kind")]
-struct Disconnected {
+struct ConnectionClosed {
+    duration: Duration,
     error: Option<String>,
 }
 
-impl fmt::Display for Disconnected {
+impl fmt::Display for ConnectionClosed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let time = format!("(total time: {:.2}s)", self.duration.as_secs_f32());
         match &self.error {
-            Some(err) => write!(f, "Remote closed with error: {err}"),
-            None => write!(f, "Disconnected"),
+            Some(err) => write!(f, "Connection closed with error: {err} {time}"),
+            None => write!(f, "Connection closed {time}",),
         }
     }
 }
