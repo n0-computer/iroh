@@ -1,11 +1,20 @@
+//! Transfer example: Transfer data between two endpoints and print stats.
+//!
+//! This example uses most of iroh's endpoint builder options and thus allows for flexible testing of connections
+//! with different discovery and transport configuration. Once a connection is established, it uses a simple protocol
+//! that transfers data between endpoints in both directions, measuring time and connection stats.
+//!
+//! The protocol is client-initiated and allows to set either a size or time limit on the transfers.
+
 use std::{
+    fmt,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     str::FromStr,
     time::{Duration, Instant},
 };
 
 use bytes::Bytes;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
@@ -16,17 +25,19 @@ use iroh::{
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-    endpoint::{BindOpts, ConnectionError, PathInfoList},
+    endpoint::{BindOpts, Connection, ConnectionError, PathInfoList, RecvStream, SendStream},
 };
-use n0_error::{Result, StackResultExt, StdResultExt};
-use n0_future::task::AbortOnDropHandle;
+use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
+use n0_future::{IterExt, stream::StreamExt, task::AbortOnDropHandle};
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
-use tokio_stream::StreamExt;
+use postcard::experimental::max_size::MaxSize;
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 use url::Url;
 
-// Transfer ALPN that we are using to communicate over the `Endpoint`
-const TRANSFER_ALPN: &[u8] = b"n0/iroh/transfer/example/0";
+/// ALPN of our transport protocol.
+const TRANSFER_ALPN: &[u8] = b"n0/iroh/transfer/example/1";
 
 const DEV_RELAY_URL: &str = "http://localhost:3340";
 const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";
@@ -103,6 +114,57 @@ impl Env {
     }
 }
 
+#[derive(ValueEnum, Default, Debug, Clone)]
+enum Mode {
+    /// We send data to the remote, measuring our upload speed.
+    Upload,
+    /// We receive data from the remote, measuring our download speed.
+    Download,
+    /// We both sends and receives data.
+    #[default]
+    Bidi,
+}
+
+#[derive(Serialize, Deserialize, MaxSize, derive_more::Debug, Clone, Copy)]
+enum Length {
+    #[debug("Size({})", HumanBytes(*_0))]
+    Size(u64),
+    #[debug("Duration({_0:?})")]
+    Duration(Duration),
+}
+
+#[derive(Debug)]
+enum RequestKind {
+    Upload,
+    Download,
+}
+
+#[derive(Serialize, Deserialize, MaxSize, Debug, Clone)]
+enum Request {
+    Download(Length),
+    Upload,
+}
+
+impl Request {
+    async fn read(recv: &mut RecvStream) -> Result<Self> {
+        let header_len = recv.read_u32().await.anyerr()? as usize;
+        ensure_any!(
+            header_len <= Self::POSTCARD_MAX_SIZE,
+            "received invalid header length"
+        );
+        let mut buf = vec![0u8; header_len];
+        recv.read_exact(&mut buf).await.anyerr()?;
+        postcard::from_bytes(&buf).std_context("failed to decode request")
+    }
+
+    async fn write(&self, send: &mut SendStream) -> Result<()> {
+        let buf = postcard::to_stdvec(&self).unwrap();
+        send.write_u32(buf.len() as u32).await.anyerr()?;
+        send.write_all(&buf).await.anyerr()?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, clap::Parser)]
 struct EndpointArgs {
     /// Set the environment for relay, pkarr, and DNS servers.
@@ -167,8 +229,6 @@ struct EndpointArgs {
 enum Commands {
     /// Provide data.
     Provide {
-        #[clap(long, default_value = "100M", value_parser = parse_byte_size)]
-        size: u64,
         #[clap(flatten)]
         endpoint_args: EndpointArgs,
     },
@@ -176,6 +236,17 @@ enum Commands {
     Fetch {
         /// Endpoint id of the remote to connect to.
         remote_id: EndpointId,
+        /// Transfer mode.
+        #[clap(long, value_enum, default_value_t)]
+        mode: Mode,
+        /// Limit the transferred data size.
+        #[clap(long, value_parser = parse_byte_size, conflicts_with = "duration")]
+        size: Option<u64>,
+        /// Limit the duration of the transfer, in seconds.
+        ///
+        /// [default: 10]
+        #[clap(long, conflicts_with = "size")]
+        duration: Option<u64>,
         /// Optionally set a relay URL for the remote.
         #[clap(long)]
         remote_relay_url: Option<RelayUrl>,
@@ -192,31 +263,35 @@ const SHUTDOWN_TIME: Duration = Duration::from_secs(4);
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    tracing_subscriber::fmt::init();
     let cli = Cli::parse();
     match cli.command {
-        Commands::Provide {
-            size,
-            endpoint_args,
-        } => {
+        Commands::Provide { endpoint_args } => {
             let endpoint = endpoint_args.bind_endpoint().await?;
-            provide(endpoint, size).await?
+            provide(endpoint).await?
         }
         Commands::Fetch {
             remote_id,
             remote_relay_url,
             remote_direct_address,
             endpoint_args,
+            mode,
+            size,
+            duration,
         } => {
+            let length = match (size, duration) {
+                (Some(size), None) => Length::Size(size),
+                (None, Some(duration)) => Length::Duration(Duration::from_secs(duration)),
+                (None, None) => Length::Duration(Duration::from_secs(10)),
+                (Some(_), Some(_)) => unreachable!("--size and --duration args are conflicting"),
+            };
             let endpoint = endpoint_args.bind_endpoint().await?;
             let addrs = remote_relay_url
                 .into_iter()
                 .map(TransportAddr::Relay)
                 .chain(remote_direct_address.into_iter().map(TransportAddr::Ip));
             let remote_addr = EndpointAddr::from_parts(remote_id, addrs);
-            fetch(endpoint, remote_addr).await?
+            fetch(endpoint, remote_addr, length, mode).await?
         }
     }
 
@@ -366,18 +441,21 @@ impl EndpointArgs {
     }
 }
 
-async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
-    let endpoint_id = endpoint.id();
-    let endpoint_addr = endpoint.addr();
+async fn provide(endpoint: Endpoint) -> Result<()> {
+    // Spawn a task that closes the endpoint upon Ctrl-C.
+    // Closing the endpoint will also stop the accept loop and close all open connections,
+    // thus terminating all other tasks we spawn.
+    tokio::task::spawn({
+        let endpoint = endpoint.clone();
+        async move {
+            tokio::signal::ctrl_c().await.ok();
+            println!("Shutting down..");
+            endpoint.close().await;
+            println!("Endpoint closed");
+        }
+    });
 
-    println!("Endpoint id:\n{endpoint_id}");
-    println!("Direct addresses:");
-    for addr in endpoint_addr.ip_addrs() {
-        println!("\t{addr}");
-    }
-    println!();
-
-    // accept incoming connections, returns a normal QUIC connection
+    // Accept incoming connections and spawn a task fo reach.
     while let Some(incoming) = endpoint.accept().await {
         let accepting = match incoming.accept() {
             Ok(accepting) => accepting,
@@ -388,122 +466,130 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
                 continue;
             }
         };
-        // spawn a task to handle reading and writing off of the connection
         tokio::spawn(async move {
-            let conn = accepting.await.anyerr()?;
-            let endpoint_id = conn.remote_id();
-            info!(
-                "new connection from {endpoint_id} with ALPN {}",
-                String::from_utf8_lossy(TRANSFER_ALPN),
-            );
-
-            let remote = endpoint_id.fmt_short();
-            println!("[{remote}] Connected");
-
-            // Spawn a background task that prints connection type changes. Will be aborted on drop.
-            let _guard = watch_conn_type(conn.remote_id(), conn.paths());
-
-            // accept a bi-directional QUIC connection
-            // use the `quinn` APIs to send and recv content
-            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
-            tracing::debug!("accepted bi stream, waiting for data...");
-            let message = recv.read_to_end(100).await.anyerr()?;
-            let message = String::from_utf8(message).anyerr()?;
-            println!("[{remote}] Received: \"{message}\"");
-
-            let start = Instant::now();
-            send_data_on_stream(&mut send, size).await?;
-
-            // We sent the last message, so wait for the client to close the connection once
-            // it received this message.
-            let res = tokio::time::timeout(SHUTDOWN_TIME, async {
-                let closed = conn.closed().await;
-                let remote = endpoint_id.fmt_short();
-                if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
-                    println!("[{remote}] Endpoint disconnected with an error: {closed:#}");
-                }
-            })
-            .await;
-            let duration = start.elapsed();
-
-            println!(
-                "[{remote}] Transferred {} in {:.4}s, {}/s",
-                HumanBytes(size),
-                duration.as_secs_f64(),
-                HumanBytes((size as f64 / duration.as_secs_f64()) as u64)
-            );
-            if res.is_err() {
-                println!("[{remote}] Error: Did not disconnect within {SHUTDOWN_TIME:?}",);
-            } else {
-                println!("[{remote}] Disconnected");
+            match accepting.await {
+                Ok(conn) => handle_connection(conn).await,
+                Err(err) => warn!("incoming connection failed during handshake: {err:#}"),
             }
-            println!("[{remote}] Path stats:");
-            for path in conn.paths().get() {
-                let stats = path.stats();
-                println!(
-                    "  {:?}: RTT {:?}, tx={}, rx={}",
-                    path.remote_addr(),
-                    stats.rtt,
-                    stats.udp_tx.bytes,
-                    stats.udp_rx.bytes,
-                );
-            }
-            n0_error::Ok(())
         });
     }
+    println!("Accept loop finished");
 
-    // stop with SIGINT (ctrl-c)
     Ok(())
 }
 
-async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
-    let me = endpoint.id().fmt_short();
-    let start = Instant::now();
-    let remote_id = remote_addr.id;
+#[tracing::instrument("conn", skip_all, fields(remote=%conn.remote_id().fmt_short()))]
+async fn handle_connection(conn: Connection) {
+    let endpoint_id = conn.remote_id();
+    info!(
+        "new connection from {endpoint_id} with ALPN {}",
+        String::from_utf8_lossy(TRANSFER_ALPN),
+    );
+    let remote = endpoint_id.fmt_short();
+    println!("[{remote}] Accepted connection");
+    let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
-    // Attempt to connect, over the given ALPN.
-    // Returns a Quinn connection.
+    // Accept incoming streams in a loop until the connection is closed by the remote.
+    let close_reason = loop {
+        let (send, recv) = match conn.accept_bi().await {
+            Ok(streams) => streams,
+            Err(err) => break err,
+        };
+        let conn = conn.clone();
+        tokio::task::spawn(async move {
+            if let Err(err) = handle_request(&conn, send, recv).await {
+                warn!("[{remote}] Request failed: {err:#}");
+            }
+        });
+    };
+
+    if !is_graceful(&close_reason) {
+        println!("[{remote}] Remote closed with error: {close_reason:#}");
+    } else {
+        println!("[{remote}] Disconnected");
+    }
+
+    println!("[{remote}] Path stats:");
+    for path in conn.paths().get() {
+        let stats = path.stats();
+        println!(
+            "  {:?}: RTT {:?}, tx={}, rx={}",
+            path.remote_addr(),
+            stats.rtt,
+            stats.udp_tx.bytes,
+            stats.udp_rx.bytes,
+        );
+    }
+}
+
+async fn handle_request(
+    conn: &Connection,
+    mut send: SendStream,
+    mut recv: RecvStream,
+) -> Result<()> {
+    let remote = conn.remote_id().fmt_short();
+    let request = Request::read(&mut recv).await?;
+    println!("[{remote}] Handling {request:?} request",);
+    match request {
+        Request::Download(length) => {
+            let stats = send_data(&mut send, length).await?;
+            println!("[{remote}] {stats}");
+        }
+        Request::Upload => {
+            let stats = drain_stream(recv, None).await?;
+            send.finish().anyerr()?;
+            println!("[{remote}] {stats}");
+        }
+    }
+    Ok(())
+}
+
+async fn fetch(
+    endpoint: Endpoint,
+    remote_addr: EndpointAddr,
+    length: Length,
+    mode: Mode,
+) -> Result<()> {
+    // Attempt to connect, over the given ALPN. Returns a connection.
+    let start = Instant::now();
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
-    println!("Connected to {}", remote_id);
+    println!(
+        "Connected to {} in {}ms",
+        conn.remote_id(),
+        start.elapsed().as_millis()
+    );
+    println!("Starting {mode:?} request for {length:?}");
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
     let _guard = watch_conn_type(conn.remote_id(), conn.paths());
 
-    // Use the Quinn API to send and recv content.
-    let (mut send, recv) = conn.open_bi().await.anyerr()?;
+    // Perform requests depending on the request mode.
+    match mode {
+        Mode::Upload => perform_request(&conn, RequestKind::Upload, length, start).await?,
+        Mode::Download => perform_request(&conn, RequestKind::Download, length, start).await?,
+        Mode::Bidi => {
+            [
+                perform_request(&conn, RequestKind::Download, length, start),
+                perform_request(&conn, RequestKind::Upload, length, start),
+            ]
+            .try_join_all()
+            .await?;
+        }
+    };
 
-    let message = format!("{me} is saying hello!");
-    send.write_all(message.as_bytes()).await.anyerr()?;
-    // Call `finish` to signal no more data will be sent on this stream.
-    send.finish().anyerr()?;
-    println!("Sent: \"{message}\"");
-
-    let (len, time_to_first_byte, chnk) = drain_stream(recv, false).await?;
-
-    conn.close(0u32.into(), b"done");
-
-    let transfer_time = start.elapsed();
-
-    // We received the last message: close all connections and allow for the close
-    // message to be sent.
+    // We finished our requests. Close the connection.
+    conn.close(1u32.into(), b"done");
+    // Also close the endpoint, with a timeout.
     let shutdown_start = Instant::now();
-    let shutdown = if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
+    if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
         warn!(timeout = ?SHUTDOWN_TIME, "Endpoint closing timed out");
-        "Shutdown timed out".to_string()
+        println!("Shutdown timed out");
     } else {
-        format!(
+        println!(
             "Shutdown took {:.4}s",
             shutdown_start.elapsed().as_secs_f32()
-        )
-    };
-    drop(endpoint);
-    println!(
-        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks) ({shutdown})",
-        HumanBytes(len as u64),
-        transfer_time.as_secs_f64(),
-        HumanBytes((len as f64 / transfer_time.as_secs_f64()) as u64),
-        time_to_first_byte.as_secs_f64(),
-        chnk,
-    );
+        );
+    }
+
     println!("Path stats:");
     for path in conn.paths().get() {
         let stats = path.stats();
@@ -519,86 +605,162 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     Ok(())
 }
 
-async fn drain_stream(
-    mut stream: iroh::endpoint::RecvStream,
-    read_unordered: bool,
-) -> Result<(usize, Duration, u64)> {
-    let mut read = 0;
-
-    let download_start = Instant::now();
-    let mut first_byte = true;
-    let mut time_to_first_byte = download_start.elapsed();
-
-    let mut num_chunks: u64 = 0;
-
-    if read_unordered {
-        let mut stream = stream.into_unordered();
-        while let Some(chunk) = stream.read_chunk(usize::MAX).await.anyerr()? {
-            if first_byte {
-                time_to_first_byte = download_start.elapsed();
-                first_byte = false;
-            }
-            read += chunk.bytes.len();
-            num_chunks += 1;
+async fn perform_request(
+    conn: &Connection,
+    request_kind: RequestKind,
+    length: Length,
+    conn_start: Instant,
+) -> Result<()> {
+    info!("Start request {request_kind:?} with {length:?}");
+    let request = match request_kind {
+        RequestKind::Upload => Request::Upload,
+        RequestKind::Download => Request::Download(length),
+    };
+    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+    request.write(&mut send).await?;
+    match request_kind {
+        RequestKind::Download => {
+            info!("downloading {length:?}");
+            let stats = drain_stream(recv, Some(conn_start)).await?;
+            println!("{stats}");
         }
-    } else {
-        // These are 32 buffers, for reading approximately 32kB at once
-        #[rustfmt::skip]
-        let mut bufs = [
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        ];
-
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.anyerr()? {
-            if first_byte {
-                time_to_first_byte = download_start.elapsed();
-                first_byte = false;
-            }
-            read += bufs.iter().take(n).map(|buf| buf.len()).sum::<usize>();
-            num_chunks += 1;
+        RequestKind::Upload => {
+            info!("uploading {length:?}");
+            let stats = send_data(&mut send, length).await?;
+            recv.read_to_end(0).await.anyerr()?;
+            println!("{stats}");
         }
     }
-
-    Ok((read, time_to_first_byte, num_chunks))
+    Ok(())
 }
 
-async fn send_data_on_stream(
-    stream: &mut iroh::endpoint::SendStream,
-    stream_size: u64,
-) -> Result<()> {
-    const DATA: &[u8] = &[0xAB; 1024 * 1024];
-    let bytes_data = Bytes::from_static(DATA);
+async fn drain_stream(mut recv: RecvStream, conn_start: Option<Instant>) -> Result<DownloadStats> {
+    let start = Instant::now();
+    let mut read = 0;
+    let mut num_chunks: u64 = 0;
+    let mut time_to_first_byte = None;
 
-    let full_chunks = stream_size / (DATA.len() as u64);
-    let remaining = (stream_size % (DATA.len() as u64)) as usize;
+    // These are 32 buffers, for reading approximately 32kB at once
+    #[rustfmt::skip]
+    let mut bufs = [
+        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+    ];
 
-    for _ in 0..full_chunks {
-        stream
-            .write_chunk(bytes_data.clone())
-            .await
-            .std_context("failed sending data")?;
+    while let Some(n) = recv.read_chunks(&mut bufs[..]).await.anyerr()? {
+        if let Some(conn_start) = conn_start
+            && time_to_first_byte.is_none()
+        {
+            time_to_first_byte = Some(conn_start.elapsed());
+        }
+        read += bufs.iter().take(n).map(|buf| buf.len()).sum::<usize>();
+        num_chunks += 1;
     }
 
-    if remaining != 0 {
+    Ok(DownloadStats {
+        len: read as u64,
+        time_to_first_byte,
+        num_chunks,
+        duration: start.elapsed(),
+    })
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct DownloadStats {
+    len: u64,
+    time_to_first_byte: Option<Duration>,
+    num_chunks: u64,
+    duration: Duration,
+}
+
+impl fmt::Display for DownloadStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Downloaded: {:>10} in {:.2}s, {:>10}/s ({}{} chunks)",
+            HumanBytes(self.len).to_string(),
+            self.duration.as_secs_f64(),
+            HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64),
+            self.time_to_first_byte
+                .map(|t| format!("time to first byte {}ms, ", t.as_millis()))
+                .unwrap_or_default(),
+            self.num_chunks
+        )
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct UploadStats {
+    len: u64,
+    duration: Duration,
+}
+
+impl fmt::Display for UploadStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Uploaded:   {:>10} in {:.2}s, {:>10}/s",
+            HumanBytes(self.len).to_string(),
+            self.duration.as_secs_f64(),
+            HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64)
+        )
+    }
+}
+
+async fn send_data(stream: &mut iroh::endpoint::SendStream, length: Length) -> Result<UploadStats> {
+    const DATA: &[u8] = &[0xAB; 1024 * 64];
+    let data = Bytes::from_static(DATA);
+
+    let start = Instant::now();
+    let mut total = 0;
+    loop {
+        // If a time limit was set, stop sending data once it is exceeded.
+        if let Length::Duration(duration) = length
+            && start.elapsed() > duration
+        {
+            break;
+        }
+        // If a size limit is set, stop sending once it is exceeded,
+        // and make sure that the last block has the correct size.
+        let data = match length {
+            Length::Duration(_) => data.clone(),
+            Length::Size(limit) => match limit.saturating_sub(total) as usize {
+                0 => break,
+                x if x >= data.len() => data.clone(),
+                x => data.slice(0..x),
+            },
+        };
+        let len = data.len();
         stream
-            .write_chunk(bytes_data.slice(0..remaining))
+            .write_chunk(data)
             .await
             .std_context("failed sending data")?;
+        total += len as u64;
     }
 
-    stream.finish().std_context("failed finishing stream")?;
+    stream.finish().std_context("failed to finish stream")?;
     stream
         .stopped()
         .await
         .std_context("failed to wait for stream to be stopped")?;
 
-    Ok(())
+    Ok(UploadStats {
+        len: total,
+        duration: start.elapsed(),
+    })
+}
+
+fn is_graceful(err: &ConnectionError) -> bool {
+    match err {
+        ConnectionError::ApplicationClosed(frame) if frame.error_code == 1u32.into() => true,
+        _ => false,
+    }
 }
 
 fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {

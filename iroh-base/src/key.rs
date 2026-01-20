@@ -132,7 +132,7 @@ impl PublicKey {
 
     /// Convert to a hex string limited to the first 5 bytes for a friendly string
     /// representation of the key.
-    pub fn fmt_short(&self) -> impl Display + 'static {
+    pub fn fmt_short(&self) -> impl Display + Copy + Clone + 'static {
         PublicKeyShort(
             self.0.as_bytes()[0..5]
                 .try_into()
@@ -153,6 +153,7 @@ impl PublicKey {
     }
 }
 
+#[derive(Copy, Clone)]
 struct PublicKeyShort([u8; 5]);
 
 impl Display for PublicKeyShort {
