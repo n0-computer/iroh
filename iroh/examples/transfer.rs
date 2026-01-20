@@ -16,6 +16,7 @@ use std::{
 use bytes::Bytes;
 use clap::{Parser, Subcommand, ValueEnum};
 use data_encoding::HEXLOWER;
+use derive_more::{Display, From};
 use indicatif::HumanBytes;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
@@ -33,7 +34,7 @@ use n0_error::{Result, StackResultExt, StdResultExt, ensure_any};
 use n0_future::{IterExt, stream::StreamExt, task::AbortOnDropHandle};
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use postcard::experimental::max_size::MaxSize;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{info, warn};
 use url::Url;
@@ -73,7 +74,7 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Clone, Copy, Default, Debug, Eq, PartialEq, clap::ValueEnum)]
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq, clap::ValueEnum, Serialize)]
 enum Env {
     /// Use the production servers hosted by number0.
     Prod,
@@ -118,7 +119,7 @@ impl Env {
     }
 }
 
-#[derive(ValueEnum, Default, Debug, Clone)]
+#[derive(Serialize, Deserialize, ValueEnum, Default, Debug, Clone, Copy)]
 enum Mode {
     /// We send data to the remote, measuring our upload speed.
     Upload,
@@ -134,7 +135,7 @@ enum Length {
     #[debug("Size({})", HumanBytes(*_0))]
     Size(u64),
     #[debug("Duration({_0:?})")]
-    Duration(Duration),
+    Duration(#[serde(with = "duration_millis")] Duration),
 }
 
 #[derive(Debug)]
@@ -169,7 +170,8 @@ impl Request {
     }
 }
 
-#[derive(Debug, clap::Parser)]
+#[derive(Debug, clap::Parser, Serialize)]
+#[serde(tag = "kind")]
 struct EndpointArgs {
     /// Set the environment for relay, pkarr, and DNS servers.
     ///
@@ -233,11 +235,17 @@ struct EndpointArgs {
 enum Commands {
     /// Provide data.
     Provide {
+        /// Output format.
+        #[clap(long, value_enum, default_value_t)]
+        output: OutputMode,
         #[clap(flatten)]
         endpoint_args: EndpointArgs,
     },
     /// Fetch data.
     Fetch {
+        /// Output format.
+        #[clap(long, value_enum, default_value_t)]
+        output: OutputMode,
         /// Endpoint id of the remote to connect to.
         remote_id: EndpointId,
         /// Transfer mode.
@@ -270,11 +278,16 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
     match cli.command {
-        Commands::Provide { endpoint_args } => {
-            let endpoint = endpoint_args.bind_endpoint().await?;
-            provide(endpoint).await?
+        Commands::Provide {
+            output,
+            endpoint_args,
+        } => {
+            output.print_json(&endpoint_args);
+            let endpoint = endpoint_args.bind_endpoint(output).await?;
+            provide(endpoint, output).await?
         }
         Commands::Fetch {
+            output,
             remote_id,
             remote_relay_url,
             remote_direct_address,
@@ -283,19 +296,20 @@ async fn main() -> Result<()> {
             size,
             duration,
         } => {
+            output.print_json(&endpoint_args);
             let length = match (size, duration) {
                 (Some(size), None) => Length::Size(size),
                 (None, Some(duration)) => Length::Duration(Duration::from_secs(duration)),
                 (None, None) => Length::Duration(Duration::from_secs(10)),
                 (Some(_), Some(_)) => unreachable!("--size and --duration args are conflicting"),
             };
-            let endpoint = endpoint_args.bind_endpoint().await?;
+            let endpoint = endpoint_args.bind_endpoint(output).await?;
             let addrs = remote_relay_url
                 .into_iter()
                 .map(TransportAddr::Relay)
                 .chain(remote_direct_address.into_iter().map(TransportAddr::Ip));
             let remote_addr = EndpointAddr::from_parts(remote_id, addrs);
-            fetch(endpoint, remote_addr, length, mode).await?
+            fetch(endpoint, remote_addr, length, mode, output).await?
         }
     }
 
@@ -303,7 +317,7 @@ async fn main() -> Result<()> {
 }
 
 impl EndpointArgs {
-    async fn bind_endpoint(self) -> Result<Endpoint> {
+    async fn bind_endpoint(self, output: OutputMode) -> Result<Endpoint> {
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
         } else if !self.relay_url.is_empty() {
@@ -318,8 +332,9 @@ impl EndpointArgs {
                 .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
             Err(_) => {
                 let s = SecretKey::generate(&mut rand::rng());
-                println!("Generated a new endpoint secret. To reuse, set");
-                println!("\tIROH_SECRET={}", HEXLOWER.encode(&s.to_bytes()));
+                output.print(SecretGenerated {
+                    secret_hex: HEXLOWER.encode(&s.to_bytes()),
+                });
                 s
             }
         };
@@ -416,9 +431,6 @@ impl EndpointArgs {
             }
         }
 
-        let endpoint_id = endpoint.id();
-        println!("Our endpoint id:\n\t{endpoint_id}");
-
         if self.relay_only {
             endpoint.online().await;
         } else if !self.no_relay {
@@ -428,24 +440,17 @@ impl EndpointArgs {
         }
 
         let endpoint_addr = endpoint.addr();
+        output.print(EndpointBound {
+            endpoint_id: endpoint.id(),
+            direct_addresses: endpoint_addr.ip_addrs().copied().collect(),
+            relay_url: endpoint_addr.relay_urls().next().cloned(),
+        });
 
-        println!("Our direct addresses:");
-        for addr in endpoint_addr.ip_addrs() {
-            println!("\t{addr}");
-        }
-
-        if let Some(url) = endpoint_addr.relay_urls().next() {
-            println!("Our home relay server:\t{url}");
-        } else {
-            println!("No home relay server found");
-        }
-
-        println!();
         Ok(endpoint)
     }
 }
 
-async fn provide(endpoint: Endpoint) -> Result<()> {
+async fn provide(endpoint: Endpoint, output: OutputMode) -> Result<()> {
     loop {
         // Accept incoming connections until Ctrl-C is pressed.
         let incoming = tokio::select! {
@@ -465,7 +470,7 @@ async fn provide(endpoint: Endpoint) -> Result<()> {
         // Spawn a task for each connetion.
         tokio::spawn(async move {
             match accepting.await {
-                Ok(conn) => handle_connection(conn).await,
+                Ok(conn) => handle_connection(conn, output).await,
                 Err(err) => warn!("incoming connection failed during handshake: {err:#}"),
             }
         });
@@ -479,15 +484,10 @@ async fn provide(endpoint: Endpoint) -> Result<()> {
 }
 
 #[tracing::instrument("conn", skip_all, fields(remote=%conn.remote_id().fmt_short()))]
-async fn handle_connection(conn: Connection) {
-    let endpoint_id = conn.remote_id();
-    info!(
-        "new connection from {endpoint_id} with ALPN {}",
-        String::from_utf8_lossy(TRANSFER_ALPN),
-    );
-    let remote = endpoint_id.fmt_short();
-    println!("[{remote}] Accepted connection");
-    let _guard = watch_conn_type(conn.remote_id(), conn.paths());
+async fn handle_connection(conn: Connection, output: OutputMode) {
+    let remote_id = conn.remote_id();
+    output.print_r(remote_id, ConnectionAccepted {});
+    let _guard = watch_conn_type(conn.paths(), Some(remote_id), output);
 
     // Accept incoming streams in a loop until the connection is closed by the remote.
     let close_reason = loop {
@@ -497,53 +497,40 @@ async fn handle_connection(conn: Connection) {
         };
         let conn = conn.clone();
         tokio::task::spawn(async move {
-            if let Err(err) = handle_request(&conn, send, recv).await {
-                warn!("[{remote}] Request failed: {err:#}");
+            if let Err(err) = handle_request(&conn, send, recv, output).await {
+                warn!("[{}] Request failed: {err:#}", remote_id.fmt_short());
             }
         });
     };
 
-    if !matches!(&close_reason, ConnectionError::ApplicationClosed(frame) if frame.error_code == GRACEFUL_CLOSE)
-    {
-        println!("[{remote}] Remote closed with error: {close_reason:#}");
-    } else {
-        println!("[{remote}] Disconnected");
-    }
+    let error = (!matches!(&close_reason, ConnectionError::ApplicationClosed(frame) if frame.error_code == GRACEFUL_CLOSE))
+        .then(|| format!("{close_reason:#}"));
 
-    println!("[{remote}] Path stats:");
-    for path in conn.paths().get() {
-        let stats = path.stats();
-        println!(
-            "  {:?}: RTT {:?}, tx={}, rx={}",
-            path.remote_addr(),
-            stats.rtt,
-            stats.udp_tx.bytes,
-            stats.udp_rx.bytes,
-        );
-    }
+    output.print_r(remote_id, Disconnected { error });
+    output.print_r(remote_id, PathStats::from_conn(&conn));
 }
 
 async fn handle_request(
     conn: &Connection,
     mut send: SendStream,
     mut recv: RecvStream,
+    output: OutputMode,
 ) -> Result<()> {
-    let remote = conn.remote_id().fmt_short();
     let request = Request::read(&mut recv)
         .await
         .context("failed to read request")?;
-    println!("[{remote}] Handling {request:?} request",);
+    output.print_r(conn.remote_id(), HandleRequest { request: &request });
     match request {
         Request::Download(length) => {
             info!("Handle download request: send data for {length:?}");
             let stats = send_data(&mut send, length).await?;
-            println!("[{remote}] {stats}");
+            output.print_r(conn.remote_id(), UploadComplete { stats });
         }
         Request::Upload => {
             info!("Handle upload request: drain stream");
             let stats = drain_stream(recv, None).await?;
             send.finish().anyerr()?;
-            println!("[{remote}] {stats}");
+            output.print_r(conn.remote_id(), DownloadComplete { stats });
         }
     }
     Ok(())
@@ -554,28 +541,33 @@ async fn fetch(
     remote_addr: EndpointAddr,
     length: Length,
     mode: Mode,
+    output: OutputMode,
 ) -> Result<()> {
     // Attempt to connect, over the given ALPN. Returns a connection.
     let start = Instant::now();
     let conn = endpoint.connect(remote_addr, TRANSFER_ALPN).await?;
-    println!(
-        "Connected to {} in {}ms",
-        conn.remote_id(),
-        start.elapsed().as_millis()
-    );
-    println!("Starting {mode:?} request for {length:?}");
+    let remote_id = conn.remote_id();
+    output.print(Connected {
+        remote_id,
+        duration: start.elapsed(),
+    });
+    output.print(StartRequest { mode, length });
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
-    let _guard = watch_conn_type(conn.remote_id(), conn.paths());
+    let _guard = watch_conn_type(conn.paths(), None, output);
 
     // Perform requests depending on the request mode.
     let request_fut = async {
         match mode {
-            Mode::Upload => perform_request(&conn, RequestKind::Upload, length, start).await?,
-            Mode::Download => perform_request(&conn, RequestKind::Download, length, start).await?,
+            Mode::Upload => {
+                perform_request(&conn, RequestKind::Upload, length, start, output).await?
+            }
+            Mode::Download => {
+                perform_request(&conn, RequestKind::Download, length, start, output).await?
+            }
             Mode::Bidi => {
                 [
-                    perform_request(&conn, RequestKind::Download, length, start),
-                    perform_request(&conn, RequestKind::Upload, length, start),
+                    perform_request(&conn, RequestKind::Download, length, start, output),
+                    perform_request(&conn, RequestKind::Upload, length, start, output),
                 ]
                 .try_join_all()
                 .await?;
@@ -594,27 +586,22 @@ async fn fetch(
 
     // Also close the endpoint, with a timeout.
     let shutdown_start = Instant::now();
-    if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
-        warn!(timeout = ?SHUTDOWN_TIME, "Endpoint closing timed out");
-        println!("Shutdown timed out");
+    if tokio::time::timeout(SHUTDOWN_TIME, endpoint.close())
+        .await
+        .is_err()
+    {
+        output.print(EndpointClosed {
+            duration: SHUTDOWN_TIME,
+            timed_out: true,
+        });
     } else {
-        println!(
-            "Shutdown took {:.4}s",
-            shutdown_start.elapsed().as_secs_f32()
-        );
-    }
+        output.print(EndpointClosed {
+            duration: shutdown_start.elapsed(),
+            timed_out: false,
+        });
+    };
 
-    println!("Path stats:");
-    for path in conn.paths().get() {
-        let stats = path.stats();
-        println!(
-            "  {:?}: RTT {:?}, tx={}, rx={}",
-            path.remote_addr(),
-            stats.rtt,
-            stats.udp_tx.bytes,
-            stats.udp_rx.bytes,
-        );
-    }
+    output.print(PathStats::from_conn(&conn));
 
     res
 }
@@ -624,6 +611,7 @@ async fn perform_request(
     request_kind: RequestKind,
     length: Length,
     conn_start: Instant,
+    output: OutputMode,
 ) -> Result<()> {
     info!("Start request {request_kind:?} with {length:?}");
     let request = match request_kind {
@@ -637,13 +625,13 @@ async fn perform_request(
             info!("downloading {length:?}");
             send.finish().anyerr()?;
             let stats = drain_stream(recv, Some(conn_start)).await?;
-            println!("{stats}");
+            output.print(DownloadComplete { stats });
         }
         RequestKind::Upload => {
             info!("uploading {length:?}");
             let stats = send_data(&mut send, length).await?;
             recv.read_to_end(0).await.anyerr()?;
-            println!("{stats}");
+            output.print(UploadComplete { stats });
         }
     }
     Ok(())
@@ -684,48 +672,6 @@ async fn drain_stream(mut recv: RecvStream, conn_start: Option<Instant>) -> Resu
         num_chunks,
         duration: start.elapsed(),
     })
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct DownloadStats {
-    len: u64,
-    time_to_first_byte: Option<Duration>,
-    num_chunks: u64,
-    duration: Duration,
-}
-
-impl fmt::Display for DownloadStats {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Downloaded: {:>10} in {:.2}s, {:>10}/s ({}{} chunks)",
-            HumanBytes(self.len).to_string(),
-            self.duration.as_secs_f64(),
-            HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64),
-            self.time_to_first_byte
-                .map(|t| format!("time to first byte {}ms, ", t.as_millis()))
-                .unwrap_or_default(),
-            self.num_chunks
-        )
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct UploadStats {
-    len: u64,
-    duration: Duration,
-}
-
-impl fmt::Display for UploadStats {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Uploaded:   {:>10} in {:.2}s, {:>10}/s",
-            HumanBytes(self.len).to_string(),
-            self.duration.as_secs_f64(),
-            HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64)
-        )
-    }
 }
 
 async fn send_data(stream: &mut iroh::endpoint::SendStream, length: Length) -> Result<UploadStats> {
@@ -777,10 +723,18 @@ fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
 }
 
 fn watch_conn_type(
-    endpoint_id: EndpointId,
     paths_watcher: impl Watcher<Value = PathInfoList> + Send + Unpin + 'static,
+    remote_id: Option<EndpointId>,
+    output: OutputMode,
 ) -> AbortOnDropHandle<()> {
-    let id = endpoint_id.fmt_short();
+    let print = move |path: SelectedPath| {
+        let event = ConnectionTypeChanged { path };
+        if let Some(remote_id) = remote_id {
+            output.print_r(remote_id, event)
+        } else {
+            output.print(event)
+        }
+    };
     let task = tokio::task::spawn(async move {
         let mut stream = paths_watcher.stream();
         let mut previous = None;
@@ -790,20 +744,16 @@ fn watch_conn_type(
                 if Some(path) == previous.as_ref() {
                     continue;
                 }
-                println!(
-                    "[{id}] Connection type changed to: {:?} (RTT: {:?})",
-                    path.remote_addr(),
-                    path.rtt()
-                );
+                print(SelectedPath::Path {
+                    addr: path.remote_addr().clone(),
+                    rtt: path.rtt(),
+                });
                 previous = Some(path.clone());
             } else if !paths.is_empty() {
-                println!(
-                    "[{id}] Connection type changed to: mixed ({} paths)",
-                    paths.len()
-                );
+                print(SelectedPath::Mixed { count: paths.len() });
                 previous = None;
             } else {
-                println!("[{id}] Connection type changed to none (no active transmission paths)",);
+                output.print(SelectedPath::None);
                 previous = None;
             }
         }
@@ -824,4 +774,320 @@ fn parse_ipv6_net(s: &str) -> Result<(SocketAddrV6, u8)> {
     let net: Ipv6Net = net.parse().std_context("invalid net")?;
     let port: u16 = port.parse().std_context("invalid port")?;
     Ok((SocketAddrV6::new(net.addr(), port, 0, 0), net.prefix_len()))
+}
+
+#[derive(ValueEnum, Default, Debug, Clone, Copy)]
+enum OutputMode {
+    /// Print human-readable text output.
+    #[default]
+    Text,
+    /// Print JSON-formatted output.
+    Json,
+}
+
+impl OutputMode {
+    fn print_r(&self, remote: EndpointId, event: impl Serialize + fmt::Display) {
+        self.print(RemoteEvent::new(remote, event))
+    }
+    fn print(&self, event: impl Serialize + fmt::Display) {
+        match self {
+            OutputMode::Text => println!("{event}"),
+            OutputMode::Json => println!("{}", serde_json::to_string(&event).unwrap()),
+        }
+    }
+    fn print_json(&self, event: &impl Serialize) {
+        if matches!(self, OutputMode::Json) {
+            println!("{}", serde_json::to_string(&event).unwrap())
+        }
+    }
+}
+
+#[derive(Serialize, Debug, Clone, Display)]
+#[display("Generated a new endpoint secret. To reuse, set\n\tIROH_SECRET={secret_hex}")]
+#[serde(tag = "kind")]
+struct SecretGenerated {
+    secret_hex: String,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(tag = "kind")]
+struct EndpointBound {
+    endpoint_id: EndpointId,
+    direct_addresses: Vec<SocketAddr>,
+    relay_url: Option<RelayUrl>,
+}
+
+impl fmt::Display for EndpointBound {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Our endpoint id:\n\t{}", self.endpoint_id)?;
+        writeln!(f, "Our direct addresses:")?;
+        for addr in &self.direct_addresses {
+            writeln!(f, "\t{addr}")?;
+        }
+        match &self.relay_url {
+            Some(url) => write!(f, "Our home relay server:\t{url}"),
+            None => write!(f, "No home relay server found"),
+        }
+    }
+}
+
+#[derive(Serialize, Debug, Clone, Display)]
+#[serde(tag = "kind")]
+#[display("Connection type changed to {path}")]
+struct ConnectionTypeChanged {
+    path: SelectedPath,
+}
+
+#[derive(Serialize, Debug, Clone)]
+enum SelectedPath {
+    Mixed {
+        count: usize,
+    },
+    Path {
+        addr: TransportAddr,
+        #[serde(with = "duration_millis")]
+        rtt: Duration,
+    },
+    None,
+}
+
+impl fmt::Display for SelectedPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            Self::Mixed { count } => {
+                write!(f, "mixed ({count} paths)")
+            }
+            Self::Path { addr, rtt } => {
+                write!(f, "{addr:?} (RTT: {}ms)", rtt.as_millis())
+            }
+            Self::None => {
+                write!(f, "none")
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Debug, Clone, Display)]
+#[serde(tag = "kind")]
+#[display("Connected to {remote_id} in {}ms", duration.as_millis())]
+struct Connected {
+    remote_id: EndpointId,
+    #[serde(with = "duration_millis")]
+    duration: Duration,
+}
+
+#[derive(Serialize, Debug, Clone, Display)]
+#[serde(tag = "kind")]
+#[display("Starting {mode:?} request for {length:?}")]
+struct StartRequest {
+    mode: Mode,
+    length: Length,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(tag = "kind")]
+struct EndpointClosed {
+    #[serde(with = "duration_millis")]
+    duration: Duration,
+    timed_out: bool,
+}
+
+impl fmt::Display for EndpointClosed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.timed_out {
+            false => write!(f, "Shutdown took {:.4}s", self.duration.as_secs_f32()),
+            true => write!(
+                f,
+                "Shutdown timed out after {}s",
+                self.duration.as_secs_f32()
+            ),
+        }
+    }
+}
+
+#[derive(Serialize, Debug, Clone)]
+struct PathStat {
+    remote_addr: String,
+    #[serde(with = "duration_millis")]
+    rtt: Duration,
+    bytes_sent: u64,
+    bytes_recv: u64,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(tag = "kind")]
+struct PathStats {
+    paths: Vec<PathStat>,
+}
+
+impl PathStats {
+    fn from_conn(conn: &Connection) -> Self {
+        let paths = conn
+            .paths()
+            .get()
+            .iter()
+            .map(|path| {
+                let stats = path.stats();
+                PathStat {
+                    remote_addr: format!("{:?}", path.remote_addr()),
+                    rtt: stats.rtt,
+                    bytes_recv: stats.udp_tx.bytes,
+                    bytes_sent: stats.udp_rx.bytes,
+                }
+            })
+            .collect();
+        Self { paths }
+    }
+}
+
+impl fmt::Display for PathStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Path stats:")?;
+        for path in &self.paths {
+            writeln!(
+                f,
+                "  {}: RTT {}ms, tx={}, rx={}",
+                path.remote_addr,
+                path.rtt.as_millis(),
+                path.bytes_sent,
+                path.bytes_recv,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Serialize, Debug, Clone, Display)]
+#[serde(tag = "kind")]
+#[display("{stats}")]
+struct DownloadComplete {
+    stats: DownloadStats,
+}
+
+#[derive(Serialize, Debug, Clone, Display)]
+#[serde(tag = "kind")]
+#[display("{stats}")]
+struct UploadComplete {
+    stats: UploadStats,
+}
+
+#[derive(Serialize, Debug, Clone, Copy, Display)]
+#[display("Accepted connection")]
+#[serde(tag = "kind")]
+struct ConnectionAccepted {}
+
+#[derive(Serialize, Debug, Clone, Display)]
+#[serde(tag = "kind")]
+#[display("Handling {request:?} request")]
+struct HandleRequest<'a> {
+    request: &'a Request,
+}
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(tag = "kind")]
+struct Disconnected {
+    error: Option<String>,
+}
+
+impl fmt::Display for Disconnected {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.error {
+            Some(err) => write!(f, "Remote closed with error: {err}"),
+            None => write!(f, "Disconnected"),
+        }
+    }
+}
+
+#[derive(Serialize, Debug, Clone)]
+struct DownloadStats {
+    len: u64,
+    #[serde(
+        serialize_with = "duration_millis_opt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    time_to_first_byte: Option<Duration>,
+    num_chunks: u64,
+    #[serde(with = "duration_millis")]
+    duration: Duration,
+}
+
+impl fmt::Display for DownloadStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Downloaded: {:>10} in {:.2}s, {:>10}/s ({}{} chunks)",
+            HumanBytes(self.len).to_string(),
+            self.duration.as_secs_f64(),
+            HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64),
+            self.time_to_first_byte
+                .map(|t| format!("time to first byte {}ms, ", t.as_millis()))
+                .unwrap_or_default(),
+            self.num_chunks
+        )
+    }
+}
+
+#[derive(Serialize, Debug, Clone)]
+struct UploadStats {
+    len: u64,
+    #[serde(with = "duration_millis")]
+    duration: Duration,
+}
+
+impl fmt::Display for UploadStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Uploaded:   {:>10} in {:.2}s, {:>10}/s",
+            HumanBytes(self.len).to_string(),
+            self.duration.as_secs_f64(),
+            HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64)
+        )
+    }
+}
+
+#[derive(Serialize, Debug, Clone, From, Display)]
+#[display("[{}] {inner}", remote_id.fmt_short())]
+struct RemoteEvent<T: Serialize + fmt::Display> {
+    #[serde(flatten)]
+    inner: T,
+    remote_id: EndpointId,
+}
+
+impl<T: Serialize + fmt::Display> RemoteEvent<T> {
+    fn new(remote_id: EndpointId, inner: T) -> Self {
+        Self { remote_id, inner }
+    }
+}
+
+pub fn duration_millis_opt<S: Serializer>(
+    value: &Option<Duration>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    match value {
+        Some(d) => serializer.serialize_u128(d.as_millis()),
+        None => serializer.serialize_none(),
+    }
+}
+
+mod duration_millis {
+    use super::*;
+    use serde::{Deserializer, Serializer};
+
+    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u128(duration.as_millis())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let millis = u128::deserialize(deserializer)?;
+        Ok(Duration::from_millis(
+            millis.try_into().map_err(serde::de::Error::custom)?,
+        ))
+    }
 }
