@@ -1515,6 +1515,7 @@ fn is_cgi() -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         io,
         net::{IpAddr, Ipv4Addr, Ipv6Addr},
         str::FromStr,
@@ -1524,12 +1525,12 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, time};
+    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use rand::SeedableRng;
     use tokio::sync::oneshot;
-    use tracing::{Instrument, debug_span, info, info_span, instrument};
+    use tracing::{Instrument, debug_span, error, info, info_span, instrument};
 
     use super::Endpoint;
     use crate::{
@@ -1537,6 +1538,7 @@ mod tests {
         discovery::static_provider::StaticProvider,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectOptions, Connection, ConnectionError,
+            PathInfo,
         },
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
@@ -2958,6 +2960,110 @@ mod tests {
                 .iter()
                 .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn connect_via_relay_becomes_direct_and_sends_direct() -> Result {
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
+        let qlog = Arc::new(QlogFileGroup::from_env(
+            "connect_via_relay_becomes_direct_and_sends_direct",
+        ));
+        let transfer_size = 1_000_000;
+
+        async fn collect_path_infos(conn: Connection) -> BTreeMap<TransportAddr, PathInfo> {
+            let mut path_infos = BTreeMap::new();
+            let mut paths = conn.paths().stream();
+            while let Some(path_list) = paths.next().await {
+                for path in path_list {
+                    path_infos.insert(path.remote_addr().clone(), path);
+                }
+            }
+            path_infos
+        }
+
+        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .transport_config(qlog.create("client")?)
+            .bind()
+            .await?;
+        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(true)
+            .transport_config(qlog.create("server")?)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let server_addr = EndpointAddr::new(server.id()).with_relay_url(relay_url);
+        let server_task = tokio::spawn(async move {
+            let incoming = server.accept().await.anyerr()?;
+            let conn = incoming.await.anyerr()?;
+            let stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+            let msg = recv.read_to_end(transfer_size).await.anyerr()?;
+            send.write_all(&msg).await.anyerr()?;
+            send.finish().anyerr()?;
+            conn.closed().await;
+            let stats = stats_task.await.std_context("server stats task failed")?;
+            Ok::<_, Error>(stats)
+        });
+
+        let conn = client.connect(server_addr, TEST_ALPN).await?;
+        let stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(&vec![42u8; transfer_size]).await.anyerr()?;
+        send.finish().anyerr()?;
+        recv.read_to_end(transfer_size).await.anyerr()?;
+        conn.close(0u32.into(), b"thanks, bye!");
+        client.close().await;
+        let client_stats = stats_task.await.std_context("client stats task failed")?;
+        let server_stats = server_task.await.anyerr()??;
+
+        info!("client stats: {client_stats:#?}");
+        info!("server stats: {server_stats:#?}");
+
+        let total = client_stats
+            .values()
+            .map(|p| p.stats().udp_tx.bytes)
+            .sum::<u64>();
+        info!(total, "client send total");
+        if total > transfer_size as u64 / 2 {
+            let client_most_sent_path = client_stats
+                .values()
+                .max_by_key(|p| p.stats().udp_tx.datagrams)
+                .expect("no paths in stats");
+            let client_most_recv_path = client_stats
+                .values()
+                .max_by_key(|p| p.stats().udp_rx.datagrams)
+                .expect("no paths in stats");
+
+            assert!(client_most_sent_path.is_ip());
+            assert!(client_most_recv_path.is_ip());
+        } else {
+            error!("skipping client assertions due to missing PathStats");
+        }
+
+        let total = server_stats
+            .values()
+            .map(|p| p.stats().udp_tx.bytes)
+            .sum::<u64>();
+        info!(total, "server send total");
+        if total > transfer_size as u64 / 2 {
+            let server_most_sent_path = server_stats
+                .values()
+                .max_by_key(|p| p.stats().udp_tx.datagrams)
+                .expect("no paths in stats");
+            let server_most_recv_path = server_stats
+                .values()
+                .max_by_key(|p| p.stats().udp_rx.datagrams)
+                .expect("no paths in stats");
+
+            assert!(server_most_sent_path.is_ip());
+            assert!(server_most_recv_path.is_ip());
+        } else {
+            error!("skipping server assertions due to missing PathStats");
+        }
+
         Ok(())
     }
 }
