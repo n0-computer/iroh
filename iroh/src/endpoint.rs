@@ -1510,8 +1510,6 @@ fn is_cgi() -> bool {
     std::env::var_os("REQUEST_METHOD").is_some()
 }
 
-// TODO: These tests could still be flaky, lets fix that:
-// https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1530,7 +1528,7 @@ mod tests {
     use n0_watcher::Watcher;
     use rand::SeedableRng;
     use tokio::sync::oneshot;
-    use tracing::{Instrument, debug_span, error, info, info_span, instrument};
+    use tracing::{Instrument, debug_span, info, info_span, instrument};
 
     use super::Endpoint;
     use crate::{
@@ -3022,47 +3020,37 @@ mod tests {
         info!("client stats: {client_stats:#?}");
         info!("server stats: {server_stats:#?}");
 
-        let total = client_stats
+        let client_total_relay_tx = client_stats
             .values()
+            .filter(|p| p.is_relay())
             .map(|p| p.stats().udp_tx.bytes)
             .sum::<u64>();
-        info!(total, "client send total");
-        if total > transfer_size as u64 / 2 {
-            let client_most_sent_path = client_stats
-                .values()
-                .max_by_key(|p| p.stats().udp_tx.datagrams)
-                .expect("no paths in stats");
-            let client_most_recv_path = client_stats
-                .values()
-                .max_by_key(|p| p.stats().udp_rx.datagrams)
-                .expect("no paths in stats");
-
-            assert!(client_most_sent_path.is_ip());
-            assert!(client_most_recv_path.is_ip());
-        } else {
-            error!("skipping client assertions due to missing PathStats");
-        }
-
-        let total = server_stats
+        let client_total_relay_rx = client_stats
             .values()
+            .filter(|p| p.is_relay())
+            .map(|p| p.stats().udp_rx.bytes)
+            .sum::<u64>();
+        let server_total_relay_tx = server_stats
+            .values()
+            .filter(|p| p.is_relay())
             .map(|p| p.stats().udp_tx.bytes)
             .sum::<u64>();
-        info!(total, "server send total");
-        if total > transfer_size as u64 / 2 {
-            let server_most_sent_path = server_stats
-                .values()
-                .max_by_key(|p| p.stats().udp_tx.datagrams)
-                .expect("no paths in stats");
-            let server_most_recv_path = server_stats
-                .values()
-                .max_by_key(|p| p.stats().udp_rx.datagrams)
-                .expect("no paths in stats");
+        let server_total_relay_rx = server_stats
+            .values()
+            .filter(|p| p.is_relay())
+            .map(|p| p.stats().udp_rx.bytes)
+            .sum::<u64>();
 
-            assert!(server_most_sent_path.is_ip());
-            assert!(server_most_recv_path.is_ip());
-        } else {
-            error!("skipping server assertions due to missing PathStats");
-        }
+        info!(?client_total_relay_tx, "total");
+        info!(?client_total_relay_rx, "total");
+        info!(?server_total_relay_tx, "total");
+        info!(?server_total_relay_rx, "total");
+
+        // We should send/receive only the minorty of traffic via the relay.
+        assert!(client_total_relay_tx < transfer_size as u64 / 2);
+        assert!(client_total_relay_rx < transfer_size as u64 / 2);
+        assert!(server_total_relay_tx < transfer_size as u64 / 2);
+        assert!(server_total_relay_rx < transfer_size as u64 / 2);
 
         Ok(())
     }
