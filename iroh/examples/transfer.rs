@@ -896,7 +896,7 @@ impl fmt::Display for EndpointBound {
             Some(url) => write!(f, "Our home relay server:\t{url}")?,
             None => write!(f, "No home relay server found")?,
         }
-        writeln!(f, "")
+        writeln!(f)
     }
 }
 
