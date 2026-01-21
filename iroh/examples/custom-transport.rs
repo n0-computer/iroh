@@ -11,7 +11,7 @@ use iroh::{
     discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
     endpoint::{
         Connection,
-        transports::{Addr, Transmit, UserSender, UserTransport, UserTransportFactory},
+        transports::{Addr, Transmit, UserEndpoint, UserSender, UserTransport},
     },
     protocol::{AcceptError, ProtocolHandler, Router},
 };
@@ -212,13 +212,13 @@ impl UserSender for TestSender {
     }
 }
 
-impl UserTransportFactory for TestTransport {
-    fn bind(&self) -> std::io::Result<Box<dyn UserTransport>> {
+impl UserTransport for TestTransport {
+    fn bind(&self) -> std::io::Result<Box<dyn UserEndpoint>> {
         Ok(Box::new(self.clone()))
     }
 }
 
-impl UserTransport for TestTransport {
+impl UserEndpoint for TestTransport {
     fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<UserAddr>> {
         self.me_watchable.watch()
     }

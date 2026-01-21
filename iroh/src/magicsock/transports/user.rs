@@ -8,14 +8,24 @@ use iroh_base::UserAddr;
 
 use super::{Addr, Transmit};
 
-/// User transport factory
-pub trait UserTransportFactory: std::fmt::Debug + Send + Sync + 'static {
+/// User defined transport.
+///
+/// Usually a transport will only deal with a single user address type, but
+/// the signature allows for dealing with multiple user address types.
+///
+/// A transport is a factory for user endpoints. Whenever an iroh endpoint is
+/// create using [crate::endpoint::Builder::bind], a new user endpoint will
+/// be created using [UserTransport::bind].
+pub trait UserTransport: std::fmt::Debug + Send + Sync + 'static {
     /// Create an actual user transport
-    fn bind(&self) -> io::Result<Box<dyn UserTransport>>;
+    fn bind(&self) -> io::Result<Box<dyn UserEndpoint>>;
 }
 
-/// An user transport
-pub trait UserTransport: std::fmt::Debug + Send + Sync + 'static {
+/// User endpoint created by a [UserTransport].
+///
+/// An endpoint has a local address (or multiple local addresses), can receive
+/// packets, and can create senders to send packets.
+pub trait UserEndpoint: std::fmt::Debug + Send + Sync + 'static {
     /// Watch local addrs
     fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<UserAddr>>;
     /// Create a sender
@@ -31,6 +41,13 @@ pub trait UserTransport: std::fmt::Debug + Send + Sync + 'static {
 }
 
 /// User sender
+///
+/// A sender provides a poll based interface to send packets to user addresses.
+/// It can decide whether it wants to send to a given user address type.
+///
+/// This is not enforced at type level, but [UserSender::poll_send] should
+/// only be called with addresses for which [UserSender::is_valid_send_addr]
+/// returns true.
 pub trait UserSender: std::fmt::Debug + Send + Sync + 'static {
     /// is addr valid for this transport?
     fn is_valid_send_addr(&self, addr: &UserAddr) -> bool;

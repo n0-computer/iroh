@@ -24,7 +24,7 @@ mod ip;
 mod relay;
 pub(crate) mod user;
 
-use user::{UserSender, UserTransport, UserTransportFactory};
+use user::{UserEndpoint, UserSender, UserTransport};
 
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::Config as IpConfig;
@@ -38,7 +38,7 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: IpTransports,
     relay: Vec<RelayTransport>,
-    user: Vec<Box<dyn UserTransport>>,
+    user: Vec<Box<dyn UserEndpoint>>,
 
     poll_recv_counter: usize,
     /// Cache for source addrs, to speed up access
@@ -90,7 +90,7 @@ pub(crate) enum TransportConfig {
         is_user_defined: bool,
     },
     /// User defined transport factory.
-    User(Arc<dyn UserTransportFactory>),
+    User(Arc<dyn UserTransport>),
 }
 
 impl TransportConfig {
