@@ -91,7 +91,7 @@ pub(crate) mod dns_and_pkarr_servers {
 
     use super::CleanupDropGuard;
     use crate::{
-        discovery::{ConcurrentDiscovery, dns::DnsDiscovery, pkarr::PkarrPublisher},
+        address_lookup::{self, ConcurrentAddressLookup, PkarrPublisher},
         dns::DnsResolver,
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
@@ -136,13 +136,13 @@ pub(crate) mod dns_and_pkarr_servers {
             })
         }
 
-        /// Create a [`ConcurrentDiscovery`] with [`DnsDiscovery`] and [`PkarrPublisher`]
+        /// Create a [`ConcurrentAddressLookup`] with [`crate::address_lookup::DnsAddressLookup`] and [`PkarrPublisher`]
         /// configured to use the test servers.
-        pub fn discovery(&self, secret_key: SecretKey) -> ConcurrentDiscovery {
-            ConcurrentDiscovery::from_services(vec![
-                // Enable DNS discovery by default
+        pub fn address_lookup(&self, secret_key: SecretKey) -> ConcurrentAddressLookup {
+            ConcurrentAddressLookup::from_services(vec![
+                // Enable DNS Address Lookup by default
                 Box::new(
-                    DnsDiscovery::builder(self.endpoint_origin.clone())
+                    address_lookup::DnsAddressLookup::builder(self.endpoint_origin.clone())
                         .dns_resolver(self.dns_resolver())
                         .build(),
                 ),

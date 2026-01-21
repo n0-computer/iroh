@@ -32,12 +32,15 @@ pub use super::magicsock::{
     remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
 };
 #[cfg(wasm_browser)]
-use crate::discovery::pkarr::PkarrResolver;
+use crate::address_lookup::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
     NetReport,
-    discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
+    address_lookup::{
+        ConcurrentAddressLookup, DynIntoAddressLookup, Error as AddressLookupError,
+        IntoAddressLookup, UserData,
+    },
     endpoint::presets::Preset,
     magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
@@ -94,8 +97,8 @@ pub struct Builder {
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: QuicTransportConfig,
     keylog: bool,
-    discovery: Vec<Box<dyn DynIntoDiscovery>>,
-    discovery_user_data: Option<UserData>,
+    address_lookup: Vec<Box<dyn DynIntoAddressLookup>>,
+    address_lookup_user_data: Option<UserData>,
     proxy_url: Option<Url>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
@@ -143,7 +146,7 @@ impl Builder {
         self
     }
 
-    /// Creates an empty builder with no discovery services.
+    /// Creates an empty builder with no address lookup  services.
     pub fn empty(relay_mode: RelayMode) -> Self {
         let mut transports = vec![
             #[cfg(not(wasm_browser))]
@@ -159,8 +162,8 @@ impl Builder {
             alpn_protocols: Default::default(),
             transport_config: QuicTransportConfig::default(),
             keylog: Default::default(),
-            discovery: Default::default(),
-            discovery_user_data: Default::default(),
+            address_lookup: Default::default(),
+            address_lookup_user_data: Default::default(),
             proxy_url: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
@@ -196,7 +199,7 @@ impl Builder {
         let msock_opts = magicsock::Options {
             transports: self.transports,
             secret_key,
-            discovery_user_data: self.discovery_user_data,
+            address_lookup_user_data: self.address_lookup_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -216,10 +219,10 @@ impl Builder {
             static_config: Arc::new(static_config),
         };
 
-        // Add discovery mechanisms
-        for create_service in self.discovery {
-            let service = create_service.into_discovery(&ep)?;
-            ep.discovery().add_boxed(service);
+        // Add Address Lookup mechanisms
+        for create_service in self.address_lookup {
+            let service = create_service.into_address_lookup(&ep)?;
+            ep.address_lookup().add_boxed(service);
         }
 
         Ok(ep)
@@ -486,47 +489,47 @@ impl Builder {
         self
     }
 
-    /// Removes all discovery services from the builder.
+    /// Removes all Address Lookup services from the builder.
     ///
-    /// If no discovery service is set, connecting to an endpoint without providing its
+    /// If no Address Lookup is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
-    /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn clear_discovery(mut self) -> Self {
-        self.discovery.clear();
+    /// See the documentation of the [`crate::address_lookup::AddressLookup`] trait for details.
+    pub fn clear_address_lookup(mut self) -> Self {
+        self.address_lookup.clear();
         self
     }
 
-    /// Adds an additional discovery mechanism for this endpoint.
+    /// Adds an additional Address Lookup for this endpoint.
     ///
-    /// Once the endpoint is created the provided [`IntoDiscovery::into_discovery`] will be
-    /// called. This allows discovery services to finalize their configuration by e.g. using
+    /// Once the endpoint is created the provided [`IntoAddressLookup::into_address_lookup`] will be
+    /// called. This allows Address Lookup's to finalize their configuration by e.g. using
     /// the secret key from the endpoint which can be needed to sign published information.
     ///
-    /// This method can be called multiple times and all the discovery services passed in
+    /// This method can be called multiple times and all the Address Lookup's passed in
     /// will be combined using an internal instance of the
-    /// [`crate::discovery::ConcurrentDiscovery`]. To clear all discovery services, use
-    /// [`Self::clear_discovery`].
+    /// [`crate::address_lookup::ConcurrentAddressLookup`]. To clear all Address Lookup's, use
+    /// [`Self::clear_address_lookup`].
     ///
-    /// If no discovery service is set, connecting to an endpoint without providing its
+    /// If no Address Lookup is set, connecting to an endpoint without providing its
     /// direct addresses or relay URLs will fail.
     ///
-    /// See the documentation of the [`crate::discovery::Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
-        self.discovery.push(Box::new(discovery));
+    /// See the documentation of the [`crate::address_lookup::AddressLookup`] trait for details.
+    pub fn address_lookup(mut self, address_lookup: impl IntoAddressLookup) -> Self {
+        self.address_lookup.push(Box::new(address_lookup));
         self
     }
 
-    /// Sets the initial user-defined data to be published in discovery services for this node.
+    /// Sets the initial user-defined data to be published in Address Lookup's for this node.
     ///
-    /// When using discovery services, this string of [`UserData`] will be published together
+    /// When using Address Lookup's, this string of [`UserData`] will be published together
     /// with the endpoint's addresses and relay URL. When other endpoints discover this endpoint,
     /// they retrieve the [`UserData`] in addition to the addressing info.
     ///
     /// Iroh itself does not interpret the user-defined data in any way, it is purely left
     /// for applications to parse and use.
-    pub fn user_data_for_discovery(mut self, user_data: UserData) -> Self {
-        self.discovery_user_data = Some(user_data);
+    pub fn user_data_for_address_lookup(mut self, user_data: UserData) -> Self {
+        self.address_lookup_user_data = Some(user_data);
         self
     }
 
@@ -551,7 +554,7 @@ impl Builder {
     /// Optionally sets a custom DNS resolver to use for this endpoint.
     ///
     /// The DNS resolver is used to resolve relay hostnames, and endpoint addresses if
-    /// [`crate::discovery::dns::DnsDiscovery`] is configured.
+    /// [`crate::address_lookup::DnsAddressLookup`] is configured.
     ///
     /// By default, a new DNS resolver is created which is configured to use the
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
@@ -689,7 +692,7 @@ pub enum ConnectWithOptsError {
     #[error("Connecting to ourself is not supported")]
     SelfConnect,
     #[error("No addressing information available")]
-    NoAddress { source: DiscoveryError },
+    NoAddress { source: AddressLookupError },
     #[error("Unable to connect to remote")]
     Quinn {
         #[error(std_err)]
@@ -787,7 +790,7 @@ impl Endpoint {
     ///
     /// If neither a [`RelayUrl`] or direct addresses are configured in the [`EndpointAddr`] it
     /// may still be possible a connection can be established.  This depends on which, if any,
-    /// [`crate::discovery::Discovery`] services were configured using [`Builder::discovery`].  The discovery
+    /// [`crate::address_lookup::AddressLookup`]s were configured using [`Builder::address_lookup`].  The Address Lookup
     /// service will also be used if the remote endpoint is not reachable on the provided direct
     /// addresses and there is no [`RelayUrl`].
     ///
@@ -1035,8 +1038,8 @@ impl Endpoint {
     /// any calls to `online` as long as possible, or avoid calling `online`
     /// entirely.
     ///
-    /// The online method does not interact with [`crate::discovery::Discovery`]
-    /// services, which means that any discovery service that relies on a WAN
+    /// The online method does not interact with [`crate::address_lookup::AddressLookup`]
+    /// services, which means that any Address Lookup that relies on a WAN
     /// connection is independent of the endpoint's online status.
     ///
     /// # Examples
@@ -1118,11 +1121,11 @@ impl Endpoint {
         self.msock.dns_resolver()
     }
 
-    /// Returns the discovery mechanism, if configured.
+    /// Returns the Address Lookup service, if configured.
     ///
-    /// See [`Builder::discovery`].
-    pub fn discovery(&self) -> &ConcurrentDiscovery {
-        self.msock.discovery()
+    /// See [`Builder::address_lookup`].
+    pub fn address_lookup(&self) -> &ConcurrentAddressLookup {
+        self.msock.address_lookup()
     }
 
     /// Returns metrics collected for this endpoint.
@@ -1274,15 +1277,15 @@ impl Endpoint {
 
     // # Methods to update internal state.
 
-    /// Sets the initial user-defined data to be published in discovery services for this endpoint.
+    /// Sets the initial user-defined data to be published in Address Lookups for this endpoint.
     ///
     /// If the user-defined data passed to this function is different to the previous one,
-    /// the endpoint will republish its endpoint info to the configured discovery services.
+    /// the endpoint will republish its endpoint info to the configured Address Lookups.
     ///
-    /// See also [`Builder::user_data_for_discovery`] for setting an initial value when
+    /// See also [`Builder::user_data_for_address_lookup`] for setting an initial value when
     /// building the endpoint.
-    pub fn set_user_data_for_discovery(&self, user_data: Option<UserData>) {
-        self.msock.set_user_data_for_discovery(user_data);
+    pub fn set_user_data_for_address_lookup(&self, user_data: Option<UserData>) {
+        self.msock.set_user_data_for_address_lookup(user_data);
     }
 
     // # Methods for terminating the endpoint.
@@ -1533,7 +1536,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMap, RelayMode,
-        discovery::static_provider::StaticProvider,
+        address_lookup::memory::MemoryLookup,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectOptions, Connection, ConnectionError,
             PathInfo,
@@ -1823,7 +1826,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_direct_only() -> Result {
         // Connect two endpoints on the same network, without a relay server, without
-        // discovery.
+        // Address Lookup.
         let ep1 = {
             let span = info_span!("server");
             let _guard = span.enter();
@@ -1884,7 +1887,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_relay_only_becomes_direct() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
-        // discovery.  Wait until there is a direct connection.
+        // Address Lookup.  Wait until there is a direct connection.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
         let qlog = Arc::new(QlogFileGroup::from_env("two_relay_only_becomes_direct"));
@@ -1985,7 +1988,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_relay_only_no_ip() -> Result {
         // Connect two endpoints on the same network, via a relay server, without
-        // discovery.
+        // Address Lookup.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
 
@@ -2082,7 +2085,7 @@ mod tests {
     #[traced_test]
     async fn endpoint_two_direct_add_relay() -> Result {
         // Connect two endpoints on the same network, without relay server and without
-        // discovery.  Add a relay connection later.
+        // Address Lookup.  Add a relay connection later.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
         let (node_addr_tx, node_addr_rx) = oneshot::channel();
 
@@ -2305,15 +2308,15 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_bidi_send_recv() -> Result {
-        let disco = StaticProvider::new();
+        let disco = MemoryLookup::new();
         let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(disco.clone())
+            .address_lookup(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
 
         let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(disco.clone())
+            .address_lookup(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
@@ -2669,9 +2672,9 @@ mod tests {
             .map(|(_, addr)| addr.clone())
             .collect::<Vec<_>>();
         let ids = addrs.iter().map(|addr| addr.id).collect::<Vec<_>>();
-        let discovery = StaticProvider::from_endpoint_info(addrs);
+        let address_lookup = MemoryLookup::from_endpoint_info(addrs);
         let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(discovery)
+            .address_lookup(address_lookup)
             .bind()
             .await
             .anyerr()?;

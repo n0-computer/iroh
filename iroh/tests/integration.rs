@@ -11,7 +11,7 @@
 //! we won't hit these with only this integration test.
 use iroh::{
     Endpoint, RelayMode,
-    discovery::{Discovery, pkarr::PkarrResolver},
+    address_lookup::{AddressLookup, pkarr::PkarrResolver},
 };
 use n0_error::{Result, StdResultExt};
 use n0_future::{
@@ -87,7 +87,7 @@ async fn simple_endpoint_id_based_connection_transfer() -> Result {
     time::timeout(Duration::from_secs(20), {
         let endpoint_id = server.id();
         tracing::info!(
-            "start timeout waiting for records to be published, waiting for {endpoint_id} resolution"
+            "start timeout waiting for records to be published, waiting for {endpoint_id} address lookup"
         );
         async move {
             let resolver = PkarrResolver::n0_dns().build();

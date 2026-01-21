@@ -12,7 +12,9 @@ use tokio::sync::oneshot;
 use tracing::trace;
 
 use super::{Source, TransportAddrInfo, TransportAddrUsage};
-use crate::{discovery::DiscoveryError, magicsock::transports, metrics::MagicsockMetrics};
+use crate::{
+    address_lookup::Error as AddressLookupError, magicsock::transports, metrics::MagicsockMetrics,
+};
 
 /// Maximum number of IP paths we keep around per endpoint.
 pub(super) const MAX_IP_PATHS: usize = 30;
@@ -25,16 +27,16 @@ pub(super) const MAX_INACTIVE_IP_PATHS: usize = 10;
 /// Map of all paths that we are aware of for a remote endpoint.
 ///
 /// Also stores a list of resolve requests which are triggered once at least one path is known,
-/// or once this struct is notified of a failed discovery run.
+/// or once this struct is notified of a failed Address Lookup run.
 #[derive(Debug)]
 pub(super) struct RemotePathState {
     /// All possible paths we are aware of.
     ///
-    /// These paths might be entirely impossible to use, since they are added by discovery
+    /// These paths might be entirely impossible to use, since they are added by Address Lookup
     /// mechanisms. The are only potentially usable.
     paths: FxHashMap<transports::Addr, PathState>,
     /// Pending resolve requests from [`Self::resolve_remote`].
-    pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), DiscoveryError>>>,
+    pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), AddressLookupError>>>,
     metrics: Arc<MagicsockMetrics>,
 }
 
@@ -144,12 +146,12 @@ impl RemotePathState {
 
     /// Triggers `tx` immediately if there are any known paths, or store in the list of pending requests.
     ///
-    /// The pending requests will be resolved once a path becomes known, or once discovery
+    /// The pending requests will be resolved once a path becomes known, or once Address Lookup
     /// concludes without results, whichever comes first.
     ///
-    /// Sends `Ok(())` over `tx` if there are any known paths, and a [`DiscoveryError`] if there are
-    /// no known paths by the time a discovery run finished with an error or without results.
-    pub(super) fn resolve_remote(&mut self, tx: oneshot::Sender<Result<(), DiscoveryError>>) {
+    /// Sends `Ok(())` over `tx` if there are any known paths, and an [`AddressLookupError`] if there are
+    /// no known paths by the time a Address Lookup run finished with an error or without results.
+    pub(super) fn resolve_remote(&mut self, tx: oneshot::Sender<Result<(), AddressLookupError>>) {
         if !self.paths.is_empty() {
             tx.send(Ok(())).ok();
         } else {
@@ -157,10 +159,10 @@ impl RemotePathState {
         }
     }
 
-    /// Notifies that a discovery run has finished.
+    /// Notifies that a Address Lookup run has finished.
     ///
     /// This will emit pending resolve requests.
-    pub(super) fn discovery_finished(&mut self, result: Result<(), DiscoveryError>) {
+    pub(super) fn address_lookup_finished(&mut self, result: Result<(), AddressLookupError>) {
         self.emit_pending_resolve_requests(result.err());
     }
 
@@ -177,15 +179,15 @@ impl RemotePathState {
     /// Replies to all pending resolve requests.
     ///
     /// This is a no-op if no requests are queued. Replies `Ok` if we have any known paths,
-    /// otherwise with the provided `discovery_error` or with [`DiscoveryError::NoResults`].
-    fn emit_pending_resolve_requests(&mut self, discovery_error: Option<DiscoveryError>) {
+    /// otherwise with the provided `address_lookup_error` or with [`AddressLookupError::NoResults`].
+    fn emit_pending_resolve_requests(&mut self, address_lookup_error: Option<AddressLookupError>) {
         if self.pending_resolve_requests.is_empty() {
             return;
         }
-        let result = match (self.paths.is_empty(), discovery_error) {
+        let result = match (self.paths.is_empty(), address_lookup_error) {
             (false, _) => Ok(()),
             (true, Some(err)) => Err(err),
-            (true, None) => Err(e!(DiscoveryError::NoResults)),
+            (true, None) => Err(e!(AddressLookupError::NoResults)),
         };
         for tx in self.pending_resolve_requests.drain(..) {
             tx.send(result.clone()).ok();
