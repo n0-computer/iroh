@@ -22,7 +22,7 @@ use iroh::{
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
-use quinn::{PathId, PathStats};
+use quinn::PathStats;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
@@ -444,13 +444,10 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
                 .await
                 .std_context("fetching stats task panicked")?;
             println!("[{remote}] Path stats:");
-            for (path_id, (path, stats)) in stats {
+            for (remote_addr, (_, stats)) in stats {
                 println!(
-                    "  [path_id={path_id}] {:?}: RTT {:?}, tx={}, rx={}",
-                    path.remote_addr(),
-                    stats.rtt,
-                    stats.udp_tx.bytes,
-                    stats.udp_rx.bytes,
+                    "  {remote_addr:?}: RTT {:?}, tx={}, rx={}",
+                    stats.rtt, stats.udp_tx.bytes, stats.udp_rx.bytes,
                 );
             }
             n0_error::Ok(())
@@ -514,13 +511,10 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
         .await
         .std_context("fetching stats task panicked")?;
     println!("Path stats:");
-    for (path_id, (path, stats)) in stats {
+    for (remote_addr, (_, stats)) in stats {
         println!(
-            "  [path_id={path_id}] {:?}: RTT {:?}, tx={}, rx={}",
-            path.remote_addr(),
-            stats.rtt,
-            stats.udp_tx.bytes,
-            stats.udp_rx.bytes,
+            "  {remote_addr:?}: RTT {:?}, tx={}, rx={}",
+            stats.rtt, stats.udp_tx.bytes, stats.udp_rx.bytes,
         );
     }
 
@@ -651,7 +645,7 @@ fn watch_conn_type(
 
 fn watch_path_stats(
     conn: iroh::endpoint::Connection,
-) -> AbortOnDropHandle<BTreeMap<PathId, (PathInfo, PathStats)>> {
+) -> AbortOnDropHandle<BTreeMap<TransportAddr, (PathInfo, PathStats)>> {
     let task = tokio::spawn(async move {
         let mut watcher = conn.paths();
         let mut latest_stats_by_path = BTreeMap::new();
@@ -668,7 +662,7 @@ fn watch_path_stats(
             // Insert what could possibly be new path stats.
             for path in watcher.get() {
                 let stats = path.stats();
-                latest_stats_by_path.insert(path.path_id(), (path, stats));
+                latest_stats_by_path.insert(path.remote_addr().clone(), (path, stats));
             }
             // Update all stat values, even for paths that are removed by now.
             for (path, stats) in latest_stats_by_path.values_mut() {
