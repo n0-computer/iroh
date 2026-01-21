@@ -9,6 +9,7 @@
 use std::{collections::BTreeSet, fmt, net::SocketAddr};
 
 use data_encoding::HEXLOWER;
+use n0_error::stack_error;
 use serde::{Deserialize, Serialize};
 
 use crate::{EndpointId, PublicKey, RelayUrl};
@@ -148,6 +149,44 @@ pub struct UserAddr {
     data: UserAddrBytes,
 }
 
+impl fmt::Display for UserAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:x}_{}", self.id, HEXLOWER.encode(self.data.as_bytes()))
+    }
+}
+
+impl std::str::FromStr for UserAddr {
+    type Err = UserAddrParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let Some((id_str, data_str)) = s.split_once('_') else {
+            return Err(UserAddrParseError::MissingSeparator);
+        };
+        let Ok(id) = u64::from_str_radix(id_str, 16) else {
+            return Err(UserAddrParseError::InvalidId);
+        };
+        let Ok(data) = HEXLOWER.decode(data_str.as_bytes()) else {
+            return Err(UserAddrParseError::InvalidData);
+        };
+        Ok(Self::from_parts(id, &data))
+    }
+}
+
+/// Error parsing a [`UserAddr`].
+#[stack_error(derive)]
+#[allow(missing_docs)]
+pub enum UserAddrParseError {
+    /// Missing `_` separator between id and data.
+    #[error("missing '_' separator")]
+    MissingSeparator,
+    /// Invalid hex-encoded id.
+    #[error("invalid id")]
+    InvalidId,
+    /// Invalid hex-encoded data.
+    #[error("invalid data")]
+    InvalidData,
+}
+
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum UserAddrBytes {
     Inline { size: u8, data: [u8; 30] },
@@ -281,5 +320,54 @@ mod tests {
                 NewAddrType::Relay("https://example.com".parse().unwrap()),
             ]
         );
+    }
+
+    #[test]
+    fn test_user_addr_roundtrip() {
+        // Small id, small data (e.g., Bluetooth MAC)
+        let addr = UserAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
+        let s = addr.to_string();
+        assert_eq!(s, "1_a1b2c3d4e5f6");
+        let parsed: UserAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+
+        // Larger id, 32-byte data (e.g., Tor pubkey)
+        let addr = UserAddr::from_parts(42, &[0xab; 32]);
+        let s = addr.to_string();
+        assert_eq!(
+            s,
+            "2a_abababababababababababababababababababababababababababababababab"
+        );
+        let parsed: UserAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+
+        // Zero id, empty data
+        let addr = UserAddr::from_parts(0, &[]);
+        let s = addr.to_string();
+        assert_eq!(s, "0_");
+        let parsed: UserAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+
+        // Large id
+        let addr = UserAddr::from_parts(0xdeadbeef, &[0x01, 0x02]);
+        let s = addr.to_string();
+        assert_eq!(s, "deadbeef_0102");
+        let parsed: UserAddr = s.parse().unwrap();
+        assert_eq!(addr, parsed);
+    }
+
+    #[test]
+    fn test_user_addr_parse_errors() {
+        // Missing separator
+        assert!("abc123".parse::<UserAddr>().is_err());
+
+        // Invalid id (not hex)
+        assert!("xyz_0102".parse::<UserAddr>().is_err());
+
+        // Invalid data (not hex)
+        assert!("1_ghij".parse::<UserAddr>().is_err());
+
+        // Odd-length hex data
+        assert!("1_abc".parse::<UserAddr>().is_err());
     }
 }
