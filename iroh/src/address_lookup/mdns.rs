@@ -1,4 +1,4 @@
-//! An address lookup service that uses an mdns-like service to discover and resolve the addresses of local endpoints.
+//! An address lookup service that uses an mdns-like service to discover and lookup the addresses of local endpoints.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about endpoints that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -84,7 +84,7 @@ pub const NAME: &str = "mdns";
 const USER_DATA_ATTRIBUTE: &str = "user-data";
 
 /// How long we will wait before we stop attempting to resolve an endpoint ID to an address
-const RESOLUTION_DURATION: Duration = Duration::from_secs(10);
+const LOOKUP_DURATION: Duration = Duration::from_secs(10);
 
 /// Address Lookup using `swarm-discovery`, a variation on mdns
 #[derive(Debug, Clone)]
@@ -394,7 +394,7 @@ impl MdnsAddressLookup {
                         }
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
-                            time::sleep(RESOLUTION_DURATION).await;
+                            time::sleep(LOOKUP_DURATION).await;
                             trace!(?endpoint_id, "resolution timeout");
                             timeout_sender
                                 .send(Message::Timeout(endpoint_id, id))

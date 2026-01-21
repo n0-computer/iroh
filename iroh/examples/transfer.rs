@@ -321,7 +321,7 @@ impl EndpointArgs {
         let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
         if self.mdns {
-            #[cfg(feature = "mdns")]
+            #[cfg(feature = "address-lookup-mdns")]
             {
                 use iroh::address_lookup::MdnsAddressLookup;
 
@@ -329,7 +329,7 @@ impl EndpointArgs {
                     .address_lookup()
                     .add(MdnsAddressLookup::builder().build(endpoint.id())?);
             }
-            #[cfg(not(feature = "mdns"))]
+            #[cfg(not(feature = "address-lookup-mdns"))]
             {
                 n0_error::bail_any!("Must have the `mdns` enabled when using the `--mdns` flag");
             }

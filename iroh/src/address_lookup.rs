@@ -37,7 +37,7 @@
 //!   opinionated mDNS implementation, to discover endpoints on the local network.
 //!
 //! - The [`address_lookup::DhtAddressLookup`] also uses the [`pkarr`] system but can also publish and lookup
-//!   records to/from the Mainline DHT. It requires enabling the `address_lookup-pkarr-dht` feature.
+//!   records to/from the Mainline DHT. It requires enabling the `address-lookup-pkarr-dht` feature.
 //!
 //! To use multiple Address Lookup'ssimultaneously you can call [`Builder::address_lookup`].
 //! This will use [`ConcurrentAddressLookup`] under the hood, which performs lookups to all
@@ -78,7 +78,7 @@
 //! To also enable [`address_lookup::MdnsAddressLookup`] it can be added as another service.
 //!
 //! ```no_run
-//! #[cfg(feature = "mdns")]
+//! #[cfg(feature = "address-lookup-mdns")]
 //! # {
 //! # use iroh::{
 //! #    address_lookup::{self, PkarrPublisher},
@@ -121,29 +121,30 @@ pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData}
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
-#[cfg(feature = "mdns")]
+#[cfg(feature = "address-lookup-mdns")]
 pub mod mdns;
 pub mod memory;
 pub mod pkarr;
 
 #[cfg(not(wasm_browser))]
 pub use dns::*;
-#[cfg(feature = "mdns")]
+#[cfg(feature = "address-lookup-mdns")]
 pub use mdns::*;
 pub use memory::*;
-#[cfg(feature = "pkarr-dht")]
+#[cfg(feature = "address-lookup-pkarr-dht")]
 pub use pkarr::dht::*;
 pub use pkarr::*;
+
 /// Trait for structs that can be converted into [`AddressLookup`]s.
 ///
 /// This trait is implemented on builders for Address Lookup's. Any type that implements this
-/// trait can be added as a Address Lookupin [`Builder::address_lookup`].
+/// trait can be added as a Address Lookup in [`Builder::address_lookup`].
 ///
 /// Any type that implements [`AddressLookup`] also implements [`IntoAddressLookup`].
 ///
-/// Iroh uses this trait to allow configuring the set of Address Lookup'son the endpoint
-/// builder, while providing the Address Lookup services access to information about the endpoint
-/// to [`IntoAddressLookup::into_address_lookup`].
+/// Iroh uses this trait to allow configuring the set of address lookup services on
+/// the endpoint builder, while also providing them access to information about the
+/// endpoint to [`IntoAddressLookup::into_address_lookup`].
 ///
 /// [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
 pub trait IntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
@@ -186,7 +187,7 @@ impl<T: IntoAddressLookup> DynIntoAddressLookup for T {
     }
 }
 
-/// IntoAddressLookup errors
+/// [`IntoAddressLookup`] errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
@@ -222,7 +223,7 @@ impl IntoAddressLookupError {
     }
 }
 
-/// AddressLookup errors
+/// [`AddressLookup`] errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]

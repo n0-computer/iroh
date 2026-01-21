@@ -352,7 +352,7 @@ mod tests {
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()
             .anyerr()?;
-        let ers = DhtAddressLookup::builder()
+        let address_lookup = DhtAddressLookup::builder()
             .secret_key(secret.clone())
             .client(client)
             .build()?;
@@ -360,14 +360,14 @@ mod tests {
         let relay_url: RelayUrl = Url::parse("https://example.com").anyerr()?.into();
 
         let data = EndpointData::default().with_relay_url(Some(relay_url.clone()));
-        ers.publish(&data);
+        address_lookup.publish(&data);
 
         // publish is fire and forget, so we have no way to wait until it is done.
         tokio::time::timeout(Duration::from_secs(30), async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 let mut found_relay_urls = BTreeSet::new();
-                let items = ers
+                let items = address_lookup
                     .resolve(secret.public())
                     .unwrap()
                     .collect::<Vec<_>>()
