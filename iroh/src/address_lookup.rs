@@ -22,7 +22,7 @@
 //!
 //! Some generally useful Address Lookup implementations are provided:
 //!
-//! - [`StaticProvider`] which allows application to add and remove out-of-band addressing
+//! - [`MemoryLookup`] which allows application to add and remove out-of-band addressing
 //!   information.
 //!
 //! - The [`address_lookup::DnsAddressLookup`] which performs lookups via the standard DNS systems.  To publish
@@ -108,7 +108,7 @@
 //! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 //! [pkarr relay servers]: https://pkarr.org/#servers
 //! [`address_lookup::MdnsAddressLookup`]: crate::address_lookup::MdnsAddressLookup
-//! [`StaticProvider`]: static_provider::StaticProvider
+//! [`MemoryLookup`]: memory::MemoryLookup
 
 use std::sync::{Arc, RwLock};
 
@@ -123,17 +123,17 @@ pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData}
 pub mod dns;
 #[cfg(feature = "mdns")]
 pub mod mdns;
+pub mod memory;
 pub mod pkarr;
-pub mod static_provider;
 
 #[cfg(not(wasm_browser))]
 pub use dns::*;
 #[cfg(feature = "mdns")]
 pub use mdns::*;
+pub use memory::*;
 #[cfg(feature = "address-lookup-pkarr-dht")]
 pub use pkarr::dht::*;
 pub use pkarr::*;
-pub use static_provider::*;
 /// Trait for structs that can be converted into [`AddressLookup`]s.
 ///
 /// This trait is implemented on builders for Address Lookup's. Any type that implements this
@@ -325,7 +325,7 @@ impl<T: AddressLookup> AddressLookup for Arc<T> {
 pub struct Item {
     /// The endpoint info for the endpoint, as discovered by the the Address Lookup.
     endpoint_info: EndpointInfo,
-    /// A static string to identify the Address Lookupsource.
+    /// A static string to identify the Address Lookup source.
     ///
     /// Should be uniform per Address Lookup.
     provenance: &'static str,

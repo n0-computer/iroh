@@ -1537,7 +1537,7 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMap, RelayMode,
-        address_lookup::static_provider::StaticProvider,
+        address_lookup::memory::MemoryLookup,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectOptions, Connection, ConnectionError,
         },
@@ -2308,7 +2308,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_bidi_send_recv() -> Result {
-        let disco = StaticProvider::new();
+        let disco = MemoryLookup::new();
         let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
             .address_lookup(disco.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2672,7 +2672,7 @@ mod tests {
             .map(|(_, addr)| addr.clone())
             .collect::<Vec<_>>();
         let ids = addrs.iter().map(|addr| addr.id).collect::<Vec<_>>();
-        let address_lookup = StaticProvider::from_endpoint_info(addrs);
+        let address_lookup = MemoryLookup::from_endpoint_info(addrs);
         let endpoint = Endpoint::empty_builder(RelayMode::Disabled)
             .address_lookup(address_lookup)
             .bind()

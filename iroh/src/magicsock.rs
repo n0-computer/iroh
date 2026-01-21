@@ -1552,7 +1552,7 @@ mod tests {
     use super::Options;
     use crate::{
         Endpoint, RelayMode, SecretKey,
-        address_lookup::static_provider::StaticProvider,
+        address_lookup::memory::MemoryLookup,
         dns::DnsResolver,
         endpoint::QuicTransportConfig,
         magicsock::{
@@ -1745,13 +1745,13 @@ mod tests {
         Ok(())
     }
 
-    /// Returns a pair of endpoints with a shared [`StaticProvider`].
+    /// Returns a pair of endpoints with a shared [`MemoryLookup`].
     ///
     /// The endpoints do not use a relay server but can connect to each other via local
     /// addresses.  Dialing by [`EndpointId`] is possible, and the addresses get updated even if
     /// the endpoints rebind.
     async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
-        let address_lookup = StaticProvider::new();
+        let address_lookup = MemoryLookup::new();
         let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
             .address_lookup(address_lookup.clone())
