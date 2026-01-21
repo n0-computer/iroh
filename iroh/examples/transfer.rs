@@ -493,7 +493,7 @@ async fn provide(endpoint: Endpoint, output: OutputMode) -> Result<()> {
                 continue;
             }
         };
-        // Spawn a task for each connetion.
+        // Spawn a task for each connection.
         tokio::spawn(async move {
             match accepting.await {
                 Ok(conn) => handle_connection(conn, output).await,
@@ -1133,8 +1133,9 @@ pub fn duration_micros_opt<S: Serializer>(
 }
 
 mod duration_micros {
-    use serde::{Deserialize, Deserializer, Serializer};
     use std::time::Duration;
+
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_u64(duration.as_micros() as u64)
