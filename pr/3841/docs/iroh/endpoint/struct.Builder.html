@@ -7,7 +7,7 @@ new <a href="../type.EndpointId.html" title="type iroh::EndpointId"><code>Endpoi
 </div></details><details class="toggle method-toggle" open><summary><section id="method.preset" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#141-144">Source</a><h4 class="code-header">pub fn <a href="#method.preset" class="fn">preset</a>&lt;P: <a class="trait" href="presets/trait.Preset.html" title="trait iroh::endpoint::presets::Preset">Preset</a>&gt;(self, preset: P) -&gt; Self</h4></section></summary><div class="docblock"><p>Applies the given <a href="presets/trait.Preset.html" title="trait iroh::endpoint::presets::Preset"><code>Preset</code></a>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.empty" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#147-173">Source</a><h4 class="code-header">pub fn <a href="#method.empty" class="fn">empty</a>(relay_mode: <a class="enum" href="enum.RelayMode.html" title="enum iroh::endpoint::RelayMode">RelayMode</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Creates an empty builder with no discovery services.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.bind" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#178-226">Source</a><h4 class="code-header">pub async fn <a href="#method.bind" class="fn">bind</a>(self) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint">Endpoint</a>, <a class="enum" href="enum.BindError.html" title="enum iroh::endpoint::BindError">BindError</a>&gt;</h4></section></summary><div class="docblock"><p>Binds the magic endpoint.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#277-283">Source</a><h4 class="code-header">pub fn <a href="#method.bind_addr" class="fn">bind_addr</a>&lt;A&gt;(self, addr: A) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.InvalidSocketAddr.html" title="enum iroh::endpoint::InvalidSocketAddr">InvalidSocketAddr</a>&gt;<div class="where">where
+</div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#278-284">Source</a><h4 class="code-header">pub fn <a href="#method.bind_addr" class="fn">bind_addr</a>&lt;A&gt;(self, addr: A) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.InvalidSocketAddr.html" title="enum iroh::endpoint::InvalidSocketAddr">InvalidSocketAddr</a>&gt;<div class="where">where
     A: <a class="trait" href="trait.ToSocketAddr.html" title="trait iroh::endpoint::ToSocketAddr">ToSocketAddr</a>,
     &lt;A as <a class="trait" href="trait.ToSocketAddr.html" title="trait iroh::endpoint::ToSocketAddr">ToSocketAddr</a>&gt;::<a class="associatedtype" href="trait.ToSocketAddr.html#associatedtype.Err" title="type iroh::endpoint::ToSocketAddr::Err">Err</a>: <a class="trait" href="https://doc.rust-lang.org/nightly/core/convert/trait.Into.html" title="trait core::convert::Into">Into</a>&lt;<a class="enum" href="enum.InvalidSocketAddr.html" title="enum iroh::endpoint::InvalidSocketAddr">InvalidSocketAddr</a>&gt;,</div></h4></section><span class="item-info"><div class="stab portability">Available on <strong>non-<code>wasm_browser</code></strong> only.</div></span></summary><div class="docblock"><p>Binds an IP socket at the provided socket address.</p>
 <p>This is an advanced API to tightly control the sockets used by the endpoint. Most
@@ -25,8 +25,9 @@ available.</p>
 on the <em>unspecified</em> address: <code>[::]</code>. This bind is allowed to fail however.</p>
 </li>
 <li>
-<p>Most likely when using this API those existing binds need to be removed explicitly
-using <a href="struct.Builder.html#method.clear_ip_transports" title="method iroh::endpoint::Builder::clear_ip_transports"><code>Self::clear_ip_transports</code></a>.</p>
+<p>Adding a bind address removes the pre-configured unspecified bind address for this
+address family. Use <a href="struct.Builder.html#method.bind_addr_with_opts" title="method iroh::endpoint::Builder::bind_addr_with_opts"><code>Self::bind_addr_with_opts</code></a> to bind additional addresses without
+replacing the default bind address.</p>
 </li>
 <li>
 <p>This should be called at most once for each address family: once for IPv4 and/or
@@ -47,7 +48,7 @@ port <code>0</code> in the socket address assigns a random free port.</p>
     .bind_addr(<span class="string">"127.0.0.1:0"</span>)<span class="question-mark">?
     </span>.bind_addr(<span class="string">"[::1]:0"</span>)<span class="question-mark">?
     </span>.bind()
-    .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr_with_opts" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#352-404">Source</a><h4 class="code-header">pub fn <a href="#method.bind_addr_with_opts" class="fn">bind_addr_with_opts</a>&lt;A&gt;(
+    .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.bind_addr_with_opts" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#355-409">Source</a><h4 class="code-header">pub fn <a href="#method.bind_addr_with_opts" class="fn">bind_addr_with_opts</a>&lt;A&gt;(
     self,
     addr: A,
     opts: <a class="struct" href="struct.BindOpts.html" title="struct iroh::endpoint::BindOpts">BindOpts</a>,
@@ -68,10 +69,6 @@ available.</p>
 <p>Likewise the builder always comes pre-configured with an IPv6 socket to be bound
 on the <em>unspecified</em> address: <code>[::]</code>. This bind is allowed to fail however.</p>
 </li>
-<li>
-<p>Most likely when using this API those existing binds need to be removed explicitly
-using <a href="struct.Builder.html#method.clear_ip_transports" title="method iroh::endpoint::Builder::clear_ip_transports"><code>Self::clear_ip_transports</code></a>.</p>
-</li>
 </ul>
 <h5 id="description-1"><a class="doc-anchor" href="#description-1">§</a>Description</h5>
 <p>Requests a socket to be bound on a specific address. This allows restricting binding
@@ -88,11 +85,15 @@ chosen.</p>
 of “default route” is used. At most one socket per address family may be marked as
 the default route using <a href="struct.BindOpts.html#method.set_is_default_route" title="method iroh::endpoint::BindOpts::set_is_default_route"><code>BindOpts::set_is_default_route</code></a>, and this will be used
 for destinations not contained by the subnets of the bound sockets. This network is
-expected to have a default gateway configured.</p>
+expected to have a default gateway configured. A socket with a prefix length of <code>/0</code>
+will be set as a “default route” implicitly, unless <a href="struct.BindOpts.html#method.set_is_default_route" title="method iroh::endpoint::BindOpts::set_is_default_route"><code>BindOpts::set_is_default_route</code></a>
+is set to <code>false</code> explicitly.</p>
 <p>Be aware that using a subnet with a prefix length of <code>/0</code> will always contain all
 destination addresses. It is valid to configure this, but no more than one such
-socket should be bound or the routing will be non-deterministic. Prefer using
-<a href="struct.BindOpts.html#method.set_is_default_route" title="method iroh::endpoint::BindOpts::set_is_default_route"><code>BindOpts::set_is_default_route</code></a> on one of the sockets instead.</p>
+socket should be bound or the routing will be non-deterministic.</p>
+<p>To use a subnet with a non-zero prefix length as the default route in addition to
+being routed when its prefix matches, use <a href="struct.BindOpts.html#method.set_is_default_route" title="method iroh::endpoint::BindOpts::set_is_default_route">`BindOpts::set_is_default_route</a>.
+Subnets with a prefix length of zero are always marked as default routes.</p>
 <p>Finally note that most outgoing datagrams are part of an existing network flow. That
 is, they are in response to an incoming datagram. In this case the outgoing datagram
 will be sent over the same socket as the incoming datagram was received on, and the
@@ -106,12 +107,8 @@ routing with the prefix length and default route as described above does not app
     .bind_addr_with_opts(<span class="string">"127.0.0.1:0"</span>, BindOpts::default().set_prefix_len(<span class="number">24</span>))<span class="question-mark">?
     </span>.bind_addr_with_opts(<span class="string">"[::1]:0"</span>, BindOpts::default().set_prefix_len(<span class="number">48</span>))<span class="question-mark">?
     </span>.bind()
-    .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.clear_ip_transports" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#408-412">Source</a><h4 class="code-header">pub fn <a href="#method.clear_ip_transports" class="fn">clear_ip_transports</a>(self) -&gt; Self</h4></section><span class="item-info"><div class="stab portability">Available on <strong>non-<code>wasm_browser</code></strong> only.</div></span></summary><div class="docblock"><p>Removes all IP based transports.</p>
+    .<span class="kw">await</span><span class="question-mark">?</span>;</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.clear_ip_transports" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#413-417">Source</a><h4 class="code-header">pub fn <a href="#method.clear_ip_transports" class="fn">clear_ip_transports</a>(self) -&gt; Self</h4></section><span class="item-info"><div class="stab portability">Available on <strong>non-<code>wasm_browser</code></strong> only.</div></span></summary><div class="docblock"><p>Removes all IP based transports.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.clear_relay_transports" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#420-424">Source</a><h4 class="code-header">pub fn <a href="#method.clear_relay_transports" class="fn">clear_relay_transports</a>(self) -&gt; Self</h4></section></summary><div class="docblock"><p>Removes all relay based transports.</p>
-<p>This method only disables using relays to send data, and has no effect
-on the endpoint using relays for connection establishment. To disable
-both connection establishment and relays-as-transports, disable relays
-entirely with <a href="enum.RelayMode.html#variant.Disabled" title="variant iroh::endpoint::RelayMode::Disabled"><code>RelayMode::Disabled</code></a>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.secret_key" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#434-437">Source</a><h4 class="code-header">pub fn <a href="#method.secret_key" class="fn">secret_key</a>(self, secret_key: <a class="struct" href="../struct.SecretKey.html" title="struct iroh::SecretKey">SecretKey</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Sets a secret key to authenticate with other peers.</p>
 <p>This secret key’s public key will be the <a href="../struct.PublicKey.html" title="struct iroh::PublicKey"><code>PublicKey</code></a> of this endpoint and thus
 also its <a href="../type.EndpointId.html" title="type iroh::EndpointId"><code>EndpointId</code></a></p>
