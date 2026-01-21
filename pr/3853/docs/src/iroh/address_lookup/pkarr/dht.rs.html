@@ -352,7 +352,7 @@
 <a href=#352 id=352 data-nosnippet>352</a>            .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap))
 <a href=#353 id=353 data-nosnippet>353</a>            .build()
 <a href=#354 id=354 data-nosnippet>354</a>            .anyerr()<span class="question-mark">?</span>;
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw">let </span>ers = DhtAddressLookup::builder()
+<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw">let </span>address_lookup = DhtAddressLookup::builder()
 <a href=#356 id=356 data-nosnippet>356</a>            .secret_key(secret.clone())
 <a href=#357 id=357 data-nosnippet>357</a>            .client(client)
 <a href=#358 id=358 data-nosnippet>358</a>            .build()<span class="question-mark">?</span>;
@@ -360,14 +360,14 @@
 <a href=#360 id=360 data-nosnippet>360</a>        <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>).anyerr()<span class="question-mark">?</span>.into();
 <a href=#361 id=361 data-nosnippet>361</a>
 <a href=#362 id=362 data-nosnippet>362</a>        <span class="kw">let </span>data = EndpointData::default().with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
-<a href=#363 id=363 data-nosnippet>363</a>        ers.publish(<span class="kw-2">&amp;</span>data);
+<a href=#363 id=363 data-nosnippet>363</a>        address_lookup.publish(<span class="kw-2">&amp;</span>data);
 <a href=#364 id=364 data-nosnippet>364</a>
 <a href=#365 id=365 data-nosnippet>365</a>        <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
 <a href=#366 id=366 data-nosnippet>366</a>        </span>tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async move </span>{
 <a href=#367 id=367 data-nosnippet>367</a>            <span class="kw">loop </span>{
 <a href=#368 id=368 data-nosnippet>368</a>                tokio::time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
 <a href=#369 id=369 data-nosnippet>369</a>                <span class="kw">let </span><span class="kw-2">mut </span>found_relay_urls = BTreeSet::new();
-<a href=#370 id=370 data-nosnippet>370</a>                <span class="kw">let </span>items = ers
+<a href=#370 id=370 data-nosnippet>370</a>                <span class="kw">let </span>items = address_lookup
 <a href=#371 id=371 data-nosnippet>371</a>                    .resolve(secret.public())
 <a href=#372 id=372 data-nosnippet>372</a>                    .unwrap()
 <a href=#373 id=373 data-nosnippet>373</a>                    .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
