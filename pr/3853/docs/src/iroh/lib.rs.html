@@ -151,18 +151,18 @@
 <a href=#151 id=151 data-nosnippet>151</a>//!
 <a href=#152 id=152 data-nosnippet>152</a>//! &lt;/div&gt;
 <a href=#153 id=153 data-nosnippet>153</a>//!
-<a href=#154 id=154 data-nosnippet>154</a>//! ## Endpoint ID Resolution
+<a href=#154 id=154 data-nosnippet>154</a>//! ## Address Lookup
 <a href=#155 id=155 data-nosnippet>155</a>//!
 <a href=#156 id=156 data-nosnippet>156</a>//! The need to know the [`RelayUrl`] *or* some direct addresses in addition to the
 <a href=#157 id=157 data-nosnippet>157</a>//! [`EndpointId`] to connect to an iroh endpoint can be an obstacle.  To address this, the
-<a href=#158 id=158 data-nosnippet>158</a>//! [`endpoint::Builder`] allows you to configure an [`ers`] service.
+<a href=#158 id=158 data-nosnippet>158</a>//! [`endpoint::Builder`] allows you to configure an [`address_lookup`] service.
 <a href=#159 id=159 data-nosnippet>159</a>//!
-<a href=#160 id=160 data-nosnippet>160</a>//! The [`ers::Dns`] service is an endpoint ID resolution service which will publish the [`RelayUrl`]
+<a href=#160 id=160 data-nosnippet>160</a>//! The [`address_lookup::DnsAddressLookup`] service is an address lookup service which will publish the [`RelayUrl`]
 <a href=#161 id=161 data-nosnippet>161</a>//! and direct addresses to a service publishing those as DNS records.  To connect it looks
 <a href=#162 id=162 data-nosnippet>162</a>//! up the [`EndpointId`] in the DNS system to find the addressing details.  This enables
 <a href=#163 id=163 data-nosnippet>163</a>//! connecting using only the [`EndpointId`] which is often more convenient and resilient.
 <a href=#164 id=164 data-nosnippet>164</a>//!
-<a href=#165 id=165 data-nosnippet>165</a>//! See [the ers module] for more details.
+<a href=#165 id=165 data-nosnippet>165</a>//! See [the Address Lookup module] for more details.
 <a href=#166 id=166 data-nosnippet>166</a>//!
 <a href=#167 id=167 data-nosnippet>167</a>//!
 <a href=#168 id=168 data-nosnippet>168</a>//! # Examples
@@ -239,11 +239,11 @@
 <a href=#239 id=239 data-nosnippet>239</a>//! [`SecretKey`]: crate::SecretKey
 <a href=#240 id=240 data-nosnippet>240</a>//! [`PublicKey`]: crate::PublicKey
 <a href=#241 id=241 data-nosnippet>241</a>//! [`RelayUrl`]: crate::RelayUrl
-<a href=#242 id=242 data-nosnippet>242</a>//! [`ers`]: crate::endpoint::Builder::ers
-<a href=#243 id=243 data-nosnippet>243</a>//! [`ers::Dns`]: crate::ers::Dns
+<a href=#242 id=242 data-nosnippet>242</a>//! [`address_lookup`]: crate::endpoint::Builder::address_lookup
+<a href=#243 id=243 data-nosnippet>243</a>//! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 <a href=#244 id=244 data-nosnippet>244</a>//! [number 0]: https://n0.computer
 <a href=#245 id=245 data-nosnippet>245</a>//! [`RelayMode::Default`]: crate::RelayMode::Default
-<a href=#246 id=246 data-nosnippet>246</a>//! [the ers module]: crate::ers
+<a href=#246 id=246 data-nosnippet>246</a>//! [the Address Lookup module]: crate::address_lookup
 <a href=#247 id=247 data-nosnippet>247</a>//! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
 <a href=#248 id=248 data-nosnippet>248</a>//! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
 <a href=#249 id=249 data-nosnippet>249</a>
@@ -260,11 +260,11 @@
 <a href=#260 id=260 data-nosnippet>260</a><span class="attr">#[cfg(wasm_browser)]
 <a href=#261 id=261 data-nosnippet>261</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>web_runtime;
 <a href=#262 id=262 data-nosnippet>262</a>
-<a href=#263 id=263 data-nosnippet>263</a><span class="kw">pub mod </span>defaults;
-<a href=#264 id=264 data-nosnippet>264</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#265 id=265 data-nosnippet>265</a></span><span class="kw">pub mod </span>dns;
-<a href=#266 id=266 data-nosnippet>266</a><span class="kw">pub mod </span>endpoint;
-<a href=#267 id=267 data-nosnippet>267</a><span class="kw">pub mod </span>ers;
+<a href=#263 id=263 data-nosnippet>263</a><span class="kw">pub mod </span>address_lookup;
+<a href=#264 id=264 data-nosnippet>264</a><span class="kw">pub mod </span>defaults;
+<a href=#265 id=265 data-nosnippet>265</a><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#266 id=266 data-nosnippet>266</a></span><span class="kw">pub mod </span>dns;
+<a href=#267 id=267 data-nosnippet>267</a><span class="kw">pub mod </span>endpoint;
 <a href=#268 id=268 data-nosnippet>268</a><span class="kw">pub mod </span>metrics;
 <a href=#269 id=269 data-nosnippet>269</a><span class="kw">mod </span>net_report;
 <a href=#270 id=270 data-nosnippet>270</a><span class="kw">pub mod </span>protocol;

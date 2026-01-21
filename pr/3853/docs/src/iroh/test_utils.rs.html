@@ -91,8 +91,8 @@
 <a href=#91 id=91 data-nosnippet>91</a>
 <a href=#92 id=92 data-nosnippet>92</a>    <span class="kw">use </span><span class="kw">super</span>::CleanupDropGuard;
 <a href=#93 id=93 data-nosnippet>93</a>    <span class="kw">use crate</span>::{
-<a href=#94 id=94 data-nosnippet>94</a>        dns::DnsResolver,
-<a href=#95 id=95 data-nosnippet>95</a>        ers::{<span class="self">self</span>, ConcurrentErs, PkarrPublisher},
+<a href=#94 id=94 data-nosnippet>94</a>        address_lookup::{<span class="self">self</span>, ConcurrentAddressLookup, PkarrPublisher},
+<a href=#95 id=95 data-nosnippet>95</a>        dns::DnsResolver,
 <a href=#96 id=96 data-nosnippet>96</a>        test_utils::{
 <a href=#97 id=97 data-nosnippet>97</a>            dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
 <a href=#98 id=98 data-nosnippet>98</a>        },
@@ -136,13 +136,13 @@
 <a href=#136 id=136 data-nosnippet>136</a>            })
 <a href=#137 id=137 data-nosnippet>137</a>        }
 <a href=#138 id=138 data-nosnippet>138</a>
-<a href=#139 id=139 data-nosnippet>139</a>        <span class="doccomment">/// Create a [`ConcurrentErs`] with [`crate::ers::Dns`] and [`PkarrPublisher`]
+<a href=#139 id=139 data-nosnippet>139</a>        <span class="doccomment">/// Create a [`ConcurrentAddressLookup`] with [`crate::address_lookup::DnsAddressLookup`] and [`PkarrPublisher`]
 <a href=#140 id=140 data-nosnippet>140</a>        /// configured to use the test servers.
-<a href=#141 id=141 data-nosnippet>141</a>        </span><span class="kw">pub fn </span>ers(<span class="kw-2">&amp;</span><span class="self">self</span>, secret_key: SecretKey) -&gt; ConcurrentErs {
-<a href=#142 id=142 data-nosnippet>142</a>            ConcurrentErs::from_services(<span class="macro">vec!</span>[
-<a href=#143 id=143 data-nosnippet>143</a>                <span class="comment">// Enable DNS ERS by default
+<a href=#141 id=141 data-nosnippet>141</a>        </span><span class="kw">pub fn </span>address_lookup(<span class="kw-2">&amp;</span><span class="self">self</span>, secret_key: SecretKey) -&gt; ConcurrentAddressLookup {
+<a href=#142 id=142 data-nosnippet>142</a>            ConcurrentAddressLookup::from_services(<span class="macro">vec!</span>[
+<a href=#143 id=143 data-nosnippet>143</a>                <span class="comment">// Enable DNS Address Lookup by default
 <a href=#144 id=144 data-nosnippet>144</a>                </span>Box::new(
-<a href=#145 id=145 data-nosnippet>145</a>                    ers::Dns::builder(<span class="self">self</span>.endpoint_origin.clone())
+<a href=#145 id=145 data-nosnippet>145</a>                    address_lookup::DnsAddressLookup::builder(<span class="self">self</span>.endpoint_origin.clone())
 <a href=#146 id=146 data-nosnippet>146</a>                        .dns_resolver(<span class="self">self</span>.dns_resolver())
 <a href=#147 id=147 data-nosnippet>147</a>                        .build(),
 <a href=#148 id=148 data-nosnippet>148</a>                ),

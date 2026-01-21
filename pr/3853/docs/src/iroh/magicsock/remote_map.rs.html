@@ -24,7 +24,7 @@
 <a href=#24 id=24 data-nosnippet>24</a>    DirectAddr, MagicsockMetrics,
 <a href=#25 id=25 data-nosnippet>25</a>    mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
 <a href=#26 id=26 data-nosnippet>26</a>};
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span><span class="kw">crate</span>::ers;
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span><span class="kw">crate</span>::address_lookup;
 <a href=#28 id=28 data-nosnippet>28</a>
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">mod </span>remote_state;
 <a href=#30 id=30 data-nosnippet>30</a>
@@ -57,7 +57,7 @@
 <a href=#57 id=57 data-nosnippet>57</a>    metrics: Arc&lt;MagicsockMetrics&gt;,
 <a href=#58 id=58 data-nosnippet>58</a>    <span class="doccomment">/// The "direct" addresses known for our local endpoint
 <a href=#59 id=59 data-nosnippet>59</a>    </span>local_direct_addrs: n0_watcher::Direct&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
-<a href=#60 id=60 data-nosnippet>60</a>    ers: ers::ConcurrentErs,
+<a href=#60 id=60 data-nosnippet>60</a>    address_lookup: address_lookup::ConcurrentAddressLookup,
 <a href=#61 id=61 data-nosnippet>61</a>    shutdown_token: CancellationToken,
 <a href=#62 id=62 data-nosnippet>62</a>
 <a href=#63 id=63 data-nosnippet>63</a>    <span class="doccomment">/// The state kept for spawning new tasks for remote state actors and cleaning them up.
@@ -88,7 +88,7 @@
 <a href=#88 id=88 data-nosnippet>88</a>        local_endpoint_id: EndpointId,
 <a href=#89 id=89 data-nosnippet>89</a>        metrics: Arc&lt;MagicsockMetrics&gt;,
 <a href=#90 id=90 data-nosnippet>90</a>        local_direct_addrs: n0_watcher::Direct&lt;BTreeSet&lt;DirectAddr&gt;&gt;,
-<a href=#91 id=91 data-nosnippet>91</a>        ers: ers::ConcurrentErs,
+<a href=#91 id=91 data-nosnippet>91</a>        address_lookup: address_lookup::ConcurrentAddressLookup,
 <a href=#92 id=92 data-nosnippet>92</a>        shutdown_token: CancellationToken,
 <a href=#93 id=93 data-nosnippet>93</a>    ) -&gt; <span class="self">Self </span>{
 <a href=#94 id=94 data-nosnippet>94</a>        <span class="self">Self </span>{
@@ -97,7 +97,7 @@
 <a href=#97 id=97 data-nosnippet>97</a>            local_endpoint_id,
 <a href=#98 id=98 data-nosnippet>98</a>            metrics,
 <a href=#99 id=99 data-nosnippet>99</a>            local_direct_addrs,
-<a href=#100 id=100 data-nosnippet>100</a>            ers,
+<a href=#100 id=100 data-nosnippet>100</a>            address_lookup,
 <a href=#101 id=101 data-nosnippet>101</a>            shutdown_token,
 <a href=#102 id=102 data-nosnippet>102</a>            state: Default::default(),
 <a href=#103 id=103 data-nosnippet>103</a>        }
@@ -235,7 +235,7 @@
 <a href=#235 id=235 data-nosnippet>235</a>            <span class="self">self</span>.local_direct_addrs.clone(),
 <a href=#236 id=236 data-nosnippet>236</a>            <span class="self">self</span>.relay_mapped_addrs.clone(),
 <a href=#237 id=237 data-nosnippet>237</a>            <span class="self">self</span>.metrics.clone(),
-<a href=#238 id=238 data-nosnippet>238</a>            <span class="self">self</span>.ers.clone(),
+<a href=#238 id=238 data-nosnippet>238</a>            <span class="self">self</span>.address_lookup.clone(),
 <a href=#239 id=239 data-nosnippet>239</a>        )
 <a href=#240 id=240 data-nosnippet>240</a>        .start(initial_msgs, tasks, <span class="self">self</span>.shutdown_token.clone());
 <a href=#241 id=241 data-nosnippet>241</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(waker) = poll_cleanup_waker.take() {
@@ -265,10 +265,10 @@
 <a href=#265 id=265 data-nosnippet>265</a>    </span>Relay,
 <a href=#266 id=266 data-nosnippet>266</a>    <span class="doccomment">/// Application layer added the address directly.
 <a href=#267 id=267 data-nosnippet>267</a>    </span>App,
-<a href=#268 id=268 data-nosnippet>268</a>    <span class="doccomment">/// The address was discovered by anErs endpoint ers::ers::Concurrensystem
+<a href=#268 id=268 data-nosnippet>268</a>    <span class="doccomment">/// The address was discovered by an Address Lookup system
 <a href=#269 id=269 data-nosnippet>269</a>    </span><span class="attr">#[strum(serialize = <span class="string">"{name}"</span>)]
-<a href=#270 id=270 data-nosnippet>270</a>    </span>Ers {
-<a href=#271 id=271 data-nosnippet>271</a>        <span class="doccomment">/// The name of the ERS that discovered the address.
+<a href=#270 id=270 data-nosnippet>270</a>    </span>AddressLookup {
+<a href=#271 id=271 data-nosnippet>271</a>        <span class="doccomment">/// The name of the Address Lookup that discovered the address.
 <a href=#272 id=272 data-nosnippet>272</a>        </span>name: String,
 <a href=#273 id=273 data-nosnippet>273</a>    },
 <a href=#274 id=274 data-nosnippet>274</a>    <span class="doccomment">/// Application layer with a specific name added the endpoint directly.
