@@ -37,7 +37,7 @@ use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{Instrument, info, warn};
+use tracing::{Instrument, debug, info, warn};
 use url::Url;
 
 /// ALPN of our transport protocol.
@@ -141,6 +141,22 @@ enum Length {
     Size(u64),
     #[debug("Duration({_0:?})")]
     Duration(#[serde(with = "duration_millis")] Duration),
+}
+
+impl Length {
+    fn remaining_size(&self, current: usize) -> usize {
+        match *self {
+            Length::Size(limit) => (limit as usize).saturating_sub(current),
+            _ => usize::MAX,
+        }
+    }
+
+    fn remaining_time(&self, start: Instant) -> Duration {
+        match self {
+            Length::Duration(limit) => limit.saturating_sub(start.elapsed()),
+            _ => Duration::MAX,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Clone, Copy)]
@@ -490,7 +506,7 @@ async fn handle_connection(conn: Connection, output: OutputMode) {
             Err(err) => break err,
         };
         let conn = conn.clone();
-        tokio::task::spawn(
+        tokio::spawn(
             async move {
                 if let Err(err) = handle_request(&conn, send, recv, output).await {
                     warn!("[{}] Request failed: {err:#}", remote_id.fmt_short());
@@ -512,7 +528,7 @@ async fn handle_connection(conn: Connection, output: OutputMode) {
             duration: start.elapsed(),
         },
     );
-    output.emit_with_remote(remote_id, PathStats::from_conn(&conn));
+    output.emit_with_remote(remote_id, PathStats::from_paths(&conn.paths().get()));
 }
 
 async fn handle_request(
@@ -527,12 +543,10 @@ async fn handle_request(
     output.emit_with_remote(conn.remote_id(), HandleRequest { request: &request });
     match request {
         Request::Download(length) => {
-            info!("Handle download request: send data for {length:?}");
             let stats = send_data(&mut send, length).await?;
             output.emit_with_remote(conn.remote_id(), UploadComplete { stats });
         }
         Request::Upload => {
-            info!("Handle upload request: drain stream");
             let stats = drain_stream(recv, None).await?;
             send.finish().anyerr()?;
             output.emit_with_remote(conn.remote_id(), DownloadComplete { stats });
@@ -596,7 +610,7 @@ async fn fetch(
     });
 
     close_endpoint_with_timeout(&endpoint, output).await;
-    output.emit(PathStats::from_conn(&conn));
+    output.emit(PathStats::from_paths(&conn.paths().get()));
 
     res
 }
@@ -653,32 +667,21 @@ async fn perform_request(
 
 #[tracing::instrument("drain_stream", skip_all, fields(id=recv.id().index()))]
 async fn drain_stream(mut recv: RecvStream, started_at: Option<Instant>) -> Result<DownloadStats> {
-    info!(stream_id=%recv.id(), "start");
+    info!("start draining");
     let start = Instant::now();
     let mut read = 0;
     let mut num_chunks: u64 = 0;
     let mut time_to_first_byte = None;
 
     // These are 32 buffers, for reading approximately 32kB at once
-    #[rustfmt::skip]
-    let mut bufs = [
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-    ];
+    let mut bufs: [Bytes; 32] = std::array::from_fn(|_| Bytes::new());
 
     while let Some(n) = recv.read_chunks(&mut bufs[..]).await.anyerr()? {
-        if let Some(started_at) = started_at
-            && time_to_first_byte.is_none()
-        {
+        // Update time to first byte if still empty and started_at is set.
+        if let (None, Some(started_at)) = (time_to_first_byte, started_at) {
             time_to_first_byte = Some(started_at.elapsed());
         }
-        read += bufs.iter().take(n).map(|buf| buf.len()).sum::<usize>();
+        read += bufs.iter().take(n).map(Bytes::len).sum::<usize>();
         num_chunks += 1;
     }
 
@@ -694,40 +697,34 @@ async fn drain_stream(mut recv: RecvStream, started_at: Option<Instant>) -> Resu
 
 #[tracing::instrument("send_data", skip_all, fields(id=stream.id().index()))]
 async fn send_data(stream: &mut SendStream, length: Length) -> Result<UploadStats> {
-    info!(stream_id=%stream.id(), ?length, "start");
-    const DATA: &[u8] = &[0xAB; 1024 * 64];
+    debug!(?length, "start sending");
+    const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let data = Bytes::from_static(DATA);
 
     let start = Instant::now();
     let mut total = 0;
     loop {
-        let data = match length {
-            // If a time limit was set, stop sending data once it is exceeded.
-            Length::Duration(limit) if limit <= start.elapsed() => break,
-            Length::Duration(_) => data.clone(),
-            // // If a size limit is set, stop sending once it is exceeded,
-            // // and make sure that the last block has the correct size.
-            Length::Size(limit) => match limit.saturating_sub(total) as usize {
-                0 => break,
-                remaining if remaining >= data.len() => data.clone(),
-                remaining => data.slice(0..remaining),
-            },
+        let data = match length.remaining_size(total) {
+            0 => break,
+            len if len < data.len() => data.slice(..len),
+            _ => data.clone(),
         };
         let len = data.len();
-        stream
-            .write_chunk(data)
-            .await
-            .std_context("failed sending data")?;
-        total += len as u64;
+        let remaining_time = length.remaining_time(start);
+        match tokio::time::timeout(remaining_time, stream.write_chunk(data)).await {
+            Err(_timeout) => break,
+            Ok(res) => res.std_context("failed sending data")?,
+        }
+        total += len;
     }
 
     stream.finish().std_context("failed to finish stream")?;
 
     let stats = UploadStats {
-        len: total,
+        len: total as u64,
         duration: start.elapsed(),
     };
-    info!(?stats, "finished");
+    debug!(?stats, "finished");
     Ok(stats)
 }
 
@@ -852,9 +849,10 @@ impl fmt::Display for EndpointBound {
             writeln!(f, "\t{addr}")?;
         }
         match &self.relay_url {
-            Some(url) => write!(f, "Our home relay server:\t{url}"),
-            None => write!(f, "No home relay server found"),
+            Some(url) => write!(f, "Our home relay server:\t{url}")?,
+            None => write!(f, "No home relay server found")?,
         }
+        writeln!(f, "")
     }
 }
 
@@ -948,10 +946,8 @@ struct PathStats {
 }
 
 impl PathStats {
-    fn from_conn(conn: &Connection) -> Self {
-        let paths = conn
-            .paths()
-            .get()
+    fn from_paths(paths: &PathInfoList) -> Self {
+        let paths = paths
             .iter()
             .map(|path| {
                 let stats = path.stats();
@@ -1027,7 +1023,17 @@ impl fmt::Display for ConnectionClosed {
     }
 }
 
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, Display)]
+#[display(
+    "Downloaded: {:>10} in {:.2}s, {:>10}/s ({}{} chunks)",
+    HumanBytes(self.len).to_string(),
+    self.duration.as_secs_f64(),
+    HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64),
+    self.time_to_first_byte
+        .map(|t| format!("time to first byte {}ms, ", t.as_millis()))
+        .unwrap_or_default(),
+    self.num_chunks
+)]
 struct DownloadStats {
     len: u64,
     #[serde(
@@ -1040,39 +1046,17 @@ struct DownloadStats {
     duration: Duration,
 }
 
-impl fmt::Display for DownloadStats {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Downloaded: {:>10} in {:.2}s, {:>10}/s ({}{} chunks)",
-            HumanBytes(self.len).to_string(),
-            self.duration.as_secs_f64(),
-            HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64),
-            self.time_to_first_byte
-                .map(|t| format!("time to first byte {}ms, ", t.as_millis()))
-                .unwrap_or_default(),
-            self.num_chunks
-        )
-    }
-}
-
-#[derive(Serialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone, Display)]
+#[display(
+    "Uploaded:   {:>10} in {:.2}s, {:>10}/s",
+    HumanBytes(self.len).to_string(),
+    self.duration.as_secs_f64(),
+    HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64)
+)]
 struct UploadStats {
     len: u64,
     #[serde(with = "duration_millis")]
     duration: Duration,
-}
-
-impl fmt::Display for UploadStats {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Uploaded:   {:>10} in {:.2}s, {:>10}/s",
-            HumanBytes(self.len).to_string(),
-            self.duration.as_secs_f64(),
-            HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64)
-        )
-    }
 }
 
 #[derive(Serialize, Debug, Clone, From, Display)]
@@ -1094,29 +1078,21 @@ pub fn duration_millis_opt<S: Serializer>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     match value {
-        Some(d) => serializer.serialize_u128(d.as_millis()),
+        Some(d) => serializer.serialize_u64(d.as_millis() as u64),
         None => serializer.serialize_none(),
     }
 }
 
 mod duration_millis {
-    use super::*;
-    use serde::{Deserializer, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::time::Duration;
 
-    pub fn serialize<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u128(duration.as_millis())
+    pub fn serialize<S: Serializer>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u64(duration.as_millis() as u64)
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let millis = u128::deserialize(deserializer)?;
-        Ok(Duration::from_millis(
-            millis.try_into().map_err(serde::de::Error::custom)?,
-        ))
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
+        let millis = u64::deserialize(deserializer)?;
+        Ok(Duration::from_millis(millis))
     }
 }
