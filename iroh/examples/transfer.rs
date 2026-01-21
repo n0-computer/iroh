@@ -1122,7 +1122,7 @@ impl<T: Serialize + fmt::Display> RemoteEvent<T> {
     }
 }
 
-pub fn duration_micros_opt<S: Serializer>(
+fn duration_micros_opt<S: Serializer>(
     value: &Option<Duration>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
