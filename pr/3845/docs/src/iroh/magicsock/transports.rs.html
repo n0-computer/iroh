@@ -24,7 +24,7 @@
 <a href=#24 id=24 data-nosnippet>24</a><span class="kw">mod </span>relay;
 <a href=#25 id=25 data-nosnippet>25</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>user;
 <a href=#26 id=26 data-nosnippet>26</a>
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>user::{UserSender, UserTransport, UserTransportFactory};
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>user::{UserEndpoint, UserSender, UserTransport};
 <a href=#28 id=28 data-nosnippet>28</a>
 <a href=#29 id=29 data-nosnippet>29</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#30 id=30 data-nosnippet>30</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::ip::Config <span class="kw">as </span>IpConfig;
@@ -38,7 +38,7 @@
 <a href=#38 id=38 data-nosnippet>38</a>    <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#39 id=39 data-nosnippet>39</a>    </span>ip: IpTransports,
 <a href=#40 id=40 data-nosnippet>40</a>    relay: Vec&lt;RelayTransport&gt;,
-<a href=#41 id=41 data-nosnippet>41</a>    user: Vec&lt;Box&lt;<span class="kw">dyn </span>UserTransport&gt;&gt;,
+<a href=#41 id=41 data-nosnippet>41</a>    user: Vec&lt;Box&lt;<span class="kw">dyn </span>UserEndpoint&gt;&gt;,
 <a href=#42 id=42 data-nosnippet>42</a>
 <a href=#43 id=43 data-nosnippet>43</a>    poll_recv_counter: usize,
 <a href=#44 id=44 data-nosnippet>44</a>    <span class="doccomment">/// Cache for source addrs, to speed up access
@@ -90,7 +90,7 @@
 <a href=#90 id=90 data-nosnippet>90</a>        </span>is_user_defined: bool,
 <a href=#91 id=91 data-nosnippet>91</a>    },
 <a href=#92 id=92 data-nosnippet>92</a>    <span class="doccomment">/// User defined transport factory.
-<a href=#93 id=93 data-nosnippet>93</a>    </span>User(Arc&lt;<span class="kw">dyn </span>UserTransportFactory&gt;),
+<a href=#93 id=93 data-nosnippet>93</a>    </span>User(Arc&lt;<span class="kw">dyn </span>UserTransport&gt;),
 <a href=#94 id=94 data-nosnippet>94</a>}
 <a href=#95 id=95 data-nosnippet>95</a>
 <a href=#96 id=96 data-nosnippet>96</a><span class="kw">impl </span>TransportConfig {
