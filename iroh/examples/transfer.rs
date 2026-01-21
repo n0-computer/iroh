@@ -18,11 +18,11 @@ use iroh::{
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{BindOpts, ConnectionError, PathInfoList},
 };
-use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
+use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::task::AbortOnDropHandle;
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use tokio_stream::StreamExt;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use url::Url;
 
 // Transfer ALPN that we are using to communicate over the `Endpoint`
@@ -441,10 +441,11 @@ async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
             for path in conn.paths().get() {
                 let stats = path.stats();
                 println!(
-                    "  {:?}: RTT {:?}, {} packets sent",
+                    "  {:?}: RTT {:?}, tx={}, rx={}",
                     path.remote_addr(),
                     stats.rtt,
-                    stats.sent_packets
+                    stats.udp_tx.bytes,
+                    stats.udp_rx.bytes,
                 );
             }
             n0_error::Ok(())
@@ -481,35 +482,40 @@ async fn fetch(endpoint: Endpoint, remote_addr: EndpointAddr) -> Result<()> {
     conn.close(0u32.into(), b"done");
 
     let transfer_time = start.elapsed();
-    let start = Instant::now();
 
     // We received the last message: close all connections and allow for the close
     // message to be sent.
-    if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
-        error!("Endpoint closing timed out");
-        bail_any!("Failed to shutdown endpoint in time");
-    }
-
-    let shutdown_time = start.elapsed();
+    let shutdown_start = Instant::now();
+    let shutdown = if let Err(_err) = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close()).await {
+        warn!(timeout = ?SHUTDOWN_TIME, "Endpoint closing timed out");
+        "Shutdown timed out".to_string()
+    } else {
+        format!(
+            "Shutdown took {:.4}s",
+            shutdown_start.elapsed().as_secs_f32()
+        )
+    };
+    drop(endpoint);
     println!(
-        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks) (Shutdown took {:.4}s)",
+        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks) ({shutdown})",
         HumanBytes(len as u64),
         transfer_time.as_secs_f64(),
         HumanBytes((len as f64 / transfer_time.as_secs_f64()) as u64),
         time_to_first_byte.as_secs_f64(),
         chnk,
-        shutdown_time.as_secs_f64(),
     );
     println!("Path stats:");
     for path in conn.paths().get() {
         let stats = path.stats();
         println!(
-            "  {:?}: RTT {:?}, {} packets sent",
+            "  {:?}: RTT {:?}, tx={}, rx={}",
             path.remote_addr(),
             stats.rtt,
-            stats.sent_packets
+            stats.udp_tx.bytes,
+            stats.udp_rx.bytes,
         );
     }
+
     Ok(())
 }
 

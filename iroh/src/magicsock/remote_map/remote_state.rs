@@ -389,7 +389,7 @@ impl RemoteStateActor {
                     if let Some(path) = quinn_conn.path(*path_id) {
                         // Ping the current path
                         if let Err(err) = path.ping() {
-                            warn!(%err, ?path_id, ?addr, "failed to ping path");
+                            warn!(%err, %path_id, ?addr, "failed to ping path");
                         }
                     }
                 }
@@ -542,11 +542,21 @@ impl RemoteStateActor {
                 && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
             {
                 trace!(?path_remote, "added new connection");
-                let status = match path_remote {
+                let path_status = match path_remote {
                     transports::Addr::Ip(_) => PathStatus::Available,
                     transports::Addr::Relay(_, _) => PathStatus::Backup,
                 };
-                path.set_status(status).ok();
+                let res = path.set_status(path_status);
+                event!(
+                    target: "iroh::_events::path::set_status",
+                    Level::DEBUG,
+                    remote = %self.endpoint_id.fmt_short(),
+                    ?path_remote,
+                    ?path_status,
+                    ?conn_id,
+                    path_id = %PathId::ZERO,
+                    ?res,
+                );
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
@@ -818,26 +828,52 @@ impl RemoteStateActor {
         };
 
         for (conn_id, conn_state) in self.connections.iter_mut() {
-            if conn_state.path_ids.contains_key(open_addr) {
-                continue;
-            }
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
+            if let Some(&path_id) = conn_state.path_ids.get(open_addr)
+                && let Some(path) = conn.path(path_id)
+            {
+                // We still need to ensure that the path status is set correctly,
+                // in case the path was opened by QNT, which opens all IP paths
+                // using PATH_STATUS_BACKUP. We need to switch the selected path
+                // to use PATH_STATUS_AVAILABLE though!
+                let res = path.set_status(path_status);
+                event!(
+                    target: "iroh::_events::path::set_status",
+                    Level::DEBUG,
+                    remote = %self.endpoint_id.fmt_short(),
+                    ?open_addr,
+                    ?path_status,
+                    ?conn_id,
+                    %path_id,
+                    ?res,
+                );
+                continue;
+            }
             if conn.side().is_server() {
                 continue;
             }
             let fut = conn.open_path_ensure(quic_addr, path_status);
             match fut.path_id() {
                 Some(path_id) => {
-                    trace!(?conn_id, ?path_id, "opening new path");
+                    trace!(?conn_id, %path_id, ?path_status, "opening new path");
                     conn_state.add_path(open_addr.clone(), path_id);
-                    // We still need to ensure that the path status is set correctly,
-                    // in case the path was opened by QNT, which opens all IP paths
-                    // using PATH_STATUS_BACKUP. We need to switch the selected path
-                    // to use PATH_STATUS_AVAILABLE though!
+                    // Just like in the PATH_STATUS comment above, we need to make sure that the
+                    // path status is set correctly, even if the path already existed.
                     if let Some(path) = conn.path(path_id) {
-                        if let Err(e) = path.set_status(path_status) {
+                        let res = path.set_status(path_status);
+                        event!(
+                            target: "iroh::_events::path::set_status",
+                            Level::DEBUG,
+                            remote = %self.endpoint_id.fmt_short(),
+                            ?open_addr,
+                            ?path_status,
+                            ?conn_id,
+                            %path_id,
+                            ?res,
+                        );
+                        if let Err(e) = res {
                             warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
                         }
                     }
@@ -895,7 +931,7 @@ impl RemoteStateActor {
                         remote = %self.endpoint_id.fmt_short(),
                         ?path_remote,
                         ?conn_id,
-                        ?path_id,
+                        %path_id,
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
@@ -935,12 +971,12 @@ impl RemoteStateActor {
                         continue;
                     };
                     if let Some(path) = conn.path(*path_id) {
-                        trace!(?path_remote, ?conn_id, ?path_id, "closing path");
+                        trace!(?path_remote, ?conn_id, %path_id, "closing path");
                         if let Err(err) = path.close() {
                             trace!(
                                 ?path_remote,
                                 ?conn_id,
-                                ?path_id,
+                                %path_id,
                                 "path close failed: {err:#}"
                             );
                         }
@@ -1076,7 +1112,7 @@ impl RemoteStateActor {
                     .filter(|conn| conn.side().is_client())
                     .and_then(|conn| conn.path(*path_id))
                 {
-                    trace!(?path_remote, ?conn_id, ?path_id, "closing direct path");
+                    trace!(?path_remote, ?conn_id, %path_id, "closing direct path");
                     match path.close() {
                         Err(quinn_proto::ClosePathError::LastOpenPath) => {
                             error!("could not close last open path");

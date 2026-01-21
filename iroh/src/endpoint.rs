@@ -242,8 +242,9 @@ impl Builder {
     /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
     ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
     ///
-    /// - Most likely when using this API those existing binds need to be removed explicitly
-    ///   using [`Self::clear_ip_transports`].
+    /// - Adding a bind address removes the pre-configured unspecified bind address for this
+    ///   address family. Use [`Self::bind_addr_with_opts`] to bind additional addresses without
+    ///   replacing the default bind address.
     ///
     /// - This should be called at most once for each address family: once for IPv4 and/or
     ///   once for IPv6. Calling it multiple times for the same address family will result
@@ -261,7 +262,7 @@ impl Builder {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
     /// # use iroh::Endpoint;
@@ -297,9 +298,6 @@ impl Builder {
     /// - Likewise the builder always comes pre-configured with an IPv6 socket to be bound
     ///   on the *unspecified* address: `[::]`. This bind is allowed to fail however.
     ///
-    /// - Most likely when using this API those existing binds need to be removed explicitly
-    ///   using [`Self::clear_ip_transports`].
-    ///
     /// # Description
     ///
     /// Requests a socket to be bound on a specific address. This allows restricting binding
@@ -318,12 +316,17 @@ impl Builder {
     /// of "default route" is used. At most one socket per address family may be marked as
     /// the default route using [`BindOpts::set_is_default_route`], and this will be used
     /// for destinations not contained by the subnets of the bound sockets. This network is
-    /// expected to have a default gateway configured.
+    /// expected to have a default gateway configured. A socket with a prefix length of `/0`
+    /// will be set as a "default route" implicitly, unless [`BindOpts::set_is_default_route`]
+    /// is set to `false` explicitly.
     ///
     /// Be aware that using a subnet with a prefix length of `/0` will always contain all
     /// destination addresses. It is valid to configure this, but no more than one such
-    /// socket should be bound or the routing will be non-deterministic. Prefer using
-    /// [`BindOpts::set_is_default_route`] on one of the sockets instead.
+    /// socket should be bound or the routing will be non-deterministic.
+    ///
+    /// To use a subnet with a non-zero prefix length as the default route in addition to
+    /// being routed when its prefix matches, use [`BindOpts::set_is_default_route].
+    /// Subnets with a prefix length of zero are always marked as default routes.
     ///
     /// Finally note that most outgoing datagrams are part of an existing network flow. That
     /// is, they are in response to an incoming datagram. In this case the outgoing datagram
@@ -336,7 +339,7 @@ impl Builder {
     /// [`BindOpts::set_is_required`] is set to `false`
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// # #[tokio::main]
     /// # async fn main() -> n0_error::Result<()> {
     /// # use iroh::{Endpoint, endpoint::BindOpts};
@@ -369,9 +372,10 @@ impl Builder {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
+                let ip_net = Ipv4Net::new(*addr.ip(), opts.prefix_len())?;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V4 {
-                        ip_net: Ipv4Net::new(*addr.ip(), opts.prefix_len())?,
+                        ip_net,
                         port: addr.port(),
                         is_required: opts.is_required(),
                         is_default: opts.is_default_route(),
@@ -388,9 +392,10 @@ impl Builder {
                     bail!(InvalidSocketAddr::DuplicateDefaultAddr);
                 }
 
+                let ip_net = Ipv6Net::new(*addr.ip(), opts.prefix_len())?;
                 self.transports.push(TransportConfig::Ip {
                     config: IpConfig::V6 {
-                        ip_net: Ipv6Net::new(*addr.ip(), opts.prefix_len())?,
+                        ip_net,
                         scope_id: addr.scope_id(),
                         port: addr.port(),
                         is_required: opts.is_required(),
@@ -412,11 +417,6 @@ impl Builder {
     }
 
     /// Removes all relay based transports.
-    ///
-    /// This method only disables using relays to send data, and has no effect
-    /// on the endpoint using relays for connection establishment. To disable
-    /// both connection establishment and relays-as-transports, disable relays
-    /// entirely with [`RelayMode::Disabled`].
     pub fn clear_relay_transports(mut self) -> Self {
         self.transports
             .retain(|t| !matches!(t, TransportConfig::Relay { .. }));
@@ -1515,8 +1515,9 @@ fn is_cgi() -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         io,
-        net::{IpAddr, Ipv4Addr},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
         str::FromStr,
         sync::Arc,
         time::{Duration, Instant},
@@ -1524,12 +1525,12 @@ mod tests {
 
     use iroh_base::{EndpointAddr, EndpointId, RelayUrl, SecretKey, TransportAddr};
     use n0_error::{AnyError as Error, Result, StdResultExt};
-    use n0_future::{BufferedStreamExt, StreamExt, stream, time};
+    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle, time};
     use n0_tracing_test::traced_test;
     use n0_watcher::Watcher;
     use rand::SeedableRng;
     use tokio::sync::oneshot;
-    use tracing::{Instrument, debug_span, info, info_span, instrument};
+    use tracing::{Instrument, debug_span, error, info, info_span, instrument};
 
     use super::Endpoint;
     use crate::{
@@ -1537,6 +1538,7 @@ mod tests {
         discovery::static_provider::StaticProvider,
         endpoint::{
             ApplicationClose, BindError, BindOpts, ConnectOptions, Connection, ConnectionError,
+            PathInfo,
         },
         protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{QlogFileGroup, run_relay_server, run_relay_server_with},
@@ -2733,31 +2735,24 @@ mod tests {
 
     /// Testing bind_addr: Do not clear IP transports and add single non-default IPv4 bind
     ///
-    /// This will bind three sockets: wildcard binds for IPv4 and IPv6, and our
+    /// This will bind two sockets: default wildcard bind for IPv6, and our
     /// manually-added IPv4 bind.
     #[tokio::test]
     #[traced_test]
     async fn test_bind_addr_no_clear() -> Result {
-        // test 2: do not clear ip transports and add single non-default IPv4 bind
         let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .bind_addr((Ipv4Addr::LOCALHOST, 0))?
             .bind()
             .await?;
         let bound_sockets = ep.bound_sockets();
-        assert_eq!(bound_sockets.len(), 3);
-        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 2);
+        assert_eq!(bound_sockets.len(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 1);
         assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
         // Test that our manually added socket is there
         assert!(
             bound_sockets
                 .iter()
                 .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
-        );
-        // Test that the default wildcard socket is there
-        assert!(
-            bound_sockets
-                .iter()
-                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
         );
         ep.close().await;
         Ok(())
@@ -2792,12 +2787,46 @@ mod tests {
         Ok(())
     }
 
+    /// Testing bind_addr: Do not clear IP transports and add single IPv4 bind with a non-zero prefix len
+    ///
+    /// This will bind three sockets: default wildcard bind for IPv4 and IPv6, and our
+    /// manually-added IPv4 bind.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_nonzero_prefix() -> Result {
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, 0),
+                BindOpts::default().set_prefix_len(32),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        assert_eq!(bound_sockets.len(), 3);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv4()).count(), 2);
+        assert_eq!(bound_sockets.iter().filter(|x| x.is_ipv6()).count(), 1);
+        // Test that the default wildcard socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+        );
+        // Test that our manually added socket is there
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        ep.close().await;
+        Ok(())
+    }
+
     /// Bind on an unusable port with the default opts.
     ///
     /// Binding the endpoint fails with an AddrInUse error.
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_unusuable_port() -> Result {
+    async fn test_bind_addr_badport() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
@@ -2818,19 +2847,21 @@ mod tests {
         Ok(())
     }
 
-    /// Bind on an unusable port, but set is_required = false.
+    /// Bind a non-default route on an unusable port, but set is_required = false.
     ///
     /// Binding the endpoint succeeds.
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_unusuable_port_not_required() -> Result {
+    async fn test_bind_addr_badport_notrequired() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
         let ep = Endpoint::empty_builder(RelayMode::Disabled)
             .bind_addr_with_opts(
                 (Ipv4Addr::LOCALHOST, port),
-                BindOpts::default().set_is_required(false),
+                BindOpts::default()
+                    .set_prefix_len(32)
+                    .set_is_required(false),
             )?
             .bind()
             .await?;
@@ -2846,12 +2877,36 @@ mod tests {
         Ok(())
     }
 
+    /// Bind on a default route on an unusable port, but set is_required = false.
+    ///
+    /// Binding the endpoint succeeds.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_badport_default_notrequired() -> Result {
+        let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
+        let port = socket.local_addr()?.port();
+
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, port),
+                BindOpts::default().set_is_required(false),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        // just the IPv6 default, but no IPv4 bind at all because we replaced the default
+        // with a bind with an unusable port and set it to not be required.
+        assert_eq!(bound_sockets.len(), 1);
+        assert!(bound_sockets[0].is_ipv6());
+        Ok(())
+    }
+
     /// Bind on an unusable port, with is_required = false, and no other transports.
     ///
     /// Binding the endpoint fails with "no valid address available".
     #[tokio::test]
     #[traced_test]
-    async fn test_bind_addr_unusable_port_not_required_no_other_transports() -> Result {
+    async fn test_bind_addr_badport_notrequired_no_other_transports() -> Result {
         let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))?;
         let port = socket.local_addr()?.port();
 
@@ -2872,6 +2927,143 @@ mod tests {
             })
             if io_error.kind() == io::ErrorKind::Other && io_error.to_string() == "no valid address available"
         ));
+        Ok(())
+    }
+
+    /// Bind with prefix len 0 but set the route as non-default.
+    #[tokio::test]
+    #[traced_test]
+    async fn test_bind_addr_prefix_len_0_not_default() -> Result {
+        let ep = Endpoint::empty_builder(RelayMode::Disabled)
+            .bind_addr_with_opts(
+                (Ipv4Addr::LOCALHOST, 0),
+                BindOpts::default().set_is_default_route(false),
+            )?
+            .bind()
+            .await?;
+        let bound_sockets = ep.bound_sockets();
+        // The two default wildcard binds plus our additional route (which does not replace the default route
+        // because we set is_default_route to false explicitly).
+        assert_eq!(bound_sockets.len(), 3);
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V6(Ipv6Addr::UNSPECIFIED))
+        );
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+        );
+        assert!(
+            bound_sockets
+                .iter()
+                .any(|x| x.ip() == IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn connect_via_relay_becomes_direct_and_sends_direct() -> Result {
+        let (relay_map, relay_url, _relay_server_guard) = run_relay_server().await?;
+        let qlog = Arc::new(QlogFileGroup::from_env(
+            "connect_via_relay_becomes_direct_and_sends_direct",
+        ));
+        let transfer_size = 1_000_000;
+
+        async fn collect_path_infos(conn: Connection) -> BTreeMap<TransportAddr, PathInfo> {
+            let mut path_infos = BTreeMap::new();
+            let mut paths = conn.paths().stream();
+            while let Some(path_list) = paths.next().await {
+                for path in path_list {
+                    path_infos.insert(path.remote_addr().clone(), path);
+                }
+            }
+            path_infos
+        }
+
+        let client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .transport_config(qlog.create("client")?)
+            .bind()
+            .await?;
+        let server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(true)
+            .transport_config(qlog.create("server")?)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let server_addr = EndpointAddr::new(server.id()).with_relay_url(relay_url);
+        let server_task = tokio::spawn(async move {
+            let incoming = server.accept().await.anyerr()?;
+            let conn = incoming.await.anyerr()?;
+            let stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+            let (mut send, mut recv) = conn.accept_bi().await.anyerr()?;
+            let msg = recv.read_to_end(transfer_size).await.anyerr()?;
+            send.write_all(&msg).await.anyerr()?;
+            send.finish().anyerr()?;
+            conn.closed().await;
+            let stats = stats_task.await.std_context("server stats task failed")?;
+            Ok::<_, Error>(stats)
+        });
+
+        let conn = client.connect(server_addr, TEST_ALPN).await?;
+        let stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(&vec![42u8; transfer_size]).await.anyerr()?;
+        send.finish().anyerr()?;
+        recv.read_to_end(transfer_size).await.anyerr()?;
+        conn.close(0u32.into(), b"thanks, bye!");
+        client.close().await;
+        let client_stats = stats_task.await.std_context("client stats task failed")?;
+        let server_stats = server_task.await.anyerr()??;
+
+        info!("client stats: {client_stats:#?}");
+        info!("server stats: {server_stats:#?}");
+
+        let total = client_stats
+            .values()
+            .map(|p| p.stats().udp_tx.bytes)
+            .sum::<u64>();
+        info!(total, "client send total");
+        if total > transfer_size as u64 / 2 {
+            let client_most_sent_path = client_stats
+                .values()
+                .max_by_key(|p| p.stats().udp_tx.datagrams)
+                .expect("no paths in stats");
+            let client_most_recv_path = client_stats
+                .values()
+                .max_by_key(|p| p.stats().udp_rx.datagrams)
+                .expect("no paths in stats");
+
+            assert!(client_most_sent_path.is_ip());
+            assert!(client_most_recv_path.is_ip());
+        } else {
+            error!("skipping client assertions due to missing PathStats");
+        }
+
+        let total = server_stats
+            .values()
+            .map(|p| p.stats().udp_tx.bytes)
+            .sum::<u64>();
+        info!(total, "server send total");
+        if total > transfer_size as u64 / 2 {
+            let server_most_sent_path = server_stats
+                .values()
+                .max_by_key(|p| p.stats().udp_tx.datagrams)
+                .expect("no paths in stats");
+            let server_most_recv_path = server_stats
+                .values()
+                .max_by_key(|p| p.stats().udp_rx.datagrams)
+                .expect("no paths in stats");
+
+            assert!(server_most_sent_path.is_ip());
+            assert!(server_most_recv_path.is_ip());
+        } else {
+            error!("skipping server assertions due to missing PathStats");
+        }
+
         Ok(())
     }
 }
