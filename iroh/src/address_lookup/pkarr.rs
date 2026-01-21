@@ -74,7 +74,7 @@ use crate::{
     util::reqwest_client_builder,
 };
 
-#[cfg(feature = "address-lookup-pkarr-dht")]
+#[cfg(feature = "pkarr-dht")]
 pub mod dht;
 
 #[allow(missing_docs)]

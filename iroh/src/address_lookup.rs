@@ -1,4 +1,4 @@
-//! Endpoint ID to address resolution.
+//! Lookup the address of an Endpoint ID.
 //!
 //! To connect to an iroh endpoint a [`EndpointAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`EndpointId`].
@@ -131,7 +131,7 @@ pub use dns::*;
 #[cfg(feature = "mdns")]
 pub use mdns::*;
 pub use memory::*;
-#[cfg(feature = "address-lookup-pkarr-dht")]
+#[cfg(feature = "pkarr-dht")]
 pub use pkarr::dht::*;
 pub use pkarr::*;
 /// Trait for structs that can be converted into [`AddressLookup`]s.
@@ -430,14 +430,14 @@ impl ConcurrentAddressLookup {
 
     /// Adds an [`AddressLookup`] service.
     ///
-    /// If there is historical Address Lookupdata, it will be published immediately on this service.
+    /// If there is historical Address Lookup data, it will be published immediately on this service.
     pub fn add(&self, service: impl AddressLookup + 'static) {
         self.add_boxed(Box::new(service))
     }
 
     /// Adds an already `Box`ed [`AddressLookup`] service.
     ///
-    /// If there is historical Address Lookupdata, it will be published immediately on this service.
+    /// If there is historical Address Lookup data, it will be published immediately on this service.
     pub fn add_boxed(&self, service: Box<dyn AddressLookup>) {
         {
             let data = self.last_data.read().expect("poisoned");
@@ -521,13 +521,13 @@ mod tests {
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
 
     #[derive(Debug, Clone, Default)]
-    struct TestErsShared {
+    struct TestAddressLookupShared {
         endpoints: Arc<Mutex<InfoStore>>,
     }
 
-    impl TestErsShared {
-        pub fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestErs {
-            TestErs {
+    impl TestAddressLookupShared {
+        pub fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+            TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
                 publish: true,
@@ -536,8 +536,8 @@ mod tests {
             }
         }
 
-        pub fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestErs {
-            TestErs {
+        pub fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+            TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
                 publish: false,
@@ -548,15 +548,15 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct TestErs {
+    struct TestAddressLookup {
         endpoint_id: EndpointId,
-        shared: TestErsShared,
+        shared: TestAddressLookupShared,
         publish: bool,
         resolve_wrong: bool,
         delay: Duration,
     }
 
-    impl AddressLookup for TestErs {
+    impl AddressLookup for TestAddressLookup {
         fn publish(&self, data: &EndpointData) {
             if !self.publish {
                 return;
@@ -607,9 +607,9 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
-    struct EmptyErs;
+    struct EmptyAddressLookup;
 
-    impl AddressLookup for EmptyErs {
+    impl AddressLookup for EmptyAddressLookup {
         fn publish(&self, _data: &EndpointData) {}
 
         fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
@@ -625,7 +625,7 @@ mod tests {
     async fn address_lookup_simple_shared() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let eir_shared = TestErsShared::default();
+        let eir_shared = TestAddressLookupShared::default();
         let (ep1, _guard1) =
             new_endpoint(&mut rng, |ep| eir_shared.create_address_lookup(ep.id())).await;
 
@@ -642,7 +642,7 @@ mod tests {
     #[traced_test]
     async fn address_lookup_simple_shared_with_arc() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let address_lookup_shared = TestErsShared::default();
+        let address_lookup_shared = TestAddressLookupShared::default();
         let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
             Arc::new(address_lookup_shared.create_address_lookup(ep.id()))
         })
@@ -662,13 +662,13 @@ mod tests {
     #[traced_test]
     async fn address_lookup_combined_with_empty_and_right() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let address_lookup_shared = TestErsShared::default();
+        let address_lookup_shared = TestAddressLookupShared::default();
         let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
             address_lookup_shared.create_address_lookup(ep.id())
         })
         .await;
         let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
-            let disco1 = EmptyErs;
+            let disco1 = EmptyAddressLookup;
             let disco2 = address_lookup_shared.create_address_lookup(ep.id());
             ep.address_lookup().add(disco1);
             ep.address_lookup().add(disco2);
@@ -692,14 +692,14 @@ mod tests {
     #[traced_test]
     async fn address_lookup_combined_with_empty_and_wrong() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let address_lookup_shared = TestErsShared::default();
+        let address_lookup_shared = TestAddressLookupShared::default();
         let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
             address_lookup_shared.create_address_lookup(ep.id())
         })
         .await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            let address_lookup1 = EmptyErs;
+            let address_lookup1 = EmptyAddressLookup;
             let address_lookup2 = address_lookup_shared.create_lying_address_lookup(ep.id());
             let address_lookup3 = address_lookup_shared.create_address_lookup(ep.id());
             let address_lookup = ConcurrentAddressLookup::empty();
@@ -720,7 +720,7 @@ mod tests {
     async fn address_lookup_combined_wrong_only() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let address_lookup_shared = TestErsShared::default();
+        let address_lookup_shared = TestAddressLookupShared::default();
         let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
             address_lookup_shared.create_address_lookup(ep.id())
         })
@@ -754,7 +754,7 @@ mod tests {
     async fn address_lookup_with_wrong_existing_addr() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let address_lookup_shared = TestErsShared::default();
+        let address_lookup_shared = TestAddressLookupShared::default();
         let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
             address_lookup_shared.create_address_lookup(ep.id())
         })

@@ -322,13 +322,12 @@ impl AddressLookup for DhtAddressLookup {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(endpoint_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", endpoint_id, pkarr_public_key.to_z32());
-        let ers = self.0.clone();
-        let stream =
-            n0_future::stream::once_future(
-                async move { ers.resolve_pkarr(pkarr_public_key).await },
-            )
-            .filter_map(|x| x)
-            .boxed();
+        let address_lookup = self.0.clone();
+        let stream = n0_future::stream::once_future(async move {
+            address_lookup.resolve_pkarr(pkarr_public_key).await
+        })
+        .filter_map(|x| x)
+        .boxed();
         Some(stream)
     }
 }
@@ -346,7 +345,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "flaky"]
     #[traced_test]
-    async fn dht_ers_smoke() -> Result {
+    async fn dht_address_lookup_smoke() -> Result {
         let secret = SecretKey::generate(&mut rand::rng());
         let testnet = pkarr::mainline::Testnet::new_async(3).await.anyerr()?;
         let client = pkarr::Client::builder()

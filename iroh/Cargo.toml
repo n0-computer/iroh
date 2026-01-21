@@ -148,7 +148,7 @@ default = ["metrics", "fast-apple-datapath"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 mdns = ["dep:swarm-discovery"]
-address-lookup-pkarr-dht = ["pkarr/dht"]
+pkarr-dht = ["pkarr/dht"]
 qlog = ["quinn/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["quinn/fast-apple-datapath"]
@@ -178,11 +178,11 @@ name = "connect-unreliable"
 required-features = []
 
 [[example]]
-name = "dht_ers"
-required-features = ["address-lookup-pkarr-dht"]
+name = "dht_address_lookup"
+required-features = ["pkarr-dht"]
 
 [[example]]
-name = "mdns"
+name = "mdns_address_lookup"
 required-features = ["mdns"]
 
 [[example]]

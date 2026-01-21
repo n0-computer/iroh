@@ -16,7 +16,7 @@ use n0_error::{Result, StdResultExt};
 use tracing::warn;
 use url::Url;
 
-const CHAT_ALPN: &[u8] = b"pkarr-ers-demo-chat";
+const CHAT_ALPN: &[u8] = b"pkarr-address-lookup-demo-chat";
 
 #[derive(Parser)]
 struct Args {
