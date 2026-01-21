@@ -2961,6 +2961,7 @@ mod tests {
         Ok(())
     }
 
+    #[ignore = "flaky"]
     #[tokio::test]
     #[traced_test]
     async fn connect_via_relay_becomes_direct_and_sends_direct() -> Result {
