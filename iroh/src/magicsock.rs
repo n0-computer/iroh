@@ -40,6 +40,7 @@ use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
 use quinn::WeakConnectionHandle;
 use rand::Rng;
+use rustc_hash::FxBuildHasher;
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{self},
@@ -63,10 +64,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, EndpointData, UserData},
     endpoint::hooks::EndpointHooksList,
-    magicsock::{
-        remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
-        transports::{OwnedTransmit, TransportsSender},
-    },
+    magicsock::remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
@@ -203,6 +201,11 @@ impl ShutdownState {
 pub(crate) struct MagicSock {
     /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
+    /// Channels for sending time-crucial messages to `RemoteStateActors`.
+    ///
+    /// Currently only exists to support sending `SendDatagram` messages.
+    remote_actors:
+        Arc<papaya::HashMap<EndpointId, mpsc::Sender<RemoteStateMessage>, FxBuildHasher>>,
     /// EndpointId of this endpoint.
     public_key: PublicKey,
 
@@ -370,20 +373,16 @@ impl MagicSock {
         res
     }
 
-    pub(crate) fn try_send_datagram(
+    pub(crate) fn try_send_remote_state_msg(
         &self,
         endpoint_id: EndpointId,
-        sender: Box<TransportsSender>,
-        transmit: OwnedTransmit,
-    ) -> Result<(), OwnedTransmit> {
-        self.actor_sender
-            .try_send(ActorMessage::SendDatagram(endpoint_id, sender, transmit))
-            .map_err(|err| {
-                let ActorMessage::SendDatagram(_, _, transmit) = err.into_inner() else {
-                    unreachable!("got a message we didn't send")
-                };
-                transmit
-            })
+        message: RemoteStateMessage,
+    ) -> Result<(), RemoteStateMessage> {
+        let guard = self.remote_actors.guard();
+        let Some(sender) = self.remote_actors.get(&endpoint_id, &guard) else {
+            return Err(message);
+        };
+        sender.try_send(message).map_err(|err| err.into_inner())
     }
 
     /// Returns a [`Watcher`] for this socket's direct addresses.
@@ -871,6 +870,7 @@ impl Handle {
         let msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
             actor_sender: actor_sender.clone(),
+            remote_actors: remote_map.senders.clone(),
             shutdown: shutdown_state,
             ipv6_reported,
             mapped_addrs: remote_map.mapped_addrs.clone(),
@@ -1095,8 +1095,6 @@ enum ActorMessage {
     ),
     #[debug("RemoteInfo(..)")]
     RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
-    #[debug("SendDatagram(..)")]
-    SendDatagram(EndpointId, Box<TransportsSender>, OwnedTransmit),
     #[cfg(test)]
     ForceNetworkChange(bool),
 }
@@ -1307,16 +1305,6 @@ impl Actor {
             ActorMessage::AddConnection(remote, conn, tx) => {
                 if let Some(watcher) = self.remote_map.add_connection(remote, conn).await {
                     tx.send(watcher).ok();
-                }
-            }
-            ActorMessage::SendDatagram(endpoint_id, sender, transmit) => {
-                if self
-                    .remote_map
-                    .remote_state_actor(endpoint_id)
-                    .try_send(RemoteStateMessage::SendDatagram(sender, transmit))
-                    .is_err()
-                {
-                    debug!(dst_node = %endpoint_id.fmt_short(), "RemoteStateActor inbox dropped transmit");
                 }
             }
             #[cfg(test)]

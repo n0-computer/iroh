@@ -751,27 +751,32 @@ impl quinn::UdpSender for MagicSender {
                 // Initial packet we are sending, so we do not yet have an src address we
                 // need to respond from.
                 if let Some(src_ip) = quinn_transmit.src_ip {
-                    warn!(dst = ?mapped_addr, ?src_ip, dst_node = %endpoint_id.fmt_short(),
+                    warn!(dst = ?mapped_addr, ?src_ip, dst_endpoint = %endpoint_id.fmt_short(),
                         "oops, flub didn't think this would happen");
                 }
 
-                let transmit = OwnedTransmit::from(quinn_transmit);
-                match self.msock.try_send_datagram(
+                match self.msock.try_send_remote_state_msg(
                     endpoint_id,
-                    Box::new(self.sender.clone()),
-                    transmit,
+                    super::RemoteStateMessage::SendDatagram(
+                        Box::new(self.sender.clone()),
+                        OwnedTransmit::from(quinn_transmit),
+                    ),
                 ) {
                     Ok(()) => {
-                        trace!(dst = ?mapped_addr, dst_node = %endpoint_id.fmt_short(), "sent transmit");
+                        trace!(dst = ?mapped_addr, dst_endpoint = %endpoint_id.fmt_short(), "sent transmit");
                         return Poll::Ready(Ok(()));
                     }
-                    Err(_) => {
+                    Err(msg) => {
                         // We do not want to block the next send which might be on a
                         // different transport.  Instead we let Quinn handle this as
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
-                        debug!(dst = ?mapped_addr, dst_node = %endpoint_id.fmt_short(),
-                            "MagicSock actor inbox dropped transmit");
+                        debug!(
+                            dst = ?mapped_addr,
+                            dst_endpoint = %endpoint_id.fmt_short(),
+                            ?msg,
+                            "RemoteStateActor inbox dropped message"
+                        );
                         return Poll::Ready(Ok(()));
                     }
                 };

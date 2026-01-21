@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeSet, hash_map},
+    collections::BTreeSet,
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -8,11 +8,11 @@ use std::{
 
 use iroh_base::{EndpointAddr, EndpointId, RelayUrl};
 use n0_future::task::JoinSet;
-use rustc_hash::FxHashMap;
+use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 pub(crate) use self::remote_state::PathsWatcher;
 use self::remote_state::RemoteStateActor;
@@ -51,7 +51,8 @@ pub(crate) struct RemoteMap {
     ///
     /// This is separated out of `Tasks` to make keeping a mutable borrow if this possible
     /// while we're spawning a task using another mutable borrow of `Tasks`.
-    senders: FxHashMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
+    pub(crate) senders:
+        Arc<papaya::HashMap<EndpointId, mpsc::Sender<RemoteStateMessage>, FxBuildHasher>>,
 
     /// The state kept for spawning new actors and cleaning them up.
     tasks: Tasks,
@@ -129,17 +130,9 @@ impl RemoteMap {
         while let Some(result) = ready!(self.tasks.tasks.poll_join_next(cx)) {
             match result {
                 Ok((eid, leftover_msgs)) => {
-                    let entry = self.senders.entry(eid);
                     if leftover_msgs.is_empty() {
                         // the actor shut down cleanly
-                        match entry {
-                            hash_map::Entry::Occupied(occupied_entry) => {
-                                occupied_entry.remove();
-                            }
-                            hash_map::Entry::Vacant(_) => {
-                                warn!(%eid, "Sender already removed for terminated task");
-                            }
-                        };
+                        self.senders.remove(&eid, &self.senders.guard());
                         return Poll::Ready(eid);
                     }
 
@@ -148,7 +141,8 @@ impl RemoteMap {
                     let sender =
                         self.tasks
                             .start_remote_state_actor(eid, leftover_msgs, &self.mapped_addrs);
-                    entry.insert_entry(sender);
+                    // We don't have to be careful about guards - only one thread is modifying this hashmap at a time.
+                    self.senders.insert(eid, sender, &self.senders.guard());
                 }
                 Err(err) => {
                     if let Ok(panic) = err.try_into_panic() {
@@ -167,7 +161,8 @@ impl RemoteMap {
     }
 
     pub(super) fn on_network_change(&mut self, is_major: bool) {
-        for sender in self.senders.values() {
+        let guard = self.senders.guard();
+        for sender in self.senders.values(&guard) {
             sender
                 .try_send(RemoteStateMessage::NetworkChange { is_major })
                 .ok();
@@ -223,35 +218,32 @@ impl RemoteMap {
         &mut self,
         eid: EndpointId,
     ) -> mpsc::Sender<RemoteStateMessage> {
-        match self.senders.entry(eid) {
-            hash_map::Entry::Occupied(mut entry) => {
-                let sender = entry.get();
-                if sender.is_closed() {
-                    // The actor is dead: Start a new actor.
-                    let sender =
-                        self.tasks
-                            .start_remote_state_actor(eid, vec![], &self.mapped_addrs);
-                    entry.insert(sender.clone());
-                    sender
-                } else {
-                    sender.clone()
-                }
-            }
-            hash_map::Entry::Vacant(entry) => {
-                let sender = self
-                    .tasks
-                    .start_remote_state_actor(eid, vec![], &self.mapped_addrs);
-                entry.insert(sender.clone());
-                sender
-            }
+        let guard = self.senders.guard();
+        let sender = self.senders.get_or_insert_with(
+            eid,
+            || {
+                self.tasks
+                    .start_remote_state_actor(eid, vec![], &self.mapped_addrs)
+            },
+            &guard,
+        );
+        if sender.is_closed() {
+            // The actor is dead: Start a new actor.
+            let sender = self
+                .tasks
+                .start_remote_state_actor(eid, vec![], &self.mapped_addrs);
+            self.senders.insert(eid, sender.clone(), &guard);
+            sender
+        } else {
+            sender.clone()
         }
     }
 
     pub(super) fn remote_state_actor_if_exists(
-        &mut self,
+        &self,
         eid: EndpointId,
     ) -> Option<mpsc::Sender<RemoteStateMessage>> {
-        self.senders.get(&eid).cloned()
+        self.senders.get(&eid, &self.senders.guard()).cloned()
     }
 }
 
