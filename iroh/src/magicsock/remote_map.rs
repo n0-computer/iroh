@@ -24,7 +24,7 @@ use super::{
     DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
 };
-use crate::ers;
+use crate::address_lookup;
 
 mod remote_state;
 
@@ -57,7 +57,7 @@ pub(crate) struct RemoteMap {
     metrics: Arc<MagicsockMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    ers: ers::ConcurrentErs,
+    address_lookup: address_lookup::ConcurrentAddressLookup,
     shutdown_token: CancellationToken,
 
     /// The state kept for spawning new tasks for remote state actors and cleaning them up.
@@ -88,7 +88,7 @@ impl RemoteMap {
         local_endpoint_id: EndpointId,
         metrics: Arc<MagicsockMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        ers: ers::ConcurrentErs,
+        address_lookup: address_lookup::ConcurrentAddressLookup,
         shutdown_token: CancellationToken,
     ) -> Self {
         Self {
@@ -97,7 +97,7 @@ impl RemoteMap {
             local_endpoint_id,
             metrics,
             local_direct_addrs,
-            ers,
+            address_lookup,
             shutdown_token,
             state: Default::default(),
         }
@@ -235,7 +235,7 @@ impl RemoteMap {
             self.local_direct_addrs.clone(),
             self.relay_mapped_addrs.clone(),
             self.metrics.clone(),
-            self.ers.clone(),
+            self.address_lookup.clone(),
         )
         .start(initial_msgs, tasks, self.shutdown_token.clone());
         if let Some(waker) = poll_cleanup_waker.take() {
@@ -265,10 +265,10 @@ pub enum Source {
     Relay,
     /// Application layer added the address directly.
     App,
-    /// The address was discovered by anErs endpoint ers::ers::Concurrensystem
+    /// The address was discovered by an Address Lookup system
     #[strum(serialize = "{name}")]
-    Ers {
-        /// The name of the ERS that discovered the address.
+    AddressLookup {
+        /// The name of the Address Lookup that discovered the address.
         name: String,
     },
     /// Application layer with a specific name added the endpoint directly.

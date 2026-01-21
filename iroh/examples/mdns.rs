@@ -1,11 +1,11 @@
-//! A small example showing how to get a list of endpoints that were discovered via [`iroh::ers::Mdns`]. Mdns ERS uses [`swarm-discovery`](https://crates.io/crates/swarm-discovery), an opinionated implementation of mDNS to discover other endpoints in the local network.
+//! A small example showing how to get a list of endpoints that were discovered via [`iroh::address_lookup::MdnsAddressLookup`]. Mdns Address Lookup uses [`swarm-discovery`](https://crates.io/crates/swarm-discovery), an opinionated implementation of mDNS to discover other endpoints in the local network.
 //!
 //! This example creates an iroh endpoint, a few additional iroh endpoints to discover, waits a few seconds, and reports all of the iroh EndpointIds (also called `[iroh::key::PublicKey]`s) it has discovered.
 //!
-//! This is an async, non-determinate process, so the number of EndpointIDs discovered each time may be different. If you have other iroh endpoints or iroh endpoints with [`ers::Mdns`] enabled, it may discover those endpoints as well.
+//! This is an async, non-determinate process, so the number of EndpointIDs discovered each time may be different. If you have other iroh endpoints or iroh endpoints with [`address_lookup::MdnsAddressLookup`] enabled, it may discover those endpoints as well.
 use std::time::Duration;
 
-use iroh::{Endpoint, EndpointId, endpoint_info::UserData, ers};
+use iroh::{Endpoint, EndpointId, address_lookup, endpoint_info::UserData};
 use n0_error::Result;
 use n0_future::StreamExt;
 use tokio::task::JoinSet;
@@ -18,20 +18,20 @@ async fn main() -> Result<()> {
     let ep = Endpoint::bind().await?;
     let endpoint_id = ep.id();
 
-    let mdns = ers::Mdns::builder().build(endpoint_id)?;
-    ep.ers().add(mdns.clone());
+    let mdns = address_lookup::MdnsAddressLookup::builder().build(endpoint_id)?;
+    ep.address_lookup().add(mdns.clone());
 
     println!("Created endpoint {}", endpoint_id.fmt_short());
 
     let user_data = UserData::try_from(String::from("local-endpoints-example"))?;
 
     let ud = user_data.clone();
-    let ers_stream_task = tokio::spawn(async move {
-        let mut ers_stream = mdns.subscribe().await;
+    let address_lookup_stream_task = tokio::spawn(async move {
+        let mut address_lookup_stream = mdns.subscribe().await;
         let mut discovered_endpoints: Vec<EndpointId> = vec![];
-        while let Some(event) = ers_stream.next().await {
+        while let Some(event) = address_lookup_stream.next().await {
             match event {
-                ers::DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                address_lookup::DiscoveryEvent::Discovered { endpoint_info, .. } => {
                     // if there is no user data, or the user data
                     // does not indicate that the discovered endpoint
                     // is a part of the example, ignore it
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
                         println!("Found endpoint {}!", endpoint_info.endpoint_id.fmt_short());
                     }
                 }
-                ers::DiscoveryEvent::Expired { .. } => {}
+                address_lookup::DiscoveryEvent::Expired { .. } => {}
             };
         }
     });
@@ -65,8 +65,9 @@ async fn main() -> Result<()> {
         let ud = user_data.clone();
         set.spawn(async move {
             let ep = Endpoint::bind().await?;
-            ep.ers().add(ers::Mdns::builder().build(ep.id())?);
-            ep.set_user_data_for_ers(Some(ud));
+            ep.address_lookup()
+                .add(address_lookup::MdnsAddressLookup::builder().build(ep.id())?);
+            ep.set_user_data_for_address_lookup(Some(ud));
             tokio::time::sleep(Duration::from_secs(3)).await;
             ep.close().await;
             n0_error::Ok(())
@@ -79,6 +80,6 @@ async fn main() -> Result<()> {
         }
     });
     ep.close().await;
-    ers_stream_task.abort();
+    address_lookup_stream_task.abort();
     Ok(())
 }

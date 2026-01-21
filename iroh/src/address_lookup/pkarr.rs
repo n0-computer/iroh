@@ -1,4 +1,4 @@
-//! An endpoint ID resolution service which publishes and resolves endpoint information using a [pkarr] relay.
+//! An address lookup service which publishes and resolves endpoint information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -19,20 +19,20 @@
 //!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
 //!   to improve performance.
 //!
-//! For endpoint ID resolution in iroh the pkarr Resource Records contain the addressing information,
+//! For address lookup in iroh the pkarr Resource Records contain the addressing information,
 //! providing endpoints which retrieve the pkarr Resource Record with enough detail
 //! to contact the iroh endpoint.
 //!
-//! There are several ERS's built on top of pkarr, which can be composed
+//! There are several Address Lookup's built on top of pkarr, which can be composed
 //! to the application's needs:
 //!
 //! - [`PkarrPublisher`], which publishes to a pkarr relay server using HTTP.
 //!
 //! - [`PkarrResolver`], which resolves from a pkarr relay server using HTTP.
 //!
-//! - [`ers::Dns`], which resolves from a DNS server.
+//! - [`address_lookup::DnsAddressLookup`], which resolves from a DNS server.
 //!
-//! - [`ers::Dht`], which resolves and publishes from both pkarr relay servers and well
+//! - [`address_lookup::DhtAddressLookup`], which resolves and publishes from both pkarr relay servers and well
 //!   as the Mainline DHT.
 //!
 //! [pkarr]: https://pkarr.org
@@ -41,8 +41,8 @@
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
 //! [`EndpointId`]: crate::EndpointId
-//! [`ers::Dns`]: crate::ers::Dns
-//! [`ers::Dht`]: crate::ers::Dht
+//! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
+//! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 
 use std::sync::Arc;
 
@@ -66,15 +66,15 @@ use url::Url;
 use crate::dns::DnsResolver;
 use crate::{
     Endpoint,
-    endpoint::force_staging_infra,
-    ers::{
-        EndpointData, EndpointIdResolutionSystem, Error as ErsError, IntoErs, IntoErsError,
-        Item as ErsItem,
+    address_lookup::{
+        AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
+        IntoAddressLookupError, Item as AddressLookupItem,
     },
+    endpoint::force_staging_infra,
     util::reqwest_client_builder,
 };
 
-#[cfg(feature = "ers-pkarr-dht")]
+#[cfg(feature = "address-lookup-pkarr-dht")]
 pub mod dht;
 
 #[allow(missing_docs)]
@@ -109,9 +109,9 @@ pub enum PkarrError {
     Encoding { source: EncodingError },
 }
 
-impl From<PkarrError> for ErsError {
+impl From<PkarrError> for AddressLookupError {
     fn from(err: PkarrError) -> Self {
-        ErsError::from_err_any("pkarr", err)
+        AddressLookupError::from_err_any("pkarr", err)
     }
 }
 
@@ -119,10 +119,10 @@ impl From<PkarrError> for ErsError {
 ///
 /// This server is both a pkarr relay server as well as a DNS resolver, see the [module
 /// documentation].  However it does not interact with the Mainline DHT, so is a more
-/// central service.  It is a reliable service to use for endpoint ID resolution.
+/// central service.  It is a reliable service to use for address lookup.
 ///
 /// [number 0]: https://n0.computer
-/// [module documentation]: crate::ers::pkarr
+/// [module documentation]: crate::address_lookup::pkarr
 pub const N0_DNS_PKARR_RELAY_PROD: &str = "https://dns.iroh.link/pkarr";
 /// The testing pkarr relay run by [number 0].
 ///
@@ -217,11 +217,11 @@ impl PkarrPublisherBuilder {
     }
 }
 
-impl IntoErs for PkarrPublisherBuilder {
-    fn into_ers(
+impl IntoAddressLookup for PkarrPublisherBuilder {
+    fn into_address_lookup(
         mut self,
         endpoint: &Endpoint,
-    ) -> Result<impl EndpointIdResolutionSystem, IntoErsError> {
+    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver().clone());
@@ -231,21 +231,21 @@ impl IntoErs for PkarrPublisherBuilder {
     }
 }
 
-/// Publisher of endpoint ID resolution information to a [pkarr] relay.
+/// Publisher of address lookup information to a [pkarr] relay.
 ///
-/// This publisher uses HTTP to publish endpoint ID resolution information to a pkarr relay
+/// This publisher uses HTTP to publish address lookup information to a pkarr relay
 /// server, see the [module docs] for details.
 ///
-/// This implements the [`EndpointIdResolutionSystem`] trait to be used as an endpoint ID resolution service.  Note
-/// that it only publishes endpoint ID resolution information, for the corresponding resolver use
-/// the [`PkarrResolver`] together with [`ConcurrentErs`].
+/// This implements the [`AddressLookup`] trait to be used as an address lookup service.  Note
+/// that it only publishes address lookup information, for the corresponding resolver use
+/// the [`PkarrResolver`] together with [`ConcurrentAddressLookup`].
 ///
 /// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
 ///
 /// [pkarr]: https://pkarr.org
-/// [module docs]: crate::ers::pkarr
+/// [module docs]: crate::address_lookup::pkarr
 /// [`RelayUrl`]: crate::RelayUrl
-/// [`ConcurrentErs`]: super::ConcurrentErs
+/// [`ConcurrentAddressLookup`]: super::ConcurrentAddressLookup
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
     endpoint_id: EndpointId,
@@ -257,13 +257,13 @@ impl PkarrPublisher {
     /// Returns a [`PkarrPublisherBuilder`] that publishes endpoint info to a [pkarr] relay at `pkarr_relay`.
     ///
     /// If no further options are set, the pkarr publisher  will use [`DEFAULT_PKARR_TTL`] as the
-    /// time-to-live value for the published packets, and it will republish ERS information
+    /// time-to-live value for the published packets, and it will republish Address Lookup information
     /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
     ///
-    /// [`PkarrPublisherBuilder`] implements [`IntoErs`], so it can be passed to [`ers`].
+    /// [`PkarrPublisherBuilder`] implements [`IntoAddressLookup`], so it can be passed to [`address_lookup`].
     /// It will then use the endpoint's secret key to sign published packets.
     ///
-    /// [`ers`]:  crate::endpoint::Builder::ers
+    /// [`address_lookup`]:  crate::endpoint::Builder::address_lookup
     /// [pkarr]: https://pkarr.org
     pub fn builder(pkarr_relay: Url) -> PkarrPublisherBuilder {
         PkarrPublisherBuilder::new(pkarr_relay)
@@ -341,7 +341,7 @@ impl PkarrPublisher {
     }
 }
 
-impl EndpointIdResolutionSystem for PkarrPublisher {
+impl AddressLookup for PkarrPublisher {
     fn publish(&self, data: &EndpointData) {
         self.update_endpoint_data(data);
     }
@@ -451,11 +451,11 @@ impl PkarrResolverBuilder {
     }
 }
 
-impl IntoErs for PkarrResolverBuilder {
-    fn into_ers(
+impl IntoAddressLookup for PkarrResolverBuilder {
+    fn into_address_lookup(
         mut self,
         endpoint: &Endpoint,
-    ) -> Result<impl EndpointIdResolutionSystem, IntoErsError> {
+    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver().clone());
@@ -465,18 +465,18 @@ impl IntoErs for PkarrResolverBuilder {
     }
 }
 
-/// Resolver of endpoint ID resolution information from a [pkarr] relay.
+/// Resolver of address lookup information from a [pkarr] relay.
 ///
-/// The resolver uses HTTP to query endpoint ID resolution information from a pkarr relay server,
+/// The resolver uses HTTP to query address lookup information from a pkarr relay server,
 /// see the [module docs] for details.
 ///
-/// This implements the [`EndpointIdResolutionSystem`] trait to be used as an endpoint ID resolution service.  Note
-/// that it only resolves endpoint ID resolution information, for the corresponding publisher use
-/// the [`PkarrPublisher`] together with [`ConcurrentErs`].
+/// This implements the [`AddressLookup`] trait to be used as an address lookup service.  Note
+/// that it only resolves address lookup information, for the corresponding publisher use
+/// the [`PkarrPublisher`] together with [`ConcurrentAddressLookup`].
 ///
 /// [pkarr]: https://pkarr.org
-/// [module docs]: crate::ers::pkarr
-/// [`ConcurrentErs`]: super::ConcurrentErs
+/// [module docs]: crate::address_lookup::pkarr
+/// [`ConcurrentAddressLookup`]: super::ConcurrentAddressLookup
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrResolver {
     pkarr_client: PkarrRelayClient,
@@ -485,7 +485,7 @@ pub struct PkarrResolver {
 impl PkarrResolver {
     /// Creates a new resolver builder using the pkarr relay server at the URL.
     ///
-    /// The builder implements [`IntoErs`].
+    /// The builder implements [`IntoAddressLookup`].
     pub fn builder(pkarr_relay: Url) -> PkarrResolverBuilder {
         PkarrResolverBuilder {
             pkarr_relay,
@@ -515,14 +515,17 @@ impl PkarrResolver {
     }
 }
 
-impl EndpointIdResolutionSystem for PkarrResolver {
-    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<ErsItem, ErsError>>> {
+impl AddressLookup for PkarrResolver {
+    fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Option<BoxStream<Result<AddressLookupItem, AddressLookupError>>> {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(endpoint_id).await?;
             let info = EndpointInfo::from_pkarr_signed_packet(&signed_packet)
-                .map_err(|err| ErsError::from_err_any("pkarr", err))?;
-            let item = ErsItem::new(info, "pkarr", None);
+                .map_err(|err| AddressLookupError::from_err_any("pkarr", err))?;
+            let item = AddressLookupItem::new(info, "pkarr", None);
             Ok(item)
         };
         let stream = n0_future::stream::once_future(fut);
@@ -564,7 +567,10 @@ impl PkarrRelayClient {
     }
 
     /// Resolves a [`SignedPacket`] for the given [`EndpointId`].
-    pub async fn resolve(&self, endpoint_id: EndpointId) -> Result<SignedPacket, ErsError> {
+    pub async fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Result<SignedPacket, AddressLookupError> {
         // We map the error to string, as in browsers the error is !Send
         let public_key = pkarr::PublicKey::try_from(endpoint_id.as_bytes())
             .map_err(|err| e!(PkarrError::PublicKey, err))?;

@@ -4,8 +4,8 @@ use clap::Parser;
 use data_encoding::HEXLOWER;
 use iroh::{
     EndpointId, SecretKey,
+    address_lookup::AddressLookup,
     endpoint::{RecvStream, SendStream, ZeroRttStatus},
-    ers::EndpointIdResolutionSystem,
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use n0_future::StreamExt;
@@ -71,11 +71,11 @@ async fn connect(args: Args) -> Result<()> {
         .await?;
     // ensure we have resolved the remote_id before connecting
     // so we get a more accurate connection timing
-    let mut ers_stream = endpoint
-        .ers()
+    let mut address_lookup_stream = endpoint
+        .address_lookup()
         .resolve(remote_id)
-        .expect("ERS to be enabled");
-    let _ = ers_stream.next().await;
+        .expect("Address Lookup to be enabled");
+    let _ = address_lookup_stream.next().await;
 
     let t0 = Instant::now();
     for i in 0..args.rounds {

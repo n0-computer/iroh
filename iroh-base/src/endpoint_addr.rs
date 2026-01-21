@@ -20,7 +20,7 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 /// To establish a network connection to an endpoint both the [`EndpointId`] and one or more network
 /// paths are needed.  The network paths can come from various sources, current sources can come from
 ///
-/// - An [ERS] service which can provide routing information for a given [`EndpointId`].
+/// - An [Address Lookup] service which can provide routing information for a given [`EndpointId`].
 ///
 /// - A [`RelayUrl`] of the endpoint's [home relay], this allows establishing the connection via
 ///   the Relay server and is very reliable.
@@ -33,7 +33,7 @@ use crate::{EndpointId, PublicKey, RelayUrl};
 /// number of other addressing information.  It is a generic addressing type used whenever a connection
 /// to other endpoints needs to be established.
 ///
-/// [ERS]: https://docs.rs/iroh/*/iroh/index.html#endpoint-id-resolution
+/// [Address Lookup]: https://docs.rs/iroh/*/iroh/index.html#address-lookup
 /// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
 /// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -69,7 +69,7 @@ impl TransportAddr {
 impl EndpointAddr {
     /// Creates a new [`EndpointAddr`] with no network level addresses.
     ///
-    /// This still is usable with e.g. an endpoint ID resolution service to establish a connection,
+    /// This still is usable with e.g. an address lookup service to establish a connection,
     /// depending on the situation.
     pub fn new(id: PublicKey) -> Self {
         EndpointAddr {

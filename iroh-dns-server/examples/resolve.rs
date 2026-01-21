@@ -1,8 +1,8 @@
 use clap::{Parser, ValueEnum};
 use iroh::{
     EndpointId,
+    address_lookup::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     dns::DnsResolver,
-    ers::dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 

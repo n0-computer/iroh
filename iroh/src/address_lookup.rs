@@ -9,23 +9,23 @@
 //! For this to work however, the endpoint has to get the addressing  information by
 //! other means.
 //!
-//! Endpoint ID resolution is an automated system for an [`Endpoint`] to retrieve this addressing
+//! [`AddressLookup`] is an automated system for an [`Endpoint`] to retrieve this addressing
 //! information.  Each iroh endpoint will automatically publish their own addressing
 //! information.  Usually this means publishing which [`RelayUrl`] to use for their
 //! [`EndpointId`], but they could also publish their direct addresses.
 //!
-//! The [`EndpointIdResolutionSystem`] trait is used to define an endpoint ID resolution system.  This allows multiple
+//! The [`AddressLookup`] trait is used to define an address lookup system.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
-//! Each [`Endpoint`] can use the endpoint ID resolution mechanisms most suitable to the application.
-//! The [`Builder::ers`] method is used to add an endpoint ID resolution mechanism to an
+//! Each [`Endpoint`] can use the address lookup mechanisms most suitable to the application.
+//! The [`Builder::address_lookup`] method is used to add an address lookup mechanism to an
 //! [`Endpoint`].
 //!
-//! Some generally useful ERS implementations are provided:
+//! Some generally useful Address Lookup implementations are provided:
 //!
 //! - [`StaticProvider`] which allows application to add and remove out-of-band addressing
 //!   information.
 //!
-//! - The [`ers::Dns`] which performs lookups via the standard DNS systems.  To publish
+//! - The [`address_lookup::DnsAddressLookup`] which performs lookups via the standard DNS systems.  To publish
 //!   to this DNS server a [`PkarrPublisher`] is needed.  [Number 0] runs a public instance
 //!   of a [`PkarrPublisher`] with attached DNS server which is globally available and a
 //!   reliable default choice.
@@ -33,64 +33,64 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`ers::Mdns`]: mdns::MdnsEndpointIdResolution which uses the crate `swarm-discovery`, an
+//! - [`address_lookup::MdnsAddressLookup`]: mdns::MdnsAddressLookup which uses the crate `swarm-discovery`, an
 //!   opinionated mDNS implementation, to discover endpoints on the local network.
 //!
-//! - The [`ers::Dht`] also uses the [`pkarr`] system but can also publish and lookup
-//!   records to/from the Mainline DHT. It requires enabling the `ers-pkarr-dht` feature.
+//! - The [`address_lookup::DhtAddressLookup`] also uses the [`pkarr`] system but can also publish and lookup
+//!   records to/from the Mainline DHT. It requires enabling the `address_lookup-pkarr-dht` feature.
 //!
-//! To use multiple ERS's simultaneously you can call [`Builder::ers`].
-//! This will use [`ConcurrentErs`] under the hood, which performs lookups to all
-//! ERS systems at the same time.
+//! To use multiple Address Lookup'ssimultaneously you can call [`Builder::address_lookup`].
+//! This will use [`ConcurrentAddressLookup`] under the hood, which performs lookups to all
+//! Address Lookupsystems at the same time.
 //!
-//! [`Builder::ers`] takes any type that implements [`IntoErs`]. You can
-//! implement that trait on a builder struct if your ERS  needs information
-//! from the endpoint it is mounted on. After endpoint construction, your ERS
-//! is built by calling [`IntoErs::into_ers`], passing the finished [`Endpoint`] to your
+//! [`Builder::address_lookup`] takes any type that implements [`IntoAddressLookup`]. You can
+//! implement that trait on a builder struct if your Address Lookup needs information
+//! from the endpoint it is mounted on. After endpoint construction, your Address Lookup
+//! is built by calling [`IntoAddressLookup::into_address_lookup`], passing the finished [`Endpoint`] to your
 //! builder.
 //!
-//! If your ERS does not need any information from its endpoint, you can
-//! pass the ERS service directly to [`Builder::ers`]: All types that
-//! implement [`EndpointIdResolutionSystem`] also have a blanket implementation of [`IntoErs`].
+//! If your Address Lookupdoes not need any information from its endpoint, you can
+//! pass the Address Lookupservice directly to [`Builder::address_lookup`]: All types that
+//! implement [`AddressLookup`] also have a blanket implementation of [`IntoAddressLookup`].
 //!
 //! # Examples
 //!
-//! A very common setup is to enable DNS ERS, which needs to be done in two parts as a
-//! [`PkarrPublisher`] and [`ers::Dns`]:
+//! A very common setup is to enable DNS Address Lookup, which needs to be done in two parts as a
+//! [`PkarrPublisher`] and [`address_lookup::DnsAddressLookup`]:
 //!
 //! ```no_run
 //! use iroh::{
 //!     Endpoint, SecretKey,
+//!     address_lookup::{self, PkarrPublisher},
 //!     endpoint::RelayMode,
-//!     ers::{self, PkarrPublisher},
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
-//!     .ers(PkarrPublisher::n0_dns())
-//!     .ers(ers::Dns::n0_dns())
+//!     .address_lookup(PkarrPublisher::n0_dns())
+//!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! To also enable [`ers::Mdns`] it can be added as another service.
+//! To also enable [`address_lookup::MdnsAddressLookup`] it can be added as another service.
 //!
 //! ```no_run
 //! #[cfg(feature = "mdns")]
 //! # {
 //! # use iroh::{
-//! #    ers::{self, PkarrPublisher},
+//! #    address_lookup::{self, PkarrPublisher},
 //! #    endpoint::RelayMode,
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
-//!     .ers(PkarrPublisher::n0_dns())
-//!     .ers(ers::Dns::n0_dns())
-//!     .ers(ers::Mdns::builder())
+//!     .address_lookup(PkarrPublisher::n0_dns())
+//!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
+//!     .address_lookup(address_lookup::MdnsAddressLookup::builder())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -100,14 +100,14 @@
 //!
 //! [`EndpointAddr`]: iroh_base::EndpointAddr
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`Builder::ers`]: crate::endpoint::Builder::ers
-//! [`ers::Dns`]: crate::ers::Dns
+//! [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
+//! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
-//! [`ers::Dht`]: crate::ers::Dht
+//! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`ers::Mdns`]: crate::ers::Mdns
+//! [`address_lookup::MdnsAddressLookup`]: crate::address_lookup::MdnsAddressLookup
 //! [`StaticProvider`]: static_provider::StaticProvider
 
 use std::sync::{Arc, RwLock};
@@ -130,65 +130,67 @@ pub mod static_provider;
 pub use dns::*;
 #[cfg(feature = "mdns")]
 pub use mdns::*;
-#[cfg(feature = "ers-pkarr-dht")]
+#[cfg(feature = "address-lookup-pkarr-dht")]
 pub use pkarr::dht::*;
 pub use pkarr::*;
 pub use static_provider::*;
-/// Trait for structs that can be converted into [`EndpointIdResolutionSystem`]s.
+/// Trait for structs that can be converted into [`AddressLookup`]s.
 ///
-/// This trait is implemented on builders for ERS's. Any type that implements this
-/// trait can be added as a ERS in [`Builder::ers`].
+/// This trait is implemented on builders for Address Lookup's. Any type that implements this
+/// trait can be added as a Address Lookupin [`Builder::address_lookup`].
 ///
-/// Any type that implements [`EndpointIdResolutionSystem`] also implements [`IntoErs`].
+/// Any type that implements [`AddressLookup`] also implements [`IntoAddressLookup`].
 ///
-/// Iroh uses this trait to allow configuring the set of ERS's on the endpoint
-/// builder, while providing the EIR services access to information about the endpoint
-/// to [`IntoErs::into_ers`].
+/// Iroh uses this trait to allow configuring the set of Address Lookup'son the endpoint
+/// builder, while providing the Address Lookup services access to information about the endpoint
+/// to [`IntoAddressLookup::into_address_lookup`].
 ///
-/// [`Builder::ers`]: crate::endpoint::Builder::ers
-pub trait IntoErs: Send + Sync + std::fmt::Debug + 'static {
-    /// Turns this endpoint ID resolution builder into a ready-to-use ERS.
+/// [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
+pub trait IntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
+    /// Turns this AddressLookup builder into a ready-to-use Address Lookup.
     ///
     /// If an error is returned, building the endpoint will fail with this error.
-    fn into_ers(self, endpoint: &Endpoint)
-    -> Result<impl EndpointIdResolutionSystem, IntoErsError>;
+    fn into_address_lookup(
+        self,
+        endpoint: &Endpoint,
+    ) -> Result<impl AddressLookup, IntoAddressLookupError>;
 }
 
-/// Blanket no-op impl of `IntoErs` for `T: EndpointIdResolution`.
-impl<T: EndpointIdResolutionSystem> IntoErs for T {
-    fn into_ers(
+/// Blanket no-op impl of `IntoAddressLookup` for `T: AddressLookup`.
+impl<T: AddressLookup> IntoAddressLookup for T {
+    fn into_address_lookup(
         self,
         _endpoint: &Endpoint,
-    ) -> Result<impl EndpointIdResolutionSystem, IntoErsError> {
+    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
         Ok(self)
     }
 }
 
-/// Non-public dyn-compatible version of [`IntoErs`], used in [`crate::endpoint::Builder`].
-pub(crate) trait DynIntoErs: Send + Sync + std::fmt::Debug + 'static {
-    /// See [`IntoErs::into_ers`]
-    fn into_ers(
+/// Non-public dyn-compatible version of [`IntoAddressLookup`], used in [`crate::endpoint::Builder`].
+pub(crate) trait DynIntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
+    /// See [`IntoAddressLookup::into_address_lookup`]
+    fn into_address_lookup(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn EndpointIdResolutionSystem>, IntoErsError>;
+    ) -> Result<Box<dyn AddressLookup>, IntoAddressLookupError>;
 }
 
-impl<T: IntoErs> DynIntoErs for T {
-    fn into_ers(
+impl<T: IntoAddressLookup> DynIntoAddressLookup for T {
+    fn into_address_lookup(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn EndpointIdResolutionSystem>, IntoErsError> {
-        let disco: Box<dyn EndpointIdResolutionSystem> =
-            Box::new(IntoErs::into_ers(*self, endpoint)?);
+    ) -> Result<Box<dyn AddressLookup>, IntoAddressLookupError> {
+        let disco: Box<dyn AddressLookup> =
+            Box::new(IntoAddressLookup::into_address_lookup(*self, endpoint)?);
         Ok(disco)
     }
 }
 
-/// IntoErs errors
+/// IntoAddressLookup errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
-pub enum IntoErsError {
+pub enum IntoAddressLookupError {
     #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
@@ -196,13 +198,13 @@ pub enum IntoErsError {
     },
 }
 
-impl IntoErsError {
+impl IntoAddressLookupError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
         provenance: &'static str,
         source: T,
     ) -> Self {
-        e!(IntoErsError::User {
+        e!(IntoAddressLookupError::User {
             provenance,
             source: AnyError::from_std(source)
         })
@@ -213,22 +215,22 @@ impl IntoErsError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        e!(IntoErsError::User {
+        e!(IntoAddressLookupError::User {
             provenance,
             source: AnyError::from_std_box(source)
         })
     }
 }
 
-/// EndpointIdResolutionSystem errors
+/// AddressLookup errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 #[derive(Clone)]
 pub enum Error {
-    #[error("No endpoint ID resolution service configured")]
+    #[error("No address lookup configured")]
     NoServiceConfigured,
-    #[error("Endpoint ID resolution produced no results")]
+    #[error("Address lookup produced no results")]
     NoResults,
     #[error("Service '{provenance}' error")]
     User {
@@ -266,24 +268,24 @@ impl Error {
     }
 }
 
-/// Endpoint ID resolution system for [`super::Endpoint`].
+/// AddressLookup system for [`super::Endpoint`].
 ///
 /// This trait defines publishing and resolving addressing information for a [`EndpointId`].
 /// This enables connecting to other endpoints with only knowing the [`EndpointId`], by using this
-/// [`EndpointIdResolutionSystem`] system to look up the actual addressing information.  It is common for
+/// [`AddressLookup`] system to look up the actual addressing information.  It is common for
 /// implementations to require each endpoint to publish their own information before it can be
 /// looked up by other endpoints.
 ///
 /// The published addressing information can include both a [`RelayUrl`] and/or direct
 /// addresses. See [`EndpointData`] for details.
 ///
-/// To allow for EIR, the [`super::Endpoint`] will call `publish` whenever
-/// EIR information changes. If an EIR mechanism requires a periodic
+/// To allow for Address Lookup, the [`super::Endpoint`] will call `publish` whenever
+/// Address Lookup information changes. If an Address Lookup mechanism requires a periodic
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::RelayUrl
-pub trait EndpointIdResolutionSystem: std::fmt::Debug + Send + Sync + 'static {
-    /// Publishes the given [`EndpointData`] to the EIR mechanism.
+pub trait AddressLookup: std::fmt::Debug + Send + Sync + 'static {
+    /// Publishes the given [`EndpointData`] to the Address Lookup mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
     /// publishing. If publishing is async, the implementation should start it's own task.
@@ -301,7 +303,7 @@ pub trait EndpointIdResolutionSystem: std::fmt::Debug + Send + Sync + 'static {
     }
 }
 
-impl<T: EndpointIdResolutionSystem> EndpointIdResolutionSystem for Arc<T> {
+impl<T: AddressLookup> AddressLookup for Arc<T> {
     fn publish(&self, data: &EndpointData) {
         self.as_ref().publish(data);
     }
@@ -311,26 +313,26 @@ impl<T: EndpointIdResolutionSystem> EndpointIdResolutionSystem for Arc<T> {
     }
 }
 
-/// Endpoint ID resolution results from [`EndpointIdResolutionSystem`]s.
+/// Address lookup results from [`AddressLookup`]s.
 ///
-/// This is the item in the streams returned from [`EndpointIdResolutionSystem::resolve`].
+/// This is the item in the streams returned from [`AddressLookup::resolve`].
 /// It contains the [`EndpointData`] about the resolved endpoint addresses,
-/// and some additional metadata about the endpoint ID resolution system.
+/// and some additional metadata about the address lookup system.
 ///
 /// This struct derefs to [`EndpointData`], so you can access the methods from [`EndpointData`]
 /// directly from [`Item`].
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Item {
-    /// The endpoint info for the endpoint, as discovered by the the ERS.
+    /// The endpoint info for the endpoint, as discovered by the the Address Lookup.
     endpoint_info: EndpointInfo,
-    /// A static string to identify the ERS source.
+    /// A static string to identify the Address Lookupsource.
     ///
-    /// Should be uniform per ERS.
+    /// Should be uniform per Address Lookup.
     provenance: &'static str,
     /// Optional timestamp when this endpoint address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
-    // TODO(ramfox): this is currently unused. As we develop more `EndpointIdResolutionSystem`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each endpoint to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
+    // TODO(ramfox): this is currently unused. As we develop more `AddressLookup`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each endpoint to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     last_updated: Option<u64>,
 }
 
@@ -358,10 +360,10 @@ impl Item {
         &self.endpoint_info
     }
 
-    /// Returns the provenance of this EIR item.
+    /// Returns the provenance of this Address Lookup item.
     ///
-    /// The provenance is a static string which identifies the EIR service that produced
-    /// this EIR item.
+    /// The provenance is a static string which identifies the Address Lookup service that produced
+    /// this item.
     pub fn provenance(&self) -> &'static str {
         self.provenance
     }
@@ -402,41 +404,41 @@ impl From<Item> for EndpointInfo {
     }
 }
 
-/// An endpoint ID resolution system that combines multiple ERS sources.
+/// An Address Lookup service that combines multiple Address Lookup sources.
 ///
-/// The ERS will resolve concurrently.
+/// The Address Lookup will resolve concurrently.
 #[derive(Debug, Default, Clone)]
-pub struct ConcurrentErs {
-    services: Arc<RwLock<Vec<Box<dyn EndpointIdResolutionSystem>>>>,
+pub struct ConcurrentAddressLookup {
+    services: Arc<RwLock<Vec<Box<dyn AddressLookup>>>>,
     /// The data last published, used to publish when adding a new service.
     last_data: Arc<RwLock<Option<EndpointData>>>,
 }
 
-impl ConcurrentErs {
-    /// Creates an empty [`ConcurrentErs`].
+impl ConcurrentAddressLookup {
+    /// Creates an empty [`ConcurrentAddressLookup`].
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// Creates a new [`ConcurrentErs`].
-    pub fn from_services(services: Vec<Box<dyn EndpointIdResolutionSystem>>) -> Self {
+    /// Creates a new [`ConcurrentAddressLookup`].
+    pub fn from_services(services: Vec<Box<dyn AddressLookup>>) -> Self {
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
         }
     }
 
-    /// Adds an [`EndpointIdResolutionSystem`] service.
+    /// Adds an [`AddressLookup`] service.
     ///
-    /// If there is historical ERS data, it will be published immediately on this service.
-    pub fn add(&self, service: impl EndpointIdResolutionSystem + 'static) {
+    /// If there is historical Address Lookupdata, it will be published immediately on this service.
+    pub fn add(&self, service: impl AddressLookup + 'static) {
         self.add_boxed(Box::new(service))
     }
 
-    /// Adds an already `Box`ed [`EndpointIdResolutionSystem`] service.
+    /// Adds an already `Box`ed [`AddressLookup`] service.
     ///
-    /// If there is historical ERS data, it will be published immediately on this service.
-    pub fn add_boxed(&self, service: Box<dyn EndpointIdResolutionSystem>) {
+    /// If there is historical Address Lookupdata, it will be published immediately on this service.
+    pub fn add_boxed(&self, service: Box<dyn AddressLookup>) {
         {
             let data = self.last_data.read().expect("poisoned");
             if let Some(data) = &*data {
@@ -457,9 +459,9 @@ impl ConcurrentErs {
     }
 }
 
-impl<T> From<T> for ConcurrentErs
+impl<T> From<T> for ConcurrentAddressLookup
 where
-    T: IntoIterator<Item = Box<dyn EndpointIdResolutionSystem>>,
+    T: IntoIterator<Item = Box<dyn AddressLookup>>,
 {
     fn from(iter: T) -> Self {
         let services = iter.into_iter().collect::<Vec<_>>();
@@ -470,7 +472,7 @@ where
     }
 }
 
-impl EndpointIdResolutionSystem for ConcurrentErs {
+impl AddressLookup for ConcurrentAddressLookup {
     fn publish(&self, data: &EndpointData) {
         let services = self.services.read().expect("poisoned");
         for service in &*services {
@@ -524,7 +526,7 @@ mod tests {
     }
 
     impl TestErsShared {
-        pub fn create_ers(&self, endpoint_id: EndpointId) -> TestErs {
+        pub fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestErs {
             TestErs {
                 endpoint_id,
                 shared: self.clone(),
@@ -534,7 +536,7 @@ mod tests {
             }
         }
 
-        pub fn create_lying_ers(&self, endpoint_id: EndpointId) -> TestErs {
+        pub fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestErs {
             TestErs {
                 endpoint_id,
                 shared: self.clone(),
@@ -554,7 +556,7 @@ mod tests {
         delay: Duration,
     }
 
-    impl EndpointIdResolutionSystem for TestErs {
+    impl AddressLookup for TestErs {
         fn publish(&self, data: &EndpointData) {
             if !self.publish {
                 return;
@@ -607,7 +609,7 @@ mod tests {
     #[derive(Debug, Clone)]
     struct EmptyErs;
 
-    impl EndpointIdResolutionSystem for EmptyErs {
+    impl AddressLookup for EmptyErs {
         fn publish(&self, _data: &EndpointData) {}
 
         fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
@@ -617,56 +619,65 @@ mod tests {
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
-    /// This is a smoke test for our ERS mechanism.
+    /// This is a smoke test for our Address Lookupmechanism.
     #[tokio::test]
     #[traced_test]
-    async fn ers_simple_shared() -> Result {
+    async fn address_lookup_simple_shared() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
         let eir_shared = TestErsShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| eir_shared.create_ers(ep.id())).await;
-
-        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| eir_shared.create_ers(ep.id())).await;
-        let ep1_addr = EndpointAddr::new(ep1.id());
-        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
-        Ok(())
-    }
-
-    /// This is a smoke test to ensure a ERS can be
-    /// `Arc`-d, and ERS will still work
-    #[tokio::test]
-    #[traced_test]
-    async fn ers_simple_shared_with_arc() -> Result {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let ers_shared = TestErsShared::default();
         let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| Arc::new(ers_shared.create_ers(ep.id()))).await;
+            new_endpoint(&mut rng, |ep| eir_shared.create_address_lookup(ep.id())).await;
 
         let (ep2, _guard2) =
-            new_endpoint(&mut rng, |ep| Arc::new(ers_shared.create_ers(ep.id()))).await;
+            new_endpoint(&mut rng, |ep| eir_shared.create_address_lookup(ep.id())).await;
         let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
 
-    /// This test adds an empty ERS which provides no addresses.
+    /// This is a smoke test to ensure a Address Lookup can be
+    /// `Arc`-d, and Address Lookup will still work
     #[tokio::test]
     #[traced_test]
-    async fn ers_combined_with_empty_and_right() -> Result {
+    async fn address_lookup_simple_shared_with_arc() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let ers_shared = TestErsShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
+        let address_lookup_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            Arc::new(address_lookup_shared.create_address_lookup(ep.id()))
+        })
+        .await;
+
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
+            Arc::new(address_lookup_shared.create_address_lookup(ep.id()))
+        })
+        .await;
+        let ep1_addr = EndpointAddr::new(ep1.id());
+        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
+        Ok(())
+    }
+
+    /// This test adds an empty Address Lookupwhich provides no addresses.
+    #[tokio::test]
+    #[traced_test]
+    async fn address_lookup_combined_with_empty_and_right() -> Result {
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
+        let address_lookup_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
         let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
             let disco1 = EmptyErs;
-            let disco2 = ers_shared.create_ers(ep.id());
-            ep.ers().add(disco1);
-            ep.ers().add(disco2);
+            let disco2 = address_lookup_shared.create_address_lookup(ep.id());
+            ep.address_lookup().add(disco1);
+            ep.address_lookup().add(disco2);
         })
         .await;
 
         let ep1_addr = EndpointAddr::new(ep1.id());
 
-        assert_eq!(ep2.ers().len(), 2);
+        assert_eq!(ep2.address_lookup().len(), 2);
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -674,25 +685,28 @@ mod tests {
         Ok(())
     }
 
-    /// This test adds a "lying" ers service which provides a wrong address.
+    /// This test adds a "lying" address_lookup service which provides a wrong address.
     /// This is to make sure that as long as one of the services returns a working address, we
     /// will connect successfully.
     #[tokio::test]
     #[traced_test]
-    async fn ers_combined_with_empty_and_wrong() -> Result {
+    async fn address_lookup_combined_with_empty_and_wrong() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let ers_shared = TestErsShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
+        let address_lookup_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            let ers1 = EmptyErs;
-            let ers2 = ers_shared.create_lying_ers(ep.id());
-            let ers3 = ers_shared.create_ers(ep.id());
-            let ers = ConcurrentErs::empty();
-            ers.add(ers1);
-            ers.add(ers2);
-            ers.add(ers3);
-            ers
+            let address_lookup1 = EmptyErs;
+            let address_lookup2 = address_lookup_shared.create_lying_address_lookup(ep.id());
+            let address_lookup3 = address_lookup_shared.create_address_lookup(ep.id());
+            let address_lookup = ConcurrentAddressLookup::empty();
+            address_lookup.add(address_lookup1);
+            address_lookup.add(address_lookup2);
+            address_lookup.add(address_lookup3);
+            address_lookup
         })
         .await;
 
@@ -700,18 +714,21 @@ mod tests {
         Ok(())
     }
 
-    /// This test only has the "lying" endpointID resolution system. It is here to make sure that this actually fails.
+    /// This test only has the "lying" address lookup system. It is here to make sure that this actually fails.
     #[tokio::test]
     #[traced_test]
-    async fn ers_combined_wrong_only() -> Result {
+    async fn address_lookup_combined_wrong_only() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let ers_shared = TestErsShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
+        let address_lookup_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            let ers1 = ers_shared.create_lying_ers(ep.id());
-            ConcurrentErs::from_services(vec![Box::new(ers1)])
+            let address_lookup1 = address_lookup_shared.create_lying_address_lookup(ep.id());
+            ConcurrentAddressLookup::from_services(vec![Box::new(address_lookup1)])
         })
         .await;
 
@@ -731,15 +748,21 @@ mod tests {
     }
 
     /// This test first adds a wrong address manually (e.g. from an outdated&endpoint_id ticket).
-    /// Connect should still succeed because the endpointID resolution service service will be invoked (after a delay).
+    /// Connect should still succeed because the address lookup service service will be invoked (after a delay).
     #[tokio::test]
     #[traced_test]
-    async fn ers_with_wrong_existing_addr() -> Result {
+    async fn address_lookup_with_wrong_existing_addr() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let ers_shared = TestErsShared::default();
-        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
-        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| ers_shared.create_ers(ep.id())).await;
+        let address_lookup_shared = TestErsShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
 
         let ep1_wrong_addr = EndpointAddr::from_parts(
             ep1.id(),
@@ -749,24 +772,20 @@ mod tests {
         Ok(())
     }
 
-    async fn new_endpoint<
-        R: CryptoRng,
-        D: EndpointIdResolutionSystem + 'static,
-        F: FnOnce(&Endpoint) -> D,
-    >(
+    async fn new_endpoint<R: CryptoRng, D: AddressLookup + 'static, F: FnOnce(&Endpoint) -> D>(
         rng: &mut R,
         create_disco: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         new_endpoint_add(rng, |ep| {
             let disco = create_disco(ep);
-            ep.ers().add(disco);
+            ep.address_lookup().add(disco);
         })
         .await
     }
 
     async fn new_endpoint_add<R: CryptoRng, F: FnOnce(&Endpoint)>(
         rng: &mut R,
-        add_ers: F,
+        add_address_lookup: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let secret = SecretKey::generate(rng);
 
@@ -776,7 +795,7 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        add_ers(&ep);
+        add_address_lookup(&ep);
 
         let handle = tokio::spawn({
             let ep = ep.clone();
@@ -805,7 +824,7 @@ mod tests {
     }
 }
 
-/// This module contains end-to-end tests for DNS endpoint id resolution service.
+/// This module contains end-to-end tests for DNS address lookup service.
 ///
 /// The tests run a minimal test DNS server to resolve against, and a minimal pkarr relay to
 /// publish to. The DNS and pkarr servers share their state.
@@ -821,9 +840,9 @@ mod test_dns_pkarr {
 
     use crate::{
         Endpoint, RelayMode,
+        address_lookup::{EndpointData, PkarrPublisher},
         dns::DnsResolver,
         endpoint_info::EndpointInfo,
-        ers::{EndpointData, PkarrPublisher},
         test_utils::{
             DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
         },
@@ -910,8 +929,10 @@ mod test_dns_pkarr {
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let (ep1, _guard1) = ep_with_ers(&mut rng, &relay_map, &dns_pkarr_server).await?;
-        let (ep2, _guard2) = ep_with_ers(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep1, _guard1) =
+            ep_with_address_lookup(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep2, _guard2) =
+            ep_with_address_lookup(&mut rng, &relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
@@ -924,7 +945,7 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_ers<R: CryptoRng + ?Sized>(
+    async fn ep_with_address_lookup<R: CryptoRng + ?Sized>(
         rng: &mut R,
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
@@ -935,7 +956,7 @@ mod test_dns_pkarr {
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
-            .ers(dns_pkarr_server.ers(secret_key))
+            .address_lookup(dns_pkarr_server.address_lookup(secret_key))
             .bind()
             .await?;
 

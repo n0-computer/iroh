@@ -151,18 +151,18 @@
 //!
 //! </div>
 //!
-//! ## Endpoint ID Resolution
+//! ## Address Lookup
 //!
 //! The need to know the [`RelayUrl`] *or* some direct addresses in addition to the
 //! [`EndpointId`] to connect to an iroh endpoint can be an obstacle.  To address this, the
-//! [`endpoint::Builder`] allows you to configure an [`ers`] service.
+//! [`endpoint::Builder`] allows you to configure an [`address_lookup`] service.
 //!
-//! The [`ers::Dns`] service is an endpoint ID resolution service which will publish the [`RelayUrl`]
+//! The [`address_lookup::DnsAddressLookup`] service is an address lookup service which will publish the [`RelayUrl`]
 //! and direct addresses to a service publishing those as DNS records.  To connect it looks
 //! up the [`EndpointId`] in the DNS system to find the addressing details.  This enables
 //! connecting using only the [`EndpointId`] which is often more convenient and resilient.
 //!
-//! See [the ers module] for more details.
+//! See [the Address Lookup module] for more details.
 //!
 //!
 //! # Examples
@@ -239,11 +239,11 @@
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`ers`]: crate::endpoint::Builder::ers
-//! [`ers::Dns`]: crate::ers::Dns
+//! [`address_lookup`]: crate::endpoint::Builder::address_lookup
+//! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 //! [number 0]: https://n0.computer
 //! [`RelayMode::Default`]: crate::RelayMode::Default
-//! [the ers module]: crate::ers
+//! [the Address Lookup module]: crate::address_lookup
 //! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
 //! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
 
@@ -260,11 +260,11 @@ pub(crate) mod util;
 #[cfg(wasm_browser)]
 pub(crate) mod web_runtime;
 
+pub mod address_lookup;
 pub mod defaults;
 #[cfg(not(wasm_browser))]
 pub mod dns;
 pub mod endpoint;
-pub mod ers;
 pub mod metrics;
 mod net_report;
 pub mod protocol;

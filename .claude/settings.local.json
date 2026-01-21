@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "Bash(.git/hooks/pre-commit)",
+      "Bash(cargo fmt:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

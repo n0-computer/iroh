@@ -1,4 +1,4 @@
-//! A static endpoint id resolution system to manually add endpoint addressing information.
+//! A static address lookup system to manually add endpoint addressing information.
 //!
 //! Often an application might get endpoint addressing information out-of-band in an
 //! application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
@@ -22,9 +22,9 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{EndpointData, EndpointIdResolutionSystem, EndpointInfo, Error, Item};
+use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 
-/// A static endpoint ID resolution system to manually add endpoint addressing information.
+/// A static address lookup system to manually add endpoint addressing information.
 ///
 /// Often an application might get endpoint addressing information out-of-band in an
 /// application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
@@ -37,20 +37,25 @@ use super::{EndpointData, EndpointIdResolutionSystem, EndpointInfo, Error, Item}
 /// # Examples
 ///
 /// ```rust
-/// use iroh::{Endpoint, EndpointAddr, TransportAddr, ers::static_provider::StaticProvider};
+/// use iroh::{
+///     Endpoint, EndpointAddr, TransportAddr, address_lookup::static_provider::StaticProvider,
+/// };
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
 /// # async fn main() -> n0_error::Result<()> {
-/// // Create the ERS and endpoint.
-/// let ers = StaticProvider::new();
+/// // Create the Address Lookup and endpoint.
+/// let address_lookup = StaticProvider::new();
 ///
-/// let _ep = Endpoint::builder().ers(ers.clone()).bind().await?;
+/// let _ep = Endpoint::builder()
+///     .address_lookup(address_lookup.clone())
+///     .bind()
+///     .await?;
 ///
 /// // Sometime later add a RelayUrl for our endpoint.
 /// let id = SecretKey::generate(&mut rand::rng()).public();
 /// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
-/// ers.add_endpoint_info(EndpointAddr {
+/// address_lookup.add_endpoint_info(EndpointAddr {
 ///     id,
 ///     addrs: [TransportAddr::Relay("https://example.com".parse()?)]
 ///         .into_iter()
@@ -84,27 +89,27 @@ struct StoredEndpointInfo {
 }
 
 impl StaticProvider {
-    /// The provenance string for this ERS implementation.
+    /// The provenance string for this Address Lookup implementation.
     ///
     /// This is mostly used for debugging information and allows understanding the origin of
     /// addressing information used by an iroh [`Endpoint`].
     ///
     /// [`Endpoint`]: crate::Endpoint
-    pub const PROVENANCE: &'static str = "static_ers";
+    pub const PROVENANCE: &'static str = "static_address_lookup";
 
-    /// Creates a new static ERS instance.
+    /// Creates a new static Address Lookup instance.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Creates a new static ERS instance with the provided `provenance`.
+    /// Creates a new static Address Lookup instance with the provided `provenance`.
     ///
-    /// The provenance is part of [`ers::Item`]s returned from [`Self::resolve`].
+    /// The provenance is part of [`address_lookup::Item`]s returned from [`Self::resolve`].
     /// It is mostly used for debugging information and allows understanding the origin of
     /// addressing information used by an iroh [`Endpoint`].
     ///
     /// [`Endpoint`]: crate::Endpoint
-    /// [`ers::Item`]: crate::ers::Item
+    /// [`address_lookup::Item`]: crate::address_lookup::Item
     pub fn with_provenance(provenance: &'static str) -> Self {
         Self {
             endpoints: Default::default(),
@@ -112,14 +117,14 @@ impl StaticProvider {
         }
     }
 
-    /// Creates a static ERS instance from endpoint addresses.
+    /// Creates a static Address Lookup instance from endpoint addresses.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use std::{net::SocketAddr, str::FromStr};
     ///
-    /// use iroh::{Endpoint, EndpointAddr, ers::static_provider::StaticProvider};
+    /// use iroh::{Endpoint, EndpointAddr, address_lookup::static_provider::StaticProvider};
     ///
     /// # fn get_addrs() -> Vec<EndpointAddr> {
     /// #     Vec::new()
@@ -130,9 +135,12 @@ impl StaticProvider {
     /// let addrs = get_addrs();
     ///
     /// // create a StaticProvider from the list of addrs.
-    /// let ers = StaticProvider::from_endpoint_info(addrs);
-    /// // create an endpoint with the Static Provider ers
-    /// let endpoint = Endpoint::builder().ers(ers).bind().await?;
+    /// let address_lookup = StaticProvider::from_endpoint_info(addrs);
+    /// // create an endpoint with the Static Provider address_lookup
+    /// let endpoint = Endpoint::builder()
+    ///     .address_lookup(address_lookup)
+    ///     .bind()
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -200,7 +208,7 @@ impl StaticProvider {
     }
 }
 
-impl EndpointIdResolutionSystem for StaticProvider {
+impl AddressLookup for StaticProvider {
     fn publish(&self, _data: &EndpointData) {}
 
     fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<super::Item, Error>>> {
@@ -235,10 +243,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic() -> Result {
-        let ers = StaticProvider::new();
+        let address_lookup = StaticProvider::new();
 
         let _ep = Endpoint::empty_builder(RelayMode::Disabled)
-            .ers(ers.clone())
+            .address_lookup(address_lookup.clone())
             .bind()
             .await?;
 
@@ -249,19 +257,21 @@ mod tests {
         );
         let user_data = Some("foobar".parse().unwrap());
         let endpoint_info = EndpointInfo::from(addr.clone()).with_user_data(user_data.clone());
-        ers.add_endpoint_info(endpoint_info.clone());
+        address_lookup.add_endpoint_info(endpoint_info.clone());
 
-        let back = ers.get_endpoint_info(key.public()).context("no addr")?;
+        let back = address_lookup
+            .get_endpoint_info(key.public())
+            .context("no addr")?;
 
         assert_eq!(back, endpoint_info);
         assert_eq!(back.user_data(), user_data.as_ref());
         assert_eq!(back.into_endpoint_addr(), addr);
 
-        let removed = ers
+        let removed = address_lookup
             .remove_endpoint_info(key.public())
             .context("nothing removed")?;
         assert_eq!(removed, endpoint_info);
-        let res = ers.get_endpoint_info(key.public());
+        let res = address_lookup.get_endpoint_info(key.public());
         assert!(res.is_none());
 
         Ok(())
@@ -269,14 +279,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_provenance() -> Result {
-        let ers = StaticProvider::with_provenance("foo");
+        let address_lookup = StaticProvider::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr::from_parts(
             key.public(),
             [TransportAddr::Relay("https://example.com".parse()?)],
         );
-        ers.add_endpoint_info(addr);
-        let mut stream = ers.resolve(key.public()).unwrap();
+        address_lookup.add_endpoint_info(addr);
+        let mut stream = address_lookup.resolve(key.public()).unwrap();
         let item = stream.next().await.unwrap()?;
         assert_eq!(item.provenance(), "foo");
         assert_eq!(

@@ -56,9 +56,9 @@ use crate::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
 use crate::net_report::QuicConfig;
 use crate::{
+    address_lookup::{self, AddressLookup, EndpointData, Error as AddressLookupError, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::hooks::EndpointHooksList,
-    ers::{self, EndpointData, EndpointIdResolutionSystem, Error as ErsError, UserData},
     magicsock::remote_map::{PathsWatcher, RemoteInfo},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
@@ -117,8 +117,8 @@ pub(crate) struct Options {
     /// Secret key for this endpoint.
     pub(crate) secret_key: SecretKey,
 
-    /// Optional user-defined ERS data.
-    pub(crate) ers_user_data: Option<UserData>,
+    /// Optional user-defined Address Lookup data.
+    pub(crate) address_lookup_user_data: Option<UserData>,
 
     /// A DNS resolver to use for resolving relay URLs.
     ///
@@ -209,7 +209,7 @@ pub(crate) struct MagicSock {
     net_report: Watchable<(Option<Report>, UpdateReason)>,
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
-    /// Tracks the networkmap endpoint entity for each endpoint ID resolution key.
+    /// Tracks the networkmap endpoint entity for each address lookup key.
     pub(crate) remote_map: RemoteMap,
 
     /// Local addresses
@@ -222,11 +222,10 @@ pub(crate) struct MagicSock {
     dns_resolver: DnsResolver,
     relay_map: RelayMap,
 
-    // - Endpoint ID Resolution
-    /// Optional ERS
-    ers: ers::ConcurrentErs,
+    /// Optional Address Lookup
+    address_lookup: address_lookup::ConcurrentAddressLookup,
     /// Optional user-defined discover data.
-    ers_user_data: RwLock<Option<UserData>>,
+    address_lookup_user_data: RwLock<Option<UserData>>,
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
@@ -303,14 +302,14 @@ impl MagicSock {
     /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
     ///
     /// This starts a `RemoteStateActor` for the remote if not running already, and then checks
-    /// if the actor has any known paths to the remote. If not, it starts endpoint ID resolution and waits for
+    /// if the actor has any known paths to the remote. If not, it starts address lookup and waits for
     /// at least one result to arrive.
     ///
-    /// Returns `Ok(Ok(EndpointIdMappedAddr))` if there is a known path or ERS produced
+    /// Returns `Ok(Ok(EndpointIdMappedAddr))` if there is a known path or Address Lookup produced
     /// at least one result. This does not mean there is a working path, only that we have at least
     /// one transport address we can try to connect to.
     ///
-    /// Returns `Ok(Err(ers_error))` if there are no known paths to the remote and ERS
+    /// Returns `Ok(Err(address_lookup_error))` if there are no known paths to the remote and Address Lookup
     /// failed or produced no results. This means that we don't have any transport address for
     /// the remote, thus there is no point in trying to connect over the quinn endpoint.
     ///
@@ -319,7 +318,8 @@ impl MagicSock {
     pub(crate) async fn resolve_remote(
         &self,
         addr: EndpointAddr,
-    ) -> Result<Result<EndpointIdMappedAddr, ErsError>, RemoteStateActorStoppedError> {
+    ) -> Result<Result<EndpointIdMappedAddr, AddressLookupError>, RemoteStateActorStoppedError>
+    {
         let EndpointAddr { id, addrs } = addr;
         let actor = self.remote_map.remote_state_actor(id);
         let (tx, rx) = oneshot::channel();
@@ -424,7 +424,7 @@ impl MagicSock {
     /// Stores a new set of direct addresses.
     ///
     /// If the direct addresses have changed from the previous set, they are published to
-    /// the endpoint ID resolution system.
+    /// the address lookup system.
     pub(super) fn store_direct_addresses(&self, addrs: BTreeSet<DirectAddr>) {
         let updated = self.direct_addrs.update(addrs);
         if updated {
@@ -438,14 +438,17 @@ impl MagicSock {
         &self.dns_resolver
     }
 
-    /// Reference to the internal ERS
-    pub(crate) fn ers(&self) -> &ers::ConcurrentErs {
-        &self.ers
+    /// Reference to the internal Address Lookup
+    pub(crate) fn address_lookup(&self) -> &address_lookup::ConcurrentAddressLookup {
+        &self.address_lookup
     }
 
-    /// Updates the user-defined ERS data for this endpoint.
-    pub(crate) fn set_user_data_for_ers(&self, user_data: Option<UserData>) {
-        let mut guard = self.ers_user_data.write().expect("lock poisened");
+    /// Updates the user-defined Address Lookup data for this endpoint.
+    pub(crate) fn set_user_data_for_address_lookup(&self, user_data: Option<UserData>) {
+        let mut guard = self
+            .address_lookup_user_data
+            .write()
+            .expect("lock poisened");
         if *guard != user_data {
             *guard = user_data;
             drop(guard);
@@ -542,7 +545,7 @@ impl MagicSock {
         }
     }
 
-    /// Publishes our address to an endpoint ID resolution service, if configured.
+    /// Publishes our address to an address lookup service, if configured.
     ///
     /// Called whenever our addresses or home relay endpoint changes.
     fn publish_my_addr(&self) {
@@ -553,7 +556,11 @@ impl MagicSock {
             .map(TransportAddr::Ip)
             .collect();
 
-        let user_data = self.ers_user_data.read().expect("lock poisened").clone();
+        let user_data = self
+            .address_lookup_user_data
+            .read()
+            .expect("lock poisened")
+            .clone();
         if relay_url.is_none() && addrs.is_empty() && user_data.is_none() {
             // do not bother publishing if we don't have any information
             return;
@@ -563,7 +570,7 @@ impl MagicSock {
         }
 
         let data = EndpointData::new(addrs).with_user_data(user_data);
-        self.ers.publish(&data);
+        self.address_lookup.publish(&data);
     }
 }
 
@@ -727,10 +734,10 @@ pub enum BindError {
     CreateNetmonMonitor { source: netmon::Error },
     #[error("Invalid transport configuration")]
     InvalidTransportConfig,
-    #[error("Failed to create an endpoint ID resolution service")]
-    EndpointIdResolution {
+    #[error("Failed to create an address lookup service")]
+    AddressLookup {
         #[error(from)]
-        source: crate::ers::IntoErsError,
+        source: crate::address_lookup::IntoAddressLookupError,
     },
 }
 
@@ -740,7 +747,7 @@ impl Handle {
         let Options {
             secret_key,
             transports: transport_configs,
-            ers_user_data,
+            address_lookup_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
             proxy_url,
@@ -751,7 +758,7 @@ impl Handle {
             hooks,
         } = opts;
 
-        let ers = ers::ConcurrentErs::default();
+        let address_lookup = address_lookup::ConcurrentAddressLookup::default();
         #[cfg(not(wasm_browser))]
         let port_mapper =
             portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
@@ -838,7 +845,7 @@ impl Handle {
                 secret_key.public(),
                 metrics.magicsock.clone(),
                 direct_addrs.addrs.watch(),
-                ers.clone(),
+                address_lookup.clone(),
                 shutdown_token.child_token(),
             )
         };
@@ -849,9 +856,9 @@ impl Handle {
             shutdown: shutdown_state,
             ipv6_reported,
             remote_map,
-            ers,
+            address_lookup,
             relay_map: relay_map.clone(),
-            ers_user_data: RwLock::new(ers_user_data),
+            address_lookup_user_data: RwLock::new(address_lookup_user_data),
             direct_addrs,
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
@@ -1545,9 +1552,9 @@ mod tests {
     use super::Options;
     use crate::{
         Endpoint, RelayMode, SecretKey,
+        address_lookup::static_provider::StaticProvider,
         dns::DnsResolver,
         endpoint::QuicTransportConfig,
-        ers::static_provider::StaticProvider,
         magicsock::{
             Handle, MagicSock, TransportConfig,
             mapped_addrs::{EndpointIdMappedAddr, MappedAddr},
@@ -1572,7 +1579,7 @@ mod tests {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
             #[cfg(any(test, feature = "test-utils"))]
-            ers_user_data: None,
+            address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
         }
@@ -1738,34 +1745,34 @@ mod tests {
         Ok(())
     }
 
-    /// Returns a pair of endpoints with a shared [`StaticEndpointIdResolution`].
+    /// Returns a pair of endpoints with a shared [`StaticProvider`].
     ///
     /// The endpoints do not use a relay server but can connect to each other via local
     /// addresses.  Dialing by [`EndpointId`] is possible, and the addresses get updated even if
     /// the endpoints rebind.
     async fn endpoint_pair() -> (AbortOnDropHandle<()>, Endpoint, Endpoint) {
-        let ers = StaticProvider::new();
+        let address_lookup = StaticProvider::new();
         let ep1 = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
-            .ers(ers.clone())
+            .address_lookup(address_lookup.clone())
             .bind()
             .await
             .unwrap();
         let ep2 = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![ALPN.to_vec()])
-            .ers(ers.clone())
+            .address_lookup(address_lookup.clone())
             .bind()
             .await
             .unwrap();
-        ers.add_endpoint_info(ep1.addr());
-        ers.add_endpoint_info(ep2.addr());
+        address_lookup.add_endpoint_info(ep1.addr());
+        address_lookup.add_endpoint_info(ep2.addr());
 
         let ep1_addr_stream = ep1.watch_addr().stream();
         let ep2_addr_stream = ep2.watch_addr().stream();
         let mut addr_stream = MergeBounded::from_iter([ep1_addr_stream, ep2_addr_stream]);
         let task = tokio::spawn(async move {
             while let Some(addr) = addr_stream.next().await {
-                ers.add_endpoint_info(addr);
+                address_lookup.add_endpoint_info(addr);
             }
         });
 
@@ -1960,7 +1967,7 @@ mod tests {
                 TransportConfig::default_ipv6(),
             ],
             secret_key: secret_key.clone(),
-            ers_user_data: None,
+            address_lookup_user_data: None,
             dns_resolver,
             proxy_url: None,
             server_config,

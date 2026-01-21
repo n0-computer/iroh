@@ -11,12 +11,12 @@ use indicatif::HumanBytes;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey, TransportAddr,
     Watcher,
-    dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
-    endpoint::{BindOpts, ConnectionError, PathInfoList},
-    ers::{
-        dns::Dns,
+    address_lookup::{
+        dns::DnsAddressLookup,
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
+    dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
+    endpoint::{BindOpts, ConnectionError, PathInfoList},
 };
 use n0_error::{Result, StackResultExt, StdResultExt, bail_any};
 use n0_future::task::AbortOnDropHandle;
@@ -116,9 +116,9 @@ struct EndpointArgs {
     /// Disable relays completely.
     #[clap(long, conflicts_with = "relay_url")]
     no_relay: bool,
-    /// Disable ERS completely.
+    /// Disable Address Lookup completely.
     #[clap(long, conflicts_with_all = ["pkarr_relay_url", "no_pkarr_publish", "dns_origin_domain", "no_dns_resolve"])]
-    no_ers: bool,
+    no_address_lookup: bool,
     /// If set no direct connections will be established.
     #[clap(long)]
     relay_only: bool,
@@ -138,7 +138,7 @@ struct EndpointArgs {
     #[clap(long)]
     no_dns_resolve: bool,
     #[clap(long)]
-    /// Enable mDNS ERS.
+    /// Enable mDNS Address Lookup.
     mdns: bool,
     /// Set the default IPv4 bind address.
     #[clap(long)]
@@ -259,19 +259,19 @@ impl EndpointArgs {
             }
         }
 
-        if !self.no_ers {
+        if !self.no_address_lookup {
             if !self.no_pkarr_publish {
                 let url = self
                     .pkarr_relay_url
                     .unwrap_or_else(|| self.env.pkarr_relay_url());
-                builder = builder.ers(PkarrPublisher::builder(url));
+                builder = builder.address_lookup(PkarrPublisher::builder(url));
             }
 
             if !self.no_dns_resolve {
                 let domain = self
                     .dns_origin_domain
                     .unwrap_or_else(|| self.env.dns_origin_domain());
-                builder = builder.ers(Dns::builder(domain));
+                builder = builder.address_lookup(DnsAddressLookup::builder(domain));
             }
         }
 
@@ -323,9 +323,11 @@ impl EndpointArgs {
         if self.mdns {
             #[cfg(feature = "mdns")]
             {
-                use iroh::ers::Mdns;
+                use iroh::address_lookup::MdnsAddressLookup;
 
-                endpoint.ers().add(Mdns::builder().build(endpoint.id())?);
+                endpoint
+                    .address_lookup()
+                    .add(MdnsAddressLookup::builder().build(endpoint.id())?);
             }
             #[cfg(not(feature = "mdns"))]
             {

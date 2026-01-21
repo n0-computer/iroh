@@ -173,7 +173,7 @@ impl BlobSearch {
     /// Query a remote endpoint, download all matching blobs and print the results.
     pub async fn query_remote(&self, endpoint_id: EndpointId, query: &str) -> Result<u64> {
         // Establish a connection to our endpoint.
-        // We use the default endpoint ID resolution in iroh, so we can connect by endpoint id without
+        // We use the default address lookup in iroh, so we can connect by endpoint id without
         // providing further information.
         let conn = self.endpoint.connect(endpoint_id, ALPN).await?;
 

@@ -29,8 +29,11 @@ use self::path_state::RemotePathState;
 pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
 use super::Source;
 use crate::{
+    address_lookup::{
+        AddressLookup, ConcurrentAddressLookup, Error as AddressLookupError,
+        Item as AddressLookupItem,
+    },
     endpoint::{DirectAddr, quic::PathStats},
-    ers::{ConcurrentErs, EndpointIdResolutionSystem, Error as ErsError, Item as ErsItem},
     magicsock::{
         MagicsockMetrics,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
@@ -100,16 +103,16 @@ type AddrEvents = MergeUnbounded<
     >,
 >;
 
-/// Either a stream of incoming results from [`ConcurrentErs::resolve`] or infinitely pending.
+/// Either a stream of incoming results from [`ConcurrentAddressLookup::resolve`] or infinitely pending.
 ///
-/// Set to [`Either::Left`] with an always-pending stream while endpoint ID resolution is not running, and to
-/// [`Either::Right`] while ERS is running.
+/// Set to [`Either::Left`] with an always-pending stream while address lookup is not running, and to
+/// [`Either::Right`] while Address Lookup is running.
 ///
-/// The stream returned from [`ConcurrentErs::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
+/// The stream returned from [`ConcurrentAddressLookup::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
 /// wrapper to make it `Sync` so that the [`RemoteStateActor::run`] future stays `Send`.
-type ErsStream = Either<
-    n0_future::stream::Pending<Result<ErsItem, ErsError>>,
-    SyncStream<BoxStream<Result<ErsItem, ErsError>>>,
+type AddressLookupStream = Either<
+    n0_future::stream::Pending<Result<AddressLookupItem, AddressLookupError>>,
+    SyncStream<BoxStream<Result<AddressLookupItem, AddressLookupError>>>,
 >;
 
 /// List of addrs and path ids for open paths in a connection.
@@ -135,8 +138,8 @@ pub(super) struct RemoteStateActor {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    /// Endpoint ID resolution service, cloned from the magicsock.
-    ers: ConcurrentErs,
+    /// Address lookup service, cloned from the magicsock.
+    address_lookup: ConcurrentAddressLookup,
 
     // Internal state - Quinn Connections we are managing.
     //
@@ -153,7 +156,7 @@ pub(super) struct RemoteStateActor {
     //
     /// All possible paths we are aware of.
     ///
-    /// These paths might be entirely impossible to use, since they are added by ERS
+    /// These paths might be entirely impossible to use, since they are added by Address Lookup
     /// mechanisms.  The are only potentially usable.
     paths: RemotePathState,
     /// Information about the last holepunching attempt.
@@ -177,10 +180,10 @@ pub(super) struct RemoteStateActor {
     /// They failed to open because we did not have enough CIDs issued by the remote.
     pending_open_paths: VecDeque<transports::Addr>,
 
-    // Internal state - endpoint ID resolution
+    // Internal state - address lookup
     //
-    /// Stream of ERS results, or always pending if ERS is not running.
-    ers_stream: ErsStream,
+    /// Stream of Address Lookup results, or always pending if Address Lookup is not running.
+    address_lookup_stream: AddressLookupStream,
 }
 
 impl RemoteStateActor {
@@ -191,7 +194,7 @@ impl RemoteStateActor {
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
-        ers: ConcurrentErs,
+        address_lookup: ConcurrentAddressLookup,
     ) -> Self {
         Self {
             endpoint_id,
@@ -199,7 +202,7 @@ impl RemoteStateActor {
             metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
-            ers,
+            address_lookup,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
             path_events: Default::default(),
@@ -210,7 +213,7 @@ impl RemoteStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            ers_stream: Either::Left(n0_future::stream::pending()),
+            address_lookup_stream: Either::Left(n0_future::stream::pending()),
         }
     }
 
@@ -324,8 +327,8 @@ impl RemoteStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching();
                 }
-                item = self.ers_stream.next() => {
-                    self.handle_ers_item(item);
+                item = self.address_lookup_stream.next() => {
+                    self.handle_address_lookup_item(item);
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -580,13 +583,13 @@ impl RemoteStateActor {
     fn handle_msg_resolve_remote(
         &mut self,
         addrs: BTreeSet<TransportAddr>,
-        tx: oneshot::Sender<Result<(), ErsError>>,
+        tx: oneshot::Sender<Result<(), AddressLookupError>>,
     ) {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
         self.paths.resolve_remote(tx);
-        // Start ERS if we have no selected path.
-        self.trigger_ers();
+        // Start Address Lookup if we have no selected path.
+        self.trigger_address_lookup();
     }
 
     fn handle_connection_close(&mut self, conn_id: ConnId) {
@@ -599,25 +602,28 @@ impl RemoteStateActor {
         }
     }
 
-    fn handle_ers_item(&mut self, item: Option<Result<ErsItem, ErsError>>) {
+    fn handle_address_lookup_item(
+        &mut self,
+        item: Option<Result<AddressLookupItem, AddressLookupError>>,
+    ) {
         match item {
             None => {
-                self.ers_stream = Either::Left(n0_future::stream::pending());
-                self.paths.ers_finished(Ok(()));
+                self.address_lookup_stream = Either::Left(n0_future::stream::pending());
+                self.paths.address_lookup_finished(Ok(()));
             }
             Some(Err(err)) => {
-                warn!("Endpoint ID Resolution failed: {err:#}");
-                self.ers_stream = Either::Left(n0_future::stream::pending());
-                self.paths.ers_finished(Err(err));
+                warn!("Address Lookup failed: {err:#}");
+                self.address_lookup_stream = Either::Left(n0_future::stream::pending());
+                self.paths.address_lookup_finished(Err(err));
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
                     warn!(
                         ?item,
-                        "Endpoint ID resolution emitted item for wrong remote endpoint"
+                        "Address Lookup emitted item for wrong remote endpoint"
                     );
                 } else {
-                    let source = Source::Ers {
+                    let source = Source::AddressLookup {
                         name: item.provenance().to_string(),
                     };
                     let addrs =
@@ -628,16 +634,18 @@ impl RemoteStateActor {
         }
     }
 
-    /// Triggers ERS for the remote endpoint, if needed.
+    /// Triggers Address Lookup for the remote endpoint, if needed.
     ///
-    /// Does not start ERS if we have a selected path or if ERS is currently running.
-    fn trigger_ers(&mut self) {
-        if self.selected_path.get().is_some() || matches!(self.ers_stream, Either::Right(_)) {
+    /// Does not start Address Lookup if we have a selected path or if Address Lookup is currently running.
+    fn trigger_address_lookup(&mut self) {
+        if self.selected_path.get().is_some()
+            || matches!(self.address_lookup_stream, Either::Right(_))
+        {
             return;
         }
-        match self.ers.resolve(self.endpoint_id) {
-            Some(stream) => self.ers_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.ers_finished(Ok(())),
+        match self.address_lookup.resolve(self.endpoint_id) {
+            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
+            None => self.paths.address_lookup_finished(Ok(())),
         }
     }
 
@@ -1215,15 +1223,15 @@ pub(crate) enum RemoteStateMessage {
     /// Asks if there is any possible path that could be used.
     ///
     /// This adds the provided transport addresses to the list of potential paths for this remote
-    /// and starts ERS if needed.
+    /// and starts Address Lookup if needed.
     ///
     /// Returns `Ok` immediately if the provided address list is non-empy or we have are other known paths.
-    /// Otherwise returns `Ok` once ERS produces a result, or the ERS error if ERS fails
+    /// Otherwise returns `Ok` once Address Lookup produces a result, or the Address Lookup error if Address Lookup fails
     /// or produces no results,
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,
-        oneshot::Sender<Result<(), ErsError>>,
+        oneshot::Sender<Result<(), AddressLookupError>>,
     ),
     /// Returns information about the remote.
     ///

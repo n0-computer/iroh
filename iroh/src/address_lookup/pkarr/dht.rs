@@ -1,6 +1,6 @@
-//! Pkarr based endpoint ID resolution for iroh, supporting both relay servers and the DHT.
+//! Pkarr based address lookup for iroh, supporting both relay servers and the DHT.
 //!
-//! This module contains pkarr-based endpoint ID resolution for iroh which can use both pkarr
+//! This module contains pkarr-based address lookup for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
 //! overview of pkarr.
 //!
@@ -19,12 +19,12 @@ use url::Url;
 
 use crate::{
     Endpoint,
-    endpoint_info::EndpointInfo,
-    ers::{
-        EndpointData, EndpointIdResolutionSystem, Error as ErsError, IntoErs, IntoErsError,
-        Item as ErsItem,
+    address_lookup::{
+        AddressLookup, EndpointData, Error as AddressLookupError, IntoAddressLookup,
+        IntoAddressLookupError, Item as AddressLookupItem,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
+    endpoint_info::EndpointInfo,
 };
 
 /// Republish delay for the DHT.
@@ -33,20 +33,20 @@ use crate::{
 /// published immediately.
 const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 
-/// Pkarr Mainline DHT and relay server endpoint ID resolution.
+/// Pkarr Mainline DHT and relay server address lookup.
 ///
 /// It stores endpoint addresses in DNS records, signed by the endpoint's private key, and publishes
 /// them to the BitTorrent Mainline DHT.  See the [pkarr module] for more details.
 ///
-/// This implements the [`EndpointIdResolutionSystem`] trait to be used as an endpoint ID resolution service which can
-/// be used as both a publisher and resolver.  Calling [`Dht::publish`] will start
+/// This implements the [`AddressLookup`] trait to be used as an address lookup service which can
+/// be used as both a publisher and resolver.  Calling [`DhtAddressLookup::publish`] will start
 /// a background task that periodically publishes the endpoint address.
 ///
 /// [pkarr module]: super
 #[derive(Debug, Clone)]
-pub struct Dht(Arc<Inner>);
+pub struct DhtAddressLookup(Arc<Inner>);
 
-impl Default for Dht {
+impl Default for DhtAddressLookup {
     fn default() -> Self {
         Self::builder().build().expect("valid builder")
     }
@@ -58,7 +58,7 @@ struct Inner {
     pkarr: PkarrClient,
     /// The background task that periodically publishes the endpoint address.
     ///
-    /// Due to [`AbortOnDropHandle`], this will be aborted when the ERS is dropped.
+    /// Due to [`AbortOnDropHandle`], this will be aborted when the Address Lookup is dropped.
     task: Mutex<Option<AbortOnDropHandle<()>>>,
     /// Optional keypair for signing the DNS packets.
     ///
@@ -75,7 +75,10 @@ struct Inner {
 }
 
 impl Inner {
-    async fn resolve_pkarr(&self, key: pkarr::PublicKey) -> Option<Result<ErsItem, ErsError>> {
+    async fn resolve_pkarr(
+        &self,
+        key: pkarr::PublicKey,
+    ) -> Option<Result<AddressLookupItem, AddressLookupError>> {
         tracing::info!(
             "resolving {} from relay and DHT {:?}",
             key.to_z32(),
@@ -87,7 +90,7 @@ impl Inner {
             Some(signed_packet) => match EndpointInfo::from_pkarr_signed_packet(&signed_packet) {
                 Ok(endpoint_info) => {
                     tracing::info!("discovered endpoint info {:?}", endpoint_info);
-                    Some(Ok(ErsItem::new(endpoint_info, "pkarr", None)))
+                    Some(Ok(AddressLookupItem::new(endpoint_info, "pkarr", None)))
                 }
                 Err(_err) => {
                     tracing::debug!("failed to parse signed packet as endpoint info");
@@ -102,7 +105,7 @@ impl Inner {
     }
 }
 
-/// Builder for [`Dht`].
+/// Builder for [`DhtAddressLookup`].
 ///
 /// By default, publishing to the DHT is enabled, and relay publishing is disabled.
 #[derive(Debug)]
@@ -196,10 +199,10 @@ impl Builder {
         self
     }
 
-    /// Builds the endpoint ID resolution mechanism.
-    pub fn build(self) -> Result<Dht, IntoErsError> {
+    /// Builds the address lookup mechanism.
+    pub fn build(self) -> Result<DhtAddressLookup, IntoAddressLookupError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
-            return Err(IntoErsError::from_err(
+            return Err(IntoAddressLookupError::from_err(
                 "pkarr",
                 std::io::Error::other("at least one of DHT or relay must be enabled"),
             ));
@@ -215,18 +218,18 @@ impl Builder {
                 if let Some(url) = &self.pkarr_relay {
                     builder
                         .relays(std::slice::from_ref(url))
-                        .map_err(|e| IntoErsError::from_err("pkarr", e))?;
+                        .map_err(|e| IntoAddressLookupError::from_err("pkarr", e))?;
                 }
                 builder
                     .build()
-                    .map_err(|e| IntoErsError::from_err("pkarr", e))?
+                    .map_err(|e| IntoAddressLookupError::from_err("pkarr", e))?
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         let include_direct_addresses = self.include_direct_addresses;
         let secret_key = self.secret_key.filter(|_| self.enable_publish);
 
-        Ok(Dht(Arc::new(Inner {
+        Ok(DhtAddressLookup(Arc::new(Inner {
             pkarr,
             ttl,
             relay_url: self.pkarr_relay,
@@ -238,17 +241,17 @@ impl Builder {
     }
 }
 
-impl IntoErs for Builder {
-    fn into_ers(
+impl IntoAddressLookup for Builder {
+    fn into_address_lookup(
         self,
         endpoint: &Endpoint,
-    ) -> Result<impl EndpointIdResolutionSystem, IntoErsError> {
+    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
         self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 
-impl Dht {
-    /// Creates a new builder for [`Dht`].
+impl DhtAddressLookup {
+    /// Creates a new builder for [`DhtAddressLookup`].
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -287,7 +290,7 @@ impl Dht {
     }
 }
 
-impl EndpointIdResolutionSystem for Dht {
+impl AddressLookup for DhtAddressLookup {
     fn publish(&self, data: &EndpointData) {
         let Some(keypair) = &self.0.secret_key else {
             tracing::debug!("no keypair set, not publishing");
@@ -312,7 +315,10 @@ impl EndpointIdResolutionSystem for Dht {
         *task = Some(AbortOnDropHandle::new(curr));
     }
 
-    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<ErsItem, ErsError>>> {
+    fn resolve(
+        &self,
+        endpoint_id: EndpointId,
+    ) -> Option<BoxStream<Result<AddressLookupItem, AddressLookupError>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(endpoint_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", endpoint_id, pkarr_public_key.to_z32());
@@ -347,7 +353,7 @@ mod tests {
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()
             .anyerr()?;
-        let ers = Dht::builder()
+        let ers = DhtAddressLookup::builder()
             .secret_key(secret.clone())
             .client(client)
             .build()?;

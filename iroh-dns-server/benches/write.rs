@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use iroh::{SecretKey, endpoint_info::EndpointInfo, ers::pkarr::PkarrRelayClient};
+use iroh::{SecretKey, address_lookup::pkarr::PkarrRelayClient, endpoint_info::EndpointInfo};
 use iroh_dns_server::{ZoneStore, config::Config, metrics::Metrics, server::Server};
 use n0_error::Result;
 use rand_chacha::rand_core::SeedableRng;
