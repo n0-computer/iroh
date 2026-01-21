@@ -1,10 +1,25 @@
-//! Transfer example: Transfer data between two endpoints and print stats.
+//! Transfer data between two endpoints and print various stats and metrics.
 //!
-//! This example uses most of iroh's endpoint builder options and thus allows for flexible testing of connections
-//! with different discovery and transport configuration. Once a connection is established, it uses a simple protocol
-//! that transfers data between endpoints in both directions, measuring time and connection stats.
+//! This example implements a transfer protocol to upload or download data between two iroh endpoints
+//! with a time or size limit. After the transfer finishes, statistics about the transfer and the used
+//! network paths are printed.
 //!
-//! The protocol is client-initiated and allows to set either a size or time limit on the transfers.
+//! It is not the typical "simple" example, yet it may be interesting to read because it uses most of
+//! iroh's endpoint builder options. We use it for manual testing before release, and it also runs as
+//! part of our CI infrastructure.
+//!
+//! You can use this example to easily test iroh connectivity between devices. Usage is straightforward:
+//!
+//! ```sh
+//! # Run in release mode and with all features and print available commands and options:
+//! cargo run --example transfer --release --all-features -- help
+//!
+//! # Run a provider endpoint on a device
+//! cargo run --example transfer --release --all-features -- provide
+//!
+//! # And connect to the provider endpoint from another device
+//! cargo run --example transfer --release --all-features -- fetch PROVIDER_ENDPOINT_ID
+//! ```
 
 use std::{
     fmt,
@@ -29,6 +44,7 @@ use iroh::{
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
         BindOpts, Connection, ConnectionError, PathInfoList, RecvStream, SendStream, VarInt,
+        WriteError,
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
@@ -36,8 +52,11 @@ use n0_future::{stream::StreamExt, task::AbortOnDropHandle};
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize, Serializer};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{Instrument, debug, info, warn};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    time::timeout,
+};
+use tracing::{Instrument, debug, instrument, warn};
 use url::Url;
 
 /// ALPN of our transport protocol.
@@ -129,9 +148,9 @@ enum Mode {
     /// We send data to the remote, measuring our upload speed.
     Upload,
     /// We receive data from the remote, measuring our download speed.
-    Download,
-    /// We both sends and receives data.
     #[default]
+    Download,
+    /// We send and receive data in parallel.
     Bidi,
 }
 
@@ -140,21 +159,14 @@ enum Length {
     #[debug("Size({})", HumanBytes(*_0))]
     Size(u64),
     #[debug("Duration({_0:?})")]
-    Duration(#[serde(with = "duration_millis")] Duration),
+    Duration(#[serde(with = "duration_micros")] Duration),
 }
 
 impl Length {
-    fn remaining_size(&self, current: usize) -> usize {
-        match *self {
-            Length::Size(limit) => (limit as usize).saturating_sub(current),
-            _ => usize::MAX,
-        }
-    }
-
-    fn remaining_time(&self, start: Instant) -> Duration {
+    fn remaining(&self, start: Instant, size: usize) -> (Duration, usize) {
         match self {
-            Length::Duration(limit) => limit.saturating_sub(start.elapsed()),
-            _ => Duration::MAX,
+            Length::Duration(limit) => (limit.saturating_sub(start.elapsed()), usize::MAX),
+            Length::Size(limit) => (Duration::MAX, (*limit as usize).saturating_sub(size)),
         }
     }
 }
@@ -180,10 +192,13 @@ impl Request {
         );
         let mut buf = vec![0u8; header_len];
         recv.read_exact(&mut buf).await.anyerr()?;
-        postcard::from_bytes(&buf).std_context("failed to decode request")
+        let request = postcard::from_bytes(&buf).std_context("failed to decode request")?;
+        debug!("received request {request:?}");
+        Ok(request)
     }
 
     async fn write(&self, send: &mut SendStream) -> Result<()> {
+        debug!("sending request {self:?}");
         let buf = postcard::to_stdvec(&self).unwrap();
         send.write_u32(buf.len() as u32).await.anyerr()?;
         send.write_all(&buf).await.anyerr()?;
@@ -344,7 +359,7 @@ impl EndpointArgs {
             Err(_) => {
                 let s = SecretKey::generate(&mut rand::rng());
                 output.emit(SecretGenerated {
-                    secret_hex: HEXLOWER.encode(&s.to_bytes()),
+                    secret_key: HEXLOWER.encode(&s.to_bytes()),
                 });
                 s
             }
@@ -445,7 +460,7 @@ impl EndpointArgs {
         if self.relay_only {
             endpoint.online().await;
         } else if !self.no_relay {
-            tokio::time::timeout(Duration::from_secs(3), endpoint.online())
+            timeout(Duration::from_secs(3), endpoint.online())
                 .await
                 .ok();
         }
@@ -492,7 +507,7 @@ async fn provide(endpoint: Endpoint, output: OutputMode) -> Result<()> {
     Ok(())
 }
 
-#[tracing::instrument("conn", skip_all, fields(remote=%conn.remote_id().fmt_short()))]
+#[instrument("conn", skip_all, fields(remote=%conn.remote_id().fmt_short()))]
 async fn handle_connection(conn: Connection, output: OutputMode) {
     let start = Instant::now();
     let remote_id = conn.remote_id();
@@ -531,9 +546,10 @@ async fn handle_connection(conn: Connection, output: OutputMode) {
     output.emit_with_remote(remote_id, PathStats::from_paths(&conn.paths().get()));
 }
 
+#[instrument("handle", skip_all, fields(id=send.id().index()))]
 async fn handle_request(
     conn: &Connection,
-    mut send: SendStream,
+    send: SendStream,
     mut recv: RecvStream,
     output: OutputMode,
 ) -> Result<()> {
@@ -543,12 +559,11 @@ async fn handle_request(
     output.emit_with_remote(conn.remote_id(), HandleRequest { request: &request });
     match request {
         Request::Download(length) => {
-            let stats = send_data(&mut send, length).await?;
+            let stats = send_data(send, recv, length).await?;
             output.emit_with_remote(conn.remote_id(), UploadComplete { stats });
         }
         Request::Upload => {
-            let stats = drain_stream(recv, None).await?;
-            send.finish().anyerr()?;
+            let stats = drain_stream(recv, send, None).await?;
             output.emit_with_remote(conn.remote_id(), DownloadComplete { stats });
         }
     }
@@ -573,6 +588,7 @@ async fn fetch(
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
     let _guard = watch_conn_type(conn.paths(), None, output);
 
+    output.emit(StartRequest { mode, length });
     // Perform requests depending on the request mode.
     let request_fut = async {
         match mode {
@@ -618,9 +634,7 @@ async fn fetch(
 /// Close the endpoint, with a timeout, and emit emit once done.
 async fn close_endpoint_with_timeout(endpoint: &Endpoint, output: OutputMode) {
     let shutdown_start = Instant::now();
-    let timed_out = tokio::time::timeout(SHUTDOWN_TIME, endpoint.close())
-        .await
-        .is_err();
+    let timed_out = timeout(SHUTDOWN_TIME, endpoint.close()).await.is_err();
 
     output.emit(EndpointClosed {
         duration: shutdown_start.elapsed(),
@@ -628,6 +642,7 @@ async fn close_endpoint_with_timeout(endpoint: &Endpoint, output: OutputMode) {
     });
 }
 
+#[instrument("request", skip_all, fields(id = tracing::field::Empty))]
 async fn perform_request(
     conn: &Connection,
     request_kind: RequestKind,
@@ -635,39 +650,31 @@ async fn perform_request(
     conn_start: Instant,
     output: OutputMode,
 ) -> Result<()> {
-    output.emit(StartRequest {
-        kind: request_kind,
-        length,
-    });
-    let request = match request_kind {
-        RequestKind::Upload => Request::Upload,
-        RequestKind::Download => Request::Download(length),
-    };
-    let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
-    request.write(&mut send).await?;
+    let (mut send, recv) = conn.open_bi().await.anyerr()?;
+    tracing::Span::current().record("id", send.id().index());
     match request_kind {
         RequestKind::Download => {
-            info!("downloading {length:?}: drain stream");
-            let stats = drain_stream(recv, Some(conn_start)).await?;
-            send.finish().anyerr()?;
-            info!(?stats, "download finished");
+            Request::Download(length).write(&mut send).await?;
+            let stats = drain_stream(recv, send, Some(conn_start)).await?;
             output.emit(DownloadComplete { stats });
         }
         RequestKind::Upload => {
-            info!("uploading {length:?}: send data");
-            let stats = send_data(&mut send, length).await?;
-            info!(?stats, "upload finished, wait for confirmation");
-            recv.read_to_end(0).await.anyerr()?;
-            info!("confirmation received");
+            Request::Upload.write(&mut send).await?;
+            let stats = send_data(send, recv, length).await?;
             output.emit(UploadComplete { stats });
         }
     }
     Ok(())
 }
 
-#[tracing::instrument("drain_stream", skip_all, fields(id=recv.id().index()))]
-async fn drain_stream(mut recv: RecvStream, started_at: Option<Instant>) -> Result<DownloadStats> {
-    info!("start draining");
+/// Drain `recv`, and once done finish `send`.
+#[instrument("drain_stream", skip_all)]
+async fn drain_stream(
+    mut recv: RecvStream,
+    mut send: SendStream,
+    started_at: Option<Instant>,
+) -> Result<DownloadStats> {
+    debug!("start");
     let start = Instant::now();
     let mut read = 0;
     let mut num_chunks: u64 = 0;
@@ -685,47 +692,84 @@ async fn drain_stream(mut recv: RecvStream, started_at: Option<Instant>) -> Resu
         num_chunks += 1;
     }
 
+    send.finish().anyerr()?;
+
     let stats = DownloadStats {
-        len: read as u64,
+        size: read as u64,
         time_to_first_byte,
         num_chunks,
         duration: start.elapsed(),
     };
-    info!(?stats, "finished");
+    debug!(?stats, "done");
     Ok(stats)
 }
 
-#[tracing::instrument("send_data", skip_all, fields(id=stream.id().index()))]
-async fn send_data(stream: &mut SendStream, length: Length) -> Result<UploadStats> {
-    debug!(?length, "start sending");
+/// Send data on `send` for `length`, afterwards wait for `recv` to be closed.
+#[instrument("send_data", skip_all)]
+async fn send_data(
+    mut send: SendStream,
+    mut recv: RecvStream,
+    length: Length,
+) -> Result<UploadStats> {
+    debug!(?length, "start");
     const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let data = Bytes::from_static(DATA);
 
     let start = Instant::now();
     let mut total = 0;
     loop {
-        let data = match length.remaining_size(total) {
-            0 => break,
-            len if len < data.len() => data.slice(..len),
-            _ => data.clone(),
+        let (remaining_time, remaining_size) = length.remaining(start, total);
+        let chunk = if remaining_size == 0 || remaining_time == Duration::ZERO {
+            break;
+        } else if remaining_size < data.len() {
+            data.slice(..remaining_size)
+        } else {
+            data.clone()
         };
-        let len = data.len();
-        let remaining_time = length.remaining_time(start);
-        match tokio::time::timeout(remaining_time, stream.write_chunk(data)).await {
-            Err(_timeout) => break,
-            Ok(res) => res.std_context("failed sending data")?,
-        }
-        total += len;
+        total += write_chunk_timeout(&mut send, chunk, remaining_time)
+            .await
+            .std_context("failed to send data")?;
     }
 
-    stream.finish().std_context("failed to finish stream")?;
+    send.finish().std_context("failed to finish stream")?;
+
+    debug!("sending finished, wait for confirmation");
+    recv.read_to_end(0).await.anyerr()?;
 
     let stats = UploadStats {
-        len: total as u64,
+        size: total as u64,
         duration: start.elapsed(),
     };
-    debug!(?stats, "finished");
+    debug!(?stats, "done");
     Ok(stats)
+}
+
+/// Writes as much of [`Bytes`] to a [`SendStream`] as possible within `timeout`.
+///
+/// Completes once `chunk` is fully written or after `timeout` elapses, whatever comes first.
+///
+/// Returns the number of bytes written.
+async fn write_chunk_timeout(
+    send: &mut SendStream,
+    chunk: Bytes,
+    timeout: Duration,
+) -> Result<usize, WriteError> {
+    // This follows the pattern of [`SendStream::write_all_chunks`] but with a timeout applied.
+    let timeout = tokio::time::sleep(timeout);
+    tokio::pin!(timeout);
+    let mut bufs = &mut [chunk][..];
+    let mut total = 0;
+    while !bufs.is_empty() {
+        tokio::select! {
+            _ = &mut timeout => break,
+            res = send.write_chunks(bufs) => {
+                let written = res?;
+                total += written.bytes;
+                bufs = &mut bufs[written.chunks..]
+            }
+        }
+    }
+    Ok(total)
 }
 
 fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
@@ -755,7 +799,7 @@ fn watch_conn_type(
                 if Some(path) == previous.as_ref() {
                     continue;
                 }
-                print(SelectedPath::Path {
+                print(SelectedPath::Selected {
                     addr: path.remote_addr().clone(),
                     rtt: path.rtt(),
                 });
@@ -789,10 +833,10 @@ fn parse_ipv6_net(s: &str) -> Result<(SocketAddrV6, u8)> {
 
 #[derive(ValueEnum, Default, Debug, Clone, Copy)]
 enum OutputMode {
-    /// Print human-readable text output.
+    /// Print human-readable text.
     #[default]
     Text,
-    /// Print JSON-formatted output.
+    /// Print newline-delimited JSON.
     Json,
 }
 
@@ -827,10 +871,10 @@ impl OutputMode {
 }
 
 #[derive(Serialize, Debug, Clone, Display)]
-#[display("Generated a new endpoint secret. To reuse, set\n\tIROH_SECRET={secret_hex}")]
+#[display("Generated a new endpoint secret. To reuse, set\n\tIROH_SECRET={secret_key}")]
 #[serde(tag = "kind")]
 struct SecretGenerated {
-    secret_hex: String,
+    secret_key: String,
 }
 
 #[derive(Serialize, Debug, Clone)]
@@ -860,17 +904,19 @@ impl fmt::Display for EndpointBound {
 #[serde(tag = "kind")]
 #[display("Connection type changed to {path}")]
 struct ConnectionTypeChanged {
+    #[serde(flatten)]
     path: SelectedPath,
 }
 
 #[derive(Serialize, Debug, Clone)]
+#[serde(tag = "status")]
 enum SelectedPath {
     Mixed {
         count: usize,
     },
-    Path {
+    Selected {
         addr: TransportAddr,
-        #[serde(with = "duration_millis")]
+        #[serde(with = "duration_micros")]
         rtt: Duration,
     },
     None,
@@ -882,7 +928,7 @@ impl fmt::Display for SelectedPath {
             Self::Mixed { count } => {
                 write!(f, "mixed ({count} paths)")
             }
-            Self::Path { addr, rtt } => {
+            Self::Selected { addr, rtt } => {
                 write!(f, "{addr:?} (RTT: {}ms)", rtt.as_millis())
             }
             Self::None => {
@@ -897,22 +943,22 @@ impl fmt::Display for SelectedPath {
 #[display("Connected to {remote_id} in {}ms", duration.as_millis())]
 struct Connected {
     remote_id: EndpointId,
-    #[serde(with = "duration_millis")]
+    #[serde(with = "duration_micros")]
     duration: Duration,
 }
 
 #[derive(Serialize, Debug, Clone, Display)]
 #[serde(tag = "kind")]
-#[display("Starting {kind:?} request for {length:?}")]
+#[display("Starting {mode:?} request with {length:?}")]
 struct StartRequest {
-    kind: RequestKind,
+    mode: Mode,
     length: Length,
 }
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "kind")]
 struct EndpointClosed {
-    #[serde(with = "duration_millis")]
+    #[serde(with = "duration_micros")]
     duration: Duration,
     timed_out: bool,
 }
@@ -931,9 +977,9 @@ impl fmt::Display for EndpointClosed {
 }
 
 #[derive(Serialize, Debug, Clone)]
-struct PathStat {
-    remote_addr: String,
-    #[serde(with = "duration_millis")]
+struct PathData {
+    remote_addr: TransportAddr,
+    #[serde(with = "duration_micros")]
     rtt: Duration,
     bytes_sent: u64,
     bytes_recv: u64,
@@ -942,7 +988,7 @@ struct PathStat {
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "kind")]
 struct PathStats {
-    paths: Vec<PathStat>,
+    paths: Vec<PathData>,
 }
 
 impl PathStats {
@@ -951,8 +997,8 @@ impl PathStats {
             .iter()
             .map(|path| {
                 let stats = path.stats();
-                PathStat {
-                    remote_addr: format!("{:?}", path.remote_addr()),
+                PathData {
+                    remote_addr: path.remote_addr().clone(),
                     rtt: stats.rtt,
                     bytes_recv: stats.udp_tx.bytes,
                     bytes_sent: stats.udp_rx.bytes,
@@ -969,7 +1015,7 @@ impl fmt::Display for PathStats {
         for path in &self.paths {
             writeln!(
                 f,
-                "  {}: RTT {}ms, tx={}, rx={}",
+                "  {:?}: RTT {}ms, tx={}, rx={}",
                 path.remote_addr,
                 path.rtt.as_millis(),
                 path.bytes_sent,
@@ -984,6 +1030,7 @@ impl fmt::Display for PathStats {
 #[serde(tag = "kind")]
 #[display("{stats}")]
 struct DownloadComplete {
+    #[serde(flatten)]
     stats: DownloadStats,
 }
 
@@ -991,6 +1038,7 @@ struct DownloadComplete {
 #[serde(tag = "kind")]
 #[display("{stats}")]
 struct UploadComplete {
+    #[serde(flatten)]
     stats: UploadStats,
 }
 
@@ -1009,6 +1057,7 @@ struct HandleRequest<'a> {
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "kind")]
 struct ConnectionClosed {
+    #[serde(with = "duration_micros")]
     duration: Duration,
     error: Option<String>,
 }
@@ -1026,36 +1075,36 @@ impl fmt::Display for ConnectionClosed {
 #[derive(Serialize, Debug, Clone, Display)]
 #[display(
     "Downloaded: {:>10} in {:.2}s, {:>10}/s ({}{} chunks)",
-    HumanBytes(self.len).to_string(),
+    HumanBytes(self.size).to_string(),
     self.duration.as_secs_f64(),
-    HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64),
+    HumanBytes((self.size as f64 / self.duration.as_secs_f64()) as u64),
     self.time_to_first_byte
         .map(|t| format!("time to first byte {}ms, ", t.as_millis()))
         .unwrap_or_default(),
     self.num_chunks
 )]
 struct DownloadStats {
-    len: u64,
+    size: u64,
     #[serde(
-        serialize_with = "duration_millis_opt",
+        serialize_with = "duration_micros_opt",
         skip_serializing_if = "Option::is_none"
     )]
     time_to_first_byte: Option<Duration>,
     num_chunks: u64,
-    #[serde(with = "duration_millis")]
+    #[serde(with = "duration_micros")]
     duration: Duration,
 }
 
 #[derive(Serialize, Debug, Clone, Display)]
 #[display(
     "Uploaded:   {:>10} in {:.2}s, {:>10}/s",
-    HumanBytes(self.len).to_string(),
+    HumanBytes(self.size).to_string(),
     self.duration.as_secs_f64(),
-    HumanBytes((self.len as f64 / self.duration.as_secs_f64()) as u64)
+    HumanBytes((self.size as f64 / self.duration.as_secs_f64()) as u64)
 )]
 struct UploadStats {
-    len: u64,
-    #[serde(with = "duration_millis")]
+    size: u64,
+    #[serde(with = "duration_micros")]
     duration: Duration,
 }
 
@@ -1073,26 +1122,26 @@ impl<T: Serialize + fmt::Display> RemoteEvent<T> {
     }
 }
 
-pub fn duration_millis_opt<S: Serializer>(
+pub fn duration_micros_opt<S: Serializer>(
     value: &Option<Duration>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     match value {
-        Some(d) => serializer.serialize_u64(d.as_millis() as u64),
+        Some(d) => serializer.serialize_u64(d.as_micros() as u64),
         None => serializer.serialize_none(),
     }
 }
 
-mod duration_millis {
+mod duration_micros {
     use serde::{Deserialize, Deserializer, Serializer};
     use std::time::Duration;
 
     pub fn serialize<S: Serializer>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_u64(duration.as_millis() as u64)
+        serializer.serialize_u64(duration.as_micros() as u64)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Duration, D::Error> {
         let millis = u64::deserialize(deserializer)?;
-        Ok(Duration::from_millis(millis))
+        Ok(Duration::from_micros(millis))
     }
 }
