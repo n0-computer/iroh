@@ -22,6 +22,7 @@
 //! ```
 
 use std::{
+    collections::BTreeMap,
     fmt,
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     str::FromStr,
@@ -513,6 +514,7 @@ async fn handle_connection(conn: Connection, output: OutputMode) {
     let remote_id = conn.remote_id();
     output.emit_with_remote(remote_id, ConnectionAccepted {});
     let _guard = watch_conn_type(conn.paths(), Some(remote_id), output);
+    let stats_task = watch_path_stats(conn.clone());
 
     // Accept incoming streams in a loop until the connection is closed by the remote.
     let close_reason = loop {
@@ -543,7 +545,8 @@ async fn handle_connection(conn: Connection, output: OutputMode) {
             duration: start.elapsed(),
         },
     );
-    output.emit_with_remote(remote_id, PathStats::from_paths(&conn.paths().get()));
+    let path_stats = stats_task.await.expect("path stats task panicked");
+    output.emit_with_remote(remote_id, path_stats);
 }
 
 #[instrument("handle", skip_all, fields(id=send.id().index()))]
@@ -587,6 +590,7 @@ async fn fetch(
     });
     // Spawn a background task that prints connection type changes. Will be aborted on drop.
     let _guard = watch_conn_type(conn.paths(), None, output);
+    let stats_task = watch_path_stats(conn.clone());
 
     output.emit(StartRequest { mode, length });
     // Perform requests depending on the request mode.
@@ -626,7 +630,8 @@ async fn fetch(
     });
 
     close_endpoint_with_timeout(&endpoint, output).await;
-    output.emit(PathStats::from_paths(&conn.paths().get()));
+    let path_stats = stats_task.await.expect("path stats task panicked");
+    output.emit(path_stats);
 
     res
 }
@@ -816,6 +821,44 @@ fn watch_conn_type(
     AbortOnDropHandle::new(task)
 }
 
+fn watch_path_stats(conn: iroh::endpoint::Connection) -> AbortOnDropHandle<PathStats> {
+    let task = tokio::spawn(async move {
+        let mut watcher = conn.paths();
+        let mut latest_stats_by_path = BTreeMap::new();
+        while conn.close_reason().is_none() {
+            n0_future::future::race(
+                async {
+                    conn.closed().await;
+                },
+                async {
+                    let _ = watcher.updated().await;
+                },
+            )
+            .await;
+            // Insert what could possibly be new path stats.
+            for path in watcher.get() {
+                let stats = path.stats();
+                latest_stats_by_path.insert(path.remote_addr().clone(), (path, stats));
+            }
+            // Update all stat values, even for paths that are removed by now.
+            for (path, stats) in latest_stats_by_path.values_mut() {
+                *stats = path.stats();
+            }
+        }
+        let list = latest_stats_by_path
+            .into_iter()
+            .map(|(addr, (_info, stats))| PathData {
+                remote_addr: addr,
+                rtt: stats.rtt,
+                bytes_sent: stats.udp_tx.bytes,
+                bytes_recv: stats.udp_tx.bytes,
+            })
+            .collect();
+        PathStats { paths: list }
+    });
+    AbortOnDropHandle::new(task)
+}
+
 fn parse_ipv4_net(s: &str) -> Result<(SocketAddrV4, u8)> {
     let (net, port) = s.split_once(":").std_context("missing colon")?;
     let net: Ipv4Net = net.parse().std_context("invalid net")?;
@@ -989,24 +1032,6 @@ struct PathData {
 #[serde(tag = "kind")]
 struct PathStats {
     paths: Vec<PathData>,
-}
-
-impl PathStats {
-    fn from_paths(paths: &PathInfoList) -> Self {
-        let paths = paths
-            .iter()
-            .map(|path| {
-                let stats = path.stats();
-                PathData {
-                    remote_addr: path.remote_addr().clone(),
-                    rtt: stats.rtt,
-                    bytes_recv: stats.udp_tx.bytes,
-                    bytes_sent: stats.udp_rx.bytes,
-                }
-            })
-            .collect();
-        Self { paths }
-    }
 }
 
 impl fmt::Display for PathStats {
