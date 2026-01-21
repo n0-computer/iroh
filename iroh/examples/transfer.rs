@@ -37,7 +37,7 @@ use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{info, warn};
+use tracing::{Instrument, info, warn};
 use url::Url;
 
 /// ALPN of our transport protocol.
@@ -490,11 +490,14 @@ async fn handle_connection(conn: Connection, output: OutputMode) {
             Err(err) => break err,
         };
         let conn = conn.clone();
-        tokio::task::spawn(async move {
-            if let Err(err) = handle_request(&conn, send, recv, output).await {
-                warn!("[{}] Request failed: {err:#}", remote_id.fmt_short());
+        tokio::task::spawn(
+            async move {
+                if let Err(err) = handle_request(&conn, send, recv, output).await {
+                    warn!("[{}] Request failed: {err:#}", remote_id.fmt_short());
+                }
             }
-        });
+            .instrument(tracing::Span::current()),
+        );
     };
 
     let is_graceful = matches!(
@@ -630,22 +633,27 @@ async fn perform_request(
     request.write(&mut send).await?;
     match request_kind {
         RequestKind::Download => {
-            info!("downloading {length:?}");
-            send.finish().anyerr()?;
+            info!("downloading {length:?}: drain stream");
             let stats = drain_stream(recv, Some(conn_start)).await?;
+            send.finish().anyerr()?;
+            info!(?stats, "download finished");
             output.emit(DownloadComplete { stats });
         }
         RequestKind::Upload => {
-            info!("uploading {length:?}");
+            info!("uploading {length:?}: send data");
             let stats = send_data(&mut send, length).await?;
+            info!(?stats, "upload finished, wait for confirmation");
             recv.read_to_end(0).await.anyerr()?;
+            info!("confirmation received");
             output.emit(UploadComplete { stats });
         }
     }
     Ok(())
 }
 
+#[tracing::instrument("drain_stream", skip_all, fields(id=recv.id().index()))]
 async fn drain_stream(mut recv: RecvStream, started_at: Option<Instant>) -> Result<DownloadStats> {
+    info!(stream_id=%recv.id(), "start");
     let start = Instant::now();
     let mut read = 0;
     let mut num_chunks: u64 = 0;
@@ -674,15 +682,19 @@ async fn drain_stream(mut recv: RecvStream, started_at: Option<Instant>) -> Resu
         num_chunks += 1;
     }
 
-    Ok(DownloadStats {
+    let stats = DownloadStats {
         len: read as u64,
         time_to_first_byte,
         num_chunks,
         duration: start.elapsed(),
-    })
+    };
+    info!(?stats, "finished");
+    Ok(stats)
 }
 
-async fn send_data(stream: &mut iroh::endpoint::SendStream, length: Length) -> Result<UploadStats> {
+#[tracing::instrument("send_data", skip_all, fields(id=stream.id().index()))]
+async fn send_data(stream: &mut SendStream, length: Length) -> Result<UploadStats> {
+    info!(stream_id=%stream.id(), ?length, "start");
     const DATA: &[u8] = &[0xAB; 1024 * 64];
     let data = Bytes::from_static(DATA);
 
@@ -710,15 +722,13 @@ async fn send_data(stream: &mut iroh::endpoint::SendStream, length: Length) -> R
     }
 
     stream.finish().std_context("failed to finish stream")?;
-    stream
-        .stopped()
-        .await
-        .std_context("failed to wait for stream to be stopped")?;
 
-    Ok(UploadStats {
+    let stats = UploadStats {
         len: total,
         duration: start.elapsed(),
-    })
+    };
+    info!(?stats, "finished");
+    Ok(stats)
 }
 
 fn parse_byte_size(s: &str) -> std::result::Result<u64, parse_size::Error> {
