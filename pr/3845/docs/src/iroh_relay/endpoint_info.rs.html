@@ -296,7 +296,7 @@
 <a href=#296 id=296 data-nosnippet>296</a>
 <a href=#297 id=297 data-nosnippet>297</a><span class="kw">impl </span>From&lt;<span class="kw-2">&amp;</span>TxtAttrs&lt;IrohAttr&gt;&gt; <span class="kw">for </span>EndpointInfo {
 <a href=#298 id=298 data-nosnippet>298</a>    <span class="kw">fn </span>from(attrs: <span class="kw-2">&amp;</span>TxtAttrs&lt;IrohAttr&gt;) -&gt; <span class="self">Self </span>{
-<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">use </span>iroh_base::UserAddr;
+<a href=#299 id=299 data-nosnippet>299</a>        <span class="kw">use </span>iroh_base::CustomAddr;
 <a href=#300 id=300 data-nosnippet>300</a>
 <a href=#301 id=301 data-nosnippet>301</a>        <span class="kw">let </span>endpoint_id = attrs.endpoint_id();
 <a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">let </span>attrs = attrs.attrs();
@@ -314,7 +314,7 @@
 <a href=#314 id=314 data-nosnippet>314</a>            .filter_map(|s| {
 <a href=#315 id=315 data-nosnippet>315</a>                <span class="kw">if let </span><span class="prelude-val">Ok</span>(addr) = SocketAddr::from_str(s) {
 <a href=#316 id=316 data-nosnippet>316</a>                    <span class="prelude-val">Some</span>(TransportAddr::Ip(addr))
-<a href=#317 id=317 data-nosnippet>317</a>                } <span class="kw">else if let </span><span class="prelude-val">Ok</span>(addr) = UserAddr::from_str(s) {
+<a href=#317 id=317 data-nosnippet>317</a>                } <span class="kw">else if let </span><span class="prelude-val">Ok</span>(addr) = CustomAddr::from_str(s) {
 <a href=#318 id=318 data-nosnippet>318</a>                    <span class="prelude-val">Some</span>(TransportAddr::User(addr))
 <a href=#319 id=319 data-nosnippet>319</a>                } <span class="kw">else </span>{
 <a href=#320 id=320 data-nosnippet>320</a>                    <span class="prelude-val">None
@@ -719,12 +719,12 @@
 <a href=#719 id=719 data-nosnippet>719</a>
 <a href=#720 id=720 data-nosnippet>720</a>    <span class="attr">#[test]
 <a href=#721 id=721 data-nosnippet>721</a>    </span><span class="kw">fn </span>txt_attr_roundtrip_with_user_addr() {
-<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">use </span>iroh_base::UserAddr;
+<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">use </span>iroh_base::CustomAddr;
 <a href=#723 id=723 data-nosnippet>723</a>
 <a href=#724 id=724 data-nosnippet>724</a>        <span class="comment">// Bluetooth-like address (small id, 6 byte MAC)
-<a href=#725 id=725 data-nosnippet>725</a>        </span><span class="kw">let </span>bt_addr = UserAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
+<a href=#725 id=725 data-nosnippet>725</a>        </span><span class="kw">let </span>bt_addr = CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
 <a href=#726 id=726 data-nosnippet>726</a>        <span class="comment">// Tor-like address (larger id, 32 byte pubkey)
-<a href=#727 id=727 data-nosnippet>727</a>        </span><span class="kw">let </span>tor_addr = UserAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
+<a href=#727 id=727 data-nosnippet>727</a>        </span><span class="kw">let </span>tor_addr = CustomAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
 <a href=#728 id=728 data-nosnippet>728</a>
 <a href=#729 id=729 data-nosnippet>729</a>        <span class="kw">let </span>endpoint_data = EndpointData::new([
 <a href=#730 id=730 data-nosnippet>730</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
@@ -743,15 +743,15 @@
 <a href=#743 id=743 data-nosnippet>743</a>
 <a href=#744 id=744 data-nosnippet>744</a>    <span class="attr">#[test]
 <a href=#745 id=745 data-nosnippet>745</a>    </span><span class="kw">fn </span>signed_packet_roundtrip_with_user_addr() {
-<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">use </span>iroh_base::UserAddr;
+<a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">use </span>iroh_base::CustomAddr;
 <a href=#747 id=747 data-nosnippet>747</a>
 <a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>secret_key =
 <a href=#749 id=749 data-nosnippet>749</a>            SecretKey::from_str(<span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"</span>).unwrap();
 <a href=#750 id=750 data-nosnippet>750</a>
 <a href=#751 id=751 data-nosnippet>751</a>        <span class="comment">// Bluetooth-like address (small id, 6 byte MAC)
-<a href=#752 id=752 data-nosnippet>752</a>        </span><span class="kw">let </span>bt_addr = UserAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
+<a href=#752 id=752 data-nosnippet>752</a>        </span><span class="kw">let </span>bt_addr = CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
 <a href=#753 id=753 data-nosnippet>753</a>        <span class="comment">// Tor-like address (larger id, 32 byte pubkey)
-<a href=#754 id=754 data-nosnippet>754</a>        </span><span class="kw">let </span>tor_addr = UserAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
+<a href=#754 id=754 data-nosnippet>754</a>        </span><span class="kw">let </span>tor_addr = CustomAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
 <a href=#755 id=755 data-nosnippet>755</a>
 <a href=#756 id=756 data-nosnippet>756</a>        <span class="kw">let </span>endpoint_data = EndpointData::new([
 <a href=#757 id=757 data-nosnippet>757</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),

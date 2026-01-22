@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Addr"],"struct":["Transmit"],"trait":["UserEndpoint","UserSender","UserTransport"]};
+window.SIDEBAR_ITEMS = {"enum":["Addr"],"struct":["Transmit"],"trait":["CustomEndpoint","CustomSender","CustomTransport"]};
