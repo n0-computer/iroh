@@ -133,7 +133,7 @@ n0-tracing-test = "0.3"
 
 [build-dependencies]
 cfg_aliases = "0.2.1"
-vergen-gitcl = "1.0.8"
+vergen-gitcl = "9.1.0"
 
 [features]
 default = ["metrics"]

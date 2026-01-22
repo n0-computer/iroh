@@ -77,7 +77,7 @@ name = "write"
 harness = false
 
 [build-dependencies]
-vergen-gitcl = "1.0.8"
+vergen-gitcl = "9.1.0"
 
 [package.metadata.docs.rs]
 all-features = true
