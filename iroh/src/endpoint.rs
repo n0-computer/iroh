@@ -997,18 +997,25 @@ impl Endpoint {
     #[cfg(not(wasm_browser))]
     pub fn watch_addr(&self) -> impl n0_watcher::Watcher<Value = EndpointAddr> + use<> {
         let watch_addrs = self.msock.ip_addrs();
+        // TODO(Frando): I had to put in the local addrs because that's the only place right now where
+        // the user addrs end up in.
+        let local_addrs = self.msock.local_addrs_watch.clone();
         let watch_relay = self.msock.home_relay();
         let endpoint_id = self.id();
 
-        watch_addrs.or(watch_relay).map(move |(addrs, relays)| {
-            EndpointAddr::from_parts(
-                endpoint_id,
-                relays
-                    .into_iter()
-                    .map(TransportAddr::Relay)
-                    .chain(addrs.into_iter().map(|x| TransportAddr::Ip(x.addr))),
-            )
-        })
+        watch_addrs
+            .or(watch_relay)
+            .or(local_addrs)
+            .map(move |((addrs, relays), local_addrs)| {
+                EndpointAddr::from_parts(
+                    endpoint_id,
+                    relays
+                        .into_iter()
+                        .map(TransportAddr::Relay)
+                        .chain(addrs.into_iter().map(|x| TransportAddr::Ip(x.addr)))
+                        .chain(local_addrs.into_iter().map(|x| TransportAddr::from(x))),
+                )
+            })
     }
 
     /// Returns a [`Watcher`] for the current [`EndpointAddr`] for this endpoint.

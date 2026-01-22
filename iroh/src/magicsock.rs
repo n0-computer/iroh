@@ -213,7 +213,7 @@ pub(crate) struct MagicSock {
     pub(crate) remote_map: RemoteMap,
 
     /// Local addresses
-    local_addrs_watch: LocalAddrsWatch,
+    pub(crate) local_addrs_watch: LocalAddrsWatch,
     /// Currently bound IP addresses of all sockets
     #[cfg(not(wasm_browser))]
     ip_bind_addrs: Vec<SocketAddr>,
