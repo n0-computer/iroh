@@ -24,10 +24,7 @@ use super::{
     DirectAddr, MagicsockMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
 };
-use crate::{
-    discovery::{ConcurrentDiscovery, DiscoveryError},
-    magicsock::RemoteStateActorStoppedError,
-};
+use crate::{address_lookup, magicsock::RemoteStateActorStoppedError};
 
 mod remote_state;
 
@@ -79,7 +76,7 @@ struct Tasks {
     metrics: Arc<MagicsockMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    discovery: ConcurrentDiscovery,
+    address_lookup: address_lookup::ConcurrentAddressLookup,
     shutdown_token: CancellationToken,
 
     //
@@ -100,7 +97,7 @@ impl RemoteMap {
         local_endpoint_id: EndpointId,
         metrics: Arc<MagicsockMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        discovery: ConcurrentDiscovery,
+        address_lookup: address_lookup::ConcurrentAddressLookup,
         shutdown_token: CancellationToken,
     ) -> Self {
         Self {
@@ -110,7 +107,7 @@ impl RemoteMap {
                 local_endpoint_id,
                 metrics,
                 local_direct_addrs,
-                discovery,
+                address_lookup,
                 shutdown_token,
                 tasks: Default::default(),
                 poll_cleanup_waker: None,
@@ -172,7 +169,8 @@ impl RemoteMap {
     pub(super) async fn resolve_remote(
         &mut self,
         addr: EndpointAddr,
-    ) -> Result<Result<EndpointIdMappedAddr, DiscoveryError>, RemoteStateActorStoppedError> {
+    ) -> Result<Result<EndpointIdMappedAddr, address_lookup::Error>, RemoteStateActorStoppedError>
+    {
         let EndpointAddr { id, addrs } = addr;
         let actor = self.remote_state_actor(id);
         let (tx, rx) = oneshot::channel();
@@ -265,7 +263,7 @@ impl Tasks {
             self.local_direct_addrs.clone(),
             mapped_addrs.relay_addrs.clone(),
             self.metrics.clone(),
-            self.discovery.clone(),
+            self.address_lookup.clone(),
         )
         .start(initial_msgs, &mut self.tasks, self.shutdown_token.clone());
         if let Some(waker) = self.poll_cleanup_waker.take() {
@@ -295,10 +293,10 @@ pub enum Source {
     Relay,
     /// Application layer added the address directly.
     App,
-    /// The address was discovered by a discovery service.
+    /// The address was discovered by an Address Lookup system
     #[strum(serialize = "{name}")]
-    Discovery {
-        /// The name of the discovery service that discovered the address.
+    AddressLookup {
+        /// The name of the Address Lookup that discovered the address.
         name: String,
     },
     /// Application layer with a specific name added the endpoint directly.
