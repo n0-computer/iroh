@@ -55,7 +55,7 @@ pub enum TransportAddr {
     /// IP based addresses
     Ip(SocketAddr),
     /// User defined transport address
-    User(UserAddr),
+    User(CustomAddr),
 }
 
 impl TransportAddr {
@@ -142,20 +142,20 @@ impl From<EndpointId> for EndpointAddr {
 
 /// TODO
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct UserAddr {
+pub struct CustomAddr {
     /// id
     id: u64,
     /// data
     data: UserAddrBytes,
 }
 
-impl fmt::Display for UserAddr {
+impl fmt::Display for CustomAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:x}_{}", self.id, HEXLOWER.encode(self.data.as_bytes()))
     }
 }
 
-impl std::str::FromStr for UserAddr {
+impl std::str::FromStr for CustomAddr {
     type Err = UserAddrParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -207,7 +207,7 @@ impl fmt::Debug for UserAddrBytes {
     }
 }
 
-impl From<(u64, &[u8])> for UserAddr {
+impl From<(u64, &[u8])> for CustomAddr {
     fn from((id, data): (u64, &[u8])) -> Self {
         Self::from_parts(id, data)
     }
@@ -242,7 +242,7 @@ impl UserAddrBytes {
     }
 }
 
-impl UserAddr {
+impl CustomAddr {
     /// Creates a new [`UserAddr`] from its parts.
     pub fn from_parts(id: u64, data: &[u8]) -> Self {
         Self {
@@ -325,49 +325,49 @@ mod tests {
     #[test]
     fn test_user_addr_roundtrip() {
         // Small id, small data (e.g., Bluetooth MAC)
-        let addr = UserAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
+        let addr = CustomAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
         let s = addr.to_string();
         assert_eq!(s, "1_a1b2c3d4e5f6");
-        let parsed: UserAddr = s.parse().unwrap();
+        let parsed: CustomAddr = s.parse().unwrap();
         assert_eq!(addr, parsed);
 
         // Larger id, 32-byte data (e.g., Tor pubkey)
-        let addr = UserAddr::from_parts(42, &[0xab; 32]);
+        let addr = CustomAddr::from_parts(42, &[0xab; 32]);
         let s = addr.to_string();
         assert_eq!(
             s,
             "2a_abababababababababababababababababababababababababababababababab"
         );
-        let parsed: UserAddr = s.parse().unwrap();
+        let parsed: CustomAddr = s.parse().unwrap();
         assert_eq!(addr, parsed);
 
         // Zero id, empty data
-        let addr = UserAddr::from_parts(0, &[]);
+        let addr = CustomAddr::from_parts(0, &[]);
         let s = addr.to_string();
         assert_eq!(s, "0_");
-        let parsed: UserAddr = s.parse().unwrap();
+        let parsed: CustomAddr = s.parse().unwrap();
         assert_eq!(addr, parsed);
 
         // Large id
-        let addr = UserAddr::from_parts(0xdeadbeef, &[0x01, 0x02]);
+        let addr = CustomAddr::from_parts(0xdeadbeef, &[0x01, 0x02]);
         let s = addr.to_string();
         assert_eq!(s, "deadbeef_0102");
-        let parsed: UserAddr = s.parse().unwrap();
+        let parsed: CustomAddr = s.parse().unwrap();
         assert_eq!(addr, parsed);
     }
 
     #[test]
     fn test_user_addr_parse_errors() {
         // Missing separator
-        assert!("abc123".parse::<UserAddr>().is_err());
+        assert!("abc123".parse::<CustomAddr>().is_err());
 
         // Invalid id (not hex)
-        assert!("xyz_0102".parse::<UserAddr>().is_err());
+        assert!("xyz_0102".parse::<CustomAddr>().is_err());
 
         // Invalid data (not hex)
-        assert!("1_ghij".parse::<UserAddr>().is_err());
+        assert!("1_ghij".parse::<CustomAddr>().is_err());
 
         // Odd-length hex data
-        assert!("1_abc".parse::<UserAddr>().is_err());
+        assert!("1_abc".parse::<CustomAddr>().is_err());
     }
 }

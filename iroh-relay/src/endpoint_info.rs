@@ -296,7 +296,7 @@ impl From<TxtAttrs<IrohAttr>> for EndpointInfo {
 
 impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
     fn from(attrs: &TxtAttrs<IrohAttr>) -> Self {
-        use iroh_base::UserAddr;
+        use iroh_base::CustomAddr;
 
         let endpoint_id = attrs.endpoint_id();
         let attrs = attrs.attrs();
@@ -314,7 +314,7 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
             .filter_map(|s| {
                 if let Ok(addr) = SocketAddr::from_str(s) {
                     Some(TransportAddr::Ip(addr))
-                } else if let Ok(addr) = UserAddr::from_str(s) {
+                } else if let Ok(addr) = CustomAddr::from_str(s) {
                     Some(TransportAddr::User(addr))
                 } else {
                     None
@@ -719,12 +719,12 @@ mod tests {
 
     #[test]
     fn txt_attr_roundtrip_with_user_addr() {
-        use iroh_base::UserAddr;
+        use iroh_base::CustomAddr;
 
         // Bluetooth-like address (small id, 6 byte MAC)
-        let bt_addr = UserAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
+        let bt_addr = CustomAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
         // Tor-like address (larger id, 32 byte pubkey)
-        let tor_addr = UserAddr::from_parts(42, &[0xab; 32]);
+        let tor_addr = CustomAddr::from_parts(42, &[0xab; 32]);
 
         let endpoint_data = EndpointData::new([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
@@ -743,15 +743,15 @@ mod tests {
 
     #[test]
     fn signed_packet_roundtrip_with_user_addr() {
-        use iroh_base::UserAddr;
+        use iroh_base::CustomAddr;
 
         let secret_key =
             SecretKey::from_str("vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia").unwrap();
 
         // Bluetooth-like address (small id, 6 byte MAC)
-        let bt_addr = UserAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
+        let bt_addr = CustomAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
         // Tor-like address (larger id, 32 byte pubkey)
-        let tor_addr = UserAddr::from_parts(42, &[0xab; 32]);
+        let tor_addr = CustomAddr::from_parts(42, &[0xab; 32]);
 
         let endpoint_data = EndpointData::new([
             TransportAddr::Relay("https://example.com".parse().unwrap()),

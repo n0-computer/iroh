@@ -6,7 +6,7 @@ use std::{
     task::Poll,
 };
 
-use iroh_base::{EndpointId, RelayUrl, TransportAddr, UserAddr};
+use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use n0_error::StackResultExt;
 use n0_future::{
     Either, FuturesUnordered, MergeUnbounded, Stream, StreamExt,
@@ -136,7 +136,7 @@ pub(super) struct RemoteStateActor {
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     /// The mapping between user provided addresses and their [`UserMappedAddr`]s.
-    user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
+    user_mapped_addrs: AddrMap<CustomAddr, UserMappedAddr>,
     /// Discovery service, cloned from the magicsock.
     discovery: ConcurrentDiscovery,
 
@@ -192,7 +192,7 @@ impl RemoteStateActor {
         local_endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-        user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
+        user_mapped_addrs: AddrMap<CustomAddr, UserMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
         discovery: ConcurrentDiscovery,
     ) -> Self {

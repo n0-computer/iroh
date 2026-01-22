@@ -30,7 +30,7 @@ use url::Url;
 pub mod transports {
     pub use super::magicsock::transports::{
         Addr, Transmit,
-        user::{UserEndpoint, UserSender, UserTransport},
+        user::{CustomEndpoint, CustomSender, CustomTransport},
     };
 }
 
@@ -46,7 +46,7 @@ use crate::dns::DnsResolver;
 use crate::{
     NetReport,
     discovery::{ConcurrentDiscovery, DiscoveryError, DynIntoDiscovery, IntoDiscovery, UserData},
-    endpoint::{presets::Preset, transports::UserTransport},
+    endpoint::{presets::Preset, transports::CustomTransport},
     magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
@@ -636,7 +636,7 @@ impl Builder {
     }
 
     /// Adds a custom user transport
-    pub fn add_user_transport(mut self, factory: Arc<dyn UserTransport>) -> Self {
+    pub fn add_user_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
         self.transports.push(TransportConfig::User(factory));
         self
     }

@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll, Waker, ready},
 };
 
-use iroh_base::{EndpointId, RelayUrl, UserAddr};
+use iroh_base::{CustomAddr, EndpointId, RelayUrl};
 use n0_future::task::JoinSet;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,7 @@ pub(crate) struct RemoteMap {
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     pub(super) relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     /// The mapping between user provided addresses and their [`UserMappedAddr`]s.
-    pub(super) user_mapped_addrs: AddrMap<UserAddr, UserMappedAddr>,
+    pub(super) user_mapped_addrs: AddrMap<CustomAddr, UserMappedAddr>,
 
     //
     // State needed to start a new RemoteStateHandle.

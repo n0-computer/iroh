@@ -4,7 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use iroh_base::UserAddr;
+use iroh_base::CustomAddr;
 
 use super::{Addr, Transmit};
 
@@ -15,21 +15,21 @@ use super::{Addr, Transmit};
 ///
 /// A transport is a factory for user endpoints. Whenever an iroh endpoint is
 /// create using [crate::endpoint::Builder::bind], a new user endpoint will
-/// be created using [UserTransport::bind].
-pub trait UserTransport: std::fmt::Debug + Send + Sync + 'static {
-    /// Create an actual user transport
-    fn bind(&self) -> io::Result<Box<dyn UserEndpoint>>;
+/// be created using [CustomTransport::bind].
+pub trait CustomTransport: std::fmt::Debug + Send + Sync + 'static {
+    /// Create a custom endpoint
+    fn bind(&self) -> io::Result<Box<dyn CustomEndpoint>>;
 }
 
-/// User endpoint created by a [UserTransport].
+/// User endpoint created by a [CustomTransport].
 ///
 /// An endpoint has a local address (or multiple local addresses), can receive
 /// packets, and can create senders to send packets.
-pub trait UserEndpoint: std::fmt::Debug + Send + Sync + 'static {
+pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
     /// Watch local addrs
-    fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<UserAddr>>;
+    fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<CustomAddr>>;
     /// Create a sender
-    fn create_sender(&self) -> Arc<dyn UserSender>;
+    fn create_sender(&self) -> Arc<dyn CustomSender>;
     /// Poll recv
     fn poll_recv(
         &mut self,
@@ -48,14 +48,14 @@ pub trait UserEndpoint: std::fmt::Debug + Send + Sync + 'static {
 /// This is not enforced at type level, but [UserSender::poll_send] should
 /// only be called with addresses for which [UserSender::is_valid_send_addr]
 /// returns true.
-pub trait UserSender: std::fmt::Debug + Send + Sync + 'static {
+pub trait CustomSender: std::fmt::Debug + Send + Sync + 'static {
     /// is addr valid for this transport?
-    fn is_valid_send_addr(&self, addr: &UserAddr) -> bool;
+    fn is_valid_send_addr(&self, addr: &CustomAddr) -> bool;
     /// poll_send
     fn poll_send(
         &self,
         cx: &mut std::task::Context,
-        dst: UserAddr,
+        dst: CustomAddr,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>>;
 }

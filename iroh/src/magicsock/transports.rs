@@ -9,7 +9,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use iroh_base::{EndpointId, RelayUrl, TransportAddr, UserAddr};
+use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
@@ -24,7 +24,7 @@ mod ip;
 mod relay;
 pub(crate) mod user;
 
-use user::{UserEndpoint, UserSender, UserTransport};
+use user::{CustomEndpoint, CustomSender, CustomTransport};
 
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::Config as IpConfig;
@@ -38,7 +38,7 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: IpTransports,
     relay: Vec<RelayTransport>,
-    user: Vec<Box<dyn UserEndpoint>>,
+    user: Vec<Box<dyn CustomEndpoint>>,
 
     poll_recv_counter: usize,
     /// Cache for source addrs, to speed up access
@@ -48,7 +48,7 @@ pub(crate) struct Transports {
 /// Combined watcher type for all ip transports
 type IpTransportsWatcher = n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>;
 /// Combined watcher type for all user transports
-type UserTransportsWatcher = n0_watcher::Join<Vec<UserAddr>, n0_watcher::Direct<Vec<UserAddr>>>;
+type UserTransportsWatcher = n0_watcher::Join<Vec<CustomAddr>, n0_watcher::Direct<Vec<CustomAddr>>>;
 /// Combined watcher type for all relay transports
 type RelayTransportsWatcher = n0_watcher::Join<
     Option<(RelayUrl, EndpointId)>,
@@ -90,7 +90,7 @@ pub(crate) enum TransportConfig {
         is_user_defined: bool,
     },
     /// User defined transport factory.
-    User(Arc<dyn UserTransport>),
+    User(Arc<dyn CustomTransport>),
 }
 
 impl TransportConfig {
@@ -497,7 +497,7 @@ pub enum Addr {
     /// A relay address.
     Relay(RelayUrl, EndpointId),
     /// A user defined address.
-    User(UserAddr),
+    User(CustomAddr),
 }
 
 impl fmt::Debug for Addr {
@@ -543,8 +543,8 @@ impl From<&SocketAddr> for Addr {
     }
 }
 
-impl From<UserAddr> for Addr {
-    fn from(value: UserAddr) -> Self {
+impl From<CustomAddr> for Addr {
+    fn from(value: CustomAddr) -> Self {
         Self::User(value)
     }
 }
@@ -590,7 +590,7 @@ pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: IpTransportsSender,
     relay: Vec<RelaySender>,
-    user: Vec<Arc<dyn UserSender>>,
+    user: Vec<Arc<dyn CustomSender>>,
     max_transmit_segments: NonZeroUsize,
 }
 

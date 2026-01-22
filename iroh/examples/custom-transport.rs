@@ -11,11 +11,11 @@ use iroh::{
     discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
     endpoint::{
         Connection,
-        transports::{Addr, Transmit, UserEndpoint, UserSender, UserTransport},
+        transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit},
     },
     protocol::{AcceptError, ProtocolHandler, Router},
 };
-use iroh_base::UserAddr;
+use iroh_base::CustomAddr;
 use n0_error::{Result, StdResultExt};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::info;
@@ -66,13 +66,13 @@ const TEST_TRANSPORT_ID: u64 = 0;
 #[derive(Debug, Clone)]
 pub(crate) struct Packet {
     pub(crate) data: Bytes,
-    pub(crate) from: UserAddr,
+    pub(crate) from: CustomAddr,
 }
 
 #[derive(Debug, Clone)]
 struct TestTransport {
-    me: UserAddr,
-    me_watchable: n0_watcher::Watchable<Vec<UserAddr>>,
+    me: CustomAddr,
+    me_watchable: n0_watcher::Watchable<Vec<CustomAddr>>,
     state: Arc<Mutex<TestTransportInner>>,
 }
 
@@ -83,7 +83,7 @@ struct TestDiscovery {
 
 #[derive(Debug, Default)]
 struct TestTransportInner {
-    channels: BTreeMap<UserAddr, (mpsc::Sender<Packet>, mpsc::Receiver<Packet>)>,
+    channels: BTreeMap<CustomAddr, (mpsc::Sender<Packet>, mpsc::Receiver<Packet>)>,
 }
 
 impl Discovery for TestDiscovery {
@@ -102,7 +102,7 @@ impl Discovery for TestDiscovery {
             Some(Box::pin(n0_future::stream::once(Ok(DiscoveryItem::new(
                 EndpointInfo {
                     endpoint_id,
-                    data: EndpointData::new([TransportAddr::User(UserAddr::from_parts(
+                    data: EndpointData::new([TransportAddr::User(CustomAddr::from_parts(
                         TEST_TRANSPORT_ID,
                         endpoint_id.as_bytes(),
                     ))]),
@@ -118,7 +118,7 @@ impl Discovery for TestDiscovery {
 
 #[derive(Debug, Clone)]
 struct TestSender {
-    me: UserAddr,
+    me: CustomAddr,
     inner: Arc<Mutex<TestTransportInner>>,
 }
 
@@ -142,11 +142,11 @@ impl TestTransport {
     }
 }
 
-fn to_user_addr(endpoint: EndpointId) -> UserAddr {
-    UserAddr::from((TEST_TRANSPORT_ID, &endpoint.as_bytes()[..]))
+fn to_user_addr(endpoint: EndpointId) -> CustomAddr {
+    CustomAddr::from((TEST_TRANSPORT_ID, &endpoint.as_bytes()[..]))
 }
 
-fn try_parse_user_addr(addr: &UserAddr) -> io::Result<EndpointId> {
+fn try_parse_user_addr(addr: &CustomAddr) -> io::Result<EndpointId> {
     if addr.id() != TEST_TRANSPORT_ID {
         return Err(io::Error::other("unexpected transport id"));
     }
@@ -158,7 +158,7 @@ fn try_parse_user_addr(addr: &UserAddr) -> io::Result<EndpointId> {
 }
 
 impl TestSender {
-    fn send_sync(&self, dst: iroh_base::UserAddr, packets: Vec<Packet>) -> io::Result<()> {
+    fn send_sync(&self, dst: iroh_base::CustomAddr, packets: Vec<Packet>) -> io::Result<()> {
         let guard = self.inner.lock().unwrap();
         let (s, _) = guard
             .channels
@@ -196,15 +196,15 @@ impl TestSender {
     }
 }
 
-impl UserSender for TestSender {
-    fn is_valid_send_addr(&self, addr: &iroh_base::UserAddr) -> bool {
+impl CustomSender for TestSender {
+    fn is_valid_send_addr(&self, addr: &iroh_base::CustomAddr) -> bool {
         addr.id() == TEST_TRANSPORT_ID
     }
 
     fn poll_send(
         &self,
         _cx: &mut std::task::Context,
-        dst: iroh_base::UserAddr,
+        dst: iroh_base::CustomAddr,
         transmit: &Transmit<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let packets = self.split(transmit).collect();
@@ -212,18 +212,18 @@ impl UserSender for TestSender {
     }
 }
 
-impl UserTransport for TestTransport {
-    fn bind(&self) -> std::io::Result<Box<dyn UserEndpoint>> {
+impl CustomTransport for TestTransport {
+    fn bind(&self) -> std::io::Result<Box<dyn CustomEndpoint>> {
         Ok(Box::new(self.clone()))
     }
 }
 
-impl UserEndpoint for TestTransport {
-    fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<UserAddr>> {
+impl CustomEndpoint for TestTransport {
+    fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<CustomAddr>> {
         self.me_watchable.watch()
     }
 
-    fn create_sender(&self) -> Arc<dyn iroh::endpoint::transports::UserSender> {
+    fn create_sender(&self) -> Arc<dyn iroh::endpoint::transports::CustomSender> {
         Arc::new(TestSender {
             me: self.me.clone(),
             inner: self.state.clone(),
