@@ -20,7 +20,7 @@
 <a href=#20 id=20 data-nosnippet>20</a>/// To establish a network connection to an endpoint both the [`EndpointId`] and one or more network
 <a href=#21 id=21 data-nosnippet>21</a>/// paths are needed.  The network paths can come from various sources, current sources can come from
 <a href=#22 id=22 data-nosnippet>22</a>///
-<a href=#23 id=23 data-nosnippet>23</a>/// - A [discovery] service which can provide routing information for a given [`EndpointId`].
+<a href=#23 id=23 data-nosnippet>23</a>/// - An [Address Lookup] service which can provide routing information for a given [`EndpointId`].
 <a href=#24 id=24 data-nosnippet>24</a>///
 <a href=#25 id=25 data-nosnippet>25</a>/// - A [`RelayUrl`] of the endpoint's [home relay], this allows establishing the connection via
 <a href=#26 id=26 data-nosnippet>26</a>///   the Relay server and is very reliable.
@@ -33,7 +33,7 @@
 <a href=#33 id=33 data-nosnippet>33</a>/// number of other addressing information.  It is a generic addressing type used whenever a connection
 <a href=#34 id=34 data-nosnippet>34</a>/// to other endpoints needs to be established.
 <a href=#35 id=35 data-nosnippet>35</a>///
-<a href=#36 id=36 data-nosnippet>36</a>/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#endpoint-discovery
+<a href=#36 id=36 data-nosnippet>36</a>/// [Address Lookup]: https://docs.rs/iroh/*/iroh/index.html#address-lookup
 <a href=#37 id=37 data-nosnippet>37</a>/// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
 <a href=#38 id=38 data-nosnippet>38</a>/// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
 <a href=#39 id=39 data-nosnippet>39</a></span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -69,7 +69,7 @@
 <a href=#69 id=69 data-nosnippet>69</a><span class="kw">impl </span>EndpointAddr {
 <a href=#70 id=70 data-nosnippet>70</a>    <span class="doccomment">/// Creates a new [`EndpointAddr`] with no network level addresses.
 <a href=#71 id=71 data-nosnippet>71</a>    ///
-<a href=#72 id=72 data-nosnippet>72</a>    /// This still is usable with e.g. a discovery service to establish a connection,
+<a href=#72 id=72 data-nosnippet>72</a>    /// This still is usable with e.g. an address lookup service to establish a connection,
 <a href=#73 id=73 data-nosnippet>73</a>    /// depending on the situation.
 <a href=#74 id=74 data-nosnippet>74</a>    </span><span class="kw">pub fn </span>new(id: PublicKey) -&gt; <span class="self">Self </span>{
 <a href=#75 id=75 data-nosnippet>75</a>        EndpointAddr {
