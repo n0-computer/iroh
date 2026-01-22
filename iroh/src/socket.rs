@@ -63,6 +63,7 @@ use crate::{
     endpoint::hooks::EndpointHooksList,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
+    runtime::Runtime,
     socket::{
         concurrent_read_map::ReadOnlyMap,
         remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
@@ -161,6 +162,8 @@ pub(crate) struct Handle {
     actor_sender: mpsc::Sender<ActorMessage>,
     // quinn endpoint
     endpoint: quinn::Endpoint,
+    /// Runtime used by quinn
+    runtime: Arc<Runtime>,
 }
 
 #[derive(Debug)]
@@ -801,14 +804,13 @@ impl Handle {
         let local_addrs_watch = transports.local_addrs_watch();
         let network_change_sender = transports.create_network_change_sender();
 
+        let runtime = Arc::new(Runtime::new(secret_key.public()));
+
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
             Box::new(Transport::new(sock.clone(), transports)),
-            #[cfg(not(wasm_browser))]
-            Arc::new(quinn::TokioRuntime),
-            #[cfg(wasm_browser)]
-            Arc::new(crate::web_runtime::WebRuntime),
+            runtime.clone(),
         )
         .map_err(|err| e!(BindError::CreateQuicEndpoint, err))?;
 
@@ -893,6 +895,7 @@ impl Handle {
             actor_sender,
             actor_task,
             endpoint,
+            runtime,
         })
     }
 
@@ -936,9 +939,9 @@ impl Handle {
         // connection close codes, and close the endpoint properly.
         // If this call is skipped, then connections that protocols close just shortly before the
         // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
-        trace!("wait_idle start");
+        debug!("wait_idle start");
         self.endpoint.wait_idle().await;
-        trace!("wait_idle done");
+        debug!("wait_idle done");
 
         // Start cancellation of all actors
         self.sock.shutdown.at_endpoint_closed.cancel();
@@ -961,6 +964,10 @@ impl Handle {
                 }
             }
         }
+
+        // Waits for the EndpointDriver and all ConnectionDrivers to shut down
+        debug!("calling runtime shutdown");
+        self.runtime.shutdown().await;
 
         self.sock.shutdown.closed.store(true, Ordering::SeqCst);
 
