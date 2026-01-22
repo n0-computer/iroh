@@ -172,7 +172,7 @@ impl std::str::FromStr for CustomAddr {
     }
 }
 
-/// Error parsing a [`UserAddr`].
+/// Error parsing a [`CustomAddr`].
 #[stack_error(derive)]
 #[allow(missing_docs)]
 pub enum UserAddrParseError {
@@ -243,7 +243,7 @@ impl UserAddrBytes {
 }
 
 impl CustomAddr {
-    /// Creates a new [`UserAddr`] from its parts.
+    /// Creates a new [`CustomAddr`] from its parts.
     pub fn from_parts(id: u64, data: &[u8]) -> Self {
         Self {
             id,

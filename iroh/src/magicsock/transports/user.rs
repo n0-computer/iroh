@@ -45,8 +45,8 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
 /// A sender provides a poll based interface to send packets to user addresses.
 /// It can decide whether it wants to send to a given user address type.
 ///
-/// This is not enforced at type level, but [UserSender::poll_send] should
-/// only be called with addresses for which [UserSender::is_valid_send_addr]
+/// This is not enforced at type level, but [CustomSender::poll_send] should
+/// only be called with addresses for which [CustomSender::is_valid_send_addr]
 /// returns true.
 pub trait CustomSender: std::fmt::Debug + Send + Sync + 'static {
     /// is addr valid for this transport?
