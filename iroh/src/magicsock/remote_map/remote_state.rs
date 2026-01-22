@@ -29,7 +29,10 @@ use self::path_state::RemotePathState;
 pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
 use super::Source;
 use crate::{
-    discovery::{ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem},
+    address_lookup::{
+        AddressLookup, ConcurrentAddressLookup, Error as AddressLookupError,
+        Item as AddressLookupItem,
+    },
     endpoint::{DirectAddr, quic::PathStats},
     magicsock::{
         MagicsockMetrics,
@@ -100,16 +103,16 @@ type AddrEvents = MergeUnbounded<
     >,
 >;
 
-/// Either a stream of incoming results from [`ConcurrentDiscovery::resolve`] or infinitely pending.
+/// Either a stream of incoming results from [`ConcurrentAddressLookup::resolve`] or infinitely pending.
 ///
-/// Set to [`Either::Left`] with an always-pending stream while discovery is not running, and to
-/// [`Either::Right`] while discovery is running.
+/// Set to [`Either::Left`] with an always-pending stream while address lookup is not running, and to
+/// [`Either::Right`] while Address Lookup is running.
 ///
-/// The stream returned from [`ConcurrentDiscovery::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
+/// The stream returned from [`ConcurrentAddressLookup::resolve`] is `!Sync`. We use the (safe) [`SyncStream`]
 /// wrapper to make it `Sync` so that the [`RemoteStateActor::run`] future stays `Send`.
-type DiscoveryStream = Either<
-    n0_future::stream::Pending<Result<DiscoveryItem, DiscoveryError>>,
-    SyncStream<BoxStream<Result<DiscoveryItem, DiscoveryError>>>,
+type AddressLookupStream = Either<
+    n0_future::stream::Pending<Result<AddressLookupItem, AddressLookupError>>,
+    SyncStream<BoxStream<Result<AddressLookupItem, AddressLookupError>>>,
 >;
 
 /// List of addrs and path ids for open paths in a connection.
@@ -137,8 +140,8 @@ pub(super) struct RemoteStateActor {
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     /// The mapping between user provided addresses and their [`UserMappedAddr`]s.
     user_mapped_addrs: AddrMap<CustomAddr, UserMappedAddr>,
-    /// Discovery service, cloned from the magicsock.
-    discovery: ConcurrentDiscovery,
+    /// Address lookup service, cloned from the magicsock.
+    address_lookup: ConcurrentAddressLookup,
 
     // Internal state - Quinn Connections we are managing.
     //
@@ -155,7 +158,7 @@ pub(super) struct RemoteStateActor {
     //
     /// All possible paths we are aware of.
     ///
-    /// These paths might be entirely impossible to use, since they are added by discovery
+    /// These paths might be entirely impossible to use, since they are added by Address Lookup
     /// mechanisms.  The are only potentially usable.
     paths: RemotePathState,
     /// Information about the last holepunching attempt.
@@ -179,10 +182,10 @@ pub(super) struct RemoteStateActor {
     /// They failed to open because we did not have enough CIDs issued by the remote.
     pending_open_paths: VecDeque<transports::Addr>,
 
-    // Internal state - Discovery
+    // Internal state - address lookup
     //
-    /// Stream of discovery results, or always pending if discovery is not running.
-    discovery_stream: DiscoveryStream,
+    /// Stream of Address Lookup results, or always pending if Address Lookup is not running.
+    address_lookup_stream: AddressLookupStream,
 }
 
 impl RemoteStateActor {
@@ -194,7 +197,7 @@ impl RemoteStateActor {
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
         user_mapped_addrs: AddrMap<CustomAddr, UserMappedAddr>,
         metrics: Arc<MagicsockMetrics>,
-        discovery: ConcurrentDiscovery,
+        address_lookup: ConcurrentAddressLookup,
     ) -> Self {
         Self {
             endpoint_id,
@@ -203,7 +206,7 @@ impl RemoteStateActor {
             local_direct_addrs,
             relay_mapped_addrs,
             user_mapped_addrs,
-            discovery,
+            address_lookup,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
             path_events: Default::default(),
@@ -214,7 +217,7 @@ impl RemoteStateActor {
             scheduled_holepunch: None,
             scheduled_open_path: None,
             pending_open_paths: VecDeque::new(),
-            discovery_stream: Either::Left(n0_future::stream::pending()),
+            address_lookup_stream: Either::Left(n0_future::stream::pending()),
         }
     }
 
@@ -328,8 +331,8 @@ impl RemoteStateActor {
                     self.scheduled_holepunch = None;
                     self.trigger_holepunching();
                 }
-                item = self.discovery_stream.next() => {
-                    self.handle_discovery_item(item);
+                item = self.address_lookup_stream.next() => {
+                    self.handle_address_lookup_item(item);
                 }
                 _ = check_connections.tick() => {
                     self.check_connections();
@@ -393,7 +396,7 @@ impl RemoteStateActor {
                     if let Some(path) = quinn_conn.path(*path_id) {
                         // Ping the current path
                         if let Err(err) = path.ping() {
-                            warn!(%err, ?path_id, ?addr, "failed to ping path");
+                            warn!(%err, %path_id, ?addr, "failed to ping path");
                         }
                     }
                 }
@@ -546,12 +549,22 @@ impl RemoteStateActor {
                 && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
             {
                 trace!(?path_remote, "added new connection");
-                let status = match path_remote {
+                let path_status = match path_remote {
                     transports::Addr::Ip(_) => PathStatus::Available,
                     transports::Addr::Relay(_, _) => PathStatus::Backup,
                     transports::Addr::User(_) => PathStatus::Backup,
                 };
-                path.set_status(status).ok();
+                let res = path.set_status(path_status);
+                event!(
+                    target: "iroh::_events::path::set_status",
+                    Level::DEBUG,
+                    remote = %self.endpoint_id.fmt_short(),
+                    ?path_remote,
+                    ?path_status,
+                    ?conn_id,
+                    path_id = %PathId::ZERO,
+                    ?res,
+                );
                 conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
@@ -585,13 +598,13 @@ impl RemoteStateActor {
     fn handle_msg_resolve_remote(
         &mut self,
         addrs: BTreeSet<TransportAddr>,
-        tx: oneshot::Sender<Result<(), DiscoveryError>>,
+        tx: oneshot::Sender<Result<(), AddressLookupError>>,
     ) {
         let addrs = to_transports_addr(self.endpoint_id, addrs);
         self.paths.insert_multiple(addrs, Source::App);
         self.paths.resolve_remote(tx);
-        // Start discovery if we have no selected path.
-        self.trigger_discovery();
+        // Start Address Lookup if we have no selected path.
+        self.trigger_address_lookup();
     }
 
     fn handle_connection_close(&mut self, conn_id: ConnId) {
@@ -604,22 +617,28 @@ impl RemoteStateActor {
         }
     }
 
-    fn handle_discovery_item(&mut self, item: Option<Result<DiscoveryItem, DiscoveryError>>) {
+    fn handle_address_lookup_item(
+        &mut self,
+        item: Option<Result<AddressLookupItem, AddressLookupError>>,
+    ) {
         match item {
             None => {
-                self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.paths.discovery_finished(Ok(()));
+                self.address_lookup_stream = Either::Left(n0_future::stream::pending());
+                self.paths.address_lookup_finished(Ok(()));
             }
             Some(Err(err)) => {
-                warn!("Discovery failed: {err:#}");
-                self.discovery_stream = Either::Left(n0_future::stream::pending());
-                self.paths.discovery_finished(Err(err));
+                warn!("Address Lookup failed: {err:#}");
+                self.address_lookup_stream = Either::Left(n0_future::stream::pending());
+                self.paths.address_lookup_finished(Err(err));
             }
             Some(Ok(item)) => {
                 if item.endpoint_id() != self.endpoint_id {
-                    warn!(?item, "Discovery emitted item for wrong remote endpoint");
+                    warn!(
+                        ?item,
+                        "Address Lookup emitted item for wrong remote endpoint"
+                    );
                 } else {
-                    let source = Source::Discovery {
+                    let source = Source::AddressLookup {
                         name: item.provenance().to_string(),
                     };
                     let addrs =
@@ -630,16 +649,18 @@ impl RemoteStateActor {
         }
     }
 
-    /// Triggers discovery for the remote endpoint, if needed.
+    /// Triggers Address Lookup for the remote endpoint, if needed.
     ///
-    /// Does not start discovery if we have a selected path or if discovery is currently running.
-    fn trigger_discovery(&mut self) {
-        if self.selected_path.get().is_some() || matches!(self.discovery_stream, Either::Right(_)) {
+    /// Does not start Address Lookup if we have a selected path or if Address Lookup is currently running.
+    fn trigger_address_lookup(&mut self) {
+        if self.selected_path.get().is_some()
+            || matches!(self.address_lookup_stream, Either::Right(_))
+        {
             return;
         }
-        match self.discovery.resolve(self.endpoint_id) {
-            Some(stream) => self.discovery_stream = Either::Right(SyncStream::new(stream)),
-            None => self.paths.discovery_finished(Ok(())),
+        match self.address_lookup.resolve(self.endpoint_id) {
+            Some(stream) => self.address_lookup_stream = Either::Right(SyncStream::new(stream)),
+            None => self.paths.address_lookup_finished(Ok(())),
         }
     }
 
@@ -825,26 +846,52 @@ impl RemoteStateActor {
         };
 
         for (conn_id, conn_state) in self.connections.iter_mut() {
-            if conn_state.path_ids.contains_key(open_addr) {
-                continue;
-            }
             let Some(conn) = conn_state.handle.upgrade() else {
                 continue;
             };
+            if let Some(&path_id) = conn_state.path_ids.get(open_addr)
+                && let Some(path) = conn.path(path_id)
+            {
+                // We still need to ensure that the path status is set correctly,
+                // in case the path was opened by QNT, which opens all IP paths
+                // using PATH_STATUS_BACKUP. We need to switch the selected path
+                // to use PATH_STATUS_AVAILABLE though!
+                let res = path.set_status(path_status);
+                event!(
+                    target: "iroh::_events::path::set_status",
+                    Level::DEBUG,
+                    remote = %self.endpoint_id.fmt_short(),
+                    ?open_addr,
+                    ?path_status,
+                    ?conn_id,
+                    %path_id,
+                    ?res,
+                );
+                continue;
+            }
             if conn.side().is_server() {
                 continue;
             }
             let fut = conn.open_path_ensure(quic_addr, path_status);
             match fut.path_id() {
                 Some(path_id) => {
-                    trace!(?conn_id, ?path_id, "opening new path");
+                    trace!(?conn_id, %path_id, ?path_status, "opening new path");
                     conn_state.add_path(open_addr.clone(), path_id);
-                    // We still need to ensure that the path status is set correctly,
-                    // in case the path was opened by QNT, which opens all IP paths
-                    // using PATH_STATUS_BACKUP. We need to switch the selected path
-                    // to use PATH_STATUS_AVAILABLE though!
+                    // Just like in the PATH_STATUS comment above, we need to make sure that the
+                    // path status is set correctly, even if the path already existed.
                     if let Some(path) = conn.path(path_id) {
-                        if let Err(e) = path.set_status(path_status) {
+                        let res = path.set_status(path_status);
+                        event!(
+                            target: "iroh::_events::path::set_status",
+                            Level::DEBUG,
+                            remote = %self.endpoint_id.fmt_short(),
+                            ?open_addr,
+                            ?path_status,
+                            ?conn_id,
+                            %path_id,
+                            ?res,
+                        );
+                        if let Err(e) = res {
                             warn!(?e, ?open_addr, ?path_status, "Setting path status failed");
                         }
                     }
@@ -902,7 +949,7 @@ impl RemoteStateActor {
                         remote = %self.endpoint_id.fmt_short(),
                         ?path_remote,
                         ?conn_id,
-                        ?path_id,
+                        %path_id,
                     );
                     conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
                     self.paths
@@ -942,12 +989,12 @@ impl RemoteStateActor {
                         continue;
                     };
                     if let Some(path) = conn.path(*path_id) {
-                        trace!(?path_remote, ?conn_id, ?path_id, "closing path");
+                        trace!(?path_remote, ?conn_id, %path_id, "closing path");
                         if let Err(err) = path.close() {
                             trace!(
                                 ?path_remote,
                                 ?conn_id,
-                                ?path_id,
+                                %path_id,
                                 "path close failed: {err:#}"
                             );
                         }
@@ -1083,7 +1130,7 @@ impl RemoteStateActor {
                     .filter(|conn| conn.side().is_client())
                     .and_then(|conn| conn.path(*path_id))
                 {
-                    trace!(?path_remote, ?conn_id, ?path_id, "closing direct path");
+                    trace!(?path_remote, ?conn_id, %path_id, "closing direct path");
                     match path.close() {
                         Err(quinn_proto::ClosePathError::LastOpenPath) => {
                             error!("could not close last open path");
@@ -1223,15 +1270,15 @@ pub(crate) enum RemoteStateMessage {
     /// Asks if there is any possible path that could be used.
     ///
     /// This adds the provided transport addresses to the list of potential paths for this remote
-    /// and starts discovery if needed.
+    /// and starts Address Lookup if needed.
     ///
     /// Returns `Ok` immediately if the provided address list is non-empy or we have are other known paths.
-    /// Otherwise returns `Ok` once discovery produces a result, or the discovery error if discovery fails
+    /// Otherwise returns `Ok` once Address Lookup produces a result, or the Address Lookup error if Address Lookup fails
     /// or produces no results,
     #[debug("ResolveRemote(..)")]
     ResolveRemote(
         BTreeSet<TransportAddr>,
-        oneshot::Sender<Result<(), DiscoveryError>>,
+        oneshot::Sender<Result<(), AddressLookupError>>,
     ),
     /// Returns information about the remote.
     ///

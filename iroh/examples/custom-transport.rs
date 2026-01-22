@@ -8,7 +8,7 @@ use bytes::Bytes;
 use futures_util::io;
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, SecretKey, TransportAddr,
-    discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
+    address_lookup::{AddressLookup, EndpointData, EndpointInfo, Item},
     endpoint::{
         Connection,
         transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit},
@@ -86,20 +86,17 @@ struct TestTransportInner {
     channels: BTreeMap<CustomAddr, (mpsc::Sender<Packet>, mpsc::Receiver<Packet>)>,
 }
 
-impl Discovery for TestDiscovery {
-    fn publish(&self, _data: &iroh::discovery::EndpointData) {}
+impl AddressLookup for TestDiscovery {
+    fn publish(&self, _data: &iroh::address_lookup::EndpointData) {}
 
     fn resolve(
         &self,
         endpoint_id: EndpointId,
-    ) -> Option<
-        n0_future::stream::Boxed<
-            std::result::Result<iroh::discovery::DiscoveryItem, iroh::discovery::DiscoveryError>,
-        >,
-    > {
+    ) -> Option<n0_future::stream::Boxed<std::result::Result<Item, iroh::address_lookup::Error>>>
+    {
         let user_addr = to_user_addr(endpoint_id);
         if self.state.lock().unwrap().channels.contains_key(&user_addr) {
-            Some(Box::pin(n0_future::stream::once(Ok(DiscoveryItem::new(
+            Some(Box::pin(n0_future::stream::once(Ok(Item::new(
                 EndpointInfo {
                     endpoint_id,
                     data: EndpointData::new([TransportAddr::User(CustomAddr::from_parts(
