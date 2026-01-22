@@ -69,7 +69,7 @@ rustls-platform-verifier = "0.5.3"
 iroh-metrics = { version = "0.38", default-features = false }
 
 # mdns
-swarm-discovery = { version = "0.4", optional = true }
+swarm-discovery = { version = "0.5", optional = true }
 futures-util = "0.3"
 
 # test_utils
