@@ -2499,7 +2499,6 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn graceful_close() -> Result {
-        let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
         let server = Endpoint::empty_builder(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2513,16 +2512,20 @@ mod tests {
             send.write_all(&msg).await.anyerr()?;
             send.finish().anyerr()?;
             let close_reason = conn.closed().await;
+            server.close().await;
             Ok::<_, Error>(close_reason)
         });
 
-        let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
-        send.write_all(b"Hello, world!").await.anyerr()?;
-        send.finish().anyerr()?;
-        recv.read_to_end(1_000).await.anyerr()?;
-        conn.close(42u32.into(), b"thanks, bye!");
-        client.close().await;
+        {
+            let client = Endpoint::empty_builder(RelayMode::Disabled).bind().await?;
+            let conn = client.connect(server_addr, TEST_ALPN).await?;
+            let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+            send.write_all(b"Hello, world!").await.anyerr()?;
+            send.finish().anyerr()?;
+            recv.read_to_end(1_000).await.anyerr()?;
+            conn.close(42u32.into(), b"thanks, bye!");
+            client.close().await;
+        }
 
         let close_err = server_task.await.anyerr()??;
         let ConnectionError::ApplicationClosed(app_close) = close_err else {
