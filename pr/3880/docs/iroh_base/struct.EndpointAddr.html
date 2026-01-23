@@ -8,7 +8,7 @@ contact the endpoint.</p>
 paths are needed.  The network paths can come from various sources, current sources can come from</p>
 <ul>
 <li>
-<p>A <a href="https://docs.rs/iroh/*/iroh/index.html#endpoint-discovery">discovery</a> service which can provide routing information for a given <a href="type.EndpointId.html" title="type iroh_base::EndpointId"><code>EndpointId</code></a>.</p>
+<p>An <a href="https://docs.rs/iroh/*/iroh/index.html#address-lookup">Address Lookup</a> service which can provide routing information for a given <a href="type.EndpointId.html" title="type iroh_base::EndpointId"><code>EndpointId</code></a>.</p>
 </li>
 <li>
 <p>A <a href="struct.RelayUrl.html" title="struct iroh_base::RelayUrl"><code>RelayUrl</code></a> of the endpoint’s <a href="https://docs.rs/iroh/*/iroh/relay/index.html">home relay</a>, this allows establishing the connection via
@@ -26,7 +26,7 @@ to other endpoints needs to be established.</p>
 </div></details><h2 id="fields" class="fields section-header">Fields<a href="#fields" class="anchor">§</a></h2><span id="structfield.id" class="structfield section-header"><a href="#structfield.id" class="anchor field">§</a><code>id: <a class="type" href="type.EndpointId.html" title="type iroh_base::EndpointId">EndpointId</a></code></span><div class="docblock"><p>The endpoint’s identifier.</p>
 </div><span id="structfield.addrs" class="structfield section-header"><a href="#structfield.addrs" class="anchor field">§</a><code>addrs: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/collections/btree/set/struct.BTreeSet.html" title="struct alloc::collections::btree::set::BTreeSet">BTreeSet</a>&lt;<a class="enum" href="enum.TransportAddr.html" title="enum iroh_base::TransportAddr">TransportAddr</a>&gt;</code></span><div class="docblock"><p>The endpoint’s addresses</p>
 </div><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-EndpointAddr" class="impl"><a class="src rightside" href="../src/iroh_base/endpoint_addr.rs.html#73-135">Source</a><a href="#impl-EndpointAddr" class="anchor">§</a><h3 class="code-header">impl <a class="struct" href="struct.EndpointAddr.html" title="struct iroh_base::EndpointAddr">EndpointAddr</a></h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.new" class="method"><a class="src rightside" href="../src/iroh_base/endpoint_addr.rs.html#78-83">Source</a><h4 class="code-header">pub fn <a href="#method.new" class="fn">new</a>(id: <a class="struct" href="struct.PublicKey.html" title="struct iroh_base::PublicKey">PublicKey</a>) -&gt; Self</h4></section></summary><div class="docblock"><p>Creates a new <a href="struct.EndpointAddr.html" title="struct iroh_base::EndpointAddr"><code>EndpointAddr</code></a> with no network level addresses.</p>
-<p>This still is usable with e.g. a discovery service to establish a connection,
+<p>This still is usable with e.g. an address lookup service to establish a connection,
 depending on the situation.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.from_parts" class="method"><a class="src rightside" href="../src/iroh_base/endpoint_addr.rs.html#86-91">Source</a><h4 class="code-header">pub fn <a href="#method.from_parts" class="fn">from_parts</a>(
     id: <a class="struct" href="struct.PublicKey.html" title="struct iroh_base::PublicKey">PublicKey</a>,

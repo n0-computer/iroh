@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a>/// To establish a network connection to an endpoint both the [`EndpointId`] and one or more network
 <a href=#23 id=23 data-nosnippet>23</a>/// paths are needed.  The network paths can come from various sources, current sources can come from
 <a href=#24 id=24 data-nosnippet>24</a>///
-<a href=#25 id=25 data-nosnippet>25</a>/// - A [discovery] service which can provide routing information for a given [`EndpointId`].
+<a href=#25 id=25 data-nosnippet>25</a>/// - An [Address Lookup] service which can provide routing information for a given [`EndpointId`].
 <a href=#26 id=26 data-nosnippet>26</a>///
 <a href=#27 id=27 data-nosnippet>27</a>/// - A [`RelayUrl`] of the endpoint's [home relay], this allows establishing the connection via
 <a href=#28 id=28 data-nosnippet>28</a>///   the Relay server and is very reliable.
@@ -35,7 +35,7 @@
 <a href=#35 id=35 data-nosnippet>35</a>/// number of other addressing information.  It is a generic addressing type used whenever a connection
 <a href=#36 id=36 data-nosnippet>36</a>/// to other endpoints needs to be established.
 <a href=#37 id=37 data-nosnippet>37</a>///
-<a href=#38 id=38 data-nosnippet>38</a>/// [discovery]: https://docs.rs/iroh/*/iroh/index.html#endpoint-discovery
+<a href=#38 id=38 data-nosnippet>38</a>/// [Address Lookup]: https://docs.rs/iroh/*/iroh/index.html#address-lookup
 <a href=#39 id=39 data-nosnippet>39</a>/// [home relay]: https://docs.rs/iroh/*/iroh/relay/index.html
 <a href=#40 id=40 data-nosnippet>40</a>/// [Relay server]: https://docs.rs/iroh/*/iroh/index.html#relay-servers
 <a href=#41 id=41 data-nosnippet>41</a></span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -55,7 +55,7 @@
 <a href=#55 id=55 data-nosnippet>55</a>    <span class="doccomment">/// IP based addresses
 <a href=#56 id=56 data-nosnippet>56</a>    </span>Ip(SocketAddr),
 <a href=#57 id=57 data-nosnippet>57</a>    <span class="doccomment">/// User defined transport address
-<a href=#58 id=58 data-nosnippet>58</a>    </span>User(UserAddr),
+<a href=#58 id=58 data-nosnippet>58</a>    </span>User(CustomAddr),
 <a href=#59 id=59 data-nosnippet>59</a>}
 <a href=#60 id=60 data-nosnippet>60</a>
 <a href=#61 id=61 data-nosnippet>61</a><span class="kw">impl </span>TransportAddr {
@@ -73,7 +73,7 @@
 <a href=#73 id=73 data-nosnippet>73</a><span class="kw">impl </span>EndpointAddr {
 <a href=#74 id=74 data-nosnippet>74</a>    <span class="doccomment">/// Creates a new [`EndpointAddr`] with no network level addresses.
 <a href=#75 id=75 data-nosnippet>75</a>    ///
-<a href=#76 id=76 data-nosnippet>76</a>    /// This still is usable with e.g. a discovery service to establish a connection,
+<a href=#76 id=76 data-nosnippet>76</a>    /// This still is usable with e.g. an address lookup service to establish a connection,
 <a href=#77 id=77 data-nosnippet>77</a>    /// depending on the situation.
 <a href=#78 id=78 data-nosnippet>78</a>    </span><span class="kw">pub fn </span>new(id: PublicKey) -&gt; <span class="self">Self </span>{
 <a href=#79 id=79 data-nosnippet>79</a>        EndpointAddr {
@@ -142,20 +142,20 @@
 <a href=#142 id=142 data-nosnippet>142</a>
 <a href=#143 id=143 data-nosnippet>143</a><span class="doccomment">/// TODO
 <a href=#144 id=144 data-nosnippet>144</a></span><span class="attr">#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-<a href=#145 id=145 data-nosnippet>145</a></span><span class="kw">pub struct </span>UserAddr {
+<a href=#145 id=145 data-nosnippet>145</a></span><span class="kw">pub struct </span>CustomAddr {
 <a href=#146 id=146 data-nosnippet>146</a>    <span class="doccomment">/// id
 <a href=#147 id=147 data-nosnippet>147</a>    </span>id: u64,
 <a href=#148 id=148 data-nosnippet>148</a>    <span class="doccomment">/// data
 <a href=#149 id=149 data-nosnippet>149</a>    </span>data: UserAddrBytes,
 <a href=#150 id=150 data-nosnippet>150</a>}
 <a href=#151 id=151 data-nosnippet>151</a>
-<a href=#152 id=152 data-nosnippet>152</a><span class="kw">impl </span>fmt::Display <span class="kw">for </span>UserAddr {
+<a href=#152 id=152 data-nosnippet>152</a><span class="kw">impl </span>fmt::Display <span class="kw">for </span>CustomAddr {
 <a href=#153 id=153 data-nosnippet>153</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
 <a href=#154 id=154 data-nosnippet>154</a>        <span class="macro">write!</span>(f, <span class="string">"{:x}_{}"</span>, <span class="self">self</span>.id, HEXLOWER.encode(<span class="self">self</span>.data.as_bytes()))
 <a href=#155 id=155 data-nosnippet>155</a>    }
 <a href=#156 id=156 data-nosnippet>156</a>}
 <a href=#157 id=157 data-nosnippet>157</a>
-<a href=#158 id=158 data-nosnippet>158</a><span class="kw">impl </span>std::str::FromStr <span class="kw">for </span>UserAddr {
+<a href=#158 id=158 data-nosnippet>158</a><span class="kw">impl </span>std::str::FromStr <span class="kw">for </span>CustomAddr {
 <a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= UserAddrParseError;
 <a href=#160 id=160 data-nosnippet>160</a>
 <a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
@@ -172,7 +172,7 @@
 <a href=#172 id=172 data-nosnippet>172</a>    }
 <a href=#173 id=173 data-nosnippet>173</a>}
 <a href=#174 id=174 data-nosnippet>174</a>
-<a href=#175 id=175 data-nosnippet>175</a><span class="doccomment">/// Error parsing a [`UserAddr`].
+<a href=#175 id=175 data-nosnippet>175</a><span class="doccomment">/// Error parsing a [`CustomAddr`].
 <a href=#176 id=176 data-nosnippet>176</a></span><span class="attr">#[stack_error(derive)]
 <a href=#177 id=177 data-nosnippet>177</a>#[allow(missing_docs)]
 <a href=#178 id=178 data-nosnippet>178</a></span><span class="kw">pub enum </span>UserAddrParseError {
@@ -207,7 +207,7 @@
 <a href=#207 id=207 data-nosnippet>207</a>    }
 <a href=#208 id=208 data-nosnippet>208</a>}
 <a href=#209 id=209 data-nosnippet>209</a>
-<a href=#210 id=210 data-nosnippet>210</a><span class="kw">impl </span>From&lt;(u64, <span class="kw-2">&amp;</span>[u8])&gt; <span class="kw">for </span>UserAddr {
+<a href=#210 id=210 data-nosnippet>210</a><span class="kw">impl </span>From&lt;(u64, <span class="kw-2">&amp;</span>[u8])&gt; <span class="kw">for </span>CustomAddr {
 <a href=#211 id=211 data-nosnippet>211</a>    <span class="kw">fn </span>from((id, data): (u64, <span class="kw-2">&amp;</span>[u8])) -&gt; <span class="self">Self </span>{
 <a href=#212 id=212 data-nosnippet>212</a>        <span class="self">Self</span>::from_parts(id, data)
 <a href=#213 id=213 data-nosnippet>213</a>    }
@@ -242,8 +242,8 @@
 <a href=#242 id=242 data-nosnippet>242</a>    }
 <a href=#243 id=243 data-nosnippet>243</a>}
 <a href=#244 id=244 data-nosnippet>244</a>
-<a href=#245 id=245 data-nosnippet>245</a><span class="kw">impl </span>UserAddr {
-<a href=#246 id=246 data-nosnippet>246</a>    <span class="doccomment">/// Creates a new [`UserAddr`] from its parts.
+<a href=#245 id=245 data-nosnippet>245</a><span class="kw">impl </span>CustomAddr {
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="doccomment">/// Creates a new [`CustomAddr`] from its parts.
 <a href=#247 id=247 data-nosnippet>247</a>    </span><span class="kw">pub fn </span>from_parts(id: u64, data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="self">Self </span>{
 <a href=#248 id=248 data-nosnippet>248</a>        <span class="self">Self </span>{
 <a href=#249 id=249 data-nosnippet>249</a>            id,
@@ -325,49 +325,49 @@
 <a href=#325 id=325 data-nosnippet>325</a>    <span class="attr">#[test]
 <a href=#326 id=326 data-nosnippet>326</a>    </span><span class="kw">fn </span>test_user_addr_roundtrip() {
 <a href=#327 id=327 data-nosnippet>327</a>        <span class="comment">// Small id, small data (e.g., Bluetooth MAC)
-<a href=#328 id=328 data-nosnippet>328</a>        </span><span class="kw">let </span>addr = UserAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
+<a href=#328 id=328 data-nosnippet>328</a>        </span><span class="kw">let </span>addr = CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
 <a href=#329 id=329 data-nosnippet>329</a>        <span class="kw">let </span>s = addr.to_string();
 <a href=#330 id=330 data-nosnippet>330</a>        <span class="macro">assert_eq!</span>(s, <span class="string">"1_a1b2c3d4e5f6"</span>);
-<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>parsed: UserAddr = s.parse().unwrap();
+<a href=#331 id=331 data-nosnippet>331</a>        <span class="kw">let </span>parsed: CustomAddr = s.parse().unwrap();
 <a href=#332 id=332 data-nosnippet>332</a>        <span class="macro">assert_eq!</span>(addr, parsed);
 <a href=#333 id=333 data-nosnippet>333</a>
 <a href=#334 id=334 data-nosnippet>334</a>        <span class="comment">// Larger id, 32-byte data (e.g., Tor pubkey)
-<a href=#335 id=335 data-nosnippet>335</a>        </span><span class="kw">let </span>addr = UserAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
+<a href=#335 id=335 data-nosnippet>335</a>        </span><span class="kw">let </span>addr = CustomAddr::from_parts(<span class="number">42</span>, <span class="kw-2">&amp;</span>[<span class="number">0xab</span>; <span class="number">32</span>]);
 <a href=#336 id=336 data-nosnippet>336</a>        <span class="kw">let </span>s = addr.to_string();
 <a href=#337 id=337 data-nosnippet>337</a>        <span class="macro">assert_eq!</span>(
 <a href=#338 id=338 data-nosnippet>338</a>            s,
 <a href=#339 id=339 data-nosnippet>339</a>            <span class="string">"2a_abababababababababababababababababababababababababababababababab"
 <a href=#340 id=340 data-nosnippet>340</a>        </span>);
-<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">let </span>parsed: UserAddr = s.parse().unwrap();
+<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">let </span>parsed: CustomAddr = s.parse().unwrap();
 <a href=#342 id=342 data-nosnippet>342</a>        <span class="macro">assert_eq!</span>(addr, parsed);
 <a href=#343 id=343 data-nosnippet>343</a>
 <a href=#344 id=344 data-nosnippet>344</a>        <span class="comment">// Zero id, empty data
-<a href=#345 id=345 data-nosnippet>345</a>        </span><span class="kw">let </span>addr = UserAddr::from_parts(<span class="number">0</span>, <span class="kw-2">&amp;</span>[]);
+<a href=#345 id=345 data-nosnippet>345</a>        </span><span class="kw">let </span>addr = CustomAddr::from_parts(<span class="number">0</span>, <span class="kw-2">&amp;</span>[]);
 <a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span>s = addr.to_string();
 <a href=#347 id=347 data-nosnippet>347</a>        <span class="macro">assert_eq!</span>(s, <span class="string">"0_"</span>);
-<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">let </span>parsed: UserAddr = s.parse().unwrap();
+<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">let </span>parsed: CustomAddr = s.parse().unwrap();
 <a href=#349 id=349 data-nosnippet>349</a>        <span class="macro">assert_eq!</span>(addr, parsed);
 <a href=#350 id=350 data-nosnippet>350</a>
 <a href=#351 id=351 data-nosnippet>351</a>        <span class="comment">// Large id
-<a href=#352 id=352 data-nosnippet>352</a>        </span><span class="kw">let </span>addr = UserAddr::from_parts(<span class="number">0xdeadbeef</span>, <span class="kw-2">&amp;</span>[<span class="number">0x01</span>, <span class="number">0x02</span>]);
+<a href=#352 id=352 data-nosnippet>352</a>        </span><span class="kw">let </span>addr = CustomAddr::from_parts(<span class="number">0xdeadbeef</span>, <span class="kw-2">&amp;</span>[<span class="number">0x01</span>, <span class="number">0x02</span>]);
 <a href=#353 id=353 data-nosnippet>353</a>        <span class="kw">let </span>s = addr.to_string();
 <a href=#354 id=354 data-nosnippet>354</a>        <span class="macro">assert_eq!</span>(s, <span class="string">"deadbeef_0102"</span>);
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw">let </span>parsed: UserAddr = s.parse().unwrap();
+<a href=#355 id=355 data-nosnippet>355</a>        <span class="kw">let </span>parsed: CustomAddr = s.parse().unwrap();
 <a href=#356 id=356 data-nosnippet>356</a>        <span class="macro">assert_eq!</span>(addr, parsed);
 <a href=#357 id=357 data-nosnippet>357</a>    }
 <a href=#358 id=358 data-nosnippet>358</a>
 <a href=#359 id=359 data-nosnippet>359</a>    <span class="attr">#[test]
 <a href=#360 id=360 data-nosnippet>360</a>    </span><span class="kw">fn </span>test_user_addr_parse_errors() {
 <a href=#361 id=361 data-nosnippet>361</a>        <span class="comment">// Missing separator
-<a href=#362 id=362 data-nosnippet>362</a>        </span><span class="macro">assert!</span>(<span class="string">"abc123"</span>.parse::&lt;UserAddr&gt;().is_err());
+<a href=#362 id=362 data-nosnippet>362</a>        </span><span class="macro">assert!</span>(<span class="string">"abc123"</span>.parse::&lt;CustomAddr&gt;().is_err());
 <a href=#363 id=363 data-nosnippet>363</a>
 <a href=#364 id=364 data-nosnippet>364</a>        <span class="comment">// Invalid id (not hex)
-<a href=#365 id=365 data-nosnippet>365</a>        </span><span class="macro">assert!</span>(<span class="string">"xyz_0102"</span>.parse::&lt;UserAddr&gt;().is_err());
+<a href=#365 id=365 data-nosnippet>365</a>        </span><span class="macro">assert!</span>(<span class="string">"xyz_0102"</span>.parse::&lt;CustomAddr&gt;().is_err());
 <a href=#366 id=366 data-nosnippet>366</a>
 <a href=#367 id=367 data-nosnippet>367</a>        <span class="comment">// Invalid data (not hex)
-<a href=#368 id=368 data-nosnippet>368</a>        </span><span class="macro">assert!</span>(<span class="string">"1_ghij"</span>.parse::&lt;UserAddr&gt;().is_err());
+<a href=#368 id=368 data-nosnippet>368</a>        </span><span class="macro">assert!</span>(<span class="string">"1_ghij"</span>.parse::&lt;CustomAddr&gt;().is_err());
 <a href=#369 id=369 data-nosnippet>369</a>
 <a href=#370 id=370 data-nosnippet>370</a>        <span class="comment">// Odd-length hex data
-<a href=#371 id=371 data-nosnippet>371</a>        </span><span class="macro">assert!</span>(<span class="string">"1_abc"</span>.parse::&lt;UserAddr&gt;().is_err());
+<a href=#371 id=371 data-nosnippet>371</a>        </span><span class="macro">assert!</span>(<span class="string">"1_abc"</span>.parse::&lt;CustomAddr&gt;().is_err());
 <a href=#372 id=372 data-nosnippet>372</a>    }
 <a href=#373 id=373 data-nosnippet>373</a>}</code></pre></div></section></main></body></html>

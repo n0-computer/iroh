@@ -22,7 +22,7 @@
 <a href=#22 id=22 data-nosnippet>22</a>    };
 <a href=#23 id=23 data-nosnippet>23</a>
 <a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">use </span>iroh::{
-<a href=#25 id=25 data-nosnippet>25</a>        RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
+<a href=#25 id=25 data-nosnippet>25</a>        RelayUrl, SecretKey, address_lookup::PkarrRelayClient, dns::DnsResolver,
 <a href=#26 id=26 data-nosnippet>26</a>        endpoint_info::EndpointInfo,
 <a href=#27 id=27 data-nosnippet>27</a>    };
 <a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">use </span>n0_error::{<span class="prelude-ty">Result</span>, StdResultExt};
@@ -38,7 +38,7 @@
 <a href=#38 id=38 data-nosnippet>38</a>        util::PublicKeyBytes,
 <a href=#39 id=39 data-nosnippet>39</a>    };
 <a href=#40 id=40 data-nosnippet>40</a>
-<a href=#41 id=41 data-nosnippet>41</a>    <span class="kw">const </span>DNS_TIMEOUT: Duration = Duration::from_secs(<span class="number">1</span>);
+<a href=#41 id=41 data-nosnippet>41</a>    <span class="kw">const </span>DNS_TIMEOUT: Duration = Duration::from_secs(<span class="number">2</span>);
 <a href=#42 id=42 data-nosnippet>42</a>
 <a href=#43 id=43 data-nosnippet>43</a>    <span class="attr">#[tokio::test]
 <a href=#44 id=44 data-nosnippet>44</a>    #[traced_test]

@@ -9,7 +9,7 @@
 <a href=#9 id=9 data-nosnippet>9</a>};
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>bytes::Bytes;
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>iroh_base::{EndpointId, RelayUrl, TransportAddr, UserAddr};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>iroh_relay::RelayMap;
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>n0_watcher::Watcher;
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>relay::{RelayNetworkChangeSender, RelaySender};
@@ -26,7 +26,7 @@
 <a href=#26 id=26 data-nosnippet>26</a></span><span class="kw">pub mod </span>tcp;
 <a href=#27 id=27 data-nosnippet>27</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>user;
 <a href=#28 id=28 data-nosnippet>28</a>
-<a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>user::{UserEndpoint, UserSender, UserTransport};
+<a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>user::{CustomEndpoint, CustomSender, CustomTransport};
 <a href=#30 id=30 data-nosnippet>30</a>
 <a href=#31 id=31 data-nosnippet>31</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::ip::Config <span class="kw">as </span>IpConfig;
@@ -40,7 +40,7 @@
 <a href=#40 id=40 data-nosnippet>40</a>    <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#41 id=41 data-nosnippet>41</a>    </span>ip: IpTransports,
 <a href=#42 id=42 data-nosnippet>42</a>    relay: Vec&lt;RelayTransport&gt;,
-<a href=#43 id=43 data-nosnippet>43</a>    user: Vec&lt;Box&lt;<span class="kw">dyn </span>UserEndpoint&gt;&gt;,
+<a href=#43 id=43 data-nosnippet>43</a>    user: Vec&lt;Box&lt;<span class="kw">dyn </span>CustomEndpoint&gt;&gt;,
 <a href=#44 id=44 data-nosnippet>44</a>
 <a href=#45 id=45 data-nosnippet>45</a>    poll_recv_counter: usize,
 <a href=#46 id=46 data-nosnippet>46</a>    <span class="doccomment">/// Cache for source addrs, to speed up access
@@ -50,7 +50,7 @@
 <a href=#50 id=50 data-nosnippet>50</a><span class="doccomment">/// Combined watcher type for all ip transports
 <a href=#51 id=51 data-nosnippet>51</a></span><span class="kw">type </span>IpTransportsWatcher = n0_watcher::Join&lt;SocketAddr, n0_watcher::Direct&lt;SocketAddr&gt;&gt;;
 <a href=#52 id=52 data-nosnippet>52</a><span class="doccomment">/// Combined watcher type for all user transports
-<a href=#53 id=53 data-nosnippet>53</a></span><span class="kw">type </span>UserTransportsWatcher = n0_watcher::Join&lt;Vec&lt;UserAddr&gt;, n0_watcher::Direct&lt;Vec&lt;UserAddr&gt;&gt;&gt;;
+<a href=#53 id=53 data-nosnippet>53</a></span><span class="kw">type </span>UserTransportsWatcher = n0_watcher::Join&lt;Vec&lt;CustomAddr&gt;, n0_watcher::Direct&lt;Vec&lt;CustomAddr&gt;&gt;&gt;;
 <a href=#54 id=54 data-nosnippet>54</a><span class="doccomment">/// Combined watcher type for all relay transports
 <a href=#55 id=55 data-nosnippet>55</a></span><span class="kw">type </span>RelayTransportsWatcher = n0_watcher::Join&lt;
 <a href=#56 id=56 data-nosnippet>56</a>    <span class="prelude-ty">Option</span>&lt;(RelayUrl, EndpointId)&gt;,
@@ -92,7 +92,7 @@
 <a href=#92 id=92 data-nosnippet>92</a>        </span>is_user_defined: bool,
 <a href=#93 id=93 data-nosnippet>93</a>    },
 <a href=#94 id=94 data-nosnippet>94</a>    <span class="doccomment">/// User defined transport factory.
-<a href=#95 id=95 data-nosnippet>95</a>    </span>User(Arc&lt;<span class="kw">dyn </span>UserTransport&gt;),
+<a href=#95 id=95 data-nosnippet>95</a>    </span>User(Arc&lt;<span class="kw">dyn </span>CustomTransport&gt;),
 <a href=#96 id=96 data-nosnippet>96</a>}
 <a href=#97 id=97 data-nosnippet>97</a>
 <a href=#98 id=98 data-nosnippet>98</a><span class="kw">impl </span>TransportConfig {
@@ -499,7 +499,7 @@
 <a href=#499 id=499 data-nosnippet>499</a>    <span class="doccomment">/// A relay address.
 <a href=#500 id=500 data-nosnippet>500</a>    </span>Relay(RelayUrl, EndpointId),
 <a href=#501 id=501 data-nosnippet>501</a>    <span class="doccomment">/// A user defined address.
-<a href=#502 id=502 data-nosnippet>502</a>    </span>User(UserAddr),
+<a href=#502 id=502 data-nosnippet>502</a>    </span>User(CustomAddr),
 <a href=#503 id=503 data-nosnippet>503</a>}
 <a href=#504 id=504 data-nosnippet>504</a>
 <a href=#505 id=505 data-nosnippet>505</a><span class="kw">impl </span>fmt::Debug <span class="kw">for </span>Addr {
@@ -545,8 +545,8 @@
 <a href=#545 id=545 data-nosnippet>545</a>    }
 <a href=#546 id=546 data-nosnippet>546</a>}
 <a href=#547 id=547 data-nosnippet>547</a>
-<a href=#548 id=548 data-nosnippet>548</a><span class="kw">impl </span>From&lt;UserAddr&gt; <span class="kw">for </span>Addr {
-<a href=#549 id=549 data-nosnippet>549</a>    <span class="kw">fn </span>from(value: UserAddr) -&gt; <span class="self">Self </span>{
+<a href=#548 id=548 data-nosnippet>548</a><span class="kw">impl </span>From&lt;CustomAddr&gt; <span class="kw">for </span>Addr {
+<a href=#549 id=549 data-nosnippet>549</a>    <span class="kw">fn </span>from(value: CustomAddr) -&gt; <span class="self">Self </span>{
 <a href=#550 id=550 data-nosnippet>550</a>        <span class="self">Self</span>::User(value)
 <a href=#551 id=551 data-nosnippet>551</a>    }
 <a href=#552 id=552 data-nosnippet>552</a>}
@@ -592,7 +592,7 @@
 <a href=#592 id=592 data-nosnippet>592</a>    <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#593 id=593 data-nosnippet>593</a>    </span>ip: IpTransportsSender,
 <a href=#594 id=594 data-nosnippet>594</a>    relay: Vec&lt;RelaySender&gt;,
-<a href=#595 id=595 data-nosnippet>595</a>    user: Vec&lt;Arc&lt;<span class="kw">dyn </span>UserSender&gt;&gt;,
+<a href=#595 id=595 data-nosnippet>595</a>    user: Vec&lt;Arc&lt;<span class="kw">dyn </span>CustomSender&gt;&gt;,
 <a href=#596 id=596 data-nosnippet>596</a>    max_transmit_segments: NonZeroUsize,
 <a href=#597 id=597 data-nosnippet>597</a>}
 <a href=#598 id=598 data-nosnippet>598</a>
