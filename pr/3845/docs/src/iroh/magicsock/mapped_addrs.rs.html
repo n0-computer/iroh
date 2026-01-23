@@ -412,15 +412,8 @@
 <a href=#412 id=412 data-nosnippet>412</a>                    </span>}
 <a href=#413 id=413 data-nosnippet>413</a>                }
 <a href=#414 id=414 data-nosnippet>414</a>            }
-<a href=#415 id=415 data-nosnippet>415</a>            MultipathMappedAddr::User(_user_mapped_addr) =&gt; {
-<a href=#416 id=416 data-nosnippet>416</a>                <span class="comment">// TODO: is this really an error?
-<a href=#417 id=417 data-nosnippet>417</a>                //
-<a href=#418 id=418 data-nosnippet>418</a>                // it seems the only thing that can ever resolve here is a MultipathMappedAddr::Relay,
-<a href=#419 id=419 data-nosnippet>419</a>                // so why is returning None not ok?
-<a href=#420 id=420 data-nosnippet>420</a>                </span><span class="macro">error!</span>(<span class="string">"Failed to convert addr to transport addr: Unknown relay mapped addr"</span>);
-<a href=#421 id=421 data-nosnippet>421</a>                <span class="prelude-val">None
-<a href=#422 id=422 data-nosnippet>422</a>            </span>}
-<a href=#423 id=423 data-nosnippet>423</a>            MultipathMappedAddr::Ip(addr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(addr)),
-<a href=#424 id=424 data-nosnippet>424</a>        }
-<a href=#425 id=425 data-nosnippet>425</a>    }
-<a href=#426 id=426 data-nosnippet>426</a>}</code></pre></div></section></main></body></html>
+<a href=#415 id=415 data-nosnippet>415</a>            MultipathMappedAddr::User(<span class="kw">_</span>) =&gt; <span class="prelude-val">None</span>,
+<a href=#416 id=416 data-nosnippet>416</a>            MultipathMappedAddr::Ip(addr) =&gt; <span class="prelude-val">Some</span>(transports::Addr::from(addr)),
+<a href=#417 id=417 data-nosnippet>417</a>        }
+<a href=#418 id=418 data-nosnippet>418</a>    }
+<a href=#419 id=419 data-nosnippet>419</a>}</code></pre></div></section></main></body></html>
