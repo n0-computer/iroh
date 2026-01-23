@@ -12,7 +12,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use iroh_base::UserAddr;
+use iroh_base::CustomAddr;
 use n0_future::boxed::BoxFuture;
 use n0_watcher::Watchable;
 use smallvec::SmallVec;
@@ -21,8 +21,8 @@ use tracing::{debug, trace};
 
 use super::{Addr, Transmit};
 use crate::{
-    endpoint::transports::{UserEndpoint, UserSender, UserTransport},
-    magicsock::transports::tcp::addr::{from_user_addr, to_user_addr},
+    endpoint::transports::{CustomEndpoint, CustomSender, CustomTransport},
+    magicsock::transports::tcp::addr::{from_custom_addr, to_custom_addr},
 };
 
 /// "tcp"
@@ -44,15 +44,15 @@ impl TcpTransport {
     }
 }
 
-impl UserTransport for TcpTransport {
-    fn bind(&self) -> io::Result<Box<dyn UserEndpoint>> {
+impl CustomTransport for TcpTransport {
+    fn bind(&self) -> io::Result<Box<dyn CustomEndpoint>> {
         let listener = std::net::TcpListener::bind(self.bind_addr)?;
         listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(listener)?;
         let local_addr = listener.local_addr()?;
         debug!(%local_addr, "TCP transport bound");
-        let user_addr = to_user_addr(local_addr);
-        let addr_watcher = Watchable::new(vec![user_addr]);
+        let custom_addr = to_custom_addr(local_addr);
+        let addr_watcher = Watchable::new(vec![custom_addr]);
         let conns = Default::default();
         Ok(Box::new(TcpEndpoint {
             listener,
@@ -65,16 +65,16 @@ impl UserTransport for TcpTransport {
 #[derive(Debug)]
 struct TcpEndpoint {
     listener: tokio::net::TcpListener,
-    addr_watcher: Watchable<Vec<UserAddr>>,
+    addr_watcher: Watchable<Vec<CustomAddr>>,
     conns: Arc<Mutex<Conns>>,
 }
 
-impl UserEndpoint for TcpEndpoint {
-    fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<UserAddr>> {
+impl CustomEndpoint for TcpEndpoint {
+    fn watch_local_addrs(&self) -> n0_watcher::Direct<Vec<CustomAddr>> {
         self.addr_watcher.watch()
     }
 
-    fn create_sender(&self) -> Arc<dyn UserSender> {
+    fn create_sender(&self) -> Arc<dyn CustomSender> {
         Arc::new(TcpSender {
             conns: self.conns.clone(),
         })
@@ -133,7 +133,7 @@ impl UserEndpoint for TcpEndpoint {
                     meta.ecn = None;
                     meta.dst_ip = None;
 
-                    source_addrs[num_packets] = Addr::User(to_user_addr(*addr));
+                    source_addrs[num_packets] = Addr::User(to_custom_addr(*addr));
                     num_packets += 1;
                 }
                 Poll::Ready(Err(e)) => {
@@ -165,18 +165,18 @@ struct TcpSender {
     conns: Arc<Mutex<Conns>>,
 }
 
-impl UserSender for TcpSender {
-    fn is_valid_send_addr(&self, addr: &UserAddr) -> bool {
+impl CustomSender for TcpSender {
+    fn is_valid_send_addr(&self, addr: &CustomAddr) -> bool {
         addr.id() == TCP_TRANSPORT_ID
     }
 
     fn poll_send(
         &self,
         cx: &mut std::task::Context,
-        dst: UserAddr,
+        dst: CustomAddr,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        let Some(dst) = from_user_addr(&dst) else {
+        let Some(dst) = from_custom_addr(&dst) else {
             debug!(?dst, "TCP invalid destination address");
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -421,7 +421,7 @@ fn clone_io_err(err: &io::Error) -> io::Error {
 pub mod addr {
     use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
-    use iroh_base::UserAddr;
+    use iroh_base::CustomAddr;
 
     use crate::magicsock::transports::tcp::TCP_TRANSPORT_ID;
 
@@ -448,11 +448,11 @@ pub mod addr {
         }
     }
 
-    pub fn to_user_addr(addr: SocketAddr) -> UserAddr {
-        UserAddr::from_parts(TCP_TRANSPORT_ID, &to_bytes(addr))
+    pub fn to_custom_addr(addr: SocketAddr) -> CustomAddr {
+        CustomAddr::from_parts(TCP_TRANSPORT_ID, &to_bytes(addr))
     }
 
-    pub fn from_user_addr(addr: &UserAddr) -> Option<SocketAddr> {
+    pub fn from_custom_addr(addr: &CustomAddr) -> Option<SocketAddr> {
         (addr.id() == TCP_TRANSPORT_ID).then(|| from_bytes(addr.data()))?
     }
 }
@@ -515,7 +515,7 @@ mod tests {
                 TransportAddr::User(u) => Some(u.clone()),
                 _ => None,
             })
-            .expect("server should have a user transport address");
+            .expect("server should have a Custom transport address");
 
         // Start the echo server
         let server = Router::builder(server_ep).accept(ALPN, Echo).spawn();
