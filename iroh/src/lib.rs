@@ -281,4 +281,5 @@ pub use net_report::{Report as NetReport, TIMEOUT as NET_REPORT_TIMEOUT};
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
 
+#[cfg(not(wasm_browser))]
 pub use magicsock::transports::tcp;

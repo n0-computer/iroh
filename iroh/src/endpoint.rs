@@ -1013,7 +1013,7 @@ impl Endpoint {
                         .into_iter()
                         .map(TransportAddr::Relay)
                         .chain(addrs.into_iter().map(|x| TransportAddr::Ip(x.addr)))
-                        .chain(local_addrs.into_iter().map(|x| TransportAddr::from(x))),
+                        .chain(local_addrs.into_iter().map(TransportAddr::from)),
                 )
             })
     }

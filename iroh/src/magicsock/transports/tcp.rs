@@ -441,9 +441,9 @@ pub mod addr {
         if bytes.len() != 18 {
             None
         } else {
-            let ip = Ipv6Addr::from_octets(bytes[..16].try_into().unwrap());
-            let ip = ip.to_canonical();
-            let port = u16::from_be_bytes([bytes[16], bytes[17]]);
+            let ip_bytes: [u8; 16] = bytes[..16].try_into().expect("length checked");
+            let ip = Ipv6Addr::from(ip_bytes);
+            let port = u16::from_be_bytes([ip_bytes[16], ip_bytes[17]]);
             Some((ip, port).into())
         }
     }
