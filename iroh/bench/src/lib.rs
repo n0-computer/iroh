@@ -76,6 +76,8 @@ pub struct Opt {
     pub only_relay: bool,
     #[clap(long, default_value_t = false)]
     pub use_ipv6: bool,
+    #[clap(long, default_value_t = false)]
+    pub tcp: bool,
 }
 
 pub enum EndpointSelector {

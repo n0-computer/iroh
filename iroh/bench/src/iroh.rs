@@ -1,12 +1,14 @@
 use std::{
     net::SocketAddr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use bytes::Bytes;
 use iroh::{
-    Endpoint, EndpointAddr, RelayMode, RelayUrl,
+    Endpoint, EndpointAddr, RelayMode, RelayUrl, TransportAddr,
     endpoint::{Connection, ConnectionError, QuicTransportConfig, RecvStream, SendStream},
+    tcp::TcpTransport,
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
 use tracing::{trace, warn};
@@ -38,6 +40,13 @@ pub fn server_endpoint(
                 builder = builder.clear_ip_transports();
             }
         }
+        if opt.tcp {
+            let tcp_transport = TcpTransport::new("127.0.0.1:0".parse().unwrap());
+            builder = builder
+                .clear_ip_transports()
+                .clear_relay_transports()
+                .add_user_transport(Arc::new(tcp_transport));
+        }
         let ep = builder
             .alpns(vec![ALPN.to_vec()])
             .relay_mode(relay_mode)
@@ -50,12 +59,24 @@ pub fn server_endpoint(
             ep.online().await;
         }
 
-        let addr = ep.bound_sockets();
-        let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr[0].port());
-        let mut addr = EndpointAddr::new(ep.id()).with_ip_addr(addr);
-        if let Some(relay_url) = relay_url {
-            addr = addr.with_relay_url(relay_url.clone());
-        }
+        let addr = if opt.tcp {
+            let addr = ep.addr();
+            let user_addrs = addr
+                .addrs
+                .into_iter()
+                .filter(|a| matches!(a, TransportAddr::User(_)));
+            let addr = EndpointAddr::from_parts(addr.id, user_addrs);
+            assert!(addr.addrs.len() == 1, "expected to have one user addr");
+            addr
+        } else {
+            let addr = ep.bound_sockets();
+            let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr[0].port());
+            let mut addr = EndpointAddr::new(ep.id()).with_ip_addr(addr);
+            if let Some(relay_url) = relay_url {
+                addr = addr.with_relay_url(relay_url.clone());
+            }
+            addr
+        };
         (addr, ep)
     })
 }
@@ -96,6 +117,13 @@ pub async fn connect_client(
         if opt.only_relay {
             builder = builder.clear_ip_transports();
         }
+    }
+    if opt.tcp {
+        let tcp_transport = TcpTransport::new("127.0.0.1:0".parse().unwrap());
+        builder = builder
+            .clear_ip_transports()
+            .clear_relay_transports()
+            .add_user_transport(Arc::new(tcp_transport));
     }
     let endpoint = builder
         .alpns(vec![ALPN.to_vec()])
