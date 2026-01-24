@@ -441,9 +441,9 @@
 <a href=#441 id=441 data-nosnippet>441</a>        <span class="kw">if </span>bytes.len() != <span class="number">18 </span>{
 <a href=#442 id=442 data-nosnippet>442</a>            <span class="prelude-val">None
 <a href=#443 id=443 data-nosnippet>443</a>        </span>} <span class="kw">else </span>{
-<a href=#444 id=444 data-nosnippet>444</a>            <span class="kw">let </span>ip = Ipv6Addr::from_octets(bytes[..<span class="number">16</span>].try_into().unwrap());
-<a href=#445 id=445 data-nosnippet>445</a>            <span class="kw">let </span>ip = ip.to_canonical();
-<a href=#446 id=446 data-nosnippet>446</a>            <span class="kw">let </span>port = u16::from_be_bytes([bytes[<span class="number">16</span>], bytes[<span class="number">17</span>]]);
+<a href=#444 id=444 data-nosnippet>444</a>            <span class="kw">let </span>ip_bytes: [u8; <span class="number">16</span>] = bytes[..<span class="number">16</span>].try_into().expect(<span class="string">"length checked"</span>);
+<a href=#445 id=445 data-nosnippet>445</a>            <span class="kw">let </span>ip = Ipv6Addr::from(ip_bytes);
+<a href=#446 id=446 data-nosnippet>446</a>            <span class="kw">let </span>port = u16::from_be_bytes([ip_bytes[<span class="number">16</span>], ip_bytes[<span class="number">17</span>]]);
 <a href=#447 id=447 data-nosnippet>447</a>            <span class="prelude-val">Some</span>((ip, port).into())
 <a href=#448 id=448 data-nosnippet>448</a>        }
 <a href=#449 id=449 data-nosnippet>449</a>    }
