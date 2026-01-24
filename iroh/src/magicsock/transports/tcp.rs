@@ -443,7 +443,7 @@ pub mod addr {
         } else {
             let ip_bytes: [u8; 16] = bytes[..16].try_into().expect("length checked");
             let ip = Ipv6Addr::from(ip_bytes);
-            let port = u16::from_be_bytes([ip_bytes[16], ip_bytes[17]]);
+            let port = u16::from_be_bytes([bytes[16], bytes[17]]);
             Some((ip, port).into())
         }
     }
