@@ -146,7 +146,7 @@ pub(crate) struct Options {
 #[derive(Clone, Debug, derive_more::Deref)]
 pub(crate) struct Handle {
     #[deref(forward)]
-    msock: Arc<Socket>,
+    sock: Arc<Socket>,
     // empty when shutdown
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
     // quinn endpoint
@@ -582,7 +582,7 @@ impl Socket {
 struct DirectAddrUpdateState {
     /// If set, start a new update as soon as the current one is finished.
     want_update: Option<UpdateReason>,
-    msock: Arc<Socket>,
+    sock: Arc<Socket>,
     #[cfg(not(wasm_browser))]
     port_mapper: portmapper::Client,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
@@ -612,7 +612,7 @@ impl UpdateReason {
 
 impl DirectAddrUpdateState {
     fn new(
-        msock: Arc<Socket>,
+        sock: Arc<Socket>,
         #[cfg(not(wasm_browser))] port_mapper: portmapper::Client,
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
@@ -624,7 +624,7 @@ impl DirectAddrUpdateState {
             #[cfg(not(wasm_browser))]
             port_mapper,
             net_reporter,
-            msock,
+            sock,
             relay_map,
             run_done,
             shutdown_token,
@@ -677,7 +677,7 @@ impl DirectAddrUpdateState {
         }
         if self.relay_map.is_empty() {
             debug!("skipping net_report, empty RelayMap");
-            self.msock.net_report.set((None, why)).ok();
+            self.sock.net_report.set((None, why)).ok();
             return;
         }
 
@@ -685,7 +685,7 @@ impl DirectAddrUpdateState {
         self.port_mapper.procure_mapping();
 
         debug!("requesting net_report report");
-        let msock = self.msock.clone();
+        let sock = self.sock.clone();
 
         let run_done = self.run_done.clone();
 
@@ -701,7 +701,7 @@ impl DirectAddrUpdateState {
 
                 match fut.await {
                     Some(Ok(report)) => {
-                        msock.net_report.set((Some(report), why)).ok();
+                        sock.net_report.set((Some(report), why)).ok();
                     }
                     Some(Err(time::Elapsed { .. })) => {
                         warn!("net_report report timed out");
@@ -848,7 +848,7 @@ impl Handle {
             )
         };
 
-        let msock = Arc::new(Socket {
+        let sock = Arc::new(Socket {
             public_key: secret_key.public(),
             actor_sender: actor_sender.clone(),
             shutdown: shutdown_state,
@@ -882,7 +882,7 @@ impl Handle {
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
-            Box::new(Transport::new(msock.clone(), transports)),
+            Box::new(Transport::new(sock.clone(), transports)),
             #[cfg(not(wasm_browser))]
             Arc::new(quinn::TokioRuntime),
             #[cfg(wasm_browser)]
@@ -928,13 +928,13 @@ impl Handle {
 
         let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
         let direct_addr_update_state = DirectAddrUpdateState::new(
-            msock.clone(),
+            sock.clone(),
             #[cfg(not(wasm_browser))]
             port_mapper,
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
             direct_addr_done_tx,
-            msock.shutdown.at_close_start.child_token(),
+            sock.shutdown.at_close_start.child_token(),
         );
 
         let netmon_watcher = network_monitor.interface_state();
@@ -942,7 +942,7 @@ impl Handle {
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
             msg_receiver: actor_receiver,
-            msock: msock.clone(),
+            sock: sock.clone(),
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
             netmon_watcher,
@@ -963,7 +963,7 @@ impl Handle {
         let actor_task = Arc::new(Mutex::new(Some(AbortOnDropHandle::new(actor_task))));
 
         Ok(Handle {
-            msock,
+            sock,
             actor_task,
             endpoint,
         })
@@ -983,13 +983,13 @@ impl Handle {
     /// [`Poll::Pending`]: std::task::Poll::Pending
     #[instrument(skip_all)]
     pub(crate) async fn close(&self) {
-        if self.msock.is_closed() || self.msock.is_closing() {
+        if self.sock.is_closed() || self.sock.is_closing() {
             return;
         }
         trace!(me = ?self.public_key, "socket closing...");
 
         // Cancel at_close_start token, which cancels running netreports.
-        self.msock.shutdown.at_close_start.cancel();
+        self.sock.shutdown.at_close_start.cancel();
 
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
@@ -1014,7 +1014,7 @@ impl Handle {
         trace!("wait_idle done");
 
         // Start cancellation of all actors
-        self.msock.shutdown.at_endpoint_closed.cancel();
+        self.sock.shutdown.at_endpoint_closed.cancel();
 
         // MutexGuard is not held across await points
         let task = self.actor_task.lock().expect("poisoned").take();
@@ -1035,7 +1035,7 @@ impl Handle {
             }
         }
 
-        self.msock.shutdown.closed.store(true, Ordering::SeqCst);
+        self.sock.shutdown.closed.store(true, Ordering::SeqCst);
 
         trace!("socket closed");
     }
@@ -1064,7 +1064,7 @@ enum ActorMessage {
 }
 
 struct Actor {
-    msock: Arc<Socket>,
+    sock: Arc<Socket>,
     msg_receiver: mpsc::Receiver<ActorMessage>,
     /// When set, is an AfterFunc timer that will call Socket::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
@@ -1096,13 +1096,13 @@ impl Actor {
         #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
 
-        let mut net_report_watcher = self.msock.net_report.watch();
+        let mut net_report_watcher = self.sock.net_report.watch();
 
         // ensure we are doing an initial publish of our addresses
-        self.msock.publish_my_addr();
+        self.sock.publish_my_addr();
 
         while !shutdown_token.is_cancelled() {
-            self.msock.metrics.socket.actor_tick_main.inc();
+            self.sock.metrics.socket.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
             let portmap_watcher_changed = portmap_watcher.changed();
             #[cfg(wasm_browser)]
@@ -1116,19 +1116,19 @@ impl Actor {
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
                     let Some(msg) = msg else {
                         trace!("tick: socket receiver closed");
-                        self.msock.metrics.socket.actor_tick_other.inc();
+                        self.sock.metrics.socket.actor_tick_other.inc();
 
                         receiver_closed = true;
                         continue;
                     };
 
                     trace!(?msg, "tick: msg");
-                    self.msock.metrics.socket.actor_tick_msg.inc();
+                    self.sock.metrics.socket.actor_tick_msg.inc();
                     self.handle_actor_message(msg).await;
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
-                    self.msock.metrics.socket.actor_tick_re_stun.inc();
+                    self.sock.metrics.socket.actor_tick_re_stun.inc();
                     self.re_stun(UpdateReason::Periodic);
                 }
                 new_addr = watcher.updated() => {
@@ -1136,7 +1136,7 @@ impl Actor {
                         Ok(addrs) => {
                             if !addrs.is_empty() {
                                 trace!(?addrs, "local addrs");
-                                self.msock.publish_my_addr();
+                                self.sock.publish_my_addr();
                             }
                         }
                         Err(_) => {
@@ -1175,14 +1175,14 @@ impl Actor {
                     {
                         if change.is_err() {
                             trace!("tick: portmap watcher closed");
-                            self.msock.metrics.socket.actor_tick_other.inc();
+                            self.sock.metrics.socket.actor_tick_other.inc();
 
                             portmap_watcher_closed = true;
                             continue;
                         }
 
                         trace!("tick: portmap changed");
-                        self.msock.metrics.socket.actor_tick_portmap_changed.inc();
+                        self.sock.metrics.socket.actor_tick_portmap_changed.inc();
                         let new_external_address = *portmap_watcher.borrow();
                         debug!("external address updated: {new_external_address:?}");
                         self.re_stun(UpdateReason::PortmapUpdated);
@@ -1193,7 +1193,7 @@ impl Actor {
                 state = self.netmon_watcher.updated() => {
                     let Ok(state) = state else {
                         trace!("tick: link change receiver closed");
-                        self.msock.metrics.socket.actor_tick_other.inc();
+                        self.sock.metrics.socket.actor_tick_other.inc();
                         continue;
                     };
                     let is_major = state.is_major_change(&current_netmon_state);
@@ -1204,10 +1204,10 @@ impl Actor {
                         is_major
                     );
                     current_netmon_state = state;
-                    self.msock.metrics.socket.actor_link_change.inc();
+                    self.sock.metrics.socket.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                eid = poll_fn(|cx| self.msock.remote_map.poll_cleanup(cx)) => {
+                eid = poll_fn(|cx| self.sock.remote_map.poll_cleanup(cx)) => {
                     trace!(%eid, "cleaned up RemoteStateActor");
                 }
                 else => {
@@ -1226,13 +1226,13 @@ impl Actor {
             }
 
             #[cfg(not(wasm_browser))]
-            self.msock.dns_resolver.reset().await;
+            self.sock.dns_resolver.reset().await;
             self.re_stun(UpdateReason::LinkChangeMajor);
         } else {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
-        self.msock.remote_map.on_network_change(is_major);
+        self.sock.remote_map.on_network_change(is_major);
     }
 
     fn handle_relay_map_change(&mut self) {
@@ -1300,7 +1300,7 @@ impl Actor {
                 // port locally, assume they might've added a static
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
-                let port = self.msock.ip_bind_addrs().iter().find_map(|addr| {
+                let port = self.sock.ip_bind_addrs().iter().find_map(|addr| {
                     if addr.port() != 0 {
                         Some(addr.port())
                     } else {
@@ -1330,7 +1330,7 @@ impl Actor {
 
         // Finally create and store store all these direct addresses and send any
         // queued call-me-maybe messages.
-        self.msock.store_direct_addresses(
+        self.sock.store_direct_addresses(
             addrs
                 .iter()
                 .map(|(addr, typ)| DirectAddr {
@@ -1345,11 +1345,11 @@ impl Actor {
     fn collect_local_addresses(&mut self, addrs: &mut BTreeMap<SocketAddr, DirectAddrType>) {
         // Matches the addresses that have been bound vs the requested ones.
         let local_addrs: Vec<(SocketAddr, SocketAddr)> = self
-            .msock
+            .sock
             .ip_bind_addrs()
             .iter()
             .copied()
-            .zip(self.msock.ip_local_addrs())
+            .zip(self.sock.ip_local_addrs())
             .collect();
 
         // Do we listen on any IPv4 unspecified address?
@@ -1407,9 +1407,9 @@ impl Actor {
 
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
         if let Some(ref mut r) = report {
-            self.msock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
+            self.sock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
             if r.preferred_relay.is_none() {
-                if let Some(my_relay) = self.msock.my_relay() {
+                if let Some(my_relay) = self.sock.my_relay() {
                     r.preferred_relay.replace(my_relay);
                 }
             }
@@ -1917,13 +1917,13 @@ mod tests {
             let (_guard, m1, m2) = endpoint_pair().await;
 
             info!("closing endpoints");
-            let msock1 = m1.socket();
-            let msock2 = m2.socket();
+            let sock1 = m1.socket();
+            let sock2 = m2.socket();
             m1.close().await;
             m2.close().await;
 
-            assert!(msock1.msock.is_closed());
-            assert!(msock2.msock.is_closed());
+            assert!(sock1.sock.is_closed());
+            assert!(sock2.sock.is_closed());
         }
         Ok(())
     }
@@ -1973,8 +1973,8 @@ mod tests {
             metrics: Default::default(),
             hooks: Default::default(),
         };
-        let msock = Socket::spawn(opts).await?;
-        Ok(msock)
+        let sock = Socket::spawn(opts).await?;
+        Ok(sock)
     }
 
     /// Connects from `ep` returned by [`socket_ep`] to the `endpoint_id`.
@@ -2043,7 +2043,7 @@ mod tests {
         let secret_key_missing_endpoint = SecretKey::from_bytes(&[255u8; 32]);
         let endpoint_id_missing_endpoint = secret_key_missing_endpoint.public();
 
-        let msock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
+        let sock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
 
         // Generate an address not present in the RemoteMap.
         let bad_addr = EndpointIdMappedAddr::generate();
@@ -2055,7 +2055,7 @@ mod tests {
         let res = tokio::time::timeout(
             Duration::from_millis(500),
             socket_connect(
-                msock_1.endpoint(),
+                sock_1.endpoint(),
                 secret_key_1.clone(),
                 bad_addr,
                 endpoint_id_missing_endpoint,
@@ -2065,7 +2065,7 @@ mod tests {
         assert!(res.is_err(), "expecting timeout");
 
         // Now check we can still create another connection with this endpoint.
-        let msock_2 = socket_ep(secret_key_2.clone()).await.unwrap();
+        let sock_2 = socket_ep(secret_key_2.clone()).await.unwrap();
 
         // This needs an accept task
         let accept_task = tokio::spawn({
@@ -2082,7 +2082,7 @@ mod tests {
                 info!("accept finished");
                 Ok(())
             }
-            let ep = msock_2.endpoint().clone();
+            let ep = sock_2.endpoint().clone();
             async move {
                 if let Err(err) = accept(ep).await {
                     error!("{err:#}");
@@ -2092,25 +2092,20 @@ mod tests {
         });
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
-        let addrs = msock_2
+        let addrs = sock_2
             .ip_addrs()
             .get()
             .into_iter()
             .map(|x| TransportAddr::Ip(x.addr));
         let endpoint_addr_2 = EndpointAddr::from_parts(endpoint_id_2, addrs);
-        let addr = msock_1
+        let addr = sock_1
             .resolve_remote(endpoint_addr_2)
             .await
             .unwrap()
             .unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
-            socket_connect(
-                msock_1.endpoint(),
-                secret_key_1.clone(),
-                addr,
-                endpoint_id_2,
-            ),
+            socket_connect(sock_1.endpoint(), secret_key_1.clone(), addr, endpoint_id_2),
         )
         .await
         .expect("timeout while connecting");
@@ -2132,9 +2127,9 @@ mod tests {
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
         let endpoint_id_2 = secret_key_2.public();
 
-        let msock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
-        let msock_2 = socket_ep(secret_key_2.clone()).await.unwrap();
-        let ep_2 = msock_2.endpoint().clone();
+        let sock_1 = socket_ep(secret_key_1.clone()).await.unwrap();
+        let sock_2 = socket_ep(secret_key_2.clone()).await.unwrap();
+        let ep_2 = sock_2.endpoint().clone();
 
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
@@ -2170,7 +2165,7 @@ mod tests {
                 SocketAddrV4::new([192, 0, 2, 1].into(), 12345).into(),
             )],
         );
-        let addr_2 = msock_1.resolve_remote(empty_addr_2).await.unwrap().unwrap();
+        let addr_2 = sock_1.resolve_remote(empty_addr_2).await.unwrap().unwrap();
 
         // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
         // not take forever.  You need to check the log output to verify this is really
@@ -2185,7 +2180,7 @@ mod tests {
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.max_idle_timeout(Some(Duration::from_millis(200).try_into().unwrap()));
         let res = socket_connect_with_transport_config(
-            msock_1.endpoint(),
+            sock_1.endpoint(),
             secret_key_1.clone(),
             addr_2,
             endpoint_id_2,
@@ -2198,13 +2193,13 @@ mod tests {
         // Provide correct addressing information
         let correct_addr_2 = EndpointAddr::from_parts(
             endpoint_id_2,
-            msock_2
+            sock_2
                 .ip_addrs()
                 .get()
                 .into_iter()
                 .map(|x| TransportAddr::Ip(x.addr)),
         );
-        let addr_2a = msock_1
+        let addr_2a = sock_1
             .resolve_remote(correct_addr_2)
             .await
             .unwrap()
@@ -2215,7 +2210,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             info!("establishing new connection");
             let conn = socket_connect(
-                msock_1.endpoint(),
+                sock_1.endpoint(),
                 secret_key_1.clone(),
                 addr_2,
                 endpoint_id_2,

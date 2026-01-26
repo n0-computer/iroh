@@ -210,18 +210,18 @@ impl Transports {
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
-        msock: &Socket,
+        sock: &Socket,
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         debug_assert!(bufs.len() <= quinn_udp::BATCH_SIZE, "too many buffers");
-        if msock.is_closing() {
+        if sock.is_closing() {
             return Poll::Pending;
         }
 
         match self.inner_poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => Poll::Pending,
             Poll::Ready(n) => {
-                msock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.source_addrs[..n]);
+                sock.process_datagrams(&mut bufs[..n], &mut metas[..n], &self.source_addrs[..n]);
                 Poll::Ready(Ok(n))
             }
         }
@@ -619,20 +619,20 @@ impl TransportsSender {
 /// [`Transports`].
 #[derive(Debug)]
 pub(crate) struct Transport {
-    msock: Arc<Socket>,
+    sock: Arc<Socket>,
     transports: Transports,
 }
 
 impl Transport {
-    pub(crate) fn new(msock: Arc<Socket>, transports: Transports) -> Self {
-        Self { msock, transports }
+    pub(crate) fn new(sock: Arc<Socket>, transports: Transports) -> Self {
+        Self { sock, transports }
     }
 }
 
 impl quinn::AsyncUdpSocket for Transport {
     fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
         Box::pin(Sender {
-            msock: self.msock.clone(),
+            sock: self.sock.clone(),
             sender: self.transports.create_sender(),
         })
     }
@@ -643,7 +643,7 @@ impl quinn::AsyncUdpSocket for Transport {
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        self.transports.poll_recv(cx, bufs, meta, &self.msock)
+        self.transports.poll_recv(cx, bufs, meta, &self.sock)
     }
 
     #[cfg(not(wasm_browser))]
@@ -702,7 +702,7 @@ impl quinn::AsyncUdpSocket for Transport {
 #[derive(Debug)]
 #[pin_project::pin_project]
 pub(crate) struct Sender {
-    msock: Arc<Socket>,
+    sock: Arc<Socket>,
     #[pin]
     sender: TransportsSender,
 }
@@ -714,7 +714,7 @@ impl Sender {
     /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
     /// transmit's destination.
     fn mapped_addr(&self, transmit: &quinn_udp::Transmit) -> io::Result<MultipathMappedAddr> {
-        if self.msock.is_closed() {
+        if self.sock.is_closed() {
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
@@ -742,7 +742,7 @@ impl quinn::UdpSender for Sender {
         let transport_addr = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
                 let Some(endpoint_id) = self
-                    .msock
+                    .sock
                     .remote_map
                     .endpoint_mapped_addrs
                     .lookup(&mapped_addr)
@@ -759,7 +759,7 @@ impl quinn::UdpSender for Sender {
                         "oops, flub didn't think this would happen");
                 }
 
-                let sender = self.msock.remote_map.remote_state_actor(endpoint_id);
+                let sender = self.sock.remote_map.remote_state_actor(endpoint_id);
                 let transmit = OwnedTransmit::from(quinn_transmit);
                 match sender.try_send(RemoteStateMessage::SendDatagram(
                     Box::new(self.sender.clone()),
@@ -782,7 +782,7 @@ impl quinn::UdpSender for Sender {
             }
             MultipathMappedAddr::Relay(relay_mapped_addr) => {
                 match self
-                    .msock
+                    .sock
                     .remote_map
                     .relay_mapped_addrs
                     .lookup(&relay_mapped_addr)
