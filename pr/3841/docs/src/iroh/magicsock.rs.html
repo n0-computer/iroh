@@ -335,9 +335,9 @@
 <a href=#335 id=335 data-nosnippet>335</a>        <span class="self">self</span>.actor_sender
 <a href=#336 id=336 data-nosnippet>336</a>            .send(ActorMessage::ResolveRemote(addr, tx))
 <a href=#337 id=337 data-nosnippet>337</a>            .<span class="kw">await
-<a href=#338 id=338 data-nosnippet>338</a>            </span>.expect(<span class="string">"TODO"</span>);
-<a href=#339 id=339 data-nosnippet>339</a>        rx.<span class="kw">await</span>.expect(<span class="string">"TODO"</span>)
-<a href=#340 id=340 data-nosnippet>340</a>    }
+<a href=#338 id=338 data-nosnippet>338</a>            </span>.ok();
+<a href=#339 id=339 data-nosnippet>339</a>        rx.<span class="kw">await</span>.map_err(|<span class="kw">_</span>| RemoteStateActorStoppedError::new())<span class="question-mark">?
+<a href=#340 id=340 data-nosnippet>340</a>    </span>}
 <a href=#341 id=341 data-nosnippet>341</a>
 <a href=#342 id=342 data-nosnippet>342</a>    <span class="doccomment">/// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
 <a href=#343 id=343 data-nosnippet>343</a>    ///
