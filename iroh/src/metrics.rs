@@ -8,7 +8,7 @@ pub use iroh_relay::server::Metrics as RelayMetrics;
 pub use portmapper::Metrics as PortmapMetrics;
 use serde::{Deserialize, Serialize};
 
-pub use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Metrics as NetReportMetrics};
+pub use crate::{net_report::Metrics as NetReportMetrics, socket::Metrics as SocketMetrics};
 
 /// Metrics collected by an [`crate::endpoint::Endpoint`].
 ///
@@ -18,7 +18,7 @@ pub use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Metrics as N
 #[non_exhaustive]
 pub struct EndpointMetrics {
     /// Metrics collected by the endpoint's socket.
-    pub magicsock: Arc<MagicsockMetrics>,
+    pub socket: Arc<SocketMetrics>,
     /// Metrics collected by net reports.
     pub net_report: Arc<NetReportMetrics>,
     /// Metrics collected by the portmapper service.
@@ -32,11 +32,11 @@ mod tests {
     #[test]
     fn test_serde() {
         let metrics = EndpointMetrics::default();
-        metrics.magicsock.actor_link_change.inc();
+        metrics.socket.actor_link_change.inc();
         metrics.net_report.reports.inc_by(10);
         let encoded = postcard::to_stdvec(&metrics).unwrap();
         let decoded: EndpointMetrics = postcard::from_bytes(&encoded).unwrap();
-        assert_eq!(decoded.magicsock.actor_link_change.get(), 1);
+        assert_eq!(decoded.socket.actor_link_change.get(), 1);
         assert_eq!(decoded.net_report.reports.get(), 10);
     }
 }

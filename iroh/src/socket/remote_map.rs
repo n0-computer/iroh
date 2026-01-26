@@ -21,7 +21,7 @@ pub use self::remote_state::{
     PathInfo, PathInfoList, RemoteInfo, TransportAddrInfo, TransportAddrUsage,
 };
 use super::{
-    DirectAddr, MagicsockMetrics,
+    DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
 };
 use crate::address_lookup;
@@ -54,7 +54,7 @@ pub(crate) struct RemoteMap {
     //
     /// The endpoint ID of the local endpoint.
     local_endpoint_id: EndpointId,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     address_lookup: address_lookup::ConcurrentAddressLookup,
@@ -86,7 +86,7 @@ impl RemoteMap {
     /// Creates a new [`RemoteMap`].
     pub(super) fn new(
         local_endpoint_id: EndpointId,
-        metrics: Arc<MagicsockMetrics>,
+        metrics: Arc<SocketMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         address_lookup: address_lookup::ConcurrentAddressLookup,
         shutdown_token: CancellationToken,

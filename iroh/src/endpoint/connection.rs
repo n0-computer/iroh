@@ -45,7 +45,7 @@ use crate::{
             SendDatagramError, ServerConfig, Side, VarInt,
         },
     },
-    magicsock::{
+    socket::{
         RemoteStateActorStoppedError,
         remote_map::{PathInfoList, PathsWatcher},
     },
@@ -244,7 +244,7 @@ pub enum AuthenticationError {
 /// or if the remote did not set an ALPN.
 ///
 /// Otherwise returns a future that completes once the connection has been registered with the
-/// magicsock. This future can return an [`RemoteStateActorStoppedError`], which will only be
+/// socket. This future can return an [`RemoteStateActorStoppedError`], which will only be
 /// emitted if the endpoint is closing.
 ///
 /// The returned future is `'static`, so it can be stored without being lifetime-bound on `&ep`.
@@ -268,13 +268,13 @@ fn conn_from_quinn_conn(
         }
     };
 
-    // Register this connection with the magicsock.
+    // Register this connection with the socket.
     let fut = ep
-        .msock
+        .sock
         .register_connection(info.endpoint_id, conn.weak_handle());
 
     // Check hooks
-    let msock = ep.msock.clone();
+    let sock = ep.sock.clone();
     Ok(async move {
         let paths = fut.await?;
         let conn = Connection {
@@ -283,7 +283,7 @@ fn conn_from_quinn_conn(
         };
 
         if let AfterHandshakeOutcome::Reject { error_code, reason } =
-            msock.hooks.after_handshake(&conn.to_info()).await
+            sock.hooks.after_handshake(&conn.to_info()).await
         {
             conn.close(error_code, &reason);
             return Err(e!(ConnectingError::LocallyRejected));
@@ -347,29 +347,29 @@ fn remote_id_from_quinn_conn(
 #[derive(derive_more::Debug)]
 pub struct Connecting {
     inner: quinn::Connecting,
-    /// Future to register the connection with the magicsock.
+    /// Future to register the connection with the socket.
     ///
     /// This is set and polled after `inner` completes. We are using an option instead of an enum
     /// because we need infallible access to `inner` in some methods.
-    #[debug("{}", register_with_magicsock.as_ref().map(|_| "Some(RegisterWithMagicsockFut)").unwrap_or("None"))]
-    register_with_magicsock: Option<RegisterWithMagicsockFut>,
+    #[debug("{}", register_with_socket.as_ref().map(|_| "Some(RegisterWithSocketFut)").unwrap_or("None"))]
+    register_with_socket: Option<RegisterWithSocketFut>,
     ep: Endpoint,
     /// `Some(remote_id)` if this is an outgoing connection, `None` if this is an incoming conn
     remote_endpoint_id: EndpointId,
 }
 
-type RegisterWithMagicsockFut = BoxFuture<Result<Connection, ConnectingError>>;
+type RegisterWithSocketFut = BoxFuture<Result<Connection, ConnectingError>>;
 
 /// In-progress connection attempt future
 #[derive(derive_more::Debug)]
 pub struct Accepting {
     inner: quinn::Connecting,
-    /// Future to register the connection with the magicsock.
+    /// Future to register the connection with the socket.
     ///
     /// This is set and polled after `inner` completes. We are using an option instead of an enum
     /// because we need infallible access to `inner` in some methods.
-    #[debug("{}", register_with_magicsock.as_ref().map(|_| "Some(RegisterWithMagicsockFut)").unwrap_or("None"))]
-    register_with_magicsock: Option<RegisterWithMagicsockFut>,
+    #[debug("{}", register_with_socket.as_ref().map(|_| "Some(RegisterWithSocketFut)").unwrap_or("None"))]
+    register_with_socket: Option<RegisterWithSocketFut>,
     ep: Endpoint,
 }
 
@@ -420,7 +420,7 @@ impl Connecting {
             inner,
             ep,
             remote_endpoint_id,
-            register_with_magicsock: None,
+            register_with_socket: None,
         }
     }
 
@@ -505,12 +505,12 @@ impl Future for Connecting {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         loop {
-            if let Some(fut) = &mut self.register_with_magicsock {
+            if let Some(fut) = &mut self.register_with_socket {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
                 let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
                 let fut = conn_from_quinn_conn(quinn_conn, &self.ep)?;
-                self.register_with_magicsock = Some(Box::pin(fut.err_into()));
+                self.register_with_socket = Some(Box::pin(fut.err_into()));
             }
         }
     }
@@ -521,7 +521,7 @@ impl Accepting {
         Self {
             inner,
             ep,
-            register_with_magicsock: None,
+            register_with_socket: None,
         }
     }
 
@@ -590,13 +590,13 @@ impl Future for Accepting {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         loop {
-            if let Some(fut) = &mut self.register_with_magicsock {
+            if let Some(fut) = &mut self.register_with_socket {
                 return fut.poll_unpin(cx).map_err(Into::into);
             } else {
                 let quinn_conn = std::task::ready!(self.inner.poll_unpin(cx)?);
                 match conn_from_quinn_conn(quinn_conn, &self.ep) {
                     Err(err) => return Poll::Ready(Err(err)),
-                    Ok(fut) => self.register_with_magicsock = Some(Box::pin(fut.err_into())),
+                    Ok(fut) => self.register_with_socket = Some(Box::pin(fut.err_into())),
                 };
             }
         }
@@ -1016,8 +1016,8 @@ impl Connection<HandshakeCompleted> {
     /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
     /// transmission path.
     ///
-    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
-    /// [`PathInfo`]: crate::magicsock::PathInfo
+    /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
+    /// [`PathInfo`]: crate::socket::PathInfo
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
         self.data.paths.clone()
     }
@@ -1153,8 +1153,8 @@ impl ConnectionInfo {
     /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
     /// transmission path.
     ///
-    /// [`PathInfo::is_selected`]: crate::magicsock::PathInfo::is_selected
-    /// [`PathInfo`]: crate::magicsock::PathInfo
+    /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
+    /// [`PathInfo`]: crate::socket::PathInfo
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
         self.data.paths.clone()
     }

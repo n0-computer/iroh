@@ -13,7 +13,7 @@ use tracing::trace;
 
 use super::{Source, TransportAddrInfo, TransportAddrUsage};
 use crate::{
-    address_lookup::Error as AddressLookupError, magicsock::transports, metrics::MagicsockMetrics,
+    address_lookup::Error as AddressLookupError, metrics::SocketMetrics, socket::transports,
 };
 
 /// Maximum number of IP paths we keep around per endpoint.
@@ -37,7 +37,7 @@ pub(super) struct RemotePathState {
     paths: FxHashMap<transports::Addr, PathState>,
     /// Pending resolve requests from [`Self::resolve_remote`].
     pending_resolve_requests: VecDeque<oneshot::Sender<Result<(), AddressLookupError>>>,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
 }
 
 /// Describes the usability of this path, i.e. whether it has ever been opened,
@@ -57,7 +57,7 @@ pub(super) enum PathStatus {
 }
 
 impl RemotePathState {
-    pub(super) fn new(metrics: Arc<MagicsockMetrics>) -> Self {
+    pub(super) fn new(metrics: Arc<SocketMetrics>) -> Self {
         Self {
             paths: Default::default(),
             pending_resolve_requests: Default::default(),
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn test_abandoned_path() {
-        let metrics = Arc::new(MagicsockMetrics::default());
+        let metrics = Arc::new(SocketMetrics::default());
         let mut state = RemotePathState::new(metrics.clone());
 
         // Test: Open goes to Inactive
