@@ -1932,15 +1932,15 @@
 <a href=#1932 id=1932 data-nosnippet>1932</a>    #[traced_test]
 <a href=#1933 id=1933 data-nosnippet>1933</a>    </span><span class="kw">async fn </span>test_direct_addresses() {
 <a href=#1934 id=1934 data-nosnippet>1934</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">0u64</span>);
-<a href=#1935 id=1935 data-nosnippet>1935</a>        <span class="kw">let </span>ms = Handle::new(default_options(<span class="kw-2">&amp;mut </span>rng)).<span class="kw">await</span>.unwrap();
+<a href=#1935 id=1935 data-nosnippet>1935</a>        <span class="kw">let </span>sock = Handle::new(default_options(<span class="kw-2">&amp;mut </span>rng)).<span class="kw">await</span>.unwrap();
 <a href=#1936 id=1936 data-nosnippet>1936</a>
 <a href=#1937 id=1937 data-nosnippet>1937</a>        <span class="comment">// See if we can get endpoints.
-<a href=#1938 id=1938 data-nosnippet>1938</a>        </span><span class="kw">let </span>eps0 = ms.ip_addrs().get();
+<a href=#1938 id=1938 data-nosnippet>1938</a>        </span><span class="kw">let </span>eps0 = sock.ip_addrs().get();
 <a href=#1939 id=1939 data-nosnippet>1939</a>        <span class="macro">info!</span>(<span class="string">"{eps0:?}"</span>);
 <a href=#1940 id=1940 data-nosnippet>1940</a>        <span class="macro">assert!</span>(!eps0.is_empty());
 <a href=#1941 id=1941 data-nosnippet>1941</a>
 <a href=#1942 id=1942 data-nosnippet>1942</a>        <span class="comment">// Getting the endpoints again immediately should give the same results.
-<a href=#1943 id=1943 data-nosnippet>1943</a>        </span><span class="kw">let </span>eps1 = ms.ip_addrs().get();
+<a href=#1943 id=1943 data-nosnippet>1943</a>        </span><span class="kw">let </span>eps1 = sock.ip_addrs().get();
 <a href=#1944 id=1944 data-nosnippet>1944</a>        <span class="macro">info!</span>(<span class="string">"{eps1:?}"</span>);
 <a href=#1945 id=1945 data-nosnippet>1945</a>        <span class="macro">assert_eq!</span>(eps0, eps1);
 <a href=#1946 id=1946 data-nosnippet>1946</a>    }
