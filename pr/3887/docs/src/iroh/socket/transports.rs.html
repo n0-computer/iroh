@@ -210,18 +210,18 @@
 <a href=#210 id=210 data-nosnippet>210</a>        cx: <span class="kw-2">&amp;mut </span>Context,
 <a href=#211 id=211 data-nosnippet>211</a>        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
 <a href=#212 id=212 data-nosnippet>212</a>        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
-<a href=#213 id=213 data-nosnippet>213</a>        msock: <span class="kw-2">&amp;</span>Socket,
+<a href=#213 id=213 data-nosnippet>213</a>        sock: <span class="kw-2">&amp;</span>Socket,
 <a href=#214 id=214 data-nosnippet>214</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
 <a href=#215 id=215 data-nosnippet>215</a>        <span class="macro">debug_assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
 <a href=#216 id=216 data-nosnippet>216</a>        <span class="macro">debug_assert!</span>(bufs.len() &lt;= quinn_udp::BATCH_SIZE, <span class="string">"too many buffers"</span>);
-<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">if </span>msock.is_closing() {
+<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">if </span>sock.is_closing() {
 <a href=#218 id=218 data-nosnippet>218</a>            <span class="kw">return </span>Poll::Pending;
 <a href=#219 id=219 data-nosnippet>219</a>        }
 <a href=#220 id=220 data-nosnippet>220</a>
 <a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">match </span><span class="self">self</span>.inner_poll_recv(cx, bufs, metas)<span class="question-mark">? </span>{
 <a href=#222 id=222 data-nosnippet>222</a>            Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; Poll::Pending,
 <a href=#223 id=223 data-nosnippet>223</a>            Poll::Ready(n) =&gt; {
-<a href=#224 id=224 data-nosnippet>224</a>                msock.process_datagrams(<span class="kw-2">&amp;mut </span>bufs[..n], <span class="kw-2">&amp;mut </span>metas[..n], <span class="kw-2">&amp;</span><span class="self">self</span>.source_addrs[..n]);
+<a href=#224 id=224 data-nosnippet>224</a>                sock.process_datagrams(<span class="kw-2">&amp;mut </span>bufs[..n], <span class="kw-2">&amp;mut </span>metas[..n], <span class="kw-2">&amp;</span><span class="self">self</span>.source_addrs[..n]);
 <a href=#225 id=225 data-nosnippet>225</a>                Poll::Ready(<span class="prelude-val">Ok</span>(n))
 <a href=#226 id=226 data-nosnippet>226</a>            }
 <a href=#227 id=227 data-nosnippet>227</a>        }
@@ -619,20 +619,20 @@
 <a href=#619 id=619 data-nosnippet>619</a>/// [`Transports`].
 <a href=#620 id=620 data-nosnippet>620</a></span><span class="attr">#[derive(Debug)]
 <a href=#621 id=621 data-nosnippet>621</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Transport {
-<a href=#622 id=622 data-nosnippet>622</a>    msock: Arc&lt;Socket&gt;,
+<a href=#622 id=622 data-nosnippet>622</a>    sock: Arc&lt;Socket&gt;,
 <a href=#623 id=623 data-nosnippet>623</a>    transports: Transports,
 <a href=#624 id=624 data-nosnippet>624</a>}
 <a href=#625 id=625 data-nosnippet>625</a>
 <a href=#626 id=626 data-nosnippet>626</a><span class="kw">impl </span>Transport {
-<a href=#627 id=627 data-nosnippet>627</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(msock: Arc&lt;Socket&gt;, transports: Transports) -&gt; <span class="self">Self </span>{
-<a href=#628 id=628 data-nosnippet>628</a>        <span class="self">Self </span>{ msock, transports }
+<a href=#627 id=627 data-nosnippet>627</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(sock: Arc&lt;Socket&gt;, transports: Transports) -&gt; <span class="self">Self </span>{
+<a href=#628 id=628 data-nosnippet>628</a>        <span class="self">Self </span>{ sock, transports }
 <a href=#629 id=629 data-nosnippet>629</a>    }
 <a href=#630 id=630 data-nosnippet>630</a>}
 <a href=#631 id=631 data-nosnippet>631</a>
 <a href=#632 id=632 data-nosnippet>632</a><span class="kw">impl </span>quinn::AsyncUdpSocket <span class="kw">for </span>Transport {
 <a href=#633 id=633 data-nosnippet>633</a>    <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpSender&gt;&gt; {
 <a href=#634 id=634 data-nosnippet>634</a>        Box::pin(Sender {
-<a href=#635 id=635 data-nosnippet>635</a>            msock: <span class="self">self</span>.msock.clone(),
+<a href=#635 id=635 data-nosnippet>635</a>            sock: <span class="self">self</span>.sock.clone(),
 <a href=#636 id=636 data-nosnippet>636</a>            sender: <span class="self">self</span>.transports.create_sender(),
 <a href=#637 id=637 data-nosnippet>637</a>        })
 <a href=#638 id=638 data-nosnippet>638</a>    }
@@ -643,7 +643,7 @@
 <a href=#643 id=643 data-nosnippet>643</a>        bufs: <span class="kw-2">&amp;mut </span>[IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
 <a href=#644 id=644 data-nosnippet>644</a>        meta: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
 <a href=#645 id=645 data-nosnippet>645</a>    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-<a href=#646 id=646 data-nosnippet>646</a>        <span class="self">self</span>.transports.poll_recv(cx, bufs, meta, <span class="kw-2">&amp;</span><span class="self">self</span>.msock)
+<a href=#646 id=646 data-nosnippet>646</a>        <span class="self">self</span>.transports.poll_recv(cx, bufs, meta, <span class="kw-2">&amp;</span><span class="self">self</span>.sock)
 <a href=#647 id=647 data-nosnippet>647</a>    }
 <a href=#648 id=648 data-nosnippet>648</a>
 <a href=#649 id=649 data-nosnippet>649</a>    <span class="attr">#[cfg(not(wasm_browser))]
@@ -702,7 +702,7 @@
 <a href=#702 id=702 data-nosnippet>702</a></span><span class="attr">#[derive(Debug)]
 <a href=#703 id=703 data-nosnippet>703</a>#[pin_project::pin_project]
 <a href=#704 id=704 data-nosnippet>704</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Sender {
-<a href=#705 id=705 data-nosnippet>705</a>    msock: Arc&lt;Socket&gt;,
+<a href=#705 id=705 data-nosnippet>705</a>    sock: Arc&lt;Socket&gt;,
 <a href=#706 id=706 data-nosnippet>706</a>    <span class="attr">#[pin]
 <a href=#707 id=707 data-nosnippet>707</a>    </span>sender: TransportsSender,
 <a href=#708 id=708 data-nosnippet>708</a>}
@@ -714,7 +714,7 @@
 <a href=#714 id=714 data-nosnippet>714</a>    /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
 <a href=#715 id=715 data-nosnippet>715</a>    /// transmit's destination.
 <a href=#716 id=716 data-nosnippet>716</a>    </span><span class="kw">fn </span>mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;MultipathMappedAddr&gt; {
-<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
+<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">if </span><span class="self">self</span>.sock.is_closed() {
 <a href=#718 id=718 data-nosnippet>718</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
 <a href=#719 id=719 data-nosnippet>719</a>                io::ErrorKind::NotConnected,
 <a href=#720 id=720 data-nosnippet>720</a>                <span class="string">"connection closed"</span>,
@@ -742,7 +742,7 @@
 <a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>transport_addr = <span class="kw">match </span>mapped_addr {
 <a href=#743 id=743 data-nosnippet>743</a>            MultipathMappedAddr::Mixed(mapped_addr) =&gt; {
 <a href=#744 id=744 data-nosnippet>744</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(endpoint_id) = <span class="self">self
-<a href=#745 id=745 data-nosnippet>745</a>                    </span>.msock
+<a href=#745 id=745 data-nosnippet>745</a>                    </span>.sock
 <a href=#746 id=746 data-nosnippet>746</a>                    .remote_map
 <a href=#747 id=747 data-nosnippet>747</a>                    .endpoint_mapped_addrs
 <a href=#748 id=748 data-nosnippet>748</a>                    .lookup(<span class="kw-2">&amp;</span>mapped_addr)
@@ -759,7 +759,7 @@
 <a href=#759 id=759 data-nosnippet>759</a>                        <span class="string">"oops, flub didn't think this would happen"</span>);
 <a href=#760 id=760 data-nosnippet>760</a>                }
 <a href=#761 id=761 data-nosnippet>761</a>
-<a href=#762 id=762 data-nosnippet>762</a>                <span class="kw">let </span>sender = <span class="self">self</span>.msock.remote_map.remote_state_actor(endpoint_id);
+<a href=#762 id=762 data-nosnippet>762</a>                <span class="kw">let </span>sender = <span class="self">self</span>.sock.remote_map.remote_state_actor(endpoint_id);
 <a href=#763 id=763 data-nosnippet>763</a>                <span class="kw">let </span>transmit = OwnedTransmit::from(quinn_transmit);
 <a href=#764 id=764 data-nosnippet>764</a>                <span class="kw">match </span>sender.try_send(RemoteStateMessage::SendDatagram(
 <a href=#765 id=765 data-nosnippet>765</a>                    Box::new(<span class="self">self</span>.sender.clone()),
@@ -782,7 +782,7 @@
 <a href=#782 id=782 data-nosnippet>782</a>            }
 <a href=#783 id=783 data-nosnippet>783</a>            MultipathMappedAddr::Relay(relay_mapped_addr) =&gt; {
 <a href=#784 id=784 data-nosnippet>784</a>                <span class="kw">match </span><span class="self">self
-<a href=#785 id=785 data-nosnippet>785</a>                    </span>.msock
+<a href=#785 id=785 data-nosnippet>785</a>                    </span>.sock
 <a href=#786 id=786 data-nosnippet>786</a>                    .remote_map
 <a href=#787 id=787 data-nosnippet>787</a>                    .relay_mapped_addrs
 <a href=#788 id=788 data-nosnippet>788</a>                    .lookup(<span class="kw-2">&amp;</span>relay_mapped_addr)

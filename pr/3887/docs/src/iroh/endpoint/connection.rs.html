@@ -270,11 +270,11 @@
 <a href=#270 id=270 data-nosnippet>270</a>
 <a href=#271 id=271 data-nosnippet>271</a>    <span class="comment">// Register this connection with the socket.
 <a href=#272 id=272 data-nosnippet>272</a>    </span><span class="kw">let </span>fut = ep
-<a href=#273 id=273 data-nosnippet>273</a>        .msock
+<a href=#273 id=273 data-nosnippet>273</a>        .sock
 <a href=#274 id=274 data-nosnippet>274</a>        .register_connection(info.endpoint_id, conn.weak_handle());
 <a href=#275 id=275 data-nosnippet>275</a>
 <a href=#276 id=276 data-nosnippet>276</a>    <span class="comment">// Check hooks
-<a href=#277 id=277 data-nosnippet>277</a>    </span><span class="kw">let </span>msock = ep.msock.clone();
+<a href=#277 id=277 data-nosnippet>277</a>    </span><span class="kw">let </span>sock = ep.sock.clone();
 <a href=#278 id=278 data-nosnippet>278</a>    <span class="prelude-val">Ok</span>(<span class="kw">async move </span>{
 <a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">let </span>paths = fut.<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">let </span>conn = Connection {
@@ -283,7 +283,7 @@
 <a href=#283 id=283 data-nosnippet>283</a>        };
 <a href=#284 id=284 data-nosnippet>284</a>
 <a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">if let </span>AfterHandshakeOutcome::Reject { error_code, reason } =
-<a href=#286 id=286 data-nosnippet>286</a>            msock.hooks.after_handshake(<span class="kw-2">&amp;</span>conn.to_info()).<span class="kw">await
+<a href=#286 id=286 data-nosnippet>286</a>            sock.hooks.after_handshake(<span class="kw-2">&amp;</span>conn.to_info()).<span class="kw">await
 <a href=#287 id=287 data-nosnippet>287</a>        </span>{
 <a href=#288 id=288 data-nosnippet>288</a>            conn.close(error_code, <span class="kw-2">&amp;</span>reason);
 <a href=#289 id=289 data-nosnippet>289</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(ConnectingError::LocallyRejected));

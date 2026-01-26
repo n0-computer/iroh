@@ -196,7 +196,7 @@
 <a href=#196 id=196 data-nosnippet>196</a>
 <a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>metrics = EndpointMetrics::default();
 <a href=#198 id=198 data-nosnippet>198</a>
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>msock_opts = socket::Options {
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>sock_opts = socket::Options {
 <a href=#200 id=200 data-nosnippet>200</a>            transports: <span class="self">self</span>.transports,
 <a href=#201 id=201 data-nosnippet>201</a>            secret_key,
 <a href=#202 id=202 data-nosnippet>202</a>            address_lookup_user_data: <span class="self">self</span>.address_lookup_user_data,
@@ -210,12 +210,12 @@
 <a href=#210 id=210 data-nosnippet>210</a>            hooks: <span class="self">self</span>.hooks,
 <a href=#211 id=211 data-nosnippet>211</a>        };
 <a href=#212 id=212 data-nosnippet>212</a>
-<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>msock = socket::Socket::spawn(msock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>sock = socket::Socket::spawn(sock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#214 id=214 data-nosnippet>214</a>        <span class="macro">trace!</span>(<span class="string">"created socket"</span>);
 <a href=#215 id=215 data-nosnippet>215</a>        <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
 <a href=#216 id=216 data-nosnippet>216</a>
 <a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">let </span>ep = Endpoint {
-<a href=#218 id=218 data-nosnippet>218</a>            msock,
+<a href=#218 id=218 data-nosnippet>218</a>            sock,
 <a href=#219 id=219 data-nosnippet>219</a>            static_config: Arc::new(static_config),
 <a href=#220 id=220 data-nosnippet>220</a>        };
 <a href=#221 id=221 data-nosnippet>221</a>
@@ -679,7 +679,7 @@
 <a href=#679 id=679 data-nosnippet>679</a></span><span class="attr">#[derive(Clone, Debug)]
 <a href=#680 id=680 data-nosnippet>680</a></span><span class="kw">pub struct </span>Endpoint {
 <a href=#681 id=681 data-nosnippet>681</a>    <span class="doccomment">/// Handle to the socket/actor
-<a href=#682 id=682 data-nosnippet>682</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) msock: Handle,
+<a href=#682 id=682 data-nosnippet>682</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) sock: Handle,
 <a href=#683 id=683 data-nosnippet>683</a>    <span class="doccomment">/// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
 <a href=#684 id=684 data-nosnippet>684</a>    </span>static_config: Arc&lt;StaticConfig&gt;,
 <a href=#685 id=685 data-nosnippet>685</a>}
@@ -756,7 +756,7 @@
 <a href=#756 id=756 data-nosnippet>756</a>    /// Note that this *overrides* the current list of ALPNs.
 <a href=#757 id=757 data-nosnippet>757</a>    </span><span class="kw">pub fn </span>set_alpns(<span class="kw-2">&amp;</span><span class="self">self</span>, alpns: Vec&lt;Vec&lt;u8&gt;&gt;) {
 <a href=#758 id=758 data-nosnippet>758</a>        <span class="kw">let </span>server_config = <span class="self">self</span>.static_config.create_server_config(alpns);
-<a href=#759 id=759 data-nosnippet>759</a>        <span class="self">self</span>.msock.endpoint().set_server_config(<span class="prelude-val">Some</span>(server_config));
+<a href=#759 id=759 data-nosnippet>759</a>        <span class="self">self</span>.sock.endpoint().set_server_config(<span class="prelude-val">Some</span>(server_config));
 <a href=#760 id=760 data-nosnippet>760</a>    }
 <a href=#761 id=761 data-nosnippet>761</a>
 <a href=#762 id=762 data-nosnippet>762</a>    <span class="doccomment">/// Adds the provided configuration to the [`RelayMap`].
@@ -767,14 +767,14 @@
 <a href=#767 id=767 data-nosnippet>767</a>        relay: RelayUrl,
 <a href=#768 id=768 data-nosnippet>768</a>        config: Arc&lt;RelayConfig&gt;,
 <a href=#769 id=769 data-nosnippet>769</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RelayConfig&gt;&gt; {
-<a href=#770 id=770 data-nosnippet>770</a>        <span class="self">self</span>.msock.insert_relay(relay, config).<span class="kw">await
+<a href=#770 id=770 data-nosnippet>770</a>        <span class="self">self</span>.sock.insert_relay(relay, config).<span class="kw">await
 <a href=#771 id=771 data-nosnippet>771</a>    </span>}
 <a href=#772 id=772 data-nosnippet>772</a>
 <a href=#773 id=773 data-nosnippet>773</a>    <span class="doccomment">/// Removes the configuration from the [`RelayMap`] for the provided [`RelayUrl`].
 <a href=#774 id=774 data-nosnippet>774</a>    ///
 <a href=#775 id=775 data-nosnippet>775</a>    /// Returns any existing configuration.
 <a href=#776 id=776 data-nosnippet>776</a>    </span><span class="kw">pub async fn </span>remove_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, relay: <span class="kw-2">&amp;</span>RelayUrl) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RelayConfig&gt;&gt; {
-<a href=#777 id=777 data-nosnippet>777</a>        <span class="self">self</span>.msock.remove_relay(relay).<span class="kw">await
+<a href=#777 id=777 data-nosnippet>777</a>        <span class="self">self</span>.sock.remove_relay(relay).<span class="kw">await
 <a href=#778 id=778 data-nosnippet>778</a>    </span>}
 <a href=#779 id=779 data-nosnippet>779</a>
 <a href=#780 id=780 data-nosnippet>780</a>    <span class="comment">// # Methods for establishing connectivity.
@@ -850,7 +850,7 @@
 <a href=#850 id=850 data-nosnippet>850</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Connecting, ConnectWithOptsError&gt; {
 <a href=#851 id=851 data-nosnippet>851</a>        <span class="kw">let </span>endpoint_addr: EndpointAddr = endpoint_addr.into();
 <a href=#852 id=852 data-nosnippet>852</a>        <span class="kw">if let </span>BeforeConnectOutcome::Reject =
-<a href=#853 id=853 data-nosnippet>853</a>            <span class="self">self</span>.msock.hooks.before_connect(<span class="kw-2">&amp;</span>endpoint_addr, alpn).<span class="kw">await
+<a href=#853 id=853 data-nosnippet>853</a>            <span class="self">self</span>.sock.hooks.before_connect(<span class="kw-2">&amp;</span>endpoint_addr, alpn).<span class="kw">await
 <a href=#854 id=854 data-nosnippet>854</a>        </span>{
 <a href=#855 id=855 data-nosnippet>855</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(ConnectWithOptsError::LocallyRejected));
 <a href=#856 id=856 data-nosnippet>856</a>        }
@@ -868,7 +868,7 @@
 <a href=#868 id=868 data-nosnippet>868</a>            <span class="string">"connecting"</span>,
 <a href=#869 id=869 data-nosnippet>869</a>        );
 <a href=#870 id=870 data-nosnippet>870</a>
-<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw">let </span>mapped_addr = <span class="self">self</span>.msock.resolve_remote(endpoint_addr).<span class="kw">await</span><span class="question-mark">??</span>;
+<a href=#871 id=871 data-nosnippet>871</a>        <span class="kw">let </span>mapped_addr = <span class="self">self</span>.sock.resolve_remote(endpoint_addr).<span class="kw">await</span><span class="question-mark">??</span>;
 <a href=#872 id=872 data-nosnippet>872</a>
 <a href=#873 id=873 data-nosnippet>873</a>        <span class="kw">let </span>transport_config = options
 <a href=#874 id=874 data-nosnippet>874</a>            .transport_config
@@ -893,7 +893,7 @@
 <a href=#893 id=893 data-nosnippet>893</a>        <span class="kw">let </span>dest_addr = mapped_addr.private_socket_addr();
 <a href=#894 id=894 data-nosnippet>894</a>        <span class="kw">let </span>server_name = <span class="kw-2">&amp;</span>tls::name::encode(endpoint_id);
 <a href=#895 id=895 data-nosnippet>895</a>        <span class="kw">let </span>connect = <span class="self">self
-<a href=#896 id=896 data-nosnippet>896</a>            </span>.msock
+<a href=#896 id=896 data-nosnippet>896</a>            </span>.sock
 <a href=#897 id=897 data-nosnippet>897</a>            .endpoint()
 <a href=#898 id=898 data-nosnippet>898</a>            .connect_with(client_config, dest_addr, server_name)<span class="question-mark">?</span>;
 <a href=#899 id=899 data-nosnippet>899</a>
@@ -910,7 +910,7 @@
 <a href=#910 id=910 data-nosnippet>910</a>    /// [`Endpoint::close`].
 <a href=#911 id=911 data-nosnippet>911</a>    </span><span class="kw">pub fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Accept&lt;<span class="lifetime">'_</span>&gt; {
 <a href=#912 id=912 data-nosnippet>912</a>        Accept {
-<a href=#913 id=913 data-nosnippet>913</a>            inner: <span class="self">self</span>.msock.endpoint().accept(),
+<a href=#913 id=913 data-nosnippet>913</a>            inner: <span class="self">self</span>.sock.endpoint().accept(),
 <a href=#914 id=914 data-nosnippet>914</a>            ep: <span class="self">self</span>.clone(),
 <a href=#915 id=915 data-nosnippet>915</a>        }
 <a href=#916 id=916 data-nosnippet>916</a>    }
@@ -982,8 +982,8 @@
 <a href=#982 id=982 data-nosnippet>982</a>    /// [`RelayUrl`]: crate::RelayUrl
 <a href=#983 id=983 data-nosnippet>983</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#984 id=984 data-nosnippet>984</a>    </span><span class="kw">pub fn </span>watch_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = EndpointAddr&gt; + <span class="kw">use</span>&lt;&gt; {
-<a href=#985 id=985 data-nosnippet>985</a>        <span class="kw">let </span>watch_addrs = <span class="self">self</span>.msock.ip_addrs();
-<a href=#986 id=986 data-nosnippet>986</a>        <span class="kw">let </span>watch_relay = <span class="self">self</span>.msock.home_relay();
+<a href=#985 id=985 data-nosnippet>985</a>        <span class="kw">let </span>watch_addrs = <span class="self">self</span>.sock.ip_addrs();
+<a href=#986 id=986 data-nosnippet>986</a>        <span class="kw">let </span>watch_relay = <span class="self">self</span>.sock.home_relay();
 <a href=#987 id=987 data-nosnippet>987</a>        <span class="kw">let </span>endpoint_id = <span class="self">self</span>.id();
 <a href=#988 id=988 data-nosnippet>988</a>
 <a href=#989 id=989 data-nosnippet>989</a>        watch_addrs.or(watch_relay).map(<span class="kw">move </span>|(addrs, relays)| {
@@ -1007,7 +1007,7 @@
 <a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="comment">// In browsers, there will never be any direct addresses, so we wait
 <a href=#1008 id=1008 data-nosnippet>1008</a>        // for the home relay instead. This makes the `EndpointAddr` have *some* way
 <a href=#1009 id=1009 data-nosnippet>1009</a>        // of connecting to us.
-<a href=#1010 id=1010 data-nosnippet>1010</a>        </span><span class="kw">let </span>watch_relay = <span class="self">self</span>.msock.home_relay();
+<a href=#1010 id=1010 data-nosnippet>1010</a>        </span><span class="kw">let </span>watch_relay = <span class="self">self</span>.sock.home_relay();
 <a href=#1011 id=1011 data-nosnippet>1011</a>        <span class="kw">let </span>endpoint_id = <span class="self">self</span>.id();
 <a href=#1012 id=1012 data-nosnippet>1012</a>        watch_relay.map(<span class="kw">move </span>|<span class="kw-2">mut </span>relays| {
 <a href=#1013 id=1013 data-nosnippet>1013</a>            EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
@@ -1060,7 +1060,7 @@
 <a href=#1060 id=1060 data-nosnippet>1060</a>    /// }
 <a href=#1061 id=1061 data-nosnippet>1061</a>    /// ```
 <a href=#1062 id=1062 data-nosnippet>1062</a>    </span><span class="kw">pub async fn </span>online(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#1063 id=1063 data-nosnippet>1063</a>        <span class="self">self</span>.msock.home_relay().initialized().<span class="kw">await</span>;
+<a href=#1063 id=1063 data-nosnippet>1063</a>        <span class="self">self</span>.sock.home_relay().initialized().<span class="kw">await</span>;
 <a href=#1064 id=1064 data-nosnippet>1064</a>    }
 <a href=#1065 id=1065 data-nosnippet>1065</a>
 <a href=#1066 id=1066 data-nosnippet>1066</a>    <span class="doccomment">/// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -1093,7 +1093,7 @@
 <a href=#1093 id=1093 data-nosnippet>1093</a>    /// ```
 <a href=#1094 id=1094 data-nosnippet>1094</a>    </span><span class="attr">#[doc(hidden)]
 <a href=#1095 id=1095 data-nosnippet>1095</a>    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NetReport&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
-<a href=#1096 id=1096 data-nosnippet>1096</a>        <span class="self">self</span>.msock.net_report()
+<a href=#1096 id=1096 data-nosnippet>1096</a>        <span class="self">self</span>.sock.net_report()
 <a href=#1097 id=1097 data-nosnippet>1097</a>    }
 <a href=#1098 id=1098 data-nosnippet>1098</a>
 <a href=#1099 id=1099 data-nosnippet>1099</a>    <span class="doccomment">/// Returns the local socket addresses on which the underlying sockets are bound.
@@ -1102,7 +1102,7 @@
 <a href=#1102 id=1102 data-nosnippet>1102</a>    /// address if available.
 <a href=#1103 id=1103 data-nosnippet>1103</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#1104 id=1104 data-nosnippet>1104</a>    </span><span class="kw">pub fn </span>bound_sockets(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SocketAddr&gt; {
-<a href=#1105 id=1105 data-nosnippet>1105</a>        <span class="self">self</span>.msock
+<a href=#1105 id=1105 data-nosnippet>1105</a>        <span class="self">self</span>.sock
 <a href=#1106 id=1106 data-nosnippet>1106</a>            .local_addr()
 <a href=#1107 id=1107 data-nosnippet>1107</a>            .into_iter()
 <a href=#1108 id=1108 data-nosnippet>1108</a>            .filter_map(|addr| addr.into_socket_addr())
@@ -1118,14 +1118,14 @@
 <a href=#1118 id=1118 data-nosnippet>1118</a>    /// See [`Builder::dns_resolver`].
 <a href=#1119 id=1119 data-nosnippet>1119</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#1120 id=1120 data-nosnippet>1120</a>    </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DnsResolver {
-<a href=#1121 id=1121 data-nosnippet>1121</a>        <span class="self">self</span>.msock.dns_resolver()
+<a href=#1121 id=1121 data-nosnippet>1121</a>        <span class="self">self</span>.sock.dns_resolver()
 <a href=#1122 id=1122 data-nosnippet>1122</a>    }
 <a href=#1123 id=1123 data-nosnippet>1123</a>
 <a href=#1124 id=1124 data-nosnippet>1124</a>    <span class="doccomment">/// Returns the Address Lookup service, if configured.
 <a href=#1125 id=1125 data-nosnippet>1125</a>    ///
 <a href=#1126 id=1126 data-nosnippet>1126</a>    /// See [`Builder::address_lookup`].
 <a href=#1127 id=1127 data-nosnippet>1127</a>    </span><span class="kw">pub fn </span>address_lookup(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ConcurrentAddressLookup {
-<a href=#1128 id=1128 data-nosnippet>1128</a>        <span class="self">self</span>.msock.address_lookup()
+<a href=#1128 id=1128 data-nosnippet>1128</a>        <span class="self">self</span>.sock.address_lookup()
 <a href=#1129 id=1129 data-nosnippet>1129</a>    }
 <a href=#1130 id=1130 data-nosnippet>1130</a>
 <a href=#1131 id=1131 data-nosnippet>1131</a>    <span class="doccomment">/// Returns metrics collected for this endpoint.
@@ -1244,7 +1244,7 @@
 <a href=#1244 id=1244 data-nosnippet>1244</a>    /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
 <a href=#1245 id=1245 data-nosnippet>1245</a>    </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 <a href=#1246 id=1246 data-nosnippet>1246</a>    </span><span class="kw">pub fn </span>metrics(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>EndpointMetrics {
-<a href=#1247 id=1247 data-nosnippet>1247</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.msock.metrics
+<a href=#1247 id=1247 data-nosnippet>1247</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.sock.metrics
 <a href=#1248 id=1248 data-nosnippet>1248</a>    }
 <a href=#1249 id=1249 data-nosnippet>1249</a>
 <a href=#1250 id=1250 data-nosnippet>1250</a>    <span class="doccomment">/// Returns addressing information about a recently used remote endpoint.
@@ -1256,7 +1256,7 @@
 <a href=#1256 id=1256 data-nosnippet>1256</a>    /// When remote endpoints are no longer used, our endpoint will keep information around
 <a href=#1257 id=1257 data-nosnippet>1257</a>    /// for a little while, and then drop it. Afterwards, this will return `None`.
 <a href=#1258 id=1258 data-nosnippet>1258</a>    </span><span class="kw">pub async fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, endpoint_id: EndpointId) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
-<a href=#1259 id=1259 data-nosnippet>1259</a>        <span class="self">self</span>.msock.remote_info(endpoint_id).<span class="kw">await
+<a href=#1259 id=1259 data-nosnippet>1259</a>        <span class="self">self</span>.sock.remote_info(endpoint_id).<span class="kw">await
 <a href=#1260 id=1260 data-nosnippet>1260</a>    </span>}
 <a href=#1261 id=1261 data-nosnippet>1261</a>
 <a href=#1262 id=1262 data-nosnippet>1262</a>    <span class="comment">// # Methods for less common state updates.
@@ -1272,7 +1272,7 @@
 <a href=#1272 id=1272 data-nosnippet>1272</a>    /// Even when the network did not change, or iroh was already able to detect
 <a href=#1273 id=1273 data-nosnippet>1273</a>    /// the network change itself, there is no harm in calling this function.
 <a href=#1274 id=1274 data-nosnippet>1274</a>    </span><span class="kw">pub async fn </span>network_change(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#1275 id=1275 data-nosnippet>1275</a>        <span class="self">self</span>.msock.network_change().<span class="kw">await</span>;
+<a href=#1275 id=1275 data-nosnippet>1275</a>        <span class="self">self</span>.sock.network_change().<span class="kw">await</span>;
 <a href=#1276 id=1276 data-nosnippet>1276</a>    }
 <a href=#1277 id=1277 data-nosnippet>1277</a>
 <a href=#1278 id=1278 data-nosnippet>1278</a>    <span class="comment">// # Methods to update internal state.
@@ -1285,7 +1285,7 @@
 <a href=#1285 id=1285 data-nosnippet>1285</a>    /// See also [`Builder::user_data_for_address_lookup`] for setting an initial value when
 <a href=#1286 id=1286 data-nosnippet>1286</a>    /// building the endpoint.
 <a href=#1287 id=1287 data-nosnippet>1287</a>    </span><span class="kw">pub fn </span>set_user_data_for_address_lookup(<span class="kw-2">&amp;</span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
-<a href=#1288 id=1288 data-nosnippet>1288</a>        <span class="self">self</span>.msock.set_user_data_for_address_lookup(user_data);
+<a href=#1288 id=1288 data-nosnippet>1288</a>        <span class="self">self</span>.sock.set_user_data_for_address_lookup(user_data);
 <a href=#1289 id=1289 data-nosnippet>1289</a>    }
 <a href=#1290 id=1290 data-nosnippet>1290</a>
 <a href=#1291 id=1291 data-nosnippet>1291</a>    <span class="comment">// # Methods for terminating the endpoint.
@@ -1323,12 +1323,12 @@
 <a href=#1323 id=1323 data-nosnippet>1323</a>    /// Be aware however that the underlying UDP sockets are only closed once all clones of
 <a href=#1324 id=1324 data-nosnippet>1324</a>    /// the the respective [`Endpoint`] are dropped.
 <a href=#1325 id=1325 data-nosnippet>1325</a>    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#1326 id=1326 data-nosnippet>1326</a>        <span class="self">self</span>.msock.close().<span class="kw">await</span>;
+<a href=#1326 id=1326 data-nosnippet>1326</a>        <span class="self">self</span>.sock.close().<span class="kw">await</span>;
 <a href=#1327 id=1327 data-nosnippet>1327</a>    }
 <a href=#1328 id=1328 data-nosnippet>1328</a>
 <a href=#1329 id=1329 data-nosnippet>1329</a>    <span class="doccomment">/// Check if this endpoint is still alive, or already closed.
 <a href=#1330 id=1330 data-nosnippet>1330</a>    </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#1331 id=1331 data-nosnippet>1331</a>        <span class="self">self</span>.msock.is_closed()
+<a href=#1331 id=1331 data-nosnippet>1331</a>        <span class="self">self</span>.sock.is_closed()
 <a href=#1332 id=1332 data-nosnippet>1332</a>    }
 <a href=#1333 id=1333 data-nosnippet>1333</a>
 <a href=#1334 id=1334 data-nosnippet>1334</a>    <span class="doccomment">/// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
@@ -1344,11 +1344,11 @@
 <a href=#1344 id=1344 data-nosnippet>1344</a>
 <a href=#1345 id=1345 data-nosnippet>1345</a>    </span><span class="attr">#[cfg(test)]
 <a href=#1346 id=1346 data-nosnippet>1346</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>socket(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Handle {
-<a href=#1347 id=1347 data-nosnippet>1347</a>        <span class="self">self</span>.msock.clone()
+<a href=#1347 id=1347 data-nosnippet>1347</a>        <span class="self">self</span>.sock.clone()
 <a href=#1348 id=1348 data-nosnippet>1348</a>    }
 <a href=#1349 id=1349 data-nosnippet>1349</a>    <span class="attr">#[cfg(test)]
 <a href=#1350 id=1350 data-nosnippet>1350</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>quinn::Endpoint {
-<a href=#1351 id=1351 data-nosnippet>1351</a>        <span class="self">self</span>.msock.endpoint()
+<a href=#1351 id=1351 data-nosnippet>1351</a>        <span class="self">self</span>.sock.endpoint()
 <a href=#1352 id=1352 data-nosnippet>1352</a>    }
 <a href=#1353 id=1353 data-nosnippet>1353</a>}
 <a href=#1354 id=1354 data-nosnippet>1354</a>
