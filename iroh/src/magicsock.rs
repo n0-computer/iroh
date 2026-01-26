@@ -40,7 +40,6 @@ use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
 use quinn::WeakConnectionHandle;
 use rand::Rng;
-use rustc_hash::FxBuildHasher;
 use tokio::sync::{
     Mutex as AsyncMutex,
     mpsc::{self},
@@ -64,13 +63,17 @@ use crate::{
     address_lookup::{self, AddressLookup, EndpointData, Error as AddressLookupError, UserData},
     defaults::timeouts::NET_REPORT_TIMEOUT,
     endpoint::hooks::EndpointHooksList,
-    magicsock::remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
+    magicsock::{
+        concurrent_read_map::ReadOnlyMap,
+        remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
+    },
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
 };
 
 mod metrics;
 
+pub(crate) mod concurrent_read_map;
 pub(crate) mod mapped_addrs;
 pub(crate) mod remote_map;
 pub(crate) mod transports;
@@ -204,8 +207,7 @@ pub(crate) struct MagicSock {
     /// Channels for sending time-crucial messages to `RemoteStateActors`.
     ///
     /// Currently only exists to support sending `SendDatagram` messages.
-    remote_actors:
-        Arc<papaya::HashMap<EndpointId, mpsc::Sender<RemoteStateMessage>, FxBuildHasher>>,
+    remote_actors: ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
     /// EndpointId of this endpoint.
     public_key: PublicKey,
 
@@ -378,8 +380,7 @@ impl MagicSock {
         endpoint_id: EndpointId,
         message: RemoteStateMessage,
     ) -> Result<(), RemoteStateMessage> {
-        let guard = self.remote_actors.guard();
-        let Some(sender) = self.remote_actors.get(&endpoint_id, &guard) else {
+        let Some(sender) = self.remote_actors.get(&endpoint_id) else {
             return Err(message);
         };
         sender.try_send(message).map_err(|err| err.into_inner())
@@ -873,7 +874,7 @@ impl Handle {
         let msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
             actor_sender: actor_sender.clone(),
-            remote_actors: remote_map.senders.clone(),
+            remote_actors: remote_map.senders(),
             shutdown: shutdown_state,
             ipv6_reported,
             mapped_addrs: remote_map.mapped_addrs.clone(),
