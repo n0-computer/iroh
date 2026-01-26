@@ -177,7 +177,7 @@ impl Builder {
 
     // # The final constructor that everyone needs.
 
-    /// Binds the magic endpoint.
+    /// Binds the endpoint.
     pub async fn bind(self) -> Result<Endpoint, BindError> {
         let mut rng = rand::rng();
         let secret_key = self
@@ -1290,7 +1290,7 @@ impl Endpoint {
 
     // # Methods for terminating the endpoint.
 
-    /// Closes the QUIC endpoint and the magic socket.
+    /// Closes the QUIC endpoint and the socket.
     ///
     /// This will close any remaining open [`Connection`]s with an error code
     /// of `0` and an empty reason.  Though it is best practice to close those

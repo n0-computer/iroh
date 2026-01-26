@@ -618,20 +618,20 @@ impl TransportsSender {
 /// knows about these and maps them back to the transport [`Addr`]s used by the wrapped
 /// [`Transports`].
 #[derive(Debug)]
-pub(crate) struct MagicTransport {
+pub(crate) struct Transport {
     msock: Arc<Socket>,
     transports: Transports,
 }
 
-impl MagicTransport {
+impl Transport {
     pub(crate) fn new(msock: Arc<Socket>, transports: Transports) -> Self {
         Self { msock, transports }
     }
 }
 
-impl quinn::AsyncUdpSocket for MagicTransport {
+impl quinn::AsyncUdpSocket for Transport {
     fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
-        Box::pin(MagicSender {
+        Box::pin(Sender {
             msock: self.msock.clone(),
             sender: self.transports.create_sender(),
         })
@@ -694,20 +694,20 @@ impl quinn::AsyncUdpSocket for MagicTransport {
     }
 }
 
-/// A sender for [`MagicTransport`].
+/// A sender for [`Transport`].
 ///
 /// This is special in that it handles [`MultipathMappedAddr::Mixed`] by delegating to the
 /// [`Socket`] which expands it back to one or more [`Addr`]s and sends it
 /// using the underlying [`Transports`].
 #[derive(Debug)]
 #[pin_project::pin_project]
-pub(crate) struct MagicSender {
+pub(crate) struct Sender {
     msock: Arc<Socket>,
     #[pin]
     sender: TransportsSender,
 }
 
-impl MagicSender {
+impl Sender {
     /// Extracts the right [`Addr`] from the [`quinn_udp::Transmit`].
     ///
     /// Because Quinn does only know about IP transports we map other transports to private
@@ -725,7 +725,7 @@ impl MagicSender {
     }
 }
 
-impl quinn::UdpSender for MagicSender {
+impl quinn::UdpSender for Sender {
     fn poll_send(
         self: Pin<&mut Self>,
         quinn_transmit: &quinn_udp::Transmit,

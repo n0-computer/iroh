@@ -1,6 +1,5 @@
 //! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
-//! Based on tailscale/wgengine/magicsock
 //!
 //! ### `RelayOnly` path selection:
 //! When set this will force all packets to be sent over
@@ -43,7 +42,7 @@ use rand::Rng;
 use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, event, info_span, instrument, trace, warn};
-use transports::{LocalAddrsWatch, MagicTransport, TransportConfig};
+use transports::{LocalAddrsWatch, Transport, TransportConfig};
 use url::Url;
 
 use self::{
@@ -232,7 +231,7 @@ pub(crate) struct Socket {
 }
 
 impl Socket {
-    /// Creates a magic [`Socket`] listening.
+    /// Creates a [`Socket`] listening.
     pub(crate) async fn spawn(opts: Options) -> Result<Handle, BindError> {
         Handle::new(opts).await
     }
@@ -476,7 +475,7 @@ impl Socket {
     /// All the `bufs` and `metas` should have initialized packets in them.
     ///
     /// This fixes up the datagrams to use the correct [`MultipathMappedAddr`] and extracts
-    /// DISCO packets, processing them inside the magic socket.
+    /// DISCO packets, processing them inside the socket.
     ///
     /// [`MultipathMappedAddr`]: mapped_addrs::MultipathMappedAddr
     fn process_datagrams(
@@ -741,7 +740,7 @@ pub enum BindError {
 }
 
 impl Handle {
-    /// Creates a magic [`Socket`].
+    /// Creates a [`Socket`].
     async fn new(opts: Options) -> Result<Self, BindError> {
         let Options {
             secret_key,
@@ -883,7 +882,7 @@ impl Handle {
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
-            Box::new(MagicTransport::new(msock.clone(), transports)),
+            Box::new(Transport::new(msock.clone(), transports)),
             #[cfg(not(wasm_browser))]
             Arc::new(quinn::TokioRuntime),
             #[cfg(wasm_browser)]
@@ -987,7 +986,7 @@ impl Handle {
         if self.msock.is_closed() || self.msock.is_closing() {
             return;
         }
-        trace!(me = ?self.public_key, "magicsock closing...");
+        trace!(me = ?self.public_key, "socket closing...");
 
         // Cancel at_close_start token, which cancels running netreports.
         self.msock.shutdown.at_close_start.cancel();
@@ -1038,7 +1037,7 @@ impl Handle {
 
         self.msock.shutdown.closed.store(true, Ordering::SeqCst);
 
-        trace!("magicsock closed");
+        trace!("socket closed");
     }
 }
 
@@ -1116,7 +1115,7 @@ impl Actor {
                 }
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
                     let Some(msg) = msg else {
-                        trace!("tick: magicsock receiver closed");
+                        trace!("tick: socket receiver closed");
                         self.msock.metrics.socket.actor_tick_other.inc();
 
                         receiver_closed = true;
@@ -1264,7 +1263,7 @@ impl Actor {
         }
     }
 
-    /// Updates the direct addresses of this magic socket.
+    /// Updates the direct addresses of this socket.
     ///
     /// Updates the [`DiscoveredDirectAddrs`] of this [`Socket`] with the current set of
     /// direct addresses from:
@@ -1780,7 +1779,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_magic_small() -> Result {
+    async fn test_two_devices_roundtrip_quinn_small() -> Result {
         let (_guard, m1, m2) = endpoint_pair().await;
 
         run_roundtrip(
@@ -1802,7 +1801,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_magic_large() -> Result {
+    async fn test_two_devices_roundtrip_quinn_large() -> Result {
         let (_guard, m1, m2) = endpoint_pair().await;
         let mut data = vec![0u8; 10 * 1024];
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
@@ -1850,7 +1849,7 @@ mod tests {
         Duration::from_millis(delay * 50)
     }
 
-    /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
+    /// Same structure as `test_two_devices_roundtrip_quinn`, but interrupts regularly
     /// with (simulated) network changes.
     /// Regular network changes to m1 only.
     #[tokio::test(flavor = "multi_thread")]
@@ -1914,7 +1913,7 @@ mod tests {
     async fn test_two_devices_setup_teardown() -> Result {
         for i in 0..10 {
             info!("-- round {i}");
-            info!("setting up magic stack");
+            info!("setting up stack");
             let (_guard, m1, m2) = endpoint_pair().await;
 
             info!("closing endpoints");
