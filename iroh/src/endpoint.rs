@@ -27,7 +27,7 @@ use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 use self::hooks::EndpointHooksList;
-pub use super::magicsock::{
+pub use super::socket::{
     BindError, DirectAddr, DirectAddrType, PathInfo,
     remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
 };
@@ -42,8 +42,8 @@ use crate::{
         IntoAddressLookup, UserData,
     },
     endpoint::presets::Preset,
-    magicsock::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     metrics::EndpointMetrics,
+    socket::{self, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
     tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
@@ -82,8 +82,8 @@ pub use self::{
     },
 };
 #[cfg(not(wasm_browser))]
-use crate::magicsock::transports::IpConfig;
-use crate::magicsock::transports::TransportConfig;
+use crate::socket::transports::IpConfig;
+use crate::socket::transports::TransportConfig;
 
 /// Builder for [`Endpoint`].
 ///
@@ -196,7 +196,7 @@ impl Builder {
 
         let metrics = EndpointMetrics::default();
 
-        let msock_opts = magicsock::Options {
+        let msock_opts = socket::Options {
             transports: self.transports,
             secret_key,
             address_lookup_user_data: self.address_lookup_user_data,
@@ -210,8 +210,8 @@ impl Builder {
             hooks: self.hooks,
         };
 
-        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
-        trace!("created magicsock");
+        let msock = socket::Socket::spawn(msock_opts).await?;
+        trace!("created socket");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 
         let ep = Endpoint {
@@ -678,7 +678,7 @@ impl StaticConfig {
 /// [QUIC]: https://quicwg.org
 #[derive(Clone, Debug)]
 pub struct Endpoint {
-    /// Handle to the magicsocket/actor
+    /// Handle to the socket/actor
     pub(crate) msock: Handle,
     /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     static_config: Arc<StaticConfig>,
@@ -1139,7 +1139,7 @@ impl Endpoint {
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> n0_error::Result<()> {
     /// let endpoint = Endpoint::bind().await?;
-    /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
+    /// assert_eq!(endpoint.metrics().socket.recv_datagrams.get(), 0);
     /// # Ok(())
     /// # }
     /// ```
@@ -1166,7 +1166,7 @@ impl Endpoint {
     ///     })
     ///     .collect();
     ///
-    /// assert_eq!(metrics["magicsock:recv_datagrams"], MetricValue::Counter(0));
+    /// assert_eq!(metrics["socket:recv_datagrams"], MetricValue::Counter(0));
     /// # Ok(())
     /// # }
     /// ```
@@ -1183,8 +1183,8 @@ impl Endpoint {
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
     /// let s = registry.encode_openmetrics_to_string()?;
-    /// assert!(s.contains(r#"TYPE magicsock_recv_datagrams counter"#));
-    /// assert!(s.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// assert!(s.contains(r#"TYPE socket_recv_datagrams counter"#));
+    /// assert!(s.contains(r#"socket_recv_datagrams_total 0"#));
     /// # Ok(())
     /// # }
     /// ```
@@ -1228,8 +1228,8 @@ impl Endpoint {
     ///     .await
     ///     .std_context("text")?;
     ///
-    /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
-    /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// assert!(res.contains(r#"TYPE socket_recv_datagrams counter"#));
+    /// assert!(res.contains(r#"socket_recv_datagrams_total 0"#));
     /// # metrics_task.abort();
     /// # Ok(())
     /// # }
@@ -1343,7 +1343,7 @@ impl Endpoint {
     // # Remaining private methods
 
     #[cfg(test)]
-    pub(crate) fn magic_sock(&self) -> Handle {
+    pub(crate) fn socket(&self) -> Handle {
         self.msock.clone()
     }
     #[cfg(test)]
@@ -1925,8 +1925,8 @@ mod tests {
             }
             info!("Have direct connection");
             // Validate holepunch metrics.
-            assert_eq!(ep.metrics().magicsock.num_conns_opened.get(), 1);
-            assert_eq!(ep.metrics().magicsock.num_conns_direct.get(), 1);
+            assert_eq!(ep.metrics().socket.num_conns_opened.get(), 1);
+            assert_eq!(ep.metrics().socket.num_conns_direct.get(), 1);
 
             send.write_all(b"close please").await.anyerr()?;
             send.finish().anyerr()?;
@@ -2493,18 +2493,18 @@ mod tests {
         let server = server_task.await.anyerr()??;
 
         let m = client.metrics();
-        // assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
-        // assert_eq!(m.magicsock.connection_became_direct.get(), 1);
-        // assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
-        // assert_eq!(m.magicsock.endpoints_contacted_directly.get(), 1);
-        assert!(m.magicsock.recv_datagrams.get() > 0);
+        // assert_eq!(m.socket.num_direct_conns_added.get(), 1);
+        // assert_eq!(m.socket.connection_became_direct.get(), 1);
+        // assert_eq!(m.socket.connection_handshake_success.get(), 1);
+        // assert_eq!(m.socket.endpoints_contacted_directly.get(), 1);
+        assert!(m.socket.recv_datagrams.get() > 0);
 
         let m = server.metrics();
-        // assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
-        // assert_eq!(m.magicsock.connection_became_direct.get(), 1);
-        // assert_eq!(m.magicsock.endpoints_contacted_directly.get(), 1);
-        // assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
-        assert!(m.magicsock.recv_datagrams.get() > 0);
+        // assert_eq!(m.socket.num_direct_conns_added.get(), 1);
+        // assert_eq!(m.socket.connection_became_direct.get(), 1);
+        // assert_eq!(m.socket.endpoints_contacted_directly.get(), 1);
+        // assert_eq!(m.socket.connection_handshake_success.get(), 1);
+        assert!(m.socket.recv_datagrams.get() > 0);
 
         // test openmetrics encoding with labeled subregistries per endpoint
         fn register_endpoint(registry: &mut Registry, endpoint: &Endpoint) {
@@ -2516,8 +2516,8 @@ mod tests {
         register_endpoint(&mut registry, &client);
         register_endpoint(&mut registry, &server);
         // let s = registry.encode_openmetrics_to_string().anyerr()?;
-        // assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#));
-        // assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#));
+        // assert!(s.contains(r#"socket_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#));
+        // assert!(s.contains(r#"socket_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#));
         Ok(())
     }
 

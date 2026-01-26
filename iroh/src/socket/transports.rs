@@ -16,7 +16,7 @@ use relay::{RelayNetworkChangeSender, RelaySender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
-use super::{MagicSock, mapped_addrs::MultipathMappedAddr, remote_map::RemoteStateMessage};
+use super::{Socket, mapped_addrs::MultipathMappedAddr, remote_map::RemoteStateMessage};
 use crate::{metrics::EndpointMetrics, net_report::Report};
 
 #[cfg(not(wasm_browser))]
@@ -29,7 +29,7 @@ pub(crate) use self::ip::Config as IpConfig;
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 
-/// Manages the different underlying data transports that the magicsock can support.
+/// Manages the different underlying data transports that the socket can support.
 #[derive(Debug)]
 pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
@@ -210,7 +210,7 @@ impl Transports {
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
-        msock: &MagicSock,
+        msock: &Socket,
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         debug_assert!(bufs.len() <= quinn_udp::BATCH_SIZE, "too many buffers");
@@ -619,12 +619,12 @@ impl TransportsSender {
 /// [`Transports`].
 #[derive(Debug)]
 pub(crate) struct MagicTransport {
-    msock: Arc<MagicSock>,
+    msock: Arc<Socket>,
     transports: Transports,
 }
 
 impl MagicTransport {
-    pub(crate) fn new(msock: Arc<MagicSock>, transports: Transports) -> Self {
+    pub(crate) fn new(msock: Arc<Socket>, transports: Transports) -> Self {
         Self { msock, transports }
     }
 }
@@ -652,7 +652,7 @@ impl quinn::AsyncUdpSocket for MagicTransport {
         let addrs: Vec<_> = local_addrs
             .into_iter()
             .map(|addr| {
-                use crate::magicsock::mapped_addrs::DEFAULT_FAKE_ADDR;
+                use crate::socket::mapped_addrs::DEFAULT_FAKE_ADDR;
 
                 match addr {
                     Addr::Ip(addr) => addr,
@@ -672,7 +672,7 @@ impl quinn::AsyncUdpSocket for MagicTransport {
 
         if !self.transports.relay.is_empty() {
             // pretend we have an address to make sure things are not too sad during startup
-            use crate::magicsock::mapped_addrs::DEFAULT_FAKE_ADDR;
+            use crate::socket::mapped_addrs::DEFAULT_FAKE_ADDR;
 
             return Ok(DEFAULT_FAKE_ADDR.into());
         }
@@ -697,12 +697,12 @@ impl quinn::AsyncUdpSocket for MagicTransport {
 /// A sender for [`MagicTransport`].
 ///
 /// This is special in that it handles [`MultipathMappedAddr::Mixed`] by delegating to the
-/// [`MagicSock`] which expands it back to one or more [`Addr`]s and sends it
+/// [`Socket`] which expands it back to one or more [`Addr`]s and sends it
 /// using the underlying [`Transports`].
 #[derive(Debug)]
 #[pin_project::pin_project]
 pub(crate) struct MagicSender {
-    msock: Arc<MagicSock>,
+    msock: Arc<Socket>,
     #[pin]
     sender: TransportsSender,
 }
