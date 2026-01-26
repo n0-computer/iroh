@@ -181,8 +181,7 @@ impl RemoteMap {
         let (tx, rx) = oneshot::channel();
         actor
             .send(RemoteStateMessage::ResolveRemote(addrs, tx))
-            .await
-            .map(|_| RemoteStateActorStoppedError::new())?;
+            .await?;
 
         match rx.await {
             Ok(Ok(())) => Ok(Ok(self.mapped_addrs.endpoint_addrs.get(&id))),
