@@ -335,8 +335,8 @@ impl MagicSock {
         self.actor_sender
             .send(ActorMessage::ResolveRemote(addr, tx))
             .await
-            .expect("TODO");
-        rx.await.expect("TODO")
+            .ok();
+        rx.await.map_err(|_| RemoteStateActorStoppedError::new())?
     }
 
     /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
