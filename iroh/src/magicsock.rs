@@ -140,6 +140,10 @@ pub(crate) struct Options {
     pub(crate) insecure_skip_relay_cert_verify: bool,
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
+    /// Enable portmapping. Upnp and friends.
+    ///
+    /// Defaults to `true`
+    pub(crate) enable_portmapper: bool,
 }
 
 /// Handle for [`MagicSock`].
@@ -586,7 +590,7 @@ struct DirectAddrUpdateState {
     want_update: Option<UpdateReason>,
     msock: Arc<MagicSock>,
     #[cfg(not(wasm_browser))]
-    port_mapper: portmapper::Client,
+    port_mapper: Option<portmapper::Client>,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_reporter: Arc<AsyncMutex<net_report::Client>>,
     relay_map: RelayMap,
@@ -615,7 +619,7 @@ impl UpdateReason {
 impl DirectAddrUpdateState {
     fn new(
         msock: Arc<MagicSock>,
-        #[cfg(not(wasm_browser))] port_mapper: portmapper::Client,
+        #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
@@ -674,7 +678,7 @@ impl DirectAddrUpdateState {
             debug!("skipping net_report, socket is shutting down");
             // deactivate portmapper
             #[cfg(not(wasm_browser))]
-            self.port_mapper.deactivate();
+            self.port_mapper.as_ref().map(|p| p.deactivate());
             return;
         }
         if self.relay_map.is_empty() {
@@ -684,7 +688,7 @@ impl DirectAddrUpdateState {
         }
 
         #[cfg(not(wasm_browser))]
-        self.port_mapper.procure_mapping();
+        self.port_mapper.as_ref().map(|p| p.procure_mapping());
 
         debug!("requesting net_report report");
         let msock = self.msock.clone();
@@ -756,12 +760,14 @@ impl Handle {
             insecure_skip_relay_cert_verify,
             metrics,
             hooks,
+            enable_portmapper,
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
         #[cfg(not(wasm_browser))]
-        let port_mapper =
-            portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
+        let port_mapper = enable_portmapper.then(|| {
+            portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone())
+        });
 
         let relay_transport_configs: Vec<_> = transport_configs
             .iter()
@@ -823,7 +829,9 @@ impl Handle {
                 // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
                 match v4_port.try_into() {
                     Ok(non_zero_port) => {
-                        port_mapper.update_local_port(non_zero_port);
+                        port_mapper
+                            .as_ref()
+                            .map(|p| p.update_local_port(non_zero_port));
                     }
                     Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
                 }
@@ -1089,10 +1097,11 @@ impl Actor {
         let mut current_netmon_state = self.netmon_watcher.get();
 
         #[cfg(not(wasm_browser))]
-        let mut portmap_watcher = self
+        let portmap_watcher = self
             .direct_addr_update_state
             .port_mapper
-            .watch_external_address();
+            .as_ref()
+            .map(|p| p.watch_external_address());
 
         let mut receiver_closed = false;
         #[cfg_attr(wasm_browser, allow(unused_mut))]
@@ -1106,7 +1115,19 @@ impl Actor {
         while !shutdown_token.is_cancelled() {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
-            let portmap_watcher_changed = portmap_watcher.changed();
+            let portmap_watcher_changed = if let Some(ref p) = portmap_watcher {
+                Box::pin(p.changed())
+                    as std::pin::Pin<
+                        Box<
+                            dyn Future<Output = Result<(), tokio::sync::watch::error::RecvError>>
+                                + Send
+                                + Sync
+                                + 'static,
+                        >,
+                    >
+            } else {
+                Box::pin(n0_future::future::pending())
+            };
             #[cfg(wasm_browser)]
             let portmap_watcher_changed = n0_future::future::pending();
 
@@ -1185,9 +1206,11 @@ impl Actor {
 
                         trace!("tick: portmap changed");
                         self.msock.metrics.magicsock.actor_tick_portmap_changed.inc();
-                        let new_external_address = *portmap_watcher.borrow();
-                        debug!("external address updated: {new_external_address:?}");
-                        self.re_stun(UpdateReason::PortmapUpdated);
+                        if let Some(ref p) = portmap_watcher {
+                            let new_external_address = *p.borrow();
+                            debug!("external address updated: {new_external_address:?}");
+                            self.re_stun(UpdateReason::PortmapUpdated);
+                        }
                     }
                     #[cfg(wasm_browser)]
                     let _unused_in_browsers = change;
@@ -1278,7 +1301,8 @@ impl Actor {
         let portmap_watcher = self
             .direct_addr_update_state
             .port_mapper
-            .watch_external_address();
+            .as_ref()
+            .map(|p| p.watch_external_address());
 
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
         // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
@@ -1286,7 +1310,7 @@ impl Actor {
         let mut addrs: BTreeMap<SocketAddr, DirectAddrType> = BTreeMap::new();
 
         // First add PortMapper provided addresses.
-        let maybe_port_mapped = *portmap_watcher.borrow();
+        let maybe_port_mapped = portmap_watcher.and_then(|p| *p.borrow());
         if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
             addrs
                 .entry(portmap_ext)
@@ -1582,6 +1606,7 @@ mod tests {
             address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
+            enable_portmapper: true,
         }
     }
 
@@ -1974,6 +1999,7 @@ mod tests {
             insecure_skip_relay_cert_verify: false,
             metrics: Default::default(),
             hooks: Default::default(),
+            enable_portmapper: true,
         };
         let msock = MagicSock::spawn(opts).await?;
         Ok(msock)
