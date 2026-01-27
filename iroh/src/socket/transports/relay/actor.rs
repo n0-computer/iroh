@@ -59,7 +59,7 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Report, util::MaybeFuture};
+use crate::{net_report::Report, socket::Metrics as SocketMetrics, util::MaybeFuture};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -150,7 +150,7 @@ struct ActiveRelayActor {
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
 }
 
 #[derive(Debug)]
@@ -193,7 +193,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
 }
 
 /// Configuration needed to create a connection to a relay server.
@@ -841,7 +841,7 @@ pub struct Config {
     pub ipv6_reported: Arc<AtomicBool>,
     #[cfg(any(test, feature = "test-utils"))]
     pub insecure_skip_relay_cert_verify: bool,
-    pub metrics: Arc<MagicsockMetrics>,
+    pub metrics: Arc<SocketMetrics>,
 }
 
 impl RelayActor {

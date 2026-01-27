@@ -34,8 +34,8 @@ use crate::{
         Item as AddressLookupItem,
     },
     endpoint::{DirectAddr, quic::PathStats},
-    magicsock::{
-        MagicsockMetrics,
+    socket::{
+        Metrics as SocketMetrics,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
         remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
@@ -128,17 +128,17 @@ pub(super) struct RemoteStateActor {
     /// The endpoint ID of the local endpoint.
     local_endpoint_id: EndpointId,
 
-    // Hooks into the rest of the MagicSocket.
+    // Hooks into the rest of the Socket.
     //
     /// Metrics.
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
     /// Our local addresses.
     ///
     /// These are our local addresses and any reflexive transport addresses.
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    /// Address lookup service, cloned from the magicsock.
+    /// Address lookup service, cloned from the socket.
     address_lookup: ConcurrentAddressLookup,
 
     // Internal state - Quinn Connections we are managing.
@@ -193,7 +193,7 @@ impl RemoteStateActor {
         local_endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-        metrics: Arc<MagicsockMetrics>,
+        metrics: Arc<SocketMetrics>,
         address_lookup: ConcurrentAddressLookup,
     ) -> Self {
         Self {
@@ -1340,7 +1340,7 @@ impl ConnectionState {
         &mut self,
         remote: transports::Addr,
         path_id: PathId,
-        metrics: &Arc<MagicsockMetrics>,
+        metrics: &Arc<SocketMetrics>,
     ) {
         match remote {
             transports::Addr::Ip(_) => metrics.paths_direct.inc(),
