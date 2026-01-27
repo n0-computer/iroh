@@ -1735,7 +1735,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tokio",
  "tower-service",
  "tracing",
@@ -2155,7 +2155,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#d7e98af8cf261987450cc78a8b8747eca2745dc0"
+source = "git+https://github.com/n0-computer/quinn?branch=fix-network-change#6da7bb448dd5d3a5b54e7dcf2a7da2e33bc3cc2d"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2164,7 +2164,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2175,7 +2175,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#d7e98af8cf261987450cc78a8b8747eca2745dc0"
+source = "git+https://github.com/n0-computer/quinn?branch=fix-network-change#6da7bb448dd5d3a5b54e7dcf2a7da2e33bc3cc2d"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2202,11 +2202,11 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.7.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#d7e98af8cf261987450cc78a8b8747eca2745dc0"
+source = "git+https://github.com/n0-computer/quinn?branch=fix-network-change#6da7bb448dd5d3a5b54e7dcf2a7da2e33bc3cc2d"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -3312,7 +3312,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3349,7 +3349,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "tracing",
  "windows-sys 0.60.2",
 ]
