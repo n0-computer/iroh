@@ -8,7 +8,7 @@
 <span class="item-spacer"></span>    fn <a href="#tymethod.poll_send" class="fn">poll_send</a>(
         &amp;self,
         cx: &amp;mut <a class="struct" href="https://doc.rust-lang.org/nightly/core/task/wake/struct.Context.html" title="struct core::task::wake::Context">Context</a>&lt;'_&gt;,
-        dst: <a class="struct" href="../../../iroh_base/endpoint_addr/struct.CustomAddr.html" title="struct iroh_base::endpoint_addr::CustomAddr">CustomAddr</a>,
+        dst: &amp;<a class="struct" href="../../../iroh_base/endpoint_addr/struct.CustomAddr.html" title="struct iroh_base::endpoint_addr::CustomAddr">CustomAddr</a>,
         transmit: &amp;<a class="struct" href="struct.Transmit.html" title="struct iroh::endpoint::transports::Transmit">Transmit</a>&lt;'_&gt;,
     ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/task/poll/enum.Poll.html" title="enum core::task::poll::Poll">Poll</a>&lt;<a class="type" href="https://doc.rust-lang.org/nightly/std/io/error/type.Result.html" title="type std::io::error::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;&gt;;
 }</code></pre><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>User sender</p>
@@ -21,7 +21,7 @@ returns true.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="tymethod.poll_send" class="method"><a class="src rightside" href="../../../src/iroh/socket/transports/user.rs.html#55-60">Source</a><h4 class="code-header">fn <a href="#tymethod.poll_send" class="fn">poll_send</a>(
     &amp;self,
     cx: &amp;mut <a class="struct" href="https://doc.rust-lang.org/nightly/core/task/wake/struct.Context.html" title="struct core::task::wake::Context">Context</a>&lt;'_&gt;,
-    dst: <a class="struct" href="../../../iroh_base/endpoint_addr/struct.CustomAddr.html" title="struct iroh_base::endpoint_addr::CustomAddr">CustomAddr</a>,
+    dst: &amp;<a class="struct" href="../../../iroh_base/endpoint_addr/struct.CustomAddr.html" title="struct iroh_base::endpoint_addr::CustomAddr">CustomAddr</a>,
     transmit: &amp;<a class="struct" href="struct.Transmit.html" title="struct iroh::endpoint::transports::Transmit">Transmit</a>&lt;'_&gt;,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/task/poll/enum.Poll.html" title="enum core::task::poll::Poll">Poll</a>&lt;<a class="type" href="https://doc.rust-lang.org/nightly/std/io/error/type.Result.html" title="type std::io::error::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>&gt;&gt;</h4></section></summary><div class="docblock"><p>poll_send</p>
 </div></details></div><h2 id="implementors" class="section-header">Implementors<a href="#implementors" class="anchor">§</a></h2><div id="implementors-list"></div><script src="../../../trait.impl/iroh/socket/transports/user/trait.CustomSender.js" async></script></section></div></main></body></html>
