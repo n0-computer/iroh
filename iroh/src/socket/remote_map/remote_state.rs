@@ -755,7 +755,7 @@ impl RemoteStateActor {
                     || !local_candidates.is_subset(&last_hp.local_candidates)
             })
             .unwrap_or(true);
-        if !new_candidates {
+        if !new_candidates && !force_close_previous_paths {
             if let Some(ref last_hp) = self.last_holepunch {
                 let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
                 let now = Instant::now();
