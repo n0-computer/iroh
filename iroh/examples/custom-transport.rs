@@ -159,10 +159,10 @@ impl TestSender {
         let guard = self.inner.lock().unwrap();
         let (s, _) = guard
             .channels
-            .get(&dst)
+            .get(dst)
             .ok_or_else(|| io::Error::other("Unknown key"))?;
         let from_id = try_parse_custom_addr(&self.me).unwrap();
-        let to_id = try_parse_custom_addr(&dst).unwrap();
+        let to_id = try_parse_custom_addr(dst).unwrap();
         for packet in packets {
             let len = packet.data.len();
             match s.try_send(packet) {
