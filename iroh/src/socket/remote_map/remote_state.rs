@@ -1132,7 +1132,7 @@ impl RemoteStateActor {
 /// Data used during path selection.
 #[derive(Debug)]
 struct PathSelectionData {
-    /// Status of the path.
+    /// Status of the path if it would be selected.
     status: PathStatus,
     /// Measured RTT for path selection.
     rtt: Duration,
