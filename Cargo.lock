@@ -1735,7 +1735,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -2122,9 +2122,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.38.1"
+version = "0.38.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5828152c482cf9d95f3039848ac2be5e6e47c41dbf3695a453e6c02739c50d2c"
+checksum = "c946095f060e6e59b9ff30cc26c75cdb758e7fb0cde8312c89e2144654989fcb"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2142,9 +2142,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics-derive"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4e12bd0763fd16062f5cc5e8db15dd52d26e75a8af4c7fb57ccee3589b344b8"
+checksum = "cab063c2bfd6c3d5a33a913d4fdb5252f140db29ec67c704f20f3da7e8f92dbf"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2155,7 +2155,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#aa6c3735cee6d3074d5421a97b5e48332de8e7b3"
+source = "git+https://github.com/n0-computer/quinn?branch=main#d7e98af8cf261987450cc78a8b8747eca2745dc0"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2164,7 +2164,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tokio-stream",
@@ -2175,7 +2175,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#aa6c3735cee6d3074d5421a97b5e48332de8e7b3"
+source = "git+https://github.com/n0-computer/quinn?branch=main#d7e98af8cf261987450cc78a8b8747eca2745dc0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2202,11 +2202,11 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.7.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#aa6c3735cee6d3074d5421a97b5e48332de8e7b3"
+source = "git+https://github.com/n0-computer/quinn?branch=main#d7e98af8cf261987450cc78a8b8747eca2745dc0"
 dependencies = [
  "cfg_aliases",
  "libc",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -3312,7 +3312,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3349,7 +3349,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -5089,7 +5089,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
