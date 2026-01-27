@@ -93,7 +93,7 @@
 <a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">if </span>opt.metrics {
 <a href=#94 id=94 data-nosnippet>94</a>        <span class="comment">// print metrics
 <a href=#95 id=95 data-nosnippet>95</a>        </span><span class="macro">println!</span>(<span class="string">"\nMetrics:"</span>);
-<a href=#96 id=96 data-nosnippet>96</a>        collect_and_print(<span class="string">"MagicsockMetrics"</span>, <span class="kw-2">&amp;*</span>endpoint_metrics.magicsock);
+<a href=#96 id=96 data-nosnippet>96</a>        collect_and_print(<span class="string">"SocketMetrics"</span>, <span class="kw-2">&amp;*</span>endpoint_metrics.socket);
 <a href=#97 id=97 data-nosnippet>97</a>        collect_and_print(<span class="string">"NetReportMetrics"</span>, <span class="kw-2">&amp;*</span>endpoint_metrics.net_report);
 <a href=#98 id=98 data-nosnippet>98</a>        collect_and_print(<span class="string">"PortmapMetrics"</span>, <span class="kw-2">&amp;*</span>endpoint_metrics.portmapper);
 <a href=#99 id=99 data-nosnippet>99</a>        <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]

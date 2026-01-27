@@ -24,7 +24,7 @@
 <a href=#24 id=24 data-nosnippet>24</a>    </span>MtuDiscoveryConfig,   <span class="comment">// iroh::endpoint::quic::QuicTransportConfig
 <a href=#25 id=25 data-nosnippet>25</a>    </span>OpenBi,               <span class="comment">// iroh::endpoint::Connection
 <a href=#26 id=26 data-nosnippet>26</a>    </span>OpenUni,              <span class="comment">// iroh::endpoint::Connection
-<a href=#27 id=27 data-nosnippet>27</a>    </span>PathStats,            <span class="comment">// iroh::magicsock::remote_map::remote_state::PathInfo
+<a href=#27 id=27 data-nosnippet>27</a>    </span>PathStats,            <span class="comment">// iroh::socket::remote_map::remote_state::PathInfo
 <a href=#28 id=28 data-nosnippet>28</a>    </span>ReadDatagram,         <span class="comment">// iroh::endpoint::Connection
 <a href=#29 id=29 data-nosnippet>29</a>    </span>ReadError,            <span class="comment">// quinn::RecvStream
 <a href=#30 id=30 data-nosnippet>30</a>    </span>ReadExactError,       <span class="comment">// quinn::RecvStream
@@ -82,7 +82,7 @@
 <a href=#82 id=82 data-nosnippet>82</a></span>};
 <a href=#83 id=83 data-nosnippet>83</a><span class="kw">use </span>tracing::warn;
 <a href=#84 id=84 data-nosnippet>84</a>
-<a href=#85 id=85 data-nosnippet>85</a><span class="kw">use </span><span class="kw">crate</span>::magicsock::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT};
+<a href=#85 id=85 data-nosnippet>85</a><span class="kw">use </span><span class="kw">crate</span>::socket::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT};
 <a href=#86 id=86 data-nosnippet>86</a>
 <a href=#87 id=87 data-nosnippet>87</a><span class="doccomment">/// Builder for a [`QuicTransportConfig`].
 <a href=#88 id=88 data-nosnippet>88</a></span><span class="attr">#[derive(Debug, Clone)]
