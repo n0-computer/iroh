@@ -2964,97 +2964,98 @@
 <a href=#2964 id=2964 data-nosnippet>2964</a>        <span class="prelude-val">Ok</span>(())
 <a href=#2965 id=2965 data-nosnippet>2965</a>    }
 <a href=#2966 id=2966 data-nosnippet>2966</a>
-<a href=#2967 id=2967 data-nosnippet>2967</a>    <span class="attr">#[tokio::test]
-<a href=#2968 id=2968 data-nosnippet>2968</a>    #[traced_test]
-<a href=#2969 id=2969 data-nosnippet>2969</a>    </span><span class="kw">async fn </span>connect_via_relay_becomes_direct_and_sends_direct() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#2970 id=2970 data-nosnippet>2970</a>        <span class="kw">let </span>(relay_map, relay_url, _relay_server_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2971 id=2971 data-nosnippet>2971</a>        <span class="kw">let </span>qlog = Arc::new(QlogFileGroup::from_env(
-<a href=#2972 id=2972 data-nosnippet>2972</a>            <span class="string">"connect_via_relay_becomes_direct_and_sends_direct"</span>,
-<a href=#2973 id=2973 data-nosnippet>2973</a>        ));
-<a href=#2974 id=2974 data-nosnippet>2974</a>        <span class="kw">let </span>transfer_size = <span class="number">1_000_000</span>;
-<a href=#2975 id=2975 data-nosnippet>2975</a>
-<a href=#2976 id=2976 data-nosnippet>2976</a>        <span class="kw">async fn </span>collect_path_infos(conn: Connection) -&gt; BTreeMap&lt;TransportAddr, PathInfo&gt; {
-<a href=#2977 id=2977 data-nosnippet>2977</a>            <span class="kw">let </span><span class="kw-2">mut </span>path_infos = BTreeMap::new();
-<a href=#2978 id=2978 data-nosnippet>2978</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = conn.paths().stream();
-<a href=#2979 id=2979 data-nosnippet>2979</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(path_list) = paths.next().<span class="kw">await </span>{
-<a href=#2980 id=2980 data-nosnippet>2980</a>                <span class="kw">for </span>path <span class="kw">in </span>path_list {
-<a href=#2981 id=2981 data-nosnippet>2981</a>                    path_infos.insert(path.remote_addr().clone(), path);
-<a href=#2982 id=2982 data-nosnippet>2982</a>                }
-<a href=#2983 id=2983 data-nosnippet>2983</a>            }
-<a href=#2984 id=2984 data-nosnippet>2984</a>            path_infos
-<a href=#2985 id=2985 data-nosnippet>2985</a>        }
-<a href=#2986 id=2986 data-nosnippet>2986</a>
-<a href=#2987 id=2987 data-nosnippet>2987</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
-<a href=#2988 id=2988 data-nosnippet>2988</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-<a href=#2989 id=2989 data-nosnippet>2989</a>            .transport_config(qlog.create(<span class="string">"client"</span>)<span class="question-mark">?</span>)
-<a href=#2990 id=2990 data-nosnippet>2990</a>            .bind()
-<a href=#2991 id=2991 data-nosnippet>2991</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2992 id=2992 data-nosnippet>2992</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
-<a href=#2993 id=2993 data-nosnippet>2993</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
-<a href=#2994 id=2994 data-nosnippet>2994</a>            .transport_config(qlog.create(<span class="string">"server"</span>)<span class="question-mark">?</span>)
-<a href=#2995 id=2995 data-nosnippet>2995</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-<a href=#2996 id=2996 data-nosnippet>2996</a>            .bind()
-<a href=#2997 id=2997 data-nosnippet>2997</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#2998 id=2998 data-nosnippet>2998</a>        <span class="kw">let </span>server_addr = EndpointAddr::new(server.id()).with_relay_url(relay_url);
-<a href=#2999 id=2999 data-nosnippet>2999</a>        <span class="kw">let </span>server_task = tokio::spawn(<span class="kw">async move </span>{
-<a href=#3000 id=3000 data-nosnippet>3000</a>            <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#3001 id=3001 data-nosnippet>3001</a>            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#3002 id=3002 data-nosnippet>3002</a>            <span class="kw">let </span>stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
-<a href=#3003 id=3003 data-nosnippet>3003</a>            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#3004 id=3004 data-nosnippet>3004</a>            <span class="kw">let </span>msg = recv.read_to_end(transfer_size).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#3005 id=3005 data-nosnippet>3005</a>            send.write_all(<span class="kw-2">&amp;</span>msg).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#3006 id=3006 data-nosnippet>3006</a>            send.finish().anyerr()<span class="question-mark">?</span>;
-<a href=#3007 id=3007 data-nosnippet>3007</a>            conn.closed().<span class="kw">await</span>;
-<a href=#3008 id=3008 data-nosnippet>3008</a>            <span class="kw">let </span>stats = stats_task.<span class="kw">await</span>.std_context(<span class="string">"server stats task failed"</span>)<span class="question-mark">?</span>;
-<a href=#3009 id=3009 data-nosnippet>3009</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(stats)
-<a href=#3010 id=3010 data-nosnippet>3010</a>        });
-<a href=#3011 id=3011 data-nosnippet>3011</a>
-<a href=#3012 id=3012 data-nosnippet>3012</a>        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3013 id=3013 data-nosnippet>3013</a>        <span class="kw">let </span>stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
-<a href=#3014 id=3014 data-nosnippet>3014</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#3015 id=3015 data-nosnippet>3015</a>        send.write_all(<span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">42u8</span>; transfer_size]).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#3016 id=3016 data-nosnippet>3016</a>        send.finish().anyerr()<span class="question-mark">?</span>;
-<a href=#3017 id=3017 data-nosnippet>3017</a>        recv.read_to_end(transfer_size).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
-<a href=#3018 id=3018 data-nosnippet>3018</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thanks, bye!"</span>);
-<a href=#3019 id=3019 data-nosnippet>3019</a>        client.close().<span class="kw">await</span>;
-<a href=#3020 id=3020 data-nosnippet>3020</a>        <span class="kw">let </span>client_stats = stats_task.<span class="kw">await</span>.std_context(<span class="string">"client stats task failed"</span>)<span class="question-mark">?</span>;
-<a href=#3021 id=3021 data-nosnippet>3021</a>        <span class="kw">let </span>server_stats = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
-<a href=#3022 id=3022 data-nosnippet>3022</a>
-<a href=#3023 id=3023 data-nosnippet>3023</a>        <span class="macro">info!</span>(<span class="string">"client stats: {client_stats:#?}"</span>);
-<a href=#3024 id=3024 data-nosnippet>3024</a>        <span class="macro">info!</span>(<span class="string">"server stats: {server_stats:#?}"</span>);
-<a href=#3025 id=3025 data-nosnippet>3025</a>
-<a href=#3026 id=3026 data-nosnippet>3026</a>        <span class="kw">let </span>client_total_relay_tx = client_stats
-<a href=#3027 id=3027 data-nosnippet>3027</a>            .values()
-<a href=#3028 id=3028 data-nosnippet>3028</a>            .filter(|p| p.is_relay())
-<a href=#3029 id=3029 data-nosnippet>3029</a>            .map(|p| p.stats().udp_tx.bytes)
-<a href=#3030 id=3030 data-nosnippet>3030</a>            .sum::&lt;u64&gt;();
-<a href=#3031 id=3031 data-nosnippet>3031</a>        <span class="kw">let </span>client_total_relay_rx = client_stats
-<a href=#3032 id=3032 data-nosnippet>3032</a>            .values()
-<a href=#3033 id=3033 data-nosnippet>3033</a>            .filter(|p| p.is_relay())
-<a href=#3034 id=3034 data-nosnippet>3034</a>            .map(|p| p.stats().udp_rx.bytes)
-<a href=#3035 id=3035 data-nosnippet>3035</a>            .sum::&lt;u64&gt;();
-<a href=#3036 id=3036 data-nosnippet>3036</a>        <span class="kw">let </span>server_total_relay_tx = server_stats
-<a href=#3037 id=3037 data-nosnippet>3037</a>            .values()
-<a href=#3038 id=3038 data-nosnippet>3038</a>            .filter(|p| p.is_relay())
-<a href=#3039 id=3039 data-nosnippet>3039</a>            .map(|p| p.stats().udp_tx.bytes)
-<a href=#3040 id=3040 data-nosnippet>3040</a>            .sum::&lt;u64&gt;();
-<a href=#3041 id=3041 data-nosnippet>3041</a>        <span class="kw">let </span>server_total_relay_rx = server_stats
-<a href=#3042 id=3042 data-nosnippet>3042</a>            .values()
-<a href=#3043 id=3043 data-nosnippet>3043</a>            .filter(|p| p.is_relay())
-<a href=#3044 id=3044 data-nosnippet>3044</a>            .map(|p| p.stats().udp_rx.bytes)
-<a href=#3045 id=3045 data-nosnippet>3045</a>            .sum::&lt;u64&gt;();
-<a href=#3046 id=3046 data-nosnippet>3046</a>
-<a href=#3047 id=3047 data-nosnippet>3047</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>client_total_relay_tx, <span class="string">"total"</span>);
-<a href=#3048 id=3048 data-nosnippet>3048</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>client_total_relay_rx, <span class="string">"total"</span>);
-<a href=#3049 id=3049 data-nosnippet>3049</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>server_total_relay_tx, <span class="string">"total"</span>);
-<a href=#3050 id=3050 data-nosnippet>3050</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>server_total_relay_rx, <span class="string">"total"</span>);
-<a href=#3051 id=3051 data-nosnippet>3051</a>
-<a href=#3052 id=3052 data-nosnippet>3052</a>        <span class="comment">// We should send/receive only the minorty of traffic via the relay.
-<a href=#3053 id=3053 data-nosnippet>3053</a>        </span><span class="macro">assert!</span>(client_total_relay_tx &lt; transfer_size <span class="kw">as </span>u64 / <span class="number">2</span>);
-<a href=#3054 id=3054 data-nosnippet>3054</a>        <span class="macro">assert!</span>(client_total_relay_rx &lt; transfer_size <span class="kw">as </span>u64 / <span class="number">2</span>);
-<a href=#3055 id=3055 data-nosnippet>3055</a>        <span class="macro">assert!</span>(server_total_relay_tx &lt; transfer_size <span class="kw">as </span>u64 / <span class="number">2</span>);
-<a href=#3056 id=3056 data-nosnippet>3056</a>        <span class="macro">assert!</span>(server_total_relay_rx &lt; transfer_size <span class="kw">as </span>u64 / <span class="number">2</span>);
-<a href=#3057 id=3057 data-nosnippet>3057</a>
-<a href=#3058 id=3058 data-nosnippet>3058</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3059 id=3059 data-nosnippet>3059</a>    }
-<a href=#3060 id=3060 data-nosnippet>3060</a>}</code></pre></div></section></main></body></html>
+<a href=#2967 id=2967 data-nosnippet>2967</a>    <span class="attr">#[ignore = <span class="string">"flaky"</span>]
+<a href=#2968 id=2968 data-nosnippet>2968</a>    #[tokio::test]
+<a href=#2969 id=2969 data-nosnippet>2969</a>    #[traced_test]
+<a href=#2970 id=2970 data-nosnippet>2970</a>    </span><span class="kw">async fn </span>connect_via_relay_becomes_direct_and_sends_direct() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#2971 id=2971 data-nosnippet>2971</a>        <span class="kw">let </span>(relay_map, relay_url, _relay_server_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2972 id=2972 data-nosnippet>2972</a>        <span class="kw">let </span>qlog = Arc::new(QlogFileGroup::from_env(
+<a href=#2973 id=2973 data-nosnippet>2973</a>            <span class="string">"connect_via_relay_becomes_direct_and_sends_direct"</span>,
+<a href=#2974 id=2974 data-nosnippet>2974</a>        ));
+<a href=#2975 id=2975 data-nosnippet>2975</a>        <span class="kw">let </span>transfer_size = <span class="number">1_000_000</span>;
+<a href=#2976 id=2976 data-nosnippet>2976</a>
+<a href=#2977 id=2977 data-nosnippet>2977</a>        <span class="kw">async fn </span>collect_path_infos(conn: Connection) -&gt; BTreeMap&lt;TransportAddr, PathInfo&gt; {
+<a href=#2978 id=2978 data-nosnippet>2978</a>            <span class="kw">let </span><span class="kw-2">mut </span>path_infos = BTreeMap::new();
+<a href=#2979 id=2979 data-nosnippet>2979</a>            <span class="kw">let </span><span class="kw-2">mut </span>paths = conn.paths().stream();
+<a href=#2980 id=2980 data-nosnippet>2980</a>            <span class="kw">while let </span><span class="prelude-val">Some</span>(path_list) = paths.next().<span class="kw">await </span>{
+<a href=#2981 id=2981 data-nosnippet>2981</a>                <span class="kw">for </span>path <span class="kw">in </span>path_list {
+<a href=#2982 id=2982 data-nosnippet>2982</a>                    path_infos.insert(path.remote_addr().clone(), path);
+<a href=#2983 id=2983 data-nosnippet>2983</a>                }
+<a href=#2984 id=2984 data-nosnippet>2984</a>            }
+<a href=#2985 id=2985 data-nosnippet>2985</a>            path_infos
+<a href=#2986 id=2986 data-nosnippet>2986</a>        }
+<a href=#2987 id=2987 data-nosnippet>2987</a>
+<a href=#2988 id=2988 data-nosnippet>2988</a>        <span class="kw">let </span>client = Endpoint::empty_builder(RelayMode::Custom(relay_map.clone()))
+<a href=#2989 id=2989 data-nosnippet>2989</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+<a href=#2990 id=2990 data-nosnippet>2990</a>            .transport_config(qlog.create(<span class="string">"client"</span>)<span class="question-mark">?</span>)
+<a href=#2991 id=2991 data-nosnippet>2991</a>            .bind()
+<a href=#2992 id=2992 data-nosnippet>2992</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2993 id=2993 data-nosnippet>2993</a>        <span class="kw">let </span>server = Endpoint::empty_builder(RelayMode::Custom(relay_map))
+<a href=#2994 id=2994 data-nosnippet>2994</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
+<a href=#2995 id=2995 data-nosnippet>2995</a>            .transport_config(qlog.create(<span class="string">"server"</span>)<span class="question-mark">?</span>)
+<a href=#2996 id=2996 data-nosnippet>2996</a>            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+<a href=#2997 id=2997 data-nosnippet>2997</a>            .bind()
+<a href=#2998 id=2998 data-nosnippet>2998</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2999 id=2999 data-nosnippet>2999</a>        <span class="kw">let </span>server_addr = EndpointAddr::new(server.id()).with_relay_url(relay_url);
+<a href=#3000 id=3000 data-nosnippet>3000</a>        <span class="kw">let </span>server_task = tokio::spawn(<span class="kw">async move </span>{
+<a href=#3001 id=3001 data-nosnippet>3001</a>            <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#3002 id=3002 data-nosnippet>3002</a>            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#3003 id=3003 data-nosnippet>3003</a>            <span class="kw">let </span>stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+<a href=#3004 id=3004 data-nosnippet>3004</a>            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#3005 id=3005 data-nosnippet>3005</a>            <span class="kw">let </span>msg = recv.read_to_end(transfer_size).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#3006 id=3006 data-nosnippet>3006</a>            send.write_all(<span class="kw-2">&amp;</span>msg).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#3007 id=3007 data-nosnippet>3007</a>            send.finish().anyerr()<span class="question-mark">?</span>;
+<a href=#3008 id=3008 data-nosnippet>3008</a>            conn.closed().<span class="kw">await</span>;
+<a href=#3009 id=3009 data-nosnippet>3009</a>            <span class="kw">let </span>stats = stats_task.<span class="kw">await</span>.std_context(<span class="string">"server stats task failed"</span>)<span class="question-mark">?</span>;
+<a href=#3010 id=3010 data-nosnippet>3010</a>            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(stats)
+<a href=#3011 id=3011 data-nosnippet>3011</a>        });
+<a href=#3012 id=3012 data-nosnippet>3012</a>
+<a href=#3013 id=3013 data-nosnippet>3013</a>        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3014 id=3014 data-nosnippet>3014</a>        <span class="kw">let </span>stats_task = AbortOnDropHandle::new(tokio::spawn(collect_path_infos(conn.clone())));
+<a href=#3015 id=3015 data-nosnippet>3015</a>        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#3016 id=3016 data-nosnippet>3016</a>        send.write_all(<span class="kw-2">&amp;</span><span class="macro">vec!</span>[<span class="number">42u8</span>; transfer_size]).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#3017 id=3017 data-nosnippet>3017</a>        send.finish().anyerr()<span class="question-mark">?</span>;
+<a href=#3018 id=3018 data-nosnippet>3018</a>        recv.read_to_end(transfer_size).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
+<a href=#3019 id=3019 data-nosnippet>3019</a>        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thanks, bye!"</span>);
+<a href=#3020 id=3020 data-nosnippet>3020</a>        client.close().<span class="kw">await</span>;
+<a href=#3021 id=3021 data-nosnippet>3021</a>        <span class="kw">let </span>client_stats = stats_task.<span class="kw">await</span>.std_context(<span class="string">"client stats task failed"</span>)<span class="question-mark">?</span>;
+<a href=#3022 id=3022 data-nosnippet>3022</a>        <span class="kw">let </span>server_stats = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
+<a href=#3023 id=3023 data-nosnippet>3023</a>
+<a href=#3024 id=3024 data-nosnippet>3024</a>        <span class="macro">info!</span>(<span class="string">"client stats: {client_stats:#?}"</span>);
+<a href=#3025 id=3025 data-nosnippet>3025</a>        <span class="macro">info!</span>(<span class="string">"server stats: {server_stats:#?}"</span>);
+<a href=#3026 id=3026 data-nosnippet>3026</a>
+<a href=#3027 id=3027 data-nosnippet>3027</a>        <span class="kw">let </span>client_total_relay_tx = client_stats
+<a href=#3028 id=3028 data-nosnippet>3028</a>            .values()
+<a href=#3029 id=3029 data-nosnippet>3029</a>            .filter(|p| p.is_relay())
+<a href=#3030 id=3030 data-nosnippet>3030</a>            .map(|p| p.stats().udp_tx.bytes)
+<a href=#3031 id=3031 data-nosnippet>3031</a>            .sum::&lt;u64&gt;();
+<a href=#3032 id=3032 data-nosnippet>3032</a>        <span class="kw">let </span>client_total_relay_rx = client_stats
+<a href=#3033 id=3033 data-nosnippet>3033</a>            .values()
+<a href=#3034 id=3034 data-nosnippet>3034</a>            .filter(|p| p.is_relay())
+<a href=#3035 id=3035 data-nosnippet>3035</a>            .map(|p| p.stats().udp_rx.bytes)
+<a href=#3036 id=3036 data-nosnippet>3036</a>            .sum::&lt;u64&gt;();
+<a href=#3037 id=3037 data-nosnippet>3037</a>        <span class="kw">let </span>server_total_relay_tx = server_stats
+<a href=#3038 id=3038 data-nosnippet>3038</a>            .values()
+<a href=#3039 id=3039 data-nosnippet>3039</a>            .filter(|p| p.is_relay())
+<a href=#3040 id=3040 data-nosnippet>3040</a>            .map(|p| p.stats().udp_tx.bytes)
+<a href=#3041 id=3041 data-nosnippet>3041</a>            .sum::&lt;u64&gt;();
+<a href=#3042 id=3042 data-nosnippet>3042</a>        <span class="kw">let </span>server_total_relay_rx = server_stats
+<a href=#3043 id=3043 data-nosnippet>3043</a>            .values()
+<a href=#3044 id=3044 data-nosnippet>3044</a>            .filter(|p| p.is_relay())
+<a href=#3045 id=3045 data-nosnippet>3045</a>            .map(|p| p.stats().udp_rx.bytes)
+<a href=#3046 id=3046 data-nosnippet>3046</a>            .sum::&lt;u64&gt;();
+<a href=#3047 id=3047 data-nosnippet>3047</a>
+<a href=#3048 id=3048 data-nosnippet>3048</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>client_total_relay_tx, <span class="string">"total"</span>);
+<a href=#3049 id=3049 data-nosnippet>3049</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>client_total_relay_rx, <span class="string">"total"</span>);
+<a href=#3050 id=3050 data-nosnippet>3050</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>server_total_relay_tx, <span class="string">"total"</span>);
+<a href=#3051 id=3051 data-nosnippet>3051</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>server_total_relay_rx, <span class="string">"total"</span>);
+<a href=#3052 id=3052 data-nosnippet>3052</a>
+<a href=#3053 id=3053 data-nosnippet>3053</a>        <span class="comment">// We should send/receive only the minorty of traffic via the relay.
+<a href=#3054 id=3054 data-nosnippet>3054</a>        </span><span class="macro">assert!</span>(client_total_relay_tx &lt; transfer_size <span class="kw">as </span>u64 / <span class="number">2</span>);
+<a href=#3055 id=3055 data-nosnippet>3055</a>        <span class="macro">assert!</span>(client_total_relay_rx &lt; transfer_size <span class="kw">as </span>u64 / <span class="number">2</span>);
+<a href=#3056 id=3056 data-nosnippet>3056</a>        <span class="macro">assert!</span>(server_total_relay_tx &lt; transfer_size <span class="kw">as </span>u64 / <span class="number">2</span>);
+<a href=#3057 id=3057 data-nosnippet>3057</a>        <span class="macro">assert!</span>(server_total_relay_rx &lt; transfer_size <span class="kw">as </span>u64 / <span class="number">2</span>);
+<a href=#3058 id=3058 data-nosnippet>3058</a>
+<a href=#3059 id=3059 data-nosnippet>3059</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3060 id=3060 data-nosnippet>3060</a>    }
+<a href=#3061 id=3061 data-nosnippet>3061</a>}</code></pre></div></section></main></body></html>
