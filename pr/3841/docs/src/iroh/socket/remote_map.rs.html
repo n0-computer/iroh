@@ -51,7 +51,7 @@
 <a href=#51 id=51 data-nosnippet>51</a>
 <a href=#52 id=52 data-nosnippet>52</a>    <span class="doccomment">/// The senders for the inbox of each `RemoteStateActor` that runs.
 <a href=#53 id=53 data-nosnippet>53</a>    ///
-<a href=#54 id=54 data-nosnippet>54</a>    /// This is separated out of `Tasks` to make keeping a mutable borrow if this possible
+<a href=#54 id=54 data-nosnippet>54</a>    /// This is separated out of `Tasks` to make keeping a mutable borrow of the senders possible
 <a href=#55 id=55 data-nosnippet>55</a>    /// while we're spawning a task using another mutable borrow of `Tasks`.
 <a href=#56 id=56 data-nosnippet>56</a>    </span>senders: ConcurrentReadMap&lt;EndpointId, mpsc::Sender&lt;RemoteStateMessage&gt;&gt;,
 <a href=#57 id=57 data-nosnippet>57</a>
