@@ -394,6 +394,17 @@ impl RemoteStateActor {
                         if let Err(err) = path.ping() {
                             warn!(%err, %path_id, ?addr, "failed to ping path");
                         }
+
+                        // On major network change, demote IP paths to Backup.
+                        // This ensures NAT traversal REACH_OUT frames are sent via
+                        // the relay path, which is still reachable after network change.
+                        if is_major && addr.is_ip() {
+                            if let Err(err) = path.set_status(PathStatus::Backup) {
+                                warn!(%err, %path_id, ?addr, "failed to demote path to backup");
+                            } else {
+                                debug!(%path_id, ?addr, "demoted IP path to backup after network change");
+                            }
+                        }
                     }
                 }
             }
