@@ -373,6 +373,10 @@ impl Socket {
         res
     }
 
+    /// Tries to send a [`RemoteStateMessage`] to the `RemoteStateActor` for given [`EndpointId`].
+    ///
+    /// Returns an error if there currently is no remote state actor running for this, or when it
+    /// is currently shutting down.
     pub(crate) fn try_send_remote_state_msg(
         &self,
         endpoint_id: EndpointId,

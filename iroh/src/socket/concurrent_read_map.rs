@@ -1,8 +1,10 @@
 //! This module implements a map that can be modified from only one task but read from many others.
 //!
-//! The combination of only being able to write using `&mut self` in [`ConcurrentReadMap`] and
-//! only allowing reading these from other places via read-only [`ReadOnlyMap`]s with `&self` is
-//! what ensures that this map avoids race conditions from multiple racing writers.
+//! We ensure this map avoids race conditions from multiple writers by doing these two things:
+//! - We only allow writing from one owner of the `&mut self` [`ConcurrentReadMap`].
+//!   It cannot be cloned.
+//! - The read-only replicas [`ReadOnlyMap`] can only read, not write, but allow reading from
+//!   concurrent tasks.
 
 use std::{hash::Hash, sync::Arc};
 
