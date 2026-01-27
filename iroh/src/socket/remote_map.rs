@@ -21,10 +21,10 @@ pub use self::remote_state::{
     PathInfo, PathInfoList, RemoteInfo, TransportAddrInfo, TransportAddrUsage,
 };
 use super::{
-    DirectAddr, MagicsockMetrics,
+    DirectAddr, Metrics as SocketMetrics,
     mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr},
 };
-use crate::discovery::ConcurrentDiscovery;
+use crate::address_lookup;
 
 mod remote_state;
 
@@ -54,10 +54,10 @@ pub(crate) struct RemoteMap {
     //
     /// The endpoint ID of the local endpoint.
     local_endpoint_id: EndpointId,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
     /// The "direct" addresses known for our local endpoint
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-    discovery: ConcurrentDiscovery,
+    address_lookup: address_lookup::ConcurrentAddressLookup,
     shutdown_token: CancellationToken,
 
     /// The state kept for spawning new tasks for remote state actors and cleaning them up.
@@ -86,9 +86,9 @@ impl RemoteMap {
     /// Creates a new [`RemoteMap`].
     pub(super) fn new(
         local_endpoint_id: EndpointId,
-        metrics: Arc<MagicsockMetrics>,
+        metrics: Arc<SocketMetrics>,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
-        discovery: ConcurrentDiscovery,
+        address_lookup: address_lookup::ConcurrentAddressLookup,
         shutdown_token: CancellationToken,
     ) -> Self {
         Self {
@@ -97,7 +97,7 @@ impl RemoteMap {
             local_endpoint_id,
             metrics,
             local_direct_addrs,
-            discovery,
+            address_lookup,
             shutdown_token,
             state: Default::default(),
         }
@@ -235,7 +235,7 @@ impl RemoteMap {
             self.local_direct_addrs.clone(),
             self.relay_mapped_addrs.clone(),
             self.metrics.clone(),
-            self.discovery.clone(),
+            self.address_lookup.clone(),
         )
         .start(initial_msgs, tasks, self.shutdown_token.clone());
         if let Some(waker) = poll_cleanup_waker.take() {
@@ -265,10 +265,10 @@ pub enum Source {
     Relay,
     /// Application layer added the address directly.
     App,
-    /// The address was discovered by a discovery service.
+    /// The address was discovered by an Address Lookup system
     #[strum(serialize = "{name}")]
-    Discovery {
-        /// The name of the discovery service that discovered the address.
+    AddressLookup {
+        /// The name of the Address Lookup that discovered the address.
         name: String,
     },
     /// Application layer with a specific name added the endpoint directly.

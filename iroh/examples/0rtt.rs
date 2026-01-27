@@ -4,7 +4,7 @@ use clap::Parser;
 use data_encoding::HEXLOWER;
 use iroh::{
     EndpointId, SecretKey,
-    discovery::Discovery,
+    address_lookup::AddressLookup,
     endpoint::{RecvStream, SendStream, ZeroRttStatus},
 };
 use n0_error::{Result, StackResultExt, StdResultExt};
@@ -71,11 +71,11 @@ async fn connect(args: Args) -> Result<()> {
         .await?;
     // ensure we have resolved the remote_id before connecting
     // so we get a more accurate connection timing
-    let mut discovery_stream = endpoint
-        .discovery()
+    let mut address_lookup_stream = endpoint
+        .address_lookup()
         .resolve(remote_id)
-        .expect("discovery to be enabled");
-    let _ = discovery_stream.next().await;
+        .expect("Address Lookup to be enabled");
+    let _ = address_lookup_stream.next().await;
 
     let t0 = Instant::now();
     for i in 0..args.rounds {

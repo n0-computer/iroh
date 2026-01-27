@@ -3,7 +3,7 @@ use std::{net::SocketAddr, str::FromStr};
 use clap::{Parser, ValueEnum};
 use iroh::{
     EndpointId, SecretKey,
-    discovery::{
+    address_lookup::{
         UserData,
         dns::{N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
         pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrRelayClient},
