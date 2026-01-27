@@ -300,7 +300,7 @@ impl RemoteStateActor {
                 }
                 Some((id, evt)) = self.addr_events.next() => {
                     trace!(?id, ?evt, "remote addrs updated, triggering holepunching");
-                    self.trigger_holepunching();
+                    self.trigger_holepunching(false);
                 }
                 Some(conn_id) = self.connections_close.next(), if !self.connections_close.is_empty() => {
                     self.handle_connection_close(conn_id);
@@ -312,7 +312,7 @@ impl RemoteStateActor {
                     }
                     self.local_addrs_updated();
                     trace!("local addrs updated, triggering holepunching");
-                    self.trigger_holepunching();
+                    self.trigger_holepunching(false);
                 }
                 _ = &mut scheduled_path_open => {
                     trace!("triggering scheduled path_open");
@@ -325,7 +325,7 @@ impl RemoteStateActor {
                 _ = &mut scheduled_hp => {
                     trace!("triggering scheduled holepunching");
                     self.scheduled_holepunch = None;
-                    self.trigger_holepunching();
+                    self.trigger_holepunching(false);
                 }
                 item = self.address_lookup_stream.next() => {
                     self.handle_address_lookup_item(item);
@@ -400,7 +400,7 @@ impl RemoteStateActor {
         }
 
         if is_major {
-            self.trigger_holepunching();
+            self.trigger_holepunching(true);
         }
     }
 
@@ -437,7 +437,7 @@ impl RemoteStateActor {
 
         if !is_goodenough {
             debug!("connections are not good enough, triggering holepunching");
-            self.trigger_holepunching();
+            self.trigger_holepunching(false);
         }
     }
 
@@ -579,7 +579,7 @@ impl RemoteStateActor {
                     }
                 }
             }
-            self.trigger_holepunching();
+            self.trigger_holepunching(false);
         }
         tx.send(PathsWatcher::new(
             pub_open_paths.watch(),
@@ -707,7 +707,9 @@ impl RemoteStateActor {
     /// - If there are no changes in local or remote candidate addresses since the
     ///   last attempt **and** there was a recent attempt, a trigger_holepunching call
     ///   will be scheduled instead.
-    fn trigger_holepunching(&mut self) {
+    ///
+    /// Set `force_close_previous_paths` after a network change to close stale paths.
+    fn trigger_holepunching(&mut self, force_close_previous_paths: bool) {
         if self.connections.is_empty() {
             trace!("not holepunching: no connections");
             return;
@@ -765,12 +767,12 @@ impl RemoteStateActor {
             }
         }
 
-        self.do_holepunching(conn);
+        self.do_holepunching(conn, force_close_previous_paths);
     }
 
     /// Unconditionally perform holepunching.
     #[instrument(skip_all)]
-    fn do_holepunching(&mut self, conn: quinn::Connection) {
+    fn do_holepunching(&mut self, conn: quinn::Connection, force_close_previous_paths: bool) {
         self.metrics.holepunch_attempts.inc();
         let local_candidates = self
             .local_direct_addrs
@@ -779,7 +781,7 @@ impl RemoteStateActor {
             .map(|daddr| daddr.addr)
             .collect::<BTreeSet<_>>();
 
-        match conn.initiate_nat_traversal_round() {
+        match conn.initiate_nat_traversal_round(force_close_previous_paths) {
             Ok(remote_candidates) => {
                 let remote_candidates = remote_candidates
                     .iter()
