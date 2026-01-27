@@ -1166,7 +1166,9 @@ fn select_best_path(
         return Some((best_addr.clone(), best_data.rtt));
     };
     // Get current data. If we don't have data for the current path, don't switch.
-    let current_data = all_paths.get(addr)?;
+    let Some(current_data) = all_paths.get(addr) else {
+        return Some((best_addr.clone(), best_data.rtt));
+    };
     if current_data.status != best_data.status {
         // Always switch if the status is different (better).
         Some((best_addr.clone(), best_data.rtt))
