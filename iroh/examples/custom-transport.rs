@@ -94,7 +94,7 @@ impl AddressLookup for TestDiscovery {
         endpoint_id: EndpointId,
     ) -> Option<n0_future::stream::Boxed<std::result::Result<Item, iroh::address_lookup::Error>>>
     {
-        let user_addr = to_user_addr(endpoint_id);
+        let user_addr = to_custom_addr(endpoint_id);
         if self.state.lock().unwrap().channels.contains_key(&user_addr) {
             Some(Box::pin(n0_future::stream::once(Ok(Item::new(
                 EndpointInfo {
@@ -121,7 +121,7 @@ struct TestSender {
 
 impl TestTransport {
     fn new(id: EndpointId, state: Arc<Mutex<TestTransportInner>>) -> Self {
-        let me = to_user_addr(id);
+        let me = to_custom_addr(id);
         Self {
             me_watchable: n0_watcher::Watchable::new(vec![me.clone()]),
             state,
@@ -130,7 +130,7 @@ impl TestTransport {
     }
 
     fn add_node(&self, a: EndpointId) {
-        let addr = to_user_addr(a);
+        let addr = to_custom_addr(a);
         let mut guard = self.state.lock().unwrap();
         let _ = guard
             .channels
@@ -139,11 +139,11 @@ impl TestTransport {
     }
 }
 
-fn to_user_addr(endpoint: EndpointId) -> CustomAddr {
+fn to_custom_addr(endpoint: EndpointId) -> CustomAddr {
     CustomAddr::from((TEST_TRANSPORT_ID, &endpoint.as_bytes()[..]))
 }
 
-fn try_parse_user_addr(addr: &CustomAddr) -> io::Result<EndpointId> {
+fn try_parse_custom_addr(addr: &CustomAddr) -> io::Result<EndpointId> {
     if addr.id() != TEST_TRANSPORT_ID {
         return Err(io::Error::other("unexpected transport id"));
     }
@@ -155,14 +155,14 @@ fn try_parse_user_addr(addr: &CustomAddr) -> io::Result<EndpointId> {
 }
 
 impl TestSender {
-    fn send_sync(&self, dst: iroh_base::CustomAddr, packets: Vec<Packet>) -> io::Result<()> {
+    fn send_sync(&self, dst: &CustomAddr, packets: Vec<Packet>) -> io::Result<()> {
         let guard = self.inner.lock().unwrap();
         let (s, _) = guard
             .channels
             .get(&dst)
             .ok_or_else(|| io::Error::other("Unknown key"))?;
-        let from_id = try_parse_user_addr(&self.me).unwrap();
-        let to_id = try_parse_user_addr(&dst).unwrap();
+        let from_id = try_parse_custom_addr(&self.me).unwrap();
+        let to_id = try_parse_custom_addr(&dst).unwrap();
         for packet in packets {
             let len = packet.data.len();
             match s.try_send(packet) {
@@ -201,7 +201,7 @@ impl CustomSender for TestSender {
     fn poll_send(
         &self,
         _cx: &mut std::task::Context,
-        dst: iroh_base::CustomAddr,
+        dst: &CustomAddr,
         transmit: &Transmit<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let packets = self.split(transmit).collect();
@@ -242,7 +242,7 @@ impl CustomEndpoint for TestTransport {
         }
         let mut guard = self.state.lock().unwrap();
         let Some((_, r)) = guard.channels.get_mut(&self.me) else {
-            let me = try_parse_user_addr(&self.me).unwrap();
+            let me = try_parse_custom_addr(&self.me).unwrap();
             info!("me: {me}");
             return Poll::Ready(Ok(0));
         };
@@ -253,14 +253,14 @@ impl CustomEndpoint for TestTransport {
             Poll::Ready(n) => n,
         };
         let mut n = 0;
-        let me = try_parse_user_addr(&self.me).unwrap();
+        let me = try_parse_custom_addr(&self.me).unwrap();
         for (((packet, meta), buf), source_addr) in
             packets.into_iter().zip(metas).zip(bufs).zip(source_addrs)
         {
             if buf.len() < packet.data.len() {
                 break;
             }
-            let from = try_parse_user_addr(&packet.from).unwrap();
+            let from = try_parse_custom_addr(&packet.from).unwrap();
             info!(
                 "recv {} -> {}: copying {} bytes",
                 from.fmt_short(),
@@ -316,7 +316,7 @@ async fn main() -> Result<()> {
     let server = Router::builder(ep2).accept(ALPN, Echo).spawn();
     let addr2 = EndpointAddr::from_parts(
         s2.public(),
-        [TransportAddr::User(to_user_addr(s2.public()))],
+        [TransportAddr::User(to_custom_addr(s2.public()))],
     );
     println!("ep2 addr: {:?}", addr2);
     let conn = ep1.connect(addr2, ALPN).await?;

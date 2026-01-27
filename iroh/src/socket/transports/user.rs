@@ -55,7 +55,7 @@ pub trait CustomSender: std::fmt::Debug + Send + Sync + 'static {
     fn poll_send(
         &self,
         cx: &mut std::task::Context,
-        dst: CustomAddr,
+        dst: &CustomAddr,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>>;
 }

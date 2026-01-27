@@ -659,7 +659,7 @@ impl TransportsSender {
             Addr::User(addr) => {
                 for sender in &mut self.user {
                     if sender.is_valid_send_addr(addr) {
-                        match sender.poll_send(cx, addr.clone(), transmit) {
+                        match sender.poll_send(cx, addr, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
