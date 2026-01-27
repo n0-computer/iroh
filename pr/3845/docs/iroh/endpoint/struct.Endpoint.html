@@ -163,7 +163,7 @@ The returned <a href="../metrics/struct.EndpointMetrics.html" title="struct iroh
 <p>You can access individual metrics directly by using the public fields:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>endpoint = Endpoint::bind().<span class="kw">await</span><span class="question-mark">?</span>;
-<span class="macro">assert_eq!</span>(endpoint.metrics().magicsock.recv_datagrams.get(), <span class="number">0</span>);</code></pre></div>
+<span class="macro">assert_eq!</span>(endpoint.metrics().socket.recv_datagrams.get(), <span class="number">0</span>);</code></pre></div>
 <p><a href="../metrics/struct.EndpointMetrics.html" title="struct iroh::metrics::EndpointMetrics"><code>EndpointMetrics</code></a> implements <a href="iroh_metrics::MetricsGroupSet"><code>MetricsGroupSet</code></a>, and each field
 implements <a href="iroh_metrics::MetricsGroup"><code>MetricsGroup</code></a>. These traits provide methods to iterate over
 the groups in the set, and over the individual metrics in each group, without having
@@ -181,7 +181,7 @@ all metrics into a map or push their values to a metrics collector.</p>
     })
     .collect();
 
-<span class="macro">assert_eq!</span>(metrics[<span class="string">"magicsock:recv_datagrams"</span>], MetricValue::Counter(<span class="number">0</span>));</code></pre></div>
+<span class="macro">assert_eq!</span>(metrics[<span class="string">"socket:recv_datagrams"</span>], MetricValue::Counter(<span class="number">0</span>));</code></pre></div>
 <p>The metrics can also be encoded into the OpenMetrics text format, as used by Prometheus.
 To do so, use the [<code>iroh_metrics::Registry</code>], add the endpoint metrics to the
 registry with <a href="iroh_metrics::Registry::register_all"><code>Registry::register_all</code></a>, and encode the metrics to a string with
@@ -191,8 +191,8 @@ registry with <a href="iroh_metrics::Registry::register_all"><code>Registry::reg
 <span class="kw">let </span><span class="kw-2">mut </span>registry = Registry::default();
 registry.register_all(endpoint.metrics());
 <span class="kw">let </span>s = registry.encode_openmetrics_to_string()<span class="question-mark">?</span>;
-<span class="macro">assert!</span>(s.contains(<span class="string">r#"TYPE magicsock_recv_datagrams counter"#</span>));
-<span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_recv_datagrams_total 0"#</span>));</code></pre></div>
+<span class="macro">assert!</span>(s.contains(<span class="string">r#"TYPE socket_recv_datagrams counter"#</span>));
+<span class="macro">assert!</span>(s.contains(<span class="string">r#"socket_recv_datagrams_total 0"#</span>));</code></pre></div>
 <p>Through a registry, you can also add labels or prefixes to metrics with
 <a href="iroh_metrics::Registry::sub_registry_with_label"><code>Registry::sub_registry_with_label</code></a> or <a href="iroh_metrics::Registry::sub_registry_with_prefix"><code>Registry::sub_registry_with_prefix</code></a>.
 Furthermore, [<code>iroh_metrics::service</code>] provides functions to easily start services
@@ -226,8 +226,8 @@ registry.write().unwrap().register_all(endpoint.metrics());
     .<span class="kw">await
     </span>.std_context(<span class="string">"text"</span>)<span class="question-mark">?</span>;
 
-<span class="macro">assert!</span>(res.contains(<span class="string">r#"TYPE magicsock_recv_datagrams counter"#</span>));
-<span class="macro">assert!</span>(res.contains(<span class="string">r#"magicsock_recv_datagrams_total 0"#</span>));</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.remote_info" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1272-1274">Source</a><h4 class="code-header">pub async fn <a href="#method.remote_info" class="fn">remote_info</a>(&amp;self, endpoint_id: <a class="type" href="../type.EndpointId.html" title="type iroh::EndpointId">EndpointId</a>) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.RemoteInfo.html" title="struct iroh::endpoint::RemoteInfo">RemoteInfo</a>&gt;</h4></section></summary><div class="docblock"><p>Returns addressing information about a recently used remote endpoint.</p>
+<span class="macro">assert!</span>(res.contains(<span class="string">r#"TYPE socket_recv_datagrams counter"#</span>));
+<span class="macro">assert!</span>(res.contains(<span class="string">r#"socket_recv_datagrams_total 0"#</span>));</code></pre></div></div></details><details class="toggle method-toggle" open><summary><section id="method.remote_info" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1272-1274">Source</a><h4 class="code-header">pub async fn <a href="#method.remote_info" class="fn">remote_info</a>(&amp;self, endpoint_id: <a class="type" href="../type.EndpointId.html" title="type iroh::EndpointId">EndpointId</a>) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="struct.RemoteInfo.html" title="struct iroh::endpoint::RemoteInfo">RemoteInfo</a>&gt;</h4></section></summary><div class="docblock"><p>Returns addressing information about a recently used remote endpoint.</p>
 <p>The returned <a href="struct.RemoteInfo.html" title="struct iroh::endpoint::RemoteInfo"><code>RemoteInfo</code></a> contains a list of all transport addresses for the remote
 that we know about. This is a snapshot in time and not a watcher.</p>
 <p>Returns <code>None</code> if the endpoint doesn’t have information about the remote.
@@ -246,7 +246,7 @@ the network change itself, there is no harm in calling this function.</p>
 the endpoint will republish its endpoint info to the configured Address Lookups.</p>
 <p>See also <a href="struct.Builder.html#method.user_data_for_address_lookup" title="method iroh::endpoint::Builder::user_data_for_address_lookup"><code>Builder::user_data_for_address_lookup</code></a> for setting an initial value when
 building the endpoint.</p>
-</div></details><details class="toggle method-toggle" open><summary><section id="method.close" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1339-1341">Source</a><h4 class="code-header">pub async fn <a href="#method.close" class="fn">close</a>(&amp;self)</h4></section></summary><div class="docblock"><p>Closes the QUIC endpoint and the magic socket.</p>
+</div></details><details class="toggle method-toggle" open><summary><section id="method.close" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1339-1341">Source</a><h4 class="code-header">pub async fn <a href="#method.close" class="fn">close</a>(&amp;self)</h4></section></summary><div class="docblock"><p>Closes the QUIC endpoint and the socket.</p>
 <p>This will close any remaining open <a href="struct.Connection.html" title="struct iroh::endpoint::Connection"><code>Connection</code></a>s with an error code
 of <code>0</code> and an empty reason.  Though it is best practice to close those
 explicitly before with a custom error code and reason.</p>

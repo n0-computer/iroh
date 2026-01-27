@@ -28,14 +28,14 @@
 <a href=#28 id=28 data-nosnippet>28</a>
 <a href=#29 id=29 data-nosnippet>29</a><span class="doccomment">/// Types for defining custom transports
 <a href=#30 id=30 data-nosnippet>30</a></span><span class="kw">pub mod </span>transports {
-<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">pub use </span><span class="kw">super</span>::magicsock::transports::{
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">pub use </span><span class="kw">super</span>::socket::transports::{
 <a href=#32 id=32 data-nosnippet>32</a>        Addr, Transmit,
 <a href=#33 id=33 data-nosnippet>33</a>        user::{CustomEndpoint, CustomSender, CustomTransport},
 <a href=#34 id=34 data-nosnippet>34</a>    };
 <a href=#35 id=35 data-nosnippet>35</a>}
 <a href=#36 id=36 data-nosnippet>36</a>
 <a href=#37 id=37 data-nosnippet>37</a><span class="kw">use </span><span class="self">self</span>::hooks::EndpointHooksList;
-<a href=#38 id=38 data-nosnippet>38</a><span class="kw">pub use </span><span class="kw">super</span>::magicsock::{
+<a href=#38 id=38 data-nosnippet>38</a><span class="kw">pub use </span><span class="kw">super</span>::socket::{
 <a href=#39 id=39 data-nosnippet>39</a>    BindError, DirectAddr, DirectAddrType, PathInfo,
 <a href=#40 id=40 data-nosnippet>40</a>    remote_map::{PathInfoList, RemoteInfo, Source, TransportAddrInfo, TransportAddrUsage},
 <a href=#41 id=41 data-nosnippet>41</a>};
@@ -50,8 +50,8 @@
 <a href=#50 id=50 data-nosnippet>50</a>        IntoAddressLookup, UserData,
 <a href=#51 id=51 data-nosnippet>51</a>    },
 <a href=#52 id=52 data-nosnippet>52</a>    endpoint::{presets::Preset, transports::CustomTransport},
-<a href=#53 id=53 data-nosnippet>53</a>    magicsock::{<span class="self">self</span>, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
-<a href=#54 id=54 data-nosnippet>54</a>    metrics::EndpointMetrics,
+<a href=#53 id=53 data-nosnippet>53</a>    metrics::EndpointMetrics,
+<a href=#54 id=54 data-nosnippet>54</a>    socket::{<span class="self">self</span>, Handle, RemoteStateActorStoppedError, mapped_addrs::MappedAddr},
 <a href=#55 id=55 data-nosnippet>55</a>    tls::{<span class="self">self</span>, DEFAULT_MAX_TLS_TICKETS},
 <a href=#56 id=56 data-nosnippet>56</a>};
 <a href=#57 id=57 data-nosnippet>57</a>
@@ -90,8 +90,8 @@
 <a href=#90 id=90 data-nosnippet>90</a>    },
 <a href=#91 id=91 data-nosnippet>91</a>};
 <a href=#92 id=92 data-nosnippet>92</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#93 id=93 data-nosnippet>93</a></span><span class="kw">use </span><span class="kw">crate</span>::magicsock::transports::IpConfig;
-<a href=#94 id=94 data-nosnippet>94</a><span class="kw">use </span><span class="kw">crate</span>::magicsock::transports::TransportConfig;
+<a href=#93 id=93 data-nosnippet>93</a></span><span class="kw">use </span><span class="kw">crate</span>::socket::transports::IpConfig;
+<a href=#94 id=94 data-nosnippet>94</a><span class="kw">use </span><span class="kw">crate</span>::socket::transports::TransportConfig;
 <a href=#95 id=95 data-nosnippet>95</a>
 <a href=#96 id=96 data-nosnippet>96</a><span class="doccomment">/// Builder for [`Endpoint`].
 <a href=#97 id=97 data-nosnippet>97</a>///
@@ -185,7 +185,7 @@
 <a href=#185 id=185 data-nosnippet>185</a>
 <a href=#186 id=186 data-nosnippet>186</a>    <span class="comment">// # The final constructor that everyone needs.
 <a href=#187 id=187 data-nosnippet>187</a>
-<a href=#188 id=188 data-nosnippet>188</a>    </span><span class="doccomment">/// Binds the magic endpoint.
+<a href=#188 id=188 data-nosnippet>188</a>    </span><span class="doccomment">/// Binds the endpoint.
 <a href=#189 id=189 data-nosnippet>189</a>    </span><span class="kw">pub async fn </span>bind(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint, BindError&gt; {
 <a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::rng();
 <a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">let </span>secret_key = <span class="self">self
@@ -204,7 +204,7 @@
 <a href=#204 id=204 data-nosnippet>204</a>
 <a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">let </span>metrics = EndpointMetrics::default();
 <a href=#206 id=206 data-nosnippet>206</a>
-<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">let </span>msock_opts = magicsock::Options {
+<a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">let </span>sock_opts = socket::Options {
 <a href=#208 id=208 data-nosnippet>208</a>            transports: <span class="self">self</span>.transports,
 <a href=#209 id=209 data-nosnippet>209</a>            secret_key,
 <a href=#210 id=210 data-nosnippet>210</a>            address_lookup_user_data: <span class="self">self</span>.address_lookup_user_data,
@@ -218,12 +218,12 @@
 <a href=#218 id=218 data-nosnippet>218</a>            hooks: <span class="self">self</span>.hooks,
 <a href=#219 id=219 data-nosnippet>219</a>        };
 <a href=#220 id=220 data-nosnippet>220</a>
-<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>msock = magicsock::MagicSock::spawn(msock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#222 id=222 data-nosnippet>222</a>        <span class="macro">trace!</span>(<span class="string">"created magicsock"</span>);
+<a href=#221 id=221 data-nosnippet>221</a>        <span class="kw">let </span>sock = socket::Socket::spawn(sock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#222 id=222 data-nosnippet>222</a>        <span class="macro">trace!</span>(<span class="string">"created socket"</span>);
 <a href=#223 id=223 data-nosnippet>223</a>        <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
 <a href=#224 id=224 data-nosnippet>224</a>
 <a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>ep = Endpoint {
-<a href=#226 id=226 data-nosnippet>226</a>            msock,
+<a href=#226 id=226 data-nosnippet>226</a>            sock,
 <a href=#227 id=227 data-nosnippet>227</a>            static_config: Arc::new(static_config),
 <a href=#228 id=228 data-nosnippet>228</a>        };
 <a href=#229 id=229 data-nosnippet>229</a>
@@ -692,8 +692,8 @@
 <a href=#692 id=692 data-nosnippet>692</a>/// [QUIC]: https://quicwg.org
 <a href=#693 id=693 data-nosnippet>693</a></span><span class="attr">#[derive(Clone, Debug)]
 <a href=#694 id=694 data-nosnippet>694</a></span><span class="kw">pub struct </span>Endpoint {
-<a href=#695 id=695 data-nosnippet>695</a>    <span class="doccomment">/// Handle to the magicsocket/actor
-<a href=#696 id=696 data-nosnippet>696</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) msock: Handle,
+<a href=#695 id=695 data-nosnippet>695</a>    <span class="doccomment">/// Handle to the socket/actor
+<a href=#696 id=696 data-nosnippet>696</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) sock: Handle,
 <a href=#697 id=697 data-nosnippet>697</a>    <span class="doccomment">/// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
 <a href=#698 id=698 data-nosnippet>698</a>    </span>static_config: Arc&lt;StaticConfig&gt;,
 <a href=#699 id=699 data-nosnippet>699</a>}
@@ -770,7 +770,7 @@
 <a href=#770 id=770 data-nosnippet>770</a>    /// Note that this *overrides* the current list of ALPNs.
 <a href=#771 id=771 data-nosnippet>771</a>    </span><span class="kw">pub fn </span>set_alpns(<span class="kw-2">&amp;</span><span class="self">self</span>, alpns: Vec&lt;Vec&lt;u8&gt;&gt;) {
 <a href=#772 id=772 data-nosnippet>772</a>        <span class="kw">let </span>server_config = <span class="self">self</span>.static_config.create_server_config(alpns);
-<a href=#773 id=773 data-nosnippet>773</a>        <span class="self">self</span>.msock.endpoint().set_server_config(<span class="prelude-val">Some</span>(server_config));
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="self">self</span>.sock.endpoint().set_server_config(<span class="prelude-val">Some</span>(server_config));
 <a href=#774 id=774 data-nosnippet>774</a>    }
 <a href=#775 id=775 data-nosnippet>775</a>
 <a href=#776 id=776 data-nosnippet>776</a>    <span class="doccomment">/// Adds the provided configuration to the [`RelayMap`].
@@ -781,14 +781,14 @@
 <a href=#781 id=781 data-nosnippet>781</a>        relay: RelayUrl,
 <a href=#782 id=782 data-nosnippet>782</a>        config: Arc&lt;RelayConfig&gt;,
 <a href=#783 id=783 data-nosnippet>783</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RelayConfig&gt;&gt; {
-<a href=#784 id=784 data-nosnippet>784</a>        <span class="self">self</span>.msock.insert_relay(relay, config).<span class="kw">await
+<a href=#784 id=784 data-nosnippet>784</a>        <span class="self">self</span>.sock.insert_relay(relay, config).<span class="kw">await
 <a href=#785 id=785 data-nosnippet>785</a>    </span>}
 <a href=#786 id=786 data-nosnippet>786</a>
 <a href=#787 id=787 data-nosnippet>787</a>    <span class="doccomment">/// Removes the configuration from the [`RelayMap`] for the provided [`RelayUrl`].
 <a href=#788 id=788 data-nosnippet>788</a>    ///
 <a href=#789 id=789 data-nosnippet>789</a>    /// Returns any existing configuration.
 <a href=#790 id=790 data-nosnippet>790</a>    </span><span class="kw">pub async fn </span>remove_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, relay: <span class="kw-2">&amp;</span>RelayUrl) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RelayConfig&gt;&gt; {
-<a href=#791 id=791 data-nosnippet>791</a>        <span class="self">self</span>.msock.remove_relay(relay).<span class="kw">await
+<a href=#791 id=791 data-nosnippet>791</a>        <span class="self">self</span>.sock.remove_relay(relay).<span class="kw">await
 <a href=#792 id=792 data-nosnippet>792</a>    </span>}
 <a href=#793 id=793 data-nosnippet>793</a>
 <a href=#794 id=794 data-nosnippet>794</a>    <span class="comment">// # Methods for establishing connectivity.
@@ -864,7 +864,7 @@
 <a href=#864 id=864 data-nosnippet>864</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;Connecting, ConnectWithOptsError&gt; {
 <a href=#865 id=865 data-nosnippet>865</a>        <span class="kw">let </span>endpoint_addr: EndpointAddr = endpoint_addr.into();
 <a href=#866 id=866 data-nosnippet>866</a>        <span class="kw">if let </span>BeforeConnectOutcome::Reject =
-<a href=#867 id=867 data-nosnippet>867</a>            <span class="self">self</span>.msock.hooks.before_connect(<span class="kw-2">&amp;</span>endpoint_addr, alpn).<span class="kw">await
+<a href=#867 id=867 data-nosnippet>867</a>            <span class="self">self</span>.sock.hooks.before_connect(<span class="kw-2">&amp;</span>endpoint_addr, alpn).<span class="kw">await
 <a href=#868 id=868 data-nosnippet>868</a>        </span>{
 <a href=#869 id=869 data-nosnippet>869</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">e!</span>(ConnectWithOptsError::LocallyRejected));
 <a href=#870 id=870 data-nosnippet>870</a>        }
@@ -882,7 +882,7 @@
 <a href=#882 id=882 data-nosnippet>882</a>            <span class="string">"connecting"</span>,
 <a href=#883 id=883 data-nosnippet>883</a>        );
 <a href=#884 id=884 data-nosnippet>884</a>
-<a href=#885 id=885 data-nosnippet>885</a>        <span class="kw">let </span>mapped_addr = <span class="self">self</span>.msock.resolve_remote(endpoint_addr).<span class="kw">await</span><span class="question-mark">??</span>;
+<a href=#885 id=885 data-nosnippet>885</a>        <span class="kw">let </span>mapped_addr = <span class="self">self</span>.sock.resolve_remote(endpoint_addr).<span class="kw">await</span><span class="question-mark">??</span>;
 <a href=#886 id=886 data-nosnippet>886</a>
 <a href=#887 id=887 data-nosnippet>887</a>        <span class="kw">let </span>transport_config = options
 <a href=#888 id=888 data-nosnippet>888</a>            .transport_config
@@ -907,7 +907,7 @@
 <a href=#907 id=907 data-nosnippet>907</a>        <span class="kw">let </span>dest_addr = mapped_addr.private_socket_addr();
 <a href=#908 id=908 data-nosnippet>908</a>        <span class="kw">let </span>server_name = <span class="kw-2">&amp;</span>tls::name::encode(endpoint_id);
 <a href=#909 id=909 data-nosnippet>909</a>        <span class="kw">let </span>connect = <span class="self">self
-<a href=#910 id=910 data-nosnippet>910</a>            </span>.msock
+<a href=#910 id=910 data-nosnippet>910</a>            </span>.sock
 <a href=#911 id=911 data-nosnippet>911</a>            .endpoint()
 <a href=#912 id=912 data-nosnippet>912</a>            .connect_with(client_config, dest_addr, server_name)<span class="question-mark">?</span>;
 <a href=#913 id=913 data-nosnippet>913</a>
@@ -924,7 +924,7 @@
 <a href=#924 id=924 data-nosnippet>924</a>    /// [`Endpoint::close`].
 <a href=#925 id=925 data-nosnippet>925</a>    </span><span class="kw">pub fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Accept&lt;<span class="lifetime">'_</span>&gt; {
 <a href=#926 id=926 data-nosnippet>926</a>        Accept {
-<a href=#927 id=927 data-nosnippet>927</a>            inner: <span class="self">self</span>.msock.endpoint().accept(),
+<a href=#927 id=927 data-nosnippet>927</a>            inner: <span class="self">self</span>.sock.endpoint().accept(),
 <a href=#928 id=928 data-nosnippet>928</a>            ep: <span class="self">self</span>.clone(),
 <a href=#929 id=929 data-nosnippet>929</a>        }
 <a href=#930 id=930 data-nosnippet>930</a>    }
@@ -996,8 +996,8 @@
 <a href=#996 id=996 data-nosnippet>996</a>    /// [`RelayUrl`]: crate::RelayUrl
 <a href=#997 id=997 data-nosnippet>997</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#998 id=998 data-nosnippet>998</a>    </span><span class="kw">pub fn </span>watch_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = EndpointAddr&gt; + <span class="kw">use</span>&lt;&gt; {
-<a href=#999 id=999 data-nosnippet>999</a>        <span class="kw">let </span>watch_addrs = <span class="self">self</span>.msock.ip_addrs();
-<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="kw">let </span>watch_relay = <span class="self">self</span>.msock.home_relay();
+<a href=#999 id=999 data-nosnippet>999</a>        <span class="kw">let </span>watch_addrs = <span class="self">self</span>.sock.ip_addrs();
+<a href=#1000 id=1000 data-nosnippet>1000</a>        <span class="kw">let </span>watch_relay = <span class="self">self</span>.sock.home_relay();
 <a href=#1001 id=1001 data-nosnippet>1001</a>        <span class="kw">let </span>endpoint_id = <span class="self">self</span>.id();
 <a href=#1002 id=1002 data-nosnippet>1002</a>
 <a href=#1003 id=1003 data-nosnippet>1003</a>        watch_addrs.or(watch_relay).map(<span class="kw">move </span>|(addrs, relays)| {
@@ -1021,7 +1021,7 @@
 <a href=#1021 id=1021 data-nosnippet>1021</a>        <span class="comment">// In browsers, there will never be any direct addresses, so we wait
 <a href=#1022 id=1022 data-nosnippet>1022</a>        // for the home relay instead. This makes the `EndpointAddr` have *some* way
 <a href=#1023 id=1023 data-nosnippet>1023</a>        // of connecting to us.
-<a href=#1024 id=1024 data-nosnippet>1024</a>        </span><span class="kw">let </span>watch_relay = <span class="self">self</span>.msock.home_relay();
+<a href=#1024 id=1024 data-nosnippet>1024</a>        </span><span class="kw">let </span>watch_relay = <span class="self">self</span>.sock.home_relay();
 <a href=#1025 id=1025 data-nosnippet>1025</a>        <span class="kw">let </span>endpoint_id = <span class="self">self</span>.id();
 <a href=#1026 id=1026 data-nosnippet>1026</a>        watch_relay.map(<span class="kw">move </span>|<span class="kw-2">mut </span>relays| {
 <a href=#1027 id=1027 data-nosnippet>1027</a>            EndpointAddr::from_parts(endpoint_id, relays.into_iter().map(TransportAddr::Relay))
@@ -1074,7 +1074,7 @@
 <a href=#1074 id=1074 data-nosnippet>1074</a>    /// }
 <a href=#1075 id=1075 data-nosnippet>1075</a>    /// ```
 <a href=#1076 id=1076 data-nosnippet>1076</a>    </span><span class="kw">pub async fn </span>online(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="self">self</span>.msock.home_relay().initialized().<span class="kw">await</span>;
+<a href=#1077 id=1077 data-nosnippet>1077</a>        <span class="self">self</span>.sock.home_relay().initialized().<span class="kw">await</span>;
 <a href=#1078 id=1078 data-nosnippet>1078</a>    }
 <a href=#1079 id=1079 data-nosnippet>1079</a>
 <a href=#1080 id=1080 data-nosnippet>1080</a>    <span class="doccomment">/// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
@@ -1107,7 +1107,7 @@
 <a href=#1107 id=1107 data-nosnippet>1107</a>    /// ```
 <a href=#1108 id=1108 data-nosnippet>1108</a>    </span><span class="attr">#[doc(hidden)]
 <a href=#1109 id=1109 data-nosnippet>1109</a>    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NetReport&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
-<a href=#1110 id=1110 data-nosnippet>1110</a>        <span class="self">self</span>.msock.net_report()
+<a href=#1110 id=1110 data-nosnippet>1110</a>        <span class="self">self</span>.sock.net_report()
 <a href=#1111 id=1111 data-nosnippet>1111</a>    }
 <a href=#1112 id=1112 data-nosnippet>1112</a>
 <a href=#1113 id=1113 data-nosnippet>1113</a>    <span class="doccomment">/// Returns the local socket addresses on which the underlying sockets are bound.
@@ -1116,7 +1116,7 @@
 <a href=#1116 id=1116 data-nosnippet>1116</a>    /// address if available.
 <a href=#1117 id=1117 data-nosnippet>1117</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#1118 id=1118 data-nosnippet>1118</a>    </span><span class="kw">pub fn </span>bound_sockets(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SocketAddr&gt; {
-<a href=#1119 id=1119 data-nosnippet>1119</a>        <span class="self">self</span>.msock
+<a href=#1119 id=1119 data-nosnippet>1119</a>        <span class="self">self</span>.sock
 <a href=#1120 id=1120 data-nosnippet>1120</a>            .local_addr()
 <a href=#1121 id=1121 data-nosnippet>1121</a>            .into_iter()
 <a href=#1122 id=1122 data-nosnippet>1122</a>            .filter_map(|addr| addr.into_socket_addr())
@@ -1132,14 +1132,14 @@
 <a href=#1132 id=1132 data-nosnippet>1132</a>    /// See [`Builder::dns_resolver`].
 <a href=#1133 id=1133 data-nosnippet>1133</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#1134 id=1134 data-nosnippet>1134</a>    </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DnsResolver {
-<a href=#1135 id=1135 data-nosnippet>1135</a>        <span class="self">self</span>.msock.dns_resolver()
+<a href=#1135 id=1135 data-nosnippet>1135</a>        <span class="self">self</span>.sock.dns_resolver()
 <a href=#1136 id=1136 data-nosnippet>1136</a>    }
 <a href=#1137 id=1137 data-nosnippet>1137</a>
 <a href=#1138 id=1138 data-nosnippet>1138</a>    <span class="doccomment">/// Returns the Address Lookup service, if configured.
 <a href=#1139 id=1139 data-nosnippet>1139</a>    ///
 <a href=#1140 id=1140 data-nosnippet>1140</a>    /// See [`Builder::address_lookup`].
 <a href=#1141 id=1141 data-nosnippet>1141</a>    </span><span class="kw">pub fn </span>address_lookup(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>ConcurrentAddressLookup {
-<a href=#1142 id=1142 data-nosnippet>1142</a>        <span class="self">self</span>.msock.address_lookup()
+<a href=#1142 id=1142 data-nosnippet>1142</a>        <span class="self">self</span>.sock.address_lookup()
 <a href=#1143 id=1143 data-nosnippet>1143</a>    }
 <a href=#1144 id=1144 data-nosnippet>1144</a>
 <a href=#1145 id=1145 data-nosnippet>1145</a>    <span class="doccomment">/// Returns metrics collected for this endpoint.
@@ -1153,7 +1153,7 @@
 <a href=#1153 id=1153 data-nosnippet>1153</a>    /// # use iroh::endpoint::Endpoint;
 <a href=#1154 id=1154 data-nosnippet>1154</a>    /// # async fn wrapper() -&gt; n0_error::Result&lt;()&gt; {
 <a href=#1155 id=1155 data-nosnippet>1155</a>    /// let endpoint = Endpoint::bind().await?;
-<a href=#1156 id=1156 data-nosnippet>1156</a>    /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
+<a href=#1156 id=1156 data-nosnippet>1156</a>    /// assert_eq!(endpoint.metrics().socket.recv_datagrams.get(), 0);
 <a href=#1157 id=1157 data-nosnippet>1157</a>    /// # Ok(())
 <a href=#1158 id=1158 data-nosnippet>1158</a>    /// # }
 <a href=#1159 id=1159 data-nosnippet>1159</a>    /// ```
@@ -1180,7 +1180,7 @@
 <a href=#1180 id=1180 data-nosnippet>1180</a>    ///     })
 <a href=#1181 id=1181 data-nosnippet>1181</a>    ///     .collect();
 <a href=#1182 id=1182 data-nosnippet>1182</a>    ///
-<a href=#1183 id=1183 data-nosnippet>1183</a>    /// assert_eq!(metrics["magicsock:recv_datagrams"], MetricValue::Counter(0));
+<a href=#1183 id=1183 data-nosnippet>1183</a>    /// assert_eq!(metrics["socket:recv_datagrams"], MetricValue::Counter(0));
 <a href=#1184 id=1184 data-nosnippet>1184</a>    /// # Ok(())
 <a href=#1185 id=1185 data-nosnippet>1185</a>    /// # }
 <a href=#1186 id=1186 data-nosnippet>1186</a>    /// ```
@@ -1197,8 +1197,8 @@
 <a href=#1197 id=1197 data-nosnippet>1197</a>    /// let mut registry = Registry::default();
 <a href=#1198 id=1198 data-nosnippet>1198</a>    /// registry.register_all(endpoint.metrics());
 <a href=#1199 id=1199 data-nosnippet>1199</a>    /// let s = registry.encode_openmetrics_to_string()?;
-<a href=#1200 id=1200 data-nosnippet>1200</a>    /// assert!(s.contains(r#"TYPE magicsock_recv_datagrams counter"#));
-<a href=#1201 id=1201 data-nosnippet>1201</a>    /// assert!(s.contains(r#"magicsock_recv_datagrams_total 0"#));
+<a href=#1200 id=1200 data-nosnippet>1200</a>    /// assert!(s.contains(r#"TYPE socket_recv_datagrams counter"#));
+<a href=#1201 id=1201 data-nosnippet>1201</a>    /// assert!(s.contains(r#"socket_recv_datagrams_total 0"#));
 <a href=#1202 id=1202 data-nosnippet>1202</a>    /// # Ok(())
 <a href=#1203 id=1203 data-nosnippet>1203</a>    /// # }
 <a href=#1204 id=1204 data-nosnippet>1204</a>    /// ```
@@ -1242,8 +1242,8 @@
 <a href=#1242 id=1242 data-nosnippet>1242</a>    ///     .await
 <a href=#1243 id=1243 data-nosnippet>1243</a>    ///     .std_context("text")?;
 <a href=#1244 id=1244 data-nosnippet>1244</a>    ///
-<a href=#1245 id=1245 data-nosnippet>1245</a>    /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
-<a href=#1246 id=1246 data-nosnippet>1246</a>    /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
+<a href=#1245 id=1245 data-nosnippet>1245</a>    /// assert!(res.contains(r#"TYPE socket_recv_datagrams counter"#));
+<a href=#1246 id=1246 data-nosnippet>1246</a>    /// assert!(res.contains(r#"socket_recv_datagrams_total 0"#));
 <a href=#1247 id=1247 data-nosnippet>1247</a>    /// # metrics_task.abort();
 <a href=#1248 id=1248 data-nosnippet>1248</a>    /// # Ok(())
 <a href=#1249 id=1249 data-nosnippet>1249</a>    /// # }
@@ -1258,7 +1258,7 @@
 <a href=#1258 id=1258 data-nosnippet>1258</a>    /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
 <a href=#1259 id=1259 data-nosnippet>1259</a>    </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 <a href=#1260 id=1260 data-nosnippet>1260</a>    </span><span class="kw">pub fn </span>metrics(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>EndpointMetrics {
-<a href=#1261 id=1261 data-nosnippet>1261</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.msock.metrics
+<a href=#1261 id=1261 data-nosnippet>1261</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.sock.metrics
 <a href=#1262 id=1262 data-nosnippet>1262</a>    }
 <a href=#1263 id=1263 data-nosnippet>1263</a>
 <a href=#1264 id=1264 data-nosnippet>1264</a>    <span class="doccomment">/// Returns addressing information about a recently used remote endpoint.
@@ -1270,7 +1270,7 @@
 <a href=#1270 id=1270 data-nosnippet>1270</a>    /// When remote endpoints are no longer used, our endpoint will keep information around
 <a href=#1271 id=1271 data-nosnippet>1271</a>    /// for a little while, and then drop it. Afterwards, this will return `None`.
 <a href=#1272 id=1272 data-nosnippet>1272</a>    </span><span class="kw">pub async fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, endpoint_id: EndpointId) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
-<a href=#1273 id=1273 data-nosnippet>1273</a>        <span class="self">self</span>.msock.remote_info(endpoint_id).<span class="kw">await
+<a href=#1273 id=1273 data-nosnippet>1273</a>        <span class="self">self</span>.sock.remote_info(endpoint_id).<span class="kw">await
 <a href=#1274 id=1274 data-nosnippet>1274</a>    </span>}
 <a href=#1275 id=1275 data-nosnippet>1275</a>
 <a href=#1276 id=1276 data-nosnippet>1276</a>    <span class="comment">// # Methods for less common state updates.
@@ -1286,7 +1286,7 @@
 <a href=#1286 id=1286 data-nosnippet>1286</a>    /// Even when the network did not change, or iroh was already able to detect
 <a href=#1287 id=1287 data-nosnippet>1287</a>    /// the network change itself, there is no harm in calling this function.
 <a href=#1288 id=1288 data-nosnippet>1288</a>    </span><span class="kw">pub async fn </span>network_change(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#1289 id=1289 data-nosnippet>1289</a>        <span class="self">self</span>.msock.network_change().<span class="kw">await</span>;
+<a href=#1289 id=1289 data-nosnippet>1289</a>        <span class="self">self</span>.sock.network_change().<span class="kw">await</span>;
 <a href=#1290 id=1290 data-nosnippet>1290</a>    }
 <a href=#1291 id=1291 data-nosnippet>1291</a>
 <a href=#1292 id=1292 data-nosnippet>1292</a>    <span class="comment">// # Methods to update internal state.
@@ -1299,12 +1299,12 @@
 <a href=#1299 id=1299 data-nosnippet>1299</a>    /// See also [`Builder::user_data_for_address_lookup`] for setting an initial value when
 <a href=#1300 id=1300 data-nosnippet>1300</a>    /// building the endpoint.
 <a href=#1301 id=1301 data-nosnippet>1301</a>    </span><span class="kw">pub fn </span>set_user_data_for_address_lookup(<span class="kw-2">&amp;</span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
-<a href=#1302 id=1302 data-nosnippet>1302</a>        <span class="self">self</span>.msock.set_user_data_for_address_lookup(user_data);
+<a href=#1302 id=1302 data-nosnippet>1302</a>        <span class="self">self</span>.sock.set_user_data_for_address_lookup(user_data);
 <a href=#1303 id=1303 data-nosnippet>1303</a>    }
 <a href=#1304 id=1304 data-nosnippet>1304</a>
 <a href=#1305 id=1305 data-nosnippet>1305</a>    <span class="comment">// # Methods for terminating the endpoint.
 <a href=#1306 id=1306 data-nosnippet>1306</a>
-<a href=#1307 id=1307 data-nosnippet>1307</a>    </span><span class="doccomment">/// Closes the QUIC endpoint and the magic socket.
+<a href=#1307 id=1307 data-nosnippet>1307</a>    </span><span class="doccomment">/// Closes the QUIC endpoint and the socket.
 <a href=#1308 id=1308 data-nosnippet>1308</a>    ///
 <a href=#1309 id=1309 data-nosnippet>1309</a>    /// This will close any remaining open [`Connection`]s with an error code
 <a href=#1310 id=1310 data-nosnippet>1310</a>    /// of `0` and an empty reason.  Though it is best practice to close those
@@ -1337,12 +1337,12 @@
 <a href=#1337 id=1337 data-nosnippet>1337</a>    /// Be aware however that the underlying UDP sockets are only closed once all clones of
 <a href=#1338 id=1338 data-nosnippet>1338</a>    /// the the respective [`Endpoint`] are dropped.
 <a href=#1339 id=1339 data-nosnippet>1339</a>    </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-<a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="self">self</span>.msock.close().<span class="kw">await</span>;
+<a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="self">self</span>.sock.close().<span class="kw">await</span>;
 <a href=#1341 id=1341 data-nosnippet>1341</a>    }
 <a href=#1342 id=1342 data-nosnippet>1342</a>
 <a href=#1343 id=1343 data-nosnippet>1343</a>    <span class="doccomment">/// Check if this endpoint is still alive, or already closed.
 <a href=#1344 id=1344 data-nosnippet>1344</a>    </span><span class="kw">pub fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#1345 id=1345 data-nosnippet>1345</a>        <span class="self">self</span>.msock.is_closed()
+<a href=#1345 id=1345 data-nosnippet>1345</a>        <span class="self">self</span>.sock.is_closed()
 <a href=#1346 id=1346 data-nosnippet>1346</a>    }
 <a href=#1347 id=1347 data-nosnippet>1347</a>
 <a href=#1348 id=1348 data-nosnippet>1348</a>    <span class="doccomment">/// Create a [`ServerConfigBuilder`] for this endpoint that includes the given alpns.
@@ -1357,12 +1357,12 @@
 <a href=#1357 id=1357 data-nosnippet>1357</a>    <span class="comment">// # Remaining private methods
 <a href=#1358 id=1358 data-nosnippet>1358</a>
 <a href=#1359 id=1359 data-nosnippet>1359</a>    </span><span class="attr">#[cfg(test)]
-<a href=#1360 id=1360 data-nosnippet>1360</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>magic_sock(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Handle {
-<a href=#1361 id=1361 data-nosnippet>1361</a>        <span class="self">self</span>.msock.clone()
+<a href=#1360 id=1360 data-nosnippet>1360</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>socket(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Handle {
+<a href=#1361 id=1361 data-nosnippet>1361</a>        <span class="self">self</span>.sock.clone()
 <a href=#1362 id=1362 data-nosnippet>1362</a>    }
 <a href=#1363 id=1363 data-nosnippet>1363</a>    <span class="attr">#[cfg(test)]
 <a href=#1364 id=1364 data-nosnippet>1364</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>endpoint(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>quinn::Endpoint {
-<a href=#1365 id=1365 data-nosnippet>1365</a>        <span class="self">self</span>.msock.endpoint()
+<a href=#1365 id=1365 data-nosnippet>1365</a>        <span class="self">self</span>.sock.endpoint()
 <a href=#1366 id=1366 data-nosnippet>1366</a>    }
 <a href=#1367 id=1367 data-nosnippet>1367</a>}
 <a href=#1368 id=1368 data-nosnippet>1368</a>
@@ -1939,8 +1939,8 @@
 <a href=#1939 id=1939 data-nosnippet>1939</a>            }
 <a href=#1940 id=1940 data-nosnippet>1940</a>            <span class="macro">info!</span>(<span class="string">"Have direct connection"</span>);
 <a href=#1941 id=1941 data-nosnippet>1941</a>            <span class="comment">// Validate holepunch metrics.
-<a href=#1942 id=1942 data-nosnippet>1942</a>            </span><span class="macro">assert_eq!</span>(ep.metrics().magicsock.num_conns_opened.get(), <span class="number">1</span>);
-<a href=#1943 id=1943 data-nosnippet>1943</a>            <span class="macro">assert_eq!</span>(ep.metrics().magicsock.num_conns_direct.get(), <span class="number">1</span>);
+<a href=#1942 id=1942 data-nosnippet>1942</a>            </span><span class="macro">assert_eq!</span>(ep.metrics().socket.num_conns_opened.get(), <span class="number">1</span>);
+<a href=#1943 id=1943 data-nosnippet>1943</a>            <span class="macro">assert_eq!</span>(ep.metrics().socket.num_conns_direct.get(), <span class="number">1</span>);
 <a href=#1944 id=1944 data-nosnippet>1944</a>
 <a href=#1945 id=1945 data-nosnippet>1945</a>            send.write_all(<span class="string">b"close please"</span>).<span class="kw">await</span>.anyerr()<span class="question-mark">?</span>;
 <a href=#1946 id=1946 data-nosnippet>1946</a>            send.finish().anyerr()<span class="question-mark">?</span>;
@@ -2507,18 +2507,18 @@
 <a href=#2507 id=2507 data-nosnippet>2507</a>        <span class="kw">let </span>server = server_task.<span class="kw">await</span>.anyerr()<span class="question-mark">??</span>;
 <a href=#2508 id=2508 data-nosnippet>2508</a>
 <a href=#2509 id=2509 data-nosnippet>2509</a>        <span class="kw">let </span>m = client.metrics();
-<a href=#2510 id=2510 data-nosnippet>2510</a>        <span class="comment">// assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
-<a href=#2511 id=2511 data-nosnippet>2511</a>        // assert_eq!(m.magicsock.connection_became_direct.get(), 1);
-<a href=#2512 id=2512 data-nosnippet>2512</a>        // assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
-<a href=#2513 id=2513 data-nosnippet>2513</a>        // assert_eq!(m.magicsock.endpoints_contacted_directly.get(), 1);
-<a href=#2514 id=2514 data-nosnippet>2514</a>        </span><span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
+<a href=#2510 id=2510 data-nosnippet>2510</a>        <span class="comment">// assert_eq!(m.socket.num_direct_conns_added.get(), 1);
+<a href=#2511 id=2511 data-nosnippet>2511</a>        // assert_eq!(m.socket.connection_became_direct.get(), 1);
+<a href=#2512 id=2512 data-nosnippet>2512</a>        // assert_eq!(m.socket.connection_handshake_success.get(), 1);
+<a href=#2513 id=2513 data-nosnippet>2513</a>        // assert_eq!(m.socket.endpoints_contacted_directly.get(), 1);
+<a href=#2514 id=2514 data-nosnippet>2514</a>        </span><span class="macro">assert!</span>(m.socket.recv_datagrams.get() &gt; <span class="number">0</span>);
 <a href=#2515 id=2515 data-nosnippet>2515</a>
 <a href=#2516 id=2516 data-nosnippet>2516</a>        <span class="kw">let </span>m = server.metrics();
-<a href=#2517 id=2517 data-nosnippet>2517</a>        <span class="comment">// assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
-<a href=#2518 id=2518 data-nosnippet>2518</a>        // assert_eq!(m.magicsock.connection_became_direct.get(), 1);
-<a href=#2519 id=2519 data-nosnippet>2519</a>        // assert_eq!(m.magicsock.endpoints_contacted_directly.get(), 1);
-<a href=#2520 id=2520 data-nosnippet>2520</a>        // assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
-<a href=#2521 id=2521 data-nosnippet>2521</a>        </span><span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
+<a href=#2517 id=2517 data-nosnippet>2517</a>        <span class="comment">// assert_eq!(m.socket.num_direct_conns_added.get(), 1);
+<a href=#2518 id=2518 data-nosnippet>2518</a>        // assert_eq!(m.socket.connection_became_direct.get(), 1);
+<a href=#2519 id=2519 data-nosnippet>2519</a>        // assert_eq!(m.socket.endpoints_contacted_directly.get(), 1);
+<a href=#2520 id=2520 data-nosnippet>2520</a>        // assert_eq!(m.socket.connection_handshake_success.get(), 1);
+<a href=#2521 id=2521 data-nosnippet>2521</a>        </span><span class="macro">assert!</span>(m.socket.recv_datagrams.get() &gt; <span class="number">0</span>);
 <a href=#2522 id=2522 data-nosnippet>2522</a>
 <a href=#2523 id=2523 data-nosnippet>2523</a>        <span class="comment">// test openmetrics encoding with labeled subregistries per endpoint
 <a href=#2524 id=2524 data-nosnippet>2524</a>        </span><span class="kw">fn </span>register_endpoint(registry: <span class="kw-2">&amp;mut </span>Registry, endpoint: <span class="kw-2">&amp;</span>Endpoint) {
@@ -2530,8 +2530,8 @@
 <a href=#2530 id=2530 data-nosnippet>2530</a>        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>client);
 <a href=#2531 id=2531 data-nosnippet>2531</a>        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>server);
 <a href=#2532 id=2532 data-nosnippet>2532</a>        <span class="comment">// let s = registry.encode_openmetrics_to_string().anyerr()?;
-<a href=#2533 id=2533 data-nosnippet>2533</a>        // assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#));
-<a href=#2534 id=2534 data-nosnippet>2534</a>        // assert!(s.contains(r#"magicsock_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#));
+<a href=#2533 id=2533 data-nosnippet>2533</a>        // assert!(s.contains(r#"socket_endpoints_contacted_directly_total{id="3b6a27bcce"} 1"#));
+<a href=#2534 id=2534 data-nosnippet>2534</a>        // assert!(s.contains(r#"socket_endpoints_contacted_directly_total{id="8a88e3dd74"} 1"#));
 <a href=#2535 id=2535 data-nosnippet>2535</a>        </span><span class="prelude-val">Ok</span>(())
 <a href=#2536 id=2536 data-nosnippet>2536</a>    }
 <a href=#2537 id=2537 data-nosnippet>2537</a>
