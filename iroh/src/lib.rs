@@ -151,18 +151,18 @@
 //!
 //! </div>
 //!
-//! ## Endpoint Discovery
+//! ## Address Lookup
 //!
 //! The need to know the [`RelayUrl`] *or* some direct addresses in addition to the
 //! [`EndpointId`] to connect to an iroh endpoint can be an obstacle.  To address this, the
-//! [`endpoint::Builder`] allows you to configure a [`discovery`] service.
+//! [`endpoint::Builder`] allows you to configure an [`address_lookup`] service.
 //!
-//! The [`DnsDiscovery`] service is a discovery service which will publish the [`RelayUrl`]
+//! The [`address_lookup::DnsAddressLookup`] service is an address lookup service which will publish the [`RelayUrl`]
 //! and direct addresses to a service publishing those as DNS records.  To connect it looks
 //! up the [`EndpointId`] in the DNS system to find the addressing details.  This enables
 //! connecting using only the [`EndpointId`] which is often more convenient and resilient.
 //!
-//! See [the discovery module] for more details.
+//! See [the Address Lookup module] for more details.
 //!
 //!
 //! # Examples
@@ -239,11 +239,11 @@
 //! [`SecretKey`]: crate::SecretKey
 //! [`PublicKey`]: crate::PublicKey
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`discovery`]: crate::endpoint::Builder::discovery
-//! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
+//! [`address_lookup`]: crate::endpoint::Builder::address_lookup
+//! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 //! [number 0]: https://n0.computer
 //! [`RelayMode::Default`]: crate::RelayMode::Default
-//! [the discovery module]: crate::discovery
+//! [the Address Lookup module]: crate::address_lookup
 //! [`Connection::open_bi`]: crate::endpoint::Connection::open_bi
 //! [`Connection::accept_bi`]: crate::endpoint::Connection::accept_bi
 
@@ -253,15 +253,15 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_cfg))]
 
-mod magicsock;
+mod socket;
 mod tls;
 
 pub(crate) mod util;
 #[cfg(wasm_browser)]
 pub(crate) mod web_runtime;
 
+pub mod address_lookup;
 pub mod defaults;
-pub mod discovery;
 #[cfg(not(wasm_browser))]
 pub mod dns;
 pub mod endpoint;

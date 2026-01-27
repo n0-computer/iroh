@@ -4,14 +4,15 @@ version = 4
 
 [[package]]
 name = "acto"
-version = "0.7.4"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a026259da4f1a13b4af60cda453c392de64c58c12d239c560923e0382f42f2b9"
+checksum = "148541f13c28e3e840354ee4d6c99046c10be2c81068bbd23b9e3a38f95a917e"
 dependencies = [
  "parking_lot",
  "pin-project-lite",
  "rustc_version",
  "smol_str",
+ "sync_wrapper",
  "tokio",
  "tracing",
 ]
@@ -1154,7 +1155,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1734,7 +1735,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -1986,6 +1987,7 @@ dependencies = [
  "n0-watcher",
  "netdev",
  "netwatch",
+ "papaya",
  "parse-size",
  "pin-project",
  "pkarr",
@@ -2153,7 +2155,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.15.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#332c8f7d7a37d14a19f73d4706603fa4fe44062b"
+source = "git+https://github.com/n0-computer/quinn?branch=main#aa6c3735cee6d3074d5421a97b5e48332de8e7b3"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2173,7 +2175,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#332c8f7d7a37d14a19f73d4706603fa4fe44062b"
+source = "git+https://github.com/n0-computer/quinn?branch=main#aa6c3735cee6d3074d5421a97b5e48332de8e7b3"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2200,13 +2202,13 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.7.0"
-source = "git+https://github.com/n0-computer/quinn?branch=main#332c8f7d7a37d14a19f73d4706603fa4fe44062b"
+source = "git+https://github.com/n0-computer/quinn?branch=main#aa6c3735cee6d3074d5421a97b5e48332de8e7b3"
 dependencies = [
  "cfg_aliases",
  "libc",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2766,7 +2768,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2926,6 +2928,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f50d9b3dabb09ecd771ad0aa242ca6894994c130308ca3d7684634df8037391"
 
 [[package]]
+name = "papaya"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f92dd0b07c53a0a0c764db2ace8c541dc47320dad97c2200c2a637ab9dd2328f"
+dependencies = [
+ "equivalent",
+ "seize",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3067,9 +3079,9 @@ dependencies = [
 
 [[package]]
 name = "pkcs8"
-version = "0.11.0-rc.8"
+version = "0.11.0-rc.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77089aec8290d0b7bb01b671b091095cf1937670725af4fd73d47249f03b12c0"
+checksum = "80f8fa6196ede5a9f9ee95b44ca134bddc9b70e8913f9297bd58c909f5889a09"
 dependencies = [
  "der",
  "spki",
@@ -3301,7 +3313,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -3338,9 +3350,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.1",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3610,7 +3622,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3723,7 +3735,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs 1.0.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3818,6 +3830,16 @@ checksum = "cc1f0cbffaac4852523ce30d8bd3c5cdc873501d96ff467ca09b6767bb8cd5c0"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "seize"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
+dependencies = [
+ "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4207,14 +4229,14 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "swarm-discovery"
-version = "0.4.1"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "790d8444f7db1e88f70aed3234cab8e42c48e05360bfc86ca7dce0d9a5d95d26"
+checksum = "1a5ab62937edac8b23fa40e55a358ea1924245b17fc1eb20d14929c8f11be98d"
 dependencies = [
  "acto",
  "hickory-proto",
  "rand",
- "socket2 0.5.10",
+ "socket2 0.6.1",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
@@ -4267,7 +4289,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5068,7 +5090,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

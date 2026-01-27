@@ -1,7 +1,7 @@
 Parts of the code has been derived from tailscale, which is under the following license.
 Specifically the following files are most relevant
 
-- ./src/magicsock**
+- ./src/socket**
 
 BSD 3-Clause License
 

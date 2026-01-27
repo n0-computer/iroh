@@ -1,11 +1,11 @@
-//! A static endpoint discovery to manually add endpoint addressing information.
+//! An in-memory address lookup system to manually add endpoint addressing information.
 //!
 //! Often an application might get endpoint addressing information out-of-band in an
 //! application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
-//! This "static" addressing information is often only usable for a limited time so needs to
+//! This addressing information is often only usable for a limited time so needs to
 //! be able to be removed again once know it is no longer useful.
 //!
-//! This is where the [`StaticProvider`] is useful: it allows applications to add and
+//! This is where the [`MemoryLookup`] is useful: it allows applications to add and
 //! retract endpoint addressing information that is otherwise out-of-band to iroh.
 //!
 //! [`EndpointTicket`]: https://docs.rs/iroh-tickets/latest/iroh_tickets/endpoint/struct.EndpointTicket.html
@@ -22,38 +22,38 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo};
+use super::{AddressLookup, EndpointData, EndpointInfo, Error, Item};
 
-/// A static endpoint discovery to manually add endpoint addressing information.
+/// An in-memory address lookup system to manually add endpoint addressing information.
 ///
 /// Often an application might get endpoint addressing information out-of-band in an
 /// application-specific way.  [`EndpointTicket`]'s are one common way used to achieve this.
-/// This "static" addressing information is often only usable for a limited time so needs to
+/// This addressing information is often only usable for a limited time so needs to
 /// be able to be removed again once know it is no longer useful.
 ///
-/// This is where the [`StaticProvider`] is useful: it allows applications to add and
+/// This is where the [`MemoryLookup`] is useful: it allows applications to add and
 /// retract endpoint addressing information that is otherwise out-of-band to iroh.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use iroh::{Endpoint, EndpointAddr, TransportAddr, discovery::static_provider::StaticProvider};
+/// use iroh::{Endpoint, EndpointAddr, TransportAddr, address_lookup::memory::MemoryLookup};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
 /// # async fn main() -> n0_error::Result<()> {
-/// // Create the discovery service and endpoint.
-/// let discovery = StaticProvider::new();
+/// // Create the Address Lookup and endpoint.
+/// let address_lookup = MemoryLookup::new();
 ///
 /// let _ep = Endpoint::builder()
-///     .discovery(discovery.clone())
+///     .address_lookup(address_lookup.clone())
 ///     .bind()
 ///     .await?;
 ///
 /// // Sometime later add a RelayUrl for our endpoint.
 /// let id = SecretKey::generate(&mut rand::rng()).public();
 /// // You can pass either `EndpointInfo` or `EndpointAddr` to `add_endpoint_info`.
-/// discovery.add_endpoint_info(EndpointAddr {
+/// address_lookup.add_endpoint_info(EndpointAddr {
 ///     id,
 ///     addrs: [TransportAddr::Relay("https://example.com".parse()?)]
 ///         .into_iter()
@@ -66,12 +66,12 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, EndpointData, EndpointInfo
 ///
 /// [`EndpointTicket`]: https://docs.rs/iroh-tickets/latest/iroh_tickets/endpoint/struct.EndpointTicket.html
 #[derive(Debug, Clone)]
-pub struct StaticProvider {
+pub struct MemoryLookup {
     endpoints: Arc<RwLock<BTreeMap<EndpointId, StoredEndpointInfo>>>,
     provenance: &'static str,
 }
 
-impl Default for StaticProvider {
+impl Default for MemoryLookup {
     fn default() -> Self {
         Self {
             endpoints: Default::default(),
@@ -86,27 +86,28 @@ struct StoredEndpointInfo {
     last_updated: SystemTime,
 }
 
-impl StaticProvider {
-    /// The provenance string for this discovery implementation.
+impl MemoryLookup {
+    /// The provenance string for this Address Lookup implementation.
     ///
     /// This is mostly used for debugging information and allows understanding the origin of
     /// addressing information used by an iroh [`Endpoint`].
     ///
     /// [`Endpoint`]: crate::Endpoint
-    pub const PROVENANCE: &'static str = "static_discovery";
+    pub const PROVENANCE: &'static str = "memory_lookup";
 
-    /// Creates a new static discovery instance.
+    /// Creates a new static Address Lookup instance.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Creates a new static discovery instance with the provided `provenance`.
+    /// Creates a new Memory Lookup instance with the provided `provenance`.
     ///
-    /// The provenance is part of [`DiscoveryItem`]s returned from [`Self::resolve`].
+    /// The provenance is part of [`address_lookup::Item`]s returned from [`Self::resolve`].
     /// It is mostly used for debugging information and allows understanding the origin of
     /// addressing information used by an iroh [`Endpoint`].
     ///
     /// [`Endpoint`]: crate::Endpoint
+    /// [`address_lookup::Item`]: crate::address_lookup::Item
     pub fn with_provenance(provenance: &'static str) -> Self {
         Self {
             endpoints: Default::default(),
@@ -114,14 +115,14 @@ impl StaticProvider {
         }
     }
 
-    /// Creates a static discovery instance from endpoint addresses.
+    /// Creates a Memory Lookup instance from endpoint addresses.
     ///
     /// # Examples
     ///
     /// ```rust
     /// use std::{net::SocketAddr, str::FromStr};
     ///
-    /// use iroh::{Endpoint, EndpointAddr, discovery::static_provider::StaticProvider};
+    /// use iroh::{Endpoint, EndpointAddr, address_lookup::memory::MemoryLookup};
     ///
     /// # fn get_addrs() -> Vec<EndpointAddr> {
     /// #     Vec::new()
@@ -131,10 +132,13 @@ impl StaticProvider {
     /// // get addrs from somewhere
     /// let addrs = get_addrs();
     ///
-    /// // create a StaticProvider from the list of addrs.
-    /// let discovery = StaticProvider::from_endpoint_info(addrs);
-    /// // create an endpoint with the discovery
-    /// let endpoint = Endpoint::builder().discovery(discovery).bind().await?;
+    /// // create a MemoryLookup from the list of addrs.
+    /// let address_lookup = MemoryLookup::from_endpoint_info(addrs);
+    /// // create an endpoint with the memory lookup address_lookup
+    /// let endpoint = Endpoint::builder()
+    ///     .address_lookup(address_lookup)
+    ///     .bind()
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -165,8 +169,8 @@ impl StaticProvider {
 
     /// Augments endpoint addressing information for the given endpoint ID.
     ///
-    /// The provided addressing information is combined with the existing info in the static
-    /// provider.  Any new direct addresses are added to those already present while the
+    /// The provided addressing information is combined with the existing info in the memory
+    /// lookup.  Any new direct addresses are added to those already present while the
     /// relay URL is overwritten.
     pub fn add_endpoint_info(&self, endpoint_info: impl Into<EndpointInfo>) {
         let last_updated = SystemTime::now();
@@ -202,13 +206,10 @@ impl StaticProvider {
     }
 }
 
-impl Discovery for StaticProvider {
+impl AddressLookup for MemoryLookup {
     fn publish(&self, _data: &EndpointData) {}
 
-    fn resolve(
-        &self,
-        endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
+    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<super::Item, Error>>> {
         let guard = self.endpoints.read().expect("poisoned");
         let info = guard.get(&endpoint_id);
         match info {
@@ -218,7 +219,7 @@ impl Discovery for StaticProvider {
                     .duration_since(SystemTime::UNIX_EPOCH)
                     .expect("time drift")
                     .as_micros() as u64;
-                let item = DiscoveryItem::new(
+                let item = Item::new(
                     EndpointInfo::from_parts(endpoint_id, endpoint_info.data.clone()),
                     self.provenance,
                     Some(last_updated),
@@ -240,10 +241,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_basic() -> Result {
-        let discovery = StaticProvider::new();
+        let address_lookup = MemoryLookup::new();
 
         let _ep = Endpoint::empty_builder(RelayMode::Disabled)
-            .discovery(discovery.clone())
+            .address_lookup(address_lookup.clone())
             .bind()
             .await?;
 
@@ -254,9 +255,9 @@ mod tests {
         );
         let user_data = Some("foobar".parse().unwrap());
         let endpoint_info = EndpointInfo::from(addr.clone()).with_user_data(user_data.clone());
-        discovery.add_endpoint_info(endpoint_info.clone());
+        address_lookup.add_endpoint_info(endpoint_info.clone());
 
-        let back = discovery
+        let back = address_lookup
             .get_endpoint_info(key.public())
             .context("no addr")?;
 
@@ -264,11 +265,11 @@ mod tests {
         assert_eq!(back.user_data(), user_data.as_ref());
         assert_eq!(back.into_endpoint_addr(), addr);
 
-        let removed = discovery
+        let removed = address_lookup
             .remove_endpoint_info(key.public())
             .context("nothing removed")?;
         assert_eq!(removed, endpoint_info);
-        let res = discovery.get_endpoint_info(key.public());
+        let res = address_lookup.get_endpoint_info(key.public());
         assert!(res.is_none());
 
         Ok(())
@@ -276,14 +277,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_provenance() -> Result {
-        let discovery = StaticProvider::with_provenance("foo");
+        let address_lookup = MemoryLookup::with_provenance("foo");
         let key = SecretKey::from_bytes(&[0u8; 32]);
         let addr = EndpointAddr::from_parts(
             key.public(),
             [TransportAddr::Relay("https://example.com".parse()?)],
         );
-        discovery.add_endpoint_info(addr);
-        let mut stream = discovery.resolve(key.public()).unwrap();
+        address_lookup.add_endpoint_info(addr);
+        let mut stream = address_lookup.resolve(key.public()).unwrap();
         let item = stream.next().await.unwrap()?;
         assert_eq!(item.provenance(), "foo");
         assert_eq!(

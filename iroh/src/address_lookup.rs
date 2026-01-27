@@ -1,4 +1,4 @@
-//! Endpoint address discovery.
+//! Lookup the address of an Endpoint ID.
 //!
 //! To connect to an iroh endpoint a [`EndpointAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`EndpointId`].
@@ -9,23 +9,23 @@
 //! For this to work however, the endpoint has to get the addressing  information by
 //! other means.
 //!
-//! Endpoint discovery is an automated system for an [`Endpoint`] to retrieve this addressing
+//! [`AddressLookup`] is an automated system for an [`Endpoint`] to retrieve this addressing
 //! information.  Each iroh endpoint will automatically publish their own addressing
 //! information.  Usually this means publishing which [`RelayUrl`] to use for their
 //! [`EndpointId`], but they could also publish their direct addresses.
 //!
-//! The [`Discovery`] trait is used to define endpoint discovery.  This allows multiple
+//! The [`AddressLookup`] trait is used to define an address lookup system.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
-//! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
-//! The [`Builder::discovery`] method is used to add a discovery mechanism to an
+//! Each [`Endpoint`] can use the address lookup mechanisms most suitable to the application.
+//! The [`Builder::address_lookup`] method is used to add an address lookup mechanism to an
 //! [`Endpoint`].
 //!
-//! Some generally useful discovery implementations are provided:
+//! Some generally useful Address Lookup implementations are provided:
 //!
-//! - [`StaticProvider`] which allows application to add and remove out-of-band addressing
+//! - [`MemoryLookup`] which allows application to add and remove out-of-band addressing
 //!   information.
 //!
-//! - The [`DnsDiscovery`] which performs lookups via the standard DNS systems.  To publish
+//! - The [`address_lookup::DnsAddressLookup`] which performs lookups via the standard DNS systems.  To publish
 //!   to this DNS server a [`PkarrPublisher`] is needed.  [Number 0] runs a public instance
 //!   of a [`PkarrPublisher`] with attached DNS server which is globally available and a
 //!   reliable default choice.
@@ -33,64 +33,64 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`MdnsDiscovery`]: mdns::MdnsDiscovery which uses the crate `swarm-discovery`, an
+//! - [`address_lookup::MdnsAddressLookup`]: mdns::MdnsAddressLookup which uses the crate `swarm-discovery`, an
 //!   opinionated mDNS implementation, to discover endpoints on the local network.
 //!
-//! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
-//!   records to/from the Mainline DHT.
+//! - The [`address_lookup::DhtAddressLookup`] also uses the [`pkarr`] system but can also publish and lookup
+//!   records to/from the Mainline DHT. It requires enabling the `address-lookup-pkarr-dht` feature.
 //!
-//! To use multiple discovery systems simultaneously you can call [`Builder::discovery`].
-//! This will use [`ConcurrentDiscovery`] under the hood, which performs lookups to all
-//! discovery systems at the same time.
+//! To use multiple Address Lookup'ssimultaneously you can call [`Builder::address_lookup`].
+//! This will use [`ConcurrentAddressLookup`] under the hood, which performs lookups to all
+//! Address Lookupsystems at the same time.
 //!
-//! [`Builder::discovery`] takes any type that implements [`IntoDiscovery`]. You can
-//! implement that trait on a builder struct if your discovery service needs information
-//! from the endpoint it is mounted on. After endpoint construction, your discovery service
-//! is built by calling [`IntoDiscovery::into_discovery`], passing the finished [`Endpoint`] to your
+//! [`Builder::address_lookup`] takes any type that implements [`IntoAddressLookup`]. You can
+//! implement that trait on a builder struct if your Address Lookup needs information
+//! from the endpoint it is mounted on. After endpoint construction, your Address Lookup
+//! is built by calling [`IntoAddressLookup::into_address_lookup`], passing the finished [`Endpoint`] to your
 //! builder.
 //!
-//! If your discovery service does not need any information from its endpoint, you can
-//! pass the discovery service directly to [`Builder::discovery`]: All types that
-//! implement [`Discovery`] also have a blanket implementation of [`IntoDiscovery`].
+//! If your Address Lookupdoes not need any information from its endpoint, you can
+//! pass the Address Lookupservice directly to [`Builder::address_lookup`]: All types that
+//! implement [`AddressLookup`] also have a blanket implementation of [`IntoAddressLookup`].
 //!
 //! # Examples
 //!
-//! A very common setup is to enable DNS discovery, which needs to be done in two parts as a
-//! [`PkarrPublisher`] and [`DnsDiscovery`]:
+//! A very common setup is to enable DNS Address Lookup, which needs to be done in two parts as a
+//! [`PkarrPublisher`] and [`address_lookup::DnsAddressLookup`]:
 //!
 //! ```no_run
 //! use iroh::{
 //!     Endpoint, SecretKey,
-//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
+//!     address_lookup::{self, PkarrPublisher},
 //!     endpoint::RelayMode,
 //! };
 //!
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
-//!     .discovery(PkarrPublisher::n0_dns())
-//!     .discovery(DnsDiscovery::n0_dns())
+//!     .address_lookup(PkarrPublisher::n0_dns())
+//!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! To also enable [`MdnsDiscovery`] it can be added as another service.
+//! To also enable [`address_lookup::MdnsAddressLookup`] it can be added as another service.
 //!
 //! ```no_run
-//! #[cfg(feature = "discovery-local-network")]
+//! #[cfg(feature = "address-lookup-mdns")]
 //! # {
 //! # use iroh::{
-//! #    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, mdns::MdnsDiscovery},
+//! #    address_lookup::{self, PkarrPublisher},
 //! #    endpoint::RelayMode,
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
 //! # async fn wrapper() -> n0_error::Result<()> {
 //! let ep = Endpoint::empty_builder(RelayMode::Default)
-//!     .discovery(PkarrPublisher::n0_dns())
-//!     .discovery(DnsDiscovery::n0_dns())
-//!     .discovery(MdnsDiscovery::builder())
+//!     .address_lookup(PkarrPublisher::n0_dns())
+//!     .address_lookup(address_lookup::DnsAddressLookup::n0_dns())
+//!     .address_lookup(address_lookup::MdnsAddressLookup::builder())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -100,15 +100,15 @@
 //!
 //! [`EndpointAddr`]: iroh_base::EndpointAddr
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`Builder::discovery`]: crate::endpoint::Builder::discovery
-//! [`DnsDiscovery`]: dns::DnsDiscovery
+//! [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
+//! [`address_lookup::DnsAddressLookup`]: crate::address_lookup::DnsAddressLookup
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
-//! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
+//! [`address_lookup::DhtAddressLookup`]: crate::address_lookup::DhtAddressLookup
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`MdnsDiscovery`]: mdns::MdnsDiscovery
-//! [`StaticProvider`]: static_provider::StaticProvider
+//! [`address_lookup::MdnsAddressLookup`]: crate::address_lookup::MdnsAddressLookup
+//! [`MemoryLookup`]: memory::MemoryLookup
 
 use std::sync::{Arc, RwLock};
 
@@ -121,61 +121,77 @@ pub use crate::endpoint_info::{EndpointData, EndpointInfo, ParseError, UserData}
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
-#[cfg(feature = "discovery-local-network")]
+#[cfg(feature = "address-lookup-mdns")]
 pub mod mdns;
+pub mod memory;
 pub mod pkarr;
-pub mod static_provider;
 
-/// Trait for structs that can be converted into [`Discovery`].
+#[cfg(not(wasm_browser))]
+pub use dns::*;
+#[cfg(feature = "address-lookup-mdns")]
+pub use mdns::*;
+pub use memory::*;
+#[cfg(feature = "address-lookup-pkarr-dht")]
+pub use pkarr::dht::*;
+pub use pkarr::*;
+
+/// Trait for structs that can be converted into [`AddressLookup`]s.
 ///
-/// This trait is implemented on builders for discovery services. Any type that implements this
-/// trait can be added as a discovery service in [`Builder::discovery`].
+/// This trait is implemented on builders for Address Lookup's. Any type that implements this
+/// trait can be added as a Address Lookup in [`Builder::address_lookup`].
 ///
-/// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
+/// Any type that implements [`AddressLookup`] also implements [`IntoAddressLookup`].
 ///
-/// Iroh uses this trait to allow configuring the set of discovery services on the endpoint
-/// builder, while providing the discovery services access to information about the endpoint
-/// to [`IntoDiscovery::into_discovery`].
+/// Iroh uses this trait to allow configuring the set of address lookup services on
+/// the endpoint builder, while also providing them access to information about the
+/// endpoint to [`IntoAddressLookup::into_address_lookup`].
 ///
-/// [`Builder::discovery`]: crate::endpoint::Builder::discovery
-pub trait IntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
-    /// Turns this discovery builder into a ready-to-use discovery service.
+/// [`Builder::address_lookup`]: crate::endpoint::Builder::address_lookup
+pub trait IntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
+    /// Turns this AddressLookup builder into a ready-to-use Address Lookup.
     ///
     /// If an error is returned, building the endpoint will fail with this error.
-    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError>;
+    fn into_address_lookup(
+        self,
+        endpoint: &Endpoint,
+    ) -> Result<impl AddressLookup, IntoAddressLookupError>;
 }
 
-/// Blanket no-op impl of `IntoDiscovery` for `T: Discovery`.
-impl<T: Discovery> IntoDiscovery for T {
-    fn into_discovery(self, _endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+/// Blanket no-op impl of `IntoAddressLookup` for `T: AddressLookup`.
+impl<T: AddressLookup> IntoAddressLookup for T {
+    fn into_address_lookup(
+        self,
+        _endpoint: &Endpoint,
+    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
         Ok(self)
     }
 }
 
-/// Non-public dyn-compatible version of [`IntoDiscovery`], used in [`crate::endpoint::Builder`].
-pub(crate) trait DynIntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
-    /// See [`IntoDiscovery::into_discovery`]
-    fn into_discovery(
+/// Non-public dyn-compatible version of [`IntoAddressLookup`], used in [`crate::endpoint::Builder`].
+pub(crate) trait DynIntoAddressLookup: Send + Sync + std::fmt::Debug + 'static {
+    /// See [`IntoAddressLookup::into_address_lookup`]
+    fn into_address_lookup(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn Discovery>, IntoDiscoveryError>;
+    ) -> Result<Box<dyn AddressLookup>, IntoAddressLookupError>;
 }
 
-impl<T: IntoDiscovery> DynIntoDiscovery for T {
-    fn into_discovery(
+impl<T: IntoAddressLookup> DynIntoAddressLookup for T {
+    fn into_address_lookup(
         self: Box<Self>,
         endpoint: &Endpoint,
-    ) -> Result<Box<dyn Discovery>, IntoDiscoveryError> {
-        let disco: Box<dyn Discovery> = Box::new(IntoDiscovery::into_discovery(*self, endpoint)?);
+    ) -> Result<Box<dyn AddressLookup>, IntoAddressLookupError> {
+        let disco: Box<dyn AddressLookup> =
+            Box::new(IntoAddressLookup::into_address_lookup(*self, endpoint)?);
         Ok(disco)
     }
 }
 
-/// IntoDiscovery errors
+/// [`IntoAddressLookup`] errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
-pub enum IntoDiscoveryError {
+pub enum IntoAddressLookupError {
     #[error("Service '{provenance}' error")]
     User {
         provenance: &'static str,
@@ -183,13 +199,13 @@ pub enum IntoDiscoveryError {
     },
 }
 
-impl IntoDiscoveryError {
+impl IntoAddressLookupError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
         provenance: &'static str,
         source: T,
     ) -> Self {
-        e!(IntoDiscoveryError::User {
+        e!(IntoAddressLookupError::User {
             provenance,
             source: AnyError::from_std(source)
         })
@@ -200,22 +216,22 @@ impl IntoDiscoveryError {
         provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     ) -> Self {
-        e!(IntoDiscoveryError::User {
+        e!(IntoAddressLookupError::User {
             provenance,
             source: AnyError::from_std_box(source)
         })
     }
 }
 
-/// Discovery errors
+/// [`AddressLookup`] errors
 #[allow(missing_docs)]
 #[stack_error(derive, add_meta)]
 #[non_exhaustive]
 #[derive(Clone)]
-pub enum DiscoveryError {
-    #[error("No discovery service configured")]
+pub enum Error {
+    #[error("No address lookup configured")]
     NoServiceConfigured,
-    #[error("Discovery produced no results")]
+    #[error("Address lookup produced no results")]
     NoResults,
     #[error("Service '{provenance}' error")]
     User {
@@ -224,7 +240,7 @@ pub enum DiscoveryError {
     },
 }
 
-impl DiscoveryError {
+impl Error {
     /// Creates a new user error from an arbitrary error type.
     #[track_caller]
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
@@ -246,31 +262,31 @@ impl DiscoveryError {
     /// Creates a new user error from an arbitrary error type that can be converted into [`AnyError`].
     #[track_caller]
     pub fn from_err_any(provenance: &'static str, source: impl Into<AnyError>) -> Self {
-        e!(DiscoveryError::User {
+        e!(Error::User {
             provenance,
             source: Arc::new(source.into())
         })
     }
 }
 
-/// Endpoint discovery for [`super::Endpoint`].
+/// AddressLookup system for [`super::Endpoint`].
 ///
 /// This trait defines publishing and resolving addressing information for a [`EndpointId`].
 /// This enables connecting to other endpoints with only knowing the [`EndpointId`], by using this
-/// [`Discovery`] system to look up the actual addressing information.  It is common for
+/// [`AddressLookup`] system to look up the actual addressing information.  It is common for
 /// implementations to require each endpoint to publish their own information before it can be
 /// looked up by other endpoints.
 ///
 /// The published addressing information can include both a [`RelayUrl`] and/or direct
 /// addresses. See [`EndpointData`] for details.
 ///
-/// To allow for discovery, the [`super::Endpoint`] will call `publish` whenever
-/// discovery information changes. If a discovery mechanism requires a periodic
+/// To allow for Address Lookup, the [`super::Endpoint`] will call `publish` whenever
+/// Address Lookup information changes. If an Address Lookup mechanism requires a periodic
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::RelayUrl
-pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
-    /// Publishes the given [`EndpointData`] to the discovery mechanism.
+pub trait AddressLookup: std::fmt::Debug + Send + Sync + 'static {
+    /// Publishes the given [`EndpointData`] to the Address Lookup mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
     /// publishing. If publishing is async, the implementation should start it's own task.
@@ -279,56 +295,50 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
     fn publish(&self, _data: &EndpointData) {}
 
-    /// Resolves the [`DiscoveryItem`] for the given [`EndpointId`].
+    /// Resolves the [`Item`] for the given [`EndpointId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
-    fn resolve(
-        &self,
-        _endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
         None
     }
 }
 
-impl<T: Discovery> Discovery for Arc<T> {
+impl<T: AddressLookup> AddressLookup for Arc<T> {
     fn publish(&self, data: &EndpointData) {
         self.as_ref().publish(data);
     }
 
-    fn resolve(
-        &self,
-        endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
         self.as_ref().resolve(endpoint_id)
     }
 }
 
-/// Endpoint discovery results from [`Discovery`] services.
+/// Address lookup results from [`AddressLookup`]s.
 ///
-/// This is the item in the streams returned from [`Discovery::resolve`].
-/// It contains the [`EndpointData`] about the discovered endpoint,
-/// and some additional metadata about the discovery.
+/// This is the item in the streams returned from [`AddressLookup::resolve`].
+/// It contains the [`EndpointData`] about the resolved endpoint addresses,
+/// and some additional metadata about the address lookup system.
 ///
 /// This struct derefs to [`EndpointData`], so you can access the methods from [`EndpointData`]
-/// directly from [`DiscoveryItem`].
+/// directly from [`Item`].
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DiscoveryItem {
-    /// The endpoint info for the endpoint, as discovered by the the discovery service.
+pub struct Item {
+    /// The endpoint info for the endpoint, as discovered by the the Address Lookup.
     endpoint_info: EndpointInfo,
-    /// A static string to identify the discovery source.
+    /// A static string to identify the Address Lookup source.
     ///
-    /// Should be uniform per discovery service.
+    /// Should be uniform per Address Lookup.
     provenance: &'static str,
     /// Optional timestamp when this endpoint address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
-    // TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each endpoint to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
+    // TODO(ramfox): this is currently unused. As we develop more `AddressLookup`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each endpoint to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
     last_updated: Option<u64>,
 }
 
-impl DiscoveryItem {
-    /// Creates a new [`DiscoveryItem`] from a [`EndpointInfo`].
+impl Item {
+    /// Creates a new [`Item`] from a [`EndpointInfo`].
     pub fn new(
         endpoint_info: EndpointInfo,
         provenance: &'static str,
@@ -351,10 +361,10 @@ impl DiscoveryItem {
         &self.endpoint_info
     }
 
-    /// Returns the provenance of this discovery item.
+    /// Returns the provenance of this Address Lookup item.
     ///
-    /// The provenance is a static string which identifies the discovery service that produced
-    /// this discovery item.
+    /// The provenance is a static string which identifies the Address Lookup service that produced
+    /// this item.
     pub fn provenance(&self) -> &'static str {
         self.provenance
     }
@@ -382,54 +392,54 @@ impl DiscoveryItem {
     }
 }
 
-impl std::ops::Deref for DiscoveryItem {
+impl std::ops::Deref for Item {
     type Target = EndpointData;
     fn deref(&self) -> &Self::Target {
         &self.endpoint_info.data
     }
 }
 
-impl From<DiscoveryItem> for EndpointInfo {
-    fn from(item: DiscoveryItem) -> Self {
+impl From<Item> for EndpointInfo {
+    fn from(item: Item) -> Self {
         item.endpoint_info
     }
 }
 
-/// A discovery service that combines multiple discovery sources.
+/// An Address Lookup service that combines multiple Address Lookup sources.
 ///
-/// The discovery services will resolve concurrently.
+/// The Address Lookup will resolve concurrently.
 #[derive(Debug, Default, Clone)]
-pub struct ConcurrentDiscovery {
-    services: Arc<RwLock<Vec<Box<dyn Discovery>>>>,
+pub struct ConcurrentAddressLookup {
+    services: Arc<RwLock<Vec<Box<dyn AddressLookup>>>>,
     /// The data last published, used to publish when adding a new service.
     last_data: Arc<RwLock<Option<EndpointData>>>,
 }
 
-impl ConcurrentDiscovery {
-    /// Creates an empty [`ConcurrentDiscovery`].
+impl ConcurrentAddressLookup {
+    /// Creates an empty [`ConcurrentAddressLookup`].
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// Creates a new [`ConcurrentDiscovery`].
-    pub fn from_services(services: Vec<Box<dyn Discovery>>) -> Self {
+    /// Creates a new [`ConcurrentAddressLookup`].
+    pub fn from_services(services: Vec<Box<dyn AddressLookup>>) -> Self {
         Self {
             services: Arc::new(RwLock::new(services)),
             last_data: Default::default(),
         }
     }
 
-    /// Adds a [`Discovery`] service.
+    /// Adds an [`AddressLookup`] service.
     ///
-    /// If there is historical discovery data, it will be published immediately on this service.
-    pub fn add(&self, service: impl Discovery + 'static) {
+    /// If there is historical Address Lookup data, it will be published immediately on this service.
+    pub fn add(&self, service: impl AddressLookup + 'static) {
         self.add_boxed(Box::new(service))
     }
 
-    /// Adds an already `Box`ed [`Discovery`] service.
+    /// Adds an already `Box`ed [`AddressLookup`] service.
     ///
-    /// If there is historical discovery data, it will be published immediately on this service.
-    pub fn add_boxed(&self, service: Box<dyn Discovery>) {
+    /// If there is historical Address Lookup data, it will be published immediately on this service.
+    pub fn add_boxed(&self, service: Box<dyn AddressLookup>) {
         {
             let data = self.last_data.read().expect("poisoned");
             if let Some(data) = &*data {
@@ -450,9 +460,9 @@ impl ConcurrentDiscovery {
     }
 }
 
-impl<T> From<T> for ConcurrentDiscovery
+impl<T> From<T> for ConcurrentAddressLookup
 where
-    T: IntoIterator<Item = Box<dyn Discovery>>,
+    T: IntoIterator<Item = Box<dyn AddressLookup>>,
 {
     fn from(iter: T) -> Self {
         let services = iter.into_iter().collect::<Vec<_>>();
@@ -463,7 +473,7 @@ where
     }
 }
 
-impl Discovery for ConcurrentDiscovery {
+impl AddressLookup for ConcurrentAddressLookup {
     fn publish(&self, data: &EndpointData) {
         let services = self.services.read().expect("poisoned");
         for service in &*services {
@@ -476,10 +486,7 @@ impl Discovery for ConcurrentDiscovery {
             .replace(data.clone());
     }
 
-    fn resolve(
-        &self,
-        endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
         let services = self.services.read().expect("poisoned");
         let streams = services
             .iter()
@@ -500,7 +507,7 @@ mod tests {
     };
 
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
-    use n0_error::{AnyError as Error, Result, StackResultExt};
+    use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::{StreamExt, time};
     use n0_tracing_test::traced_test;
     use rand::{CryptoRng, Rng, SeedableRng};
@@ -515,13 +522,13 @@ mod tests {
     type InfoStore = HashMap<EndpointId, (EndpointData, u64)>;
 
     #[derive(Debug, Clone, Default)]
-    struct TestDiscoveryShared {
+    struct TestAddressLookupShared {
         endpoints: Arc<Mutex<InfoStore>>,
     }
 
-    impl TestDiscoveryShared {
-        pub fn create_discovery(&self, endpoint_id: EndpointId) -> TestDiscovery {
-            TestDiscovery {
+    impl TestAddressLookupShared {
+        pub fn create_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+            TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
                 publish: true,
@@ -530,8 +537,8 @@ mod tests {
             }
         }
 
-        pub fn create_lying_discovery(&self, endpoint_id: EndpointId) -> TestDiscovery {
-            TestDiscovery {
+        pub fn create_lying_address_lookup(&self, endpoint_id: EndpointId) -> TestAddressLookup {
+            TestAddressLookup {
                 endpoint_id,
                 shared: self.clone(),
                 publish: false,
@@ -542,15 +549,15 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct TestDiscovery {
+    struct TestAddressLookup {
         endpoint_id: EndpointId,
-        shared: TestDiscoveryShared,
+        shared: TestAddressLookupShared,
         publish: bool,
         resolve_wrong: bool,
         delay: Duration,
     }
 
-    impl Discovery for TestDiscovery {
+    impl AddressLookup for TestAddressLookup {
         fn publish(&self, data: &EndpointData) {
             if !self.publish {
                 return;
@@ -563,10 +570,7 @@ mod tests {
                 .insert(self.endpoint_id, (data.clone(), now));
         }
 
-        fn resolve(
-            &self,
-            endpoint_id: EndpointId,
-        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        fn resolve(&self, endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
             let addr_info = if self.resolve_wrong {
                 let ts = system_time_now() - 100_000;
                 let port: u16 = rand::rng().random_range(10_000..20_000);
@@ -584,7 +588,7 @@ mod tests {
             };
             let stream = match addr_info {
                 Some((data, ts)) => {
-                    let item = DiscoveryItem::new(
+                    let item = Item::new(
                         EndpointInfo::from_parts(endpoint_id, data),
                         "test-disco",
                         Some(ts),
@@ -604,52 +608,49 @@ mod tests {
     }
 
     #[derive(Debug, Clone)]
-    struct EmptyDiscovery;
+    struct EmptyAddressLookup;
 
-    impl Discovery for EmptyDiscovery {
+    impl AddressLookup for EmptyAddressLookup {
         fn publish(&self, _data: &EndpointData) {}
 
-        fn resolve(
-            &self,
-            _endpoint_id: EndpointId,
-        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        fn resolve(&self, _endpoint_id: EndpointId) -> Option<BoxStream<Result<Item, Error>>> {
             Some(n0_future::stream::empty().boxed())
         }
     }
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
-    /// This is a smoke test for our discovery mechanism.
+    /// This is a smoke test for our Address Lookupmechanism.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_simple_shared() -> Result {
+    async fn address_lookup_simple_shared() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let disco_shared = TestDiscoveryShared::default();
+        let eir_shared = TestAddressLookupShared::default();
         let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+            new_endpoint(&mut rng, |ep| eir_shared.create_address_lookup(ep.id())).await;
 
         let (ep2, _guard2) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+            new_endpoint(&mut rng, |ep| eir_shared.create_address_lookup(ep.id())).await;
         let ep1_addr = EndpointAddr::new(ep1.id());
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
 
-    /// This is a smoke test to ensure a discovery service can be
-    /// `Arc`-d, and discovery will still work
+    /// This is a smoke test to ensure a Address Lookup can be
+    /// `Arc`-d, and Address Lookup will still work
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_simple_shared_with_arc() -> Result {
+    async fn address_lookup_simple_shared_with_arc() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let disco_shared = TestDiscoveryShared::default();
+        let address_lookup_shared = TestAddressLookupShared::default();
         let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
-            Arc::new(disco_shared.create_discovery(ep.id()))
+            Arc::new(address_lookup_shared.create_address_lookup(ep.id()))
         })
         .await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            Arc::new(disco_shared.create_discovery(ep.id()))
+            Arc::new(address_lookup_shared.create_address_lookup(ep.id()))
         })
         .await;
         let ep1_addr = EndpointAddr::new(ep1.id());
@@ -657,25 +658,27 @@ mod tests {
         Ok(())
     }
 
-    /// This test adds an empty discovery which provides no addresses.
+    /// This test adds an empty Address Lookupwhich provides no addresses.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty_and_right() -> Result {
+    async fn address_lookup_combined_with_empty_and_right() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let address_lookup_shared = TestAddressLookupShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
         let (ep2, _guard2) = new_endpoint_add(&mut rng, |ep| {
-            let disco1 = EmptyDiscovery;
-            let disco2 = disco_shared.create_discovery(ep.id());
-            ep.discovery().add(disco1);
-            ep.discovery().add(disco2);
+            let disco1 = EmptyAddressLookup;
+            let disco2 = address_lookup_shared.create_address_lookup(ep.id());
+            ep.address_lookup().add(disco1);
+            ep.address_lookup().add(disco2);
         })
         .await;
 
         let ep1_addr = EndpointAddr::new(ep1.id());
 
-        assert_eq!(ep2.discovery().len(), 2);
+        assert_eq!(ep2.address_lookup().len(), 2);
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -683,26 +686,28 @@ mod tests {
         Ok(())
     }
 
-    /// This test adds a "lying" discovery which provides a wrong address.
-    /// This is to make sure that as long as one of the discoveries returns a working address, we
+    /// This test adds a "lying" address_lookup service which provides a wrong address.
+    /// This is to make sure that as long as one of the services returns a working address, we
     /// will connect successfully.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty_and_wrong() -> Result {
+    async fn address_lookup_combined_with_empty_and_wrong() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let address_lookup_shared = TestAddressLookupShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            let disco1 = EmptyDiscovery;
-            let disco2 = disco_shared.create_lying_discovery(ep.id());
-            let disco3 = disco_shared.create_discovery(ep.id());
-            let disco = ConcurrentDiscovery::empty();
-            disco.add(disco1);
-            disco.add(disco2);
-            disco.add(disco3);
-            disco
+            let address_lookup1 = EmptyAddressLookup;
+            let address_lookup2 = address_lookup_shared.create_lying_address_lookup(ep.id());
+            let address_lookup3 = address_lookup_shared.create_address_lookup(ep.id());
+            let address_lookup = ConcurrentAddressLookup::empty();
+            address_lookup.add(address_lookup1);
+            address_lookup.add(address_lookup2);
+            address_lookup.add(address_lookup3);
+            address_lookup
         })
         .await;
 
@@ -710,19 +715,21 @@ mod tests {
         Ok(())
     }
 
-    /// This test only has the "lying" discovery. It is here to make sure that this actually fails.
+    /// This test only has the "lying" address lookup system. It is here to make sure that this actually fails.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_wrong_only() -> Result {
+    async fn address_lookup_combined_wrong_only() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let address_lookup_shared = TestAddressLookupShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
 
         let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
-            let disco1 = disco_shared.create_lying_discovery(ep.id());
-            ConcurrentDiscovery::from_services(vec![Box::new(disco1)])
+            let address_lookup1 = address_lookup_shared.create_lying_address_lookup(ep.id());
+            ConcurrentAddressLookup::from_services(vec![Box::new(address_lookup1)])
         })
         .await;
 
@@ -742,17 +749,21 @@ mod tests {
     }
 
     /// This test first adds a wrong address manually (e.g. from an outdated&endpoint_id ticket).
-    /// Connect should still succeed because the discovery service will be invoked (after a delay).
+    /// Connect should still succeed because the address lookup service service will be invoked (after a delay).
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_with_wrong_existing_addr() -> Result {
+    async fn address_lookup_with_wrong_existing_addr() -> Result {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-        let disco_shared = TestDiscoveryShared::default();
-        let (ep1, _guard1) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
-        let (ep2, _guard2) =
-            new_endpoint(&mut rng, |ep| disco_shared.create_discovery(ep.id())).await;
+        let address_lookup_shared = TestAddressLookupShared::default();
+        let (ep1, _guard1) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
+        let (ep2, _guard2) = new_endpoint(&mut rng, |ep| {
+            address_lookup_shared.create_address_lookup(ep.id())
+        })
+        .await;
 
         let ep1_wrong_addr = EndpointAddr::from_parts(
             ep1.id(),
@@ -762,20 +773,20 @@ mod tests {
         Ok(())
     }
 
-    async fn new_endpoint<R: CryptoRng, D: Discovery + 'static, F: FnOnce(&Endpoint) -> D>(
+    async fn new_endpoint<R: CryptoRng, D: AddressLookup + 'static, F: FnOnce(&Endpoint) -> D>(
         rng: &mut R,
         create_disco: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         new_endpoint_add(rng, |ep| {
             let disco = create_disco(ep);
-            ep.discovery().add(disco);
+            ep.address_lookup().add(disco);
         })
         .await
     }
 
     async fn new_endpoint_add<R: CryptoRng, F: FnOnce(&Endpoint)>(
         rng: &mut R,
-        add_disco: F,
+        add_address_lookup: F,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let secret = SecretKey::generate(rng);
 
@@ -785,7 +796,7 @@ mod tests {
             .bind()
             .await
             .unwrap();
-        add_disco(&ep);
+        add_address_lookup(&ep);
 
         let handle = tokio::spawn({
             let ep = ep.clone();
@@ -799,7 +810,7 @@ mod tests {
                     connections.push(conn);
                 }
 
-                Ok::<_, Error>(())
+                Ok::<_, AnyError>(())
             }
         });
 
@@ -814,7 +825,7 @@ mod tests {
     }
 }
 
-/// This module contains end-to-end tests for DNS endpoint discovery.
+/// This module contains end-to-end tests for DNS address lookup service.
 ///
 /// The tests run a minimal test DNS server to resolve against, and a minimal pkarr relay to
 /// publish to. The DNS and pkarr servers share their state.
@@ -822,7 +833,7 @@ mod tests {
 mod test_dns_pkarr {
     use iroh_base::{EndpointAddr, SecretKey, TransportAddr};
     use iroh_relay::{RelayMap, endpoint_info::UserData};
-    use n0_error::{AnyError as Error, Result, StackResultExt};
+    use n0_error::{AnyError, Result, StackResultExt};
     use n0_future::time::Duration;
     use n0_tracing_test::traced_test;
     use rand::{CryptoRng, SeedableRng};
@@ -830,7 +841,7 @@ mod test_dns_pkarr {
 
     use crate::{
         Endpoint, RelayMode,
-        discovery::{EndpointData, pkarr::PkarrPublisher},
+        address_lookup::{EndpointData, PkarrPublisher},
         dns::DnsResolver,
         endpoint_info::EndpointInfo,
         test_utils::{
@@ -919,8 +930,10 @@ mod test_dns_pkarr {
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let (ep1, _guard1) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
-        let (ep2, _guard2) = ep_with_discovery(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep1, _guard1) =
+            ep_with_address_lookup(&mut rng, &relay_map, &dns_pkarr_server).await?;
+        let (ep2, _guard2) =
+            ep_with_address_lookup(&mut rng, &relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
@@ -933,7 +946,7 @@ mod test_dns_pkarr {
         Ok(())
     }
 
-    async fn ep_with_discovery<R: CryptoRng + ?Sized>(
+    async fn ep_with_address_lookup<R: CryptoRng + ?Sized>(
         rng: &mut R,
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
@@ -944,7 +957,7 @@ mod test_dns_pkarr {
             .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
-            .discovery(dns_pkarr_server.discovery(secret_key))
+            .address_lookup(dns_pkarr_server.address_lookup(secret_key))
             .bind()
             .await?;
 
@@ -957,7 +970,7 @@ mod test_dns_pkarr {
                     // Just accept incoming connections, but don't do anything with them.
                 }
 
-                Ok::<_, Error>(())
+                Ok::<_, AnyError>(())
             }
         });
 

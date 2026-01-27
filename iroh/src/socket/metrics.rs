@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[allow(missing_docs)]
 #[derive(Debug, Serialize, Deserialize, MetricsGroup)]
 #[non_exhaustive]
-#[metrics(name = "magicsock", default)]
+#[metrics(name = "socket", default)]
 pub struct Metrics {
     pub update_direct_addrs: Counter,
 
