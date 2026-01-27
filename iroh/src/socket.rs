@@ -39,7 +39,11 @@ use netwatch::ip::LocalAddresses;
 use netwatch::netmon;
 use quinn::WeakConnectionHandle;
 use rand::Rng;
-use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
+use tokio::sync::{
+    Mutex as AsyncMutex,
+    mpsc::{self},
+    oneshot,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Level, debug, event, info_span, instrument, trace, warn};
 use transports::{LocalAddrsWatch, Transport, TransportConfig};
@@ -59,11 +63,15 @@ use crate::{
     endpoint::hooks::EndpointHooksList,
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, Report},
-    socket::remote_map::{PathsWatcher, RemoteInfo},
+    socket::{
+        concurrent_read_map::ReadOnlyMap,
+        remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
+    },
 };
 
 mod metrics;
 
+pub(crate) mod concurrent_read_map;
 pub(crate) mod mapped_addrs;
 pub(crate) mod remote_map;
 pub(crate) mod transports;
@@ -194,6 +202,10 @@ impl ShutdownState {
 pub(crate) struct Socket {
     /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
+    /// Channels for sending time-crucial messages to `RemoteStateActors`.
+    ///
+    /// Currently only exists to support sending `SendDatagram` messages.
+    remote_actors: ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
     /// EndpointId of this endpoint.
     public_key: PublicKey,
 
@@ -207,8 +219,8 @@ pub(crate) struct Socket {
     net_report: Watchable<(Option<Report>, UpdateReason)>,
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
-    /// Tracks the networkmap endpoint entity for each address lookup key.
-    pub(crate) remote_map: RemoteMap,
+    /// Maps for resolving mapped addrs to/from IP and relay addresses.
+    mapped_addrs: MappedAddrs,
 
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
@@ -277,11 +289,12 @@ impl Socket {
     ) -> impl Future<Output = Result<PathsWatcher, RemoteStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
-        let sender = self.remote_map.remote_state_actor(remote);
+        let sender = self.actor_sender.clone();
         async move {
             sender
-                .send(RemoteStateMessage::AddConnection(conn, tx))
-                .await?;
+                .send(ActorMessage::AddConnection(remote, conn, tx))
+                .await
+                .map_err(|_| RemoteStateActorStoppedError::new())?;
             rx.await.map_err(|_| RemoteStateActorStoppedError::new())
         }
     }
@@ -318,26 +331,23 @@ impl Socket {
         addr: EndpointAddr,
     ) -> Result<Result<EndpointIdMappedAddr, AddressLookupError>, RemoteStateActorStoppedError>
     {
-        let EndpointAddr { id, addrs } = addr;
-        let actor = self.remote_map.remote_state_actor(id);
         let (tx, rx) = oneshot::channel();
-        actor
-            .send(RemoteStateMessage::ResolveRemote(addrs, tx))
-            .await?;
-        match rx.await {
-            Ok(Ok(())) => Ok(Ok(self.remote_map.endpoint_mapped_addr(id))),
-            Ok(Err(err)) => Ok(Err(err)),
-            Err(_) => Err(RemoteStateActorStoppedError::new()),
-        }
+        self.actor_sender
+            .send(ActorMessage::ResolveRemote(addr, tx))
+            .await
+            .ok();
+        rx.await.map_err(|_| RemoteStateActorStoppedError::new())?
     }
 
     /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
     ///
     /// Returns `None` if no actor is running for the remote.
     pub(crate) async fn remote_info(&self, id: EndpointId) -> Option<RemoteInfo> {
-        let actor = self.remote_map.remote_state_actor_if_exists(id)?;
         let (tx, rx) = oneshot::channel();
-        actor.send(RemoteStateMessage::RemoteInfo(tx)).await.ok()?;
+        self.actor_sender
+            .send(ActorMessage::RemoteInfo(id, tx))
+            .await
+            .ok()?;
         rx.await.ok()
     }
 
@@ -361,6 +371,21 @@ impl Socket {
             .await
             .ok();
         res
+    }
+
+    /// Tries to send a [`RemoteStateMessage`] to the `RemoteStateActor` for given [`EndpointId`].
+    ///
+    /// Returns an error if there currently is no remote state actor running for this, or when it
+    /// is currently shutting down.
+    pub(crate) fn try_send_remote_state_msg(
+        &self,
+        endpoint_id: EndpointId,
+        message: RemoteStateMessage,
+    ) -> Result<(), RemoteStateMessage> {
+        let Some(sender) = self.remote_actors.get(&endpoint_id) else {
+            return Err(message);
+        };
+        sender.try_send(message).map_err(|err| err.into_inner())
     }
 
     /// Returns a [`Watcher`] for this socket's direct addresses.
@@ -534,8 +559,8 @@ impl Socket {
 
                     // Fill in the correct mapped address
                     let mapped_addr = self
-                        .remote_map
-                        .relay_mapped_addrs
+                        .mapped_addrs
+                        .relay_addrs
                         .get(&(src_url.clone(), *src_node));
                     quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
@@ -851,9 +876,10 @@ impl Handle {
         let sock = Arc::new(Socket {
             public_key: secret_key.public(),
             actor_sender: actor_sender.clone(),
+            remote_actors: remote_map.senders(),
             shutdown: shutdown_state,
             ipv6_reported,
-            remote_map,
+            mapped_addrs: remote_map.mapped_addrs.clone(),
             address_lookup,
             relay_map: relay_map.clone(),
             address_lookup_user_data: RwLock::new(address_lookup_user_data),
@@ -943,6 +969,7 @@ impl Handle {
         let mut actor = Actor {
             msg_receiver: actor_receiver,
             sock: sock.clone(),
+            remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
             netmon_watcher,
@@ -1054,17 +1081,34 @@ fn default_quic_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 #[allow(clippy::enum_variant_names)]
 enum ActorMessage {
     NetworkChange,
     RelayMapChange,
+    #[debug("ResolveRemote(..)")]
+    ResolveRemote(
+        EndpointAddr,
+        oneshot::Sender<
+            Result<Result<EndpointIdMappedAddr, AddressLookupError>, RemoteStateActorStoppedError>,
+        >,
+    ),
+    #[debug("AddConnection(..)")]
+    AddConnection(
+        EndpointId,
+        WeakConnectionHandle,
+        oneshot::Sender<PathsWatcher>,
+    ),
+    #[debug("RemoteInfo(..)")]
+    RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
     #[cfg(test)]
     ForceNetworkChange(bool),
 }
 
 struct Actor {
     sock: Arc<Socket>,
+    /// Tracks the networkmap endpoint entity for each endpoint discovery key.
+    remote_map: RemoteMap,
     msg_receiver: mpsc::Receiver<ActorMessage>,
     /// When set, is an AfterFunc timer that will call Socket::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
@@ -1207,7 +1251,7 @@ impl Actor {
                     self.sock.metrics.socket.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
-                eid = poll_fn(|cx| self.sock.remote_map.poll_cleanup(cx)) => {
+                eid = poll_fn(|cx| self.remote_map.poll_cleanup(cx)) => {
                     trace!(%eid, "cleaned up RemoteStateActor");
                 }
                 else => {
@@ -1232,7 +1276,7 @@ impl Actor {
             self.re_stun(UpdateReason::LinkChangeMinor);
         }
 
-        self.sock.remote_map.on_network_change(is_major);
+        self.remote_map.on_network_change(is_major);
     }
 
     fn handle_relay_map_change(&mut self) {
@@ -1255,6 +1299,19 @@ impl Actor {
             }
             ActorMessage::RelayMapChange => {
                 self.handle_relay_map_change();
+            }
+            ActorMessage::ResolveRemote(addr, tx) => {
+                tx.send(self.remote_map.resolve_remote(addr).await).ok();
+            }
+            ActorMessage::RemoteInfo(id, tx) => {
+                if let Some(info) = self.remote_map.remote_info(id).await {
+                    tx.send(info).ok();
+                }
+            }
+            ActorMessage::AddConnection(remote, conn, tx) => {
+                if let Some(watcher) = self.remote_map.add_connection(remote, conn).await {
+                    tx.send(watcher).ok();
+                }
             }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
