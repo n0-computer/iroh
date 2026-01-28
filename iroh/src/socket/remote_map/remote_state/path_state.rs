@@ -111,7 +111,9 @@ impl RemotePathState {
                     transports::Addr::Relay(_, _) => {
                         self.metrics.transport_relay_paths_removed.inc()
                     }
-                    transports::Addr::Custom(_) => self.metrics.transport_custom_paths_removed.inc(),
+                    transports::Addr::Custom(_) => {
+                        self.metrics.transport_custom_paths_removed.inc()
+                    }
                 };
             }
             match state.status {

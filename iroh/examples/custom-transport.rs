@@ -3,9 +3,12 @@ use std::{sync::Arc, time::Duration};
 use clap::Parser;
 use iroh::{
     Endpoint, SecretKey, TransportAddr,
-    endpoint::{Builder, Connection, transports::{AddrKind, TransportBias}},
+    endpoint::{
+        Builder, Connection,
+        transports::{AddrKind, TransportBias},
+    },
     protocol::{AcceptError, ProtocolHandler, Router},
-    test_utils::test_transport::{TestNetwork, TestTransport, TEST_TRANSPORT_ID},
+    test_utils::test_transport::{TEST_TRANSPORT_ID, TestNetwork, TestTransport},
 };
 use n0_error::{Result, StdResultExt};
 use n0_watcher::Watcher;

@@ -17,7 +17,11 @@ use tracing::info;
 
 use crate::{
     address_lookup::{AddressLookup, EndpointData, EndpointInfo, Item},
-    endpoint::{Builder, presets::Preset, transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit}},
+    endpoint::{
+        Builder,
+        presets::Preset,
+        transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit},
+    },
 };
 
 /// The transport ID used by [`TestNetwork`].
@@ -305,5 +309,218 @@ impl CustomEndpoint for TestTransport {
         } else {
             Poll::Pending
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use n0_error::{Result, StdResultExt};
+    use n0_watcher::Watcher;
+
+    use super::*;
+    use crate::{
+        Endpoint, EndpointAddr, RelayMode, SecretKey, TransportAddr,
+        endpoint::{
+            Builder, Connection,
+            transports::{AddrKind, TransportBias},
+        },
+        protocol::{AcceptError, ProtocolHandler, Router},
+    };
+
+    const ECHO_ALPN: &[u8] = b"test/echo";
+
+    #[derive(Debug, Clone)]
+    struct Echo;
+
+    impl ProtocolHandler for Echo {
+        async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+            let (mut send, mut recv) = connection.accept_bi().await?;
+            tokio::io::copy(&mut recv, &mut send).await?;
+            send.finish()?;
+            connection.closed().await;
+            Ok(())
+        }
+    }
+
+    /// Creates a basic endpoint builder with the given secret key and custom transport.
+    fn endpoint_builder(
+        secret_key: SecretKey,
+        transport: Arc<TestTransport>,
+        custom_bias: Option<TransportBias>,
+        keep_ip: bool,
+    ) -> Builder {
+        let mut builder = Endpoint::builder()
+            .secret_key(secret_key)
+            .relay_mode(RelayMode::Disabled)
+            .add_custom_transport(transport);
+        if let Some(bias) = custom_bias {
+            builder = builder.transport_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias);
+        }
+        if !keep_ip {
+            builder = builder.clear_ip_transports();
+        }
+        builder
+    }
+
+    /// Creates an address with both IP (from endpoint) and custom transport addresses.
+    fn mixed_addr(ep: &Endpoint, endpoint_id: EndpointId) -> EndpointAddr {
+        let ep_addr = ep.addr();
+        let custom_addr = to_custom_addr(endpoint_id);
+        EndpointAddr::from_parts(
+            endpoint_id,
+            ep_addr
+                .addrs
+                .iter()
+                .cloned()
+                .chain(std::iter::once(TransportAddr::Custom(custom_addr))),
+        )
+    }
+
+    /// Creates an address with only the custom transport address.
+    fn custom_only_addr(endpoint_id: EndpointId) -> EndpointAddr {
+        EndpointAddr::from_parts(
+            endpoint_id,
+            std::iter::once(TransportAddr::Custom(to_custom_addr(endpoint_id))),
+        )
+    }
+
+    /// Returns true if the selected path is the custom transport.
+    fn is_custom_selected(conn: &crate::endpoint::Connection) -> bool {
+        let paths = conn.paths().get();
+        paths.iter().find(|p| p.is_selected()).is_some_and(
+            |p| matches!(p.remote_addr(), TransportAddr::Custom(a) if a.id() == TEST_TRANSPORT_ID),
+        )
+    }
+
+    /// Returns true if the selected path is an IP transport.
+    fn is_ip_selected(conn: &crate::endpoint::Connection) -> bool {
+        let paths = conn.paths().get();
+        paths
+            .iter()
+            .find(|p| p.is_selected())
+            .is_some_and(|p| matches!(p.remote_addr(), TransportAddr::Ip(_)))
+    }
+
+    /// Verifies echo works over the connection.
+    async fn verify_echo(conn: &crate::endpoint::Connection, msg: &[u8]) -> Result<()> {
+        let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
+        send.write_all(msg).await.anyerr()?;
+        send.finish().anyerr()?;
+        let response = recv.read_to_end(100).await.anyerr()?;
+        assert_eq!(response, msg);
+        Ok(())
+    }
+
+    /// Test custom transport only - no IP, no relay, dial by custom address.
+    #[tokio::test]
+    async fn test_custom_transport_only() -> Result<()> {
+        let network = TestNetwork::new();
+        let s1 = SecretKey::generate(&mut rand::rng());
+        let s2 = SecretKey::generate(&mut rand::rng());
+
+        let t1 = network.create_transport(s1.public())?;
+        let t2 = network.create_transport(s2.public())?;
+
+        let ep1 = endpoint_builder(s1, t1, None, false).bind().await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, None, false).bind().await?;
+        let router = Router::builder(ep2).accept(ECHO_ALPN, Echo).spawn();
+
+        let conn = ep1
+            .connect(custom_only_addr(s2.public()), ECHO_ALPN)
+            .await?;
+
+        // Verify exactly one path exists and it's the custom transport
+        let paths = conn.paths().get();
+        assert_eq!(paths.len(), 1, "Expected exactly one path");
+        assert!(
+            is_custom_selected(&conn),
+            "Custom transport should be selected"
+        );
+
+        verify_echo(&conn, b"custom only").await?;
+        conn.close(0u32.into(), b"done");
+        router.shutdown().await.anyerr()?;
+        Ok(())
+    }
+
+    /// Test that custom transport is selected over IP when given an RTT advantage.
+    #[tokio::test]
+    async fn test_custom_transport_wins_with_advantage() -> Result<()> {
+        let network = TestNetwork::new();
+        let s1 = SecretKey::generate(&mut rand::rng());
+        let s2 = SecretKey::generate(&mut rand::rng());
+
+        let t1 = network.create_transport(s1.public())?;
+        let t2 = network.create_transport(s2.public())?;
+
+        // Strong RTT advantage for custom transport
+        let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
+
+        let ep1 = endpoint_builder(s1, t1, Some(custom_bias), true)
+            .bind()
+            .await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, Some(custom_bias), true)
+            .bind()
+            .await?;
+        let router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
+
+        let conn = ep1
+            .connect(mixed_addr(&ep2, s2.public()), ECHO_ALPN)
+            .await?;
+
+        // Wait for paths to settle
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(
+            is_custom_selected(&conn),
+            "Custom transport should be selected with RTT advantage"
+        );
+
+        verify_echo(&conn, b"custom wins").await?;
+        conn.close(0u32.into(), b"done");
+        router.shutdown().await.anyerr()?;
+        Ok(())
+    }
+
+    /// Test that IP is selected over custom transport when custom has an RTT disadvantage.
+    #[tokio::test]
+    async fn test_ip_wins_with_custom_disadvantage() -> Result<()> {
+        let network = TestNetwork::new();
+        let s1 = SecretKey::generate(&mut rand::rng());
+        let s2 = SecretKey::generate(&mut rand::rng());
+
+        let t1 = network.create_transport(s1.public())?;
+        let t2 = network.create_transport(s2.public())?;
+
+        // Strong RTT disadvantage for custom transport
+        let custom_bias =
+            TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(100));
+
+        let ep1 = endpoint_builder(s1, t1, Some(custom_bias), true)
+            .bind()
+            .await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, Some(custom_bias), true)
+            .bind()
+            .await?;
+        let router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
+
+        let conn = ep1
+            .connect(mixed_addr(&ep2, s2.public()), ECHO_ALPN)
+            .await?;
+
+        // Wait for paths to settle
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert!(
+            is_ip_selected(&conn),
+            "IP transport should be selected when custom has RTT disadvantage"
+        );
+
+        verify_echo(&conn, b"ip wins").await?;
+        conn.close(0u32.into(), b"done");
+        router.shutdown().await.anyerr()?;
+        Ok(())
     }
 }

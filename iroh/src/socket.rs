@@ -65,7 +65,8 @@ use crate::{
     net_report::{self, IfStateDetails, Report},
     socket::{
         concurrent_read_map::ReadOnlyMap,
-        remote_map::{MappedAddrs, PathsWatcher, RemoteInfo}, transports::TransportBiasMap,
+        remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
+        transports::TransportBiasMap,
     },
 };
 

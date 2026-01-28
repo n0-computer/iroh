@@ -12,8 +12,8 @@ use std::{
 use bytes::Bytes;
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
-use quinn_proto::PathStatus;
 use n0_watcher::Watcher;
+use quinn_proto::PathStatus;
 use relay::{RelayNetworkChangeSender, RelaySender};
 use rustc_hash::FxHashMap;
 use tokio_util::sync::CancellationToken;
@@ -22,10 +22,10 @@ use tracing::{debug, error, instrument, trace, warn};
 use super::{Socket, mapped_addrs::MultipathMappedAddr};
 use crate::{metrics::EndpointMetrics, net_report::Report};
 
+pub(crate) mod custom;
 #[cfg(not(wasm_browser))]
 mod ip;
 mod relay;
-pub(crate) mod custom;
 
 use custom::{CustomEndpoint, CustomSender, CustomTransport};
 
@@ -51,7 +51,8 @@ pub(crate) struct Transports {
 /// Combined watcher type for all ip transports
 type IpTransportsWatcher = n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>;
 /// Combined watcher type for all custom transports
-type CustomTransportsWatcher = n0_watcher::Join<Vec<CustomAddr>, n0_watcher::Direct<Vec<CustomAddr>>>;
+type CustomTransportsWatcher =
+    n0_watcher::Join<Vec<CustomAddr>, n0_watcher::Direct<Vec<CustomAddr>>>;
 /// Combined watcher type for all relay transports
 type RelayTransportsWatcher = n0_watcher::Join<
     Option<(RelayUrl, EndpointId)>,
@@ -648,6 +649,7 @@ impl TransportType {
 ///
 /// ```
 /// use std::time::Duration;
+///
 /// use iroh::endpoint::transports::TransportBias;
 ///
 /// // A primary transport with 100ms RTT advantage (will be preferred)
@@ -692,6 +694,16 @@ impl TransportBias {
     /// the same measured RTT but no advantage.
     pub fn with_rtt_advantage(mut self, advantage: Duration) -> Self {
         self.rtt_bias -= advantage.as_nanos() as i128;
+        self
+    }
+
+    /// Adds an RTT disadvantage to this transport, making it less preferred.
+    ///
+    /// The disadvantage is added to the measured RTT during path selection,
+    /// so a transport with a 100ms disadvantage will be avoided in favor of
+    /// one with the same measured RTT but no disadvantage.
+    pub fn with_rtt_disadvantage(mut self, disadvantage: Duration) -> Self {
+        self.rtt_bias += disadvantage.as_nanos() as i128;
         self
     }
 }
@@ -1174,7 +1186,10 @@ mod tests {
 
         // IPv6 should have lower biased RTT (more preferred)
         assert!(v6_biased_rtt < v4_biased_rtt);
-        assert_eq!(v4_biased_rtt - v6_biased_rtt, IPV6_RTT_ADVANTAGE.as_nanos() as i128);
+        assert_eq!(
+            v4_biased_rtt - v6_biased_rtt,
+            IPV6_RTT_ADVANTAGE.as_nanos() as i128
+        );
     }
 
     #[test]

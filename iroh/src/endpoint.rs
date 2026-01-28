@@ -29,7 +29,7 @@ use url::Url;
 /// Types for defining custom transports
 pub mod transports {
     pub use super::socket::transports::{
-        Addr, AddrKind, TransportBias, TransportType, Transmit,
+        Addr, AddrKind, Transmit, TransportBias, TransportType,
         custom::{CustomEndpoint, CustomSender, CustomTransport},
     };
 }

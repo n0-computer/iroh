@@ -77,7 +77,6 @@ const ACTOR_MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// The minimum RTT difference to make it worth switching IP paths
 const RTT_SWITCHING_MIN_IP: Duration = Duration::from_millis(5);
 
-
 /// A stream of events from all paths for all connections.
 ///
 /// The connection is identified using [`ConnId`].  The event `Err` variant happens when the
@@ -549,7 +548,11 @@ impl RemoteStateActor {
             // is needed.
             if let Some(path) = conn.path(PathId::ZERO)
                 && let Ok(socketaddr) = path.remote_address()
-                && let Some(path_remote) = to_transport_addr(socketaddr, &self.relay_mapped_addrs, &self.custom_mapped_addrs)
+                && let Some(path_remote) = to_transport_addr(
+                    socketaddr,
+                    &self.relay_mapped_addrs,
+                    &self.custom_mapped_addrs,
+                )
             {
                 trace!(?path_remote, "added new connection");
                 let bias = self.transport_bias.get(&path_remote);
@@ -839,7 +842,9 @@ impl RemoteStateActor {
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))
                 .private_socket_addr(),
-            transports::Addr::Custom(addr) => self.custom_mapped_addrs.get(addr).private_socket_addr(),
+            transports::Addr::Custom(addr) => {
+                self.custom_mapped_addrs.get(addr).private_socket_addr()
+            }
         };
 
         for (conn_id, conn_state) in self.connections.iter_mut() {
@@ -938,7 +943,11 @@ impl RemoteStateActor {
                 };
 
                 if let Ok(socketaddr) = path.remote_address()
-                    && let Some(path_remote) = to_transport_addr(socketaddr, &self.relay_mapped_addrs, &self.custom_mapped_addrs)
+                    && let Some(path_remote) = to_transport_addr(
+                        socketaddr,
+                        &self.relay_mapped_addrs,
+                        &self.custom_mapped_addrs,
+                    )
                 {
                     event!(
                         target: "iroh::_events::path::open",
@@ -1036,7 +1045,12 @@ impl RemoteStateActor {
         let path_rtts: FxHashMap<transports::Addr, PathSelectionData> = all_path_rtts
             .into_iter()
             .filter_map(|(addr, rtts)| rtts.into_iter().min().map(|rtt| (addr, rtt)))
-            .map(|(addr, rtt)| (addr.clone(), self.transport_bias.path_selection_data(&addr, rtt)))
+            .map(|(addr, rtt)| {
+                (
+                    addr.clone(),
+                    self.transport_bias.path_selection_data(&addr, rtt),
+                )
+            })
             .collect();
 
         let current_path = self.selected_path.get();
@@ -1127,8 +1141,10 @@ fn select_best_path(
     if current_data.status != best_data.status {
         // Always switch if the status is different (better).
         Some((best_addr.clone(), best_data.rtt))
-    } else if best_data.rtt + RTT_SWITCHING_MIN_IP <= current_data.rtt {
-        // For the same status, only switch if the RTT is significantly better.
+    } else if best_data.biased_rtt + RTT_SWITCHING_MIN_IP.as_nanos() as i128
+        <= current_data.biased_rtt
+    {
+        // For the same status, only switch if the biased RTT is significantly better.
         Some((best_addr.clone(), best_data.rtt))
     } else {
         None

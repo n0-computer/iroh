@@ -21,7 +21,9 @@ pub use self::remote_state::{
 };
 use super::{
     DirectAddr, Metrics as SocketMetrics,
-    mapped_addrs::{AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr},
+    mapped_addrs::{
+        AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr,
+    },
     transports,
 };
 use crate::{
@@ -96,9 +98,7 @@ pub(super) fn to_transport_addr(
             match relay_addrs.lookup(&relay_mapped_addr) {
                 Some(parts) => Some(transports::Addr::from(parts)),
                 None => {
-                    error!(
-                        "Failed to convert addr to transport addr: Unknown relay mapped addr"
-                    );
+                    error!("Failed to convert addr to transport addr: Unknown relay mapped addr");
                     None
                 }
             }
@@ -107,9 +107,7 @@ pub(super) fn to_transport_addr(
             match custom_addrs.lookup(&custom_mapped_addr) {
                 Some(custom_addr) => Some(transports::Addr::Custom(custom_addr)),
                 None => {
-                    error!(
-                        "Failed to convert addr to transport addr: Unknown custom mapped addr"
-                    );
+                    error!("Failed to convert addr to transport addr: Unknown custom mapped addr");
                     None
                 }
             }
@@ -331,7 +329,7 @@ impl Tasks {
             waker.wake();
         }
         sender
-    } 
+    }
 }
 
 /// The origin or *source* through which an address associated with a remote endpoint
