@@ -306,7 +306,7 @@
 <a href=#306 id=306 data-nosnippet>306</a>            .flatten()
 <a href=#307 id=307 data-nosnippet>307</a>            .filter_map(|s| Url::parse(s).ok())
 <a href=#308 id=308 data-nosnippet>308</a>            .map(|url| TransportAddr::Relay(url.into()));
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="comment">// Parse addresses: try IP first, then UserAddr
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="comment">// Parse addresses: try IP first, then CustomAddr
 <a href=#310 id=310 data-nosnippet>310</a>        </span><span class="kw">let </span>addrs = attrs
 <a href=#311 id=311 data-nosnippet>311</a>            .get(<span class="kw-2">&amp;</span>IrohAttr::Addr)
 <a href=#312 id=312 data-nosnippet>312</a>            .into_iter()
@@ -499,7 +499,7 @@
 <a href=#499 id=499 data-nosnippet>499</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>IrohAttr {
 <a href=#500 id=500 data-nosnippet>500</a>    <span class="doccomment">/// URL of home relay.
 <a href=#501 id=501 data-nosnippet>501</a>    </span>Relay,
-<a href=#502 id=502 data-nosnippet>502</a>    <span class="doccomment">/// Address (IP or user transport).
+<a href=#502 id=502 data-nosnippet>502</a>    <span class="doccomment">/// Address (IP or custom transport).
 <a href=#503 id=503 data-nosnippet>503</a>    </span>Addr,
 <a href=#504 id=504 data-nosnippet>504</a>    <span class="doccomment">/// User-defined data
 <a href=#505 id=505 data-nosnippet>505</a>    </span>UserData,
@@ -718,7 +718,7 @@
 <a href=#718 id=718 data-nosnippet>718</a>    }
 <a href=#719 id=719 data-nosnippet>719</a>
 <a href=#720 id=720 data-nosnippet>720</a>    <span class="attr">#[test]
-<a href=#721 id=721 data-nosnippet>721</a>    </span><span class="kw">fn </span>txt_attr_roundtrip_with_user_addr() {
+<a href=#721 id=721 data-nosnippet>721</a>    </span><span class="kw">fn </span>txt_attr_roundtrip_with_custom_addr() {
 <a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">use </span>iroh_base::CustomAddr;
 <a href=#723 id=723 data-nosnippet>723</a>
 <a href=#724 id=724 data-nosnippet>724</a>        <span class="comment">// Bluetooth-like address (small id, 6 byte MAC)
@@ -742,7 +742,7 @@
 <a href=#742 id=742 data-nosnippet>742</a>    }
 <a href=#743 id=743 data-nosnippet>743</a>
 <a href=#744 id=744 data-nosnippet>744</a>    <span class="attr">#[test]
-<a href=#745 id=745 data-nosnippet>745</a>    </span><span class="kw">fn </span>signed_packet_roundtrip_with_user_addr() {
+<a href=#745 id=745 data-nosnippet>745</a>    </span><span class="kw">fn </span>signed_packet_roundtrip_with_custom_addr() {
 <a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">use </span>iroh_base::CustomAddr;
 <a href=#747 id=747 data-nosnippet>747</a>
 <a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>secret_key =

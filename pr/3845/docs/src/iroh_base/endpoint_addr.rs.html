@@ -146,7 +146,7 @@
 <a href=#146 id=146 data-nosnippet>146</a>    <span class="doccomment">/// id
 <a href=#147 id=147 data-nosnippet>147</a>    </span>id: u64,
 <a href=#148 id=148 data-nosnippet>148</a>    <span class="doccomment">/// data
-<a href=#149 id=149 data-nosnippet>149</a>    </span>data: UserAddrBytes,
+<a href=#149 id=149 data-nosnippet>149</a>    </span>data: CustomAddrBytes,
 <a href=#150 id=150 data-nosnippet>150</a>}
 <a href=#151 id=151 data-nosnippet>151</a>
 <a href=#152 id=152 data-nosnippet>152</a><span class="kw">impl </span>fmt::Display <span class="kw">for </span>CustomAddr {
@@ -156,17 +156,17 @@
 <a href=#156 id=156 data-nosnippet>156</a>}
 <a href=#157 id=157 data-nosnippet>157</a>
 <a href=#158 id=158 data-nosnippet>158</a><span class="kw">impl </span>std::str::FromStr <span class="kw">for </span>CustomAddr {
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= UserAddrParseError;
+<a href=#159 id=159 data-nosnippet>159</a>    <span class="kw">type </span><span class="prelude-val">Err </span>= CustomAddrParseError;
 <a href=#160 id=160 data-nosnippet>160</a>
 <a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
 <a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((id_str, data_str)) = s.split_once(<span class="string">'_'</span>) <span class="kw">else </span>{
-<a href=#163 id=163 data-nosnippet>163</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(UserAddrParseError::MissingSeparator);
+<a href=#163 id=163 data-nosnippet>163</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CustomAddrParseError::MissingSeparator);
 <a href=#164 id=164 data-nosnippet>164</a>        };
 <a href=#165 id=165 data-nosnippet>165</a>        <span class="kw">let </span><span class="prelude-val">Ok</span>(id) = u64::from_str_radix(id_str, <span class="number">16</span>) <span class="kw">else </span>{
-<a href=#166 id=166 data-nosnippet>166</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(UserAddrParseError::InvalidId);
+<a href=#166 id=166 data-nosnippet>166</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CustomAddrParseError::InvalidId);
 <a href=#167 id=167 data-nosnippet>167</a>        };
 <a href=#168 id=168 data-nosnippet>168</a>        <span class="kw">let </span><span class="prelude-val">Ok</span>(data) = HEXLOWER.decode(data_str.as_bytes()) <span class="kw">else </span>{
-<a href=#169 id=169 data-nosnippet>169</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(UserAddrParseError::InvalidData);
+<a href=#169 id=169 data-nosnippet>169</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(CustomAddrParseError::InvalidData);
 <a href=#170 id=170 data-nosnippet>170</a>        };
 <a href=#171 id=171 data-nosnippet>171</a>        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::from_parts(id, <span class="kw-2">&amp;</span>data))
 <a href=#172 id=172 data-nosnippet>172</a>    }
@@ -175,7 +175,7 @@
 <a href=#175 id=175 data-nosnippet>175</a><span class="doccomment">/// Error parsing a [`CustomAddr`].
 <a href=#176 id=176 data-nosnippet>176</a></span><span class="attr">#[stack_error(derive)]
 <a href=#177 id=177 data-nosnippet>177</a>#[allow(missing_docs)]
-<a href=#178 id=178 data-nosnippet>178</a></span><span class="kw">pub enum </span>UserAddrParseError {
+<a href=#178 id=178 data-nosnippet>178</a></span><span class="kw">pub enum </span>CustomAddrParseError {
 <a href=#179 id=179 data-nosnippet>179</a>    <span class="doccomment">/// Missing `_` separator between id and data.
 <a href=#180 id=180 data-nosnippet>180</a>    </span><span class="attr">#[error(<span class="string">"missing '_' separator"</span>)]
 <a href=#181 id=181 data-nosnippet>181</a>    </span>MissingSeparator,
@@ -188,12 +188,12 @@
 <a href=#188 id=188 data-nosnippet>188</a>}
 <a href=#189 id=189 data-nosnippet>189</a>
 <a href=#190 id=190 data-nosnippet>190</a><span class="attr">#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-<a href=#191 id=191 data-nosnippet>191</a></span><span class="kw">enum </span>UserAddrBytes {
+<a href=#191 id=191 data-nosnippet>191</a></span><span class="kw">enum </span>CustomAddrBytes {
 <a href=#192 id=192 data-nosnippet>192</a>    Inline { size: u8, data: [u8; <span class="number">30</span>] },
 <a href=#193 id=193 data-nosnippet>193</a>    Heap(Box&lt;[u8]&gt;),
 <a href=#194 id=194 data-nosnippet>194</a>}
 <a href=#195 id=195 data-nosnippet>195</a>
-<a href=#196 id=196 data-nosnippet>196</a><span class="kw">impl </span>fmt::Debug <span class="kw">for </span>UserAddrBytes {
+<a href=#196 id=196 data-nosnippet>196</a><span class="kw">impl </span>fmt::Debug <span class="kw">for </span>CustomAddrBytes {
 <a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
 <a href=#198 id=198 data-nosnippet>198</a>        <span class="kw">if </span>!f.alternate() {
 <a href=#199 id=199 data-nosnippet>199</a>            <span class="macro">write!</span>(f, <span class="string">"[{}]"</span>, HEXLOWER.encode(<span class="self">self</span>.as_bytes()))
@@ -213,7 +213,7 @@
 <a href=#213 id=213 data-nosnippet>213</a>    }
 <a href=#214 id=214 data-nosnippet>214</a>}
 <a href=#215 id=215 data-nosnippet>215</a>
-<a href=#216 id=216 data-nosnippet>216</a><span class="kw">impl </span>UserAddrBytes {
+<a href=#216 id=216 data-nosnippet>216</a><span class="kw">impl </span>CustomAddrBytes {
 <a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">pub fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
 <a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#219 id=219 data-nosnippet>219</a>            <span class="self">Self</span>::Inline { size, .. } =&gt; <span class="kw-2">*</span>size <span class="kw">as </span>usize,
@@ -247,16 +247,16 @@
 <a href=#247 id=247 data-nosnippet>247</a>    </span><span class="kw">pub fn </span>from_parts(id: u64, data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="self">Self </span>{
 <a href=#248 id=248 data-nosnippet>248</a>        <span class="self">Self </span>{
 <a href=#249 id=249 data-nosnippet>249</a>            id,
-<a href=#250 id=250 data-nosnippet>250</a>            data: UserAddrBytes::copy_from_slice(data),
+<a href=#250 id=250 data-nosnippet>250</a>            data: CustomAddrBytes::copy_from_slice(data),
 <a href=#251 id=251 data-nosnippet>251</a>        }
 <a href=#252 id=252 data-nosnippet>252</a>    }
 <a href=#253 id=253 data-nosnippet>253</a>
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="doccomment">/// Id to distinguish different user address types
+<a href=#254 id=254 data-nosnippet>254</a>    <span class="doccomment">/// Id to distinguish different custom address types
 <a href=#255 id=255 data-nosnippet>255</a>    </span><span class="kw">pub fn </span>id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u64 {
 <a href=#256 id=256 data-nosnippet>256</a>        <span class="self">self</span>.id
 <a href=#257 id=257 data-nosnippet>257</a>    }
 <a href=#258 id=258 data-nosnippet>258</a>
-<a href=#259 id=259 data-nosnippet>259</a>    <span class="doccomment">/// Data associated with this user address
+<a href=#259 id=259 data-nosnippet>259</a>    <span class="doccomment">/// Data associated with this custom address
 <a href=#260 id=260 data-nosnippet>260</a>    </span><span class="kw">pub fn </span>data(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[u8] {
 <a href=#261 id=261 data-nosnippet>261</a>        <span class="self">self</span>.data.as_bytes()
 <a href=#262 id=262 data-nosnippet>262</a>    }
@@ -323,7 +323,7 @@
 <a href=#323 id=323 data-nosnippet>323</a>    }
 <a href=#324 id=324 data-nosnippet>324</a>
 <a href=#325 id=325 data-nosnippet>325</a>    <span class="attr">#[test]
-<a href=#326 id=326 data-nosnippet>326</a>    </span><span class="kw">fn </span>test_user_addr_roundtrip() {
+<a href=#326 id=326 data-nosnippet>326</a>    </span><span class="kw">fn </span>test_custom_addr_roundtrip() {
 <a href=#327 id=327 data-nosnippet>327</a>        <span class="comment">// Small id, small data (e.g., Bluetooth MAC)
 <a href=#328 id=328 data-nosnippet>328</a>        </span><span class="kw">let </span>addr = CustomAddr::from_parts(<span class="number">1</span>, <span class="kw-2">&amp;</span>[<span class="number">0xa1</span>, <span class="number">0xb2</span>, <span class="number">0xc3</span>, <span class="number">0xd4</span>, <span class="number">0xe5</span>, <span class="number">0xf6</span>]);
 <a href=#329 id=329 data-nosnippet>329</a>        <span class="kw">let </span>s = addr.to_string();
@@ -357,7 +357,7 @@
 <a href=#357 id=357 data-nosnippet>357</a>    }
 <a href=#358 id=358 data-nosnippet>358</a>
 <a href=#359 id=359 data-nosnippet>359</a>    <span class="attr">#[test]
-<a href=#360 id=360 data-nosnippet>360</a>    </span><span class="kw">fn </span>test_user_addr_parse_errors() {
+<a href=#360 id=360 data-nosnippet>360</a>    </span><span class="kw">fn </span>test_custom_addr_parse_errors() {
 <a href=#361 id=361 data-nosnippet>361</a>        <span class="comment">// Missing separator
 <a href=#362 id=362 data-nosnippet>362</a>        </span><span class="macro">assert!</span>(<span class="string">"abc123"</span>.parse::&lt;CustomAddr&gt;().is_err());
 <a href=#363 id=363 data-nosnippet>363</a>
