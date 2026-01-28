@@ -173,7 +173,7 @@ required-features = []
 
 [[example]]
 name = "custom-transport"
-required-features = []
+required-features = ["test-utils"]
 
 [[example]]
 name = "listen-unreliable"

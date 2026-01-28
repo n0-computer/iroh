@@ -13,6 +13,7 @@ use tokio::sync::oneshot;
 
 pub use self::{dns_and_pkarr_servers::DnsPkarrServer, qlog::QlogFileGroup};
 
+pub mod test_transport;
 mod qlog;
 
 /// A drop guard to clean up test infrastructure.
