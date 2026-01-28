@@ -682,17 +682,7 @@ async fn fetch(
                 let Length::Duration(duration) = length else {
                     n0_error::bail_any!("--mode ping needs --duration to be set")
                 };
-                while start.elapsed() < duration {
-                    perform_request(
-                        &conn,
-                        RequestKind::Download,
-                        Length::Size(1024),
-                        start,
-                        output,
-                    )
-                    .await?;
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
+                tokio::time::sleep(duration).await;
             }
         }
         // We finished our requests. Close the connection with our graceful error code.
