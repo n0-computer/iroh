@@ -1987,6 +1987,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
     async fn test_holepunch_recovery_after_network_change() -> Result {
+        
         // Test that holepunching re-triggers after a network interface change.
         // This verifies that direct paths recover when the same IPs re-appear.
         let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
