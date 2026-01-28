@@ -29,7 +29,7 @@ use url::Url;
 /// Types for defining custom transports
 pub mod transports {
     pub use super::socket::transports::{
-        Addr, Transmit,
+        Addr, AddrKind, TransportBias, TransportType, Transmit,
         user::{CustomEndpoint, CustomSender, CustomTransport},
     };
 }
@@ -115,6 +115,7 @@ pub struct Builder {
     transports: Vec<TransportConfig>,
     max_tls_tickets: usize,
     hooks: EndpointHooksList,
+    transport_bias: socket::transports::TransportBiasMap,
 }
 
 impl From<RelayMode> for Option<TransportConfig> {
@@ -180,6 +181,7 @@ impl Builder {
             max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
             transports,
             hooks: Default::default(),
+            transport_bias: Default::default(),
         }
     }
 
@@ -216,7 +218,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
             hooks: self.hooks,
-            transport_bias: Default::default(),
+            transport_bias: self.transport_bias,
         };
 
         let sock = socket::Socket::spawn(sock_opts).await?;
@@ -642,6 +644,37 @@ impl Builder {
     /// Adds a custom transport
     pub fn add_custom_transport(mut self, factory: Arc<dyn CustomTransport>) -> Self {
         self.transports.push(TransportConfig::Custom(factory));
+        self
+    }
+
+    /// Sets the transport bias for a specific address kind.
+    ///
+    /// Transport bias controls how different transport types are prioritized during
+    /// path selection. By default:
+    /// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
+    /// - Relay is a backup transport (only used when no primary transport is available)
+    ///
+    /// Use this to customize the behavior, for example to add bias for custom transports.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use iroh::endpoint::{Builder, transports::{AddrKind, TransportBias, TransportType}};
+    ///
+    /// let endpoint = Builder::new(SomePreset)
+    ///     .transport_bias(AddrKind::Custom(42), TransportBias {
+    ///         transport_type: TransportType::Primary,
+    ///         rtt_bias: 0,
+    ///     })
+    ///     .bind()
+    ///     .await?;
+    /// ```
+    pub fn transport_bias(
+        mut self,
+        kind: transports::AddrKind,
+        bias: transports::TransportBias,
+    ) -> Self {
+        self.transport_bias = self.transport_bias.with_bias(kind, bias);
         self
     }
 }

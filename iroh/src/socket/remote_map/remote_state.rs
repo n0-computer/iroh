@@ -16,7 +16,7 @@ use n0_future::{
 };
 use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
-use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
+use quinn_proto::{PathError, PathEvent, PathId, iroh_hp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
@@ -552,11 +552,8 @@ impl RemoteStateActor {
                 && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
             {
                 trace!(?path_remote, "added new connection");
-                let path_status = match path_remote {
-                    transports::Addr::Ip(_) => PathStatus::Available,
-                    transports::Addr::Relay(_, _) => PathStatus::Backup,
-                    transports::Addr::Custom(_) => PathStatus::Backup,
-                };
+                let bias = self.transport_bias.get(&path_remote);
+                let path_status = bias.transport_type.to_path_status();
                 let res = path.set_status(path_status);
                 event!(
                     target: "iroh::_events::path::set_status",
@@ -834,11 +831,8 @@ impl RemoteStateActor {
     /// the path exists, or opens it.
     #[instrument(level = "warn", skip(self))]
     fn open_path(&mut self, open_addr: &transports::Addr) {
-        let path_status = match open_addr {
-            transports::Addr::Ip(_) => PathStatus::Available,
-            transports::Addr::Relay(_, _) => PathStatus::Backup,
-            transports::Addr::Custom(_) => PathStatus::Backup,
-        };
+        let bias = self.transport_bias.get(open_addr);
+        let path_status = bias.transport_type.to_path_status();
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
             transports::Addr::Relay(relay_url, eid) => self

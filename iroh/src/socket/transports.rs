@@ -599,35 +599,55 @@ impl Addr {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+/// The kind of a transport address, used for configuring bias.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AddrKind {
-    /// An IPv4 address
+    /// An IPv4 address.
     IpV4,
-    /// An IPv6 address
+    /// An IPv6 address.
     IpV6,
-    /// A relay address
+    /// A relay address.
     Relay,
-    /// A custom transport address with the given id
+    /// A custom transport address with the given id.
     Custom(u64),
 }
 
+/// The type of transport, either primary or backup.
+///
+/// Primary transports compete with each other based on biased RTT measurements.
+/// Backup transports are only used when no primary transport is available.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TransportType {
     /// A transport that has the potential to be the primary transport.
-    /// 
-    /// It will complete with other Primary transports such as IP based
+    ///
+    /// It will compete with other Primary transports such as IP based
     /// transports based on biased RTT measurements.
     Primary,
     /// A transport that is only used as a backup transport.
-    /// 
+    ///
     /// It will only compete with other backup transports such as the relay
     /// transport based on biased RTT measurements.
-    Backup
+    Backup,
 }
 
+impl TransportType {
+    /// Converts to the corresponding QUIC path status.
+    pub fn to_path_status(self) -> PathStatus {
+        match self {
+            Self::Primary => PathStatus::Available,
+            Self::Backup => PathStatus::Backup,
+        }
+    }
+}
+
+/// Bias configuration for a transport type.
+///
+/// This controls how a transport is prioritized during path selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TransportBias {
+    /// Whether this is a primary or backup transport.
     pub transport_type: TransportType,
+    /// RTT bias in nanoseconds. Negative values make this transport more preferred.
     pub rtt_bias: i128,
 }
 
@@ -640,6 +660,12 @@ impl Default for TransportBias {
     }
 }
 
+/// A map from address kinds to their transport bias configuration.
+///
+/// This controls how different transport types are prioritized during path selection.
+/// By default:
+/// - IPv4 and IPv6 are primary transports (IPv6 has a small RTT advantage)
+/// - Relay is a backup transport (only used when no primary transport is available)
 #[derive(Debug, Clone)]
 pub struct TransportBiasMap {
     map: Arc<FxHashMap<AddrKind, TransportBias>>,
@@ -680,6 +706,16 @@ impl Default for TransportBiasMap {
 }
 
 impl TransportBiasMap {
+    /// Returns a new map with the given bias added or updated.
+    pub fn with_bias(self, kind: AddrKind, bias: TransportBias) -> Self {
+        let mut map = (*self.map).clone();
+        map.insert(kind, bias);
+        Self { map: Arc::new(map) }
+    }
+
+    /// Gets the bias for the given address.
+    ///
+    /// Returns the default bias (Primary with no RTT bias) if no specific bias is configured.
     pub fn get(&self, addr: &Addr) -> TransportBias {
         self.map.get(&addr.addr_kind()).cloned().unwrap_or_default()
     }
@@ -687,10 +723,7 @@ impl TransportBiasMap {
     /// Computes path selection data for a given address and RTT.
     pub fn path_selection_data(&self, addr: &Addr, rtt: Duration) -> PathSelectionData {
         let bias = self.get(addr);
-        let status = match bias.transport_type {
-            TransportType::Primary => PathStatus::Available,
-            TransportType::Backup => PathStatus::Backup,
-        };
+        let status = bias.transport_type.to_path_status();
         let biased_rtt = rtt.as_nanos() as i128 + bias.rtt_bias;
         PathSelectionData {
             status,
