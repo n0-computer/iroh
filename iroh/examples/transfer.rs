@@ -797,23 +797,19 @@ fn watch_conn_type(
         let mut stream = paths_watcher.stream();
         let mut previous = None;
         while let Some(paths) = stream.next().await {
-            if let Some(path) = paths.iter().find(|p| p.is_selected()) {
-                // We can get path updates without the selected path changing. We don't want to log again in that case.
-                if Some(path) == previous.as_ref() {
-                    continue;
-                }
-                print(SelectedPath::Selected {
-                    addr: path.remote_addr().clone(),
-                    rtt: path.rtt(),
-                });
-                previous = Some(path.clone());
-            } else if !paths.is_empty() {
-                print(SelectedPath::Mixed { count: paths.len() });
-                previous = None;
-            } else {
-                output.emit(SelectedPath::None);
-                previous = None;
+            let path = paths
+                .into_iter()
+                .find(|p| p.is_selected())
+                .expect("expected to always have a selected path");
+            // We can get path updates without the selected path changing. We don't want to log again in that case.
+            if Some(&path) == previous.as_ref() {
+                continue;
             }
+            print(SelectedPath {
+                addr: path.remote_addr().clone(),
+                rtt: path.rtt(),
+            });
+            previous = Some(path);
         }
     });
     AbortOnDropHandle::new(task)
@@ -951,31 +947,15 @@ struct ConnectionTypeChanged {
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(tag = "status")]
-enum SelectedPath {
-    Mixed {
-        count: usize,
-    },
-    Selected {
-        addr: TransportAddr,
-        #[serde(with = "duration_micros")]
-        rtt: Duration,
-    },
-    None,
+struct SelectedPath {
+    addr: TransportAddr,
+    #[serde(with = "duration_micros")]
+    rtt: Duration,
 }
 
 impl fmt::Display for SelectedPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self {
-            Self::Mixed { count } => {
-                write!(f, "mixed ({count} paths)")
-            }
-            Self::Selected { addr, rtt } => {
-                write!(f, "{addr:?} (RTT: {}ms)", rtt.as_millis())
-            }
-            Self::None => {
-                write!(f, "none")
-            }
-        }
+        write!(f, "{:?} (RTT: {}ms)", self.addr, self.rtt.as_millis())
     }
 }
 
