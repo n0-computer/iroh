@@ -316,6 +316,7 @@ impl CustomEndpoint for TestTransport {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
+    use iroh_relay::RelayMap;
     use n0_error::{Result, StdResultExt};
     use n0_watcher::Watcher;
 
@@ -327,6 +328,7 @@ mod tests {
             transports::{AddrKind, TransportBias},
         },
         protocol::{AcceptError, ProtocolHandler, Router},
+        test_utils::run_relay_server,
     };
 
     const ECHO_ALPN: &[u8] = b"test/echo";
@@ -344,21 +346,50 @@ mod tests {
         }
     }
 
+    /// Configuration for endpoint builder.
+    #[derive(Clone, Default)]
+    struct EndpointConfig {
+        custom_bias: Option<TransportBias>,
+        keep_ip: bool,
+        relay_map: Option<RelayMap>,
+    }
+
+    impl EndpointConfig {
+        fn with_custom_bias(mut self, bias: TransportBias) -> Self {
+            self.custom_bias = Some(bias);
+            self
+        }
+
+        fn with_ip(mut self) -> Self {
+            self.keep_ip = true;
+            self
+        }
+
+        fn with_relay(mut self, relay_map: RelayMap) -> Self {
+            self.relay_map = Some(relay_map);
+            self
+        }
+    }
+
     /// Creates a basic endpoint builder with the given secret key and custom transport.
     fn endpoint_builder(
         secret_key: SecretKey,
         transport: Arc<TestTransport>,
-        custom_bias: Option<TransportBias>,
-        keep_ip: bool,
+        config: EndpointConfig,
     ) -> Builder {
+        let relay_mode = match config.relay_map {
+            Some(map) => RelayMode::Custom(map),
+            None => RelayMode::Disabled,
+        };
         let mut builder = Endpoint::builder()
             .secret_key(secret_key)
-            .relay_mode(RelayMode::Disabled)
+            .relay_mode(relay_mode)
+            .insecure_skip_relay_cert_verify(true)
             .add_custom_transport(transport);
-        if let Some(bias) = custom_bias {
+        if let Some(bias) = config.custom_bias {
             builder = builder.transport_bias(AddrKind::Custom(TEST_TRANSPORT_ID), bias);
         }
-        if !keep_ip {
+        if !config.keep_ip {
             builder = builder.clear_ip_transports();
         }
         builder
@@ -403,6 +434,15 @@ mod tests {
             .is_some_and(|p| matches!(p.remote_addr(), TransportAddr::Ip(_)))
     }
 
+    /// Returns true if the selected path is a relay transport.
+    fn is_relay_selected(conn: &crate::endpoint::Connection) -> bool {
+        let paths = conn.paths().get();
+        paths
+            .iter()
+            .find(|p| p.is_selected())
+            .is_some_and(|p| matches!(p.remote_addr(), TransportAddr::Relay(_)))
+    }
+
     /// Verifies echo works over the connection.
     async fn verify_echo(conn: &crate::endpoint::Connection, msg: &[u8]) -> Result<()> {
         let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
@@ -423,8 +463,12 @@ mod tests {
         let t1 = network.create_transport(s1.public())?;
         let t2 = network.create_transport(s2.public())?;
 
-        let ep1 = endpoint_builder(s1, t1, None, false).bind().await?;
-        let ep2 = endpoint_builder(s2.clone(), t2, None, false).bind().await?;
+        let ep1 = endpoint_builder(s1, t1, EndpointConfig::default())
+            .bind()
+            .await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, EndpointConfig::default())
+            .bind()
+            .await?;
         let router = Router::builder(ep2).accept(ECHO_ALPN, Echo).spawn();
 
         let conn = ep1
@@ -447,7 +491,7 @@ mod tests {
 
     /// Test that custom transport is selected over IP when given an RTT advantage.
     #[tokio::test]
-    async fn test_custom_transport_wins_with_advantage() -> Result<()> {
+    async fn test_custom_transport_wins_over_ip() -> Result<()> {
         let network = TestNetwork::new();
         let s1 = SecretKey::generate(&mut rand::rng());
         let s2 = SecretKey::generate(&mut rand::rng());
@@ -457,13 +501,12 @@ mod tests {
 
         // Strong RTT advantage for custom transport
         let custom_bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
+        let config = EndpointConfig::default()
+            .with_ip()
+            .with_custom_bias(custom_bias);
 
-        let ep1 = endpoint_builder(s1, t1, Some(custom_bias), true)
-            .bind()
-            .await?;
-        let ep2 = endpoint_builder(s2.clone(), t2, Some(custom_bias), true)
-            .bind()
-            .await?;
+        let ep1 = endpoint_builder(s1, t1, config.clone()).bind().await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, config).bind().await?;
         let router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
 
         let conn = ep1
@@ -486,7 +529,7 @@ mod tests {
 
     /// Test that IP is selected over custom transport when custom has an RTT disadvantage.
     #[tokio::test]
-    async fn test_ip_wins_with_custom_disadvantage() -> Result<()> {
+    async fn test_ip_wins_over_custom() -> Result<()> {
         let network = TestNetwork::new();
         let s1 = SecretKey::generate(&mut rand::rng());
         let s2 = SecretKey::generate(&mut rand::rng());
@@ -497,13 +540,12 @@ mod tests {
         // Strong RTT disadvantage for custom transport
         let custom_bias =
             TransportBias::primary().with_rtt_disadvantage(Duration::from_millis(100));
+        let config = EndpointConfig::default()
+            .with_ip()
+            .with_custom_bias(custom_bias);
 
-        let ep1 = endpoint_builder(s1, t1, Some(custom_bias), true)
-            .bind()
-            .await?;
-        let ep2 = endpoint_builder(s2.clone(), t2, Some(custom_bias), true)
-            .bind()
-            .await?;
+        let ep1 = endpoint_builder(s1, t1, config.clone()).bind().await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, config).bind().await?;
         let router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
 
         let conn = ep1
@@ -519,6 +561,128 @@ mod tests {
         );
 
         verify_echo(&conn, b"ip wins").await?;
+        conn.close(0u32.into(), b"done");
+        router.shutdown().await.anyerr()?;
+        Ok(())
+    }
+
+    /// Test that custom transport (primary) is selected over relay (backup).
+    ///
+    /// This test first connects using only the relay address, then reconnects with
+    /// both relay and custom addresses to verify the custom transport (primary) wins
+    /// over the relay (backup).
+    #[tokio::test]
+    async fn test_custom_transport_wins_over_relay() -> Result<()> {
+        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
+        let network = TestNetwork::new();
+        let s1 = SecretKey::generate(&mut rand::rng());
+        let s2 = SecretKey::generate(&mut rand::rng());
+
+        let t1 = network.create_transport(s1.public())?;
+        let t2 = network.create_transport(s2.public())?;
+
+        // Custom transport is primary by default, relay is backup
+        let config = EndpointConfig::default().with_relay(relay_map.clone());
+
+        let ep1 = endpoint_builder(s1, t1, config.clone()).bind().await?;
+        let ep2 = endpoint_builder(s2.clone(), t2, config).bind().await?;
+
+        // Wait for relay connection to be established
+        ep1.online().await;
+        ep2.online().await;
+
+        let router = Router::builder(ep2.clone()).accept(ECHO_ALPN, Echo).spawn();
+
+        // Get all addresses including relay and custom
+        let ep2_addr = ep2.addr();
+        let custom_addr = to_custom_addr(s2.public());
+
+        // Debug: print ep2 address to see what's available
+        eprintln!("ep2 address: {:?}", ep2_addr);
+
+        // Create address with both relay and custom
+        let all_addrs = EndpointAddr::from_parts(
+            s2.public(),
+            ep2_addr
+                .addrs
+                .iter()
+                .cloned()
+                .chain(std::iter::once(TransportAddr::Custom(custom_addr))),
+        );
+        eprintln!("Connecting with all addresses: {:?}", all_addrs);
+
+        // First, connect with relay-only to verify relay works
+        let relay_addrs: Vec<_> = ep2_addr
+            .addrs
+            .iter()
+            .filter(|a| matches!(a, TransportAddr::Relay(_)))
+            .cloned()
+            .collect();
+        eprintln!("Relay addresses in ep2_addr: {:?}", relay_addrs);
+
+        // If there are no relay addresses, skip the relay-first test
+        if relay_addrs.is_empty() {
+            eprintln!(
+                "WARNING: No relay addresses found in ep2_addr, skipping relay-first connection test"
+            );
+        } else {
+            // Connect with relay-only address first to verify relay works
+            let relay_only_addr = EndpointAddr::from_parts(s2.public(), relay_addrs.into_iter());
+            eprintln!("Connecting with relay-only address: {:?}", relay_only_addr);
+
+            let conn = ep1.connect(relay_only_addr, ECHO_ALPN).await?;
+
+            // Wait for relay path to be established
+            tokio::time::sleep(Duration::from_millis(200)).await;
+
+            // Debug: print paths after relay-only connect
+            let paths = conn.paths().get();
+            eprintln!("Paths after relay-only connect:");
+            for path in paths.iter() {
+                eprintln!(
+                    "  {} selected={} rtt={:?}",
+                    path.remote_addr(),
+                    path.is_selected(),
+                    path.rtt()
+                );
+            }
+
+            // Verify relay is currently selected
+            assert!(
+                is_relay_selected(&conn),
+                "Relay should be selected after connecting with relay-only address"
+            );
+
+            verify_echo(&conn, b"relay test").await?;
+            conn.close(0u32.into(), b"done with relay test");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Now connect with all addresses (relay + custom)
+        let conn = ep1.connect(all_addrs, ECHO_ALPN).await?;
+
+        // Wait for paths to settle
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Debug: print all paths
+        let paths = conn.paths().get();
+        eprintln!("Paths after connecting with all addresses:");
+        for path in paths.iter() {
+            eprintln!(
+                "  {} selected={} rtt={:?}",
+                path.remote_addr(),
+                path.is_selected(),
+                path.rtt()
+            );
+        }
+
+        // Custom (primary) should win over relay (backup)
+        assert!(
+            is_custom_selected(&conn),
+            "Custom transport (primary) should be selected over relay (backup)"
+        );
+
+        verify_echo(&conn, b"custom wins over relay").await?;
         conn.close(0u32.into(), b"done");
         router.shutdown().await.anyerr()?;
         Ok(())
