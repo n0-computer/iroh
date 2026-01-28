@@ -6,13 +6,16 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
+    time::Duration,
 };
 
 use bytes::Bytes;
 use iroh_base::{CustomAddr, EndpointId, RelayUrl, TransportAddr};
 use iroh_relay::RelayMap;
+use quinn_proto::PathStatus;
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
+use rustc_hash::FxHashMap;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
@@ -582,6 +585,142 @@ impl Addr {
             Self::Custom(..) => None,
         }
     }
+
+    /// Returns the kind of address, for configuring bias.
+    pub(crate) fn addr_kind(&self) -> AddrKind {
+        match self {
+            Self::Ip(addr) => match addr {
+                SocketAddr::V4(_) => AddrKind::IpV4,
+                SocketAddr::V6(_) => AddrKind::IpV6,
+            },
+            Self::Relay(_, _) => AddrKind::Relay,
+            Self::Custom(addr) => AddrKind::Custom(addr.id()),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum AddrKind {
+    /// An IPv4 address
+    IpV4,
+    /// An IPv6 address
+    IpV6,
+    /// A relay address
+    Relay,
+    /// A custom transport address with the given id
+    Custom(u64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TransportType {
+    /// A transport that has the potential to be the primary transport.
+    /// 
+    /// It will complete with other Primary transports such as IP based
+    /// transports based on biased RTT measurements.
+    Primary,
+    /// A transport that is only used as a backup transport.
+    /// 
+    /// It will only compete with other backup transports such as the relay
+    /// transport based on biased RTT measurements.
+    Backup
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TransportBias {
+    pub transport_type: TransportType,
+    pub rtt_bias: i128,
+}
+
+impl Default for TransportBias {
+    fn default() -> Self {
+        Self {
+            transport_type: TransportType::Primary,
+            rtt_bias: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TransportBiasMap {
+    map: Arc<FxHashMap<AddrKind, TransportBias>>,
+}
+
+/// How much do we prefer IPv6 over IPv4.
+pub(super) const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
+
+impl Default for TransportBiasMap {
+    fn default() -> Self {
+        let mut map = FxHashMap::default();
+        // IPv4 is primary with no bias
+        map.insert(
+            AddrKind::IpV4,
+            TransportBias {
+                transport_type: TransportType::Primary,
+                rtt_bias: 0,
+            },
+        );
+        // IPv6 is primary with a negative bias (preferred over IPv4)
+        map.insert(
+            AddrKind::IpV6,
+            TransportBias {
+                transport_type: TransportType::Primary,
+                rtt_bias: -(IPV6_RTT_ADVANTAGE.as_nanos() as i128),
+            },
+        );
+        // Relay is a backup transport
+        map.insert(
+            AddrKind::Relay,
+            TransportBias {
+                transport_type: TransportType::Backup,
+                rtt_bias: 0,
+            },
+        );
+        Self { map: Arc::new(map) }
+    }
+}
+
+impl TransportBiasMap {
+    pub fn get(&self, addr: &Addr) -> TransportBias {
+        self.map.get(&addr.addr_kind()).cloned().unwrap_or_default()
+    }
+
+    /// Computes path selection data for a given address and RTT.
+    pub fn path_selection_data(&self, addr: &Addr, rtt: Duration) -> PathSelectionData {
+        let bias = self.get(addr);
+        let status = match bias.transport_type {
+            TransportType::Primary => PathStatus::Available,
+            TransportType::Backup => PathStatus::Backup,
+        };
+        let biased_rtt = rtt.as_nanos() as i128 + bias.rtt_bias;
+        PathSelectionData {
+            status,
+            rtt,
+            biased_rtt,
+        }
+    }
+}
+
+/// Data used during path selection.
+#[derive(Debug)]
+pub struct PathSelectionData {
+    /// Status of the path if it would be selected.
+    pub status: PathStatus,
+    /// Measured RTT for path selection.
+    pub rtt: Duration,
+    /// Biased RTT for path selection.
+    ///
+    /// This is an i128 so we can subtract an advantage for e.g. IPv6 without underflowing.
+    pub biased_rtt: i128,
+}
+
+impl PathSelectionData {
+    /// Key for sorting paths. Lower is better.
+    ///
+    /// First part is the status, 0 for Available, 1 for Backup.
+    /// Second part is the biased RTT.
+    pub fn sort_key(&self) -> (u8, i128) {
+        (self.status as u8, self.biased_rtt)
+    }
 }
 
 /// A sender that sends to all our transports.
@@ -916,5 +1055,84 @@ impl quinn::UdpSender for Sender {
 
     fn max_transmit_segments(&self) -> NonZeroUsize {
         self.sender.max_transmit_segments
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+
+    use iroh_base::{EndpointId, RelayUrl};
+
+    use super::*;
+
+    fn v4(port: u16) -> Addr {
+        Addr::Ip(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
+    }
+
+    fn v6(port: u16) -> Addr {
+        Addr::Ip(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            port,
+            0,
+            0,
+        )))
+    }
+
+    fn relay(port: u16) -> Addr {
+        let url = format!("https://relay{port}.iroh.computer")
+            .parse::<RelayUrl>()
+            .unwrap();
+        Addr::Relay(url, EndpointId::from_bytes(&[0u8; 32]).unwrap())
+    }
+
+    #[test]
+    fn test_transport_bias_map_default() {
+        let bias_map = TransportBiasMap::default();
+
+        // IPv4 should be Primary with no bias
+        let v4_bias = bias_map.get(&v4(1));
+        assert_eq!(v4_bias.transport_type, TransportType::Primary);
+        assert_eq!(v4_bias.rtt_bias, 0);
+
+        // IPv6 should be Primary with negative bias (preferred)
+        let v6_bias = bias_map.get(&v6(1));
+        assert_eq!(v6_bias.transport_type, TransportType::Primary);
+        assert_eq!(v6_bias.rtt_bias, -(IPV6_RTT_ADVANTAGE.as_nanos() as i128));
+
+        // Relay should be Backup with no bias
+        let relay_bias = bias_map.get(&relay(1));
+        assert_eq!(relay_bias.transport_type, TransportType::Backup);
+        assert_eq!(relay_bias.rtt_bias, 0);
+    }
+
+    #[test]
+    fn test_ipv6_bias_gives_advantage() {
+        let bias_map = TransportBiasMap::default();
+
+        // With equal RTTs, IPv6 should have a lower biased_rtt
+        let rtt = Duration::from_millis(50);
+        let v4_bias = bias_map.get(&v4(1));
+        let v6_bias = bias_map.get(&v6(1));
+
+        let v4_biased_rtt = rtt.as_nanos() as i128 + v4_bias.rtt_bias;
+        let v6_biased_rtt = rtt.as_nanos() as i128 + v6_bias.rtt_bias;
+
+        // IPv6 should have lower biased RTT (more preferred)
+        assert!(v6_biased_rtt < v4_biased_rtt);
+        assert_eq!(v4_biased_rtt - v6_biased_rtt, IPV6_RTT_ADVANTAGE.as_nanos() as i128);
+    }
+
+    #[test]
+    fn test_relay_is_backup() {
+        let bias_map = TransportBiasMap::default();
+
+        // Relay should be Backup, which means it won't compete with Primary transports
+        let relay_bias = bias_map.get(&relay(1));
+        assert_eq!(relay_bias.transport_type, TransportType::Backup);
+
+        // Primary transports (IPv4/IPv6) should be preferred over Backup
+        let v4_bias = bias_map.get(&v4(1));
+        assert!(v4_bias.transport_type < relay_bias.transport_type);
     }
 }

@@ -216,6 +216,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             metrics,
             hooks: self.hooks,
+            transport_bias: Default::default(),
         };
 
         let sock = socket::Socket::spawn(sock_opts).await?;

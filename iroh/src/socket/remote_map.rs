@@ -28,6 +28,7 @@ use crate::{
     socket::{
         RemoteStateActorStoppedError,
         concurrent_read_map::{ConcurrentReadMap, ReadOnlyMap},
+        transports::TransportBiasMap,
     },
 };
 
@@ -95,6 +96,8 @@ struct Tasks {
     tasks: JoinSet<(EndpointId, Vec<RemoteStateMessage>)>,
     /// The waker that notifies `poll_cleanup` when the join set is populated with another task.
     poll_cleanup_waker: Option<Waker>,
+    /// Biases for different transport kinds.
+    transport_bias: TransportBiasMap,
 }
 
 impl RemoteMap {
@@ -105,6 +108,7 @@ impl RemoteMap {
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         address_lookup: address_lookup::ConcurrentAddressLookup,
         shutdown_token: CancellationToken,
+        transport_bias: TransportBiasMap,
     ) -> Self {
         Self {
             mapped_addrs: Default::default(),
@@ -117,6 +121,7 @@ impl RemoteMap {
                 shutdown_token,
                 tasks: Default::default(),
                 poll_cleanup_waker: None,
+                transport_bias,
             },
         }
     }
@@ -270,6 +275,7 @@ impl Tasks {
             mapped_addrs.custom_addrs.clone(),
             self.metrics.clone(),
             self.address_lookup.clone(),
+            self.transport_bias.clone(),
         )
         .start(initial_msgs, &mut self.tasks, self.shutdown_token.clone());
         if let Some(waker) = self.poll_cleanup_waker.take() {
@@ -277,7 +283,7 @@ impl Tasks {
             waker.wake();
         }
         sender
-    }
+    } 
 }
 
 /// The origin or *source* through which an address associated with a remote endpoint
