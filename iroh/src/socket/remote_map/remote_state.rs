@@ -37,7 +37,7 @@ use crate::{
     socket::{
         Metrics as SocketMetrics,
         mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
-        remote_map::Private,
+        remote_map::{Private, to_transport_addr},
         transports::{self, OwnedTransmit, PathSelectionData, TransportBiasMap, TransportsSender},
     },
     util::MaybeFuture,
@@ -549,7 +549,7 @@ impl RemoteStateActor {
             // is needed.
             if let Some(path) = conn.path(PathId::ZERO)
                 && let Ok(socketaddr) = path.remote_address()
-                && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
+                && let Some(path_remote) = to_transport_addr(socketaddr, &self.relay_mapped_addrs, &self.custom_mapped_addrs)
             {
                 trace!(?path_remote, "added new connection");
                 let bias = self.transport_bias.get(&path_remote);
@@ -938,7 +938,7 @@ impl RemoteStateActor {
                 };
 
                 if let Ok(socketaddr) = path.remote_address()
-                    && let Some(path_remote) = self.relay_mapped_addrs.to_transport_addr(socketaddr)
+                    && let Some(path_remote) = to_transport_addr(socketaddr, &self.relay_mapped_addrs, &self.custom_mapped_addrs)
                 {
                     event!(
                         target: "iroh::_events::path::open",

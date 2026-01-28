@@ -21,7 +21,8 @@ pub use self::remote_state::{
 };
 use super::{
     DirectAddr, Metrics as SocketMetrics,
-    mapped_addrs::{AddrMap, CustomMappedAddr, EndpointIdMappedAddr, RelayMappedAddr},
+    mapped_addrs::{AddrMap, CustomMappedAddr, EndpointIdMappedAddr, MultipathMappedAddr, RelayMappedAddr},
+    transports,
 };
 use crate::{
     address_lookup,
@@ -68,6 +69,53 @@ pub(crate) struct MappedAddrs {
     pub(super) relay_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
     /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
     pub(super) custom_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
+}
+
+/// Converts a mapped socket address to a transport address.
+///
+/// This takes a socket address, converts it into a [`MultipathMappedAddr`] and then tries
+/// to convert the mapped address into a [`transports::Addr`].
+///
+/// Returns `Some` with the transport address for IP, relay, or custom mapped addresses
+/// if an entry exists in the corresponding map.
+///
+/// Returns `None` for [`MultipathMappedAddr::Mixed`] addresses or unknown mapped addresses.
+pub(super) fn to_transport_addr(
+    addr: impl Into<MultipathMappedAddr>,
+    relay_addrs: &AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
+    custom_addrs: &AddrMap<CustomAddr, CustomMappedAddr>,
+) -> Option<transports::Addr> {
+    match addr.into() {
+        MultipathMappedAddr::Mixed(_) => {
+            error!(
+                "Failed to convert addr to transport addr: Mixed mapped addr has no transport address"
+            );
+            None
+        }
+        MultipathMappedAddr::Relay(relay_mapped_addr) => {
+            match relay_addrs.lookup(&relay_mapped_addr) {
+                Some(parts) => Some(transports::Addr::from(parts)),
+                None => {
+                    error!(
+                        "Failed to convert addr to transport addr: Unknown relay mapped addr"
+                    );
+                    None
+                }
+            }
+        }
+        MultipathMappedAddr::Custom(custom_mapped_addr) => {
+            match custom_addrs.lookup(&custom_mapped_addr) {
+                Some(custom_addr) => Some(transports::Addr::Custom(custom_addr)),
+                None => {
+                    error!(
+                        "Failed to convert addr to transport addr: Unknown custom mapped addr"
+                    );
+                    None
+                }
+            }
+        }
+        MultipathMappedAddr::Ip(addr) => Some(transports::Addr::from(addr)),
+    }
 }
 
 /// Stores the state required for starting and cleaning up the `RemoteStateActor`s.

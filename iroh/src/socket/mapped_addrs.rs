@@ -14,12 +14,9 @@ use std::{
     },
 };
 
-use iroh_base::{EndpointId, RelayUrl};
 use n0_error::{e, stack_error};
 use rustc_hash::FxHashMap;
-use tracing::{error, trace};
-
-use super::transports;
+use tracing::trace;
 
 /// The Prefix/L of all Unique Local Addresses.
 const ADDR_PREFIXL: u8 = 0xfd;
@@ -376,43 +373,3 @@ impl<K, V> Default for AddrMapInner<K, V> {
     }
 }
 
-/// Functions for the relay mapped address map.
-impl AddrMap<(RelayUrl, EndpointId), RelayMappedAddr> {
-    /// Converts a mapped socket address to a transport address.
-    ///
-    /// This takes a socket address, converts it into a [`MultipathMappedAddr`] and then tries
-    /// to convert the mapped address into a [`transports::Addr`].
-    ///
-    /// Returns `Some` with the transport address for IP mapped addresses and for relay mapped
-    /// addresses if an entry for the mapped address exists in `self`.
-    ///
-    /// Returns `None` and emits an error log if the mapped address is a [`MultipathMappedAddr::Mixed`],
-    /// or if the mapped address is a [`MultipathMappedAddr::Relay`] and `self` does not contain the
-    /// mapped address.
-    pub(crate) fn to_transport_addr(
-        &self,
-        addr: impl Into<MultipathMappedAddr>,
-    ) -> Option<transports::Addr> {
-        match addr.into() {
-            MultipathMappedAddr::Mixed(_) => {
-                error!(
-                    "Failed to convert addr to transport addr: Mixed mapped addr has no transport address"
-                );
-                None
-            }
-            MultipathMappedAddr::Relay(relay_mapped_addr) => {
-                match self.lookup(&relay_mapped_addr) {
-                    Some(parts) => Some(transports::Addr::from(parts)),
-                    None => {
-                        error!(
-                            "Failed to convert addr to transport addr: Unknown relay mapped addr"
-                        );
-                        None
-                    }
-                }
-            }
-            MultipathMappedAddr::Custom(_) => None,
-            MultipathMappedAddr::Ip(addr) => Some(transports::Addr::from(addr)),
-        }
-    }
-}
