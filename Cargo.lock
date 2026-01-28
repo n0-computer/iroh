@@ -3763,7 +3763,7 @@ dependencies = [
  "rustls-webpki",
  "security-framework",
  "security-framework-sys",
- "webpki-root-certs 1.0.5",
+ "webpki-root-certs",
  "windows-sys 0.61.2",
 ]
 
