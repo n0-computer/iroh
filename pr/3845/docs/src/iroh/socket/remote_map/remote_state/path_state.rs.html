@@ -90,7 +90,7 @@
 <a href=#90 id=90 data-nosnippet>90</a>        <span class="kw">match </span>addr {
 <a href=#91 id=91 data-nosnippet>91</a>            transports::Addr::Ip(<span class="kw">_</span>) =&gt; <span class="self">self</span>.metrics.transport_ip_paths_added.inc(),
 <a href=#92 id=92 data-nosnippet>92</a>            transports::Addr::Relay(<span class="kw">_</span>, <span class="kw">_</span>) =&gt; <span class="self">self</span>.metrics.transport_relay_paths_added.inc(),
-<a href=#93 id=93 data-nosnippet>93</a>            transports::Addr::User(<span class="kw">_</span>) =&gt; <span class="self">self</span>.metrics.transport_user_paths_added.inc(),
+<a href=#93 id=93 data-nosnippet>93</a>            transports::Addr::Custom(<span class="kw">_</span>) =&gt; <span class="self">self</span>.metrics.transport_custom_paths_added.inc(),
 <a href=#94 id=94 data-nosnippet>94</a>        };
 <a href=#95 id=95 data-nosnippet>95</a>        <span class="kw">let </span>state = <span class="self">self</span>.paths.entry(addr).or_default();
 <a href=#96 id=96 data-nosnippet>96</a>        state.status = PathStatus::Open;
@@ -111,7 +111,7 @@
 <a href=#111 id=111 data-nosnippet>111</a>                    transports::Addr::Relay(<span class="kw">_</span>, <span class="kw">_</span>) =&gt; {
 <a href=#112 id=112 data-nosnippet>112</a>                        <span class="self">self</span>.metrics.transport_relay_paths_removed.inc()
 <a href=#113 id=113 data-nosnippet>113</a>                    }
-<a href=#114 id=114 data-nosnippet>114</a>                    transports::Addr::User(<span class="kw">_</span>) =&gt; <span class="self">self</span>.metrics.transport_user_paths_removed.inc(),
+<a href=#114 id=114 data-nosnippet>114</a>                    transports::Addr::Custom(<span class="kw">_</span>) =&gt; <span class="self">self</span>.metrics.transport_custom_paths_removed.inc(),
 <a href=#115 id=115 data-nosnippet>115</a>                };
 <a href=#116 id=116 data-nosnippet>116</a>            }
 <a href=#117 id=117 data-nosnippet>117</a>            <span class="kw">match </span>state.status {

@@ -21,7 +21,7 @@
 <a href=#21 id=21 data-nosnippet>21</a>};
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">use super</span>::{
 <a href=#23 id=23 data-nosnippet>23</a>    DirectAddr, Metrics <span class="kw">as </span>SocketMetrics,
-<a href=#24 id=24 data-nosnippet>24</a>    mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr, UserMappedAddr},
+<a href=#24 id=24 data-nosnippet>24</a>    mapped_addrs::{AddrMap, CustomMappedAddr, EndpointIdMappedAddr, RelayMappedAddr},
 <a href=#25 id=25 data-nosnippet>25</a>};
 <a href=#26 id=26 data-nosnippet>26</a><span class="kw">use crate</span>::{
 <a href=#27 id=27 data-nosnippet>27</a>    address_lookup,
@@ -65,8 +65,8 @@
 <a href=#65 id=65 data-nosnippet>65</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) endpoint_addrs: AddrMap&lt;EndpointId, EndpointIdMappedAddr&gt;,
 <a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
 <a href=#67 id=67 data-nosnippet>67</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) relay_addrs: AddrMap&lt;(RelayUrl, EndpointId), RelayMappedAddr&gt;,
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// The mapping between user provided addresses and their [`UserMappedAddr`]s.
-<a href=#69 id=69 data-nosnippet>69</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) user_addrs: AddrMap&lt;CustomAddr, UserMappedAddr&gt;,
+<a href=#68 id=68 data-nosnippet>68</a>    <span class="doccomment">/// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
+<a href=#69 id=69 data-nosnippet>69</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) custom_addrs: AddrMap&lt;CustomAddr, CustomMappedAddr&gt;,
 <a href=#70 id=70 data-nosnippet>70</a>}
 <a href=#71 id=71 data-nosnippet>71</a>
 <a href=#72 id=72 data-nosnippet>72</a><span class="doccomment">/// Stores the state required for starting and cleaning up the `RemoteStateActor`s.
@@ -267,7 +267,7 @@
 <a href=#267 id=267 data-nosnippet>267</a>            <span class="self">self</span>.local_endpoint_id,
 <a href=#268 id=268 data-nosnippet>268</a>            <span class="self">self</span>.local_direct_addrs.clone(),
 <a href=#269 id=269 data-nosnippet>269</a>            mapped_addrs.relay_addrs.clone(),
-<a href=#270 id=270 data-nosnippet>270</a>            mapped_addrs.user_addrs.clone(),
+<a href=#270 id=270 data-nosnippet>270</a>            mapped_addrs.custom_addrs.clone(),
 <a href=#271 id=271 data-nosnippet>271</a>            <span class="self">self</span>.metrics.clone(),
 <a href=#272 id=272 data-nosnippet>272</a>            <span class="self">self</span>.address_lookup.clone(),
 <a href=#273 id=273 data-nosnippet>273</a>        )

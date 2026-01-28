@@ -638,9 +638,9 @@
 <a href=#638 id=638 data-nosnippet>638</a>        <span class="self">self
 <a href=#639 id=639 data-nosnippet>639</a>    </span>}
 <a href=#640 id=640 data-nosnippet>640</a>
-<a href=#641 id=641 data-nosnippet>641</a>    <span class="doccomment">/// Adds a custom user transport
-<a href=#642 id=642 data-nosnippet>642</a>    </span><span class="kw">pub fn </span>add_user_transport(<span class="kw-2">mut </span><span class="self">self</span>, factory: Arc&lt;<span class="kw">dyn </span>CustomTransport&gt;) -&gt; <span class="self">Self </span>{
-<a href=#643 id=643 data-nosnippet>643</a>        <span class="self">self</span>.transports.push(TransportConfig::User(factory));
+<a href=#641 id=641 data-nosnippet>641</a>    <span class="doccomment">/// Adds a custom transport
+<a href=#642 id=642 data-nosnippet>642</a>    </span><span class="kw">pub fn </span>add_custom_transport(<span class="kw-2">mut </span><span class="self">self</span>, factory: Arc&lt;<span class="kw">dyn </span>CustomTransport&gt;) -&gt; <span class="self">Self </span>{
+<a href=#643 id=643 data-nosnippet>643</a>        <span class="self">self</span>.transports.push(TransportConfig::Custom(factory));
 <a href=#644 id=644 data-nosnippet>644</a>        <span class="self">self
 <a href=#645 id=645 data-nosnippet>645</a>    </span>}
 <a href=#646 id=646 data-nosnippet>646</a>}

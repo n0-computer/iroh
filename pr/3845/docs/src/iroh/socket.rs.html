@@ -461,13 +461,13 @@
 <a href=#461 id=461 data-nosnippet>461</a>                        .get(<span class="kw-2">&amp;</span>(src_url.clone(), <span class="kw-2">*</span>src_node));
 <a href=#462 id=462 data-nosnippet>462</a>                    quinn_meta.addr = mapped_addr.private_socket_addr();
 <a href=#463 id=463 data-nosnippet>463</a>                }
-<a href=#464 id=464 data-nosnippet>464</a>                transports::Addr::User(addr) =&gt; {
+<a href=#464 id=464 data-nosnippet>464</a>                transports::Addr::Custom(addr) =&gt; {
 <a href=#465 id=465 data-nosnippet>465</a>                    <span class="self">self</span>.metrics
 <a href=#466 id=466 data-nosnippet>466</a>                        .socket
-<a href=#467 id=467 data-nosnippet>467</a>                        .recv_data_user
+<a href=#467 id=467 data-nosnippet>467</a>                        .recv_data_custom
 <a href=#468 id=468 data-nosnippet>468</a>                        .inc_by(quinn_meta.len <span class="kw">as _</span>);
 <a href=#469 id=469 data-nosnippet>469</a>                    <span class="comment">// Fill in the correct mapped address
-<a href=#470 id=470 data-nosnippet>470</a>                    </span><span class="kw">let </span>mapped_addr = <span class="self">self</span>.mapped_addrs.user_addrs.get(addr);
+<a href=#470 id=470 data-nosnippet>470</a>                    </span><span class="kw">let </span>mapped_addr = <span class="self">self</span>.mapped_addrs.custom_addrs.get(addr);
 <a href=#471 id=471 data-nosnippet>471</a>                    quinn_meta.addr = mapped_addr.private_socket_addr();
 <a href=#472 id=472 data-nosnippet>472</a>                }
 <a href=#473 id=473 data-nosnippet>473</a>            }

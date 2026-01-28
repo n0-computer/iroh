@@ -315,7 +315,7 @@
 <a href=#315 id=315 data-nosnippet>315</a>                <span class="kw">if let </span><span class="prelude-val">Ok</span>(addr) = SocketAddr::from_str(s) {
 <a href=#316 id=316 data-nosnippet>316</a>                    <span class="prelude-val">Some</span>(TransportAddr::Ip(addr))
 <a href=#317 id=317 data-nosnippet>317</a>                } <span class="kw">else if let </span><span class="prelude-val">Ok</span>(addr) = CustomAddr::from_str(s) {
-<a href=#318 id=318 data-nosnippet>318</a>                    <span class="prelude-val">Some</span>(TransportAddr::User(addr))
+<a href=#318 id=318 data-nosnippet>318</a>                    <span class="prelude-val">Some</span>(TransportAddr::Custom(addr))
 <a href=#319 id=319 data-nosnippet>319</a>                } <span class="kw">else </span>{
 <a href=#320 id=320 data-nosnippet>320</a>                    <span class="prelude-val">None
 <a href=#321 id=321 data-nosnippet>321</a>                </span>}
@@ -523,7 +523,7 @@
 <a href=#523 id=523 data-nosnippet>523</a>            <span class="kw">match </span>addr {
 <a href=#524 id=524 data-nosnippet>524</a>                TransportAddr::Relay(url) =&gt; attrs.push((IrohAttr::Relay, url.to_string())),
 <a href=#525 id=525 data-nosnippet>525</a>                TransportAddr::Ip(addr) =&gt; attrs.push((IrohAttr::Addr, addr.to_string())),
-<a href=#526 id=526 data-nosnippet>526</a>                TransportAddr::User(addr) =&gt; attrs.push((IrohAttr::Addr, addr.to_string())),
+<a href=#526 id=526 data-nosnippet>526</a>                TransportAddr::Custom(addr) =&gt; attrs.push((IrohAttr::Addr, addr.to_string())),
 <a href=#527 id=527 data-nosnippet>527</a>                <span class="kw">_ </span>=&gt; {}
 <a href=#528 id=528 data-nosnippet>528</a>            }
 <a href=#529 id=529 data-nosnippet>529</a>        }
@@ -729,8 +729,8 @@
 <a href=#729 id=729 data-nosnippet>729</a>        <span class="kw">let </span>endpoint_data = EndpointData::new([
 <a href=#730 id=730 data-nosnippet>730</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
 <a href=#731 id=731 data-nosnippet>731</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
-<a href=#732 id=732 data-nosnippet>732</a>            TransportAddr::User(bt_addr),
-<a href=#733 id=733 data-nosnippet>733</a>            TransportAddr::User(tor_addr),
+<a href=#732 id=732 data-nosnippet>732</a>            TransportAddr::Custom(bt_addr),
+<a href=#733 id=733 data-nosnippet>733</a>            TransportAddr::Custom(tor_addr),
 <a href=#734 id=734 data-nosnippet>734</a>        ]);
 <a href=#735 id=735 data-nosnippet>735</a>        <span class="kw">let </span>endpoint_id = <span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
 <a href=#736 id=736 data-nosnippet>736</a>            </span>.parse()
@@ -756,8 +756,8 @@
 <a href=#756 id=756 data-nosnippet>756</a>        <span class="kw">let </span>endpoint_data = EndpointData::new([
 <a href=#757 id=757 data-nosnippet>757</a>            TransportAddr::Relay(<span class="string">"https://example.com"</span>.parse().unwrap()),
 <a href=#758 id=758 data-nosnippet>758</a>            TransportAddr::Ip(<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()),
-<a href=#759 id=759 data-nosnippet>759</a>            TransportAddr::User(bt_addr),
-<a href=#760 id=760 data-nosnippet>760</a>            TransportAddr::User(tor_addr),
+<a href=#759 id=759 data-nosnippet>759</a>            TransportAddr::Custom(bt_addr),
+<a href=#760 id=760 data-nosnippet>760</a>            TransportAddr::Custom(tor_addr),
 <a href=#761 id=761 data-nosnippet>761</a>        ])
 <a href=#762 id=762 data-nosnippet>762</a>        .with_user_data(<span class="prelude-val">Some</span>(<span class="string">"foobar"</span>.parse().unwrap()));
 <a href=#763 id=763 data-nosnippet>763</a>
