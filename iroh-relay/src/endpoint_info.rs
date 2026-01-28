@@ -315,7 +315,7 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
                 if let Ok(addr) = SocketAddr::from_str(s) {
                     Some(TransportAddr::Ip(addr))
                 } else if let Ok(addr) = CustomAddr::from_str(s) {
-                    Some(TransportAddr::User(addr))
+                    Some(TransportAddr::Custom(addr))
                 } else {
                     None
                 }
@@ -523,7 +523,7 @@ impl From<&EndpointInfo> for TxtAttrs<IrohAttr> {
             match addr {
                 TransportAddr::Relay(url) => attrs.push((IrohAttr::Relay, url.to_string())),
                 TransportAddr::Ip(addr) => attrs.push((IrohAttr::Addr, addr.to_string())),
-                TransportAddr::User(addr) => attrs.push((IrohAttr::Addr, addr.to_string())),
+                TransportAddr::Custom(addr) => attrs.push((IrohAttr::Addr, addr.to_string())),
                 _ => {}
             }
         }
@@ -729,8 +729,8 @@ mod tests {
         let endpoint_data = EndpointData::new([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
-            TransportAddr::User(bt_addr),
-            TransportAddr::User(tor_addr),
+            TransportAddr::Custom(bt_addr),
+            TransportAddr::Custom(tor_addr),
         ]);
         let endpoint_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
             .parse()
@@ -756,8 +756,8 @@ mod tests {
         let endpoint_data = EndpointData::new([
             TransportAddr::Relay("https://example.com".parse().unwrap()),
             TransportAddr::Ip("127.0.0.1:1234".parse().unwrap()),
-            TransportAddr::User(bt_addr),
-            TransportAddr::User(tor_addr),
+            TransportAddr::Custom(bt_addr),
+            TransportAddr::Custom(tor_addr),
         ])
         .with_user_data(Some("foobar".parse().unwrap()));
 

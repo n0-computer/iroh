@@ -99,7 +99,7 @@ impl AddressLookup for TestDiscovery {
             Some(Box::pin(n0_future::stream::once(Ok(Item::new(
                 EndpointInfo {
                     endpoint_id,
-                    data: EndpointData::new([TransportAddr::User(CustomAddr::from_parts(
+                    data: EndpointData::new([TransportAddr::Custom(CustomAddr::from_parts(
                         TEST_TRANSPORT_ID,
                         endpoint_id.as_bytes(),
                     ))]),
@@ -297,7 +297,7 @@ async fn main() -> Result<()> {
         .secret_key(s1.clone())
         // .clear_discovery()
         // .discovery(d.clone())
-        .add_user_transport(tt1.clone())
+        .add_custom_transport(tt1.clone())
         .clear_ip_transports()
         .clear_relay_transports()
         .bind()
@@ -306,7 +306,7 @@ async fn main() -> Result<()> {
         .secret_key(s2.clone())
         // .clear_discovery()
         // .discovery(d.clone())
-        .add_user_transport(tt2.clone())
+        .add_custom_transport(tt2.clone())
         .clear_ip_transports()
         .clear_relay_transports()
         .bind()
@@ -316,7 +316,7 @@ async fn main() -> Result<()> {
     let server = Router::builder(ep2).accept(ALPN, Echo).spawn();
     let addr2 = EndpointAddr::from_parts(
         s2.public(),
-        [TransportAddr::User(to_custom_addr(s2.public()))],
+        [TransportAddr::Custom(to_custom_addr(s2.public()))],
     );
     println!("ep2 addr: {:?}", addr2);
     let conn = ep1.connect(addr2, ALPN).await?;

@@ -21,7 +21,7 @@ pub use self::remote_state::{
 };
 use super::{
     DirectAddr, Metrics as SocketMetrics,
-    mapped_addrs::{AddrMap, EndpointIdMappedAddr, RelayMappedAddr, UserMappedAddr},
+    mapped_addrs::{AddrMap, CustomMappedAddr, EndpointIdMappedAddr, RelayMappedAddr},
 };
 use crate::{
     address_lookup,
@@ -65,8 +65,8 @@ pub(crate) struct MappedAddrs {
     pub(super) endpoint_addrs: AddrMap<EndpointId, EndpointIdMappedAddr>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     pub(super) relay_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    /// The mapping between user provided addresses and their [`UserMappedAddr`]s.
-    pub(super) user_addrs: AddrMap<CustomAddr, UserMappedAddr>,
+    /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
+    pub(super) custom_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
 }
 
 /// Stores the state required for starting and cleaning up the `RemoteStateActor`s.
@@ -267,7 +267,7 @@ impl Tasks {
             self.local_endpoint_id,
             self.local_direct_addrs.clone(),
             mapped_addrs.relay_addrs.clone(),
-            mapped_addrs.user_addrs.clone(),
+            mapped_addrs.custom_addrs.clone(),
             self.metrics.clone(),
             self.address_lookup.clone(),
         )

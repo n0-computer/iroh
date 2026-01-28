@@ -36,7 +36,7 @@ use crate::{
     endpoint::{DirectAddr, quic::PathStats},
     socket::{
         Metrics as SocketMetrics,
-        mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr, UserMappedAddr},
+        mapped_addrs::{AddrMap, CustomMappedAddr, MappedAddr, RelayMappedAddr},
         remote_map::Private,
         transports::{self, OwnedTransmit, TransportsSender},
     },
@@ -138,8 +138,8 @@ pub(super) struct RemoteStateActor {
     local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
     /// The mapping between endpoints via a relay and their [`RelayMappedAddr`]s.
     relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-    /// The mapping between user provided addresses and their [`UserMappedAddr`]s.
-    user_mapped_addrs: AddrMap<CustomAddr, UserMappedAddr>,
+    /// The mapping between custom transport addresses and their [`CustomMappedAddr`]s.
+    custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
     /// Address lookup service, cloned from the socket.
     address_lookup: ConcurrentAddressLookup,
 
@@ -195,7 +195,7 @@ impl RemoteStateActor {
         local_endpoint_id: EndpointId,
         local_direct_addrs: n0_watcher::Direct<BTreeSet<DirectAddr>>,
         relay_mapped_addrs: AddrMap<(RelayUrl, EndpointId), RelayMappedAddr>,
-        user_mapped_addrs: AddrMap<CustomAddr, UserMappedAddr>,
+        custom_mapped_addrs: AddrMap<CustomAddr, CustomMappedAddr>,
         metrics: Arc<SocketMetrics>,
         address_lookup: ConcurrentAddressLookup,
     ) -> Self {
@@ -205,7 +205,7 @@ impl RemoteStateActor {
             metrics: metrics.clone(),
             local_direct_addrs,
             relay_mapped_addrs,
-            user_mapped_addrs,
+            custom_mapped_addrs,
             address_lookup,
             connections: FxHashMap::default(),
             connections_close: Default::default(),
@@ -552,7 +552,7 @@ impl RemoteStateActor {
                 let path_status = match path_remote {
                     transports::Addr::Ip(_) => PathStatus::Available,
                     transports::Addr::Relay(_, _) => PathStatus::Backup,
-                    transports::Addr::User(_) => PathStatus::Backup,
+                    transports::Addr::Custom(_) => PathStatus::Backup,
                 };
                 let res = path.set_status(path_status);
                 event!(
@@ -834,7 +834,7 @@ impl RemoteStateActor {
         let path_status = match open_addr {
             transports::Addr::Ip(_) => PathStatus::Available,
             transports::Addr::Relay(_, _) => PathStatus::Backup,
-            transports::Addr::User(_) => PathStatus::Backup,
+            transports::Addr::Custom(_) => PathStatus::Backup,
         };
         let quic_addr = match &open_addr {
             transports::Addr::Ip(socket_addr) => *socket_addr,
@@ -842,7 +842,7 @@ impl RemoteStateActor {
                 .relay_mapped_addrs
                 .get(&(relay_url.clone(), *eid))
                 .private_socket_addr(),
-            transports::Addr::User(addr) => self.user_mapped_addrs.get(addr).private_socket_addr(),
+            transports::Addr::Custom(addr) => self.custom_mapped_addrs.get(addr).private_socket_addr(),
         };
 
         for (conn_id, conn_state) in self.connections.iter_mut() {
@@ -1206,8 +1206,8 @@ fn select_best_path(
                 }
             }
         }
-        Some((transports::Addr::User(_), _)) => {
-            // todo: when should we select an user path?
+        Some((transports::Addr::Custom(_), _)) => {
+            // todo: when should we select a custom path?
             None
         }
     }
@@ -1356,7 +1356,7 @@ impl ConnectionState {
         match remote {
             transports::Addr::Ip(_) => metrics.paths_direct.inc(),
             transports::Addr::Relay(_, _) => metrics.paths_relay.inc(),
-            transports::Addr::User(_) => metrics.paths_user.inc(),
+            transports::Addr::Custom(_) => metrics.paths_custom.inc(),
         };
         if !self.has_been_direct && remote.is_ip() {
             self.has_been_direct = true;
@@ -1619,7 +1619,7 @@ fn to_transports_addr(
     addrs.into_iter().filter_map(move |addr| match addr {
         TransportAddr::Relay(relay_url) => Some(transports::Addr::from((relay_url, endpoint_id))),
         TransportAddr::Ip(sockaddr) => Some(transports::Addr::from(sockaddr)),
-        TransportAddr::User(user_addr) => Some(transports::Addr::from(user_addr)),
+        TransportAddr::Custom(custom_addr) => Some(transports::Addr::from(custom_addr)),
         _ => {
             warn!(?addr, "Unsupported TransportAddr");
             None

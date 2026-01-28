@@ -17,7 +17,7 @@ pub struct Metrics {
 
     // Data packets (non-disco)
     pub recv_data_relay: Counter,
-    pub recv_data_user: Counter,
+    pub recv_data_custom: Counter,
     pub recv_data_ipv4: Counter,
     pub recv_data_ipv6: Counter,
     /// Number of QUIC datagrams received.
@@ -47,7 +47,7 @@ pub struct Metrics {
     /// The number of network paths to peers that are user defined.
     ///
     /// This would typically only be incremented once for a single connection.
-    pub paths_user: Counter,
+    pub paths_custom: Counter,
     /// The number of connections that have been direct connections.
     ///
     /// This is only incremented once for each opened connection. See `num_conns_opened` for
@@ -74,9 +74,9 @@ pub struct Metrics {
     /// Number of relay transport paths closed.
     pub transport_relay_paths_removed: Counter,
     /// Number of user transport paths opened.
-    pub transport_user_paths_added: Counter,
+    pub transport_custom_paths_added: Counter,
     /// Number of user transport paths closed.
-    pub transport_user_paths_removed: Counter,
+    pub transport_custom_paths_removed: Counter,
 
     pub actor_tick_main: Counter,
     pub actor_tick_msg: Counter,

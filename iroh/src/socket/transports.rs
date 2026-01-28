@@ -38,7 +38,7 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: IpTransports,
     relay: Vec<RelayTransport>,
-    user: Vec<Box<dyn CustomEndpoint>>,
+    custom: Vec<Box<dyn CustomEndpoint>>,
 
     poll_recv_counter: usize,
     /// Cache for source addrs, to speed up access
@@ -47,8 +47,8 @@ pub(crate) struct Transports {
 
 /// Combined watcher type for all ip transports
 type IpTransportsWatcher = n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>;
-/// Combined watcher type for all user transports
-type UserTransportsWatcher = n0_watcher::Join<Vec<CustomAddr>, n0_watcher::Direct<Vec<CustomAddr>>>;
+/// Combined watcher type for all custom transports
+type CustomTransportsWatcher = n0_watcher::Join<Vec<CustomAddr>, n0_watcher::Direct<Vec<CustomAddr>>>;
 /// Combined watcher type for all relay transports
 type RelayTransportsWatcher = n0_watcher::Join<
     Option<(RelayUrl, EndpointId)>,
@@ -56,19 +56,19 @@ type RelayTransportsWatcher = n0_watcher::Join<
 >;
 
 #[cfg(not(wasm_browser))]
-/// Combined watcher type for all transports, user, relay and ip
+/// Combined watcher type for all transports, custom, relay and ip
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     n0_watcher::Tuple<
-        n0_watcher::Tuple<IpTransportsWatcher, UserTransportsWatcher>,
+        n0_watcher::Tuple<IpTransportsWatcher, CustomTransportsWatcher>,
         RelayTransportsWatcher,
     >,
     Vec<Addr>,
 >;
 
-/// Type for watching relay and user transports only, no ip
+/// Type for watching relay and custom transports only, no ip
 #[cfg(wasm_browser)]
 pub(crate) type LocalAddrsWatch =
-    n0_watcher::Map<n0_watcher::Tuple<UserTransportsWatcher, RelayTransportsWatcher>, Vec<Addr>>;
+    n0_watcher::Map<n0_watcher::Tuple<CustomTransportsWatcher, RelayTransportsWatcher>, Vec<Addr>>;
 
 /// Available transport configurations.
 #[derive(Debug, Clone)]
@@ -89,8 +89,8 @@ pub(crate) enum TransportConfig {
         /// Was this added explicitly by the user.
         is_user_defined: bool,
     },
-    /// User defined transport factory.
-    User(Arc<dyn CustomTransport>),
+    /// Custom transport factory.
+    Custom(Arc<dyn CustomTransport>),
 }
 
 impl TransportConfig {
@@ -157,7 +157,7 @@ impl TransportConfig {
             Self::Relay {
                 is_user_defined, ..
             } => *is_user_defined,
-            Self::User(_) => true,
+            Self::Custom(_) => true,
         }
     }
 }
@@ -207,23 +207,23 @@ impl Transports {
             .map(|_c| RelayTransport::new(relay_actor_config.clone(), shutdown_token.child_token()))
             .collect();
 
-        let mut user = Vec::new();
+        let mut custom = Vec::new();
         for config in configs.iter().filter_map(|t| {
-            if let TransportConfig::User(config) = t {
+            if let TransportConfig::Custom(config) = t {
                 Some(config)
             } else {
                 None
             }
         }) {
             let transport = config.bind()?;
-            user.push(transport);
+            custom.push(transport);
         }
 
         Ok(Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
-            user,
+            custom,
             poll_recv_counter: Default::default(),
             source_addrs: Default::default(),
         })
@@ -282,11 +282,11 @@ impl Transports {
             for transport in self.relay.iter_mut() {
                 poll_transport!(transport);
             }
-            for transport in self.user.iter_mut() {
+            for transport in self.custom.iter_mut() {
                 poll_transport!(transport);
             }
         } else {
-            for transport in self.user.iter_mut().rev() {
+            for transport in self.custom.iter_mut().rev() {
                 poll_transport!(transport);
             }
             for transport in self.relay.iter_mut().rev() {
@@ -312,16 +312,16 @@ impl Transports {
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
-        let users = n0_watcher::Join::new(self.user.iter().map(|t| t.watch_local_addrs()));
+        let custom = n0_watcher::Join::new(self.custom.iter().map(|t| t.watch_local_addrs()));
 
-        ips.or(users).or(relays).map(|((ips, users), relays)| {
+        ips.or(custom).or(relays).map(|((ips, custom), relays)| {
             let ips = ips.into_iter().map(Addr::from);
-            let users = users.into_iter().flatten().map(Addr::from);
+            let custom = custom.into_iter().flatten().map(Addr::from);
             let relays = relays
                 .into_iter()
                 .flatten()
                 .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id));
-            ips.chain(users).chain(relays).collect()
+            ips.chain(custom).chain(relays).collect()
         })
     }
 
@@ -329,14 +329,14 @@ impl Transports {
     /// Watch for all currently known local addresses, excluding IP based transports.
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
-        let users = n0_watcher::Join::new(self.user.iter().map(|t| t.watch_local_addrs()));
-        users.or(relays).map(|(users, relays)| {
-            let users = users.into_iter().flatten().map(Addr::from);
+        let custom = n0_watcher::Join::new(self.custom.iter().map(|t| t.watch_local_addrs()));
+        custom.or(relays).map(|(custom, relays)| {
+            let custom = custom.into_iter().flatten().map(Addr::from);
             let relays = relays
                 .into_iter()
                 .flatten()
                 .map(|(relay_url, endpoint_id)| Addr::Relay(relay_url, endpoint_id));
-            users.chain(relays).collect()
+            custom.chain(relays).collect()
         })
     }
 
@@ -390,14 +390,14 @@ impl Transports {
         let ip = self.ip.create_sender();
 
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
-        let user = self.user.iter().map(|t| t.create_sender()).collect();
+        let custom = self.custom.iter().map(|t| t.create_sender()).collect();
         let max_transmit_segments = self.max_transmit_segments();
 
         TransportsSender {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
-            user,
+            custom,
             max_transmit_segments,
         }
     }
@@ -496,8 +496,8 @@ pub enum Addr {
     Ip(SocketAddr),
     /// A relay address.
     Relay(RelayUrl, EndpointId),
-    /// A user defined address.
-    User(CustomAddr),
+    /// A custom transport address.
+    Custom(CustomAddr),
 }
 
 impl fmt::Debug for Addr {
@@ -505,7 +505,7 @@ impl fmt::Debug for Addr {
         match self {
             Addr::Ip(addr) => write!(f, "Ip({addr})"),
             Addr::Relay(url, node_id) => write!(f, "Relay({url}, {})", node_id.fmt_short()),
-            Addr::User(user_addr) => write!(f, "User({user_addr:?})"),
+            Addr::Custom(custom_addr) => write!(f, "Custom({custom_addr:?})"),
         }
     }
 }
@@ -545,7 +545,7 @@ impl From<&SocketAddr> for Addr {
 
 impl From<CustomAddr> for Addr {
     fn from(value: CustomAddr) -> Self {
-        Self::User(value)
+        Self::Custom(value)
     }
 }
 
@@ -560,7 +560,7 @@ impl From<Addr> for TransportAddr {
         match value {
             Addr::Ip(addr) => TransportAddr::Ip(addr),
             Addr::Relay(url, _) => TransportAddr::Relay(url),
-            Addr::User(user_addr) => TransportAddr::User(user_addr),
+            Addr::Custom(custom_addr) => TransportAddr::Custom(custom_addr),
         }
     }
 }
@@ -579,7 +579,7 @@ impl Addr {
         match self {
             Self::Ip(ip) => Some(ip),
             Self::Relay(..) => None,
-            Self::User(..) => None,
+            Self::Custom(..) => None,
         }
     }
 }
@@ -590,7 +590,7 @@ pub(crate) struct TransportsSender {
     #[cfg(not(wasm_browser))]
     ip: IpTransportsSender,
     relay: Vec<RelaySender>,
-    user: Vec<Arc<dyn CustomSender>>,
+    custom: Vec<Arc<dyn CustomSender>>,
     max_transmit_segments: NonZeroUsize,
 }
 
@@ -656,8 +656,8 @@ impl TransportsSender {
                     return Poll::Pending;
                 }
             }
-            Addr::User(addr) => {
-                for sender in &mut self.user {
+            Addr::Custom(addr) => {
+                for sender in &mut self.custom {
                     if sender.is_valid_send_addr(addr) {
                         match sender.poll_send(cx, addr, transmit) {
                             Poll::Pending => {}
@@ -720,7 +720,7 @@ impl quinn::AsyncUdpSocket for Transport {
                 match addr {
                     Addr::Ip(addr) => addr,
                     Addr::Relay(..) => DEFAULT_FAKE_ADDR.into(),
-                    Addr::User(_) => DEFAULT_FAKE_ADDR.into(),
+                    Addr::Custom(_) => DEFAULT_FAKE_ADDR.into(),
                 }
             })
             .collect();
@@ -740,7 +740,7 @@ impl quinn::AsyncUdpSocket for Transport {
 
             return Ok(DEFAULT_FAKE_ADDR.into());
         }
-        if !self.transports.user.is_empty() {
+        if !self.transports.custom.is_empty() {
             // pretend we have an address to make sure things are not too sad during startup
             use crate::socket::mapped_addrs::DEFAULT_FAKE_ADDR;
 
@@ -865,16 +865,16 @@ impl quinn::UdpSender for Sender {
                     }
                 }
             }
-            MultipathMappedAddr::User(user_mapped_addr) => {
+            MultipathMappedAddr::Custom(custom_mapped_addr) => {
                 match self
                     .sock
                     .mapped_addrs
-                    .user_addrs
-                    .lookup(&user_mapped_addr)
+                    .custom_addrs
+                    .lookup(&custom_mapped_addr)
                 {
-                    Some(addr) => Addr::User(addr),
+                    Some(addr) => Addr::Custom(addr),
                     None => {
-                        error!("unknown UserMappedAddr, dropped transmit");
+                        error!("unknown CustomMappedAddr, dropped transmit");
                         return Poll::Ready(Ok(()));
                     }
                 }

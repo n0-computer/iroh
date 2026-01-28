@@ -54,8 +54,8 @@ pub enum TransportAddr {
     Relay(RelayUrl),
     /// IP based addresses
     Ip(SocketAddr),
-    /// User defined transport address
-    User(CustomAddr),
+    /// Custom transport address
+    Custom(CustomAddr),
 }
 
 impl TransportAddr {

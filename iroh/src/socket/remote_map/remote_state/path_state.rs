@@ -90,7 +90,7 @@ impl RemotePathState {
         match addr {
             transports::Addr::Ip(_) => self.metrics.transport_ip_paths_added.inc(),
             transports::Addr::Relay(_, _) => self.metrics.transport_relay_paths_added.inc(),
-            transports::Addr::User(_) => self.metrics.transport_user_paths_added.inc(),
+            transports::Addr::Custom(_) => self.metrics.transport_custom_paths_added.inc(),
         };
         let state = self.paths.entry(addr).or_default();
         state.status = PathStatus::Open;
@@ -111,7 +111,7 @@ impl RemotePathState {
                     transports::Addr::Relay(_, _) => {
                         self.metrics.transport_relay_paths_removed.inc()
                     }
-                    transports::Addr::User(_) => self.metrics.transport_user_paths_removed.inc(),
+                    transports::Addr::Custom(_) => self.metrics.transport_custom_paths_removed.inc(),
                 };
             }
             match state.status {

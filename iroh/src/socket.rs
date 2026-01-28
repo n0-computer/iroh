@@ -461,13 +461,13 @@ impl Socket {
                         .get(&(src_url.clone(), *src_node));
                     quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
-                transports::Addr::User(addr) => {
+                transports::Addr::Custom(addr) => {
                     self.metrics
                         .socket
-                        .recv_data_user
+                        .recv_data_custom
                         .inc_by(quinn_meta.len as _);
                     // Fill in the correct mapped address
-                    let mapped_addr = self.mapped_addrs.user_addrs.get(addr);
+                    let mapped_addr = self.mapped_addrs.custom_addrs.get(addr);
                     quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
             }
