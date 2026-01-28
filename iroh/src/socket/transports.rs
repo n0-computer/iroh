@@ -16,7 +16,7 @@ use relay::{RelayNetworkChangeSender, RelaySender};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, instrument, trace, warn};
 
-use super::{Socket, mapped_addrs::MultipathMappedAddr, remote_map::RemoteStateMessage};
+use super::{Socket, mapped_addrs::MultipathMappedAddr};
 use crate::{metrics::EndpointMetrics, net_report::Report};
 
 #[cfg(not(wasm_browser))]
@@ -811,11 +811,7 @@ impl quinn::UdpSender for Sender {
 
         let transport_addr = match mapped_addr {
             MultipathMappedAddr::Mixed(mapped_addr) => {
-                let Some(endpoint_id) = self
-                    .sock
-                    .remote_map
-                    .endpoint_mapped_addrs
-                    .lookup(&mapped_addr)
+                let Some(endpoint_id) = self.sock.mapped_addrs.endpoint_addrs.lookup(&mapped_addr)
                 else {
                     error!(dst = ?mapped_addr, "unknown NodeIdMappedAddr, dropped transmit");
                     return Poll::Ready(Ok(()));
@@ -825,27 +821,32 @@ impl quinn::UdpSender for Sender {
                 // Initial packet we are sending, so we do not yet have an src address we
                 // need to respond from.
                 if let Some(src_ip) = quinn_transmit.src_ip {
-                    warn!(dst = ?mapped_addr, ?src_ip, dst_node = %endpoint_id.fmt_short(),
+                    warn!(dst = ?mapped_addr, ?src_ip, dst_endpoint = %endpoint_id.fmt_short(),
                         "oops, flub didn't think this would happen");
                 }
 
-                let sender = self.sock.remote_map.remote_state_actor(endpoint_id);
-                let transmit = OwnedTransmit::from(quinn_transmit);
-                match sender.try_send(RemoteStateMessage::SendDatagram(
-                    Box::new(self.sender.clone()),
-                    transmit,
-                )) {
+                match self.sock.try_send_remote_state_msg(
+                    endpoint_id,
+                    super::RemoteStateMessage::SendDatagram(
+                        Box::new(self.sender.clone()),
+                        OwnedTransmit::from(quinn_transmit),
+                    ),
+                ) {
                     Ok(()) => {
-                        trace!(dst = ?mapped_addr, dst_node = %endpoint_id.fmt_short(), "sent transmit");
+                        trace!(dst = ?mapped_addr, dst_endpoint = %endpoint_id.fmt_short(), "sent transmit");
                         return Poll::Ready(Ok(()));
                     }
-                    Err(err) => {
+                    Err(msg) => {
                         // We do not want to block the next send which might be on a
                         // different transport.  Instead we let Quinn handle this as
                         // a lost datagram.
                         // TODO: Revisit this: we might want to do something better.
-                        debug!(dst = ?mapped_addr, dst_node = %endpoint_id.fmt_short(),
-                            "RemoteStateActor inbox {err:#}, dropped transmit");
+                        debug!(
+                            dst = ?mapped_addr,
+                            dst_endpoint = %endpoint_id.fmt_short(),
+                            ?msg,
+                            "RemoteStateActor inbox dropped message"
+                        );
                         return Poll::Ready(Ok(()));
                     }
                 };
@@ -853,8 +854,8 @@ impl quinn::UdpSender for Sender {
             MultipathMappedAddr::Relay(relay_mapped_addr) => {
                 match self
                     .sock
-                    .remote_map
-                    .relay_mapped_addrs
+                    .mapped_addrs
+                    .relay_addrs
                     .lookup(&relay_mapped_addr)
                 {
                     Some((relay_url, endpoint_id)) => Addr::Relay(relay_url, endpoint_id),
@@ -867,8 +868,8 @@ impl quinn::UdpSender for Sender {
             MultipathMappedAddr::User(user_mapped_addr) => {
                 match self
                     .sock
-                    .remote_map
-                    .user_mapped_addrs
+                    .mapped_addrs
+                    .user_addrs
                     .lookup(&user_mapped_addr)
                 {
                     Some(addr) => Addr::User(addr),
