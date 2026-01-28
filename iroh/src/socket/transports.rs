@@ -251,7 +251,7 @@ impl Transports {
 
         let counter = self.poll_recv_counter.wrapping_add(1);
 
-        if counter % 2 == 0 {
+        if counter.is_multiple_of(2) {
             #[cfg(not(wasm_browser))]
             poll_transport!(&mut self.ip);
 
@@ -565,10 +565,10 @@ impl TransportsSender {
                     {
                         return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                     }
-                    if let Some(sender) = self.ip.v4_default_mut() {
-                        if sender.is_valid_default_addr(src, dst_addr) {
-                            return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
-                        }
+                    if let Some(sender) = self.ip.v4_default_mut()
+                        && sender.is_valid_default_addr(src, dst_addr)
+                    {
+                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                     }
                 }
                 SocketAddr::V6(_) => {
@@ -579,10 +579,10 @@ impl TransportsSender {
                     {
                         return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                     }
-                    if let Some(sender) = self.ip.v6_default_mut() {
-                        if sender.is_valid_default_addr(src, dst_addr) {
-                            return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
-                        }
+                    if let Some(sender) = self.ip.v6_default_mut()
+                        && sender.is_valid_default_addr(src, dst_addr)
+                    {
+                        return Pin::new(sender).poll_send(cx, *dst_addr, src, transmit);
                     }
                 }
             },

@@ -288,11 +288,10 @@ impl MdnsAddressLookup {
                         for addr in addrs {
                             address_lookup.add(addr.0, addr.1)
                         }
-                        if let Some(user_data) = data.user_data() {
-                            if let Err(err) = address_lookup.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
+                        if let Some(user_data) = data.user_data()
+                            && let Err(err) = address_lookup.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
                                 warn!("Failed to set the user-defined data in mdns: {err:?}");
                             }
-                        }
                         continue;
                     }
                 };
@@ -342,11 +341,11 @@ impl MdnsAddressLookup {
                         }
 
                         let entry = endpoint_addrs.entry(discovered_endpoint_id);
-                        if let std::collections::hash_map::Entry::Occupied(ref entry) = entry {
-                            if entry.get() == &peer_info {
-                                // this is a republish we already know about
-                                continue;
-                            }
+                        if let std::collections::hash_map::Entry::Occupied(ref entry) = entry
+                            && entry.get() == &peer_info
+                        {
+                            // this is a republish we already know about
+                            continue;
                         }
 
                         debug!(

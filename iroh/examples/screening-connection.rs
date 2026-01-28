@@ -108,7 +108,7 @@ impl ProtocolHandler for ScreenedEcho {
         let count = self.conn_attempt_count.load(Ordering::Relaxed);
 
         // reject every other connection
-        if count % 2 == 0 {
+        if count.is_multiple_of(2) {
             println!("rejecting connection");
             return Err(e!(AcceptError::NotAllowed));
         }

@@ -630,10 +630,10 @@ impl ActiveRelayActor {
             }
         };
 
-        if res.is_ok() {
-            if let Err(err) = client_sink.close().await {
-                debug!("Failed to close client sink gracefully: {err:#}");
-            }
+        if res.is_ok()
+            && let Err(err) = client_sink.close().await
+        {
+            debug!("Failed to close client sink gracefully: {err:#}");
         }
 
         res.map_err(|err| state.map_err(err))
@@ -1057,13 +1057,12 @@ impl RelayActor {
             Some(e) => e.clone(),
             None => {
                 let handle = self.start_active_relay(url.clone());
-                if Some(&url) == self.config.my_relay.get().as_ref() {
-                    if let Err(err) = handle
+                if Some(&url) == self.config.my_relay.get().as_ref()
+                    && let Err(err) = handle
                         .inbox_addr
                         .try_send(ActiveRelayMessage::SetHomeRelay(true))
-                    {
-                        error!("Home relay not set, send to new actor failed: {err:#}.");
-                    }
+                {
+                    error!("Home relay not set, send to new actor failed: {err:#}.");
                 }
                 self.active_relays.insert(url, handle.clone());
                 self.log_active_relay();

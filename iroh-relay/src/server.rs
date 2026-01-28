@@ -651,13 +651,13 @@ fn serve_no_content_handler<B: hyper::body::Body>(
         !c.is_empty() && c.len() < 64 && c.as_bytes().iter().all(|c| is_challenge_char(*c as char))
     };
 
-    if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER) {
-        if check(challenge) {
-            response = response.header(
-                NO_CONTENT_RESPONSE_HEADER,
-                format!("response {}", challenge.to_str()?),
-            );
-        }
+    if let Some(challenge) = r.headers().get(NO_CONTENT_CHALLENGE_HEADER)
+        && check(challenge)
+    {
+        response = response.header(
+            NO_CONTENT_RESPONSE_HEADER,
+            format!("response {}", challenge.to_str()?),
+        );
     }
 
     response
@@ -713,10 +713,10 @@ async fn run_captive_portal_service(http_listener: TcpListener) {
             biased;
 
             Some(res) = tasks.join_next() => {
-                if let Err(err) = res {
-                    if err.is_panic() {
-                        panic!("task panicked: {err:#?}");
-                    }
+                if let Err(err) = res
+                    && err.is_panic()
+                {
+                    panic!("task panicked: {err:#?}");
                 }
             }
 
