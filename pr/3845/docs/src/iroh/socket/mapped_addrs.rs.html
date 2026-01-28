@@ -52,7 +52,7 @@
 <a href=#52 id=52 data-nosnippet>52</a>
 <a href=#53 id=53 data-nosnippet>53</a><span class="doccomment">/// The dummy port used for all mapped addresses.
 <a href=#54 id=54 data-nosnippet>54</a>///
-<a href=#55 id=55 data-nosnippet>55</a>/// We map each entity, usually an [`EndpointId`], to an IPv6 address.  But socket addresses
+<a href=#55 id=55 data-nosnippet>55</a>/// We map each entity, usually an [`crate::EndpointId`], to an IPv6 address.  But socket addresses
 <a href=#56 id=56 data-nosnippet>56</a>/// involve ports, so we use a dummy fixed port when creating socket addresses.
 <a href=#57 id=57 data-nosnippet>57</a></span><span class="kw">const </span>MAPPED_PORT: u16 = <span class="number">12345</span>;
 <a href=#58 id=58 data-nosnippet>58</a>
@@ -90,9 +90,9 @@
 <a href=#90 id=90 data-nosnippet>90</a>/// address is even supported on this platform.  Hence no wasm exceptions here.
 <a href=#91 id=91 data-nosnippet>91</a></span><span class="attr">#[derive(Clone, Debug)]
 <a href=#92 id=92 data-nosnippet>92</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>MultipathMappedAddr {
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// An address for a [`EndpointId`], via one or more paths.
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// An address for a [`crate::EndpointId`], via one or more paths.
 <a href=#94 id=94 data-nosnippet>94</a>    </span>Mixed(EndpointIdMappedAddr),
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// An address for a particular [`EndpointId`] via a particular relay.
+<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// An address for a particular [`crate::EndpointId`] via a particular relay.
 <a href=#96 id=96 data-nosnippet>96</a>    </span>Relay(RelayMappedAddr),
 <a href=#97 id=97 data-nosnippet>97</a>    <span class="doccomment">/// An IP based transport address.
 <a href=#98 id=98 data-nosnippet>98</a>    </span>Ip(SocketAddr),
@@ -190,7 +190,7 @@
 <a href=#190 id=190 data-nosnippet>190</a>#[error(<span class="string">"Failed to convert"</span>)]
 <a href=#191 id=191 data-nosnippet>191</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>EndpointIdMappedAddrError;
 <a href=#192 id=192 data-nosnippet>192</a>
-<a href=#193 id=193 data-nosnippet>193</a><span class="doccomment">/// An Ipv6 ULA address, identifying a relay path for a [`EndpointId`].
+<a href=#193 id=193 data-nosnippet>193</a><span class="doccomment">/// An Ipv6 ULA address, identifying a relay path for a [`crate::EndpointId`].
 <a href=#194 id=194 data-nosnippet>194</a>///
 <a href=#195 id=195 data-nosnippet>195</a>/// Since iroh endpoint are reachable via a relay server we have a network path indicated by
 <a href=#196 id=196 data-nosnippet>196</a>/// the `(EndpointId, RelayUrl)`.  However Quinn can only handle socket addresses, so we use
@@ -257,7 +257,7 @@
 <a href=#257 id=257 data-nosnippet>257</a>///
 <a href=#258 id=258 data-nosnippet>258</a>/// Custom transports allow user-defined transport mechanisms. However Quinn can only handle
 <a href=#259 id=259 data-nosnippet>259</a>/// socket addresses, so we use IPv6 addresses in a private IPv6 Unique Local Address range,
-<a href=#260 id=260 data-nosnippet>260</a>/// which map to a unique [`CustomAddr`].
+<a href=#260 id=260 data-nosnippet>260</a>/// which map to a unique [`iroh_base::CustomAddr`].
 <a href=#261 id=261 data-nosnippet>261</a></span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 <a href=#262 id=262 data-nosnippet>262</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>CustomMappedAddr(Ipv6Addr);
 <a href=#263 id=263 data-nosnippet>263</a>
