@@ -57,6 +57,7 @@ use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{stream::StreamExt, task::AbortOnDropHandle};
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use postcard::experimental::max_size::MaxSize;
+use quinn::PathId;
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -891,6 +892,7 @@ fn watch_conn_type(
                     continue;
                 }
                 print(SelectedPath::Selected {
+                    id: path.id(),
                     addr: path.remote_addr().clone(),
                     rtt: path.rtt(),
                 });
@@ -933,7 +935,8 @@ fn watch_path_stats(conn: iroh::endpoint::Connection) -> AbortOnDropHandle<PathS
         }
         let list = latest_stats_by_path
             .into_iter()
-            .map(|(addr, (_info, stats))| PathData {
+            .map(|(addr, (info, stats))| PathData {
+                id: info.id(),
                 remote_addr: addr,
                 rtt: stats.rtt,
                 bytes_sent: stats.udp_tx.bytes,
@@ -1065,6 +1068,8 @@ enum SelectedPath {
         count: usize,
     },
     Selected {
+        #[serde(skip)]
+        id: PathId,
         addr: TransportAddr,
         #[serde(with = "duration_micros")]
         rtt: Duration,
@@ -1078,8 +1083,8 @@ impl fmt::Display for SelectedPath {
             Self::Mixed { count } => {
                 write!(f, "mixed ({count} paths)")
             }
-            Self::Selected { addr, rtt } => {
-                write!(f, "{addr:?} (RTT: {})", fmt_duration(*rtt))
+            Self::Selected { addr, rtt, id } => {
+                write!(f, "{addr:?} [id:{id}] (RTT: {})", fmt_duration(*rtt))
             }
             Self::None => {
                 write!(f, "none")
@@ -1125,6 +1130,8 @@ impl fmt::Display for EndpointClosed {
 
 #[derive(Serialize, Debug, Clone)]
 struct PathData {
+    #[serde(skip)]
+    id: PathId,
     remote_addr: TransportAddr,
     #[serde(with = "duration_micros")]
     rtt: Duration,
@@ -1144,7 +1151,8 @@ impl fmt::Display for PathStats {
         for path in &self.paths {
             write!(
                 f,
-                "\n\t{:?}: RTT {}ms, tx={}, rx={}",
+                "\n\t[{:>2}] {:?}: RTT {}, tx={}, rx={}",
+                path.id,
                 path.remote_addr,
                 fmt_duration(path.rtt),
                 path.bytes_sent,
@@ -1205,12 +1213,12 @@ impl fmt::Display for ConnectionClosed {
 
 #[derive(Serialize, Debug, Clone, Display)]
 #[display(
-    "Downloaded: {:>10} in {:.2}s, {:>10}/s ({}{} chunks)",
+    "Downloaded: {:>10} in {:.2}, {:>10}/s ({}{} chunks)",
     HumanBytes(self.size).to_string(),
     fmt_duration(self.duration),
     HumanBytes((self.size as f64 / self.duration.as_secs_f64()) as u64),
     self.time_to_first_byte
-        .map(|t| format!("time to first byte {}ms, ", t.as_millis()))
+        .map(|t| format!("time to first byte {}, ", fmt_duration(t)))
         .unwrap_or_default(),
     self.num_chunks
 )]
