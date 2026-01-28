@@ -25,9 +25,9 @@ use crate::{metrics::EndpointMetrics, net_report::Report};
 #[cfg(not(wasm_browser))]
 mod ip;
 mod relay;
-pub(crate) mod user;
+pub(crate) mod custom;
 
-use user::{CustomEndpoint, CustomSender, CustomTransport};
+use custom::{CustomEndpoint, CustomSender, CustomTransport};
 
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::Config as IpConfig;

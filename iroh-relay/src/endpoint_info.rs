@@ -306,7 +306,7 @@ impl From<&TxtAttrs<IrohAttr>> for EndpointInfo {
             .flatten()
             .filter_map(|s| Url::parse(s).ok())
             .map(|url| TransportAddr::Relay(url.into()));
-        // Parse addresses: try IP first, then UserAddr
+        // Parse addresses: try IP first, then CustomAddr
         let addrs = attrs
             .get(&IrohAttr::Addr)
             .into_iter()
@@ -499,7 +499,7 @@ fn endpoint_id_from_txt_name(name: &str) -> Result<EndpointId, ParseError> {
 pub(crate) enum IrohAttr {
     /// URL of home relay.
     Relay,
-    /// Address (IP or user transport).
+    /// Address (IP or custom transport).
     Addr,
     /// User-defined data
     UserData,
@@ -718,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn txt_attr_roundtrip_with_user_addr() {
+    fn txt_attr_roundtrip_with_custom_addr() {
         use iroh_base::CustomAddr;
 
         // Bluetooth-like address (small id, 6 byte MAC)
@@ -742,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    fn signed_packet_roundtrip_with_user_addr() {
+    fn signed_packet_roundtrip_with_custom_addr() {
         use iroh_base::CustomAddr;
 
         let secret_key =

@@ -30,7 +30,7 @@ use url::Url;
 pub mod transports {
     pub use super::socket::transports::{
         Addr, AddrKind, TransportBias, TransportType, Transmit,
-        user::{CustomEndpoint, CustomSender, CustomTransport},
+        custom::{CustomEndpoint, CustomSender, CustomTransport},
     };
 }
 

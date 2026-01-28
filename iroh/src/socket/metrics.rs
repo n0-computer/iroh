@@ -73,9 +73,9 @@ pub struct Metrics {
     pub transport_relay_paths_added: Counter,
     /// Number of relay transport paths closed.
     pub transport_relay_paths_removed: Counter,
-    /// Number of user transport paths opened.
+    /// Number of custom transport paths opened.
     pub transport_custom_paths_added: Counter,
-    /// Number of user transport paths closed.
+    /// Number of custom transport paths closed.
     pub transport_custom_paths_removed: Counter,
 
     pub actor_tick_main: Counter,

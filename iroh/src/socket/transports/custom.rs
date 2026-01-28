@@ -8,20 +8,20 @@ use iroh_base::CustomAddr;
 
 use super::{Addr, Transmit};
 
-/// User defined transport.
+/// Custom transport.
 ///
-/// Usually a transport will only deal with a single user address type, but
-/// the signature allows for dealing with multiple user address types.
+/// Usually a transport will only deal with a single custom address type, but
+/// the signature allows for dealing with multiple custom address types.
 ///
-/// A transport is a factory for user endpoints. Whenever an iroh endpoint is
-/// create using [crate::endpoint::Builder::bind], a new user endpoint will
+/// A transport is a factory for custom endpoints. Whenever an iroh endpoint is
+/// created using [crate::endpoint::Builder::bind], a new custom endpoint will
 /// be created using [CustomTransport::bind].
 pub trait CustomTransport: std::fmt::Debug + Send + Sync + 'static {
     /// Create a custom endpoint
     fn bind(&self) -> io::Result<Box<dyn CustomEndpoint>>;
 }
 
-/// User endpoint created by a [CustomTransport].
+/// Custom endpoint created by a [CustomTransport].
 ///
 /// An endpoint has a local address (or multiple local addresses), can receive
 /// packets, and can create senders to send packets.
@@ -40,10 +40,10 @@ pub trait CustomEndpoint: std::fmt::Debug + Send + Sync + 'static {
     ) -> Poll<io::Result<usize>>;
 }
 
-/// User sender
+/// Custom sender
 ///
-/// A sender provides a poll based interface to send packets to user addresses.
-/// It can decide whether it wants to send to a given user address type.
+/// A sender provides a poll based interface to send packets to custom addresses.
+/// It can decide whether it wants to send to a given custom address type.
 ///
 /// This is not enforced at type level, but [CustomSender::poll_send] should
 /// only be called with addresses for which [CustomSender::is_valid_send_addr]

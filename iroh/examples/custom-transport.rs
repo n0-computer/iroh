@@ -94,8 +94,8 @@ impl AddressLookup for TestDiscovery {
         endpoint_id: EndpointId,
     ) -> Option<n0_future::stream::Boxed<std::result::Result<Item, iroh::address_lookup::Error>>>
     {
-        let user_addr = to_custom_addr(endpoint_id);
-        if self.state.lock().unwrap().channels.contains_key(&user_addr) {
+        let custom_addr = to_custom_addr(endpoint_id);
+        if self.state.lock().unwrap().channels.contains_key(&custom_addr) {
             Some(Box::pin(n0_future::stream::once(Ok(Item::new(
                 EndpointInfo {
                     endpoint_id,

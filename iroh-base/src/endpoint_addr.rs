@@ -146,7 +146,7 @@ pub struct CustomAddr {
     /// id
     id: u64,
     /// data
-    data: UserAddrBytes,
+    data: CustomAddrBytes,
 }
 
 impl fmt::Display for CustomAddr {
@@ -156,17 +156,17 @@ impl fmt::Display for CustomAddr {
 }
 
 impl std::str::FromStr for CustomAddr {
-    type Err = UserAddrParseError;
+    type Err = CustomAddrParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let Some((id_str, data_str)) = s.split_once('_') else {
-            return Err(UserAddrParseError::MissingSeparator);
+            return Err(CustomAddrParseError::MissingSeparator);
         };
         let Ok(id) = u64::from_str_radix(id_str, 16) else {
-            return Err(UserAddrParseError::InvalidId);
+            return Err(CustomAddrParseError::InvalidId);
         };
         let Ok(data) = HEXLOWER.decode(data_str.as_bytes()) else {
-            return Err(UserAddrParseError::InvalidData);
+            return Err(CustomAddrParseError::InvalidData);
         };
         Ok(Self::from_parts(id, &data))
     }
@@ -175,7 +175,7 @@ impl std::str::FromStr for CustomAddr {
 /// Error parsing a [`CustomAddr`].
 #[stack_error(derive)]
 #[allow(missing_docs)]
-pub enum UserAddrParseError {
+pub enum CustomAddrParseError {
     /// Missing `_` separator between id and data.
     #[error("missing '_' separator")]
     MissingSeparator,
@@ -188,12 +188,12 @@ pub enum UserAddrParseError {
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum UserAddrBytes {
+enum CustomAddrBytes {
     Inline { size: u8, data: [u8; 30] },
     Heap(Box<[u8]>),
 }
 
-impl fmt::Debug for UserAddrBytes {
+impl fmt::Debug for CustomAddrBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !f.alternate() {
             write!(f, "[{}]", HEXLOWER.encode(self.as_bytes()))
@@ -213,7 +213,7 @@ impl From<(u64, &[u8])> for CustomAddr {
     }
 }
 
-impl UserAddrBytes {
+impl CustomAddrBytes {
     pub fn len(&self) -> usize {
         match self {
             Self::Inline { size, .. } => *size as usize,
@@ -247,16 +247,16 @@ impl CustomAddr {
     pub fn from_parts(id: u64, data: &[u8]) -> Self {
         Self {
             id,
-            data: UserAddrBytes::copy_from_slice(data),
+            data: CustomAddrBytes::copy_from_slice(data),
         }
     }
 
-    /// Id to distinguish different user address types
+    /// Id to distinguish different custom address types
     pub fn id(&self) -> u64 {
         self.id
     }
 
-    /// Data associated with this user address
+    /// Data associated with this custom address
     pub fn data(&self) -> &[u8] {
         self.data.as_bytes()
     }
@@ -323,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn test_user_addr_roundtrip() {
+    fn test_custom_addr_roundtrip() {
         // Small id, small data (e.g., Bluetooth MAC)
         let addr = CustomAddr::from_parts(1, &[0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]);
         let s = addr.to_string();
@@ -357,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn test_user_addr_parse_errors() {
+    fn test_custom_addr_parse_errors() {
         // Missing separator
         assert!("abc123".parse::<CustomAddr>().is_err());
 
