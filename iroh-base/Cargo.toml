@@ -18,7 +18,7 @@ workspace = true
 curve25519-dalek = { version = "=5.0.0-pre.1", features = ["serde", "rand_core", "zeroize"], optional = true }
 data-encoding = { version = "2.3.3", optional = true }
 ed25519-dalek = { version = "=3.0.0-pre.1", features = ["serde", "rand_core", "zeroize"], optional = true }
-derive_more = { version = "2.0.1", features = ["display"], optional = true }
+derive_more = { version = "2.0.1", features = ["debug", "display"], optional = true }
 url = { version = "2.5.3", features = ["serde"], optional = true }
 rand_core = { version = "0.9.3", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }

@@ -356,7 +356,7 @@ async fn main() -> Result<()> {
             _ => None,
         };
         let log_file = if let Some(dir) = dir.as_ref() {
-            std::fs::create_dir_all(&dir)
+            std::fs::create_dir_all(dir)
                 .with_context(|_| format!("failed to create log directory at {}", dir.display()))?;
             Some(dir.join("logs"))
         } else {
