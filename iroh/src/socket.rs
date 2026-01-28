@@ -998,7 +998,7 @@ impl Handle {
     }
 
     #[cfg(test)]
-    async fn force_network_change(&self, is_major: bool) {
+    pub(crate) async fn force_network_change(&self, is_major: bool) {
         self.actor_sender
             .send(ActorMessage::ForceNetworkChange(is_major))
             .await
