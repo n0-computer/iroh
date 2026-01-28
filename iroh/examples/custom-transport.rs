@@ -1,8 +1,9 @@
+use clap::Parser;
 use iroh::{
     Endpoint, EndpointAddr, SecretKey, TransportAddr,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
-    test_utils::test_transport::{TestNetwork, to_custom_addr},
+    test_utils::test_transport::{TestNetwork, TEST_TRANSPORT_ID},
 };
 use n0_error::{Result, StdResultExt};
 use n0_watcher::Watcher;
@@ -12,6 +13,18 @@ use n0_watcher::Watcher;
 /// The ALPN, or application-layer protocol negotiation, is exchanged in the connection handshake,
 /// and the connection is aborted unless both endpoints pass the same bytestring.
 const ALPN: &[u8] = b"iroh-example/echo/0";
+
+/// Example demonstrating custom transport usage.
+#[derive(Parser, Debug)]
+struct Args {
+    /// Keep IP transports enabled (in addition to custom transport)
+    #[arg(long)]
+    keep_ip: bool,
+
+    /// Keep relay transports enabled (in addition to custom transport)
+    #[arg(long)]
+    keep_relay: bool,
+}
 
 #[derive(Debug, Clone)]
 struct Echo;
@@ -50,49 +63,56 @@ impl ProtocolHandler for Echo {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
+    let args = Args::parse();
+
+    println!("Config: keep_ip={}, keep_relay={}", args.keep_ip, args.keep_relay);
+
     let network = TestNetwork::new();
     let s1 = SecretKey::from([0u8; 32]);
     let s2 = SecretKey::from([1u8; 32]);
-    let tt1 = network.create_transport(s1.public())?;
-    let tt2 = network.create_transport(s2.public())?;
-    let _d = network.discovery();
-    let ep1 = Endpoint::builder()
-        .secret_key(s1.clone())
-        // .clear_discovery()
-        // .discovery(d.clone())
-        .add_custom_transport(tt1)
-        .clear_ip_transports()
-        .clear_relay_transports()
-        .bind()
-        .await?;
-    let ep2 = Endpoint::builder()
-        .secret_key(s2.clone())
-        // .clear_discovery()
-        // .discovery(d.clone())
-        .add_custom_transport(tt2)
-        .clear_ip_transports()
-        .clear_relay_transports()
-        .bind()
-        .await?;
-    let addr2 = ep2.addr();
-    println!("ep2 addr: {:?}", addr2);
-    let server = Router::builder(ep2).accept(ALPN, Echo).spawn();
-    let addr2 = EndpointAddr::from_parts(
-        s2.public(),
-        [TransportAddr::Custom(to_custom_addr(s2.public()))],
-    );
-    println!("ep2 addr: {:?}", addr2);
-    let conn = ep1.connect(addr2, ALPN).await?;
 
-    // Verify that the custom transport is being used
+    // Create transports and configure builders with transport + address lookup
+    let t1 = network.create_transport(s1.public())?;
+    let mut builder1 = Endpoint::builder().secret_key(s1.clone()).preset(t1);
+    if !args.keep_ip {
+        builder1 = builder1.clear_ip_transports();
+    }
+    if !args.keep_relay {
+        builder1 = builder1.clear_relay_transports();
+    }
+    let ep1 = builder1.bind().await?;
+
+    let t2 = network.create_transport(s2.public())?;
+    let mut builder2 = Endpoint::builder().secret_key(s2.clone()).preset(t2);
+    if !args.keep_ip {
+        builder2 = builder2.clear_ip_transports();
+    }
+    if !args.keep_relay {
+        builder2 = builder2.clear_relay_transports();
+    }
+    let ep2 = builder2.bind().await?;
+    println!("ep2 addr: {:?}", ep2.addr());
+    let server = Router::builder(ep2).accept(ALPN, Echo).spawn();
+
+    // Connect using just the endpoint ID - discovery will resolve addresses
+    // Note: The test network's discovery is very fast (in-memory), so the custom
+    // transport address is available immediately and wins before IP discovery runs.
+    println!("Connecting to: {:?}", s2.public());
+    let conn = ep1.connect(s2.public(), ALPN).await?;
+
+    // Verify that the test transport is being used
     let paths = conn.paths().get();
     let selected_path = paths.iter().find(|p| p.is_selected());
+    let is_test_transport = selected_path.is_some_and(|p| {
+        matches!(p.remote_addr(), TransportAddr::Custom(addr) if addr.id() == TEST_TRANSPORT_ID)
+    });
     assert!(
-        selected_path.is_some_and(|p| p.is_custom()),
-        "Expected custom transport to be selected, got: {:?}",
+        is_test_transport,
+        "Expected test transport (id={}) to be selected, got: {:?}",
+        TEST_TRANSPORT_ID,
         selected_path.map(|p| p.remote_addr())
     );
-    println!("Verified: custom transport is selected");
+    println!("Verified: test transport (id={}) is selected", TEST_TRANSPORT_ID);
 
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
     send.write_all(b"Hello custom transport!").await.anyerr()?;

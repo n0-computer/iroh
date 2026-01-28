@@ -17,7 +17,7 @@ use tracing::info;
 
 use crate::{
     address_lookup::{AddressLookup, EndpointData, EndpointInfo, Item},
-    endpoint::transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit},
+    endpoint::{Builder, presets::Preset, transports::{Addr, CustomEndpoint, CustomSender, CustomTransport, Transmit}},
 };
 
 /// The transport ID used by [`TestNetwork`].
@@ -38,6 +38,27 @@ pub struct TestTransport {
     id: EndpointId,
     id_watchable: n0_watcher::Watchable<Vec<CustomAddr>>,
     network: TestNetwork,
+}
+
+impl Preset for Arc<TestTransport> {
+    /// Configures the builder with this transport and the network's address lookup.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let network = TestNetwork::new();
+    /// let transport = network.create_transport(secret_key.public())?;
+    /// let ep = Endpoint::builder()
+    ///     .secret_key(secret_key)
+    ///     .preset(transport)
+    ///     .bind()
+    ///     .await?;
+    /// ```
+    fn apply(self, builder: Builder) -> Builder {
+        builder
+            .add_custom_transport(self.clone())
+            .address_lookup(self.network.address_lookup())
+    }
 }
 
 /// A simulated network for testing custom transports.
@@ -66,8 +87,8 @@ impl TestNetwork {
         Self::default()
     }
 
-    /// Creates a discovery service for this network.
-    pub fn discovery(&self) -> impl AddressLookup {
+    /// Creates an address lookup service for this network.
+    pub fn address_lookup(&self) -> impl AddressLookup {
         TestAddrLookup {
             network: self.clone(),
         }
