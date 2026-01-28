@@ -749,6 +749,9 @@ async fn perform_request(
 }
 
 /// Drain `recv`, and once done finish `send`.
+///
+/// We use [`SendStream::finish`] as a confirmation once we fully read [`RecvStream`]. The remote will wait
+/// for this event and not close the connection earlire.
 #[instrument("drain_stream", skip_all)]
 async fn drain_stream(
     mut recv: RecvStream,
@@ -786,6 +789,10 @@ async fn drain_stream(
 }
 
 /// Send data on `send` for `length`, afterwards wait for `recv` to be closed.
+///
+/// When done sending, we wait for [`RecvStream`] to be closed. The remote will finish its corresponding
+/// send stream once it has read all our data. This ensures that we don't close the connection before the remote
+/// has fully read our data.
 #[instrument("send_data", skip_all)]
 async fn send_data(
     mut send: SendStream,
