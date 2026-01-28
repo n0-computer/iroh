@@ -960,49 +960,76 @@ impl RemoteStateActor {
                     self.paths.abandoned_path(&addr);
                 }
             }
-            PathEvent::Closed { id, .. } | PathEvent::LocallyClosed { id, .. } => {
-                let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
-                    debug!("path not in path_id_map");
-                    return;
-                };
-                event!(
-                    target: "iroh::_events::path::closed",
-                    Level::DEBUG,
-                    remote = %self.endpoint_id.fmt_short(),
-                    ?path_remote,
-                    ?conn_id,
-                    path_id = ?id,
-                );
-                conn_state.remove_open_path(&id);
-
-                // If one connection closes this path, close it on all connections.
-                for (conn_id, conn_state) in self.connections.iter_mut() {
-                    let Some(path_id) = conn_state.path_ids.get(&path_remote) else {
-                        continue;
-                    };
-                    let Some(conn) = conn_state.handle.upgrade() else {
-                        continue;
-                    };
-                    if let Some(path) = conn.path(*path_id) {
-                        trace!(?path_remote, ?conn_id, %path_id, "closing path");
-                        if let Err(err) = path.close() {
-                            trace!(
-                                ?path_remote,
-                                ?conn_id,
-                                %path_id,
-                                "path close failed: {err:#}"
-                            );
-                        }
-                    }
-                }
-
-                // If the remote closed our selected path, select a new one.
-                self.select_path();
+            PathEvent::Closed { id, .. } => {
+                drop(conn);
+                self.handle_path_closed(conn_id, id, false);
+            }
+            PathEvent::LocallyClosed { id, error } => {
+                drop(conn);
+                let validation_failed = error == PathError::ValidationFailed;
+                self.handle_path_closed(conn_id, id, validation_failed);
             }
             PathEvent::RemoteStatus { .. } | PathEvent::ObservedAddr { .. } => {
                 // Nothing to do for these events.
             }
         }
+    }
+
+    /// Handles a path being closed (either remotely or locally).
+    fn handle_path_closed(&mut self, conn_id: ConnId, id: PathId, validation_failed: bool) {
+        // If path validation failed, retry holepunching after a short delay.
+        // This handles cases where paths fail to validate after network changes
+        // (e.g., interface down/up) due to routing not being fully established.
+        // Note: this must be checked BEFORE the early returns below, because paths
+        // opened by initiate_nat_traversal_round() are not tracked in our path map.
+        if validation_failed {
+            debug!("path validation failed, scheduling holepunch retry");
+            let retry_delay = Duration::from_millis(500);
+            self.last_holepunch = None;
+            self.scheduled_holepunch = Some(Instant::now() + retry_delay);
+        }
+
+        let Some(conn_state) = self.connections.get_mut(&conn_id) else {
+            debug!("path closed for removed connection");
+            return;
+        };
+        let Some(path_remote) = conn_state.paths.get(&id).cloned() else {
+            debug!("path not in path_id_map");
+            return;
+        };
+        event!(
+            target: "iroh::_events::path::closed",
+            Level::DEBUG,
+            remote = %self.endpoint_id.fmt_short(),
+            ?path_remote,
+            ?conn_id,
+            path_id = ?id,
+        );
+        conn_state.remove_open_path(&id);
+
+        // If one connection closes this path, close it on all connections.
+        for (other_conn_id, other_conn_state) in self.connections.iter_mut() {
+            let Some(path_id) = other_conn_state.path_ids.get(&path_remote) else {
+                continue;
+            };
+            let Some(conn) = other_conn_state.handle.upgrade() else {
+                continue;
+            };
+            if let Some(path) = conn.path(*path_id) {
+                trace!(?path_remote, conn_id = ?other_conn_id, %path_id, "closing path");
+                if let Err(err) = path.close() {
+                    trace!(
+                        ?path_remote,
+                        conn_id = ?other_conn_id,
+                        %path_id,
+                        "path close failed: {err:#}"
+                    );
+                }
+            }
+        }
+
+        // If the closed path was our selected path, select a new one.
+        self.select_path();
     }
 
     /// Selects the path with the lowest RTT, prefers direct paths.
