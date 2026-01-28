@@ -400,6 +400,7 @@ impl RemoteStateActor {
         }
 
         if is_major {
+            self.last_holepunch = None;
             self.trigger_holepunching();
         }
     }
@@ -741,16 +742,17 @@ impl RemoteStateActor {
             .last_holepunch
             .as_ref()
             .map(|last_hp| {
-                // Addrs are allowed to disappear, but if there are new ones we need to
-                // holepunch again.
+                // Trigger holepunch if candidates changed (new ones appeared OR old ones disappeared).
+                // When addresses disappear and reappear (e.g., interface down/up), we need to
+                // re-holepunch because the old paths may be stale.
                 trace!(
                     ?last_hp,
                     ?local_candidates,
                     ?remote_candidates,
                     "candidates to holepunch?"
                 );
-                !remote_candidates.is_subset(&last_hp.remote_candidates)
-                    || !local_candidates.is_subset(&last_hp.local_candidates)
+                remote_candidates != last_hp.remote_candidates
+                    || local_candidates != last_hp.local_candidates
             })
             .unwrap_or(true);
         if !new_candidates {
