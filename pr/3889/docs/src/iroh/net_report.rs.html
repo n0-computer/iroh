@@ -147,31 +147,31 @@
 <a href=#147 id=147 data-nosnippet>147</a>    }
 <a href=#148 id=148 data-nosnippet>148</a>
 <a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">fn </span>current_v4(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;ProbeReport&gt; {
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, <span class="kw-2">ref </span>conn)) = <span class="self">self</span>.v4 {
-<a href=#151 id=151 data-nosnippet>151</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>r) = conn.observer.get() {
-<a href=#152 id=152 data-nosnippet>152</a>                <span class="comment">// grab latest rtt
-<a href=#153 id=153 data-nosnippet>153</a>
-<a href=#154 id=154 data-nosnippet>154</a>                </span><span class="kw">use </span>quinn_proto::PathId;
-<a href=#155 id=155 data-nosnippet>155</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(latency) = conn.conn.rtt(PathId::ZERO) {
-<a href=#156 id=156 data-nosnippet>156</a>                    r.latency = latency;
-<a href=#157 id=157 data-nosnippet>157</a>                }
-<a href=#158 id=158 data-nosnippet>158</a>                <span class="kw">return </span><span class="prelude-val">Some</span>(ProbeReport::QadIpv4(r));
-<a href=#159 id=159 data-nosnippet>159</a>            }
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, <span class="kw-2">ref </span>conn)) = <span class="self">self</span>.v4
+<a href=#151 id=151 data-nosnippet>151</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>r) = conn.observer.get()
+<a href=#152 id=152 data-nosnippet>152</a>        {
+<a href=#153 id=153 data-nosnippet>153</a>            <span class="comment">// grab latest rtt
+<a href=#154 id=154 data-nosnippet>154</a>
+<a href=#155 id=155 data-nosnippet>155</a>            </span><span class="kw">use </span>quinn_proto::PathId;
+<a href=#156 id=156 data-nosnippet>156</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(latency) = conn.conn.rtt(PathId::ZERO) {
+<a href=#157 id=157 data-nosnippet>157</a>                r.latency = latency;
+<a href=#158 id=158 data-nosnippet>158</a>            }
+<a href=#159 id=159 data-nosnippet>159</a>            <span class="kw">return </span><span class="prelude-val">Some</span>(ProbeReport::QadIpv4(r));
 <a href=#160 id=160 data-nosnippet>160</a>        }
 <a href=#161 id=161 data-nosnippet>161</a>        <span class="prelude-val">None
 <a href=#162 id=162 data-nosnippet>162</a>    </span>}
 <a href=#163 id=163 data-nosnippet>163</a>
 <a href=#164 id=164 data-nosnippet>164</a>    <span class="kw">fn </span>current_v6(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;ProbeReport&gt; {
-<a href=#165 id=165 data-nosnippet>165</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, <span class="kw-2">ref </span>conn)) = <span class="self">self</span>.v6 {
-<a href=#166 id=166 data-nosnippet>166</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>r) = conn.observer.get() {
-<a href=#167 id=167 data-nosnippet>167</a>                <span class="comment">// grab latest rtt
-<a href=#168 id=168 data-nosnippet>168</a>
-<a href=#169 id=169 data-nosnippet>169</a>                </span><span class="kw">use </span>quinn_proto::PathId;
-<a href=#170 id=170 data-nosnippet>170</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(latency) = conn.conn.rtt(PathId::ZERO) {
-<a href=#171 id=171 data-nosnippet>171</a>                    r.latency = latency;
-<a href=#172 id=172 data-nosnippet>172</a>                }
-<a href=#173 id=173 data-nosnippet>173</a>                <span class="kw">return </span><span class="prelude-val">Some</span>(ProbeReport::QadIpv6(r));
-<a href=#174 id=174 data-nosnippet>174</a>            }
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>((<span class="kw">_</span>, <span class="kw-2">ref </span>conn)) = <span class="self">self</span>.v6
+<a href=#166 id=166 data-nosnippet>166</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">mut </span>r) = conn.observer.get()
+<a href=#167 id=167 data-nosnippet>167</a>        {
+<a href=#168 id=168 data-nosnippet>168</a>            <span class="comment">// grab latest rtt
+<a href=#169 id=169 data-nosnippet>169</a>
+<a href=#170 id=170 data-nosnippet>170</a>            </span><span class="kw">use </span>quinn_proto::PathId;
+<a href=#171 id=171 data-nosnippet>171</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(latency) = conn.conn.rtt(PathId::ZERO) {
+<a href=#172 id=172 data-nosnippet>172</a>                r.latency = latency;
+<a href=#173 id=173 data-nosnippet>173</a>            }
+<a href=#174 id=174 data-nosnippet>174</a>            <span class="kw">return </span><span class="prelude-val">Some</span>(ProbeReport::QadIpv6(r));
 <a href=#175 id=175 data-nosnippet>175</a>        }
 <a href=#176 id=176 data-nosnippet>176</a>        <span class="prelude-val">None
 <a href=#177 id=177 data-nosnippet>177</a>    </span>}
@@ -284,12 +284,12 @@
 <a href=#284 id=284 data-nosnippet>284</a>        <span class="comment">// If the last report had a captive portal and reported no UDP access,
 <a href=#285 id=285 data-nosnippet>285</a>        // it's possible that we didn't get a useful net_report due to the
 <a href=#286 id=286 data-nosnippet>286</a>        // captive portal blocking us. If so, make this report a full (non-incremental) one.
-<a href=#287 id=287 data-nosnippet>287</a>        </span><span class="kw">if </span>!do_full {
-<a href=#288 id=288 data-nosnippet>288</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>last) = <span class="self">self</span>.reports.last {
-<a href=#289 id=289 data-nosnippet>289</a>                <span class="kw">if </span>!last.has_udp() &amp;&amp; last.captive_portal == <span class="prelude-val">Some</span>(<span class="bool-val">true</span>) {
-<a href=#290 id=290 data-nosnippet>290</a>                    do_full = <span class="bool-val">true</span>;
-<a href=#291 id=291 data-nosnippet>291</a>                }
-<a href=#292 id=292 data-nosnippet>292</a>            }
+<a href=#287 id=287 data-nosnippet>287</a>        </span><span class="kw">if </span>!do_full
+<a href=#288 id=288 data-nosnippet>288</a>            &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>last) = <span class="self">self</span>.reports.last
+<a href=#289 id=289 data-nosnippet>289</a>            &amp;&amp; !last.has_udp()
+<a href=#290 id=290 data-nosnippet>290</a>            &amp;&amp; last.captive_portal == <span class="prelude-val">Some</span>(<span class="bool-val">true</span>)
+<a href=#291 id=291 data-nosnippet>291</a>        {
+<a href=#292 id=292 data-nosnippet>292</a>            do_full = <span class="bool-val">true</span>;
 <a href=#293 id=293 data-nosnippet>293</a>        }
 <a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">if </span>do_full {
 <a href=#295 id=295 data-nosnippet>295</a>            <span class="self">self</span>.reports.last = <span class="prelude-val">None</span>; <span class="comment">// causes ProbePlan::new below to do a full (initial) plan
@@ -770,11 +770,11 @@
 <a href=#770 id=770 data-nosnippet>770</a>                <span class="kw">if </span><span class="prelude-val">Some</span>(url) == prev_relay.as_ref() {
 <a href=#771 id=771 data-nosnippet>771</a>                    old_relay_cur_latency = duration;
 <a href=#772 id=772 data-nosnippet>772</a>                }
-<a href=#773 id=773 data-nosnippet>773</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(best) = best_recent.get(url) {
-<a href=#774 id=774 data-nosnippet>774</a>                    <span class="kw">if </span>r.preferred_relay.is_none() || best &lt; best_any {
-<a href=#775 id=775 data-nosnippet>775</a>                        best_any = best;
-<a href=#776 id=776 data-nosnippet>776</a>                        r.preferred_relay.replace(url.clone());
-<a href=#777 id=777 data-nosnippet>777</a>                    }
+<a href=#773 id=773 data-nosnippet>773</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(best) = best_recent.get(url)
+<a href=#774 id=774 data-nosnippet>774</a>                    &amp;&amp; (r.preferred_relay.is_none() || best &lt; best_any)
+<a href=#775 id=775 data-nosnippet>775</a>                {
+<a href=#776 id=776 data-nosnippet>776</a>                    best_any = best;
+<a href=#777 id=777 data-nosnippet>777</a>                    r.preferred_relay.replace(url.clone());
 <a href=#778 id=778 data-nosnippet>778</a>                }
 <a href=#779 id=779 data-nosnippet>779</a>            }
 <a href=#780 id=780 data-nosnippet>780</a>
