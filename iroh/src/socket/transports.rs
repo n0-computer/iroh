@@ -643,20 +643,56 @@ impl TransportType {
 /// Bias configuration for a transport type.
 ///
 /// This controls how a transport is prioritized during path selection.
+///
+/// # Examples
+///
+/// ```
+/// use std::time::Duration;
+/// use iroh::endpoint::transports::TransportBias;
+///
+/// // A primary transport with 100ms RTT advantage (will be preferred)
+/// let bias = TransportBias::primary().with_rtt_advantage(Duration::from_millis(100));
+///
+/// // A backup transport (only used when no primary transport is available)
+/// let bias = TransportBias::backup();
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct TransportBias {
     /// Whether this is a primary or backup transport.
-    pub transport_type: TransportType,
+    pub(crate) transport_type: TransportType,
     /// RTT bias in nanoseconds. Negative values make this transport more preferred.
-    pub rtt_bias: i128,
+    pub(crate) rtt_bias: i128,
 }
 
-impl Default for TransportBias {
-    fn default() -> Self {
+impl TransportBias {
+    /// Creates a primary transport bias with no RTT advantage.
+    ///
+    /// Primary transports compete with each other based on biased RTT measurements.
+    pub fn primary() -> Self {
         Self {
             transport_type: TransportType::Primary,
             rtt_bias: 0,
         }
+    }
+
+    /// Creates a backup transport bias with no RTT advantage.
+    ///
+    /// Backup transports are only used when no primary transport is available.
+    pub fn backup() -> Self {
+        Self {
+            transport_type: TransportType::Backup,
+            rtt_bias: 0,
+        }
+    }
+
+    /// Adds an RTT advantage to this transport, making it more preferred.
+    ///
+    /// The advantage is subtracted from the measured RTT during path selection,
+    /// so a transport with a 100ms advantage will be preferred over one with
+    /// the same measured RTT but no advantage.
+    pub fn with_rtt_advantage(mut self, advantage: Duration) -> Self {
+        self.rtt_bias -= advantage.as_nanos() as i128;
+        self
     }
 }
 
@@ -677,30 +713,12 @@ pub(super) const IPV6_RTT_ADVANTAGE: Duration = Duration::from_millis(3);
 impl Default for TransportBiasMap {
     fn default() -> Self {
         let mut map = FxHashMap::default();
-        // IPv4 is primary with no bias
-        map.insert(
-            AddrKind::IpV4,
-            TransportBias {
-                transport_type: TransportType::Primary,
-                rtt_bias: 0,
-            },
-        );
-        // IPv6 is primary with a negative bias (preferred over IPv4)
+        map.insert(AddrKind::IpV4, TransportBias::primary());
         map.insert(
             AddrKind::IpV6,
-            TransportBias {
-                transport_type: TransportType::Primary,
-                rtt_bias: -(IPV6_RTT_ADVANTAGE.as_nanos() as i128),
-            },
+            TransportBias::primary().with_rtt_advantage(IPV6_RTT_ADVANTAGE),
         );
-        // Relay is a backup transport
-        map.insert(
-            AddrKind::Relay,
-            TransportBias {
-                transport_type: TransportType::Backup,
-                rtt_bias: 0,
-            },
-        );
+        map.insert(AddrKind::Relay, TransportBias::backup());
         Self { map: Arc::new(map) }
     }
 }
@@ -715,9 +733,12 @@ impl TransportBiasMap {
 
     /// Gets the bias for the given address.
     ///
-    /// Returns the default bias (Primary with no RTT bias) if no specific bias is configured.
+    /// Returns a primary transport with no RTT bias if no specific bias is configured.
     pub fn get(&self, addr: &Addr) -> TransportBias {
-        self.map.get(&addr.addr_kind()).cloned().unwrap_or_default()
+        self.map
+            .get(&addr.addr_kind())
+            .cloned()
+            .unwrap_or_else(TransportBias::primary)
     }
 
     /// Computes path selection data for a given address and RTT.

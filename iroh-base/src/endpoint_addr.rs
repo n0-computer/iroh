@@ -75,6 +75,16 @@ impl TransportAddr {
     }
 }
 
+impl fmt::Display for TransportAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Relay(url) => write!(f, "relay:{url}"),
+            Self::Ip(addr) => write!(f, "ip:{addr}"),
+            Self::Custom(addr) => write!(f, "custom:{addr}"),
+        }
+    }
+}
+
 impl EndpointAddr {
     /// Creates a new [`EndpointAddr`] with no network level addresses.
     ///

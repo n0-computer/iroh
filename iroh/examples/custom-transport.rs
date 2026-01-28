@@ -1,9 +1,11 @@
+use std::{sync::Arc, time::Duration};
+
 use clap::Parser;
 use iroh::{
-    Endpoint, EndpointAddr, SecretKey, TransportAddr,
-    endpoint::Connection,
+    Endpoint, SecretKey, TransportAddr,
+    endpoint::{Builder, Connection, transports::{AddrKind, TransportBias}},
     protocol::{AcceptError, ProtocolHandler, Router},
-    test_utils::test_transport::{TestNetwork, TEST_TRANSPORT_ID},
+    test_utils::test_transport::{TestNetwork, TestTransport, TEST_TRANSPORT_ID},
 };
 use n0_error::{Result, StdResultExt};
 use n0_watcher::Watcher;
@@ -15,7 +17,7 @@ use n0_watcher::Watcher;
 const ALPN: &[u8] = b"iroh-example/echo/0";
 
 /// Example demonstrating custom transport usage.
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 struct Args {
     /// Keep IP transports enabled (in addition to custom transport)
     #[arg(long)]
@@ -24,6 +26,34 @@ struct Args {
     /// Keep relay transports enabled (in addition to custom transport)
     #[arg(long)]
     keep_relay: bool,
+
+    /// Delay in seconds to wait after connecting before re-checking the selected transport
+    #[arg(long, default_value = "0")]
+    delay: u64,
+}
+
+/// Strong RTT advantage for the custom transport (100ms) to ensure it wins path selection.
+const CUSTOM_TRANSPORT_RTT_ADVANTAGE: Duration = Duration::from_millis(100);
+
+impl Args {
+    /// Configure an endpoint builder with the custom transport and optional IP/relay transports.
+    fn configure(&self, secret_key: SecretKey, transport: Arc<TestTransport>) -> Builder {
+        let mut builder = Endpoint::builder()
+            .secret_key(secret_key)
+            .preset(transport)
+            // Give the custom transport a strong RTT advantage so it always wins path selection
+            .transport_bias(
+                AddrKind::Custom(TEST_TRANSPORT_ID),
+                TransportBias::primary().with_rtt_advantage(CUSTOM_TRANSPORT_RTT_ADVANTAGE),
+            );
+        if !self.keep_ip {
+            builder = builder.clear_ip_transports();
+        }
+        if !self.keep_relay {
+            builder = builder.clear_relay_transports();
+        }
+        builder
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,7 +95,10 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
-    println!("Config: keep_ip={}, keep_relay={}", args.keep_ip, args.keep_relay);
+    println!(
+        "Config: keep_ip={}, keep_relay={}, delay={}s",
+        args.keep_ip, args.keep_relay, args.delay
+    );
 
     let network = TestNetwork::new();
     let s1 = SecretKey::from([0u8; 32]);
@@ -73,24 +106,10 @@ async fn main() -> Result<()> {
 
     // Create transports and configure builders with transport + address lookup
     let t1 = network.create_transport(s1.public())?;
-    let mut builder1 = Endpoint::builder().secret_key(s1.clone()).preset(t1);
-    if !args.keep_ip {
-        builder1 = builder1.clear_ip_transports();
-    }
-    if !args.keep_relay {
-        builder1 = builder1.clear_relay_transports();
-    }
-    let ep1 = builder1.bind().await?;
+    let ep1 = args.configure(s1.clone(), t1).bind().await?;
 
     let t2 = network.create_transport(s2.public())?;
-    let mut builder2 = Endpoint::builder().secret_key(s2.clone()).preset(t2);
-    if !args.keep_ip {
-        builder2 = builder2.clear_ip_transports();
-    }
-    if !args.keep_relay {
-        builder2 = builder2.clear_relay_transports();
-    }
-    let ep2 = builder2.bind().await?;
+    let ep2 = args.configure(s2.clone(), t2).bind().await?;
     println!("ep2 addr: {:?}", ep2.addr());
     let server = Router::builder(ep2).accept(ALPN, Echo).spawn();
 
@@ -100,19 +119,48 @@ async fn main() -> Result<()> {
     println!("Connecting to: {:?}", s2.public());
     let conn = ep1.connect(s2.public(), ALPN).await?;
 
-    // Verify that the test transport is being used
-    let paths = conn.paths().get();
-    let selected_path = paths.iter().find(|p| p.is_selected());
-    let is_test_transport = selected_path.is_some_and(|p| {
-        matches!(p.remote_addr(), TransportAddr::Custom(addr) if addr.id() == TEST_TRANSPORT_ID)
-    });
-    assert!(
-        is_test_transport,
-        "Expected test transport (id={}) to be selected, got: {:?}",
-        TEST_TRANSPORT_ID,
-        selected_path.map(|p| p.remote_addr())
-    );
-    println!("Verified: test transport (id={}) is selected", TEST_TRANSPORT_ID);
+    // Helper to print paths and verify test transport is selected
+    let verify_test_transport = |label: &str| {
+        let paths = conn.paths().get();
+        println!("Paths {}:", label);
+        for path in paths.iter() {
+            println!(
+                "  {} selected={} rtt={:?}",
+                path.remote_addr(),
+                path.is_selected(),
+                path.rtt()
+            );
+        }
+        let selected_path = paths.iter().find(|p| p.is_selected());
+        let is_test_transport = selected_path.is_some_and(|p| {
+            matches!(p.remote_addr(), TransportAddr::Custom(addr) if addr.id() == TEST_TRANSPORT_ID)
+        });
+        assert!(
+            is_test_transport,
+            "Expected test transport (id={}) to be selected {}, got: {:?}",
+            TEST_TRANSPORT_ID,
+            label,
+            selected_path.map(|p| p.remote_addr())
+        );
+        println!(
+            "Verified: test transport (id={}) is selected {}",
+            TEST_TRANSPORT_ID, label
+        );
+    };
+
+    // Verify test transport is selected immediately after connecting
+    verify_test_transport("immediately after connecting");
+
+    // If a delay is specified, wait and then re-check to see if the transport is still selected
+    // after other discovery mechanisms have had time to run.
+    if args.delay > 0 {
+        println!(
+            "Waiting {}s to let other discovery mechanisms run...",
+            args.delay
+        );
+        tokio::time::sleep(Duration::from_secs(args.delay)).await;
+        verify_test_transport(&format!("after {}s delay", args.delay));
+    }
 
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
     send.write_all(b"Hello custom transport!").await.anyerr()?;

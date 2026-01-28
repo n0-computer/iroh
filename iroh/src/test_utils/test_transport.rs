@@ -21,7 +21,9 @@ use crate::{
 };
 
 /// The transport ID used by [`TestNetwork`].
-pub const TEST_TRANSPORT_ID: u64 = 0;
+///
+/// See `TRANSPORTS.md` for the registry of transport IDs.
+pub const TEST_TRANSPORT_ID: u64 = 0x20;
 
 /// An outgoing packet that can be sent across channels.
 #[derive(Debug, Clone)]
