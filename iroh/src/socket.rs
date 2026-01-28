@@ -1275,6 +1275,13 @@ impl Actor {
 
             #[cfg(not(wasm_browser))]
             self.sock.dns_resolver.reset().await;
+
+            // Immediately update direct_addrs with local netmon addresses.
+            // This ensures holepunching uses fresh addresses before net_report completes,
+            // which is important because QAD probes can timeout during interface transitions.
+            #[cfg(not(wasm_browser))]
+            self.update_direct_addresses(None);
+
             self.re_stun(UpdateReason::LinkChangeMajor);
         } else {
             self.re_stun(UpdateReason::LinkChangeMinor);
