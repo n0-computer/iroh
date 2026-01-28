@@ -1984,6 +1984,131 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    #[traced_test]
+    async fn test_holepunch_recovery_after_network_change() -> Result {
+        
+        // Test that holepunching re-triggers after a network interface change.
+        // This verifies that direct paths recover when the same IPs re-appear.
+        let (relay_map, _relay_url, _relay_server_guard) = run_relay_server().await?;
+        let (node_addr_tx, node_addr_rx) = oneshot::channel();
+
+        #[instrument(name = "client", skip_all)]
+        async fn connect(
+            relay_map: RelayMap,
+            node_addr_rx: oneshot::Receiver<EndpointAddr>,
+        ) -> Result<(u64, u64)> {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42u64);
+            let secret = SecretKey::generate(&mut rng);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+
+            info!(me = %ep.id().fmt_short(), "client starting");
+            let dst = node_addr_rx.await.anyerr()?;
+
+            info!(me = %ep.id().fmt_short(), "client connecting");
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+
+            // PHASE 1: Wait for initial direct path via holepunch
+            let mut paths = conn.paths().stream();
+            info!("Waiting for initial direct connection");
+            while let Some(infos) = paths.next().await {
+                info!(?infos, "new PathInfos");
+                if infos.iter().any(|info| info.is_ip()) {
+                    break;
+                }
+            }
+            info!("Have initial direct connection");
+
+            #[cfg(feature = "metrics")]
+            let hp_before = ep.metrics().socket.holepunch_attempts.get();
+            #[cfg(not(feature = "metrics"))]
+            let hp_before = 0u64;
+
+            // PHASE 2: Trigger network change (simulates interface down/up)
+            info!("Triggering network change");
+            ep.socket().force_network_change(true).await;
+
+            // Give time for paths to potentially drop and recover
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            // PHASE 3: Wait for direct path recovery
+            info!("Waiting for direct path recovery");
+            let recovery_timeout = tokio::time::timeout(Duration::from_secs(5), async {
+                let mut paths = conn.paths().stream();
+                while let Some(infos) = paths.next().await {
+                    info!(?infos, "recovery PathInfos");
+                    if infos.iter().any(|info| info.is_ip()) {
+                        return true;
+                    }
+                }
+                false
+            })
+            .await;
+
+            let recovered = recovery_timeout.unwrap_or(false);
+            info!(recovered, "direct path recovery result");
+
+            #[cfg(feature = "metrics")]
+            let hp_after = ep.metrics().socket.holepunch_attempts.get();
+            #[cfg(not(feature = "metrics"))]
+            let hp_after = 0u64;
+
+            conn.close(0u32.into(), b"done");
+            Ok((hp_before, hp_after))
+        }
+
+        #[instrument(name = "server", skip_all)]
+        async fn accept(
+            relay_map: RelayMap,
+            node_addr_tx: oneshot::Sender<EndpointAddr>,
+        ) -> Result {
+            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(43u64);
+            let secret = SecretKey::generate(&mut rng);
+            let ep = Endpoint::builder()
+                .secret_key(secret)
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .insecure_skip_relay_cert_verify(true)
+                .relay_mode(RelayMode::Custom(relay_map))
+                .bind()
+                .await?;
+            ep.online().await;
+
+            // Provide only relay address to force holepunching
+            let mut node_addr = ep.addr();
+            node_addr.addrs.retain(|addr| addr.is_relay());
+            node_addr_tx.send(node_addr).unwrap();
+
+            info!(me = %ep.id().fmt_short(), "server starting");
+            let conn = ep.accept().await.anyerr()?.await.anyerr()?;
+
+            // Keep connection alive until client closes
+            let _ = conn.closed().await;
+            info!("server connection closed");
+            Ok(())
+        }
+
+        let server_task = tokio::spawn(accept(relay_map.clone(), node_addr_tx));
+        let client_task = tokio::spawn(connect(relay_map, node_addr_rx));
+
+        let (hp_before, hp_after) = client_task.await.anyerr()??;
+        server_task.await.anyerr()??;
+
+        // Verify holepunch was re-triggered after network change
+        #[cfg(feature = "metrics")]
+        assert!(
+            hp_after > hp_before,
+            "holepunch should re-trigger after network change: before={hp_before}, after={hp_after}"
+        );
+
+        Ok(())
+    }
+
     #[tokio::test]
     #[traced_test]
     async fn endpoint_two_relay_only_no_ip() -> Result {

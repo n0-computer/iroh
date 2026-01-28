@@ -157,6 +157,8 @@ pub(crate) struct Handle {
     sock: Arc<Socket>,
     // empty when shutdown
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
+    /// Channel to send to the internal actor.
+    actor_sender: mpsc::Sender<ActorMessage>,
     // quinn endpoint
     endpoint: quinn::Endpoint,
 }
@@ -200,12 +202,11 @@ impl ShutdownState {
 /// possible.
 #[derive(Debug)]
 pub(crate) struct Socket {
-    /// Channel to send to the internal actor.
-    actor_sender: mpsc::Sender<ActorMessage>,
     /// Channels for sending time-crucial messages to `RemoteStateActors`.
     ///
     /// Currently only exists to support sending `SendDatagram` messages.
     remote_actors: ReadOnlyMap<EndpointId, mpsc::Sender<RemoteStateMessage>>,
+
     /// EndpointId of this endpoint.
     public_key: PublicKey,
 
@@ -274,31 +275,6 @@ impl Socket {
         self.local_addrs_watch.clone().get()
     }
 
-    /// Registers the connection in the `RemoteStateActor`.
-    ///
-    /// The actor is responsible for holepunching and opening additional paths to this
-    /// connection.
-    ///
-    /// Returns a future that resolves to [`PathsWatcher`].
-    ///
-    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
-    pub(crate) fn register_connection(
-        &self,
-        remote: EndpointId,
-        conn: WeakConnectionHandle,
-    ) -> impl Future<Output = Result<PathsWatcher, RemoteStateActorStoppedError>> + Send + 'static
-    {
-        let (tx, rx) = oneshot::channel();
-        let sender = self.actor_sender.clone();
-        async move {
-            sender
-                .send(ActorMessage::AddConnection(remote, conn, tx))
-                .await
-                .map_err(|_| RemoteStateActorStoppedError::new())?;
-            rx.await.map_err(|_| RemoteStateActorStoppedError::new())
-        }
-    }
-
     #[cfg(not(wasm_browser))]
     fn ip_bind_addrs(&self) -> &[SocketAddr] {
         &self.ip_bind_addrs
@@ -308,69 +284,6 @@ impl Socket {
         self.local_addr()
             .into_iter()
             .filter_map(|addr| addr.into_socket_addr())
-    }
-
-    /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
-    ///
-    /// This starts a `RemoteStateActor` for the remote if not running already, and then checks
-    /// if the actor has any known paths to the remote. If not, it starts address lookup and waits for
-    /// at least one result to arrive.
-    ///
-    /// Returns `Ok(Ok(EndpointIdMappedAddr))` if there is a known path or Address Lookup produced
-    /// at least one result. This does not mean there is a working path, only that we have at least
-    /// one transport address we can try to connect to.
-    ///
-    /// Returns `Ok(Err(address_lookup_error))` if there are no known paths to the remote and Address Lookup
-    /// failed or produced no results. This means that we don't have any transport address for
-    /// the remote, thus there is no point in trying to connect over the quinn endpoint.
-    ///
-    /// Returns `Err(RemoteStateActorStoppedError)` if the `RemoteStateActor` for the remote has stopped,
-    /// which may never happen and thus is a bug if it does.
-    pub(crate) async fn resolve_remote(
-        &self,
-        addr: EndpointAddr,
-    ) -> Result<Result<EndpointIdMappedAddr, AddressLookupError>, RemoteStateActorStoppedError>
-    {
-        let (tx, rx) = oneshot::channel();
-        self.actor_sender
-            .send(ActorMessage::ResolveRemote(addr, tx))
-            .await
-            .ok();
-        rx.await.map_err(|_| RemoteStateActorStoppedError::new())?
-    }
-
-    /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
-    ///
-    /// Returns `None` if no actor is running for the remote.
-    pub(crate) async fn remote_info(&self, id: EndpointId) -> Option<RemoteInfo> {
-        let (tx, rx) = oneshot::channel();
-        self.actor_sender
-            .send(ActorMessage::RemoteInfo(id, tx))
-            .await
-            .ok()?;
-        rx.await.ok()
-    }
-
-    pub(crate) async fn insert_relay(
-        &self,
-        relay: RelayUrl,
-        endpoint: Arc<RelayConfig>,
-    ) -> Option<Arc<RelayConfig>> {
-        let res = self.relay_map.insert(relay, endpoint);
-        self.actor_sender
-            .send(ActorMessage::RelayMapChange)
-            .await
-            .ok();
-        res
-    }
-
-    pub(crate) async fn remove_relay(&self, relay: &RelayUrl) -> Option<Arc<RelayConfig>> {
-        let res = self.relay_map.remove(relay);
-        self.actor_sender
-            .send(ActorMessage::RelayMapChange)
-            .await
-            .ok();
-        res
     }
 
     /// Tries to send a [`RemoteStateMessage`] to the `RemoteStateActor` for given [`EndpointId`].
@@ -477,22 +390,6 @@ impl Socket {
             drop(guard);
             self.publish_my_addr();
         }
-    }
-
-    /// Call to notify the system of potential network changes.
-    pub(crate) async fn network_change(&self) {
-        self.actor_sender
-            .send(ActorMessage::NetworkChange)
-            .await
-            .ok();
-    }
-
-    #[cfg(test)]
-    async fn force_network_change(&self, is_major: bool) {
-        self.actor_sender
-            .send(ActorMessage::ForceNetworkChange(is_major))
-            .await
-            .ok();
     }
 
     /// Process datagrams received from all the transports.
@@ -875,7 +772,6 @@ impl Handle {
 
         let sock = Arc::new(Socket {
             public_key: secret_key.public(),
-            actor_sender: actor_sender.clone(),
             remote_actors: remote_map.senders(),
             shutdown: shutdown_state,
             ipv6_reported,
@@ -967,7 +863,6 @@ impl Handle {
 
         #[cfg_attr(not(wasm_browser), allow(unused_mut))]
         let mut actor = Actor {
-            msg_receiver: actor_receiver,
             sock: sock.clone(),
             remote_map,
             periodic_re_stun_timer: new_re_stun_timer(false),
@@ -983,7 +878,11 @@ impl Handle {
 
         let actor_task = task::spawn(
             actor
-                .run(shutdown_token.child_token(), local_addrs_watch)
+                .run(
+                    actor_receiver,
+                    shutdown_token.child_token(),
+                    local_addrs_watch,
+                )
                 .instrument(info_span!("actor")),
         );
 
@@ -991,6 +890,7 @@ impl Handle {
 
         Ok(Handle {
             sock,
+            actor_sender,
             actor_task,
             endpoint,
         })
@@ -1066,6 +966,110 @@ impl Handle {
 
         trace!("socket closed");
     }
+
+    pub(crate) async fn insert_relay(
+        &self,
+        relay: RelayUrl,
+        endpoint: Arc<RelayConfig>,
+    ) -> Option<Arc<RelayConfig>> {
+        let res = self.relay_map.insert(relay, endpoint);
+        self.actor_sender
+            .send(ActorMessage::RelayMapChange)
+            .await
+            .ok();
+        res
+    }
+
+    pub(crate) async fn remove_relay(&self, relay: &RelayUrl) -> Option<Arc<RelayConfig>> {
+        let res = self.relay_map.remove(relay);
+        self.actor_sender
+            .send(ActorMessage::RelayMapChange)
+            .await
+            .ok();
+        res
+    }
+
+    /// Call to notify the system of potential network changes.
+    pub(crate) async fn network_change(&self) {
+        self.actor_sender
+            .send(ActorMessage::NetworkChange)
+            .await
+            .ok();
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn force_network_change(&self, is_major: bool) {
+        self.actor_sender
+            .send(ActorMessage::ForceNetworkChange(is_major))
+            .await
+            .ok();
+    }
+
+    /// Resolves an [`EndpointAddr`] to an [`EndpointIdMappedAddr`] to connect to via [`Handle::endpoint`].
+    ///
+    /// This starts a `RemoteStateActor` for the remote if not running already, and then checks
+    /// if the actor has any known paths to the remote. If not, it starts address lookup and waits for
+    /// at least one result to arrive.
+    ///
+    /// Returns `Ok(Ok(EndpointIdMappedAddr))` if there is a known path or Address Lookup produced
+    /// at least one result. This does not mean there is a working path, only that we have at least
+    /// one transport address we can try to connect to.
+    ///
+    /// Returns `Ok(Err(address_lookup_error))` if there are no known paths to the remote and Address Lookup
+    /// failed or produced no results. This means that we don't have any transport address for
+    /// the remote, thus there is no point in trying to connect over the quinn endpoint.
+    ///
+    /// Returns `Err(RemoteStateActorStoppedError)` if the `RemoteStateActor` for the remote has stopped,
+    /// which may never happen and thus is a bug if it does.
+    pub(crate) async fn resolve_remote(
+        &self,
+        addr: EndpointAddr,
+    ) -> Result<Result<EndpointIdMappedAddr, AddressLookupError>, RemoteStateActorStoppedError>
+    {
+        let (tx, rx) = oneshot::channel();
+        self.actor_sender
+            .send(ActorMessage::ResolveRemote(addr, tx))
+            .await
+            .ok();
+        rx.await.map_err(|_| RemoteStateActorStoppedError::new())?
+    }
+
+    /// Fetches the [`RemoteInfo`] about a remote from the `RemoteStateActor`.
+    ///
+    /// Returns `None` if no actor is running for the remote.
+    pub(crate) async fn remote_info(&self, id: EndpointId) -> Option<RemoteInfo> {
+        let (tx, rx) = oneshot::channel();
+        self.actor_sender
+            .send(ActorMessage::RemoteInfo(id, tx))
+            .await
+            .ok()?;
+        rx.await.ok()
+    }
+
+    /// Registers the connection in the `RemoteStateActor`.
+    ///
+    /// The actor is responsible for holepunching and opening additional paths to this
+    /// connection.
+    ///
+    /// Returns a future that resolves to [`PathsWatcher`].
+    ///
+    /// The returned future is `'static`, so it can be stored without being liftetime-bound to `&self`.
+    pub(crate) fn register_connection(
+        &self,
+        remote: EndpointId,
+        conn: WeakConnectionHandle,
+    ) -> impl Future<Output = Result<PathsWatcher, RemoteStateActorStoppedError>> + Send + 'static
+    {
+        let (tx, rx) = oneshot::channel();
+        let sender = self.actor_sender.clone();
+        async move {
+            sender
+                .send(ActorMessage::AddConnection(remote, conn, tx))
+                .await
+                .map_err(|_| RemoteStateActorStoppedError::new())?;
+            rx.await.map_err(|_| RemoteStateActorStoppedError::new())
+        }
+    }
 }
 
 fn default_quic_client_config() -> rustls::ClientConfig {
@@ -1109,7 +1113,6 @@ struct Actor {
     sock: Arc<Socket>,
     /// Tracks the networkmap endpoint entity for each endpoint discovery key.
     remote_map: RemoteMap,
-    msg_receiver: mpsc::Receiver<ActorMessage>,
     /// When set, is an AfterFunc timer that will call Socket::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
 
@@ -1124,8 +1127,9 @@ struct Actor {
 impl Actor {
     async fn run(
         mut self,
+        mut msg_receiver: mpsc::Receiver<ActorMessage>,
         shutdown_token: CancellationToken,
-        mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
+        mut local_addrs_watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
     ) {
         // Setup network monitoring
         let mut current_netmon_state = self.netmon_watcher.get();
@@ -1157,7 +1161,7 @@ impl Actor {
                     debug!("tick: shutting down");
                     return;
                 }
-                msg = self.msg_receiver.recv(), if !receiver_closed => {
+                msg = msg_receiver.recv(), if !receiver_closed => {
                     let Some(msg) = msg else {
                         trace!("tick: socket receiver closed");
                         self.sock.metrics.socket.actor_tick_other.inc();
@@ -1175,7 +1179,7 @@ impl Actor {
                     self.sock.metrics.socket.actor_tick_re_stun.inc();
                     self.re_stun(UpdateReason::Periodic);
                 }
-                new_addr = watcher.updated() => {
+                new_addr = local_addrs_watcher.updated() => {
                     match new_addr {
                         Ok(addrs) => {
                             if !addrs.is_empty() {
@@ -1271,6 +1275,13 @@ impl Actor {
 
             #[cfg(not(wasm_browser))]
             self.sock.dns_resolver.reset().await;
+
+            // Immediately update direct_addrs with local netmon addresses.
+            // This ensures holepunching uses fresh addresses before net_report completes,
+            // which is important because QAD probes can timeout during interface transitions.
+            #[cfg(not(wasm_browser))]
+            self.update_direct_addresses(None);
+
             self.re_stun(UpdateReason::LinkChangeMajor);
         } else {
             self.re_stun(UpdateReason::LinkChangeMinor);
