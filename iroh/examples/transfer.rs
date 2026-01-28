@@ -49,15 +49,14 @@ use iroh::{
     },
     dns::{DnsResolver, N0_DNS_ENDPOINT_ORIGIN_PROD, N0_DNS_ENDPOINT_ORIGIN_STAGING},
     endpoint::{
-        BindOpts, Connection, ConnectionError, PathInfoList, RecvStream, SendStream, VarInt,
-        WriteError,
+        BindOpts, Connection, ConnectionError, PathId, PathInfoList, RecvStream, SendStream,
+        VarInt, WriteError,
     },
 };
 use n0_error::{Result, StackResultExt, StdResultExt, anyerr, ensure_any};
 use n0_future::{stream::StreamExt, task::AbortOnDropHandle};
 use netdev::ipnet::{Ipv4Net, Ipv6Net};
 use postcard::experimental::max_size::MaxSize;
-use quinn::PathId;
 use serde::{Deserialize, Serialize, Serializer};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
