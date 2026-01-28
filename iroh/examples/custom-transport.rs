@@ -5,6 +5,7 @@ use iroh::{
     test_utils::test_transport::{TestNetwork, to_custom_addr},
 };
 use n0_error::{Result, StdResultExt};
+use n0_watcher::Watcher;
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -82,6 +83,17 @@ async fn main() -> Result<()> {
     );
     println!("ep2 addr: {:?}", addr2);
     let conn = ep1.connect(addr2, ALPN).await?;
+
+    // Verify that the custom transport is being used
+    let paths = conn.paths().get();
+    let selected_path = paths.iter().find(|p| p.is_selected());
+    assert!(
+        selected_path.is_some_and(|p| p.is_custom()),
+        "Expected custom transport to be selected, got: {:?}",
+        selected_path.map(|p| p.remote_addr())
+    );
+    println!("Verified: custom transport is selected");
+
     let (mut send, mut recv) = conn.open_bi().await.anyerr()?;
     send.write_all(b"Hello custom transport!").await.anyerr()?;
     send.finish().anyerr()?;

@@ -1467,6 +1467,11 @@ impl PathInfo {
         self.remote.is_relay()
     }
 
+    /// Whether this is a custom transport address.
+    pub fn is_custom(&self) -> bool {
+        self.remote.is_custom()
+    }
+
     /// Returns stats for this transmission path.
     pub fn stats(&self) -> PathStats {
         self.handle

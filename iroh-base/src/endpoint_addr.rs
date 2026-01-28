@@ -68,6 +68,11 @@ impl TransportAddr {
     pub fn is_ip(&self) -> bool {
         matches!(self, Self::Ip(_))
     }
+
+    /// Whether this is a custom transport address.
+    pub fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom(_))
+    }
 }
 
 impl EndpointAddr {
