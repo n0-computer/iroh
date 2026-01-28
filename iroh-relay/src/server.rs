@@ -42,16 +42,17 @@ use crate::{
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
 
-mod client;
-mod clients;
-mod http_server;
+pub mod client;
+pub mod clients;
+pub mod http_server;
 mod metrics;
 pub(crate) mod resolver;
-pub(crate) mod streams;
+pub mod streams;
 #[cfg(feature = "test-utils")]
 pub mod testing;
 
 pub use self::{
+    http_server::{Handlers, RelayService},
     metrics::{Metrics, RelayMetrics},
     resolver::{DEFAULT_CERT_RELOAD_INTERVAL, ReloadingResolver},
 };

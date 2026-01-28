@@ -37,7 +37,7 @@ pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(15);
 
 /// The number of packets buffered for sending per client
 #[cfg(feature = "server")]
-pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
+pub const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
 
 /// Protocol send errors.
 #[stack_error(derive, add_meta, from_sources)]

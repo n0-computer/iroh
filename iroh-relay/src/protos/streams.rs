@@ -27,11 +27,23 @@ pub(crate) struct WsBytesFramed {
     pub(crate) io: ws_stream_wasm::WsStream,
 }
 
+/// Error type for WebSocket stream operations.
+///
+/// This type alias represents errors that can occur during WebSocket communication.
+/// The underlying error type depends on the platform:
+/// - On non-browser platforms: `tokio_websockets::Error`
+/// - On browser WASM: `ws_stream_wasm::WsErr`
 #[cfg(not(wasm_browser))]
-pub(crate) type StreamError = tokio_websockets::Error;
+pub type StreamError = tokio_websockets::Error;
 
+/// Error type for WebSocket stream operations.
+///
+/// This type alias represents errors that can occur during WebSocket communication.
+/// The underlying error type depends on the platform:
+/// - On non-browser platforms: `tokio_websockets::Error`
+/// - On browser WASM: `ws_stream_wasm::WsErr`
 #[cfg(wasm_browser)]
-pub(crate) type StreamError = ws_stream_wasm::WsErr;
+pub type StreamError = ws_stream_wasm::WsErr;
 
 /// Shorthand for a type that implements both a websocket-based stream & sink for [`Bytes`].
 pub(crate) trait BytesStreamSink:
