@@ -52,7 +52,7 @@ pub const DEFAULT_FAKE_ADDR: SocketAddrV6 = SocketAddrV6::new(
 
 /// The dummy port used for all mapped addresses.
 ///
-/// We map each entity, usually an [`EndpointId`], to an IPv6 address.  But socket addresses
+/// We map each entity, usually an [`crate::EndpointId`], to an IPv6 address.  But socket addresses
 /// involve ports, so we use a dummy fixed port when creating socket addresses.
 const MAPPED_PORT: u16 = 12345;
 
@@ -90,9 +90,9 @@ pub(crate) trait MappedAddr {
 /// address is even supported on this platform.  Hence no wasm exceptions here.
 #[derive(Clone, Debug)]
 pub(crate) enum MultipathMappedAddr {
-    /// An address for a [`EndpointId`], via one or more paths.
+    /// An address for a [`crate::EndpointId`], via one or more paths.
     Mixed(EndpointIdMappedAddr),
-    /// An address for a particular [`EndpointId`] via a particular relay.
+    /// An address for a particular [`crate::EndpointId`] via a particular relay.
     Relay(RelayMappedAddr),
     /// An IP based transport address.
     Ip(SocketAddr),
@@ -190,7 +190,7 @@ impl TryFrom<Ipv6Addr> for EndpointIdMappedAddr {
 #[error("Failed to convert")]
 pub(crate) struct EndpointIdMappedAddrError;
 
-/// An Ipv6 ULA address, identifying a relay path for a [`EndpointId`].
+/// An Ipv6 ULA address, identifying a relay path for a [`crate::EndpointId`].
 ///
 /// Since iroh endpoint are reachable via a relay server we have a network path indicated by
 /// the `(EndpointId, RelayUrl)`.  However Quinn can only handle socket addresses, so we use
@@ -257,7 +257,7 @@ impl std::fmt::Display for RelayMappedAddr {
 ///
 /// Custom transports allow user-defined transport mechanisms. However Quinn can only handle
 /// socket addresses, so we use IPv6 addresses in a private IPv6 Unique Local Address range,
-/// which map to a unique [`CustomAddr`].
+/// which map to a unique [`iroh_base::CustomAddr`].
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub(crate) struct CustomMappedAddr(Ipv6Addr);
 

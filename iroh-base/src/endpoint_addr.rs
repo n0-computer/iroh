@@ -187,7 +187,7 @@ impl std::str::FromStr for CustomAddr {
     }
 }
 
-/// Error parsing a [`CustomAddr`].
+/// Error parsing a [`crate::CustomAddr`].
 #[stack_error(derive)]
 #[allow(missing_docs)]
 pub enum CustomAddrParseError {
