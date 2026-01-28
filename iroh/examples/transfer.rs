@@ -1209,7 +1209,7 @@ impl fmt::Display for ConnectionClosed {
 
 #[derive(Serialize, Debug, Clone, Display)]
 #[display(
-    "Downloaded: {:>10} in {:.2}, {:>10}/s ({}{} chunks)",
+    "Downloaded: {:>10} in {}, {:>10}/s ({}{} chunks)",
     HumanBytes(self.size).to_string(),
     fmt_duration(self.duration),
     HumanBytes((self.size as f64 / self.duration.as_secs_f64()) as u64),
@@ -1232,9 +1232,9 @@ struct DownloadStats {
 
 #[derive(Serialize, Debug, Clone, Display)]
 #[display(
-    "Uploaded:   {:>10} in {:.2}s, {:>10}/s",
+    "Uploaded:   {:>10} in {}, {:>10}/s",
     HumanBytes(self.size).to_string(),
-    self.duration.as_secs_f64(),
+    fmt_duration(self.duration),
     HumanBytes((self.size as f64 / self.duration.as_secs_f64()) as u64)
 )]
 struct UploadStats {
