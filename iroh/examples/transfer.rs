@@ -165,7 +165,7 @@ enum Mode {
     Download,
     /// We send and receive data in parallel.
     Bidi,
-    /// We send a ping every other second.
+    /// We keep the connection open without sending data.
     Ping,
 }
 
