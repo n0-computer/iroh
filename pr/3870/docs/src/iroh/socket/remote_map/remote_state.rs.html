@@ -1159,11 +1159,11 @@
 <a href=#1159 id=1159 data-nosnippet>1159</a>    <span class="comment">// Determine the best new path according to sort_key.
 <a href=#1160 id=1160 data-nosnippet>1160</a>    // If there is no path, return None.
 <a href=#1161 id=1161 data-nosnippet>1161</a>    </span><span class="kw">let </span>(best_addr, best_data) = all_paths.iter().min_by_key(|(<span class="kw">_</span>, psd)| psd.sort_key())<span class="question-mark">?</span>;
-<a href=#1162 id=1162 data-nosnippet>1162</a>    <span class="comment">// If there is no current path, always switch to the new path.
+<a href=#1162 id=1162 data-nosnippet>1162</a>    <span class="comment">// If there is no current path, always switch to the best path.
 <a href=#1163 id=1163 data-nosnippet>1163</a>    </span><span class="kw">let </span><span class="prelude-val">Some</span>(addr) = current_path <span class="kw">else </span>{
 <a href=#1164 id=1164 data-nosnippet>1164</a>        <span class="kw">return </span><span class="prelude-val">Some</span>((best_addr.clone(), best_data.rtt));
 <a href=#1165 id=1165 data-nosnippet>1165</a>    };
-<a href=#1166 id=1166 data-nosnippet>1166</a>    <span class="comment">// Get current data. If we don't have data for the current path, don't switch.
+<a href=#1166 id=1166 data-nosnippet>1166</a>    <span class="comment">// Get current data. If we don't have data for the current path, switch to the best path.
 <a href=#1167 id=1167 data-nosnippet>1167</a>    </span><span class="kw">let </span><span class="prelude-val">Some</span>(current_data) = all_paths.get(addr) <span class="kw">else </span>{
 <a href=#1168 id=1168 data-nosnippet>1168</a>        <span class="kw">return </span><span class="prelude-val">Some</span>((best_addr.clone(), best_data.rtt));
 <a href=#1169 id=1169 data-nosnippet>1169</a>    };
