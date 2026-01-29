@@ -222,8 +222,8 @@ impl IpTransport {
         self.local_addr.watch()
     }
 
-    pub(super) fn max_transmit_segments(&self) -> NonZeroUsize {
-        self.socket.max_gso_segments()
+    pub(super) fn max_transmit_segments(&self, destination: &SocketAddr) -> NonZeroUsize {
+        self.socket.max_gso_segments(destination)
     }
 
     pub(super) fn max_receive_segments(&self) -> NonZeroUsize {

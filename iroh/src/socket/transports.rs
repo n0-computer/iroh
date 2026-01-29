@@ -29,6 +29,12 @@ pub(crate) use self::ip::Config as IpConfig;
 use self::ip::{IpNetworkChangeSender, IpTransports, IpTransportsSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 
+/// Maximum transmit segments for relay transport.
+///
+/// Relay doesn't have GSO limits - it's just bytes over a websocket connection.
+/// We use a large value here; quinn will clamp it to its own MAX_TRANSMIT_SEGMENTS (10).
+const RELAY_MAX_TRANSMIT_SEGMENTS: NonZeroUsize = NonZeroUsize::new(64).expect("non-zero");
+
 /// Manages the different underlying data transports that the socket can support.
 #[derive(Debug)]
 pub(crate) struct Transports {
@@ -311,7 +317,14 @@ impl Transports {
 
     #[cfg(not(wasm_browser))]
     pub(crate) fn max_transmit_segments(&self) -> NonZeroUsize {
-        let res = self.ip.iter().map(|t| t.max_transmit_segments()).min();
+        // Placeholder address - the actual destination doesn't affect GSO capability
+        // for IP sockets, but the API requires one for consistency.
+        let placeholder = SocketAddr::from(([0, 0, 0, 0], 0));
+        let res = self
+            .ip
+            .iter()
+            .map(|t| t.max_transmit_segments(&placeholder))
+            .min();
         res.unwrap_or(NonZeroUsize::MIN)
     }
 
@@ -830,7 +843,23 @@ impl quinn::UdpSender for Sender {
         }
     }
 
-    fn max_transmit_segments(&self) -> NonZeroUsize {
-        self.sender.max_transmit_segments
+    fn max_transmit_segments(&self, destination: &SocketAddr) -> NonZeroUsize {
+        // Determine GSO capability based on destination type
+        match MultipathMappedAddr::from(*destination) {
+            MultipathMappedAddr::Ip(_) => {
+                // IP destinations use the pre-computed IP transport GSO capability
+                self.sender.max_transmit_segments
+            }
+            MultipathMappedAddr::Relay(_) => {
+                // Relay transport doesn't have GSO limits - it's just bytes over a connection
+                RELAY_MAX_TRANSMIT_SEGMENTS
+            }
+            MultipathMappedAddr::Mixed(_) => {
+                // Mixed addresses go through RemoteStateActor which chooses between IP and relay.
+                // We use the IP capability here because relay can handle any GSO value anyway,
+                // so using the IP capability is correct regardless of which path is chosen.
+                self.sender.max_transmit_segments
+            }
+        }
     }
 }

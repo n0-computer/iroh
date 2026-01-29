@@ -2153,8 +2153,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.16.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8a207ea77da14b683e8d454088795b6ac38e5d5cf26ded6868b9d80392cf8c1"
+source = "git+https://github.com/n0-computer/quinn?branch=max-transmit-per-path#01a7654ddebbc032d43717d175fff3c113ed1303"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2174,8 +2173,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f66e567aa8b052c5632b8fc902fbb503891eda705553494ccddf3505257be40"
+source = "git+https://github.com/n0-computer/quinn?branch=max-transmit-per-path#01a7654ddebbc032d43717d175fff3c113ed1303"
 dependencies = [
  "bytes",
  "derive_more",
@@ -2215,8 +2213,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f981dadd5a072a9e0efcd24bdcc388e570073f7e51b33505ceb1ef4668c80c86"
+source = "git+https://github.com/n0-computer/quinn?branch=max-transmit-per-path#01a7654ddebbc032d43717d175fff3c113ed1303"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2742,8 +2739,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "454b8c0759b2097581f25ed5180b4a1d14c324fde6d0734932a288e044d06232"
+source = "git+https://github.com/n0-computer/net-tools?branch=per-path-max-transmit-segments#eb153084abc32a3068376cce310fd81684423ebd"
 dependencies = [
  "atomic-waker",
  "bytes",
