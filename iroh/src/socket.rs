@@ -66,6 +66,7 @@ use crate::{
     socket::{
         concurrent_read_map::ReadOnlyMap,
         remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
+        transports::TransportBiasMap,
     },
 };
 
@@ -146,6 +147,7 @@ pub(crate) struct Options {
     pub(crate) insecure_skip_relay_cert_verify: bool,
     pub(crate) metrics: EndpointMetrics,
     pub(crate) hooks: EndpointHooksList,
+    pub(crate) transport_bias: TransportBiasMap,
 }
 
 /// Handle for [`Socket`].
@@ -461,6 +463,15 @@ impl Socket {
                         .get(&(src_url.clone(), *src_node));
                     quinn_meta.addr = mapped_addr.private_socket_addr();
                 }
+                transports::Addr::Custom(addr) => {
+                    self.metrics
+                        .socket
+                        .recv_data_custom
+                        .inc_by(quinn_meta.len as _);
+                    // Fill in the correct mapped address
+                    let mapped_addr = self.mapped_addrs.custom_addrs.get(addr);
+                    quinn_meta.addr = mapped_addr.private_socket_addr();
+                }
             }
         }
     }
@@ -676,6 +687,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
             metrics,
             hooks,
+            transport_bias,
         } = opts;
 
         let address_lookup = address_lookup::ConcurrentAddressLookup::default();
@@ -767,6 +779,7 @@ impl Handle {
                 direct_addrs.addrs.watch(),
                 address_lookup.clone(),
                 shutdown_token.child_token(),
+                transport_bias,
             )
         };
 
@@ -1640,6 +1653,7 @@ mod tests {
             address_lookup_user_data: None,
             metrics: Default::default(),
             hooks: Default::default(),
+            transport_bias: Default::default(),
         }
     }
 
@@ -2032,6 +2046,7 @@ mod tests {
             insecure_skip_relay_cert_verify: false,
             metrics: Default::default(),
             hooks: Default::default(),
+            transport_bias: Default::default(),
         };
         let sock = Socket::spawn(opts).await?;
         Ok(sock)
