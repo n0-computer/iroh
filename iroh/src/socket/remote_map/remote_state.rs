@@ -18,7 +18,6 @@ use n0_watcher::{Watchable, Watcher};
 use quinn::WeakConnectionHandle;
 use quinn_proto::{PathError, PathEvent, PathId, PathStatus, iroh_hp};
 use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
 use sync_wrapper::SyncStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
@@ -33,7 +32,7 @@ use crate::{
         AddressLookup, ConcurrentAddressLookup, Error as AddressLookupError,
         Item as AddressLookupItem,
     },
-    endpoint::{DirectAddr, quic::PathStats},
+    endpoint::DirectAddr,
     socket::{
         Metrics as SocketMetrics,
         mapped_addrs::{AddrMap, MappedAddr, RelayMappedAddr},
@@ -43,7 +42,11 @@ use crate::{
     util::MaybeFuture,
 };
 
+pub(crate) use path_watcher::{PathAddrList, PathsWatcher};
+pub use path_watcher::{PathInfo, PathInfoList};
+
 mod path_state;
+mod path_watcher;
 mod remote_info;
 
 /// How often to attempt holepunching.
@@ -114,9 +117,6 @@ type AddressLookupStream = Either<
     n0_future::stream::Pending<Result<AddressLookupItem, AddressLookupError>>,
     SyncStream<BoxStream<Result<AddressLookupItem, AddressLookupError>>>,
 >;
-
-/// List of addrs and path ids for open paths in a connection.
-pub(crate) type PathAddrList = SmallVec<[(TransportAddr, PathId); 4]>;
 
 /// The state we need to know about a single remote endpoint.
 ///
@@ -1385,179 +1385,6 @@ impl ConnectionState {
             .collect::<PathAddrList>();
 
         self.pub_open_paths.set(new).ok();
-    }
-}
-
-/// Watcher for the open paths and selected transmission path in a connection.
-///
-/// This is stored in the [`Connection`], and the watchables are set from within the endpoint state actor.
-///
-/// Internally, this contains a boxed-mapped-joined watcher over the open paths in the connection and the
-/// selected path to the remote endpoint. The watcher is boxed because the mapped-joined watcher with
-/// `SmallVec<PathInfoList>` has a size of over 800 bytes, which we don't want to put upon the [`Connection`].
-///
-/// [`Connection`]: crate::endpoint::Connection
-#[derive(Clone, derive_more::Debug)]
-#[debug("PathsWatcher")]
-#[allow(clippy::type_complexity)]
-pub(crate) struct PathsWatcher(
-    Box<
-        n0_watcher::Map<
-            n0_watcher::Tuple<
-                n0_watcher::Direct<PathAddrList>,
-                n0_watcher::Direct<Option<transports::Addr>>,
-            >,
-            PathInfoList,
-        >,
-    >,
-);
-
-impl n0_watcher::Watcher for PathsWatcher {
-    type Value = PathInfoList;
-
-    fn update(&mut self) -> bool {
-        self.0.update()
-    }
-
-    fn peek(&self) -> &Self::Value {
-        self.0.peek()
-    }
-
-    fn is_connected(&self) -> bool {
-        self.0.is_connected()
-    }
-
-    fn poll_updated(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), n0_watcher::Disconnected>> {
-        self.0.poll_updated(cx)
-    }
-}
-
-impl PathsWatcher {
-    fn new(
-        open_paths: n0_watcher::Direct<PathAddrList>,
-        selected_path: n0_watcher::Direct<Option<transports::Addr>>,
-        conn_handle: WeakConnectionHandle,
-    ) -> Self {
-        Self(Box::new(open_paths.or(selected_path).map(
-            move |(open_paths, selected_path)| {
-                let selected_path: Option<TransportAddr> = selected_path.map(Into::into);
-                let Some(conn) = conn_handle.upgrade() else {
-                    return PathInfoList(Default::default());
-                };
-                let list = open_paths
-                    .into_iter()
-                    .flat_map(move |(remote, path_id)| {
-                        PathInfo::new(path_id, &conn, remote, selected_path.as_ref())
-                    })
-                    .collect();
-                PathInfoList(list)
-            },
-        )))
-    }
-}
-
-/// List of [`PathInfo`] for the network paths of a [`Connection`].
-///
-/// This struct implements [`IntoIterator`].
-///
-/// [`Connection`]: crate::endpoint::Connection
-#[derive(derive_more::Debug, derive_more::IntoIterator, Eq, PartialEq, Clone)]
-#[debug("{_0:?}")]
-pub struct PathInfoList(SmallVec<[PathInfo; 4]>);
-
-impl PathInfoList {
-    /// Returns an iterator over the path infos.
-    pub fn iter(&self) -> impl Iterator<Item = &PathInfo> {
-        self.0.iter()
-    }
-
-    /// Returns `true` if the list is empty.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// Returns the number of paths.
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-}
-
-/// Information about a network path used by a [`Connection`].
-///
-/// [`Connection`]: crate::endpoint::Connection
-#[derive(derive_more::Debug, Clone)]
-pub struct PathInfo {
-    path_id: PathId,
-    #[debug(skip)]
-    handle: WeakConnectionHandle,
-    stats: PathStats,
-    remote: TransportAddr,
-    is_selected: bool,
-}
-
-impl PartialEq for PathInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.path_id == other.path_id
-            && self.remote == other.remote
-            && self.is_selected == other.is_selected
-    }
-}
-
-impl Eq for PathInfo {}
-
-impl PathInfo {
-    fn new(
-        path_id: PathId,
-        conn: &quinn::Connection,
-        remote: TransportAddr,
-        selected_path: Option<&TransportAddr>,
-    ) -> Option<Self> {
-        let stats = conn.path_stats(path_id)?;
-        Some(Self {
-            path_id,
-            handle: conn.weak_handle(),
-            is_selected: Some(&remote) == selected_path,
-            remote,
-            stats,
-        })
-    }
-
-    /// The remote transport address used by this network path.
-    pub fn remote_addr(&self) -> &TransportAddr {
-        &self.remote
-    }
-
-    /// Returns `true` if this path is currently the main transmission path for this [`Connection`].
-    ///
-    /// [`Connection`]: crate::endpoint::Connection
-    pub fn is_selected(&self) -> bool {
-        self.is_selected
-    }
-
-    /// Whether this is an IP transport address.
-    pub fn is_ip(&self) -> bool {
-        self.remote.is_ip()
-    }
-
-    /// Whether this is a transport address via a relay server.
-    pub fn is_relay(&self) -> bool {
-        self.remote.is_relay()
-    }
-
-    /// Returns stats for this transmission path.
-    pub fn stats(&self) -> PathStats {
-        self.handle
-            .upgrade()
-            .and_then(|conn| conn.path_stats(self.path_id))
-            .unwrap_or(self.stats)
-    }
-
-    /// Current best estimate of this paths's latency (round-trip-time)
-    pub fn rtt(&self) -> Duration {
-        self.stats().rtt
     }
 }
 
