@@ -1159,11 +1159,11 @@ fn select_best_path(
     // Determine the best new path according to sort_key.
     // If there is no path, return None.
     let (best_addr, best_data) = all_paths.iter().min_by_key(|(_, psd)| psd.sort_key())?;
-    // If there is no current path, always switch to the new path.
+    // If there is no current path, always switch to the best path.
     let Some(addr) = current_path else {
         return Some((best_addr.clone(), best_data.rtt));
     };
-    // Get current data. If we don't have data for the current path, don't switch.
+    // Get current data. If we don't have data for the current path, switch to the best path.
     let Some(current_data) = all_paths.get(addr) else {
         return Some((best_addr.clone(), best_data.rtt));
     };
