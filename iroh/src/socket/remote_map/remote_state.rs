@@ -753,15 +753,13 @@ impl RemoteStateActor {
                     || !local_candidates.is_subset(&last_hp.local_candidates)
             })
             .unwrap_or(true);
-        if !new_candidates {
-            if let Some(ref last_hp) = self.last_holepunch {
-                let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
-                let now = Instant::now();
-                if next_hp > now {
-                    trace!(scheduled_in = ?(next_hp - now), "not holepunching: no new addresses");
-                    self.scheduled_holepunch = Some(next_hp);
-                    return;
-                }
+        if !new_candidates && let Some(ref last_hp) = self.last_holepunch {
+            let next_hp = last_hp.when + HOLEPUNCH_ATTEMPTS_INTERVAL;
+            let now = Instant::now();
+            if next_hp > now {
+                trace!(scheduled_in = ?(next_hp - now), "not holepunching: no new addresses");
+                self.scheduled_holepunch = Some(next_hp);
+                return;
             }
         }
 

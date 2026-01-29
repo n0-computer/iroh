@@ -1,6 +1,6 @@
 [package]
 name = "iroh-base"
-version = "0.95.1"
+version = "0.96.0"
 edition = "2024"
 readme = "README.md"
 description = "base type and utilities for Iroh"
@@ -9,7 +9,7 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.85"
+rust-version = "1.89"
 
 [lints]
 workspace = true
