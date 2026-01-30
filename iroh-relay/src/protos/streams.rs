@@ -46,7 +46,7 @@ pub type StreamError = tokio_websockets::Error;
 pub type StreamError = ws_stream_wasm::WsErr;
 
 /// Shorthand for a type that implements both a websocket-based stream & sink for [`Bytes`].
-pub(crate) trait BytesStreamSink:
+pub trait BytesStreamSink:
     Stream<Item = Result<Bytes, StreamError>> + Sink<Bytes, Error = StreamError> + Unpin
 {
 }

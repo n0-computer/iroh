@@ -53,7 +53,7 @@ pub struct Config<S> {
 /// [`Server`]: crate::server::Server
 /// [`Client`]: crate::client::Client
 #[derive(Debug)]
-pub(super) struct Client {
+pub struct Client {
     /// Identity of the connected peer.
     endpoint_id: EndpointId,
     /// Connection identifier.
@@ -166,7 +166,7 @@ impl Client {
     }
 }
 
-/// Error for [`Actor::handle_frame`]
+/// Error when handling an incoming frame from a client.
 #[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]
@@ -181,7 +181,7 @@ pub enum HandleFrameError {
     Send { source: WriteFrameError },
 }
 
-/// Error for [`Actor::write_frame`]
+/// Error when writing a frame to a client.
 #[stack_error(derive, add_meta, from_sources)]
 #[allow(missing_docs)]
 #[non_exhaustive]

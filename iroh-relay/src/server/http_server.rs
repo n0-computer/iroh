@@ -157,8 +157,9 @@ impl ServerHandle {
 ///
 /// ```
 /// use std::sync::Arc;
-/// use rustls::ServerConfig;
+///
 /// use iroh_relay::server::http_server::TlsConfig;
+/// use rustls::ServerConfig;
 /// use webpki_types::{CertificateDer, PrivateKeyDer};
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -172,9 +173,11 @@ impl ServerHandle {
 /// let private_key = PrivateKeyDer::try_from(private_key_der)?;
 ///
 /// // Create a rustls ServerConfig
-/// let server_config = Arc::new(ServerConfig::builder()
-///     .with_no_client_auth()
-///     .with_single_cert(cert_chain, private_key)?);
+/// let server_config = Arc::new(
+///     ServerConfig::builder()
+///         .with_no_client_auth()
+///         .with_single_cert(cert_chain, private_key)?,
+/// );
 ///
 /// // Create TlsConfig for use with RelayService
 /// let tls_config = TlsConfig::new(server_config);
@@ -199,8 +202,9 @@ impl TlsConfig {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use rustls::ServerConfig;
+    ///
     /// use iroh_relay::server::http_server::TlsConfig;
+    /// use rustls::ServerConfig;
     /// use webpki_types::{CertificateDer, PrivateKeyDer};
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -213,9 +217,11 @@ impl TlsConfig {
     /// let cert_chain = vec![CertificateDer::from(cert_der)];
     /// let private_key = PrivateKeyDer::try_from(private_key_der)?;
     ///
-    /// let server_config = Arc::new(ServerConfig::builder()
-    ///     .with_no_client_auth()
-    ///     .with_single_cert(cert_chain, private_key)?);
+    /// let server_config = Arc::new(
+    ///     ServerConfig::builder()
+    ///         .with_no_client_auth()
+    ///         .with_single_cert(cert_chain, private_key)?,
+    /// );
     ///
     /// let tls_config = TlsConfig::new(server_config);
     /// # Ok(())
@@ -829,7 +835,7 @@ impl RelayService {
     /// let relay_service = RelayService::new(
     ///     handlers,
     ///     headers,
-    ///     None,  // No rate limiting
+    ///     None, // No rate limiting
     ///     key_cache,
     ///     AccessConfig::Everyone,
     ///     metrics,
@@ -843,11 +849,16 @@ impl RelayService {
     /// let private_key = PrivateKeyDer::try_from(private_key_der)?;
     ///
     /// // Serve with HTTPS
-    /// let server_config = Arc::new(rustls::ServerConfig::builder()
-    ///     .with_no_client_auth()
-    ///     .with_single_cert(cert_chain, private_key)?);
+    /// let server_config = Arc::new(
+    ///     rustls::ServerConfig::builder()
+    ///         .with_no_client_auth()
+    ///         .with_single_cert(cert_chain, private_key)?,
+    /// );
     /// let tls_config = TlsConfig::new(server_config);
-    /// relay_service.clone().handle_connection(stream, Some(tls_config)).await;
+    /// relay_service
+    ///     .clone()
+    ///     .handle_connection(stream, Some(tls_config))
+    ///     .await;
     ///
     /// // Or serve with plain HTTP
     /// # let stream = TcpStream::connect("127.0.0.1:0").await?;

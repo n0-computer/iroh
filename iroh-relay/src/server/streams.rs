@@ -44,6 +44,7 @@ impl<S> RelayedStream<S> {
 }
 
 /// Type alias for the standard server-side relay stream
+#[allow(dead_code)]
 pub(crate) type ServerRelayedStream = RelayedStream<WsBytesFramed<RateLimited<MaybeTlsStream>>>;
 
 #[cfg(test)]

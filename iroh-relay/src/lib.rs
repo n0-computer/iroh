@@ -77,7 +77,7 @@ pub trait ExportKeyingMaterial {
     /// [`export_keying_material`] documentation.
     ///
     /// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
-    /// [`MaybeTlsStream`]: crate::client::streams::MaybeTlsStream
+    /// [`MaybeTlsStream`]: crate::server::streams::MaybeTlsStream
     #[cfg_attr(wasm_browser, allow(unused))]
     fn export_keying_material<T: AsMut<[u8]>>(
         &self,
