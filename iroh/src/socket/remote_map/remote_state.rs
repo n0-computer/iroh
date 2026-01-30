@@ -42,8 +42,8 @@ use crate::{
     util::MaybeFuture,
 };
 
-pub(crate) use path_watcher::{PathAddrList, PathsWatcher};
-pub use path_watcher::{PathInfo, PathInfoList};
+use path_watcher::PathWatchable;
+pub use path_watcher::{PathInfo, PathInfoList, PathsWatcher};
 
 mod path_state;
 mod path_watcher;
@@ -382,6 +382,15 @@ impl RemoteStateActor {
             RemoteStateMessage::NetworkChange { is_major } => {
                 self.handle_network_change(is_major);
             }
+            RemoteStateMessage::WatchPaths(conn_id, tx) => {
+                let paths_watcher = if let Some(state) = self.connections.get_mut(&ConnId(conn_id))
+                {
+                    Some(state.watch_paths(self.selected_path.watch()))
+                } else {
+                    None
+                };
+                tx.send(paths_watcher).ok();
+            }
         }
     }
 
@@ -494,12 +503,7 @@ impl RemoteStateActor {
     /// Handles [`RemoteStateMessage::AddConnection`].
     ///
     /// Error returns are fatal and kill the actor.
-    fn handle_msg_add_connection(
-        &mut self,
-        handle: WeakConnectionHandle,
-        tx: oneshot::Sender<PathsWatcher>,
-    ) {
-        let pub_open_paths = Watchable::default();
+    fn handle_msg_add_connection(&mut self, handle: WeakConnectionHandle, tx: oneshot::Sender<()>) {
         if let Some(conn) = handle.upgrade() {
             self.metrics.num_conns_opened.inc();
             // Remove any conflicting stable_ids from the local state.
@@ -530,7 +534,7 @@ impl RemoteStateActor {
                 .entry(conn_id)
                 .insert_entry(ConnectionState {
                     handle: handle.clone(),
-                    pub_open_paths: pub_open_paths.clone(),
+                    pub_open_paths: Default::default(),
                     paths: Default::default(),
                     open_paths: Default::default(),
                     path_ids: Default::default(),
@@ -560,7 +564,12 @@ impl RemoteStateActor {
                     path_id = %PathId::ZERO,
                     ?res,
                 );
-                conn_state.add_open_path(path_remote.clone(), PathId::ZERO, &self.metrics);
+                conn_state.add_open_path(
+                    path_remote.clone(),
+                    PathId::ZERO,
+                    &self.metrics,
+                    self.selected_path.get(),
+                );
                 self.paths
                     .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 self.select_path();
@@ -580,13 +589,11 @@ impl RemoteStateActor {
                 }
             }
             self.trigger_holepunching();
+
+            tx.send(()).ok();
         }
-        tx.send(PathsWatcher::new(
-            pub_open_paths.watch(),
-            self.selected_path.watch(),
-            handle,
-        ))
-        .ok();
+
+        // TODO: No path watcher if conn is already closed
     }
 
     /// Handles [`RemoteStateMessage::ResolveRemote`].
@@ -942,7 +949,12 @@ impl RemoteStateActor {
                         ?conn_id,
                         %path_id,
                     );
-                    conn_state.add_open_path(path_remote.clone(), path_id, &self.metrics);
+                    conn_state.add_open_path(
+                        path_remote.clone(),
+                        path_id,
+                        &self.metrics,
+                        self.selected_path.get(),
+                    );
                     self.paths
                         .insert_open_path(path_remote.clone(), Source::Connection { _0: Private });
                 }
@@ -1253,7 +1265,7 @@ pub(crate) enum RemoteStateMessage {
     /// needed, any new paths discovered via holepunching will be added.  And closed paths
     /// will be removed etc.
     #[debug("AddConnection(..)")]
-    AddConnection(WeakConnectionHandle, oneshot::Sender<PathsWatcher>),
+    AddConnection(WeakConnectionHandle, oneshot::Sender<()>),
     /// Asks if there is any possible path that could be used.
     ///
     /// This adds the provided transport addresses to the list of potential paths for this remote
@@ -1272,7 +1284,10 @@ pub(crate) enum RemoteStateMessage {
     /// This currently only includes a list of all known transport addresses for the remote.
     RemoteInfo(oneshot::Sender<RemoteInfo>),
     /// The network status has changed in some way
-    NetworkChange { is_major: bool },
+    NetworkChange {
+        is_major: bool,
+    },
+    WatchPaths(usize, oneshot::Sender<Option<PathsWatcher>>),
 }
 
 /// Information about a holepunch attempt.
@@ -1309,7 +1324,7 @@ struct ConnectionState {
     /// Weak handle to the connection.
     handle: WeakConnectionHandle,
     /// The information we publish to users about the paths used in this connection.
-    pub_open_paths: Watchable<PathAddrList>,
+    pub_open_paths: PathWatchable,
     /// The paths that exist on this connection.
     ///
     /// This could be in any state, e.g. while still validating the path or already closed
@@ -1327,6 +1342,18 @@ struct ConnectionState {
 }
 
 impl ConnectionState {
+    fn watch_paths(
+        &mut self,
+        selected_path: n0_watcher::Direct<Option<transports::Addr>>,
+    ) -> PathsWatcher {
+        let open_paths = self
+            .open_paths
+            .iter()
+            .map(|(id, addr)| (*id, TransportAddr::from(addr.clone())));
+        self.pub_open_paths
+            .watch(open_paths, selected_path, self.handle.clone())
+    }
+
     /// Tracks a path for the connection.
     fn add_path(&mut self, remote: transports::Addr, path_id: PathId) {
         self.paths.insert(path_id, remote.clone());
@@ -1339,6 +1366,7 @@ impl ConnectionState {
         remote: transports::Addr,
         path_id: PathId,
         metrics: &Arc<SocketMetrics>,
+        selected_path: Option<transports::Addr>,
     ) {
         match remote {
             transports::Addr::Ip(_) => metrics.paths_direct.inc(),
@@ -1350,8 +1378,12 @@ impl ConnectionState {
         }
         self.paths.insert(path_id, remote.clone());
         self.open_paths.insert(path_id, remote.clone());
-        self.path_ids.insert(remote, path_id);
-        self.update_pub_path_info();
+        self.path_ids.insert(remote.clone(), path_id);
+
+        if let Some(conn) = self.handle.upgrade() {
+            self.pub_open_paths
+                .insert(&conn, path_id, remote.into(), selected_path.as_ref());
+        }
     }
 
     /// Completely removes a path from this connection.
@@ -1361,6 +1393,12 @@ impl ConnectionState {
             self.path_ids.remove(addr);
         }
         self.open_paths.remove(path_id);
+
+        self.pub_open_paths.update(*path_id, |info| {
+            info.is_abandoned = true;
+            true
+        });
+
         addr
     }
 
@@ -1368,23 +1406,10 @@ impl ConnectionState {
     fn remove_open_path(&mut self, path_id: &PathId) {
         self.open_paths.remove(path_id);
 
-        self.update_pub_path_info();
-    }
-
-    /// Sets the new [`PathInfo`] structs for the public [`Connection`].
-    ///
-    /// [`Connection`]: crate::endpoint::Connection
-    fn update_pub_path_info(&self) {
-        let new = self
-            .open_paths
-            .iter()
-            .map(|(path_id, remote)| {
-                let remote = TransportAddr::from(remote.clone());
-                (remote, *path_id)
-            })
-            .collect::<PathAddrList>();
-
-        self.pub_open_paths.set(new).ok();
+        self.pub_open_paths.update(*path_id, |info| {
+            info.is_closed = true;
+            true
+        });
     }
 }
 
