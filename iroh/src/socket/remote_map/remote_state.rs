@@ -26,8 +26,10 @@ use tracing::{Instrument, Level, debug, error, event, info_span, instrument, tra
 
 use self::path_state::RemotePathState;
 pub(crate) use self::path_watcher::PathWatchable;
-pub use self::path_watcher::{PathInfo, PathInfoList};
-pub use self::remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage};
+pub use self::{
+    path_watcher::{PathInfo, PathInfoList},
+    remote_info::{RemoteInfo, TransportAddrInfo, TransportAddrUsage},
+};
 use super::Source;
 use crate::{
     address_lookup::{
