@@ -147,31 +147,31 @@ impl QadConns {
     }
 
     fn current_v4(&self) -> Option<ProbeReport> {
-        if let Some((_, ref conn)) = self.v4 {
-            if let Some(mut r) = conn.observer.get() {
-                // grab latest rtt
+        if let Some((_, ref conn)) = self.v4
+            && let Some(mut r) = conn.observer.get()
+        {
+            // grab latest rtt
 
-                use quinn_proto::PathId;
-                if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
-                    r.latency = latency;
-                }
-                return Some(ProbeReport::QadIpv4(r));
+            use quinn_proto::PathId;
+            if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
+                r.latency = latency;
             }
+            return Some(ProbeReport::QadIpv4(r));
         }
         None
     }
 
     fn current_v6(&self) -> Option<ProbeReport> {
-        if let Some((_, ref conn)) = self.v6 {
-            if let Some(mut r) = conn.observer.get() {
-                // grab latest rtt
+        if let Some((_, ref conn)) = self.v6
+            && let Some(mut r) = conn.observer.get()
+        {
+            // grab latest rtt
 
-                use quinn_proto::PathId;
-                if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
-                    r.latency = latency;
-                }
-                return Some(ProbeReport::QadIpv6(r));
+            use quinn_proto::PathId;
+            if let Some(latency) = conn.conn.rtt(PathId::ZERO) {
+                r.latency = latency;
             }
+            return Some(ProbeReport::QadIpv6(r));
         }
         None
     }
@@ -284,12 +284,12 @@ impl Client {
         // If the last report had a captive portal and reported no UDP access,
         // it's possible that we didn't get a useful net_report due to the
         // captive portal blocking us. If so, make this report a full (non-incremental) one.
-        if !do_full {
-            if let Some(ref last) = self.reports.last {
-                if !last.has_udp() && last.captive_portal == Some(true) {
-                    do_full = true;
-                }
-            }
+        if !do_full
+            && let Some(ref last) = self.reports.last
+            && !last.has_udp()
+            && last.captive_portal == Some(true)
+        {
+            do_full = true;
         }
         if do_full {
             self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
@@ -770,11 +770,11 @@ impl Client {
                 if Some(url) == prev_relay.as_ref() {
                     old_relay_cur_latency = duration;
                 }
-                if let Some(best) = best_recent.get(url) {
-                    if r.preferred_relay.is_none() || best < best_any {
-                        best_any = best;
-                        r.preferred_relay.replace(url.clone());
-                    }
+                if let Some(best) = best_recent.get(url)
+                    && (r.preferred_relay.is_none() || best < best_any)
+                {
+                    best_any = best;
+                    r.preferred_relay.replace(url.clone());
                 }
             }
 

@@ -18,7 +18,7 @@ use super::common::{FrameType, FrameTypeError};
 use crate::KeyCache;
 
 /// The maximum size of a packet sent over relay.
-/// (This only includes the data bytes visible to magicsock, not
+/// (This only includes the data bytes visible to the socket, not
 /// including its on-wire framing overhead)
 pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 

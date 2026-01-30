@@ -434,10 +434,10 @@ impl ServerBuilder {
                             break;
                         }
                         Some(res) = set.join_next() => {
-                            if let Err(err) = res {
-                                if err.is_panic() {
-                                    panic!("task panicked: {err:#?}");
-                                }
+                            if let Err(err) = res
+                                && err.is_panic()
+                            {
+                                panic!("task panicked: {err:#?}");
                             }
                         }
                         res = listener.accept() => match res {

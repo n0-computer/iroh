@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.95.1"
+version = "0.96.0"
 edition = "2024"
 readme = "README.md"
 description = "p2p quic connections dialed by public key"
@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 keywords = ["quic", "networking", "holepunching", "p2p"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.85"
+rust-version = "1.89"
 
 [lib]
 # We need "cdylib" to actually generate .wasm files when we run with --target=wasm32-unknown-unknown.
@@ -27,17 +27,18 @@ data-encoding = "2.2"
 derive_more = { version = "2.0.1", features = ["debug", "display", "from", "try_into", "deref", "from_str", "into_iterator"] }
 ed25519-dalek = { version = "3.0.0-pre.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
-iroh-base = { version = "0.95.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
-iroh-relay = { version = "0.95", path = "../iroh-relay", default-features = false }
+iroh-base = { version = "0.96.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-relay = { version = "0.96", path = "../iroh-relay", default-features = false }
 n0-future = "0.3"
 n0-error = "0.1"
 n0-watcher = "0.6"
-netwatch = { version = "0.13" }
+netwatch = { version = "0.14" }
+papaya = { version = "0.2.3", default-features = false }
 pin-project = "1"
 pkarr = { version = "5", default-features = false, features = ["relays"] }
-quinn = { package = "iroh-quinn", version = "0.15", default-features = false, features = ["rustls-ring"] }
-quinn-proto = { package = "iroh-quinn-proto", version = "0.14" }
-quinn-udp = { package = "iroh-quinn-udp", version = "0.7" }
+quinn = { package = "iroh-quinn", version = "0.16", default-features = false, features = ["rustls-ring"] }
+quinn-proto = { package = "iroh-quinn-proto", version = "0.15" }
+quinn-udp = { package = "iroh-quinn-udp", version = "0.8" }
 rand = "0.9.2"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
@@ -61,15 +62,13 @@ url = { version = "2.5", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.103.7", features = ["ring"] }
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 webpki-roots = "1.0.3"
-z32 = "1.0.3"
-pkcs8 = "0.11.0-rc.7"
-rustls-platform-verifier = "0.5.3"
+pkcs8 = "0.11.0-rc.9"
 
 # metrics
 iroh-metrics = { version = "0.38", default-features = false }
 
-# local-swarm-discovery
-swarm-discovery = { version = "0.4", optional = true }
+# mdns
+swarm-discovery = { version = "0.5", optional = true }
 futures-util = "0.3"
 
 # test_utils
@@ -82,7 +81,7 @@ hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.40.0" }
 portmapper = { version = "0.13", default-features = false }
-quinn = { package = "iroh-quinn", version = "0.15", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quinn = { package = "iroh-quinn", version = "0.16", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -133,7 +132,8 @@ tracing-subscriber = { version = "0.3", features = [
 ] }
 indicatif = { version = "0.18", features = ["tokio"] }
 parse-size = { version = "1.1.0", features = ['std'] }
-iroh-base = { version = "0.95.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-base = { version = "0.96.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+console = { version = "0.16" }
 
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
@@ -147,8 +147,8 @@ cfg_aliases = { version = "0.2.1" }
 default = ["metrics", "fast-apple-datapath"]
 metrics = ["iroh-metrics/metrics", "iroh-relay/metrics", "portmapper/metrics"]
 test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
-discovery-local-network = ["dep:swarm-discovery"]
-discovery-pkarr-dht = ["pkarr/dht"]
+address-lookup-mdns = ["dep:swarm-discovery"]
+address-lookup-pkarr-dht = ["pkarr/dht"]
 qlog = ["quinn/qlog"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = ["quinn/fast-apple-datapath"]
@@ -178,12 +178,12 @@ name = "connect-unreliable"
 required-features = []
 
 [[example]]
-name = "dht_discovery"
-required-features = ["discovery-pkarr-dht"]
+name = "dht_address_lookup"
+required-features = ["address-lookup-pkarr-dht"]
 
 [[example]]
-name = "locally-discovered-nodes"
-required-features = ["discovery-local-network"]
+name = "mdns_address_lookup"
+required-features = ["address-lookup-mdns"]
 
 [[example]]
 name = "search"

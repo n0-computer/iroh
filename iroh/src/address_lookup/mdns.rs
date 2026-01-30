@@ -1,16 +1,16 @@
-//! A discovery service that uses an mdns-like service to discover local endpoints.
+//! An address lookup service that uses an mdns-like service to discover and lookup the addresses of local endpoints.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about endpoints that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
 //!
-//! When [`MdnsDiscovery`] is enabled, it's possible to get a list of the locally discovered endpoints by filtering a list of `RemoteInfo`s.
+//! When [`MdnsAddressLookup`] is enabled, it's possible to get a list of the locally discovered endpoints by filtering a list of `RemoteInfo`s.
 //!
 //! ```no_run
 //! use std::time::Duration;
 //!
 //! use iroh::{
 //!     RelayMode, SecretKey,
-//!     discovery::mdns::{DiscoveryEvent, MdnsDiscovery},
+//!     address_lookup::{DiscoveryEvent, MdnsAddressLookup},
 //!     endpoint::{Endpoint, Source},
 //! };
 //! use n0_future::StreamExt;
@@ -23,11 +23,11 @@
 //!         .await
 //!         .unwrap();
 //!
-//!     // Register the discovery services with the endpoint
-//!     let mdns = MdnsDiscovery::builder().build(endpoint.id()).unwrap();
-//!     endpoint.discovery().add(mdns.clone());
+//!     // Register the Address Lookupwith the endpoint
+//!     let mdns = MdnsAddressLookup::builder().build(endpoint.id()).unwrap();
+//!     endpoint.address_lookup().add(mdns.clone());
 //!
-//!     // Subscribe to the discovery events
+//!     // Subscribe to the mdns discovery events
 //!     let mut events = mdns.subscribe().await;
 //!     while let Some(event) = events.next().await {
 //!         match event {
@@ -60,32 +60,35 @@ use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{Instrument, debug, error, info_span, trace, warn};
 
-use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use super::IntoAddressLookup;
 use crate::{
     Endpoint,
-    discovery::{Discovery, DiscoveryItem, EndpointData, EndpointInfo},
+    address_lookup::{
+        AddressLookup, EndpointData, EndpointInfo, Error as AddressLookupError,
+        IntoAddressLookupError, Item as AddressLookupItem,
+    },
 };
 
 /// The n0 local service name
 const N0_SERVICE_NAME: &str = "irohv1";
 
-/// Name of this discovery service.
+/// Name of this address lookup service.
 ///
-/// Used as the `provenance` field in [`DiscoveryItem`]s.
+/// Used as the `provenance` field in [`AddressLookupItem`]s.
 ///
-/// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
+/// Used in the [`crate::endpoint::Source::AddressLookup`] enum variant as the `name`.
 pub const NAME: &str = "mdns";
 
 /// The key of the attribute under which the `UserData` is stored in
 /// the TXT record supported by swarm-discovery.
 const USER_DATA_ATTRIBUTE: &str = "user-data";
 
-/// How long we will wait before we stop sending discovery items
-const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
+/// How long we will wait before we stop attempting to resolve an endpoint ID to an address
+const LOOKUP_DURATION: Duration = Duration::from_secs(10);
 
-/// Discovery using `swarm-discovery`, a variation on mdns
+/// Address Lookup using `swarm-discovery`, a variation on mdns
 #[derive(Debug, Clone)]
-pub struct MdnsDiscovery {
+pub struct MdnsAddressLookup {
     #[allow(dead_code)]
     handle: Arc<AbortOnDropHandle<()>>,
     sender: mpsc::Sender<Message>,
@@ -96,16 +99,16 @@ pub struct MdnsDiscovery {
 
 #[derive(Debug)]
 enum Message {
-    Discovery(String, Peer),
+    Discovered(String, Peer),
     Resolve(
         EndpointId,
-        mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>,
+        mpsc::Sender<Result<AddressLookupItem, AddressLookupError>>,
     ),
     Timeout(EndpointId, usize),
     Subscribe(mpsc::Sender<DiscoveryEvent>),
 }
 
-/// Manages the list of subscribers that are subscribed to this discovery service.
+/// Manages the list of subscribers that are subscribed to this Address Lookup.
 #[derive(Debug)]
 struct Subscribers(Vec<mpsc::Sender<DiscoveryEvent>>);
 
@@ -129,11 +132,7 @@ impl Subscribers {
             if let Err(err) = subscriber.try_send(item.clone()) {
                 match err {
                     TrySendError::Full(_) => {
-                        warn!(
-                            ?item,
-                            idx = i,
-                            "local swarm discovery subscriber is blocked, dropping item"
-                        )
+                        warn!(?item, idx = i, "mdns subscriber is blocked, dropping item")
                     }
                     TrySendError::Closed(_) => clean_up.push(i),
                 }
@@ -145,15 +144,15 @@ impl Subscribers {
     }
 }
 
-/// Builder for [`MdnsDiscovery`].
+/// Builder for [`MdnsAddressLookup`].
 #[derive(Debug)]
-pub struct MdnsDiscoveryBuilder {
+pub struct MdnsAddressLookupBuilder {
     advertise: bool,
     service_name: String,
 }
 
-impl MdnsDiscoveryBuilder {
-    /// Creates a new [`MdnsDiscoveryBuilder`] with default settings.
+impl MdnsAddressLookupBuilder {
+    /// Creates a new [`MdnsAddressLookupBuilder`] with default settings.
     fn new() -> Self {
         Self {
             advertise: true,
@@ -182,31 +181,37 @@ impl MdnsDiscoveryBuilder {
         self
     }
 
-    /// Builds an [`MdnsDiscovery`] instance with the configured settings.
+    /// Builds an [`MdnsAddressLookup`] instance with the configured settings.
     ///
     /// # Errors
     /// Returns an error if the network does not allow ipv4 OR ipv6.
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    pub fn build(self, endpoint_id: EndpointId) -> Result<MdnsDiscovery, IntoDiscoveryError> {
-        MdnsDiscovery::new(endpoint_id, self.advertise, self.service_name)
+    pub fn build(
+        self,
+        endpoint_id: EndpointId,
+    ) -> Result<MdnsAddressLookup, IntoAddressLookupError> {
+        MdnsAddressLookup::new(endpoint_id, self.advertise, self.service_name)
     }
 }
 
-impl Default for MdnsDiscoveryBuilder {
+impl Default for MdnsAddressLookupBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl IntoDiscovery for MdnsDiscoveryBuilder {
-    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+impl IntoAddressLookup for MdnsAddressLookupBuilder {
+    fn into_address_lookup(
+        self,
+        endpoint: &Endpoint,
+    ) -> Result<impl AddressLookup, IntoAddressLookupError> {
         self.build(endpoint.id())
     }
 }
 
-/// An event emitted from the [`MdnsDiscovery`] service.
+/// An event emitted from the [`MdnsAddressLookup`] service.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum DiscoveryEvent {
     /// A peer was discovered or it's information was updated.
@@ -224,13 +229,13 @@ pub enum DiscoveryEvent {
     },
 }
 
-impl MdnsDiscovery {
-    /// Returns a [`MdnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
-    pub fn builder() -> MdnsDiscoveryBuilder {
-        MdnsDiscoveryBuilder::default()
+impl MdnsAddressLookup {
+    /// Returns a [`MdnsAddressLookupBuilder`] that implements [`Into`].
+    pub fn builder() -> MdnsAddressLookupBuilder {
+        MdnsAddressLookupBuilder::default()
     }
 
-    /// Create a new [`MdnsDiscovery`] Service.
+    /// Create a new [`MdnsAddressLookup`] Service.
     ///
     /// This starts a [`Discoverer`] that broadcasts your addresses (if advertise is set to true)
     /// and receives addresses from other endpoints in your local network.
@@ -244,12 +249,12 @@ impl MdnsDiscovery {
         endpoint_id: EndpointId,
         advertise: bool,
         service_name: String,
-    ) -> Result<Self, IntoDiscoveryError> {
-        debug!("Creating new MdnsDiscovery service");
+    ) -> Result<Self, IntoAddressLookupError> {
+        debug!("Creating new Mdns service");
         let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
-        let discovery = MdnsDiscovery::spawn_discoverer(
+        let address_lookup = MdnsAddressLookup::spawn_discoverer(
             endpoint_id,
             advertise,
             task_sender.clone(),
@@ -260,66 +265,64 @@ impl MdnsDiscovery {
 
         let local_addrs: Watchable<Option<EndpointData>> = Watchable::default();
         let mut addrs_change = local_addrs.watch();
-        let discovery_fut = async move {
+        let address_lookup_fut = async move {
             let mut endpoint_addrs: HashMap<PublicKey, Peer> = HashMap::default();
             let mut subscribers = Subscribers::new();
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
-                HashMap<usize, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>>,
+                HashMap<usize, mpsc::Sender<Result<AddressLookupItem, AddressLookupError>>>,
             > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
-                trace!(?endpoint_addrs, "MdnsDiscovery Service loop tick");
+                trace!(?endpoint_addrs, "Mdns Service loop tick");
                 let msg = tokio::select! {
                     msg = recv.recv() => {
                         msg
                     }
                     Ok(Some(data)) = addrs_change.updated() => {
-                        tracing::trace!(?data, "MdnsDiscovery address changed");
-                        discovery.remove_all();
+                        tracing::trace!(?data, "Mdns address changed");
+                        address_lookup.remove_all();
                         let addrs =
-                            MdnsDiscovery::socketaddrs_to_addrs(data.ip_addrs());
+                            MdnsAddressLookup::socketaddrs_to_addrs(data.ip_addrs());
                         for addr in addrs {
-                            discovery.add(addr.0, addr.1)
+                            address_lookup.add(addr.0, addr.1)
                         }
-                        if let Some(user_data) = data.user_data() {
-                            if let Err(err) = discovery.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
-                                warn!("Failed to set the user-defined data in local swarm discovery: {err:?}");
+                        if let Some(user_data) = data.user_data()
+                            && let Err(err) = address_lookup.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
+                                warn!("Failed to set the user-defined data in mdns: {err:?}");
                             }
-                        }
                         continue;
                     }
                 };
                 let msg = match msg {
                     None => {
-                        error!("MdnsDiscovery channel closed");
-                        error!("closing MdnsDiscovery");
+                        error!("Mdns channel closed");
+                        error!("closing Mdns");
                         timeouts.abort_all();
-                        discovery.remove_all();
+                        address_lookup.remove_all();
                         return;
                     }
                     Some(msg) => msg,
                 };
                 match msg {
-                    Message::Discovery(discovered_endpoint_id, peer_info) => {
+                    Message::Discovered(discovered_endpoint_id, peer_info) => {
                         trace!(
                             ?discovered_endpoint_id,
                             ?peer_info,
-                            "MdnsDiscovery Message::Discovery"
+                            "Mdns Message::Discovered"
                         );
-                        let discovered_endpoint_id = match PublicKey::from_str(
-                            &discovered_endpoint_id,
-                        ) {
-                            Ok(endpoint_id) => endpoint_id,
-                            Err(e) => {
-                                warn!(
-                                    discovered_endpoint_id,
-                                    "couldn't parse endpoint_id from mdns discovery service: {e:?}"
-                                );
-                                continue;
-                            }
-                        };
+                        let discovered_endpoint_id =
+                            match PublicKey::from_str(&discovered_endpoint_id) {
+                                Ok(endpoint_id) => endpoint_id,
+                                Err(e) => {
+                                    warn!(
+                                        discovered_endpoint_id,
+                                        "couldn't parse endpoint_id from mdns Address Lookup: {e:?}"
+                                    );
+                                    continue;
+                                }
+                            };
 
                         if discovered_endpoint_id == endpoint_id {
                             continue;
@@ -328,7 +331,7 @@ impl MdnsDiscovery {
                         if peer_info.is_expiry() {
                             trace!(
                                 ?discovered_endpoint_id,
-                                "removing endpoint from MdnsDiscovery address book"
+                                "removing endpoint from Mdns address book"
                             );
                             endpoint_addrs.remove(&discovered_endpoint_id);
                             subscribers.send(DiscoveryEvent::Expired {
@@ -338,23 +341,23 @@ impl MdnsDiscovery {
                         }
 
                         let entry = endpoint_addrs.entry(discovered_endpoint_id);
-                        if let std::collections::hash_map::Entry::Occupied(ref entry) = entry {
-                            if entry.get() == &peer_info {
-                                // this is a republish we already know about
-                                continue;
-                            }
+                        if let std::collections::hash_map::Entry::Occupied(ref entry) = entry
+                            && entry.get() == &peer_info
+                        {
+                            // this is a republish we already know about
+                            continue;
                         }
 
                         debug!(
                             ?discovered_endpoint_id,
                             ?peer_info,
-                            "adding endpoint to MdnsDiscovery address book"
+                            "adding endpoint to Mdns address book"
                         );
 
                         let mut resolved = false;
                         let item = peer_to_discovery_item(&peer_info, &discovered_endpoint_id);
                         if let Some(senders) = senders.get(&discovered_endpoint_id) {
-                            trace!(?item, senders = senders.len(), "sending DiscoveryItem");
+                            trace!(?item, senders = senders.len(), "sending AddressLookupItem");
                             resolved = true;
                             for sender in senders.values() {
                                 sender.send(Ok(item.clone())).await.ok();
@@ -375,10 +378,10 @@ impl MdnsDiscovery {
                     Message::Resolve(endpoint_id, sender) => {
                         let id = last_id + 1;
                         last_id = id;
-                        trace!(?endpoint_id, "MdnsDiscovery Message::SendAddrs");
+                        trace!(?endpoint_id, "Mdns Message::SendAddrs");
                         if let Some(peer_info) = endpoint_addrs.get(&endpoint_id) {
                             let item = peer_to_discovery_item(peer_info, &endpoint_id);
-                            debug!(?item, "sending DiscoveryItem");
+                            debug!(?item, "sending AddressLookupItem");
                             sender.send(Ok(item)).await.ok();
                         }
                         if let Some(senders_for_endpoint_id) = senders.get_mut(&endpoint_id) {
@@ -390,8 +393,8 @@ impl MdnsDiscovery {
                         }
                         let timeout_sender = task_sender.clone();
                         timeouts.spawn(async move {
-                            time::sleep(DISCOVERY_DURATION).await;
-                            trace!(?endpoint_id, "discovery timeout");
+                            time::sleep(LOOKUP_DURATION).await;
+                            trace!(?endpoint_id, "resolution timeout");
                             timeout_sender
                                 .send(Message::Timeout(endpoint_id, id))
                                 .await
@@ -399,7 +402,7 @@ impl MdnsDiscovery {
                         });
                     }
                     Message::Timeout(endpoint_id, id) => {
-                        trace!(?endpoint_id, "MdnsDiscovery Message::Timeout");
+                        trace!(?endpoint_id, "Mdns Message::Timeout");
                         if let Some(senders_for_endpoint_id) = senders.get_mut(&endpoint_id) {
                             senders_for_endpoint_id.remove(&id);
                             if senders_for_endpoint_id.is_empty() {
@@ -408,13 +411,14 @@ impl MdnsDiscovery {
                         }
                     }
                     Message::Subscribe(subscriber) => {
-                        trace!("MdnsDiscovery Message::Subscribe");
+                        trace!("Mdns Message::Subscribe");
                         subscribers.push(subscriber);
                     }
                 }
             }
         };
-        let handle = task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
+        let handle =
+            task::spawn(address_lookup_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
             handle: Arc::new(AbortOnDropHandle::new(handle)),
             sender: send,
@@ -426,8 +430,11 @@ impl MdnsDiscovery {
     /// Subscribe to discovered endpoints
     pub async fn subscribe(&self) -> impl Stream<Item = DiscoveryEvent> + Unpin + use<> {
         let (sender, recv) = mpsc::channel(20);
-        let discovery_sender = self.sender.clone();
-        discovery_sender.send(Message::Subscribe(sender)).await.ok();
+        let address_lookup_sender = self.sender.clone();
+        address_lookup_sender
+            .send(Message::Subscribe(sender))
+            .await
+            .ok();
         tokio_stream::wrappers::ReceiverStream::new(recv)
     }
 
@@ -438,21 +445,17 @@ impl MdnsDiscovery {
         socketaddrs: BTreeSet<SocketAddr>,
         service_name: String,
         rt: &tokio::runtime::Handle,
-    ) -> Result<DropGuard, IntoDiscoveryError> {
+    ) -> Result<DropGuard, IntoAddressLookupError> {
         let spawn_rt = rt.clone();
         let callback = move |endpoint_id: &str, peer: &Peer| {
-            trace!(
-                endpoint_id,
-                ?peer,
-                "Received peer information from MdnsDiscovery"
-            );
+            trace!(endpoint_id, ?peer, "Received peer information from Mdns");
 
             let sender = sender.clone();
             let endpoint_id = endpoint_id.to_string();
             let peer = peer.clone();
             spawn_rt.spawn(async move {
                 sender
-                    .send(Message::Discovery(endpoint_id, peer))
+                    .send(Message::Discovered(endpoint_id, peer))
                     .await
                     .ok();
             });
@@ -464,14 +467,14 @@ impl MdnsDiscovery {
             .with_callback(callback)
             .with_ip_class(IpClass::Auto);
         if advertise {
-            let addrs = MdnsDiscovery::socketaddrs_to_addrs(socketaddrs.iter());
+            let addrs = MdnsAddressLookup::socketaddrs_to_addrs(socketaddrs.iter());
             for addr in addrs {
                 discoverer = discoverer.with_addrs(addr.0, addr.1);
             }
         }
         discoverer
             .spawn(rt)
-            .map_err(|e| IntoDiscoveryError::from_err("mdns", e))
+            .map_err(|e| IntoAddressLookupError::from_err("mdns", e))
     }
 
     fn socketaddrs_to_addrs<'a>(
@@ -488,7 +491,7 @@ impl MdnsDiscovery {
     }
 }
 
-fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryItem {
+fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> AddressLookupItem {
     let ip_addrs: BTreeSet<SocketAddr> = peer
         .addrs()
         .iter()
@@ -510,20 +513,20 @@ fn peer_to_discovery_item(peer: &Peer, endpoint_id: &EndpointId) -> DiscoveryIte
     let endpoint_info = EndpointInfo::new(*endpoint_id)
         .with_ip_addrs(ip_addrs)
         .with_user_data(user_data);
-    DiscoveryItem::new(endpoint_info, NAME, None)
+    AddressLookupItem::new(endpoint_info, NAME, None)
 }
 
-impl Discovery for MdnsDiscovery {
+impl AddressLookup for MdnsAddressLookup {
     fn resolve(
         &self,
         endpoint_id: EndpointId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<AddressLookupItem, AddressLookupError>>> {
         use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);
-        let discovery_sender = self.sender.clone();
+        let address_lookup_sender = self.sender.clone();
         let stream = async move {
-            discovery_sender
+            address_lookup_sender
                 .send(Message::Resolve(endpoint_id, send))
                 .await
                 .ok();
@@ -552,17 +555,17 @@ mod tests {
         use rand::{CryptoRng, SeedableRng};
 
         use super::super::*;
-        use crate::discovery::UserData;
+        use crate::address_lookup::UserData;
 
         #[tokio::test]
         #[traced_test]
         async fn mdns_publish_resolve() -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-            // Create discoverer A with advertise=false (only listens)
-            let (_, discovery_a) = make_discoverer(&mut rng, false)?;
-            // Create discoverer B with advertise=true (will broadcast)
-            let (endpoint_id_b, discovery_b) = make_discoverer(&mut rng, true)?;
+            // Create Address LookupA with advertise=false (only listens)
+            let (_, address_lookup_a) = make_address_lookup(&mut rng, false)?;
+            // Create Address LookupB with advertise=true (will broadcast)
+            let (endpoint_id_b, address_lookup_b) = make_address_lookup(&mut rng, true)?;
 
             // make addr info for discoverer b
             let user_data: UserData = "foobar".parse()?;
@@ -571,22 +574,28 @@ mod tests {
                     .with_user_data(Some(user_data.clone()));
 
             // resolve twice to ensure we can create separate streams for the same endpoint_id
-            let mut s1 = discovery_a.subscribe().await.filter(|event| match event {
-                DiscoveryEvent::Discovered { endpoint_info, .. } => {
-                    endpoint_info.endpoint_id == endpoint_id_b
-                }
-                _ => false,
-            });
-            let mut s2 = discovery_a.subscribe().await.filter(|event| match event {
-                DiscoveryEvent::Discovered { endpoint_info, .. } => {
-                    endpoint_info.endpoint_id == endpoint_id_b
-                }
-                _ => false,
-            });
+            let mut s1 = address_lookup_a
+                .subscribe()
+                .await
+                .filter(|event| match event {
+                    DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                        endpoint_info.endpoint_id == endpoint_id_b
+                    }
+                    _ => false,
+                });
+            let mut s2 = address_lookup_a
+                .subscribe()
+                .await
+                .filter(|event| match event {
+                    DiscoveryEvent::Discovered { endpoint_info, .. } => {
+                        endpoint_info.endpoint_id == endpoint_id_b
+                    }
+                    _ => false,
+                });
 
             tracing::debug!(?endpoint_id_b, "Discovering endpoint id b");
-            // publish discovery_b's address
-            discovery_b.publish(&endpoint_data);
+            // publish address_lookup_b's address
+            address_lookup_b.publish(&endpoint_data);
             let DiscoveryEvent::Discovered {
                 endpoint_info: s1_endpoint_info,
                 ..
@@ -617,16 +626,16 @@ mod tests {
         #[traced_test]
         async fn mdns_publish_expire() -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
-            let (_, discovery_a) = make_discoverer(&mut rng, false)?;
-            let (endpoint_id_b, discovery_b) = make_discoverer(&mut rng, true)?;
+            let (_, address_lookup_a) = make_address_lookup(&mut rng, false)?;
+            let (endpoint_id_b, address_lookup_b) = make_address_lookup(&mut rng, true)?;
 
-            // publish discovery_b's address
+            // publish address_lookup_b's address
             let endpoint_data =
                 EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())])
                     .with_user_data(Some("".parse()?));
-            discovery_b.publish(&endpoint_data);
+            address_lookup_b.publish(&endpoint_data);
 
-            let mut s1 = discovery_a.subscribe().await;
+            let mut s1 = address_lookup_a.subscribe().await;
             tracing::debug!(?endpoint_id_b, "Discovering endpoint id b");
 
             // Wait for the specific endpoint to be discovered
@@ -647,7 +656,7 @@ mod tests {
             }
 
             // Shutdown endpoint B
-            drop(discovery_b);
+            drop(address_lookup_b);
             tokio::time::sleep(Duration::from_secs(5)).await;
 
             // Wait for the expiration event for the specific endpoint
@@ -677,24 +686,24 @@ mod tests {
 
             let num_endpoints = 5;
             let mut endpoint_ids = BTreeSet::new();
-            let mut discoverers = vec![];
+            let mut address_lookup_list = vec![];
 
-            let (_, discovery) = make_discoverer(&mut rng, false)?;
+            let (_, address_lookup) = make_address_lookup(&mut rng, false)?;
             let endpoint_data =
                 EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
 
             for i in 0..num_endpoints {
-                let (endpoint_id, discovery) = make_discoverer(&mut rng, true)?;
+                let (endpoint_id, address_lookup) = make_address_lookup(&mut rng, true)?;
                 let user_data: UserData = format!("endpoint{i}").parse()?;
                 let endpoint_data = endpoint_data
                     .clone()
                     .with_user_data(Some(user_data.clone()));
                 endpoint_ids.insert((endpoint_id, Some(user_data)));
-                discovery.publish(&endpoint_data);
-                discoverers.push(discovery);
+                address_lookup.publish(&endpoint_data);
+                address_lookup_list.push(address_lookup);
             }
 
-            let mut events = discovery.subscribe().await;
+            let mut events = address_lookup.subscribe().await;
 
             let test = async move {
                 let mut got_ids = BTreeSet::new();
@@ -726,26 +735,26 @@ mod tests {
         async fn non_advertising_endpoint_not_discovered() -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-            let (_, discovery_a) = make_discoverer(&mut rng, false)?;
-            let (endpoint_id_b, discovery_b) = make_discoverer(&mut rng, false)?;
+            let (_, address_lookup_a) = make_address_lookup(&mut rng, false)?;
+            let (endpoint_id_b, address_lookup_b) = make_address_lookup(&mut rng, false)?;
 
-            let (endpoint_id_c, discovery_c) = make_discoverer(&mut rng, true)?;
+            let (endpoint_id_c, address_lookup_c) = make_address_lookup(&mut rng, true)?;
             let endpoint_data_c =
                 EndpointData::new([TransportAddr::Ip("0.0.0.0:22222".parse().unwrap())]);
-            discovery_c.publish(&endpoint_data_c);
+            address_lookup_c.publish(&endpoint_data_c);
 
             let endpoint_data_b =
                 EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
-            discovery_b.publish(&endpoint_data_b);
+            address_lookup_b.publish(&endpoint_data_b);
 
-            let mut stream_c = discovery_a.resolve(endpoint_id_c).unwrap();
+            let mut stream_c = address_lookup_a.resolve(endpoint_id_c).unwrap();
             let result_c = tokio::time::timeout(Duration::from_secs(2), stream_c.next()).await;
             assert!(
                 result_c.is_ok(),
                 "Advertising endpoint should be discoverable"
             );
 
-            let mut stream_b = discovery_a.resolve(endpoint_id_b).unwrap();
+            let mut stream_b = address_lookup_a.resolve(endpoint_id_b).unwrap();
             let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
             assert!(
                 result_b.is_err(),
@@ -760,52 +769,52 @@ mod tests {
         async fn test_service_names() -> Result {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0u64);
 
-            // Create a discovery service using the default
+            // Create an Address Lookupusing the default
             // service name
             let id_a = SecretKey::generate(&mut rng).public();
-            let discovery_a = MdnsDiscovery::builder().build(id_a)?;
+            let address_lookup_a = MdnsAddressLookup::builder().build(id_a)?;
 
-            // Create a discovery service using a custom
+            // Create a Address Lookupusing a custom
             // service name
             let id_b = SecretKey::generate(&mut rng).public();
-            let discovery_b = MdnsDiscovery::builder()
+            let address_lookup_b = MdnsAddressLookup::builder()
                 .service_name("different.name")
                 .build(id_b)?;
 
-            // Create a discovery service using the same
+            // Create an Address Lookupusing the same
             // custom service name
             let id_c = SecretKey::generate(&mut rng).public();
-            let discovery_c = MdnsDiscovery::builder()
+            let address_lookup_c = MdnsAddressLookup::builder()
                 .service_name("different.name")
                 .build(id_c)?;
 
             let endpoint_data_a =
                 EndpointData::new([TransportAddr::Ip("0.0.0.0:11111".parse().unwrap())]);
-            discovery_a.publish(&endpoint_data_a);
+            address_lookup_a.publish(&endpoint_data_a);
 
             let endpoint_data_b =
                 EndpointData::new([TransportAddr::Ip("0.0.0.0:22222".parse().unwrap())]);
-            discovery_b.publish(&endpoint_data_b);
+            address_lookup_b.publish(&endpoint_data_b);
 
             let endpoint_data_c =
                 EndpointData::new([TransportAddr::Ip("0.0.0.0:33333".parse().unwrap())]);
-            discovery_c.publish(&endpoint_data_c);
+            address_lookup_c.publish(&endpoint_data_c);
 
-            let mut stream_a = discovery_a.resolve(id_b).unwrap();
+            let mut stream_a = address_lookup_a.resolve(id_b).unwrap();
             let result_a = tokio::time::timeout(Duration::from_secs(2), stream_a.next()).await;
             assert!(
                 result_a.is_err(),
                 "Endpoint on a different service should NOT be discoverable"
             );
 
-            let mut stream_b = discovery_b.resolve(id_c).unwrap();
+            let mut stream_b = address_lookup_b.resolve(id_c).unwrap();
             let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
             assert!(
                 result_b.is_ok(),
                 "Endpoint on the same service should be discoverable"
             );
 
-            let mut stream_b = discovery_b.resolve(id_a).unwrap();
+            let mut stream_b = address_lookup_b.resolve(id_a).unwrap();
             let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
             assert!(
                 result_b.is_err(),
@@ -815,14 +824,14 @@ mod tests {
             Ok(())
         }
 
-        fn make_discoverer<R: CryptoRng + ?Sized>(
+        fn make_address_lookup<R: CryptoRng + ?Sized>(
             rng: &mut R,
             advertise: bool,
-        ) -> Result<(PublicKey, MdnsDiscovery)> {
+        ) -> Result<(PublicKey, MdnsAddressLookup)> {
             let endpoint_id = SecretKey::generate(rng).public();
             Ok((
                 endpoint_id,
-                MdnsDiscovery::builder()
+                MdnsAddressLookup::builder()
                     .advertise(advertise)
                     .build(endpoint_id)?,
             ))

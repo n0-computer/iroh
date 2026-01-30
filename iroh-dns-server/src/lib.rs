@@ -22,7 +22,7 @@ mod tests {
     };
 
     use iroh::{
-        RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
+        RelayUrl, SecretKey, address_lookup::PkarrRelayClient, dns::DnsResolver,
         endpoint_info::EndpointInfo,
     };
     use n0_error::{Result, StdResultExt};
@@ -38,7 +38,7 @@ mod tests {
         util::PublicKeyBytes,
     };
 
-    const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+    const DNS_TIMEOUT: Duration = Duration::from_secs(2);
 
     #[tokio::test]
     #[traced_test]

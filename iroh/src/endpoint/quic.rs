@@ -24,7 +24,7 @@ pub use quinn::{
     MtuDiscoveryConfig,   // iroh::endpoint::quic::QuicTransportConfig
     OpenBi,               // iroh::endpoint::Connection
     OpenUni,              // iroh::endpoint::Connection
-    PathStats,            // iroh::magicsock::remote_map::remote_state::PathInfo
+    PathStats,            // iroh::socket::remote_map::remote_state::PathInfo
     ReadDatagram,         // iroh::endpoint::Connection
     ReadError,            // quinn::RecvStream
     ReadExactError,       // quinn::RecvStream
@@ -82,7 +82,7 @@ pub use quinn_proto::{
 };
 use tracing::warn;
 
-use crate::magicsock::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT};
+use crate::socket::{HEARTBEAT_INTERVAL, MAX_MULTIPATH_PATHS, PATH_MAX_IDLE_TIMEOUT};
 
 /// Builder for a [`QuicTransportConfig`].
 #[derive(Debug, Clone)]

@@ -59,7 +59,7 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Report, util::MaybeFuture};
+use crate::{net_report::Report, socket::Metrics as SocketMetrics, util::MaybeFuture};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -150,7 +150,7 @@ struct ActiveRelayActor {
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
 }
 
 #[derive(Debug)]
@@ -193,7 +193,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
 }
 
 /// Configuration needed to create a connection to a relay server.
@@ -630,10 +630,10 @@ impl ActiveRelayActor {
             }
         };
 
-        if res.is_ok() {
-            if let Err(err) = client_sink.close().await {
-                debug!("Failed to close client sink gracefully: {err:#}");
-            }
+        if res.is_ok()
+            && let Err(err) = client_sink.close().await
+        {
+            debug!("Failed to close client sink gracefully: {err:#}");
         }
 
         res.map_err(|err| state.map_err(err))
@@ -841,7 +841,7 @@ pub struct Config {
     pub ipv6_reported: Arc<AtomicBool>,
     #[cfg(any(test, feature = "test-utils"))]
     pub insecure_skip_relay_cert_verify: bool,
-    pub metrics: Arc<MagicsockMetrics>,
+    pub metrics: Arc<SocketMetrics>,
 }
 
 impl RelayActor {
@@ -1057,13 +1057,12 @@ impl RelayActor {
             Some(e) => e.clone(),
             None => {
                 let handle = self.start_active_relay(url.clone());
-                if Some(&url) == self.config.my_relay.get().as_ref() {
-                    if let Err(err) = handle
+                if Some(&url) == self.config.my_relay.get().as_ref()
+                    && let Err(err) = handle
                         .inbox_addr
                         .try_send(ActiveRelayMessage::SetHomeRelay(true))
-                    {
-                        error!("Home relay not set, send to new actor failed: {err:#}.");
-                    }
+                {
+                    error!("Home relay not set, send to new actor failed: {err:#}.");
                 }
                 self.active_relays.insert(url, handle.clone());
                 self.log_active_relay();

@@ -14,14 +14,14 @@ use pin_project::pin_project;
 use tracing::{debug, info, trace};
 
 use super::{Addr, Transmit};
-use crate::metrics::{EndpointMetrics, MagicsockMetrics};
+use crate::metrics::{EndpointMetrics, SocketMetrics};
 
 #[derive(Debug)]
 pub(crate) struct IpTransport {
     config: Config,
     socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
 }
 
 /// IP transport configuration
@@ -160,40 +160,19 @@ impl From<Config> for SocketAddr {
     }
 }
 
-fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<netwatch::UdpSocket> {
-    debug!(?addr, "binding");
-    // First try binding a preferred port, if specified
-    match netwatch::UdpSocket::bind_full(addr) {
-        Ok(socket) => {
-            let local_addr = socket.local_addr()?;
-            debug!(%addr, %local_addr, "successfully bound");
-            return Ok(socket);
-        }
-        Err(err) => {
-            debug!(%addr, "failed to bind: {err:#}");
-            // If that was already the fallback port, then error out
-            if addr.port() == 0 {
-                return Err(err);
-            }
-        }
-    }
-
-    // Otherwise, try binding with port 0
-    addr.set_port(0);
-    netwatch::UdpSocket::bind_full(addr)
-}
-
 impl IpTransport {
-    pub(crate) fn bind(config: Config, metrics: Arc<MagicsockMetrics>) -> io::Result<Self> {
-        let socket = bind_with_fallback(config.into())?;
+    pub(crate) fn bind(config: Config, metrics: Arc<SocketMetrics>) -> io::Result<Self> {
+        let addr: SocketAddr = config.into();
+        debug!(?addr, "binding");
+        let socket = netwatch::UdpSocket::bind_full(addr).inspect_err(|err| {
+            debug!(%addr, "failed to bind: {err:#}");
+        })?;
+        let local_addr = socket.local_addr()?;
+        debug!(%addr, %local_addr, "successfully bound");
         Ok(Self::new(config, Arc::new(socket), metrics.clone()))
     }
 
-    pub(crate) fn new(
-        config: Config,
-        socket: Arc<UdpSocket>,
-        metrics: Arc<MagicsockMetrics>,
-    ) -> Self {
+    pub(crate) fn new(config: Config, socket: Arc<UdpSocket>, metrics: Arc<SocketMetrics>) -> Self {
         // Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
         let local_addr = Watchable::new(socket.local_addr().expect("invalid socket"));
@@ -293,7 +272,7 @@ impl IpNetworkChangeSender {
         Ok(())
     }
 
-    pub(super) fn on_network_change(&self, _info: &crate::magicsock::Report) {
+    pub(super) fn on_network_change(&self, _info: &crate::socket::Report) {
         // Nothing to do for now
     }
 }
@@ -304,7 +283,7 @@ pub(super) struct IpSender {
     config: Config,
     #[pin]
     sender: UdpSender,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: Arc<SocketMetrics>,
 }
 
 impl IpSender {
@@ -433,7 +412,7 @@ impl IpTransports {
         let mut ip_v6 = Vec::new();
 
         for config in configs {
-            match IpTransport::bind(config, metrics.magicsock.clone()) {
+            match IpTransport::bind(config, metrics.socket.clone()) {
                 Ok(transport) => {
                     if config.is_ipv4() {
                         if config.is_default() {
