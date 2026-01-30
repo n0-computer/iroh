@@ -1359,11 +1359,7 @@ impl ConnectionState {
             self.path_ids.remove(addr);
         }
         self.open_paths.remove(path_id);
-
-        self.path_watchable.update(*path_id, |info| {
-            info.is_abandoned = true;
-            true
-        });
+        self.path_watchable.set_abandoned(*path_id);
 
         addr
     }
@@ -1371,11 +1367,7 @@ impl ConnectionState {
     /// Removes the path from the open paths.
     fn remove_open_path(&mut self, path_id: &PathId) {
         self.open_paths.remove(path_id);
-
-        self.path_watchable.update(*path_id, |info| {
-            info.is_closed = true;
-            true
-        });
+        self.path_watchable.set_closed(*path_id);
     }
 }
 

@@ -217,30 +217,35 @@ impl PathWatchable {
     }
 
     pub(super) fn insert(&self, conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) {
-        let Some(info) = PathInfo::new(conn, id, remote_addr, self.selected_path.get().as_ref())
-        else {
-            return;
-        };
-        let mut value = self.paths.get();
-        value.0.push(info);
-
-        if !self.paths.has_watchers() {
-            value.0.retain(|p| !p.is_abandoned);
+        let info = PathInfo::new(conn, id, remote_addr, self.selected_path.get().as_ref());
+        if let Some(info) = info {
+            self.update(move |list| list.push(info));
         }
-
-        self.paths.set(value).ok();
     }
 
-    pub(super) fn update(&self, id: PathId, f: impl Fn(&mut PathInfo) -> bool) {
-        let mut value = self.paths.get();
-        value
-            .0
-            .retain_mut(|item| if item.id() == id { f(item) } else { true });
+    pub(super) fn set_closed(&self, id: PathId) {
+        self.update(|list| {
+            if let Some(item) = list.iter_mut().find(|p| p.id() == id) {
+                item.is_closed = true;
+            }
+        });
+    }
 
+    pub(super) fn set_abandoned(&self, id: PathId) {
+        self.update(|list| {
+            if let Some(item) = list.iter_mut().find(|p| p.id() == id) {
+                item.is_closed = true;
+                item.is_abandoned = true;
+            }
+        });
+    }
+
+    fn update(&self, f: impl FnOnce(&mut SmallVec<[PathInfo; 4]>)) {
+        let mut value = self.paths.get();
+        f(&mut value.0);
         if !self.paths.has_watchers() {
             value.0.retain(|p| !p.is_abandoned);
         }
-
         self.paths.set(value).ok();
     }
 
