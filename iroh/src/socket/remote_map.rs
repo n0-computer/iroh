@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 
-pub(crate) use self::remote_state::PathsWatcher;
+pub(crate) use self::remote_state::PathWatchable;
 use self::remote_state::RemoteStateActor;
 pub(super) use self::remote_state::RemoteStateMessage;
 pub use self::remote_state::{
@@ -201,7 +201,7 @@ impl RemoteMap {
         &mut self,
         remote: EndpointId,
         conn: quinn::WeakConnectionHandle,
-    ) -> Option<PathsWatcher> {
+    ) -> Option<PathWatchable> {
         let actor = self.remote_state_actor(remote);
         let (tx, rx) = oneshot::channel();
         actor

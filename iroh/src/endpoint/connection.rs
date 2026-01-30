@@ -47,7 +47,7 @@ use crate::{
     },
     socket::{
         RemoteStateActorStoppedError,
-        remote_map::{PathInfoList, PathsWatcher},
+        remote_map::{PathInfoList, PathWatchable},
     },
 };
 
@@ -672,7 +672,7 @@ pub struct Connection<State: ConnectionState = HandshakeCompleted> {
 #[derive(Debug, Clone)]
 pub struct HandshakeCompletedData {
     info: StaticInfo,
-    paths: PathsWatcher,
+    paths: PathWatchable,
 }
 
 /// Static info from a completed TLS handshake.
@@ -1019,7 +1019,7 @@ impl Connection<HandshakeCompleted> {
     /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
     /// [`PathInfo`]: crate::socket::PathInfo
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        self.data.paths.clone()
+        self.data.paths.watch()
     }
 
     /// Returns the side of the connection (client or server).
@@ -1156,7 +1156,7 @@ impl ConnectionInfo {
     /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
     /// [`PathInfo`]: crate::socket::PathInfo
     pub fn paths(&self) -> impl Watcher<Value = PathInfoList> + Unpin + Send + Sync + 'static {
-        self.data.paths.clone()
+        self.data.paths.watch()
     }
 
     /// Returns connection statistics.

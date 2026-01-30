@@ -3,14 +3,14 @@ use std::task::Poll;
 use iroh_base::TransportAddr;
 use n0_future::time::Duration;
 use n0_watcher::{Watchable, Watcher};
-use quinn::{WeakConnectionHandle, WeakPathHandle};
+use quinn::WeakPathHandle;
 use quinn_proto::PathId;
 use smallvec::SmallVec;
 
 use crate::{endpoint::PathStats, socket::transports};
 
 /// List of [`PathInfo`] for a connection.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct PathInfoList(SmallVec<[PathInfo; 4]>);
 
 impl PathInfoList {
@@ -52,19 +52,13 @@ impl Iterator for PathInfoListIntoIter {
 }
 
 #[derive(Clone, Debug)]
-pub struct PathsWatcher {
+pub struct PathWatcher {
     paths: n0_watcher::Direct<PathInfoList>,
     selected_path: n0_watcher::Direct<Option<transports::Addr>>,
     current: PathInfoList,
 }
 
-impl PathsWatcher {
-    pub fn iter(&self) -> impl Iterator<Item = &PathInfo> {
-        self.current.iter()
-    }
-}
-
-impl PathsWatcher {
+impl PathWatcher {
     fn apply_selected_path(&mut self) {
         if let Some(selected_path) = self.selected_path.peek() {
             for path in self.current.0.iter_mut() {
@@ -74,7 +68,7 @@ impl PathsWatcher {
     }
 }
 
-impl Watcher for PathsWatcher {
+impl Watcher for PathWatcher {
     type Value = PathInfoList;
 
     fn update(&mut self) -> bool {
@@ -134,6 +128,8 @@ impl PartialEq for PathInfo {
         self.handle.id() == other.handle.id()
             && self.remote_addr == other.remote_addr
             && self.is_selected == other.is_selected
+            && self.is_closed == other.is_closed
+            && self.is_abandoned == other.is_abandoned
     }
 }
 
@@ -206,61 +202,54 @@ impl PathInfo {
     }
 }
 
-#[derive(Default, Debug)]
-pub(super) struct PathWatchable {
-    inner: Option<Watchable<PathInfoList>>,
+#[derive(Debug, Clone)]
+pub(crate) struct PathWatchable {
+    paths: Watchable<PathInfoList>,
+    selected_path: Watchable<Option<transports::Addr>>,
 }
 
 impl PathWatchable {
-    pub(super) fn insert(
-        &self,
-        conn: &quinn::Connection,
-        id: PathId,
-        remote_addr: TransportAddr,
-        selected_path: Option<&transports::Addr>,
-    ) {
-        let Some(watchable) = self.inner.as_ref() else {
+    pub(super) fn new(selected_path: Watchable<Option<transports::Addr>>) -> Self {
+        Self {
+            paths: Watchable::new(Default::default()),
+            selected_path,
+        }
+    }
+
+    pub(super) fn insert(&self, conn: &quinn::Connection, id: PathId, remote_addr: TransportAddr) {
+        let Some(info) = PathInfo::new(conn, id, remote_addr, self.selected_path.get().as_ref())
+        else {
             return;
         };
-        let Some(info) = PathInfo::new(conn, id, remote_addr, selected_path) else {
-            return;
-        };
-        let mut value = watchable.get();
+        let mut value = self.paths.get();
         value.0.push(info);
-        watchable.set(value).ok();
+
+        if !self.paths.has_watchers() {
+            value.0.retain(|p| !p.is_abandoned);
+        }
+
+        self.paths.set(value).ok();
     }
 
     pub(super) fn update(&self, id: PathId, f: impl Fn(&mut PathInfo) -> bool) {
-        let Some(watchable) = self.inner.as_ref() else {
-            return;
-        };
-        let mut value = watchable.get();
+        let mut value = self.paths.get();
         value
             .0
             .retain_mut(|item| if item.id() == id { f(item) } else { true });
-        watchable.set(value).ok();
+
+        if !self.paths.has_watchers() {
+            value.0.retain(|p| !p.is_abandoned);
+        }
+
+        self.paths.set(value).ok();
     }
 
-    pub(super) fn watch(
-        &mut self,
-        open_paths: impl Iterator<Item = (PathId, TransportAddr)>,
-        selected_path: n0_watcher::Direct<Option<transports::Addr>>,
-        conn: WeakConnectionHandle,
-    ) -> PathsWatcher {
-        if self.inner.is_none() {
-            let conn = conn.upgrade();
-            let selected_path = selected_path.peek();
-            let list = SmallVec::from_iter(open_paths.filter_map(|(id, remote_addr)| {
-                PathInfo::new(conn.as_ref()?, id, remote_addr, selected_path.as_ref())
-            }));
-            let watchable = Watchable::new(PathInfoList(list));
-            self.inner = Some(watchable);
-        }
-        let paths = self.inner.as_ref().expect("just set").watch();
+    pub(crate) fn watch(&self) -> PathWatcher {
+        let paths = self.paths.watch();
         let current = paths.peek().clone();
-        let mut watcher = PathsWatcher {
+        let mut watcher = PathWatcher {
             paths,
-            selected_path,
+            selected_path: self.selected_path.watch(),
             current,
         };
         watcher.apply_selected_path();

@@ -530,6 +530,17 @@ impl Addr {
             Self::Relay(..) => None,
         }
     }
+
+    pub(crate) fn is_transport_addr(&self, transport_addr: &TransportAddr) -> bool {
+        match self {
+            Addr::Ip(socket_addr) => {
+                matches!(transport_addr, TransportAddr::Ip(a) if a == socket_addr)
+            }
+            Addr::Relay(relay_url, _) => {
+                matches!(transport_addr, TransportAddr::Relay(a) if a == relay_url)
+            }
+        }
+    }
 }
 
 /// A sender that sends to all our transports.

@@ -65,7 +65,7 @@ use crate::{
     net_report::{self, IfStateDetails, Report},
     socket::{
         concurrent_read_map::ReadOnlyMap,
-        remote_map::{MappedAddrs, PathsWatcher, RemoteInfo},
+        remote_map::{MappedAddrs, PathWatchable, RemoteInfo},
     },
 };
 
@@ -1058,7 +1058,7 @@ impl Handle {
         &self,
         remote: EndpointId,
         conn: WeakConnectionHandle,
-    ) -> impl Future<Output = Result<PathsWatcher, RemoteStateActorStoppedError>> + Send + 'static
+    ) -> impl Future<Output = Result<PathWatchable, RemoteStateActorStoppedError>> + Send + 'static
     {
         let (tx, rx) = oneshot::channel();
         let sender = self.actor_sender.clone();
@@ -1101,7 +1101,7 @@ enum ActorMessage {
     AddConnection(
         EndpointId,
         WeakConnectionHandle,
-        oneshot::Sender<PathsWatcher>,
+        oneshot::Sender<PathWatchable>,
     ),
     #[debug("RemoteInfo(..)")]
     RemoteInfo(EndpointId, oneshot::Sender<RemoteInfo>),
