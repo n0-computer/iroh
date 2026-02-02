@@ -18,7 +18,7 @@ env:
 jobs:
   wine_test:
     name: Wine Sanity Check
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     steps:
       - uses: actions/checkout@v4
 
