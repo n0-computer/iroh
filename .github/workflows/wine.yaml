@@ -13,7 +13,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  RUSTFLAGS: -Dwarnings
+  # -Dwarnings: treat warnings as errors
+  # -Clink-arg: suppress mingw .drectve warnings (MSVC-specific directives ignored by mingw)
+  RUSTFLAGS: -Dwarnings -Clink-arg=-Wl,--no-warn-drectve
 
 jobs:
   wine_test:
