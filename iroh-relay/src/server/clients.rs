@@ -17,7 +17,7 @@ use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
 use crate::{
-    protos::relay::Datagrams,
+    protos::{relay::Datagrams, streams::BytesStreamSink},
     server::{client::SendError, metrics::Metrics},
 };
 
@@ -57,11 +57,7 @@ impl Clients {
     /// Builds the client handler and starts the read & write loops for the connection.
     pub async fn register<S>(&self, client_config: Config<S>, metrics: Arc<Metrics>)
     where
-        S: Stream<Item = Result<bytes::Bytes, crate::protos::streams::StreamError>>
-            + Sink<bytes::Bytes, Error = crate::protos::streams::StreamError>
-            + Unpin
-            + Send
-            + 'static,
+        S: BytesStreamSink + Send + 'static,
     {
         let endpoint_id = client_config.endpoint_id;
         let connection_id = self.get_connection_id();

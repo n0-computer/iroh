@@ -16,7 +16,10 @@ use tracing::{Instrument, debug, trace, warn};
 
 use crate::{
     PingTracker,
-    protos::relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
+    protos::{
+        relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
+        streams::BytesStreamSink,
+    },
     server::{
         clients::Clients,
         metrics::Metrics,
@@ -79,11 +82,7 @@ impl Client {
         metrics: Arc<Metrics>,
     ) -> Client
     where
-        S: Stream<Item = Result<bytes::Bytes, crate::protos::streams::StreamError>>
-            + Sink<bytes::Bytes, Error = crate::protos::streams::StreamError>
-            + Unpin
-            + Send
-            + 'static,
+        S: BytesStreamSink + Send + 'static,
     {
         let Config {
             endpoint_id,
@@ -267,9 +266,7 @@ struct Actor<S> {
 
 impl<S> Actor<S>
 where
-    S: Stream<Item = Result<bytes::Bytes, crate::protos::streams::StreamError>>
-        + Sink<bytes::Bytes, Error = crate::protos::streams::StreamError>
-        + Unpin,
+    S: BytesStreamSink,
 {
     async fn run(mut self, done: CancellationToken) {
         // Note the accept and disconnects metrics must be in a pair.  Technically the
