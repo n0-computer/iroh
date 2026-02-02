@@ -50,12 +50,12 @@ jobs:
         run: |
           for exe in target/x86_64-pc-windows-gnu/release/deps/iroh-*.exe; do
             echo "=== Tests in $exe ==="
-            wine "$exe" --list 2>/dev/null || echo "Failed to list tests in $exe"
+            wine "$exe" --list
           done
 
       - name: Run tests under Wine
         run: |
           for exe in target/x86_64-pc-windows-gnu/release/deps/iroh-*.exe; do
             echo "=== Running $exe ==="
-            wine "$exe" --test-threads=1 2>&1 || echo "Some tests failed in $exe"
+            wine "$exe" --test-threads=1
           done
