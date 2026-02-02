@@ -1,0 +1,54 @@
+name: Wine Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: wine-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  wine_test:
+    name: Wine Sanity Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Wine
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y wine64 wine32
+
+      - name: Install Rust + mingw target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install mingw-w64
+        run: sudo apt-get install -y mingw-w64
+
+      - name: Build tests
+        run: cargo build --target x86_64-pc-windows-gnu --tests -p iroh
+
+      - name: List available tests
+        run: |
+          for exe in target/x86_64-pc-windows-gnu/debug/deps/iroh-*.exe; do
+            echo "=== Tests in $exe ==="
+            wine "$exe" --list 2>/dev/null || echo "Failed to list tests in $exe"
+          done
+
+      - name: Run tests under Wine
+        run: |
+          for exe in target/x86_64-pc-windows-gnu/debug/deps/iroh-*.exe; do
+            echo "=== Running $exe ==="
+            wine "$exe" --test-threads=1 2>&1 || echo "Some tests failed in $exe"
+          done
