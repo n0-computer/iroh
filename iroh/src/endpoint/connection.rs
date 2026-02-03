@@ -1001,19 +1001,36 @@ impl Connection<HandshakeCompleted> {
         self.data.info.endpoint_id
     }
 
-    /// Returns a [`Watcher`] for the network paths of this connection.
+    /// Returns a watcher for the network paths of this connection.
     ///
     /// A connection can have several network paths to the remote endpoint, commonly there
     /// will be a path via the relay server and a holepunched path.
     ///
-    /// The watcher is updated whenever a path is opened or closed, or when the path selected
-    /// for transmission changes (see [`PathInfo::is_selected`]).
+    /// Returns a [`PathWatcher`], which implements the [`Watcher`] trait. The watcher is updated
+    /// whenever a path is opened or closed, or when the path selected for transmission changes
+    /// (see [`PathInfo::is_selected`]).
     ///
     /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
     /// transmission path.
     ///
-    /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
+    /// As long as a [`PathWatcher`] is alive, the list of paths will only grow. If paths
+    /// are closed, they will be marked as closed (see [`PathInfo::is_closed`]) but will
+    /// not be removed from the list of paths. This allows to reliably retrieve stats for
+    /// closed paths.
+    ///
+    /// A [`PathWatcher`] does not keep the [`Connection`] itself alive. If all references to
+    /// a connection are dropped, the [`PathWatcher`] will start to return an error when
+    /// updating. Its last value may still be used - note however that accessing
+    /// stats for a path via [`PathInfo::stats`] returns `None` if all references to a
+    /// [`Connection`] have been dropped. To reliably access path stats when a connection closes,
+    /// wait for [`Connection::closed`] and then call [`Connection::paths`] and directly
+    /// iterate over the path stats while the [`Connection`] struct is still in scope.
+    ///
     /// [`PathInfo`]: crate::socket::PathInfo
+    /// [`PathInfoList`]: crate::socket::PathInfoList
+    /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
+    /// [`PathInfo::is_closed`]: crate::socket::PathInfo::is_closed
+    /// [`PathInfo::stats`]: crate::socket::PathInfo::stats
     pub fn paths(&self) -> PathWatcher {
         self.data.paths.watch()
     }
@@ -1140,17 +1157,7 @@ impl ConnectionInfo {
 
     /// Returns a [`Watcher`] for the network paths of this connection.
     ///
-    /// A connection can have several network paths to the remote endpoint, commonly there
-    /// will be a path via the relay server and a holepunched path.
-    ///
-    /// The watcher is updated whenever a path is opened or closed, or when the path selected
-    /// for transmission changes (see [`PathInfo::is_selected`]).
-    ///
-    /// The [`PathInfoList`] returned from the watcher contains a [`PathInfo`] for each
-    /// transmission path.
-    ///
-    /// [`PathInfo::is_selected`]: crate::socket::PathInfo::is_selected
-    /// [`PathInfo`]: crate::socket::PathInfo
+    /// See [`Connection::paths`] for details.
     pub fn paths(&self) -> PathWatcher {
         self.data.paths.watch()
     }
